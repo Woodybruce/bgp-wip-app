@@ -1,0 +1,31 @@
+{
+  "id": "bgp-dashboard",
+  "name": "BGP Dashboard",
+  "description": "Connect to the BGP property management dashboard — query properties, deals, diary, contacts, Monday.com boards, and chat with ChatBGP AI assistant",
+  "version": "1.0.0",
+  "skills": ["skills/bgp"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "dashboardUrl": {
+        "type": "string",
+        "description": "The URL of your BGP Dashboard (e.g. https://your-app.replit.app)"
+      },
+      "username": {
+        "type": "string",
+        "description": "Your BGP Dashboard login username"
+      },
+      "password": {
+        "type": "string",
+        "description": "Your BGP Dashboard login password"
+      }
+    },
+    "required": ["dashboardUrl", "username", "password"]
+  },
+  "uiHints": {
+    "dashboardUrl": { "label": "Dashboard URL", "placeholder": "https://your-app.replit.app" },
+    "username": { "label": "Username", "placeholder": "woody" },
+    "password": { "label": "Password", "sensitive": true }
+  }
+}

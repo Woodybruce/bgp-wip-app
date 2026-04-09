@@ -1,0 +1,730 @@
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import {
+  Search,
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldX,
+  User,
+  Building2,
+  AlertTriangle,
+  CheckCircle,
+  XCircle,
+  Loader2,
+  ChevronRight,
+  FileText,
+  Link as LinkIcon,
+  Eye,
+  Scale,
+  Landmark,
+  MapPin,
+  RefreshCw,
+} from "lucide-react";
+
+interface InvestigationResult {
+  subject: { name: string; companyNumber?: string; type: string };
+  companyProfile?: any;
+  officers?: any[];
+  pscs?: any[];
+  ownershipChain?: any;
+  filingHistory?: any[];
+  insolvencyHistory?: any[];
+  sanctionsScreening?: any[];
+  aiAnalysis?: string;
+  riskScore?: number;
+  riskLevel?: string;
+  flags?: string[];
+  charges?: any[];
+  propertyContext?: any;
+  timestamp: string;
+}
+
+interface SearchResult {
+  source: string;
+  companyNumber?: string;
+  name: string;
+  status?: string;
+  incorporatedDate?: string;
+  address?: string;
+  crmId?: number;
+  kycStatus?: string;
+}
+
+function RiskBadge({ level, score }: { level?: string; score?: number }) {
+  const config: Record<string, { color: string; icon: any; label: string }> = {
+    low: { color: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400", icon: ShieldCheck, label: "Low Risk" },
+    medium: { color: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400", icon: Shield, label: "Medium Risk" },
+    high: { color: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400", icon: ShieldAlert, label: "High Risk" },
+    critical: { color: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400", icon: ShieldX, label: "Critical Risk" },
+  };
+  const c = config[level || "low"] || config.low;
+  const Icon = c.icon;
+  return (
+    <div className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium ${c.color}`}>
+      <Icon className="h-4 w-4" />
+      {c.label}{score !== undefined ? ` (${score}/100)` : ""}
+    </div>
+  );
+}
+
+function SanctionsBadge({ status }: { status: string }) {
+  if (status === "clear") return <Badge variant="outline" className="text-emerald-600 border-emerald-300"><CheckCircle className="h-3 w-3 mr-1" />Clear</Badge>;
+  if (status === "strong_match") return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Match</Badge>;
+  return <Badge variant="outline" className="text-amber-600 border-amber-300"><AlertTriangle className="h-3 w-3 mr-1" />Potential</Badge>;
+}
+
+function MarkdownContent({ content }: { content: string }) {
+  const lines = content.split("\n");
+  return (
+    <div className="space-y-2 text-sm leading-relaxed">
+      {lines.map((line, i) => {
+        if (line.startsWith("## ")) return <h2 key={i} className="text-lg font-semibold mt-4 mb-1">{line.replace("## ", "")}</h2>;
+        if (line.startsWith("### ")) return <h3 key={i} className="text-base font-semibold mt-3 mb-1">{line.replace("### ", "")}</h3>;
+        if (line.match(/^\*\*.*\*\*$/)) return <h3 key={i} className="text-base font-semibold mt-3 mb-1">{line.replace(/\*\*/g, "")}</h3>;
+        if (line.match(/^\d+\.\s+\*\*/)) {
+          const cleaned = line.replace(/\*\*/g, "");
+          const [num, ...rest] = cleaned.split(". ");
+          return <h3 key={i} className="text-base font-semibold mt-4 mb-1">{num}. {rest.join(". ")}</h3>;
+        }
+        if (line.startsWith("- ") || line.startsWith("* ")) {
+          const text = line.replace(/^[-*]\s+/, "");
+          const boldMatch = text.match(/^\*\*(.*?)\*\*(.*)$/);
+          if (boldMatch) return <div key={i} className="ml-4 flex gap-1"><span className="text-muted-foreground">•</span><span><strong>{boldMatch[1]}</strong>{boldMatch[2]}</span></div>;
+          return <div key={i} className="ml-4 flex gap-1"><span className="text-muted-foreground">•</span><span>{text}</span></div>;
+        }
+        if (line.trim() === "") return <div key={i} className="h-1" />;
+        const formatted = line.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+        return <p key={i} dangerouslySetInnerHTML={{ __html: formatted }} />;
+      })}
+    </div>
+  );
+}
+
+export default function KycClouseau() {
+  const { toast } = useToast();
+  const params = new URLSearchParams(window.location.search);
+  const landRegName = params.get("name") || "";
+  const landRegAddress = params.get("address") || "";
+  const landRegMortgage = params.get("mortgage") || "";
+  const landRegPrice = params.get("price") || "";
+  const hasPropertyContext = !!landRegName;
+
+  const [propertyContext] = useState(hasPropertyContext ? {
+    ownerName: landRegName,
+    propertyAddress: landRegAddress,
+    mortgageLender: landRegMortgage,
+    pricePaid: landRegPrice,
+  } : null);
+
+  const [searchQuery, setSearchQuery] = useState(landRegName);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [investigation, setInvestigation] = useState<InvestigationResult | null>(null);
+  const [selectedOfficer, setSelectedOfficer] = useState<any>(null);
+  const [officerDeepDive, setOfficerDeepDive] = useState<any>(null);
+  const [lastInvestigateParams, setLastInvestigateParams] = useState<{ companyNumber?: string; companyName?: string; propertyContext?: any } | null>(null);
+  const autoSearched = useRef(false);
+
+  function extractErrorMessage(err: unknown, fallback: string): string {
+    if (err instanceof Error) {
+      const msg = err.message || fallback;
+      const jsonMatch = msg.match(/^\d+:\s*(.+)$/s);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[1]);
+          if (parsed.error) return parsed.error;
+        } catch {
+          return jsonMatch[1];
+        }
+      }
+      return msg;
+    }
+    return fallback;
+  }
+
+  const searchMutation = useMutation({
+    mutationFn: async (query: string) => {
+      const res = await apiRequest("GET", `/api/kyc-clouseau/search?q=${encodeURIComponent(query)}`);
+      return res.json();
+    },
+    onSuccess: (data) => setSearchResults(data.items || []),
+    onError: (err) => {
+      const message = extractErrorMessage(err, "Search failed. Please try again.");
+      toast({ title: "Search Error", description: message, variant: "destructive" });
+    },
+  });
+
+  const investigateMutation = useMutation({
+    mutationFn: async (params: { companyNumber?: string; companyName?: string; propertyContext?: any }) => {
+      setLastInvestigateParams(params);
+      const res = await apiRequest("POST", "/api/kyc-clouseau/investigate", params);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setInvestigation(data);
+      setSelectedOfficer(null);
+      setOfficerDeepDive(null);
+    },
+    onError: (err) => {
+      const message = extractErrorMessage(err, "Investigation failed. Please try again.");
+      toast({ title: "Investigation Error", description: message, variant: "destructive" });
+    },
+  });
+
+  useEffect(() => {
+    if (landRegName && !autoSearched.current) {
+      autoSearched.current = true;
+      searchMutation.mutate(landRegName);
+    }
+  }, []);
+
+  const officerMutation = useMutation({
+    mutationFn: async (params: { officerId: string; officerName: string }) => {
+      const res = await apiRequest("POST", "/api/kyc-clouseau/officer-deep-dive", params);
+      return res.json();
+    },
+    onSuccess: (data) => setOfficerDeepDive(data),
+    onError: (err) => {
+      const message = extractErrorMessage(err, "Officer deep-dive failed. Please try again.");
+      toast({ title: "Officer Deep-Dive Error", description: message, variant: "destructive" });
+    },
+  });
+
+  const handleSearch = useCallback(() => {
+    if (searchQuery.length >= 2) searchMutation.mutate(searchQuery);
+  }, [searchQuery]);
+
+  const handleInvestigate = useCallback((result: SearchResult) => {
+    investigateMutation.mutate({
+      companyNumber: result.companyNumber,
+      companyName: result.name,
+      ...(propertyContext ? { propertyContext } : {}),
+    });
+  }, [propertyContext]);
+
+  const handleOfficerDive = useCallback((officer: any) => {
+    setSelectedOfficer(officer);
+    const officerId = officer.links?.officer?.appointments?.replace("/officers/", "").replace("/appointments", "") || "";
+    if (officerId) {
+      officerMutation.mutate({ officerId, officerName: officer.name });
+    }
+  }, []);
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="border-b px-6 py-4 flex-shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+            <Scale className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold" data-testid="text-page-title">KYC Clouseau</h1>
+            <p className="text-sm text-muted-foreground">AI-Powered KYC & AML Investigation Tool</p>
+          </div>
+        </div>
+      </div>
+
+      {propertyContext && (
+        <div className="border-b bg-amber-50 dark:bg-amber-950/30 px-6 py-3 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <Landmark className="h-4 w-4 text-amber-600" />
+            <div className="flex-1">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                Property Acquisition Investigation
+              </p>
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                {propertyContext.propertyAddress && (
+                  <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{propertyContext.propertyAddress}</span>
+                )}
+                {propertyContext.pricePaid && !isNaN(Number(propertyContext.pricePaid)) && (
+                  <span>Last sold: £{Number(propertyContext.pricePaid).toLocaleString()}</span>
+                )}
+                {propertyContext.mortgageLender && (
+                  <span>Lender: {propertyContext.mortgageLender}</span>
+                )}
+              </div>
+            </div>
+            <Badge variant="outline" className="text-amber-700 border-amber-300 dark:text-amber-400 dark:border-amber-700 text-xs">
+              From Land Registry
+            </Badge>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-hidden flex">
+        <div className="w-80 border-r flex flex-col flex-shrink-0">
+          <div className="p-4 border-b">
+            <div className="flex gap-2">
+              <Input
+                data-testid="input-search"
+                placeholder="Company name or number..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              />
+              <Button
+                data-testid="button-search"
+                size="icon"
+                onClick={handleSearch}
+                disabled={searchMutation.isPending}
+              >
+                {searchMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+              </Button>
+            </div>
+          </div>
+
+          <ScrollArea className="flex-1">
+            <div className="p-2 space-y-1">
+              {searchResults.map((result, i) => (
+                <button
+                  key={`${result.source}-${result.companyNumber}-${i}`}
+                  data-testid={`button-result-${i}`}
+                  className="w-full text-left p-3 rounded-lg hover:bg-accent transition-colors"
+                  onClick={() => handleInvestigate(result)}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{result.name}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        {result.companyNumber && (
+                          <span className="text-xs text-muted-foreground">{result.companyNumber}</span>
+                        )}
+                        {result.source === "crm" && (
+                          <Badge variant="outline" className="text-xs px-1 py-0">CRM</Badge>
+                        )}
+                      </div>
+                      {result.address && (
+                        <p className="text-xs text-muted-foreground mt-0.5 truncate">{result.address}</p>
+                      )}
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
+                  </div>
+                </button>
+              ))}
+              {searchMutation.isError && (
+                <div className="p-4 text-center space-y-2" data-testid="error-search">
+                  <div className="inline-flex items-center gap-2 text-sm text-destructive">
+                    <XCircle className="h-4 w-4 flex-shrink-0" />
+                    <span>{extractErrorMessage(searchMutation.error, "Search failed. Please try again.")}</span>
+                  </div>
+                  <div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid="button-retry-search"
+                      onClick={handleSearch}
+                    >
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                      Retry
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {searchResults.length === 0 && !searchMutation.isPending && !searchMutation.isError && (
+                <div className="p-8 text-center text-sm text-muted-foreground">
+                  Search for a company to begin your investigation
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        <div className="flex-1 overflow-auto">
+          {investigateMutation.isPending && (
+            <div className="flex flex-col items-center justify-center h-full gap-4">
+              <div className="relative">
+                <Scale className="h-12 w-12 text-primary animate-pulse" />
+              </div>
+              <div className="text-center">
+                <p className="font-medium">Investigating...</p>
+                <p className="text-sm text-muted-foreground mt-1">Running Companies House lookup, sanctions screening, ownership trace, and AI analysis</p>
+              </div>
+            </div>
+          )}
+
+          {investigateMutation.isError && !investigateMutation.isPending && (
+            <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8" data-testid="error-investigation">
+              <div className="h-16 w-16 rounded-full bg-destructive/10 flex items-center justify-center">
+                <XCircle className="h-8 w-8 text-destructive" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold">Investigation Failed</h3>
+                <p className="text-sm text-muted-foreground mt-1 max-w-md">
+                  {extractErrorMessage(investigateMutation.error, "Something went wrong while running the investigation. Please try again.")}
+                </p>
+              </div>
+              {lastInvestigateParams && (
+                <Button
+                  data-testid="button-retry-investigation"
+                  variant="outline"
+                  onClick={() => investigateMutation.mutate(lastInvestigateParams)}
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Retry Investigation
+                </Button>
+              )}
+            </div>
+          )}
+
+          {investigation && !investigateMutation.isPending && !investigateMutation.isError && (
+            <div className="p-6 space-y-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-bold" data-testid="text-subject-name">{investigation.subject.name}</h2>
+                  <div className="flex items-center gap-3 mt-1">
+                    {investigation.companyProfile?.company_number && (
+                      <span className="text-sm text-muted-foreground">#{investigation.companyProfile.company_number}</span>
+                    )}
+                    {investigation.companyProfile?.company_status && (
+                      <Badge variant={investigation.companyProfile.company_status === "active" ? "outline" : "destructive"}>
+                        {investigation.companyProfile.company_status}
+                      </Badge>
+                    )}
+                    {investigation.companyProfile?.type && (
+                      <span className="text-xs text-muted-foreground">{investigation.companyProfile.type}</span>
+                    )}
+                  </div>
+                </div>
+                <RiskBadge level={investigation.riskLevel} score={investigation.riskScore} />
+              </div>
+
+              {(investigation.flags?.length || 0) > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-500" />
+                      Risk Flags ({investigation.flags?.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-1">
+                      {investigation.flags?.map((flag, i) => (
+                        <div key={i} className="flex items-start gap-2 text-sm">
+                          <span className="text-amber-500 mt-0.5">•</span>
+                          <span>{flag}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              <Tabs defaultValue="analysis" className="w-full">
+                <TabsList className="w-full justify-start">
+                  <TabsTrigger value="analysis" data-testid="tab-analysis">AI Analysis</TabsTrigger>
+                  <TabsTrigger value="officers" data-testid="tab-officers">Officers ({investigation.officers?.length || 0})</TabsTrigger>
+                  <TabsTrigger value="pscs" data-testid="tab-pscs">PSCs ({investigation.pscs?.length || 0})</TabsTrigger>
+                  <TabsTrigger value="ownership" data-testid="tab-ownership">Ownership</TabsTrigger>
+                  <TabsTrigger value="charges" data-testid="tab-charges">Charges ({investigation.charges?.length || 0})</TabsTrigger>
+                  <TabsTrigger value="sanctions" data-testid="tab-sanctions">Sanctions</TabsTrigger>
+                  <TabsTrigger value="filings" data-testid="tab-filings">Filings</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="analysis" className="mt-4">
+                  <Card>
+                    <CardContent className="pt-6">
+                      {investigation.aiAnalysis ? (
+                        <MarkdownContent content={investigation.aiAnalysis} />
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No AI analysis available</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="officers" className="mt-4">
+                  <div className="grid gap-3">
+                    {investigation.officers?.map((officer, i) => {
+                      const officerId = officer.links?.officer?.appointments?.replace("/officers/", "").replace("/appointments", "") || "";
+                      return (
+                        <Card key={i} className={selectedOfficer?.name === officer.name ? "ring-2 ring-primary" : ""}>
+                          <CardContent className="pt-4 pb-4">
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <User className="h-4 w-4 text-muted-foreground" />
+                                  <span className="font-medium text-sm" data-testid={`text-officer-${i}`}>{officer.name}</span>
+                                </div>
+                                <div className="ml-6 mt-1 space-y-0.5">
+                                  <p className="text-xs text-muted-foreground">Role: {officer.officer_role?.replace(/-/g, " ")}</p>
+                                  {officer.nationality && <p className="text-xs text-muted-foreground">Nationality: {officer.nationality}</p>}
+                                  {officer.appointed_on && <p className="text-xs text-muted-foreground">Appointed: {officer.appointed_on}</p>}
+                                  {officer.date_of_birth && (
+                                    <p className="text-xs text-muted-foreground">DOB: {officer.date_of_birth.month}/{officer.date_of_birth.year}</p>
+                                  )}
+                                </div>
+                              </div>
+                              {officerId && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  data-testid={`button-dive-officer-${i}`}
+                                  onClick={() => handleOfficerDive(officer)}
+                                  disabled={officerMutation.isPending}
+                                >
+                                  {officerMutation.isPending && selectedOfficer?.name === officer.name ? (
+                                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                  ) : (
+                                    <Eye className="h-3 w-3 mr-1" />
+                                  )}
+                                  Deep Dive
+                                </Button>
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+
+                    {officerMutation.isError && !officerMutation.isPending && (
+                      <Card className="border-destructive/30" data-testid="error-officer-dive">
+                        <CardContent className="pt-4 pb-4">
+                          <div className="flex items-center gap-3">
+                            <XCircle className="h-5 w-5 text-destructive flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="text-sm font-medium">Officer deep-dive failed</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {extractErrorMessage(officerMutation.error, "Something went wrong. Please try again.")}
+                              </p>
+                            </div>
+                            {selectedOfficer && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                data-testid="button-retry-officer-dive"
+                                onClick={() => handleOfficerDive(selectedOfficer)}
+                              >
+                                <RefreshCw className="h-3 w-3 mr-1" />
+                                Retry
+                              </Button>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {officerDeepDive && (
+                      <Card className="border-primary/30">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <Eye className="h-4 w-4" />
+                            Deep Dive: {officerDeepDive.officerName}
+                            <Badge variant="outline" className="ml-2">{officerDeepDive.totalAppointments} appointments</Badge>
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          {officerDeepDive.activeAppointments?.length > 0 && (
+                            <div className="mb-4">
+                              <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-2">Active Appointments ({officerDeepDive.activeAppointments.length})</h4>
+                              <div className="space-y-1">
+                                {officerDeepDive.activeAppointments.map((a: any, i: number) => (
+                                  <div key={i} className="flex items-center gap-2 text-sm">
+                                    <Building2 className="h-3 w-3 text-muted-foreground flex-shrink-0" />
+                                    <span className="truncate">{a.appointed_to?.company_name || "Unknown"}</span>
+                                    <span className="text-xs text-muted-foreground flex-shrink-0">({a.officer_role})</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {officerDeepDive.aiInsight && (
+                            <div className="mt-4 pt-4 border-t">
+                              <h4 className="text-xs font-semibold uppercase text-muted-foreground mb-2">AI Analysis</h4>
+                              <MarkdownContent content={officerDeepDive.aiInsight} />
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="pscs" className="mt-4">
+                  <div className="grid gap-3">
+                    {investigation.pscs?.map((psc, i) => (
+                      <Card key={i}>
+                        <CardContent className="pt-4 pb-4">
+                          <div className="flex items-center gap-2">
+                            {psc.kind?.includes("corporate") ? (
+                              <Building2 className="h-4 w-4 text-muted-foreground" />
+                            ) : (
+                              <User className="h-4 w-4 text-muted-foreground" />
+                            )}
+                            <span className="font-medium text-sm" data-testid={`text-psc-${i}`}>{psc.name}</span>
+                          </div>
+                          <div className="ml-6 mt-1 space-y-0.5">
+                            <p className="text-xs text-muted-foreground">Type: {psc.kind?.replace(/-/g, " ")}</p>
+                            {psc.natures_of_control?.map((c: string, j: number) => (
+                              <p key={j} className="text-xs text-muted-foreground">Control: {c.replace(/-/g, " ")}</p>
+                            ))}
+                            {psc.nationality && <p className="text-xs text-muted-foreground">Nationality: {psc.nationality}</p>}
+                            {psc.country_of_residence && <p className="text-xs text-muted-foreground">Residence: {psc.country_of_residence}</p>}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                    {(!investigation.pscs || investigation.pscs.length === 0) && (
+                      <p className="text-sm text-muted-foreground p-4">No PSCs found</p>
+                    )}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="ownership" className="mt-4">
+                  <Card>
+                    <CardContent className="pt-6">
+                      {investigation.ownershipChain?.chain?.length > 0 ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2 p-2 bg-accent/50 rounded">
+                            <Building2 className="h-4 w-4" />
+                            <span className="text-sm font-medium">{investigation.subject.name}</span>
+                            <Badge variant="outline" className="text-xs">Subject</Badge>
+                          </div>
+                          {investigation.ownershipChain.chain.map((link: any, i: number) => (
+                            <div key={i}>
+                              <div className="flex justify-center">
+                                <div className="h-6 w-px bg-border" />
+                              </div>
+                              <div className="flex items-center gap-2 p-2 bg-accent/30 rounded">
+                                <Building2 className="h-4 w-4" />
+                                <span className="text-sm">{link.name}</span>
+                                <span className="text-xs text-muted-foreground">({link.number})</span>
+                                {i === investigation.ownershipChain.chain.length - 1 && (
+                                  <Badge className="text-xs">Ultimate Parent</Badge>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No corporate ownership chain discovered — this may be the ultimate parent entity</p>
+                      )}
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="charges" className="mt-4">
+                  <div className="grid gap-3">
+                    {(investigation.charges?.length || 0) === 0 && (
+                      <Card>
+                        <CardContent className="pt-4 pb-4 text-sm text-muted-foreground text-center">
+                          No charges or mortgages registered
+                        </CardContent>
+                      </Card>
+                    )}
+                    {investigation.charges?.map((charge: any, i: number) => (
+                      <Card key={i}>
+                        <CardContent className="pt-4 pb-4 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <FileText className="h-4 w-4 text-muted-foreground" />
+                              <span className="text-sm font-medium">
+                                {charge.classification?.description || charge.particulars?.description || "Charge"}
+                              </span>
+                            </div>
+                            <Badge variant={charge.status === "fully-satisfied" ? "outline" : "default"} className={`text-xs ${charge.status === "fully-satisfied" ? "text-muted-foreground" : charge.status === "outstanding" ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400" : ""}`}>
+                              {charge.status || "unknown"}
+                            </Badge>
+                          </div>
+                          {(charge.persons_entitled || []).length > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              <span className="font-medium">Lender: </span>
+                              {charge.persons_entitled.map((p: any) => p.name).join(", ")}
+                            </p>
+                          )}
+                          <div className="flex gap-4 text-xs text-muted-foreground">
+                            {charge.created_on && <span>Created: {charge.created_on}</span>}
+                            {charge.delivered_on && <span>Delivered: {charge.delivered_on}</span>}
+                            {charge.satisfied_on && <span>Satisfied: {charge.satisfied_on}</span>}
+                          </div>
+                          {charge.particulars?.contains_negative_pledge && (
+                            <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">Negative Pledge</Badge>
+                          )}
+                          {charge.particulars?.floating_charge_covers_all && (
+                            <Badge variant="outline" className="text-xs text-blue-600 border-blue-300">Floating Charge — All Assets</Badge>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="sanctions" className="mt-4">
+                  <div className="grid gap-3">
+                    {investigation.sanctionsScreening?.map((result: any, i: number) => (
+                      <Card key={i}>
+                        <CardContent className="pt-4 pb-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <User className="h-4 w-4 text-muted-foreground" />
+                              <span className="text-sm font-medium">{result.name}</span>
+                            </div>
+                            <SanctionsBadge status={result.status} />
+                          </div>
+                          {result.matches?.length > 0 && (
+                            <div className="ml-6 mt-2 space-y-1">
+                              {result.matches.map((m: any, j: number) => (
+                                <div key={j} className="text-xs text-muted-foreground">
+                                  Matched: <strong>{m.sanctionedName}</strong> (score: {(m.score * 100).toFixed(0)}%, regime: {m.regime})
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ))}
+                    {(!investigation.sanctionsScreening || investigation.sanctionsScreening.length === 0) && (
+                      <p className="text-sm text-muted-foreground p-4">Sanctions screening data unavailable</p>
+                    )}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="filings" className="mt-4">
+                  <Card>
+                    <CardContent className="pt-6">
+                      <div className="space-y-2">
+                        {investigation.filingHistory?.map((filing, i) => (
+                          <div key={i} className="flex items-center gap-3 text-sm py-1.5 border-b last:border-0">
+                            <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                            <span className="text-xs text-muted-foreground flex-shrink-0 w-20">{filing.date}</span>
+                            <span className="flex-1 truncate">{filing.description || filing.type}</span>
+                          </div>
+                        ))}
+                        {(!investigation.filingHistory || investigation.filingHistory.length === 0) && (
+                          <p className="text-sm text-muted-foreground">No recent filings</p>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              </Tabs>
+            </div>
+          )}
+
+          {!investigation && !investigateMutation.isPending && !investigateMutation.isError && (
+            <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
+              <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
+                <Scale className="h-8 w-8 text-primary" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold">KYC Clouseau</h3>
+                <p className="text-sm text-muted-foreground mt-1 max-w-md">
+                  Your AI-powered KYC investigation tool. Search for any company to get a comprehensive compliance analysis
+                  including ownership chains, sanctions screening, officer networks, and AI risk assessment.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6e7f8a9b",
+  "developer": {
+    "name": "Bruce Gillingham Pollard",
+    "websiteUrl": "https://chatbgp.app",
+    "privacyUrl": "https://chatbgp.app",
+    "termsOfUseUrl": "https://chatbgp.app"
+  },
+  "name": {
+    "short": "BGP Dashboard",
+    "full": "BGP Dashboard - Property CRM & Intelligence"
+  },
+  "description": {
+    "short": "Access BGP CRM, deals, news, and property intelligence from Teams.",
+    "full": "The BGP Dashboard brings your property CRM directly into Microsoft Teams. View active deals, search contacts and companies, browse property news, access the WIP Report, Investment Tracker, and ChatBGP AI assistant — all without leaving Teams."
+  },
+  "icons": {
+    "outline": "https://chatbgp.app/favicon.png",
+    "color": "https://chatbgp.app/icon-192.png"
+  },
+  "accentColor": "#1a1a1a",
+  "staticTabs": [
+    {
+      "entityId": "bgp-dashboard",
+      "name": "Dashboard",
+      "contentUrl": "https://chatbgp.app/addin/teams",
+      "websiteUrl": "https://chatbgp.app",
+      "scopes": ["personal"]
+    },
+    {
+      "entityId": "bgp-chatbgp",
+      "name": "ChatBGP",
+      "contentUrl": "https://chatbgp.app/chatbgp",
+      "websiteUrl": "https://chatbgp.app/chatbgp",
+      "scopes": ["personal"]
+    }
+  ],
+  "configurableTabs": [
+    {
+      "configurationUrl": "https://chatbgp.app/addin/teams",
+      "canUpdateConfiguration": true,
+      "scopes": ["team", "groupChat"]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": ["chatbgp.app"],
+  "webApplicationInfo": {
+    "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6e7f8a9b",
+    "resource": "https://chatbgp.app"
+  }
+}

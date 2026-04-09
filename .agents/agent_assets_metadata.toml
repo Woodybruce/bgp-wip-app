@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "3-dir3tBC7Y3nm5F-hzI0"
+uri = "file://BGP_Dashboard_Security_Summary.pdf"
+type = "pdf"
+title = "BGP Dashboard — Data Security & Privacy Summary"

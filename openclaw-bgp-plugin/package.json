@@ -1,0 +1,9 @@
+{
+  "name": "openclaw-bgp-dashboard",
+  "version": "1.0.0",
+  "description": "OpenClaw plugin for BGP (Bruce Gillingham Pollard) property dashboard — query properties, deals, diary, contacts, and chat with the AI assistant",
+  "openclaw": {
+    "extensions": ["index.ts"]
+  },
+  "dependencies": {}
+}
