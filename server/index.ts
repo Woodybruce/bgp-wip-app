@@ -88,6 +88,9 @@ declare module "http" {
   }
 }
 
+// Health check — bypasses maintenance mode, used by Railway
+app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+
 app.use(
   express.json({
     limit: "50mb",
