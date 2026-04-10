@@ -51,8 +51,8 @@ import { createServer } from "http";
 const app = express();
 const httpServer = createServer(app);
 
-// Health check — must be BEFORE maintenance middleware so Railway can reach it
-app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+// Railway health check — unauthenticated, before all middleware
+app.get("/api/ping", (_req, res) => res.json({ status: "ok" }));
 
 const MAINTENANCE_MODE = true;
 const MAINTENANCE_ALLOWED_EMAILS = new Set([

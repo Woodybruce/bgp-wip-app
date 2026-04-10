@@ -20,6 +20,7 @@ export function getPool(): pg.Pool {
       allowExitOnIdle: false,
       keepAlive: true,
       keepAliveInitialDelayMillis: 10000,
+      ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
     });
 
     poolInstance.on('error', (err) => {
