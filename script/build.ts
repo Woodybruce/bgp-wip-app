@@ -66,6 +66,8 @@ const allowlist = [
   "passport",
   "passport-local",
   "pg",
+  "p-limit",
+  "p-retry",
   "stripe",
   "uuid",
   "ws",
