@@ -51,6 +51,9 @@ import { createServer } from "http";
 const app = express();
 const httpServer = createServer(app);
 
+// Health check — must be BEFORE maintenance middleware so Railway can reach it
+app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
+
 const MAINTENANCE_MODE = true;
 const MAINTENANCE_ALLOWED_EMAILS = new Set([
   "woody@brucegillinghampollard.com",
@@ -87,9 +90,6 @@ declare module "http" {
     rawBody: unknown;
   }
 }
-
-// Health check — bypasses maintenance mode, used by Railway
-app.get("/api/health", (_req, res) => res.json({ status: "ok" }));
 
 app.use(
   express.json({
