@@ -258,7 +258,7 @@ function AuthenticatedApp() {
             {location === "/" ? "Dashboard" : location.replace(/^\//, "").replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
           </span>
         </div>
-        <div className="flex-1 overflow-y-auto min-h-0 pb-16">
+        <div className="flex-1 overflow-y-auto min-h-0 pb-14 md:pb-0">
           <Router />
         </div>
         <MobileBottomNav onMoreTap={() => setMobileSidebarOpen(true)} />

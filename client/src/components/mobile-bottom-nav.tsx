@@ -1,10 +1,10 @@
 import { useLocation } from "wouter";
-import { LayoutDashboard, Sparkles, Building2, BarChart3, Menu } from "lucide-react";
+import { LayoutDashboard, Sparkles, ClipboardList, BarChart3, Menu } from "lucide-react";
 
 const NAV_ITEMS = [
   { label: "Home", icon: LayoutDashboard, path: "/" },
   { label: "ChatBGP", icon: Sparkles, path: "/chatbgp" },
-  { label: "Properties", icon: Building2, path: "/properties" },
+  { label: "Requirements", icon: ClipboardList, path: "/requirements" },
   { label: "Deals", icon: BarChart3, path: "/deals" },
   { label: "More", icon: Menu, path: "__more__" },
 ] as const;
@@ -62,4 +62,4 @@ export function MobileBottomNav({ onMoreTap }: { onMoreTap: () => void }) {
  * These should not show the standard mobile header back button behavior
  * and instead just display in the content area above the bottom nav.
  */
-export const BOTTOM_NAV_PATHS = ["/", "/chatbgp", "/properties", "/deals"];
+export const BOTTOM_NAV_PATHS = ["/", "/chatbgp", "/requirements", "/deals"];

@@ -576,6 +576,20 @@ body {
   --sidebar-ring: 25 35% 50%;
 }
 
+/* Claude scheme: remap hardcoded green/emerald to warm tones across all pages */
+.scheme-claude .text-emerald-600, .scheme-claude .text-emerald-500, .scheme-claude .text-green-600, .scheme-claude .text-green-700 { color: hsl(25 60% 45%) !important; }
+.scheme-claude .text-emerald-400 { color: hsl(25 50% 55%) !important; }
+.scheme-claude .bg-emerald-600, .scheme-claude .bg-green-600 { background-color: hsl(25 60% 45%) !important; }
+.scheme-claude .bg-emerald-500, .scheme-claude .bg-green-500 { background-color: hsl(25 55% 50%) !important; }
+.scheme-claude .bg-emerald-100, .scheme-claude .bg-green-100 { background-color: hsl(30 40% 92%) !important; }
+.scheme-claude .bg-emerald-50, .scheme-claude .bg-green-50 { background-color: hsl(30 30% 96%) !important; }
+.scheme-claude .border-emerald-600, .scheme-claude .border-green-600 { border-color: hsl(25 60% 45%) !important; }
+.scheme-claude .border-emerald-200, .scheme-claude .border-green-200 { border-color: hsl(30 30% 85%) !important; }
+.scheme-claude .ring-emerald-500, .scheme-claude .ring-green-500 { --tw-ring-color: hsl(25 50% 50%) !important; }
+.scheme-claude .hover\:bg-emerald-700:hover { background-color: hsl(25 55% 38%) !important; }
+.scheme-claude .hover\:bg-green-50:hover { background-color: hsl(30 30% 94%) !important; }
+.scheme-claude .focus-visible\:ring-emerald-500:focus-visible { --tw-ring-color: hsl(25 50% 50%) !important; }
+
 :root.scheme-ocean {
   --background: 330 100% 97%;
   --foreground: 330 30% 10%;
