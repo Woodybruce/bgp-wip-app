@@ -10,6 +10,7 @@ process.on("uncaughtException", (err) => {
   setTimeout(() => process.exit(1), 1000);
 });
 import { registerRoutes } from "./routes";
+import { pool } from "./db";
 import { setupAuth } from "./auth";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupMondayRoutes } from "./monday";
