@@ -423,7 +423,7 @@ export async function registerRoutes(
       await pool.query("UPDATE users SET is_active = $1 WHERE id = $2", [active, targetId]);
 
       if (!active) {
-        await pool.query("DELETE FROM session WHERE sess::text LIKE $1", [`%${targetId}%`]);
+        await pool.query("DELETE FROM session WHERE sess::jsonb -> 'passport' ->> 'user' = $1 OR sess::jsonb ->> 'userId' = $1", [targetId]);
       }
 
       const [updated] = await pool.query("SELECT name, is_active FROM users WHERE id = $1", [targetId]).then(r => r.rows);
@@ -440,7 +440,7 @@ export async function registerRoutes(
       if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
 
       const targetId = req.params.id;
-      const result = await pool.query("DELETE FROM session WHERE sess::text LIKE $1", [`%${targetId}%`]);
+      const result = await pool.query("DELETE FROM session WHERE sess::jsonb -> 'passport' ->> 'user' = $1 OR sess::jsonb ->> 'userId' = $1", [targetId]);
       const [user] = await pool.query("SELECT name FROM users WHERE id = $1", [targetId]).then(r => r.rows);
       res.json({ success: true, name: user?.name, sessionsCleared: result.rowCount });
     } catch (err: any) {
