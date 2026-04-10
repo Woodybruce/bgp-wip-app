@@ -67,6 +67,7 @@ import {
   InvestmentTrackerWidget,
   SharePointWidget,
   StudiosWidget,
+  MyPortfolioWidget,
   WidgetPickerDialog,
   WIDGET_REGISTRY,
   DEFAULT_WIDGETS,
@@ -76,6 +77,8 @@ import {
   timeAgo,
 } from "@/components/dashboard";
 import type { CrmStats, NewsArticle, DashboardIntelligence, CalendarEvent } from "@/components/dashboard";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
+import type { CrmComp } from "@shared/schema";
 
 
 function SystemActivityWidget() {
@@ -446,6 +449,44 @@ export default function Dashboard() {
     },
     enabled: isLandsecTeam && !!resolvedCompanyId,
     staleTime: 5 * 60 * 1000,
+  });
+
+  // Fetch comps for the portfolio's property areas/postcodes
+  const portfolioPostcodes = useMemo(() => {
+    if (!portfolioData?.properties) return [];
+    return (portfolioData.properties as any[])
+      .map((p: any) => {
+        const addr = p.address as any;
+        if (addr?.postcode) return (addr.postcode as string).split(" ")[0]; // district only e.g. "EC2"
+        return null;
+      })
+      .filter(Boolean) as string[];
+  }, [portfolioData?.properties]);
+
+  const { data: portfolioComps = [], isLoading: compsLoading } = useQuery<CrmComp[]>({
+    queryKey: ["/api/crm/comps"],
+    enabled: isLandsecTeam && !!portfolioData,
+    staleTime: 10 * 60 * 1000,
+    select: (allComps: CrmComp[]) => {
+      if (!portfolioPostcodes.length) return allComps.slice(0, 10);
+      // Filter comps whose postcode or areaLocation matches any portfolio property district
+      const matched = allComps.filter((c: CrmComp) => {
+        const cPostcode = (c.postcode || "").toUpperCase();
+        const cArea = (c.areaLocation || "").toUpperCase();
+        return portfolioPostcodes.some(district => {
+          const d = district.toUpperCase();
+          return cPostcode.startsWith(d) || cArea.includes(d);
+        });
+      });
+      // Sort by completionDate desc, take 10
+      return matched
+        .sort((a: CrmComp, b: CrmComp) => {
+          const da = a.completionDate ? new Date(a.completionDate).getTime() : 0;
+          const db = b.completionDate ? new Date(b.completionDate).getTime() : 0;
+          return db - da;
+        })
+        .slice(0, 10);
+    },
   });
 
   const [dashboardViewMode, setDashboardViewMode] = useState<"team" | "individual">(() => {
@@ -1302,6 +1343,336 @@ export default function Dashboard() {
               </Card>
             ),
           } : null,
+          // === Feature 1: Lease Expiry Waterfall Chart ===
+          (() => {
+            const WATERFALL_COLORS = [
+              "#0d9488", "#2563eb", "#7c3aed", "#db2777", "#ea580c",
+              "#059669", "#4f46e5", "#be185d", "#c2410c", "#0891b2",
+              "#65a30d", "#9333ea", "#e11d48", "#d97706", "#0284c7",
+            ];
+            const allUnits = portfolioData.leasingUnits || [];
+            const unitsWithExpiry = allUnits.filter((u: any) => u.lease_expiry);
+            if (unitsWithExpiry.length === 0) return {
+              id: "portfolio-lease-expiry",
+              label: "Lease Expiry Timeline",
+              defaultW: 12, defaultH: 10, minW: 6, minH: 6,
+              content: (
+                <Card className="h-full flex flex-col">
+                  <CardContent className="p-3 flex-1 flex flex-col items-center justify-center">
+                    <h3 className="font-semibold text-xs flex items-center gap-1.5 mb-4 self-start">
+                      <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
+                      Lease Expiry Timeline
+                    </h3>
+                    <CalendarDays className="w-8 h-8 text-muted-foreground/30 mb-2" />
+                    <p className="text-xs text-muted-foreground">No lease expiry data available</p>
+                  </CardContent>
+                </Card>
+              ),
+            };
+
+            // Group by quarter for next 5 years, stacked by property
+            const now = new Date();
+            const fiveYearsOut = new Date(now.getFullYear() + 5, 11, 31);
+            const propertyNames = new Map<string, string>();
+            const quarterData = new Map<string, Record<string, { count: number; sqft: number }>>();
+
+            for (const u of unitsWithExpiry) {
+              const exp = new Date(u.lease_expiry);
+              if (exp < now || exp > fiveYearsOut) continue;
+              const q = `Q${Math.ceil((exp.getMonth() + 1) / 3)} ${exp.getFullYear()}`;
+              const propName = u.property_name || "Unknown";
+              const propKey = propName.replace(/[^a-zA-Z0-9]/g, "_");
+              propertyNames.set(propKey, propName);
+              if (!quarterData.has(q)) quarterData.set(q, {});
+              const qd = quarterData.get(q)!;
+              if (!qd[propKey]) qd[propKey] = { count: 0, sqft: 0 };
+              qd[propKey].count += 1;
+              qd[propKey].sqft += (u.sqft || 0);
+            }
+
+            // Build sorted quarter labels
+            const quarterLabels: string[] = [];
+            for (let y = now.getFullYear(); y <= now.getFullYear() + 5; y++) {
+              for (let q = 1; q <= 4; q++) {
+                const label = `Q${q} ${y}`;
+                if (quarterData.has(label)) quarterLabels.push(label);
+              }
+            }
+
+            const propKeys = Array.from(propertyNames.keys());
+            const chartData = quarterLabels.map(q => {
+              const entry: any = { quarter: q };
+              const qd = quarterData.get(q) || {};
+              for (const pk of propKeys) {
+                entry[pk] = qd[pk]?.count || 0;
+                entry[`${pk}_sqft`] = qd[pk]?.sqft || 0;
+              }
+              return entry;
+            });
+
+            return {
+              id: "portfolio-lease-expiry",
+              label: "Lease Expiry Timeline",
+              defaultW: 12, defaultH: 12, minW: 6, minH: 8,
+              content: (
+                <Card className="h-full flex flex-col">
+                  <CardContent className="p-3 flex-1 overflow-hidden flex flex-col">
+                    <h3 className="font-semibold text-xs flex items-center gap-1.5 mb-2">
+                      <CalendarDays className="w-3.5 h-3.5 text-teal-500" />
+                      Lease Expiry Timeline
+                      <Badge variant="secondary" className="text-[10px]">{unitsWithExpiry.length} leases across {propertyNames.size} properties</Badge>
+                    </h3>
+                    <div className="flex-1 min-h-0">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                          <XAxis dataKey="quarter" tick={{ fontSize: 10 }} interval={0} angle={-45} textAnchor="end" height={50} />
+                          <YAxis tick={{ fontSize: 10 }} allowDecimals={false} label={{ value: "Units", angle: -90, position: "insideLeft", style: { fontSize: 10 } }} />
+                          <Tooltip
+                            contentStyle={{ fontSize: 11, borderRadius: 8 }}
+                            formatter={(value: number, name: string) => {
+                              const propName = propertyNames.get(name) || name;
+                              return [value, propName];
+                            }}
+                            labelFormatter={(label: string) => `${label}`}
+                            itemSorter={(item: any) => -(item.value || 0)}
+                          />
+                          <Legend
+                            wrapperStyle={{ fontSize: 10 }}
+                            formatter={(value: string) => propertyNames.get(value) || value}
+                          />
+                          {propKeys.map((pk, i) => (
+                            <Bar key={pk} dataKey={pk} stackId="a" fill={WATERFALL_COLORS[i % WATERFALL_COLORS.length]} radius={i === propKeys.length - 1 ? [2, 2, 0, 0] : [0, 0, 0, 0]} />
+                          ))}
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </CardContent>
+                </Card>
+              ),
+            };
+          })(),
+          // === Feature 2: Vacancy-to-Pipeline Funnel ===
+          (() => {
+            const allUnits = portfolioData.leasingUnits || [];
+            const allDeals = portfolioData.deals || [];
+            const properties = portfolioData.properties || [];
+
+            // Build vacancy + deal stats per property
+            const propStats: { propId: string; propName: string; vacantUnits: number; totalUnits: number; activeDeals: number }[] = [];
+            const propMap = new Map<string, { vacantUnits: number; totalUnits: number; activeDeals: number; propName: string }>();
+
+            for (const u of allUnits) {
+              const key = u.property_id;
+              if (!propMap.has(key)) propMap.set(key, { vacantUnits: 0, totalUnits: 0, activeDeals: 0, propName: u.property_name || "Unknown" });
+              const entry = propMap.get(key)!;
+              entry.totalUnits += 1;
+              const isOccupied = u.status === "Occupied" || u.status === "Let";
+              if (!isOccupied) entry.vacantUnits += 1;
+            }
+
+            // Count active deals per property (non-completed, non-withdrawn)
+            for (const d of allDeals) {
+              if (!d.property_id) continue;
+              const st = (d.status || "").toLowerCase();
+              const isActive = !st.includes("completed") && !st.includes("withdrawn") && !st.includes("closed") && !st.includes("fallen");
+              if (!isActive) continue;
+              if (!propMap.has(d.property_id)) {
+                const prop = properties.find((p: any) => p.id === d.property_id);
+                propMap.set(d.property_id, { vacantUnits: 0, totalUnits: 0, activeDeals: 0, propName: prop?.name || d.property_name || "Unknown" });
+              }
+              propMap.get(d.property_id)!.activeDeals += 1;
+            }
+
+            for (const [propId, data] of propMap.entries()) {
+              propStats.push({ propId, ...data });
+            }
+            propStats.sort((a, b) => b.vacantUnits - a.vacantUnits);
+
+            const totalVacant = propStats.reduce((s, p) => s + p.vacantUnits, 0);
+            const totalActiveDeals = propStats.reduce((s, p) => s + p.activeDeals, 0);
+            const propertiesWithVacancy = propStats.filter(p => p.vacantUnits > 0).length;
+
+            if (propStats.length === 0) return null;
+
+            return {
+              id: "portfolio-vacancy-pipeline",
+              label: "Vacancy Pipeline",
+              defaultW: 6, defaultH: 12, minW: 4, minH: 6,
+              content: (
+                <Card className="h-full flex flex-col">
+                  <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
+                    <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                      <TrendingUp className="w-3.5 h-3.5 text-teal-500" />
+                      Vacancy Pipeline
+                    </h3>
+                    <ScrollArea className="flex-1">
+                      <div className="space-y-2 pr-2">
+                        {propStats.filter(p => p.vacantUnits > 0 || p.activeDeals > 0).map(({ propId, propName, vacantUnits, totalUnits, activeDeals }) => {
+                          const vacancyPct = totalUnits > 0 ? (vacantUnits / totalUnits) * 100 : 0;
+                          const pipelinePct = vacantUnits > 0 ? Math.min((activeDeals / vacantUnits) * 100, 100) : 0;
+                          return (
+                            <div key={propId} className="border rounded-lg p-2.5" data-testid={`vacancy-prop-${propId}`}>
+                              <div className="flex items-center justify-between mb-1.5">
+                                <Link href={`/properties/${propId}`}>
+                                  <span className="text-xs font-medium text-teal-700 dark:text-teal-300 hover:underline cursor-pointer">{propName}</span>
+                                </Link>
+                                <span className="text-[10px] text-muted-foreground">
+                                  {vacantUnits} vacant unit{vacantUnits !== 1 ? "s" : ""} · {activeDeals} active deal{activeDeals !== 1 ? "s" : ""}
+                                </span>
+                              </div>
+                              {/* Vacancy bar */}
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="text-[9px] text-muted-foreground w-12 shrink-0">Vacancy</span>
+                                <div className="flex-1 h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full bg-rose-400 dark:bg-rose-500 rounded-full transition-all"
+                                    style={{ width: `${vacancyPct}%` }}
+                                  />
+                                </div>
+                                <span className="text-[9px] text-muted-foreground w-10 text-right shrink-0">{vacancyPct.toFixed(0)}%</span>
+                              </div>
+                              {/* Pipeline coverage bar */}
+                              <div className="flex items-center gap-2">
+                                <span className="text-[9px] text-muted-foreground w-12 shrink-0">Pipeline</span>
+                                <div className="flex-1 h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all ${pipelinePct >= 75 ? "bg-emerald-400 dark:bg-emerald-500" : pipelinePct >= 40 ? "bg-amber-400 dark:bg-amber-500" : "bg-rose-300 dark:bg-rose-400"}`}
+                                    style={{ width: `${pipelinePct}%` }}
+                                  />
+                                </div>
+                                <span className="text-[9px] text-muted-foreground w-10 text-right shrink-0">{pipelinePct.toFixed(0)}%</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </ScrollArea>
+                    <div className="border-t pt-2 mt-auto">
+                      <p className="text-[10px] text-muted-foreground text-center">
+                        {totalVacant} total vacant unit{totalVacant !== 1 ? "s" : ""} across {propertiesWithVacancy} propert{propertiesWithVacancy !== 1 ? "ies" : "y"} · {totalActiveDeals} active deal{totalActiveDeals !== 1 ? "s" : ""} in progress
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ),
+            };
+          })(),
+          // === Feature 3: Market Comparables ===
+          (() => {
+            if (compsLoading) return {
+              id: "portfolio-market-comps",
+              label: "Market Comparables",
+              defaultW: 12, defaultH: 10, minW: 6, minH: 6,
+              content: (
+                <Card className="h-full flex flex-col">
+                  <CardContent className="p-3 flex-1">
+                    <h3 className="font-semibold text-xs flex items-center gap-1.5 mb-3">
+                      <BarChart3 className="w-3.5 h-3.5 text-teal-500" />
+                      Market Comparables
+                    </h3>
+                    <div className="space-y-2">
+                      {[1,2,3].map(i => <Skeleton key={i} className="h-8 w-full" />)}
+                    </div>
+                  </CardContent>
+                </Card>
+              ),
+            };
+
+            if (!portfolioComps.length) return {
+              id: "portfolio-market-comps",
+              label: "Market Comparables",
+              defaultW: 12, defaultH: 10, minW: 6, minH: 6,
+              content: (
+                <Card className="h-full flex flex-col">
+                  <CardContent className="p-3 flex-1 flex flex-col items-center justify-center">
+                    <h3 className="font-semibold text-xs flex items-center gap-1.5 mb-4 self-start">
+                      <BarChart3 className="w-3.5 h-3.5 text-teal-500" />
+                      Market Comparables
+                    </h3>
+                    <BarChart3 className="w-8 h-8 text-muted-foreground/30 mb-2" />
+                    <p className="text-xs text-muted-foreground">No comparable evidence found for portfolio areas</p>
+                    <Link href="/comps">
+                      <span className="text-xs text-teal-600 dark:text-teal-400 hover:underline mt-1 cursor-pointer">Browse all comps</span>
+                    </Link>
+                  </CardContent>
+                </Card>
+              ),
+            };
+
+            return {
+              id: "portfolio-market-comps",
+              label: "Market Comparables",
+              defaultW: 12, defaultH: 11, minW: 6, minH: 6,
+              content: (
+                <Card className="h-full flex flex-col">
+                  <CardContent className="p-3 space-y-2 flex-1 overflow-hidden flex flex-col">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                        <BarChart3 className="w-3.5 h-3.5 text-teal-500" />
+                        Market Comparables
+                        <Badge variant="secondary" className="text-[10px]">{portfolioComps.length} comp{portfolioComps.length !== 1 ? "s" : ""}</Badge>
+                      </h3>
+                      <Link href="/comps">
+                        <span className="text-xs text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1 cursor-pointer" data-testid="link-view-all-comps">
+                          View all comps <ExternalLink className="w-3 h-3" />
+                        </span>
+                      </Link>
+                    </div>
+                    <ScrollArea className="flex-1">
+                      <div className="pr-2">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b text-left">
+                              <th className="pb-1.5 font-medium text-muted-foreground">Address</th>
+                              <th className="pb-1.5 font-medium text-muted-foreground">Tenant</th>
+                              <th className="pb-1.5 font-medium text-muted-foreground text-right">Size (sqft)</th>
+                              <th className="pb-1.5 font-medium text-muted-foreground text-right">Rent (psf)</th>
+                              <th className="pb-1.5 font-medium text-muted-foreground">Date</th>
+                              <th className="pb-1.5 font-medium text-muted-foreground">Source</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y">
+                            {portfolioComps.map((comp: CrmComp) => (
+                              <tr key={comp.id} className="hover:bg-muted/30 transition-colors">
+                                <td className="py-1.5 pr-2 max-w-[180px]">
+                                  <p className="truncate font-medium">{comp.name}</p>
+                                  {comp.postcode && <p className="text-[10px] text-muted-foreground">{comp.postcode}</p>}
+                                </td>
+                                <td className="py-1.5 pr-2 max-w-[120px]">
+                                  <p className="truncate">{comp.tenant || "-"}</p>
+                                </td>
+                                <td className="py-1.5 pr-2 text-right tabular-nums">
+                                  {comp.niaSqft || comp.areaSqft || comp.floorAreaSqft || "-"}
+                                </td>
+                                <td className="py-1.5 pr-2 text-right tabular-nums">
+                                  {comp.overallRate || comp.zoneARate || comp.rentPsfNia ? (
+                                    <span>{comp.overallRate || comp.zoneARate || comp.rentPsfNia}</span>
+                                  ) : "-"}
+                                </td>
+                                <td className="py-1.5 pr-2 whitespace-nowrap text-muted-foreground">
+                                  {comp.completionDate ? new Date(comp.completionDate).toLocaleDateString("en-GB", { month: "short", year: "2-digit" }) : "-"}
+                                </td>
+                                <td className="py-1.5">
+                                  {comp.sourceEvidence || comp.evidenceSource ? (
+                                    <Badge variant="outline" className="text-[9px] px-1.5 py-0">
+                                      {comp.sourceEvidence || comp.evidenceSource}
+                                    </Badge>
+                                  ) : (
+                                    <span className="text-muted-foreground">-</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </ScrollArea>
+                  </CardContent>
+                </Card>
+              ),
+            };
+          })(),
         ].filter(Boolean) as any[];
 
         const visiblePortfolioItems = portfolioGridItems.filter((item: any) => !hiddenPortfolioBoards.includes(item.id));
@@ -1359,6 +1730,7 @@ export default function Dashboard() {
           "system-activity": { w: 6, h: 9, minW: 4, minH: 5 },
           "daily-digest": { w: 6, h: 9, minW: 4, minH: 5 },
           "my-tasks": { w: 6, h: 18, minW: 4, minH: 10 },
+          "my-portfolio": { w: 6, h: 10, minW: 4, minH: 6 },
         };
 
         const renderWidget = (widgetId: string) => {
@@ -2047,6 +2419,8 @@ export default function Dashboard() {
         if (widgetId === "daily-digest") return <DailyDigestWidget />;
 
         if (widgetId === "my-tasks") return <MyTasksWidget />;
+
+        if (widgetId === "my-portfolio") return <MyPortfolioWidget key="my-portfolio" />;
 
         return null;
         };

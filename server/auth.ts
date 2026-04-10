@@ -99,6 +99,17 @@ export function setupAuth(app: Express) {
     throw new Error("SESSION_SECRET must be set in production");
   }
 
+  // Ensure session table exists before connect-pg-simple tries to use it
+  pool.query(`
+    CREATE TABLE IF NOT EXISTS "session" (
+      "sid" varchar NOT NULL COLLATE "default",
+      "sess" json NOT NULL,
+      "expire" timestamp(6) NOT NULL,
+      CONSTRAINT "session_pkey" PRIMARY KEY ("sid")
+    );
+    CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
+  `).catch((err: any) => console.error("[auth] Session table bootstrap error:", err.message));
+
   pool.query(`
     CREATE TABLE IF NOT EXISTS auth_tokens (
       id SERIAL PRIMARY KEY,
@@ -146,8 +157,8 @@ export function setupAuth(app: Express) {
       cookie: {
         maxAge: 30 * 24 * 60 * 60 * 1000,
         httpOnly: true,
-        secure: true,
-        sameSite: "none" as const,
+        secure: isProduction,
+        sameSite: isProduction ? ("none" as const) : ("lax" as const),
       },
     })
   );

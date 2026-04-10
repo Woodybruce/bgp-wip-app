@@ -3,7 +3,7 @@ import { requireAuth } from "./auth";
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db";
 import { landRegistrySearches } from "@shared/schema";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 
 const LR_BASE = "https://landregistry.data.gov.uk/data";
 
@@ -22,6 +22,9 @@ function extractLabel(obj: any): string {
 }
 
 export function registerLandRegistryRoutes(app: Express) {
+  // Bootstrap: ensure crm_property_id column exists
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS crm_property_id varchar`).catch(() => {});
+
   app.get("/api/land-registry/price-paid", requireAuth, async (req, res) => {
     try {
       const { street, postcode, town, district, pageSize } = req.query;
@@ -799,6 +802,38 @@ Respond with ONLY a JSON object (no markdown, no backticks):
       res.json(row);
     } catch (e: any) {
       console.error("[land-registry-searches] Save error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/land-registry/searches/:id/link-property", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const searchId = parseInt(req.params.id);
+      if (isNaN(searchId)) return res.status(400).json({ error: "Invalid search id" });
+      const { crmPropertyId } = req.body;
+      const [updated] = await db.update(landRegistrySearches)
+        .set({ crmPropertyId: crmPropertyId ?? null })
+        .where(eq(landRegistrySearches.id, searchId))
+        .returning();
+      if (!updated) return res.status(404).json({ error: "Search not found" });
+      res.json(updated);
+    } catch (e: any) {
+      console.error("[land-registry-link] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/land-registry/property-searches/:crmPropertyId", requireAuth, async (req: any, res) => {
+    try {
+      const { crmPropertyId } = req.params;
+      const rows = await db.select().from(landRegistrySearches)
+        .where(eq(landRegistrySearches.crmPropertyId, crmPropertyId))
+        .orderBy(desc(landRegistrySearches.createdAt));
+      res.json(rows);
+    } catch (e: any) {
+      console.error("[land-registry-property-searches] Error:", e);
       res.status(500).json({ error: e.message });
     }
   });

@@ -3729,6 +3729,55 @@ function Property360Panel({ propertyId }: { propertyId: string }) {
   );
 }
 
+function LinkedLandRegistryPanel({ propertyId }: { propertyId: string }) {
+  const { data: searches = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/land-registry/property-searches", propertyId],
+    queryFn: async () => {
+      const res = await fetch(`/api/land-registry/property-searches/${propertyId}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  if (isLoading) {
+    return <p className="text-xs text-muted-foreground py-2">Loading...</p>;
+  }
+
+  if (searches.length === 0) {
+    return (
+      <div className="space-y-1">
+        <p className="text-xs text-muted-foreground">No land registry searches linked.</p>
+        <p className="text-xs text-muted-foreground italic">Link searches from the Land Registry page.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {searches.map((s: any) => {
+        const summaryText = s.aiSummary?.summary || s.aiSummary?.executiveSummary || "";
+        const truncated = summaryText.length > 100 ? summaryText.slice(0, 100) + "…" : summaryText;
+        return (
+          <a
+            key={s.id}
+            href={`/land-registry`}
+            className="block p-2.5 rounded-lg border hover:bg-muted/50 transition-colors group"
+          >
+            <p className="text-xs font-medium truncate">{s.address}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              {new Date(s.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+              {s.freeholdsCount > 0 && ` · ${s.freeholdsCount} freehold${s.freeholdsCount !== 1 ? "s" : ""}`}
+              {s.leaseholdsCount > 0 && ` · ${s.leaseholdsCount} leasehold${s.leaseholdsCount !== 1 ? "s" : ""}`}
+            </p>
+            {truncated && <p className="text-[10px] text-muted-foreground mt-1 line-clamp-2">{truncated}</p>}
+          </a>
+        );
+      })}
+      <p className="text-[10px] text-muted-foreground italic px-0.5">Link additional searches from the Land Registry page.</p>
+    </div>
+  );
+}
+
 function PropertyDetail({ id }: { id: string }) {
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
@@ -3767,6 +3816,7 @@ function PropertyDetail({ id }: { id: string }) {
     team: true,
     clients: false,
     deals: false,
+    landRegistry: false,
   });
   const toggleSection = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
   const { toast } = useToast();
@@ -4160,6 +4210,21 @@ function PropertyDetail({ id }: { id: string }) {
                 <div className="px-4 pb-3 space-y-2">
                   <InlineDeals propertyId={id} dealLinks={dealLinks} allDeals={allDealsForDetail} />
                   <LinkedDealsPanel propertyId={property.id} />
+                </div>
+              )}
+            </div>
+
+            <div className="border-b">
+              <button onClick={() => toggleSection("landRegistry")} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors" data-testid="toggle-land-registry-section">
+                <div className="flex items-center gap-2">
+                  <Landmark className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-semibold">Land Registry</span>
+                </div>
+                {sidebarSections.landRegistry ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+              </button>
+              {sidebarSections.landRegistry && (
+                <div className="px-4 pb-3">
+                  <LinkedLandRegistryPanel propertyId={property.id} />
                 </div>
               )}
             </div>

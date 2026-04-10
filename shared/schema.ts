@@ -500,6 +500,7 @@ export const crmProperties = pgTable("crm_properties", {
   proprietorKycData: jsonb("proprietor_kyc_data"),
   bgpContactCrm: text("bgp_contact_crm"),
   bgpContactUserIds: text("bgp_contact_user_ids").array(),
+  leasingPrivacyEnabled: boolean("leasing_privacy_enabled").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1467,10 +1468,53 @@ export const landRegistrySearches = pgTable("land_registry_searches", {
   intelligence: jsonb("intelligence"),
   aiSummary: jsonb("ai_summary"),
   ownership: jsonb("ownership"),
+  crmPropertyId: varchar("crm_property_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export type LandRegistrySearch = typeof landRegistrySearches.$inferSelect;
+
+export const leasingScheduleUnits = pgTable("leasing_schedule_units", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id").notNull(),
+  unitName: text("unit_name"),
+  zone: text("zone"),
+  positioning: text("positioning"),
+  tenantName: text("tenant_name"),
+  agentInitials: text("agent_initials"),
+  leaseExpiry: timestamp("lease_expiry"),
+  leaseBreak: timestamp("lease_break"),
+  rentReview: timestamp("rent_review"),
+  landlordBreak: timestamp("landlord_break"),
+  rentPa: real("rent_pa"),
+  sqft: real("sqft"),
+  matPsqft: real("mat_psqft"),
+  lflPercent: real("lfl_percent"),
+  occCostPercent: real("occ_cost_percent"),
+  financialNotes: text("financial_notes"),
+  targetBrands: text("target_brands"),
+  optimumTarget: text("optimum_target"),
+  priority: text("priority"),
+  status: text("status"),
+  updates: text("updates"),
+  targetCompanyIds: text("target_company_ids").array(),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const leasingScheduleAudit = pgTable("leasing_schedule_audit", {
+  id: serial("id").primaryKey(),
+  unitId: varchar("unit_id"),
+  propertyId: varchar("property_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  userName: text("user_name").notNull(),
+  action: text("action").notNull(),
+  fieldName: text("field_name"),
+  oldValue: text("old_value"),
+  newValue: text("new_value"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
 
 export const loginSchema = z.object({
   username: z.string().min(1, "Username is required"),

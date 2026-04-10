@@ -349,6 +349,14 @@ function buildCell(cd: any): any | null {
   if (cd.f) {
     const formula = typeof cd.f === "string" ? cd.f.replace(/^=/, "") : String(cd.f);
     cell.f = formula;
+    // xlsx-js-style cannot evaluate formulas; use pre-calculated value so cells aren't blank
+    if (cd.pv !== undefined && cd.pv !== null) {
+      const parsed = typeof cd.pv === "number" ? cd.pv : parseFloat(String(cd.pv));
+      if (!isNaN(parsed)) {
+        cell.v = parsed;
+        cell.t = "n";
+      }
+    }
   } else if (typeof cd.v === "number") {
     cell.v = cd.v;
     cell.t = "n";
@@ -627,10 +635,12 @@ Important:
 - Return ONLY the JSON object, no markdown formatting.`;
 
 function getAnthropicClient() {
-  return new Anthropic({
-    apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-    baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-  });
+  // Use direct API key first (same dual-key approach as chatbgp.ts)
+  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  const baseURL = process.env.ANTHROPIC_API_KEY
+    ? undefined
+    : process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+  return new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
 }
 
 function getGeminiModelClient() {
@@ -1947,7 +1957,8 @@ Return ONLY valid JSON. No markdown, no code fences.`;
 
 JSON: {"name":"...","description":"...","sheets":[{"name":"...","cells":{"B2":{"v":"Label","bold":true},"C2":{"v":100000,"nf":"#,##0;(#,##0);\\"-\\""}},"colWidths":{"A":5,"B":40},"merges":["B2:D2"],"expandQuarters":{"templateCols":["E","F"],"totalQuarters":20,"startRow":2,"endRow":50}}],"inputCells":{...},"outputCells":{...}}
 
-Cell: "v"=value, "f"=formula (no =prefix), "nf"=format, "bold"=true, "align"="right".
+Cell: "v"=display value (for labels/hardcoded inputs), "f"=formula (no = prefix), "pv"=pre-calculated numeric result of the formula (REQUIRED for every formula cell), "nf"=format, "bold"=true, "align"="right".
+CRITICAL — "pv" rule: xlsx-js cannot evaluate formulas, so every formula cell MUST include "pv" with a realistic numeric estimate so the file shows values immediately on open. Example: {"f":"SUM(C6:C10)","pv":2500000,"nf":"£#,##0"}. For XIRR: {"f":"XIRR(C20:V20,C5:V5)","pv":0.142}. Missing "pv" = blank cell.
 Formats: £#,##0;(£#,##0);"-" (GBP), #,##0;(#,##0);"-" (int), #,##0.0%;(#,##0.0%);"-" (%), dd-mmm-yy (dates).
 
 2 sheets. Row 1 blank. Col A=spacer(5w). Labels in B(40w).

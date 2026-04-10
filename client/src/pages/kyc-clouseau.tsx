@@ -22,6 +22,7 @@ import {
   XCircle,
   Loader2,
   ChevronRight,
+  ChevronDown,
   FileText,
   Link as LinkIcon,
   Eye,
@@ -29,6 +30,9 @@ import {
   Landmark,
   MapPin,
   RefreshCw,
+  Clock,
+  Home,
+  UserSearch,
 } from "lucide-react";
 
 interface InvestigationResult {
@@ -46,6 +50,19 @@ interface InvestigationResult {
   flags?: string[];
   charges?: any[];
   propertyContext?: any;
+  propertiesOwned?: any;
+  timestamp: string;
+}
+
+interface IndividualResult {
+  subject: { name: string; type: string; dateOfBirth?: string };
+  officerMatches?: any[];
+  associatedCompanies?: any[];
+  sanctionsScreening?: any[];
+  aiAnalysis?: string;
+  riskScore?: number;
+  riskLevel?: string;
+  flags?: string[];
   timestamp: string;
 }
 
@@ -58,6 +75,19 @@ interface SearchResult {
   address?: string;
   crmId?: number;
   kycStatus?: string;
+}
+
+interface HistoryItem {
+  id: string;
+  subject_type: string;
+  subject_name: string;
+  company_number: string;
+  risk_level: string;
+  risk_score: number;
+  sanctions_match: boolean;
+  conducted_by: string;
+  conducted_at: string;
+  notes: string;
 }
 
 function RiskBadge({ level, score }: { level?: string; score?: number }) {
@@ -110,6 +140,143 @@ function MarkdownContent({ content }: { content: string }) {
   );
 }
 
+function InvestigationHistory({ companyNumber }: { companyNumber: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [viewingReport, setViewingReport] = useState<string | null>(null);
+  const [reportData, setReportData] = useState<any>(null);
+
+  const { data: historyData, isLoading } = useQuery({
+    queryKey: ["kyc-history", companyNumber],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/kyc-clouseau/history/${encodeURIComponent(companyNumber)}`);
+      return res.json();
+    },
+    enabled: !!companyNumber,
+  });
+
+  const investigations: HistoryItem[] = historyData?.investigations || [];
+
+  const loadReport = async (id: string) => {
+    try {
+      const res = await apiRequest("GET", `/api/kyc-clouseau/investigation/${id}`);
+      const data = await res.json();
+      setReportData(data);
+      setViewingReport(id);
+    } catch {
+      setReportData(null);
+    }
+  };
+
+  if (isLoading || investigations.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Clock className="h-4 w-4" />
+          {investigations.length} Previous Investigation{investigations.length !== 1 ? "s" : ""}
+          <ChevronDown className={`h-4 w-4 ml-auto transition-transform ${expanded ? "rotate-180" : ""}`} />
+        </CardTitle>
+      </CardHeader>
+      {expanded && (
+        <CardContent>
+          <div className="space-y-3">
+            {investigations.map((inv) => (
+              <div key={inv.id} className="flex items-center gap-3 text-sm py-2 border-b last:border-0">
+                <div className="flex-shrink-0 w-24 text-xs text-muted-foreground">
+                  {new Date(inv.conducted_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                </div>
+                <RiskBadge level={inv.risk_level} score={inv.risk_score} />
+                {inv.sanctions_match && (
+                  <Badge variant="destructive" className="text-xs">Sanctions</Badge>
+                )}
+                <div className="flex-1" />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => loadReport(inv.id)}
+                >
+                  <Eye className="h-3 w-3 mr-1" />
+                  View Full Report
+                </Button>
+              </div>
+            ))}
+          </div>
+          {viewingReport && reportData?.result && (
+            <div className="mt-4 pt-4 border-t">
+              <h4 className="text-sm font-semibold mb-2">Full Report — {new Date(reportData.conducted_at).toLocaleDateString("en-GB")}</h4>
+              <div className="max-h-96 overflow-auto">
+                {reportData.result.aiAnalysis && (
+                  <MarkdownContent content={reportData.result.aiAnalysis} />
+                )}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+function PropertiesOwnedSection({ propertiesOwned }: { propertiesOwned: any }) {
+  if (!propertiesOwned) return null;
+
+  const properties = propertiesOwned.data || propertiesOwned.properties || propertiesOwned.freeholds || [];
+  if (!Array.isArray(properties) || properties.length === 0) {
+    if (propertiesOwned.status === "error" || propertiesOwned.error) return null;
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Home className="h-4 w-4" />
+            Properties Owned
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">No properties found for this company</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Home className="h-4 w-4" />
+          Properties Owned ({properties.length})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b">
+                <th className="text-left py-2 pr-4 font-medium text-muted-foreground">Address</th>
+                <th className="text-left py-2 pr-4 font-medium text-muted-foreground">Title Number</th>
+                <th className="text-left py-2 pr-4 font-medium text-muted-foreground">Tenure</th>
+              </tr>
+            </thead>
+            <tbody>
+              {properties.map((prop: any, i: number) => (
+                <tr key={i} className="border-b last:border-0">
+                  <td className="py-2 pr-4">{prop.address || prop.property_address || "Unknown"}</td>
+                  <td className="py-2 pr-4 text-muted-foreground">{prop.title_number || prop.titleNumber || "-"}</td>
+                  <td className="py-2 pr-4">
+                    <Badge variant="outline" className="text-xs">
+                      {prop.tenure || prop.tenure_type || "Unknown"}
+                    </Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function KycClouseau() {
   const { toast } = useToast();
   const params = new URLSearchParams(window.location.search);
@@ -126,13 +293,20 @@ export default function KycClouseau() {
     pricePaid: landRegPrice,
   } : null);
 
+  const [searchMode, setSearchMode] = useState<"company" | "individual">("company");
   const [searchQuery, setSearchQuery] = useState(landRegName);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [investigation, setInvestigation] = useState<InvestigationResult | null>(null);
+  const [individualResult, setIndividualResult] = useState<IndividualResult | null>(null);
   const [selectedOfficer, setSelectedOfficer] = useState<any>(null);
   const [officerDeepDive, setOfficerDeepDive] = useState<any>(null);
   const [lastInvestigateParams, setLastInvestigateParams] = useState<{ companyNumber?: string; companyName?: string; propertyContext?: any } | null>(null);
   const autoSearched = useRef(false);
+
+  // Individual search fields
+  const [individualName, setIndividualName] = useState("");
+  const [individualDob, setIndividualDob] = useState("");
+  const [individualCompanyNumbers, setIndividualCompanyNumbers] = useState("");
 
   function extractErrorMessage(err: unknown, fallback: string): string {
     if (err instanceof Error) {
@@ -171,11 +345,29 @@ export default function KycClouseau() {
     },
     onSuccess: (data) => {
       setInvestigation(data);
+      setIndividualResult(null);
       setSelectedOfficer(null);
       setOfficerDeepDive(null);
     },
     onError: (err) => {
       const message = extractErrorMessage(err, "Investigation failed. Please try again.");
+      toast({ title: "Investigation Error", description: message, variant: "destructive" });
+    },
+  });
+
+  const individualMutation = useMutation({
+    mutationFn: async (params: { name: string; dateOfBirth?: string; companyNumbers?: string[] }) => {
+      const res = await apiRequest("POST", "/api/kyc-clouseau/investigate-individual", params);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setIndividualResult(data);
+      setInvestigation(null);
+      setSelectedOfficer(null);
+      setOfficerDeepDive(null);
+    },
+    onError: (err) => {
+      const message = extractErrorMessage(err, "Individual investigation failed. Please try again.");
       toast({ title: "Investigation Error", description: message, variant: "destructive" });
     },
   });
@@ -211,6 +403,19 @@ export default function KycClouseau() {
     });
   }, [propertyContext]);
 
+  const handleIndividualSearch = useCallback(() => {
+    if (!individualName.trim()) return;
+    const companyNums = individualCompanyNumbers
+      .split(",")
+      .map(s => s.trim())
+      .filter(Boolean);
+    individualMutation.mutate({
+      name: individualName.trim(),
+      dateOfBirth: individualDob || undefined,
+      companyNumbers: companyNums.length > 0 ? companyNums : undefined,
+    });
+  }, [individualName, individualDob, individualCompanyNumbers]);
+
   const handleOfficerDive = useCallback((officer: any) => {
     setSelectedOfficer(officer);
     const officerId = officer.links?.officer?.appointments?.replace("/officers/", "").replace("/appointments", "") || "";
@@ -218,6 +423,8 @@ export default function KycClouseau() {
       officerMutation.mutate({ officerId, officerName: officer.name });
     }
   }, []);
+
+  const isInvestigating = investigateMutation.isPending || individualMutation.isPending;
 
   return (
     <div className="h-full flex flex-col">
@@ -261,97 +468,168 @@ export default function KycClouseau() {
       )}
 
       <div className="flex-1 overflow-hidden flex">
+        {/* Left sidebar — search */}
         <div className="w-80 border-r flex flex-col flex-shrink-0">
-          <div className="p-4 border-b">
-            <div className="flex gap-2">
-              <Input
-                data-testid="input-search"
-                placeholder="Company name or number..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              />
-              <Button
-                data-testid="button-search"
-                size="icon"
-                onClick={handleSearch}
-                disabled={searchMutation.isPending}
+          <div className="p-4 border-b space-y-3">
+            {/* Search mode tabs */}
+            <div className="flex gap-1 p-0.5 bg-muted rounded-lg">
+              <button
+                className={`flex-1 text-xs font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "company" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                onClick={() => setSearchMode("company")}
               >
-                {searchMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-              </Button>
+                <Building2 className="h-3 w-3" />
+                Company
+              </button>
+              <button
+                className={`flex-1 text-xs font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "individual" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                onClick={() => setSearchMode("individual")}
+              >
+                <UserSearch className="h-3 w-3" />
+                Individual
+              </button>
             </div>
+
+            {searchMode === "company" ? (
+              <div className="flex gap-2">
+                <Input
+                  data-testid="input-search"
+                  placeholder="Company name or number..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                />
+                <Button
+                  data-testid="button-search"
+                  size="icon"
+                  onClick={handleSearch}
+                  disabled={searchMutation.isPending}
+                >
+                  {searchMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Input
+                  data-testid="input-individual-name"
+                  placeholder="Full name..."
+                  value={individualName}
+                  onChange={(e) => setIndividualName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleIndividualSearch()}
+                />
+                <Input
+                  data-testid="input-individual-dob"
+                  placeholder="Date of birth (optional, YYYY-MM-DD)"
+                  value={individualDob}
+                  onChange={(e) => setIndividualDob(e.target.value)}
+                />
+                <Input
+                  data-testid="input-individual-companies"
+                  placeholder="Known company numbers (comma-separated)"
+                  value={individualCompanyNumbers}
+                  onChange={(e) => setIndividualCompanyNumbers(e.target.value)}
+                />
+                <Button
+                  data-testid="button-individual-search"
+                  className="w-full"
+                  onClick={handleIndividualSearch}
+                  disabled={individualMutation.isPending || !individualName.trim()}
+                >
+                  {individualMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <UserSearch className="h-4 w-4 mr-2" />
+                  )}
+                  Investigate Individual
+                </Button>
+              </div>
+            )}
           </div>
 
-          <ScrollArea className="flex-1">
-            <div className="p-2 space-y-1">
-              {searchResults.map((result, i) => (
-                <button
-                  key={`${result.source}-${result.companyNumber}-${i}`}
-                  data-testid={`button-result-${i}`}
-                  className="w-full text-left p-3 rounded-lg hover:bg-accent transition-colors"
-                  onClick={() => handleInvestigate(result)}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{result.name}</p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {result.companyNumber && (
-                          <span className="text-xs text-muted-foreground">{result.companyNumber}</span>
-                        )}
-                        {result.source === "crm" && (
-                          <Badge variant="outline" className="text-xs px-1 py-0">CRM</Badge>
+          {searchMode === "company" && (
+            <ScrollArea className="flex-1">
+              <div className="p-2 space-y-1">
+                {searchResults.map((result, i) => (
+                  <button
+                    key={`${result.source}-${result.companyNumber}-${i}`}
+                    data-testid={`button-result-${i}`}
+                    className="w-full text-left p-3 rounded-lg hover:bg-accent transition-colors"
+                    onClick={() => handleInvestigate(result)}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{result.name}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {result.companyNumber && (
+                            <span className="text-xs text-muted-foreground">{result.companyNumber}</span>
+                          )}
+                          {result.source === "crm" && (
+                            <Badge variant="outline" className="text-xs px-1 py-0">CRM</Badge>
+                          )}
+                        </div>
+                        {result.address && (
+                          <p className="text-xs text-muted-foreground mt-0.5 truncate">{result.address}</p>
                         )}
                       </div>
-                      {result.address && (
-                        <p className="text-xs text-muted-foreground mt-0.5 truncate">{result.address}</p>
-                      )}
+                      <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
                     </div>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
+                  </button>
+                ))}
+                {searchMutation.isError && (
+                  <div className="p-4 text-center space-y-2" data-testid="error-search">
+                    <div className="inline-flex items-center gap-2 text-sm text-destructive">
+                      <XCircle className="h-4 w-4 flex-shrink-0" />
+                      <span>{extractErrorMessage(searchMutation.error, "Search failed. Please try again.")}</span>
+                    </div>
+                    <div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="button-retry-search"
+                        onClick={handleSearch}
+                      >
+                        <RefreshCw className="h-3 w-3 mr-1" />
+                        Retry
+                      </Button>
+                    </div>
                   </div>
-                </button>
-              ))}
-              {searchMutation.isError && (
-                <div className="p-4 text-center space-y-2" data-testid="error-search">
-                  <div className="inline-flex items-center gap-2 text-sm text-destructive">
-                    <XCircle className="h-4 w-4 flex-shrink-0" />
-                    <span>{extractErrorMessage(searchMutation.error, "Search failed. Please try again.")}</span>
+                )}
+                {searchResults.length === 0 && !searchMutation.isPending && !searchMutation.isError && (
+                  <div className="p-8 text-center text-sm text-muted-foreground">
+                    Search for a company to begin your investigation
                   </div>
-                  <div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      data-testid="button-retry-search"
-                      onClick={handleSearch}
-                    >
-                      <RefreshCw className="h-3 w-3 mr-1" />
-                      Retry
-                    </Button>
-                  </div>
-                </div>
-              )}
-              {searchResults.length === 0 && !searchMutation.isPending && !searchMutation.isError && (
-                <div className="p-8 text-center text-sm text-muted-foreground">
-                  Search for a company to begin your investigation
-                </div>
-              )}
-            </div>
-          </ScrollArea>
+                )}
+              </div>
+            </ScrollArea>
+          )}
+
+          {searchMode === "individual" && (
+            <ScrollArea className="flex-1">
+              <div className="p-4 text-center text-sm text-muted-foreground">
+                Enter an individual's name above to search officer records, appointments, sanctions, and generate a full compliance profile.
+              </div>
+            </ScrollArea>
+          )}
         </div>
 
+        {/* Main content area */}
         <div className="flex-1 overflow-auto">
-          {investigateMutation.isPending && (
+          {isInvestigating && (
             <div className="flex flex-col items-center justify-center h-full gap-4">
               <div className="relative">
                 <Scale className="h-12 w-12 text-primary animate-pulse" />
               </div>
               <div className="text-center">
                 <p className="font-medium">Investigating...</p>
-                <p className="text-sm text-muted-foreground mt-1">Running Companies House lookup, sanctions screening, ownership trace, and AI analysis</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {individualMutation.isPending
+                    ? "Searching officer records, appointments, sanctions screening, and generating AI analysis"
+                    : "Running Companies House lookup, sanctions screening, ownership trace, and AI analysis"}
+                </p>
               </div>
             </div>
           )}
 
-          {investigateMutation.isError && !investigateMutation.isPending && (
+          {(investigateMutation.isError || individualMutation.isError) && !isInvestigating && (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8" data-testid="error-investigation">
               <div className="h-16 w-16 rounded-full bg-destructive/10 flex items-center justify-center">
                 <XCircle className="h-8 w-8 text-destructive" />
@@ -359,7 +637,10 @@ export default function KycClouseau() {
               <div>
                 <h3 className="text-lg font-semibold">Investigation Failed</h3>
                 <p className="text-sm text-muted-foreground mt-1 max-w-md">
-                  {extractErrorMessage(investigateMutation.error, "Something went wrong while running the investigation. Please try again.")}
+                  {extractErrorMessage(
+                    investigateMutation.error || individualMutation.error,
+                    "Something went wrong while running the investigation. Please try again."
+                  )}
                 </p>
               </div>
               {lastInvestigateParams && (
@@ -375,7 +656,144 @@ export default function KycClouseau() {
             </div>
           )}
 
-          {investigation && !investigateMutation.isPending && !investigateMutation.isError && (
+          {/* Individual investigation result */}
+          {individualResult && !isInvestigating && !individualMutation.isError && (
+            <div className="p-6 space-y-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <UserSearch className="h-6 w-6 text-muted-foreground" />
+                    <h2 className="text-2xl font-bold">{individualResult.subject.name}</h2>
+                  </div>
+                  <div className="flex items-center gap-3 mt-1">
+                    <Badge variant="outline">Individual</Badge>
+                    {individualResult.subject.dateOfBirth && (
+                      <span className="text-sm text-muted-foreground">DOB: {individualResult.subject.dateOfBirth}</span>
+                    )}
+                    <span className="text-xs text-muted-foreground">
+                      {individualResult.officerMatches?.length || 0} officer match(es)
+                    </span>
+                  </div>
+                </div>
+                <RiskBadge level={individualResult.riskLevel} score={individualResult.riskScore} />
+              </div>
+
+              {/* Risk flags */}
+              {(individualResult.flags?.length || 0) > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-500" />
+                      Risk Flags ({individualResult.flags?.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-1">
+                      {individualResult.flags?.map((flag, i) => (
+                        <div key={i} className="flex items-start gap-2 text-sm">
+                          <span className="text-amber-500 mt-0.5">•</span>
+                          <span>{flag}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Sanctions screening */}
+              {individualResult.sanctionsScreening && individualResult.sanctionsScreening.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Shield className="h-4 w-4" />
+                      Sanctions Screening
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {individualResult.sanctionsScreening.map((s: any, i: number) => (
+                        <div key={i} className="flex items-center justify-between text-sm">
+                          <span>{s.name}</span>
+                          <SanctionsBadge status={s.status} />
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Associated companies as clickable cards */}
+              {individualResult.associatedCompanies && individualResult.associatedCompanies.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <Building2 className="h-4 w-4" />
+                      Associated Companies ({individualResult.associatedCompanies.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {individualResult.associatedCompanies.map((co: any, i: number) => (
+                        <button
+                          key={i}
+                          className="text-left p-3 rounded-lg border hover:bg-accent transition-colors"
+                          onClick={() => {
+                            setSearchMode("company");
+                            investigateMutation.mutate({
+                              companyNumber: co.companyNumber,
+                              companyName: co.profile?.company_name,
+                            });
+                          }}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">
+                                {co.profile?.company_name || co.companyNumber}
+                              </p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-xs text-muted-foreground">{co.companyNumber}</span>
+                                {co.profile?.company_status && (
+                                  <Badge
+                                    variant={co.profile.company_status === "active" ? "outline" : "destructive"}
+                                    className="text-xs"
+                                  >
+                                    {co.profile.company_status}
+                                  </Badge>
+                                )}
+                              </div>
+                              {co.charges && co.charges.length > 0 && (
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  {co.charges.length} charge(s) — {co.charges.filter((c: any) => c.status === "outstanding").length} outstanding
+                                </p>
+                              )}
+                            </div>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* AI analysis */}
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">AI Analysis</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {individualResult.aiAnalysis ? (
+                    <MarkdownContent content={individualResult.aiAnalysis} />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No AI analysis available</p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Company investigation result */}
+          {investigation && !isInvestigating && !investigateMutation.isError && (
             <div className="p-6 space-y-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -416,6 +834,11 @@ export default function KycClouseau() {
                     </div>
                   </CardContent>
                 </Card>
+              )}
+
+              {/* Investigation History */}
+              {investigation.subject.companyNumber && (
+                <InvestigationHistory companyNumber={investigation.subject.companyNumber} />
               )}
 
               <Tabs defaultValue="analysis" className="w-full">
@@ -706,10 +1129,13 @@ export default function KycClouseau() {
                   </Card>
                 </TabsContent>
               </Tabs>
+
+              {/* Properties Owned section */}
+              <PropertiesOwnedSection propertiesOwned={(investigation as any).propertiesOwned} />
             </div>
           )}
 
-          {!investigation && !investigateMutation.isPending && !investigateMutation.isError && (
+          {!investigation && !individualResult && !isInvestigating && !investigateMutation.isError && !individualMutation.isError && (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
               <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
                 <Scale className="h-8 w-8 text-primary" />
@@ -717,7 +1143,7 @@ export default function KycClouseau() {
               <div>
                 <h3 className="text-lg font-semibold">KYC Clouseau</h3>
                 <p className="text-sm text-muted-foreground mt-1 max-w-md">
-                  Your AI-powered KYC investigation tool. Search for any company to get a comprehensive compliance analysis
+                  Your AI-powered KYC investigation tool. Search for any company or individual to get a comprehensive compliance analysis
                   including ownership chains, sanctions screening, officer networks, and AI risk assessment.
                 </p>
               </div>

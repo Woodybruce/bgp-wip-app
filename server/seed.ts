@@ -216,7 +216,7 @@ async function seedFromFile() {
   const paths = [
     join(process.cwd(), "dist", "seed-data.sql.gz"),
     join(process.cwd(), "server", "seed-data.sql.gz"),
-    join(dirname(process.argv[1] || __filename), "seed-data.sql.gz"),
+    join(process.cwd(), "seed-data.sql.gz"),
   ];
   const seedPath = paths.find(p => existsSync(p));
   if (!seedPath) {
@@ -303,7 +303,7 @@ async function seedInvestmentTracker() {
     const paths = [
       join(process.cwd(), "dist", "seed-investment-tracker.sql.gz"),
       join(process.cwd(), "server", "seed-investment-tracker.sql.gz"),
-      join(dirname(process.argv[1] || __filename), "seed-investment-tracker.sql.gz"),
+      join(process.cwd(), "seed-investment-tracker.sql.gz"),
     ];
     const seedPath = paths.find(p => existsSync(p));
     if (!seedPath) {
@@ -354,7 +354,7 @@ async function seedLettingTracker() {
     const paths = [
       join(process.cwd(), "dist", "seed-letting-tracker.sql.gz"),
       join(process.cwd(), "server", "seed-letting-tracker.sql.gz"),
-      join(dirname(process.argv[1] || __filename), "seed-letting-tracker.sql.gz"),
+      join(process.cwd(), "seed-letting-tracker.sql.gz"),
     ];
     const seedPath = paths.find(p => existsSync(p));
     if (!seedPath) return;

@@ -4172,6 +4172,273 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     console.log(`[classify] Classified ${classified}/${untyped.length} companies, ${remaining} remaining`);
     res.json({ classified, processed: untyped.length, remaining });
   });
+
+  // ── My Portfolio dashboard endpoint ──────────────────────────────────
+  app.get("/api/dashboard/my-portfolio", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const currentUser = await storage.getUser(userId);
+      if (!currentUser) return res.status(401).json({ error: "User not found" });
+
+      const userName = currentUser.name || "";
+      const userTeam = currentUser.team || "";
+
+      // Get deals where user is internal_agent OR deal team matches user's team
+      const { rows: deals } = await pool.query(`
+        SELECT d.id, d.name, d.deal_type, d.status, d.fee, d.property_id, d.landlord_id,
+               d.internal_agent, d.team, d.completion_date
+        FROM crm_deals d
+        WHERE d.status NOT IN ('Dead', 'Draft')
+          AND (
+            $1 = ANY(d.internal_agent)
+            OR $2 = ANY(d.team)
+          )
+      `, [userName, userTeam]);
+
+      if (deals.length === 0) {
+        return res.json([]);
+      }
+
+      // Collect unique property IDs
+      const propertyIds = [...new Set(deals.filter(d => d.property_id).map(d => d.property_id))];
+      if (propertyIds.length === 0) return res.json([]);
+
+      // Get properties
+      const { rows: properties } = await pool.query(`
+        SELECT id, name, address, asset_class, landlord_id
+        FROM crm_properties WHERE id = ANY($1)
+      `, [propertyIds]);
+      const propMap = new Map(properties.map(p => [p.id, p]));
+
+      // Get landlord names
+      const landlordIds = [...new Set(properties.filter(p => p.landlord_id).map(p => p.landlord_id))];
+      const landlordMap = new Map<string, string>();
+      if (landlordIds.length > 0) {
+        const { rows: landlords } = await pool.query(
+          `SELECT id, name FROM crm_companies WHERE id = ANY($1)`, [landlordIds]
+        );
+        landlords.forEach(l => landlordMap.set(l.id, l.name));
+      }
+
+      // Get expiring units (lease_expiry within 12 months)
+      const { rows: expiringUnits } = await pool.query(`
+        SELECT id, property_id, unit_name, lease_expiry, sqft, status
+        FROM leasing_schedule_units
+        WHERE property_id = ANY($1)
+          AND lease_expiry IS NOT NULL
+          AND lease_expiry <= NOW() + INTERVAL '12 months'
+          AND lease_expiry >= NOW()
+        ORDER BY lease_expiry ASC
+      `, [propertyIds]);
+
+      // Get contacts linked to properties via crm_contact_properties
+      const { rows: propertyContacts } = await pool.query(`
+        SELECT cp.property_id, c.id AS contact_id, c.first_name, c.last_name, c.email, c.job_title
+        FROM crm_contact_properties cp
+        JOIN crm_contacts c ON c.id = cp.contact_id
+        WHERE cp.property_id = ANY($1)
+        ORDER BY c.last_name ASC
+      `, [propertyIds]);
+
+      // Group by property
+      const grouped = new Map<string, {
+        propertyId: string;
+        propertyName: string;
+        address: any;
+        assetClass: string | null;
+        landlordName: string | null;
+        deals: any[];
+        expiringUnits: any[];
+        contacts: any[];
+      }>();
+
+      for (const prop of properties) {
+        grouped.set(prop.id, {
+          propertyId: prop.id,
+          propertyName: prop.name,
+          address: prop.address,
+          assetClass: prop.asset_class,
+          landlordName: prop.landlord_id ? landlordMap.get(prop.landlord_id) || null : null,
+          deals: [],
+          expiringUnits: [],
+          contacts: [],
+        });
+      }
+
+      for (const deal of deals) {
+        if (deal.property_id && grouped.has(deal.property_id)) {
+          grouped.get(deal.property_id)!.deals.push({
+            id: deal.id,
+            name: deal.name,
+            dealType: deal.deal_type,
+            status: deal.status,
+            fee: deal.fee,
+            completionDate: deal.completion_date,
+          });
+        }
+      }
+
+      for (const unit of expiringUnits) {
+        if (grouped.has(unit.property_id)) {
+          grouped.get(unit.property_id)!.expiringUnits.push({
+            id: unit.id,
+            unitName: unit.unit_name,
+            leaseExpiry: unit.lease_expiry,
+            sqft: unit.sqft,
+            status: unit.status,
+          });
+        }
+      }
+
+      for (const pc of propertyContacts) {
+        if (grouped.has(pc.property_id)) {
+          grouped.get(pc.property_id)!.contacts.push({
+            id: pc.contact_id,
+            name: [pc.first_name, pc.last_name].filter(Boolean).join(" "),
+            email: pc.email,
+            jobTitle: pc.job_title,
+          });
+        }
+      }
+
+      res.json(Array.from(grouped.values()));
+    } catch (e: any) {
+      console.error("[my-portfolio] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Deal WIP Badges endpoint ──────────────────────────────────────────
+  app.get("/api/crm/deals/wip-badges", requireAuth, async (req: any, res) => {
+    try {
+      const { rows: deals } = await pool.query(`SELECT id, name FROM crm_deals`);
+      const { rows: wips } = await pool.query(`
+        SELECT ref, project, amt_wip, amt_invoice, deal_status AS stage, month
+        FROM wip_entries
+      `);
+
+      const result: Record<string, { amtWip: number; amtInvoice: number; count: number; entries: any[] }> = {};
+
+      for (const d of deals) {
+        const matched = wips.filter((w: any) => {
+          if (!w.project || !d.name) return false;
+          const wp = w.project.toLowerCase();
+          const dn = d.name.toLowerCase();
+          return wp.includes(dn) || dn.includes(wp);
+        });
+
+        if (matched.length > 0) {
+          result[d.id] = {
+            amtWip: matched.reduce((sum: number, w: any) => sum + (parseFloat(w.amt_wip) || 0), 0),
+            amtInvoice: matched.reduce((sum: number, w: any) => sum + (parseFloat(w.amt_invoice) || 0), 0),
+            count: matched.length,
+            entries: matched.map((w: any) => ({
+              ref: w.ref,
+              project: w.project,
+              amtWip: parseFloat(w.amt_wip) || 0,
+              amtInvoice: parseFloat(w.amt_invoice) || 0,
+              stage: w.stage,
+              month: w.month,
+            })),
+          };
+        }
+      }
+
+      res.json(result);
+    } catch (e: any) {
+      console.error("[wip-badges] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── WIP Reconciliation endpoint ──────────────────────────────────────
+  app.get("/api/wip/reconciliation", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const currentUser = userId ? await storage.getUser(userId) : null;
+      const isAdmin = !!currentUser?.isAdmin;
+      const userTeam = currentUser?.team || null;
+
+      // Query 1: Active deals with no matching WIP entry
+      // Match by deal name similarity to wip_entries.project or wip_entries.ref
+      const { rows: dealsWithoutWip } = await pool.query(`
+        SELECT d.id, d.name, d.deal_type, d.status, d.fee, d.team, d.internal_agent,
+               d.property_id,
+               p.name AS property_name
+        FROM crm_deals d
+        LEFT JOIN crm_properties p ON d.property_id = p.id
+        WHERE d.status NOT IN ('Dead', 'Draft', 'Leasing Comps', 'Investment Comps')
+          AND NOT EXISTS (
+            SELECT 1 FROM wip_entries w
+            WHERE LOWER(TRIM(w.project)) = LOWER(TRIM(p.name))
+               OR LOWER(TRIM(w.ref)) = LOWER(TRIM(d.name))
+               OR LOWER(TRIM(w.project)) = LOWER(TRIM(d.name))
+          )
+        ORDER BY d.fee DESC NULLS LAST
+      `);
+
+      // Query 2: WIP entries with no matching deal
+      const { rows: wipWithoutDeals } = await pool.query(`
+        SELECT w.id, w.ref, w.project, w.agent, w.team, w.amt_wip, w.amt_invoice,
+               w.group_name, w.deal_status
+        FROM wip_entries w
+        WHERE NOT EXISTS (
+            SELECT 1 FROM crm_deals d
+            LEFT JOIN crm_properties p ON d.property_id = p.id
+            WHERE LOWER(TRIM(w.project)) = LOWER(TRIM(p.name))
+               OR LOWER(TRIM(w.ref)) = LOWER(TRIM(d.name))
+               OR LOWER(TRIM(w.project)) = LOWER(TRIM(d.name))
+          )
+        ORDER BY COALESCE(w.amt_wip, 0) + COALESCE(w.amt_invoice, 0) DESC
+      `);
+
+      // Filter by team if not admin
+      let filteredDeals = dealsWithoutWip;
+      let filteredWip = wipWithoutDeals;
+
+      if (!isAdmin && userTeam) {
+        const ut = userTeam.toLowerCase();
+        filteredDeals = dealsWithoutWip.filter((d: any) => {
+          if (!d.team) return false;
+          const teams = (Array.isArray(d.team) ? d.team : [d.team]).map((t: string) => t.toLowerCase());
+          return teams.some((t: string) => t === ut);
+        });
+        filteredWip = wipWithoutDeals.filter((w: any) => {
+          if (!w.team) return false;
+          const teams = w.team.split(",").map((t: string) => t.trim().toLowerCase());
+          return teams.some((t: string) => t === ut);
+        });
+      }
+
+      res.json({
+        dealsWithoutWip: filteredDeals.map((d: any) => ({
+          id: d.id,
+          name: d.name,
+          dealType: d.deal_type,
+          status: d.status,
+          fee: d.fee,
+          team: d.team,
+          internalAgent: d.internal_agent,
+          propertyName: d.property_name,
+        })),
+        wipWithoutDeals: filteredWip.map((w: any) => ({
+          id: w.id,
+          ref: w.ref,
+          project: w.project,
+          agent: w.agent,
+          team: w.team,
+          amtWip: w.amt_wip,
+          amtInvoice: w.amt_invoice,
+          groupName: w.group_name,
+          dealStatus: w.deal_status,
+        })),
+      });
+    } catch (e: any) {
+      console.error("[wip-reconciliation] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
 }
 
 const AUTO_ENRICH_INTERVAL_HOURS = 6;

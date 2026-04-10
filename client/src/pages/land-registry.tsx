@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getAuthHeaders } from "@/lib/queryClient";
@@ -25,6 +25,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Search,
   Minus,
@@ -53,6 +58,8 @@ import {
   Warehouse,
   Train,
   Activity,
+  Link2,
+  Check,
 } from "lucide-react";
 
 interface Transaction {
@@ -211,6 +218,7 @@ interface SavedSearch {
   intelligence: Record<string, any>;
   aiSummary: PropertySummaryData | null;
   ownership: OwnershipData | null;
+  crmPropertyId: string | null;
   createdAt: string;
 }
 
@@ -244,6 +252,36 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
   const [savedSearches, setSavedSearches] = useState<SavedSearch[]>([]);
   const [searchesLoading, setSearchesLoading] = useState(true);
   const searchSavedRef = useRef(false);
+  const [linkPopoverOpen, setLinkPopoverOpen] = useState<number | null>(null);
+  const [crmPropertySearch, setCrmPropertySearch] = useState("");
+  const [linkingSearchId, setLinkingSearchId] = useState<number | null>(null);
+
+  const { data: allCrmProperties = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/properties"],
+    queryFn: async () => {
+      const res = await fetch("/api/crm/properties", { credentials: "include", headers: getAuthHeaders() });
+      const data = await res.json();
+      return Array.isArray(data) ? data : (data.data ?? []);
+    },
+  });
+
+  const linkPropertyMutation = useMutation({
+    mutationFn: async ({ searchId, crmPropertyId }: { searchId: number; crmPropertyId: string | null }) => {
+      const res = await fetch(`/api/land-registry/searches/${searchId}/link-property`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ crmPropertyId }),
+      });
+      if (!res.ok) throw new Error("Failed to link property");
+      return res.json();
+    },
+    onSuccess: (updated: SavedSearch) => {
+      setSavedSearches(prev => prev.map(s => s.id === updated.id ? { ...s, crmPropertyId: updated.crmPropertyId } : s));
+      setLinkPopoverOpen(null);
+      setCrmPropertySearch("");
+    },
+  });
 
   useEffect(() => {
     fetch("/api/land-registry/searches", { credentials: "include", headers: getAuthHeaders() })
@@ -704,31 +742,102 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                 Recent Searches
               </h3>
               <div className="space-y-2">
-                {savedSearches.slice(0, 10).map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => loadSavedSearch(s)}
-                    className="w-full text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors flex items-center gap-3"
-                    data-testid={`saved-search-${s.id}`}
-                  >
-                    <MapPin className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium truncate">{s.address}</p>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {s.postcode && <span className="text-xs text-muted-foreground">{s.postcode}</span>}
-                        {s.freeholdsCount > 0 && <Badge variant="secondary" className="text-[10px]">{s.freeholdsCount} freeholds</Badge>}
-                        {s.leaseholdsCount > 0 && <Badge variant="secondary" className="text-[10px]">{s.leaseholdsCount} leaseholds</Badge>}
+                {savedSearches.slice(0, 10).map((s) => {
+                  const linkedProperty = s.crmPropertyId ? allCrmProperties.find((p: any) => p.id === s.crmPropertyId) : null;
+                  const filteredProperties = allCrmProperties.filter((p: any) =>
+                    !crmPropertySearch || (p.name || "").toLowerCase().includes(crmPropertySearch.toLowerCase())
+                  );
+                  return (
+                    <div key={s.id} className="rounded-lg border overflow-hidden">
+                      <button
+                        onClick={() => loadSavedSearch(s)}
+                        className="w-full text-left p-3 hover:bg-muted/50 transition-colors flex items-center gap-3"
+                        data-testid={`saved-search-${s.id}`}
+                      >
+                        <MapPin className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{s.address}</p>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            {s.postcode && <span className="text-xs text-muted-foreground">{s.postcode}</span>}
+                            {s.freeholdsCount > 0 && <Badge variant="secondary" className="text-[10px]">{s.freeholdsCount} freeholds</Badge>}
+                            {s.leaseholdsCount > 0 && <Badge variant="secondary" className="text-[10px]">{s.leaseholdsCount} leaseholds</Badge>}
+                          </div>
+                          {s.ownership && typeof s.ownership === "object" && (s.ownership as OwnershipData).summary && (
+                            <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{(s.ownership as OwnershipData).summary}</p>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground shrink-0">
+                          {new Date(s.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                        </div>
+                        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                      </button>
+                      <div className="px-3 pb-2 flex items-center gap-2 border-t bg-muted/20">
+                        {linkedProperty ? (
+                          <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                            <Check className="w-3 h-3 text-green-600 shrink-0" />
+                            <span className="text-xs text-muted-foreground">Linked:</span>
+                            <Link href={`/properties/${linkedProperty.id}`} className="text-xs font-medium text-primary hover:underline truncate">
+                              {linkedProperty.name}
+                            </Link>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground flex-1">Not linked to a property</span>
+                        )}
+                        <Popover open={linkPopoverOpen === s.id} onOpenChange={(open) => {
+                          setLinkPopoverOpen(open ? s.id : null);
+                          if (!open) setCrmPropertySearch("");
+                        }}>
+                          <PopoverTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-6 text-xs px-2 shrink-0">
+                              <Link2 className="w-3 h-3 mr-1" />
+                              {linkedProperty ? "Change" : "Link"}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-72 p-2" align="end">
+                            <p className="text-xs font-semibold mb-2 px-1">Link to CRM Property</p>
+                            <Input
+                              placeholder="Search properties..."
+                              value={crmPropertySearch}
+                              onChange={(e) => setCrmPropertySearch(e.target.value)}
+                              className="h-7 text-xs mb-2"
+                            />
+                            <div className="max-h-48 overflow-y-auto space-y-0.5">
+                              {linkedProperty && (
+                                <button
+                                  className="w-full text-left px-2 py-1.5 rounded text-xs hover:bg-muted transition-colors text-muted-foreground"
+                                  onClick={() => {
+                                    setLinkingSearchId(s.id);
+                                    linkPropertyMutation.mutate({ searchId: s.id, crmPropertyId: null });
+                                  }}
+                                  disabled={linkingSearchId === s.id && linkPropertyMutation.isPending}
+                                >
+                                  Remove link
+                                </button>
+                              )}
+                              {filteredProperties.slice(0, 30).map((p: any) => (
+                                <button
+                                  key={p.id}
+                                  className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-muted transition-colors flex items-center gap-2 ${p.id === s.crmPropertyId ? "bg-muted font-medium" : ""}`}
+                                  onClick={() => {
+                                    setLinkingSearchId(s.id);
+                                    linkPropertyMutation.mutate({ searchId: s.id, crmPropertyId: p.id });
+                                  }}
+                                  disabled={linkingSearchId === s.id && linkPropertyMutation.isPending}
+                                >
+                                  {p.id === s.crmPropertyId && <Check className="w-3 h-3 text-green-600 shrink-0" />}
+                                  <span className="truncate">{p.name}</span>
+                                </button>
+                              ))}
+                              {filteredProperties.length === 0 && (
+                                <p className="text-xs text-muted-foreground px-2 py-2">No properties found</p>
+                              )}
+                            </div>
+                          </PopoverContent>
+                        </Popover>
                       </div>
-                      {s.ownership && typeof s.ownership === "object" && (s.ownership as OwnershipData).summary && (
-                        <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{(s.ownership as OwnershipData).summary}</p>
-                      )}
                     </div>
-                    <div className="text-xs text-muted-foreground shrink-0">
-                      {new Date(s.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                  </button>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

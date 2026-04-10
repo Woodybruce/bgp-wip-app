@@ -218,7 +218,8 @@ export async function getValidMsToken(req: Request): Promise<string | null> {
           expiresOn: result.expiresOn?.toISOString() || "",
         };
         req.session.msAccountHomeId = homeAccountId;
-
+        // Persist updated cache — silent refresh may rotate the refresh token
+        await saveMsalCache(String(userId), homeAccountId);
         return result.accessToken;
       }
     } catch (err: any) {

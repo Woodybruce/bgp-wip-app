@@ -14,9 +14,9 @@ import { getValidMsToken } from "./microsoft";
 import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
 import { escapeLike } from "./utils/escape-like";
 
-const CHATBGP_MODEL = "claude-sonnet-4-6";
-const CHATBGP_OPUS_MODEL = "claude-opus-4-20250514";
-const CHATBGP_HELPER_MODEL = "claude-sonnet-4-6";
+const CHATBGP_MODEL = "claude-opus-4-6";        // Main chat: Opus for intelligence
+const CHATBGP_OPUS_MODEL = "claude-opus-4-6";   // Same
+const CHATBGP_HELPER_MODEL = "claude-sonnet-4-6"; // Background tasks: Sonnet for speed
 
 function sanitiseForPdf(text: string): string {
   const emojiMap: Record<string, string> = {
@@ -93,10 +93,16 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
     bufferPages: true,
   });
 
-  const fontPath = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-  const fontBoldPath = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
-  doc.registerFont("Body", fontPath);
-  doc.registerFont("Body-Bold", fontBoldPath);
+  // Platform-aware font paths (Linux: DejaVu, macOS: Helvetica built-in)
+  const linuxFont = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+  const linuxFontBold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
+  if (process.platform !== "linux" || !require("fs").existsSync(linuxFont)) {
+    doc.registerFont("Body", "Helvetica");
+    doc.registerFont("Body-Bold", "Helvetica-Bold");
+  } else {
+    doc.registerFont("Body", linuxFont);
+    doc.registerFont("Body-Bold", linuxFontBold);
+  }
 
   const chunks: Buffer[] = [];
   doc.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -1151,6 +1157,11 @@ Return ONLY the JSON array, no other text.`;
 }
 
 export async function getEmailAndCalendarContext(req: Request): Promise<string> {
+  // Cache per user for 3 minutes to avoid hammering Microsoft Graph on every message
+  const userId = (req.session as any)?.userId || (req as any).tokenUserId;
+  const cacheKey = `emailCal_${userId}`;
+  const cached = getCached<string>(cacheKey);
+  if (cached) return cached;
   try {
     const token = await getValidMsToken(req);
     if (!token) return "";
@@ -1213,6 +1224,7 @@ export async function getEmailAndCalendarContext(req: Request): Promise<string> 
       }
     }
 
+    setCache(cacheKey, ctx, 3 * 60 * 1000);
     return ctx;
   } catch (err) {
     console.error("Failed to load email/calendar context:", err);
@@ -1228,6 +1240,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
 }
 
 export async function getCrmContext(): Promise<string> {
+  const cached = getCached<string>("crmContext");
+  if (cached) return cached;
   try {
     const [properties, deals, companies, contacts] = await Promise.all([
       withTimeout(storage.getCrmProperties(), 5000, []),
@@ -1344,6 +1358,7 @@ export async function getCrmContext(): Promise<string> {
       }
     }
 
+    setCache("crmContext", ctx, 2 * 60 * 1000); // 2-minute cache
     return ctx;
   } catch (err) {
     console.error("Failed to load CRM context:", err);
@@ -1351,6 +1366,10 @@ export async function getCrmContext(): Promise<string> {
   }
 }
 
+// Invalidate CRM context cache when CRM data changes (call from crm.ts on mutations)
+export function invalidateCrmContextCache() {
+  contextCache.delete("crmContext");
+}
 
 const SYSTEM_PROMPT_FALLBACK = "You are ChatBGP, an AI assistant for Bruce Gillingham Pollard (BGP). You are powered by Claude Opus. IMPORTANT: If deep_investigate returns report.property.ambiguous === true, present the options as a numbered list and ask the user to pick the correct property. Do NOT guess or proceed with unverified property data.";
 
@@ -4372,7 +4391,7 @@ async function executeCrmToolRaw(
     const dir = fnArgs.directory || ".";
     const path = await import("path");
     const safePath = dir.replace(/\.\./g, "").replace(/[;&|`$]/g, "");
-    const projectRoot = "/home/runner/workspace";
+    const projectRoot = process.cwd();
     const targetDir = safePath === "." ? projectRoot : path.resolve(projectRoot, safePath);
     if (!targetDir.startsWith(projectRoot)) {
       return { data: { success: false, error: "Path must be within the project directory." } };
@@ -4391,7 +4410,7 @@ async function executeCrmToolRaw(
   if (fnName === "read_source_file") {
     const fs = await import("fs");
     const path = await import("path");
-    const projectRoot = "/home/runner/workspace";
+    const projectRoot = process.cwd();
     const safePath = (fnArgs.filePath as string).replace(/\.\./g, "");
     const fullPath = path.resolve(projectRoot, safePath);
     if (!fullPath.startsWith(projectRoot)) {
@@ -4413,7 +4432,7 @@ async function executeCrmToolRaw(
   if (fnName === "edit_source_file") {
     const fs = await import("fs");
     const path = await import("path");
-    const projectRoot = "/home/runner/workspace";
+    const projectRoot = process.cwd();
     const safePath = (fnArgs.filePath as string).replace(/\.\./g, "");
     const fullPath = path.resolve(projectRoot, safePath);
     if (!fullPath.startsWith(projectRoot)) {
@@ -4485,7 +4504,7 @@ async function executeCrmToolRaw(
 
     try {
       const output = execSync(command, {
-        cwd: "/home/runner/workspace",
+        cwd: process.cwd(),
         timeout: 30000,
         env: { ...process.env },
         maxBuffer: 1024 * 1024,

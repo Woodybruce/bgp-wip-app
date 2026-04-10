@@ -25,6 +25,7 @@ import {
   Zap,
   AlertTriangle,
   ListTodo,
+  Briefcase,
 } from "lucide-react";
 import type { WidgetDefinition, BoardDefinition } from "./types";
 
@@ -46,6 +47,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
   { id: "system-activity", name: "System Activity", description: "Real-time feed of automated background processes", icon: Zap, category: "overview" },
   { id: "daily-digest", name: "Daily Digest", description: "Proactive alerts: stuck deals, KYC gaps, cooling contacts", icon: AlertTriangle, category: "crm" },
   { id: "my-tasks", name: "My Tasks & Briefing", description: "Personal task list with AI daily briefing", icon: ListTodo, category: "overview" },
+  { id: "my-portfolio", name: "My Portfolio", description: "Properties and deals assigned to you", icon: Briefcase, category: "crm" },
 ];
 
 export const DEFAULT_WIDGETS = WIDGET_REGISTRY.map(w => w.id);
@@ -64,6 +66,7 @@ export const BOARD_REGISTRY: BoardDefinition[] = [
   { id: "system-activity-board", name: "System Activity", description: "Automated process activity feed", icon: Zap, widgetIds: ["system-activity"] },
   { id: "daily-digest-board", name: "Daily Digest", description: "Proactive alerts and action items", icon: AlertTriangle, widgetIds: ["daily-digest"] },
   { id: "tasks-briefing", name: "My Tasks & Briefing", description: "Personal tasks and AI daily briefing", icon: ListTodo, widgetIds: ["my-tasks"] },
+  { id: "my-portfolio-board", name: "My Portfolio", description: "Properties and deals assigned to you", icon: Briefcase, widgetIds: ["my-portfolio"] },
 ];
 
 export const DEFAULT_BOARDS = BOARD_REGISTRY.map(b => b.id);

@@ -2498,7 +2498,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const countResult = await pool.query("SELECT COUNT(*)::int as count FROM investment_tracker");
       if (countResult.rows[0].count === 0) {
-        const seedPath = path.join(__dirname, "investment_tracker_seed.json");
+        const seedPath = path.join(process.cwd(), "server", "investment_tracker_seed.json");
         if (fs.existsSync(seedPath)) {
           const seedData = JSON.parse(fs.readFileSync(seedPath, "utf-8"));
           let inserted = 0;

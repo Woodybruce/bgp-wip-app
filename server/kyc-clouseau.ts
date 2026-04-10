@@ -69,6 +69,9 @@ interface InvestigationResult {
   riskScore?: number;
   riskLevel?: "low" | "medium" | "high" | "critical";
   flags?: string[];
+  charges?: any[];
+  propertyContext?: any;
+  propertiesOwned?: any;
   timestamp: string;
 }
 
@@ -391,6 +394,46 @@ router.post("/api/kyc-clouseau/investigate", requireAuth, async (req: Request, r
       timestamp: new Date().toISOString(),
     };
 
+    // PropertyData pipeline — fetch properties owned by this company
+    if (targetNumber && process.env.PROPERTYDATA_API_KEY) {
+      try {
+        const pdRes = await fetch(
+          `https://api.propertydata.co.uk/freeholds?company_number=${encodeURIComponent(targetNumber)}&key=${process.env.PROPERTYDATA_API_KEY}`
+        );
+        if (pdRes.ok) {
+          const pdData = await pdRes.json();
+          (result as any).propertiesOwned = pdData;
+        }
+      } catch (pdErr: any) {
+        console.warn("[kyc-clouseau] PropertyData fetch failed:", pdErr.message);
+      }
+    }
+
+    // Save to kyc_investigations
+    const userId = (req as any).user?.id || null;
+    const hasSanctionsMatch = sanctionsResult
+      ? sanctionsResult.some((s: any) => s.status === "strong_match" || s.status === "potential_match")
+      : false;
+    try {
+      await pool.query(
+        `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, risk_level, risk_score, sanctions_match, result, conducted_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          "company",
+          result.subject.name,
+          targetNumber,
+          req.body.crmCompanyId || null,
+          risk.level,
+          risk.score,
+          hasSanctionsMatch,
+          JSON.stringify(result),
+          userId,
+        ]
+      );
+    } catch (dbErr: any) {
+      console.warn("[kyc-clouseau] Failed to save investigation:", dbErr.message);
+    }
+
     console.log(`[kyc-clouseau] Investigation complete: ${result.subject.name} — risk: ${risk.level} (${risk.score})`);
     res.json(result);
   } catch (err: any) {
@@ -525,5 +568,368 @@ Provide:
     res.status(500).json({ error: userMessage });
   }
 });
+
+// History endpoints
+router.get("/api/kyc-clouseau/history/:companyNumber", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { companyNumber } = req.params;
+    const result = await pool.query(
+      `SELECT id, subject_type, subject_name, company_number, risk_level, risk_score, sanctions_match, conducted_by, conducted_at, notes
+       FROM kyc_investigations
+       WHERE company_number = $1
+       ORDER BY conducted_at DESC
+       LIMIT 10`,
+      [companyNumber]
+    );
+    res.json({ investigations: result.rows });
+  } catch (err: any) {
+    console.error("[kyc-clouseau] History error:", err.message);
+    res.status(500).json({ error: "Failed to fetch investigation history" });
+  }
+});
+
+router.get("/api/kyc-clouseau/history/crm/:companyId", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { companyId } = req.params;
+    const result = await pool.query(
+      `SELECT id, subject_type, subject_name, company_number, risk_level, risk_score, sanctions_match, conducted_by, conducted_at, notes
+       FROM kyc_investigations
+       WHERE crm_company_id = $1
+       ORDER BY conducted_at DESC
+       LIMIT 10`,
+      [companyId]
+    );
+    res.json({ investigations: result.rows });
+  } catch (err: any) {
+    console.error("[kyc-clouseau] CRM history error:", err.message);
+    res.status(500).json({ error: "Failed to fetch investigation history" });
+  }
+});
+
+router.get("/api/kyc-clouseau/investigation/:id", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      `SELECT * FROM kyc_investigations WHERE id = $1`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: "Investigation not found" });
+    }
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    console.error("[kyc-clouseau] Investigation fetch error:", err.message);
+    res.status(500).json({ error: "Failed to fetch investigation" });
+  }
+});
+
+// Individual person investigation
+router.post("/api/kyc-clouseau/investigate-individual", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { name, dateOfBirth, companyNumbers } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: "Name is required" });
+    }
+
+    console.log(`[kyc-clouseau] Starting individual investigation: ${name}`);
+
+    // Search for officers matching this name
+    const officerSearchData = await chFetch(`/search/officers?q=${encodeURIComponent(name)}&items_per_page=10`);
+    const officerItems = officerSearchData.items || [];
+
+    // Fetch appointments for each matching officer
+    const officerDetails: any[] = [];
+    for (const officer of officerItems.slice(0, 5)) {
+      const officerLink = officer.links?.self || "";
+      const officerId = officerLink.replace("/officers/", "");
+      if (!officerId) continue;
+
+      try {
+        const appointments = await chFetch(`/officers/${officerId}/appointments?items_per_page=50`);
+        officerDetails.push({
+          ...officer,
+          officerId,
+          appointments: appointments.items || [],
+          totalAppointments: appointments.total_results || 0,
+        });
+      } catch (err: any) {
+        console.warn(`[kyc-clouseau] Failed to fetch appointments for officer ${officerId}:`, err.message);
+        officerDetails.push({ ...officer, officerId, appointments: [], totalAppointments: 0 });
+      }
+    }
+
+    // Collect all company numbers this person is associated with
+    const associatedCompanies = new Set<string>();
+    for (const officer of officerDetails) {
+      for (const appt of officer.appointments) {
+        if (appt.appointed_to?.company_number) {
+          associatedCompanies.add(appt.appointed_to.company_number);
+        }
+      }
+    }
+    // Add any explicitly provided company numbers
+    if (companyNumbers && Array.isArray(companyNumbers)) {
+      companyNumbers.forEach((cn: string) => { if (cn.trim()) associatedCompanies.add(cn.trim()); });
+    }
+
+    // Fetch charges for associated companies (limit to first 10)
+    const companyCharges: Record<string, any[]> = {};
+    const companyProfiles: Record<string, any> = {};
+    const companyNumbersArr = Array.from(associatedCompanies).slice(0, 10);
+    for (const cn of companyNumbersArr) {
+      try {
+        const padded = cn.padStart(8, "0");
+        const [profileRes, chargesRes] = await Promise.allSettled([
+          chFetch(`/company/${padded}`),
+          chFetch(`/company/${padded}/charges`),
+        ]);
+        if (profileRes.status === "fulfilled") companyProfiles[cn] = profileRes.value;
+        if (chargesRes.status === "fulfilled") companyCharges[cn] = chargesRes.value.items || [];
+      } catch {}
+    }
+
+    // Run sanctions check on the individual
+    const sanctionsResult = await screenSanctions([name]);
+
+    // Build risk assessment for individual
+    const flags: string[] = [];
+    let riskScore = 0;
+
+    if (officerDetails.length === 0) {
+      flags.push("No matching officer records found at Companies House");
+      riskScore += 5;
+    }
+
+    const totalActiveAppointments = officerDetails.reduce((sum, o) =>
+      sum + (o.appointments || []).filter((a: any) => !a.resigned_on).length, 0);
+    const totalResignedAppointments = officerDetails.reduce((sum, o) =>
+      sum + (o.appointments || []).filter((a: any) => a.resigned_on).length, 0);
+
+    if (totalActiveAppointments > 10) {
+      flags.push(`High number of active directorships: ${totalActiveAppointments}`);
+      riskScore += 15;
+    }
+    if (totalResignedAppointments > 20) {
+      flags.push(`Extensive resignation history: ${totalResignedAppointments} resigned appointments`);
+      riskScore += 10;
+    }
+
+    // Check for dissolved companies
+    const dissolvedCount = Object.values(companyProfiles).filter((p: any) => p.company_status === "dissolved").length;
+    if (dissolvedCount > 3) {
+      flags.push(`Associated with ${dissolvedCount} dissolved companies`);
+      riskScore += 15;
+    }
+
+    // Sanctions
+    const hasSanctionsMatch = sanctionsResult
+      ? sanctionsResult.some((s: any) => s.status === "strong_match" || s.status === "potential_match")
+      : false;
+    if (sanctionsResult) {
+      const strongMatches = sanctionsResult.filter((s: any) => s.status === "strong_match");
+      const potentialMatches = sanctionsResult.filter((s: any) => s.status === "potential_match");
+      if (strongMatches.length > 0) {
+        flags.push(`SANCTIONS MATCH: ${strongMatches.length} strong match(es)`);
+        riskScore += 50;
+      } else if (potentialMatches.length > 0) {
+        flags.push(`Potential sanctions match: ${potentialMatches.length} name(s) flagged`);
+        riskScore += 25;
+      }
+    }
+
+    // Outstanding charges
+    const totalOutstandingCharges = Object.values(companyCharges).reduce((sum, charges) =>
+      sum + charges.filter((c: any) => c.status === "outstanding").length, 0);
+    if (totalOutstandingCharges > 0) {
+      flags.push(`${totalOutstandingCharges} outstanding charges across associated companies`);
+      riskScore += 10;
+    }
+
+    riskScore = Math.min(riskScore, 100);
+    let riskLevel = "low";
+    if (riskScore >= 60) riskLevel = "critical";
+    else if (riskScore >= 40) riskLevel = "high";
+    else if (riskScore >= 20) riskLevel = "medium";
+
+    // AI analysis for individual
+    let aiAnalysis = "";
+    try {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const anthropic = new Anthropic({
+        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
+        baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+      });
+
+      const activeAppointmentsList = officerDetails.flatMap(o =>
+        (o.appointments || []).filter((a: any) => !a.resigned_on).map((a: any) =>
+          `- ${a.appointed_to?.company_name || "Unknown"} (${a.appointed_to?.company_number || "?"}) as ${a.officer_role} since ${a.appointed_on || "?"}`
+        )
+      ).join("\n");
+
+      const resignedAppointmentsList = officerDetails.flatMap(o =>
+        (o.appointments || []).filter((a: any) => a.resigned_on).map((a: any) =>
+          `- ${a.appointed_to?.company_name || "Unknown"} (${a.appointed_to?.company_number || "?"}) as ${a.officer_role}, ${a.appointed_on || "?"} – ${a.resigned_on || "?"}`
+        )
+      ).slice(0, 20).join("\n");
+
+      const chargesSummary = Object.entries(companyCharges).map(([cn, charges]) => {
+        const profile = companyProfiles[cn];
+        return `${profile?.company_name || cn} (${cn}): ${charges.length} charge(s) — ${charges.map((c: any) =>
+          `${c.status || "unknown"}: ${(c.persons_entitled || []).map((p: any) => p.name).join(", ") || "Unknown lender"}`
+        ).join("; ")}`;
+      }).join("\n");
+
+      const prompt = `You are KYC Clouseau — an expert KYC/AML compliance investigator for a London commercial property agency. Produce a comprehensive intelligence report on this INDIVIDUAL.
+
+INDIVIDUAL: ${name}
+${dateOfBirth ? `DATE OF BIRTH: ${dateOfBirth}` : ""}
+
+OFFICER SEARCH MATCHES: ${officerDetails.length} match(es) found at Companies House
+TOTAL ACTIVE APPOINTMENTS: ${totalActiveAppointments}
+TOTAL RESIGNED APPOINTMENTS: ${totalResignedAppointments}
+
+ACTIVE APPOINTMENTS:
+${activeAppointmentsList || "None"}
+
+RECENT RESIGNED APPOINTMENTS (up to 20):
+${resignedAppointmentsList || "None"}
+
+CHARGES/MORTGAGES ON ASSOCIATED COMPANIES:
+${chargesSummary || "None"}
+
+SANCTIONS SCREENING: ${sanctionsResult ? JSON.stringify(sanctionsResult.slice(0, 5)) : "Not available"}
+
+AUTOMATED RISK FLAGS:
+${flags.map(f => `- ${f}`).join("\n") || "None identified"}
+
+Please provide:
+1. **IDENTITY SUMMARY** — Who is this person? What is their corporate footprint? Summarise all known identities and officer records.
+2. **COMPANIES CONTROLLED/DIRECTED** — List every company they control or direct, with current status, incorporation date, and their role.
+3. **OWNERSHIP CHAIN ANALYSIS** — For each company, describe the ownership structure. Are these SPVs? Holding companies? Part of a group?
+4. **FINANCIAL EXPOSURE** — What charges/mortgages exist across their companies? Who are the lenders? What is the total debt exposure signal?
+5. **SANCTIONS STATUS** — Clear summary of sanctions screening results.
+6. **NETWORK ANALYSIS** — What sectors/industries? Any patterns in company types? Connections to other individuals?
+7. **RED FLAGS & CONCERNS** — Frequent directorships? Dissolved companies? Unusual patterns? PEP indicators?
+8. **RISK ASSESSMENT** — Overall risk level with detailed reasoning.
+9. **COMPLIANCE RECOMMENDATION** — APPROVE / ENHANCED DUE DILIGENCE REQUIRED / REFER TO MLRO / REJECT
+10. **SUGGESTED NEXT STEPS** — What additional checks should be performed?
+
+Format with clear headers and be specific. This is a professional compliance document.`;
+
+      const aiRes = await anthropic.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 4000,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      aiAnalysis = aiRes.content[0].type === "text" ? aiRes.content[0].text : "Analysis unavailable";
+    } catch (aiErr: any) {
+      aiAnalysis = `AI analysis unavailable (${aiErr.message}). Structured data is shown below.`;
+    }
+
+    const result = {
+      subject: {
+        name,
+        type: "individual" as const,
+        dateOfBirth: dateOfBirth || null,
+      },
+      officerMatches: officerDetails,
+      associatedCompanies: companyNumbersArr.map(cn => ({
+        companyNumber: cn,
+        profile: companyProfiles[cn] || null,
+        charges: companyCharges[cn] || [],
+      })),
+      sanctionsScreening: sanctionsResult,
+      aiAnalysis,
+      riskScore,
+      riskLevel,
+      flags,
+      timestamp: new Date().toISOString(),
+    };
+
+    // Save to kyc_investigations
+    const userId = (req as any).user?.id || null;
+    try {
+      await pool.query(
+        `INSERT INTO kyc_investigations (subject_type, subject_name, officer_name, risk_level, risk_score, sanctions_match, result, conducted_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [
+          "individual",
+          name,
+          name,
+          riskLevel,
+          riskScore,
+          hasSanctionsMatch,
+          JSON.stringify(result),
+          userId,
+        ]
+      );
+    } catch (dbErr: any) {
+      console.warn("[kyc-clouseau] Failed to save individual investigation:", dbErr.message);
+    }
+
+    console.log(`[kyc-clouseau] Individual investigation complete: ${name} — risk: ${riskLevel} (${riskScore})`);
+    res.json(result);
+  } catch (err: any) {
+    console.error("[kyc-clouseau] Individual investigation error:", err.message);
+    const userMessage = sanitizeErrorMessage(err.message, "Individual investigation failed");
+    res.status(500).json({ error: userMessage });
+  }
+});
+
+// Monthly re-screening function (exported for cron use)
+export async function runMonthlyReScreening() {
+  console.log("[kyc-clouseau] Starting monthly sanctions re-screening...");
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT ON (company_number) id, company_number, subject_name, result
+       FROM kyc_investigations
+       WHERE company_number IS NOT NULL
+         AND risk_level != 'critical'
+         AND conducted_at > NOW() - INTERVAL '6 months'
+       ORDER BY company_number, conducted_at DESC`
+    );
+
+    let rescreened = 0;
+    let newMatches = 0;
+
+    for (const row of result.rows) {
+      try {
+        const parsedResult = typeof row.result === "string" ? JSON.parse(row.result) : row.result;
+        const namesToScreen: string[] = [];
+        if (parsedResult?.subject?.name) namesToScreen.push(parsedResult.subject.name);
+        if (parsedResult?.officers) {
+          parsedResult.officers.forEach((o: any) => { if (o.name) namesToScreen.push(o.name); });
+        }
+        if (parsedResult?.pscs) {
+          parsedResult.pscs.forEach((p: any) => { if (p.name) namesToScreen.push(p.name); });
+        }
+
+        if (namesToScreen.length === 0) continue;
+
+        const sanctionsResult = await screenSanctions(namesToScreen);
+        rescreened++;
+
+        if (sanctionsResult) {
+          const hasMatch = sanctionsResult.some((s: any) => s.status === "strong_match" || s.status === "potential_match");
+          if (hasMatch) {
+            newMatches++;
+            console.warn(`[kyc-clouseau] RE-SCREENING ALERT: New sanctions match for ${row.subject_name} (${row.company_number})`);
+            await pool.query(
+              `UPDATE kyc_investigations SET sanctions_match = true, notes = COALESCE(notes, '') || $1 WHERE id = $2`,
+              [`\n[Re-screened ${new Date().toISOString()}] New sanctions match detected`, row.id]
+            );
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[kyc-clouseau] Re-screening failed for ${row.company_number}:`, err.message);
+      }
+    }
+
+    console.log(`[kyc-clouseau] Monthly re-screening complete: ${rescreened} screened, ${newMatches} new matches`);
+  } catch (err: any) {
+    console.error("[kyc-clouseau] Monthly re-screening error:", err.message);
+  }
+}
 
 export default router;

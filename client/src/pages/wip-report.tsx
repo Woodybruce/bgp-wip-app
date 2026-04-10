@@ -14,12 +14,14 @@ import {
   X,
   Upload,
   Loader2,
+  Link2,
+  Plus,
 } from "lucide-react";
 import { ScrollableTable } from "@/components/scrollable-table";
 import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTeam } from "@/lib/team-context";
 import { Link } from "wouter";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
 
 type SortDirection = "asc" | "desc";
@@ -44,6 +46,30 @@ interface WipDealEntry {
   orderNumber: string | null;
   fiscalYear: number | null;
   source?: "crm" | "spreadsheet";
+}
+
+interface ReconciliationData {
+  dealsWithoutWip: Array<{
+    id: string;
+    name: string;
+    dealType: string | null;
+    status: string | null;
+    fee: number | null;
+    team: string[] | null;
+    internalAgent: string[] | null;
+    propertyName: string | null;
+  }>;
+  wipWithoutDeals: Array<{
+    id: string;
+    ref: string | null;
+    project: string | null;
+    agent: string | null;
+    team: string | null;
+    amtWip: number | null;
+    amtInvoice: number | null;
+    groupName: string | null;
+    dealStatus: string | null;
+  }>;
 }
 
 const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
@@ -283,13 +309,165 @@ function FilterSection({
   );
 }
 
+function ReconciliationTab() {
+  const { data, isLoading } = useQuery<ReconciliationData>({
+    queryKey: ["/api/wip/reconciliation"],
+    queryFn: async () => {
+      const res = await fetch("/api/wip/reconciliation", { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed to fetch reconciliation data");
+      return res.json();
+    },
+  });
+
+  const dealsWithoutWip = data?.dealsWithoutWip || [];
+  const wipWithoutDeals = data?.wipWithoutDeals || [];
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-gray-500 text-lg">Loading reconciliation data...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 overflow-y-auto flex-1 min-h-0">
+      {/* Deals without WIP */}
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="recon-deals-without-wip">
+        <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-gray-700">Deals not on WIP</span>
+            <Badge variant="secondary" className="text-xs">
+              {dealsWithoutWip.length}
+            </Badge>
+          </div>
+        </div>
+        {dealsWithoutWip.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-gray-500">
+            All active deals are matched to WIP entries
+          </div>
+        ) : (
+          <ScrollableTable minWidth={900}>
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-48">Deal Name</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-40">Property</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-32">Assigned To</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-24">Status</th>
+                  <th className="px-3 py-2 text-right font-medium text-gray-600 w-28">Expected Fee</th>
+                  <th className="px-3 py-2 text-center font-medium text-gray-600 w-28">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-xs">
+                {dealsWithoutWip.map((deal) => (
+                  <tr key={deal.id} className="hover:bg-gray-50" data-testid={`recon-deal-row-${deal.id}`}>
+                    <td className="px-3 py-2 text-gray-700">
+                      <Link href={`/deals/${deal.id}`}>
+                        <span className="text-blue-600 hover:underline cursor-pointer">{deal.name}</span>
+                      </Link>
+                    </td>
+                    <td className="px-3 py-2 text-gray-700 truncate max-w-[160px]">{deal.propertyName || "—"}</td>
+                    <td className="px-3 py-2 text-gray-700 truncate max-w-[130px]">
+                      {Array.isArray(deal.internalAgent) ? deal.internalAgent.join(", ") : deal.internalAgent || "—"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge variant="secondary" className="text-[10px]">
+                        {deal.status || "—"}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-900">
+                      {deal.fee ? `£${deal.fee.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1">
+                        <Link2 className="w-3 h-3" />
+                        Link to WIP
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollableTable>
+        )}
+      </div>
+
+      {/* WIP entries without deals */}
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="recon-wip-without-deals">
+        <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-gray-700">WIP entries without a deal</span>
+            <Badge variant="secondary" className="text-xs">
+              {wipWithoutDeals.length}
+            </Badge>
+          </div>
+        </div>
+        {wipWithoutDeals.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-gray-500">
+            All WIP entries are matched to CRM deals
+          </div>
+        ) : (
+          <ScrollableTable minWidth={800}>
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-32">Ref</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-40">Project / Property</th>
+                  <th className="px-3 py-2 text-left font-medium text-gray-600 w-28">Fee Earner</th>
+                  <th className="px-3 py-2 text-right font-medium text-gray-600 w-28">WIP Amount</th>
+                  <th className="px-3 py-2 text-right font-medium text-gray-600 w-28">Invoice Amount</th>
+                  <th className="px-3 py-2 text-center font-medium text-gray-600 w-28">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 text-xs">
+                {wipWithoutDeals.map((wip) => (
+                  <tr key={wip.id} className="hover:bg-gray-50" data-testid={`recon-wip-row-${wip.id}`}>
+                    <td className="px-3 py-2 text-gray-700 truncate max-w-[130px]">{wip.ref || "—"}</td>
+                    <td className="px-3 py-2 text-gray-700 truncate max-w-[160px]">{wip.project || "—"}</td>
+                    <td className="px-3 py-2 text-gray-700 truncate max-w-[120px]">{wip.agent || "—"}</td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-900">
+                      {wip.amtWip ? `£${wip.amtWip.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-green-700">
+                      {wip.amtInvoice ? `£${wip.amtInvoice.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1">
+                        <Plus className="w-3 h-3" />
+                        Create Deal
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollableTable>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function WipReport() {
   const { toast } = useToast();
   const { activeTeam } = useTeam();
+  const [activeTab, setActiveTab] = useState<"report" | "reconciliation">("report");
 
   const { data: user } = useQuery<{ id: string; name: string; email: string; team: string; isAdmin?: boolean }>({
     queryKey: ["/api/auth/me"],
   });
+
+  const { data: reconData } = useQuery<ReconciliationData>({
+    queryKey: ["/api/wip/reconciliation"],
+    queryFn: async () => {
+      const res = await fetch("/api/wip/reconciliation", { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed to fetch reconciliation data");
+      return res.json();
+    },
+  });
+
+  const reconCount = (reconData?.dealsWithoutWip?.length || 0) + (reconData?.wipWithoutDeals?.length || 0);
 
   const WIP_SENIOR_EMAILS = useMemo(() => new Set([
     "woody@brucegillinghampollard.com",
@@ -742,6 +920,40 @@ export default function WipReport() {
         </div>
       </div>
 
+      {/* Tab switcher */}
+      <div className="flex items-center gap-1 mb-4 flex-shrink-0 no-print border-b" data-testid="wip-tabs">
+        <button
+          onClick={() => setActiveTab("report")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "report"
+              ? "border-green-600 text-green-700"
+              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+          }`}
+          data-testid="wip-tab-report"
+        >
+          WIP Report
+        </button>
+        <button
+          onClick={() => setActiveTab("reconciliation")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
+            activeTab === "reconciliation"
+              ? "border-green-600 text-green-700"
+              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+          }`}
+          data-testid="wip-tab-reconciliation"
+        >
+          Reconciliation
+          {reconCount > 0 && (
+            <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+              {reconCount}
+            </Badge>
+          )}
+        </button>
+      </div>
+
+      {activeTab === "reconciliation" ? (
+        <ReconciliationTab />
+      ) : (
       <div className="flex gap-4 flex-1 min-h-0">
         <div className="flex-1 overflow-y-auto space-y-4 min-h-0">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -993,6 +1205,7 @@ export default function WipReport() {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

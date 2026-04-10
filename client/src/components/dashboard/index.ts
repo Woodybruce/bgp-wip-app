@@ -4,6 +4,7 @@ export { AvailableUnitsWidget } from "./available-units-widget";
 export { InvestmentTrackerWidget } from "./investment-tracker-widget";
 export { SharePointWidget } from "./sharepoint-widget";
 export { StudiosWidget } from "./studios-widget";
+export { MyPortfolioWidget } from "./portfolio-widget";
 export { WidgetPickerDialog, WIDGET_REGISTRY, BOARD_REGISTRY, DEFAULT_WIDGETS, DEFAULT_BOARDS, boardsToWidgets, widgetsToBoards } from "./widget-picker";
 export { formatCurrencyShort, formatCurrencyFull, getWipMonthSortKey, timeAgo } from "./helpers";
 export type { CrmStats, NewsArticle, CalendarEvent, TeamIntelligence, DashboardIntelligence, LeadProfile, Lead, WidgetDefinition, BoardDefinition } from "./types";

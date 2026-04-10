@@ -34,7 +34,7 @@ import { setupCrmRoutes, startAutoEnrichment } from "./crm";
 import { setupMondayImportRoutes } from "./monday-import";
 import companiesHouseRouter from "./companies-house";
 import sanctionsRouter from "./sanctions-screening";
-import kycClouseauRouter from "./kyc-clouseau";
+import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
 import turnoverRouter from "./turnover";
@@ -52,8 +52,33 @@ const app = express();
 const httpServer = createServer(app);
 
 const MAINTENANCE_MODE = true;
-app.use((_req, res, next) => {
+const MAINTENANCE_ALLOWED_EMAILS = new Set([
+  "woody@brucegillinghampollard.com",
+]);
+
+app.use(async (req: any, res, next) => {
   if (!MAINTENANCE_MODE) return next();
+  // Always allow auth routes so login still works
+  if (req.path.startsWith("/api/auth") || req.path.startsWith("/api/branding")) return next();
+  // Allow static assets (JS/CSS/images) so the login page renders on mobile
+  if (req.path.match(/\.(js|css|png|jpg|svg|ico|woff|woff2|ttf|webp|map)$/)) return next();
+
+  // Check if this user's session email is in the allowed list
+  const userId = req.session?.userId;
+  if (userId) {
+    try {
+      const row = await pool.query("SELECT email FROM users WHERE id = $1", [userId]);
+      const email = row.rows[0]?.email?.toLowerCase().trim();
+      if (email && MAINTENANCE_ALLOWED_EMAILS.has(email)) return next();
+    } catch {}
+  }
+
+  // Block API calls with JSON
+  if (req.path.startsWith("/api/")) {
+    return res.status(503).json({ error: "maintenance", message: "Dashboard is temporarily down for maintenance." });
+  }
+
+  // Block everyone else with the maintenance page (works on mobile too)
   res.status(503).send(`<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BGP Dashboard — Maintenance</title><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#1a1a2e;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center}.container{max-width:480px;padding:40px}h1{font-size:28px;margin-bottom:12px;color:#c9a96e}p{font-size:16px;line-height:1.6;color:#aab;margin-bottom:8px}.logo{font-size:14px;letter-spacing:3px;color:#888;margin-bottom:32px}</style></head><body><div class="container"><div class="logo">BRUCE GILLINGHAM POLLARD</div><h1>Scheduled Maintenance</h1><p>We're making some improvements. The dashboard will be back shortly.</p><p style="margin-top:24px;font-size:13px;color:#667">If you need urgent assistance, please contact the team directly.</p></div></body></html>`);
 });
 
@@ -281,7 +306,6 @@ app.use("/api/branding/assets", express.static(
     {
       port,
       host: "0.0.0.0",
-      reusePort: true,
     },
     () => {
       log(`serving on port ${port}`);
@@ -297,6 +321,15 @@ app.use("/api/branding/assets", express.static(
         }
       }, 60000);
       setTimeout(() => startArchivist(), 300000);
+      // KYC monthly re-screening cron (check daily, run on 1st of month)
+      setInterval(() => {
+        const now = new Date();
+        if (now.getDate() === 1 && now.getHours() === 3) {
+          runMonthlyReScreening().catch(err =>
+            console.error("[kyc-cron] Monthly re-screening failed:", err?.message)
+          );
+        }
+      }, 60 * 60 * 1000); // Check every hour
       setTimeout(async () => {
         try {
           const { db } = await import("./db");

@@ -228,6 +228,7 @@ const COLUMN_LABELS: Record<string, string> = {
   rentAnalysis: "Rent Analysis",
   comments: "Comments",
   sharepoint: "SharePoint",
+  wipBadge: "WIP Match",
 };
 
 function formatCurrency(val: number | null | undefined): string {
@@ -3444,6 +3445,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     rentAnalysis: true,
     comments: true,
     sharepoint: true,
+    wipBadge: true,
   });
 
   const dealsUrl = mode === "wip" ? "/api/crm/deals?excludeTrackerDeals=true" : "/api/crm/deals";
@@ -3484,6 +3486,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const { data: allFeeAllocations } = useQuery<Record<string, DealFeeAllocation[]>>({
     queryKey: ["/api/crm/fee-allocations"],
+  });
+
+  const { data: wipBadges } = useQuery<Record<string, { amtWip: number; amtInvoice: number; count: number; entries: { ref: string; project: string; amtWip: number; amtInvoice: number; stage: string; month: string }[] }>>({
+    queryKey: ["/api/crm/deals/wip-badges"],
+    queryFn: async () => {
+      const r = await fetch("/api/crm/deals/wip-badges", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
+      return r.json();
+    },
+    enabled: mode === "wip",
   });
 
   const inlineUpdateMutation = useMutation({
@@ -4023,6 +4035,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.pricing && <TableHead className="min-w-[100px] text-right">Pricing</TableHead>}
                     {visibleColumns.yield && <TableHead className="min-w-[80px] text-right">Yield %</TableHead>}
                     {visibleColumns.fee && <TableHead className="min-w-[80px] text-right">Fee</TableHead>}
+                    {visibleColumns.wipBadge && mode === "wip" && <TableHead className="min-w-[100px] text-right">WIP Match</TableHead>}
                     {visibleColumns.feeAlloc && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
                     {visibleColumns.feeAgreement && <TableHead className="min-w-[100px]">Fee Agreement</TableHead>}
                     {visibleColumns.amlCheck && <TableHead className="min-w-[80px]">AML Check</TableHead>}
@@ -4270,6 +4283,26 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onSave={(v) => handleInlineSave(deal.id, "fee", v)}
                             prefix="£"
                           />
+                        </TableCell>
+                      )}
+                      {visibleColumns.wipBadge && mode === "wip" && (
+                        <TableCell className="px-1.5 py-1 text-right">
+                          {(() => {
+                            const badge = wipBadges?.[deal.id];
+                            if (!badge) return null;
+                            const topEntry = badge.entries[0];
+                            const tipText = topEntry
+                              ? `${topEntry.project}${topEntry.stage ? ` — ${topEntry.stage}` : ""}${badge.count > 1 ? ` (+${badge.count - 1} more)` : ""}`
+                              : `${badge.count} WIP entr${badge.count === 1 ? "y" : "ies"}`;
+                            return (
+                              <Badge
+                                className="text-[10px] px-1.5 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white cursor-default"
+                                title={tipText}
+                              >
+                                £{(badge.amtWip / 1000).toFixed(0)}k
+                              </Badge>
+                            );
+                          })()}
                         </TableCell>
                       )}
                       {visibleColumns.feeAlloc && (
