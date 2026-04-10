@@ -8856,11 +8856,17 @@ export function setupChatBGPRoutes(app: Express) {
     });
 
     const heartbeat = setInterval(() => {
-      try { res.write(": heartbeat\n\n"); } catch {}
-    }, 5000);
+      if (res.destroyed || res.writableEnded) { clearInterval(heartbeat); return; }
+      try { res.write(": heartbeat\n\n"); } catch { clearInterval(heartbeat); }
+    }, 2000);
+
+    const safeSseWrite = (data: string) => {
+      if (res.destroyed || res.writableEnded) return false;
+      try { res.write(data); return true; } catch { return false; }
+    };
 
     const sendProgress = (status: string) => {
-      try { res.write(`data: ${JSON.stringify({ progress: status })}\n\n`); } catch {}
+      safeSseWrite(`data: ${JSON.stringify({ progress: status })}\n\n`);
     };
 
     const sseThreadId = result.data.threadId;
@@ -8894,14 +8900,12 @@ export function setupChatBGPRoutes(app: Express) {
           console.error(`[ChatBGP] Failed to save reply to thread:`, saveErr?.message);
         }
       }
-      try {
-        res.write(`data: ${JSON.stringify({ ...data, savedToThread: saved })}\n\n`);
-        res.end();
-      } catch {}
+      if (!safeSseWrite(`data: ${JSON.stringify({ ...data, savedToThread: saved })}\n\n`)) return;
+      try { res.end(); } catch {}
     };
 
     const requestStart = Date.now();
-    const REQUEST_DEADLINE_MS = 240000; // 240 seconds for SSE (heartbeats keep connection alive)
+    const REQUEST_DEADLINE_MS = 120000; // 120 seconds — stricter deadline with faster context loading
     let clientDisconnected = false;
     const isOverDeadline = () => clientDisconnected || Date.now() - requestStart > REQUEST_DEADLINE_MS;
 
@@ -8923,22 +8927,22 @@ export function setupChatBGPRoutes(app: Express) {
       
       try {
         sendProgress("Gathering intelligence...");
-        [memoryContext, businessLearnings2] = await Promise.all([
-          withTimeout(getMemoryContext(userId), 5000, ""),
-          withTimeout(getBusinessLearningsContext(), 5000, ""),
+        const contextResults = await Promise.all([
+          withTimeout(getMemoryContext(userId), 3000, ""),
+          withTimeout(getBusinessLearningsContext(), 3000, ""),
+          withTimeout(getCrmContext(), 3000, ""),
+          withTimeout(getKnowledgeContext(), 3000, ""),
+          withTimeout(getEmailAndCalendarContext(req), 3000, ""),
         ]);
-        
-        const primarySize = memoryContext.length + businessLearnings2.length;
-        if (primarySize < 50000) {
-          crmCtx = await withTimeout(getCrmContext(), 5000, "");
-        }
-        
-        if (primarySize + crmCtx.length < 80000) {
-          knowledgeContext2 = await withTimeout(getKnowledgeContext(), 5000, "");
-        }
-        
-        if (primarySize + crmCtx.length + knowledgeContext2.length < 100000) {
-          emailCalContext = await withTimeout(getEmailAndCalendarContext(req), 5000, "");
+        memoryContext = contextResults[0];
+        businessLearnings2 = contextResults[1];
+        crmCtx = contextResults[2];
+        knowledgeContext2 = contextResults[3];
+        emailCalContext = contextResults[4];
+        // Trim to stay under 120KB total context
+        const totalLen = memoryContext.length + businessLearnings2.length + crmCtx.length + knowledgeContext2.length + emailCalContext.length;
+        if (totalLen > 120000) {
+          emailCalContext = emailCalContext.slice(0, Math.max(0, 120000 - totalLen + emailCalContext.length));
         }
       } catch (err) {
         console.error("Context loading error:", err);
@@ -9141,7 +9145,12 @@ export function setupChatBGPRoutes(app: Express) {
             console.log(`[ChatBGP] Loop ${loopCount}: tool=${tcName}${tcArgs?.command ? ' cmd=' + tcArgs.command.substring(0, 80) : ''}`);
 
             try {
-              const toolResult = await executeAnyTool(tcName, tcArgs, req, msToken);
+              const toolTimeoutMs = tcName.includes("sharepoint") || tcName.includes("file") ? 20000 : 15000;
+              const toolResult = await withTimeout(
+                executeAnyTool(tcName, tcArgs, req, msToken),
+                toolTimeoutMs,
+                { data: { error: `Tool timed out after ${toolTimeoutMs / 1000}s` } }
+              );
               if (toolResult.action) lastAction = toolResult.action;
               const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
               conversationMessages.push({
@@ -9179,7 +9188,6 @@ export function setupChatBGPRoutes(app: Express) {
       await sendResult({ reply: fallbackReply, ...(lastAction ? { action: lastAction } : {}) });
     } catch (err: any) {
       console.error("ChatBGP error:", err?.message || err);
-      clearInterval(heartbeat);
       let errorMsg = "Sorry, I ran into an issue processing your request. Please try again.";
       if (err?.status === 529) errorMsg = "I'm a bit overloaded right now. Please try again in a moment.";
       else if (err?.status === 401) errorMsg = "AI authentication issue — please contact support.";
@@ -9198,10 +9206,9 @@ export function setupChatBGPRoutes(app: Express) {
         errorMsg = lastAssistantContent;
       }
 
-      try {
-        res.write(`data: ${JSON.stringify({ reply: errorMsg, error: !lastAssistantContent })}\n\n`);
-        res.end();
-      } catch {}
+      clearInterval(heartbeat);
+      safeSseWrite(`data: ${JSON.stringify({ reply: errorMsg, error: !lastAssistantContent })}\n\n`);
+      try { if (!res.writableEnded) res.end(); } catch {}
     }
   });
 
