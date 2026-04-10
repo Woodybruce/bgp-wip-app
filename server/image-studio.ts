@@ -259,6 +259,11 @@ export function registerImageStudioRoutes(app: Express) {
           );
         }
       }
+      // Clean up collection references before deleting images
+      await pool.query(
+        `DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`,
+        [ids]
+      );
       await db.delete(imageStudioImages).where(inArray(imageStudioImages.id, ids));
       res.json({ success: true, deleted: images.length });
     } catch (e: any) {
@@ -299,6 +304,11 @@ export function registerImageStudioRoutes(app: Express) {
         );
       }
 
+      // Clean up collection references before deleting image
+      await pool.query(
+        "DELETE FROM image_studio_collection_images WHERE image_id = $1",
+        [req.params.id]
+      );
       await db.delete(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
       res.json({ success: true });
     } catch (e: any) {

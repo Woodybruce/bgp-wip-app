@@ -3508,7 +3508,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           if (agentNames.length === 0) continue;
           const filteredNames = senior ? agentNames : agentNames.filter(n => !WIP_RESTRICTED_AGENTS.has(n.toLowerCase()));
           if (filteredNames.length === 0) continue;
-          const perAgent = totalFee / agentNames.length;
+          const perAgent = totalFee / filteredNames.length;
           for (const name of filteredNames) {
             const entry = agentTotals.get(name) || { invoiced: 0, wip: 0 };
             if (isInvoiced) entry.invoiced += perAgent;
@@ -3743,8 +3743,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         if (dealAllocations && dealAllocations.length > 0) {
           // Use fee allocations: one WIP entry per allocation
           for (const alloc of dealAllocations) {
-            const agentFee = alloc.fixedAmount || Math.round(totalFee * ((alloc.percentage || 0) / 100) * 100) / 100;
-            const agentInvoiceAmt = alloc.fixedAmount || (totalInvoiceAmt * pct);
+            const allocPct = (alloc.percentage || 0) / 100;
+            const agentFee = alloc.fixedAmount || Math.round(totalFee * allocPct * 100) / 100;
+            const agentInvoiceAmt = alloc.fixedAmount || Math.round(totalInvoiceAmt * allocPct * 100) / 100;
             entries.push({
               id: `${deal.id}_${alloc.agentName}`,
               dealId: deal.id,

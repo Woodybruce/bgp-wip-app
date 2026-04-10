@@ -244,12 +244,13 @@ export default function ImageStudio() {
     mutationFn: async (ids: string[]) => {
       await apiRequest("POST", "/api/image-studio/bulk-delete", { ids });
     },
-    onSuccess: () => {
+    onSuccess: (_data: unknown, variables: { ids: string[] }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
+      const count = variables.ids.length;
       setSelectedIds(new Set());
       setSelectMode(false);
-      toast({ title: "Deleted", description: `${selectedIds.size} images removed` });
+      toast({ title: "Deleted", description: `${count} images removed` });
     },
   });
 

@@ -385,7 +385,7 @@ function buildAssumptionsSheet(wb: ExcelJS.Workbook, assumptions: Record<string,
           valCell.dataValidation = {
             type: 'list',
             allowBlank: false,
-            formulae: [`"${item.validation.values.join(',')}"`],
+            formulae: [item.validation.values.map((v: string) => `"${v}"`).join(',')],
             showErrorMessage: true,
             errorTitle: 'Invalid',
             error: `Please select from: ${item.validation.values.join(', ')}`,
@@ -1540,7 +1540,7 @@ function buildSummarySheet(wb: ExcelJS.Workbook, modelName: string): ExcelJS.Wor
 
   setVal(wsRef, r, 2, 'Unlevered IRR', 'label');
   setFormula(wsRef, r, 3, 'UnleveredIRR', 'total', 'percentage');
-  wsRef.getCell(r, 3).font = { ...FONT_TOTAL, size: 14, color: { argb: BGP_GREEN.slice(2) ? BGP_GREEN : BGP_GREEN } };
+  wsRef.getCell(r, 3).font = { ...FONT_TOTAL, size: 14, color: { argb: BGP_GREEN } };
   setVal(wsRef, r, 5, 'Levered IRR', 'label');
   setFormula(wsRef, r, 6, 'LeveredIRR', 'total', 'percentage');
   wsRef.getCell(r, 6).font = { ...FONT_TOTAL, size: 14, color: { argb: BGP_GREEN } };
