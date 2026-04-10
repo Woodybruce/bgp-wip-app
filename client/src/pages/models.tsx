@@ -2529,6 +2529,7 @@ function ClaudeModelStudio() {
   const { toast } = useToast();
   const [description, setDescription] = useState("");
   const [modelType, setModelType] = useState("");
+  const [useAdvanced, setUseAdvanced] = useState(true);
   const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
 
@@ -2555,6 +2556,7 @@ function ClaudeModelStudio() {
         const formData = new FormData();
         formData.append("description", description.trim());
         if (modelType) formData.append("modelType", modelType);
+        if (useAdvanced) formData.append("useAdvanced", "true");
         files.forEach(f => formData.append("documents", f));
         startRes = await fetch("/api/models/create-model", {
           method: "POST",
@@ -2570,6 +2572,7 @@ function ClaudeModelStudio() {
           body: JSON.stringify({
             description: description.trim(),
             modelType: modelType || undefined,
+            useAdvanced,
           }),
         });
       }
@@ -2819,6 +2822,20 @@ function ClaudeModelStudio() {
           </div>
         )}
 
+        <div className="flex items-center gap-3 text-xs">
+          <label className="flex items-center gap-1.5 cursor-pointer select-none" data-testid="toggle-advanced-model">
+            <Checkbox
+              checked={useAdvanced}
+              onCheckedChange={(v) => setUseAdvanced(!!v)}
+              className="h-3.5 w-3.5"
+            />
+            <span className="text-muted-foreground">Professional model</span>
+          </label>
+          {useAdvanced && (
+            <span className="text-[10px] text-emerald-600 font-medium">6 sheets with working formulas, named ranges, sensitivity tables</span>
+          )}
+        </div>
+
         <div className="flex gap-2">
           <Button
             onClick={() => createMutation.mutate()}
@@ -2830,12 +2847,12 @@ function ClaudeModelStudio() {
             {createMutation.isPending ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Building model...
+                {useAdvanced ? "Building professional model..." : "Building model..."}
               </>
             ) : (
               <>
                 <Sparkles className="w-4 h-4 mr-2" />
-                Create Model{files.length > 0 ? ` (${files.length} file${files.length > 1 ? "s" : ""})` : ""}
+                {useAdvanced ? "Create Professional Model" : "Create Model"}{files.length > 0 ? ` (${files.length} file${files.length > 1 ? "s" : ""})` : ""}
               </>
             )}
           </Button>

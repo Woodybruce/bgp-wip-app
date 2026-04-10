@@ -2746,31 +2746,33 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
       {(() => {
         const categories = [
           { key: "all", label: "All" },
-          { key: "presentations", label: "Presentations" },
-          { key: "proposals", label: "Proposals" },
-          { key: "reports", label: "Reports" },
-          { key: "legal", label: "Legal" },
-          { key: "internal", label: "Internal" },
+          { key: "investment-memo", label: "Investment Memo" },
+          { key: "lease-report", label: "Lease Report" },
+          { key: "valuation", label: "Valuation" },
+          { key: "client-update", label: "Client Update" },
           { key: "marketing", label: "Marketing" },
+          { key: "internal", label: "Internal" },
+          { key: "presentations", label: "Presentations" },
+          { key: "legal", label: "Legal" },
         ];
         const categoryMap: Record<string, string> = {
           "Marketing Particulars": "marketing",
           "Heads of Terms": "legal",
-          "Pitch Presentation": "proposals",
-          "Client Report": "reports",
+          "Pitch Presentation": "presentations",
+          "Client Report": "client-update",
           "Team CV": "marketing",
           "Press Release": "marketing",
-          "Tenant Handbook": "reports",
-          "Rent Review Memo": "internal",
+          "Tenant Handbook": "internal",
+          "Rent Review Memo": "lease-report",
           "Instruction Letter": "legal",
-          "Investment Memo": "reports",
-          "Leasing Strategy": "proposals",
+          "Investment Memo": "investment-memo",
+          "Leasing Strategy": "lease-report",
           "Requirement Flyer": "marketing",
           "Pitch Deck": "presentations",
           "Property Tour Deck": "presentations",
-          "Market Report Deck": "presentations",
-          "Investment Deck": "presentations",
-          "Leasing Deck": "presentations",
+          "Market Report Deck": "valuation",
+          "Investment Deck": "investment-memo",
+          "Leasing Deck": "lease-report",
           "Team Deck": "presentations",
           "Case Study Deck": "presentations",
         };
@@ -2949,6 +2951,77 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
           </div>
         );
       })()}
+
+      {/* Quick Generate buttons */}
+      {!selectedPreset && !isClientScoped && (
+        <Card className="shadow-sm border-dashed">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Zap className="w-4 h-4 text-[#2E5E3F]" />
+              Quick Generate
+            </CardTitle>
+            <CardDescription className="text-xs">One-click generation with pre-structured sections</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <button
+                className="flex flex-col items-start gap-1.5 p-3 rounded-lg border bg-white hover:bg-[#2E5E3F]/5 hover:border-[#2E5E3F]/30 transition-all text-left group disabled:opacity-50"
+                disabled={isBusy}
+                onClick={() => {
+                  setSelectedPreset("Investment Memo");
+                  setDescription("Generate a full investment memorandum with: Executive Summary, Property Description (address, tenure, size), Tenancy Schedule (tenant, demise, rent, lease expiry, break options), WAULT Analysis, Comparable Investment Transactions, Pricing Analysis (NIY, reversionary yield, capital value), Risk Factors, and Recommendation.");
+                  generateMutation.mutate({ presetLabel: "Investment Memo", presetDesc: "Investment memorandum: property summary, tenancy schedule, passing rent & WAULT, market context, comparable investment transactions, pricing analysis (NIY, reversionary yield), recommendation, and risk factors." });
+                }}
+                data-testid="quick-gen-investment-memo"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-md bg-[#2E5E3F]/10 flex items-center justify-center">
+                    <FileText className="w-3.5 h-3.5 text-[#2E5E3F]" />
+                  </div>
+                  <span className="font-medium text-sm text-[#232323]">Investment Memo</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground leading-relaxed">Pre-structured: executive summary, tenancy schedule, WAULT, comparables, pricing, recommendation</p>
+              </button>
+              <button
+                className="flex flex-col items-start gap-1.5 p-3 rounded-lg border bg-white hover:bg-[#2E5E3F]/5 hover:border-[#2E5E3F]/30 transition-all text-left group disabled:opacity-50"
+                disabled={isBusy}
+                onClick={() => {
+                  setSelectedPreset("Marketing Particulars");
+                  setDescription("Generate property particulars with: Property Address & Description, Hero Image placeholder, Accommodation Schedule (floor-by-floor NIA sq ft and sq m), Terms (rent, lease length, break options), Service Charge & Rates, Location & Transport Links, EPC Rating, Viewing Arrangements, and Agent Contact Details.");
+                  generateMutation.mutate({ presetLabel: "Marketing Particulars", presetDesc: "Property marketing details: property image, accommodation schedule (NIA sq ft/sq m by floor), rates & service charge, location description, viewing arrangements, and agent contact." });
+                }}
+                data-testid="quick-gen-property-particulars"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-md bg-[#2E5E3F]/10 flex items-center justify-center">
+                    <Image className="w-3.5 h-3.5 text-[#2E5E3F]" />
+                  </div>
+                  <span className="font-medium text-sm text-[#232323]">Property Particulars</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground leading-relaxed">Pre-structured: address, accommodation, terms, photos, transport links, EPC, viewing arrangements</p>
+              </button>
+              <button
+                className="flex flex-col items-start gap-1.5 p-3 rounded-lg border bg-white hover:bg-[#2E5E3F]/5 hover:border-[#2E5E3F]/30 transition-all text-left group disabled:opacity-50"
+                disabled={isBusy}
+                onClick={() => {
+                  setSelectedPreset("Rent Review Memo");
+                  setDescription("Generate a lease summary / rent review memo with: Property Details, Key Lease Terms (commencement, expiry, term certain), Break Dates & Conditions, Rent Review Dates & Mechanism (open market / RPI / fixed), Current Passing Rent, Estimated Rental Value (ERV), Comparable Evidence Schedule, Service Charge Position, Dilapidations Liability, and Recommendation.");
+                  generateMutation.mutate({ presetLabel: "Rent Review Memo", presetDesc: "Internal rent review memorandum: property address, current passing rent, lease term & review pattern, comparable evidence analysis, recommended ERV, negotiation strategy, timeline, and fee estimate." });
+                }}
+                data-testid="quick-gen-lease-summary"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 rounded-md bg-[#2E5E3F]/10 flex items-center justify-center">
+                    <ClipboardCheck className="w-3.5 h-3.5 text-[#2E5E3F]" />
+                  </div>
+                  <span className="font-medium text-sm text-[#232323]">Lease Summary</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground leading-relaxed">Pre-structured: key lease terms, break dates, rent reviews, comparable evidence, ERV analysis</p>
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className={selectedPreset ? "border-[#232323]/20 shadow-md" : "shadow-sm"}>
         <CardHeader className="pb-2">
@@ -3250,6 +3323,7 @@ function DesignPreview({ design, scale = 0.35, allPages = false }: { design: str
 function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void }) {
   const { toast } = useToast();
   const [previewRun, setPreviewRun] = useState<string | null>(null);
+  const [filterCategory, setFilterCategory] = useState<string>("all");
 
   const { data: runs, isLoading } = useQuery<DocumentRun[]>({
     queryKey: ["/api/doc-runs"],
@@ -3269,6 +3343,54 @@ function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void
     navigator.clipboard.writeText(text);
     toast({ title: "Copied to clipboard" });
   };
+
+  // Category tag mapping for document_type
+  const docTypeCategories: Record<string, string> = {
+    "Investment Memo": "Investment Memo",
+    "Investment Memorandum": "Investment Memo",
+    "Investment Deck": "Investment Memo",
+    "Rent Review Memo": "Lease Report",
+    "Leasing Strategy": "Lease Report",
+    "Leasing Deck": "Lease Report",
+    "Lease Summary": "Lease Report",
+    "Market Report Deck": "Valuation",
+    "Client Report": "Client Update",
+    "Client Advisory": "Client Update",
+    "Marketing Particulars": "Marketing",
+    "Requirement Flyer": "Marketing",
+    "Press Release": "Marketing",
+    "Team CV": "Marketing",
+    "Tenant Handbook": "Internal",
+    "Pitch Presentation": "Marketing",
+    "Pitch Deck": "Marketing",
+    "Heads of Terms": "Lease Report",
+    "Instruction Letter": "Lease Report",
+    "Property Tour Deck": "Marketing",
+    "Team Deck": "Marketing",
+    "Case Study Deck": "Marketing",
+  };
+
+  const libCategories = [
+    { key: "all", label: "All" },
+    { key: "Investment Memo", label: "Investment Memo" },
+    { key: "Lease Report", label: "Lease Report" },
+    { key: "Valuation", label: "Valuation" },
+    { key: "Client Update", label: "Client Update" },
+    { key: "Marketing", label: "Marketing" },
+    { key: "Internal", label: "Internal" },
+  ];
+
+  const getRunCategory = (run: DocumentRun): string => {
+    if (run.document_type) {
+      return docTypeCategories[run.document_type] || "Internal";
+    }
+    return "Internal";
+  };
+
+  const filteredRuns = runs?.filter(r => {
+    if (filterCategory === "all") return true;
+    return getRunCategory(r) === filterCategory;
+  });
 
   if (isLoading) {
     return (
@@ -3352,10 +3474,26 @@ function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{runs.length} document{runs.length !== 1 ? "s" : ""}</p>
+        <p className="text-sm text-muted-foreground">
+          {filterCategory === "all"
+            ? `${runs.length} document${runs.length !== 1 ? "s" : ""}`
+            : `${filteredRuns?.length || 0} of ${runs.length} documents`}
+        </p>
+        <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
+          {libCategories.map(cat => (
+            <button
+              key={cat.key}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${filterCategory === cat.key ? "bg-white shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              onClick={() => setFilterCategory(cat.key)}
+              data-testid={`lib-filter-${cat.key}`}
+            >
+              {cat.label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-        {runs.map((run) => (
+        {(filteredRuns || []).map((run) => (
           <Card
             key={run.id}
             className="overflow-hidden cursor-pointer hover:shadow-md transition-all hover:border-primary/30 group"
@@ -3378,13 +3516,14 @@ function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void
             </div>
             <div className="p-3 border-t">
               <h4 className="text-xs font-medium truncate" data-testid={`text-doc-run-name-${run.id}`}>{run.name}</h4>
-              <div className="flex items-center gap-1.5 mt-1">
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                 <p className="text-[10px] text-muted-foreground truncate">
                   {run.created_at ? new Date(run.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—"}
                 </p>
                 {run.document_type && (
                   <Badge variant="secondary" className="text-[8px] h-3.5 px-1">{run.document_type}</Badge>
                 )}
+                <Badge variant="outline" className="text-[8px] h-3.5 px-1 border-[#2E5E3F]/30 text-[#2E5E3F]">{getRunCategory(run)}</Badge>
                 {run.design && (
                   <Badge variant="outline" className="text-[8px] h-3.5 px-1 border-blue-200 text-blue-600">Designed</Badge>
                 )}

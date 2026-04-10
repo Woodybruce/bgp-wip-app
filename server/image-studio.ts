@@ -2,8 +2,8 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { db } from "./db";
-import { imageStudioImages } from "@shared/schema";
-import { eq, desc, ilike, or, sql, inArray } from "drizzle-orm";
+import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages } from "@shared/schema";
+import { eq, desc, ilike, or, sql, inArray, count } from "drizzle-orm";
 import multer from "multer";
 import sharp from "sharp";
 import path from "path";
@@ -62,6 +62,28 @@ async function ensureTable() {
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_deleted_sp_drive_item
     ON deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id)
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS image_studio_collections (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      name TEXT NOT NULL,
+      description TEXT,
+      cover_image_id VARCHAR,
+      created_by VARCHAR,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS image_studio_collection_images (
+      id SERIAL PRIMARY KEY,
+      collection_id VARCHAR NOT NULL,
+      image_id VARCHAR NOT NULL,
+      added_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_collection_image_unique
+    ON image_studio_collection_images (collection_id, image_id)
   `);
 }
 
@@ -815,6 +837,152 @@ export function registerImageStudioRoutes(app: Express) {
     if (imageSyncRunning) return res.json({ message: "Sync already in progress" });
     res.json({ message: "Sync started" });
     runImageSync().catch(e => console.error("[image-sync] Manual sync error:", e.message));
+  });
+
+  // Bulk tag endpoint
+  app.post("/api/image-studio/bulk-tag", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { ids, tags } = req.body;
+      if (!Array.isArray(ids) || !ids.length || !Array.isArray(tags) || !tags.length) {
+        return res.status(400).json({ error: "ids (array) and tags (array) required" });
+      }
+      const cleanTags = tags.map((t: string) => t.trim()).filter(Boolean);
+      // Append tags to existing tags (unique)
+      const placeholders = ids.map((_: string, i: number) => `$${i + 1}`).join(", ");
+      const tagArray = `ARRAY[${cleanTags.map((_: string, i: number) => `$${ids.length + i + 1}`).join(", ")}]::TEXT[]`;
+      await pool.query(
+        `UPDATE image_studio_images
+         SET tags = (
+           SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(tags, '{}'::TEXT[]) || ${tagArray}))
+         )
+         WHERE id IN (${placeholders})`,
+        [...ids, ...cleanTags]
+      );
+      res.json({ success: true, updated: ids.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Bulk assign property endpoint
+  app.post("/api/image-studio/bulk-assign-property", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { ids, propertyId, address } = req.body;
+      if (!Array.isArray(ids) || !ids.length || !propertyId) {
+        return res.status(400).json({ error: "ids (array) and propertyId required" });
+      }
+      const updates: Record<string, any> = { propertyId };
+      if (address) updates.address = address;
+      await db.update(imageStudioImages)
+        .set(updates)
+        .where(inArray(imageStudioImages.id, ids));
+      res.json({ success: true, updated: ids.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Collections CRUD
+  app.post("/api/image-studio/collections", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { name, description } = req.body;
+      if (!name?.trim()) return res.status(400).json({ error: "Collection name required" });
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const [collection] = await db.insert(imageStudioCollections).values({
+        name: name.trim(),
+        description: description?.trim() || null,
+        createdBy: userId,
+      }).returning();
+      res.json(collection);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/image-studio/collections", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const result = await pool.query(`
+        SELECT c.*,
+          (SELECT COUNT(*)::int FROM image_studio_collection_images ci WHERE ci.collection_id = c.id) as image_count,
+          (SELECT i.thumbnail_data FROM image_studio_collection_images ci
+           JOIN image_studio_images i ON i.id = ci.image_id
+           WHERE ci.collection_id = c.id
+           ORDER BY ci.added_at DESC LIMIT 1) as cover_thumbnail
+        FROM image_studio_collections c
+        ORDER BY c.created_at DESC
+      `);
+      res.json(result.rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/image-studio/collections/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const collectionId = req.params.id as string;
+      const [collection] = await db.select().from(imageStudioCollections).where(eq(imageStudioCollections.id, collectionId));
+      if (!collection) return res.status(404).json({ error: "Collection not found" });
+
+      const result = await pool.query(`
+        SELECT i.* FROM image_studio_images i
+        JOIN image_studio_collection_images ci ON ci.image_id = i.id
+        WHERE ci.collection_id = $1
+        ORDER BY ci.added_at DESC
+      `, [collectionId]);
+
+      res.json({ ...collection, images: result.rows });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/image-studio/collections/:id/images", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const collectionId = req.params.id as string;
+      const { imageIds } = req.body;
+      if (!Array.isArray(imageIds) || !imageIds.length) {
+        return res.status(400).json({ error: "imageIds (array) required" });
+      }
+      const [collection] = await db.select().from(imageStudioCollections).where(eq(imageStudioCollections.id, collectionId));
+      if (!collection) return res.status(404).json({ error: "Collection not found" });
+
+      let added = 0;
+      for (const imageId of imageIds) {
+        try {
+          await pool.query(
+            `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT (collection_id, image_id) DO NOTHING`,
+            [collectionId, imageId]
+          );
+          added++;
+        } catch {}
+      }
+      res.json({ success: true, added });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/image-studio/collections/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const collectionId = req.params.id as string;
+      await pool.query("DELETE FROM image_studio_collection_images WHERE collection_id = $1", [collectionId]);
+      await db.delete(imageStudioCollections).where(eq(imageStudioCollections.id, collectionId));
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/image-studio/collections/:id/images/:imageId", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      await pool.query(
+        "DELETE FROM image_studio_collection_images WHERE collection_id = $1 AND image_id = $2",
+        [req.params.id, req.params.imageId]
+      );
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   console.log("[image-studio] Image Studio routes registered");

@@ -4,8 +4,34 @@ import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db";
 import { landRegistrySearches } from "@shared/schema";
 import { desc, eq, sql } from "drizzle-orm";
+import pLimit from "p-limit";
 
 const LR_BASE = "https://landregistry.data.gov.uk/data";
+
+// In-memory cache for ownership intelligence results (24-hour TTL)
+const ownershipCache = new Map<string, { data: any; expiresAt: number }>();
+const OWNERSHIP_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+function getCachedOwnership(key: string): any | null {
+  const entry = ownershipCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    ownershipCache.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function setCachedOwnership(key: string, data: any): void {
+  ownershipCache.set(key, { data, expiresAt: Date.now() + OWNERSHIP_CACHE_TTL });
+  // Evict old entries periodically (keep cache under 500 entries)
+  if (ownershipCache.size > 500) {
+    const now = Date.now();
+    for (const [k, v] of ownershipCache) {
+      if (now > v.expiresAt) ownershipCache.delete(k);
+    }
+  }
+}
 
 function extractLabel(obj: any): string {
   if (!obj) return "";
@@ -22,8 +48,11 @@ function extractLabel(obj: any): string {
 }
 
 export function registerLandRegistryRoutes(app: Express) {
-  // Bootstrap: ensure crm_property_id column exists
+  // Bootstrap: ensure columns exist
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS crm_property_id varchar`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS notes text`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS tags jsonb DEFAULT '[]'`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS status varchar DEFAULT 'New'`).catch(() => {});
 
   app.get("/api/land-registry/price-paid", requireAuth, async (req, res) => {
     try {
@@ -834,6 +863,168 @@ Respond with ONLY a JSON object (no markdown, no backticks):
       res.json(rows);
     } catch (e: any) {
       console.error("[land-registry-property-searches] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // PATCH /api/land-registry/searches/:id — Update notes, tags, or status on a saved search
+  app.patch("/api/land-registry/searches/:id", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const searchId = parseInt(req.params.id);
+      if (isNaN(searchId)) return res.status(400).json({ error: "Invalid search id" });
+
+      const { notes, tags, status } = req.body;
+      const validStatuses = ["New", "Investigating", "Contacted Owner", "No Interest", "Acquired"];
+      if (status && !validStatuses.includes(status)) {
+        return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` });
+      }
+
+      const updates: Record<string, any> = {};
+      if (notes !== undefined) updates.notes = notes;
+      if (tags !== undefined) updates.tags = Array.isArray(tags) ? tags : [];
+      if (status !== undefined) updates.status = status;
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: "No fields to update" });
+      }
+
+      const result = await db.execute(sql`
+        UPDATE land_registry_searches
+        SET ${sql.join(
+          Object.entries(updates).map(([key, value]) => {
+            const col = key === "notes" ? sql`notes` : key === "tags" ? sql`tags` : sql`status`;
+            return sql`${col} = ${key === "tags" ? sql`${JSON.stringify(value)}::jsonb` : sql`${value}`}`;
+          }),
+          sql`, `
+        )}
+        WHERE id = ${searchId} AND user_id = ${userId}
+        RETURNING *
+      `);
+
+      const rows = result.rows || result;
+      const updated = Array.isArray(rows) ? rows[0] : null;
+      if (!updated) return res.status(404).json({ error: "Search not found" });
+      res.json(updated);
+    } catch (e: any) {
+      console.error("[land-registry-search-update] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET /api/land-registry/searches/recent — Return the 20 most recent searches with linked CRM property info
+  app.get("/api/land-registry/searches/recent", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const rows = await db.execute(sql`
+        SELECT
+          lrs.*,
+          CASE WHEN lrs.crm_property_id IS NOT NULL THEN (
+            SELECT json_build_object(
+              'id', p.id,
+              'name', p.name,
+              'address', p.address,
+              'postcode', p.postcode
+            )
+            FROM crm_properties p
+            WHERE p.id = lrs.crm_property_id
+            LIMIT 1
+          ) ELSE NULL END AS linked_property
+        FROM land_registry_searches lrs
+        WHERE lrs.user_id = ${userId}
+        ORDER BY lrs.created_at DESC
+        LIMIT 20
+      `);
+
+      res.json(rows.rows || rows);
+    } catch (e: any) {
+      console.error("[land-registry-searches-recent] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/ownership-intelligence/bulk — Bulk ownership intelligence for multiple addresses
+  app.post("/api/ownership-intelligence/bulk", requireAuth, async (req: any, res) => {
+    try {
+      const { addresses } = req.body;
+      if (!Array.isArray(addresses) || addresses.length === 0) {
+        return res.status(400).json({ error: "addresses array required" });
+      }
+      if (addresses.length > 20) {
+        return res.status(400).json({ error: "Maximum 20 addresses per bulk request" });
+      }
+
+      const limit = pLimit(2);
+      const results: any[] = [];
+
+      const tasks = addresses.map((addr: { address: string; postcode: string }) =>
+        limit(async () => {
+          const cacheKey = `ownership:${(addr.postcode || addr.address || "").toLowerCase().trim()}`;
+          const cached = getCachedOwnership(cacheKey);
+          if (cached) {
+            return { ...cached, fromCache: true };
+          }
+
+          try {
+            // Fetch freeholds for the postcode
+            const PD_KEY = process.env.PROPERTYDATA_API_KEY;
+            if (!PD_KEY || !addr.postcode) {
+              return { address: addr.address, postcode: addr.postcode, error: "Missing API key or postcode", titles: [] };
+            }
+
+            const cleanPc = addr.postcode.replace(/\s+/g, "");
+            const fhResp = await fetch(`https://api.propertydata.co.uk/freeholds?key=${PD_KEY}&postcode=${cleanPc}`, { signal: AbortSignal.timeout(15000) });
+            if (!fhResp.ok) {
+              return { address: addr.address, postcode: addr.postcode, error: `PropertyData API error ${fhResp.status}`, titles: [] };
+            }
+            const fhData = await fhResp.json();
+            const titles = fhData.status === "success" ? (fhData.data || []) : [];
+
+            // Call ownership-intelligence endpoint internally
+            const companyTitles = titles.filter((t: any) => t.company_reg).slice(0, 4);
+            let ownerName = null;
+            if (companyTitles.length > 0) {
+              ownerName = companyTitles[0].proprietor_name_1 || null;
+            } else if (titles.length > 0) {
+              ownerName = titles[0].proprietor_name_1 || null;
+            }
+
+            const result = {
+              address: addr.address,
+              postcode: addr.postcode,
+              freeholdsCount: titles.length,
+              ownerName,
+              titles: titles.slice(0, 5).map((t: any) => ({
+                titleNumber: t.title_number,
+                owner: t.proprietor_name_1,
+                ownerType: t.proprietor_category,
+                companyReg: t.company_reg,
+              })),
+            };
+
+            setCachedOwnership(cacheKey, result);
+            return result;
+          } catch (err: any) {
+            return { address: addr.address, postcode: addr.postcode, error: err.message, titles: [] };
+          }
+        })
+      );
+
+      const taskResults = await Promise.allSettled(tasks);
+      for (const r of taskResults) {
+        if (r.status === "fulfilled") {
+          results.push(r.value);
+        } else {
+          results.push({ error: r.reason?.message || "Unknown error" });
+        }
+      }
+
+      res.json({ results, count: results.length });
+    } catch (e: any) {
+      console.error("[ownership-intelligence-bulk] Error:", e);
       res.status(500).json({ error: e.message });
     }
   });

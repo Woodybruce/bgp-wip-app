@@ -10,6 +10,7 @@ import {
   BarChart3,
   Newspaper,
   Users,
+  X,
 
   FileText,
   Settings,
@@ -335,5 +336,95 @@ export function AppSidebar() {
         </div>
       </SidebarFooter>
     </Sidebar>
+  );
+}
+
+/**
+ * Mobile sidebar overlay — slides in from the left when "More" is tapped
+ * in the bottom nav bar. Shows all navigation items not present in the
+ * bottom nav (Home, ChatBGP, Properties, Deals are in the bottom nav).
+ */
+const mobileOverlayItems = [
+  { title: "My Tasks", url: "/tasks", icon: ListTodo },
+  { title: "Requirements", url: "/requirements", icon: FileText },
+  { title: "People Hub", url: "/contacts", icon: Users },
+  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
+  { title: "Comps", url: "/comps", icon: Scale },
+  { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
+  { title: "Document Studio", url: "/templates", icon: FileTextIcon },
+  { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
+  { title: "SharePoint", url: "/sharepoint", icon: Cloud },
+  { title: "Calendar", url: "/calendar", icon: Calendar },
+  { title: "Mail", url: "/mail", icon: Mail },
+  { title: "Board Report", url: "/board-report", icon: Presentation },
+  { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
+  { title: "News", url: "/news", icon: Newspaper },
+  { title: "Leads", url: "/leads", icon: UserPlus },
+  { title: "KYC Clouseau", url: "/kyc-clouseau", icon: Scale },
+  { title: "Land Registry", url: "/land-registry", icon: Landmark },
+  { title: "Business Rates", url: "/business-rates", icon: Receipt },
+  { title: "Turnover Data", url: "/turnover", icon: BarChart3 },
+  { title: "Settings", url: "/settings", icon: Settings },
+];
+
+export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [location] = useLocation();
+
+  const isActive = (url: string) => {
+    if (url === "/") return location === "/";
+    return location.startsWith(url);
+  };
+
+  return (
+    <>
+      {/* Backdrop */}
+      {open && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/50 transition-opacity"
+          onClick={onClose}
+          data-testid="mobile-sidebar-backdrop"
+        />
+      )}
+      {/* Sidebar panel */}
+      <div
+        className={`fixed inset-y-0 left-0 z-[70] w-[280px] bg-background border-r shadow-xl flex flex-col transition-transform duration-300 ease-out ${
+          open ? "translate-x-0" : "-translate-x-full"
+        }`}
+        style={{ paddingTop: "env(safe-area-inset-top)" }}
+        data-testid="mobile-sidebar-overlay"
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b shrink-0">
+          <span className="text-sm font-bold">Menu</span>
+          <button
+            onClick={onClose}
+            className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"
+            data-testid="button-close-mobile-sidebar"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto py-2">
+          {mobileOverlayItems.map((item) => {
+            const Icon = item.icon;
+            const active = isActive(item.url);
+            return (
+              <Link key={item.url} href={item.url} onClick={onClose}>
+                <div
+                  className={`flex items-center gap-3 px-4 py-3 mx-2 rounded-lg text-sm font-medium transition-colors min-h-[44px] ${
+                    active
+                      ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"
+                      : "text-foreground hover:bg-muted"
+                  }`}
+                  data-testid={`mobile-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+                >
+                  <Icon className={`w-5 h-5 shrink-0 ${active ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
+                  <span>{item.title}</span>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+    </>
   );
 }

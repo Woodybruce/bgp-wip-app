@@ -4161,6 +4161,100 @@ ${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuc
     }
   });
 
+  // === Landsec Portfolio Analytics ===
+  app.get("/api/portfolio/landsec/analytics", requireAuth, async (_req, res) => {
+    try {
+      // All deals where groupName contains "Landsec" (case-insensitive)
+      const dealsResult = await pool.query(
+        `SELECT id, name, group_name, deal_type, status, fee, internal_agent, created_at, updated_at
+         FROM crm_deals
+         WHERE group_name ILIKE '%Landsec%'
+         ORDER BY COALESCE(updated_at, created_at) DESC`
+      );
+      const allDeals = dealsResult.rows;
+
+      const totalDeals = allDeals.length;
+
+      // Pipeline statuses (not completed/invoiced/dead)
+      const INVOICED_STATUSES = ["Invoiced"];
+      const DEAD_STATUSES = ["Dead"];
+      const PIPELINE_STAGE_ORDER = ["Targeting", "Available", "Marketing", "NEG", "HOTs", "SOLs", "Exchanged", "Completed", "Live", "Invoiced"];
+
+      let totalWIP = 0;
+      let totalInvoiced = 0;
+      let pipelineValue = 0;
+      const byDealType: Record<string, { count: number; fees: number }> = {};
+      const byStatus: Record<string, number> = {};
+      const byAgent: Record<string, { count: number; fees: number }> = {};
+
+      for (const deal of allDeals) {
+        const fee = parseFloat(deal.fee) || 0;
+        const status = (deal.status || "").trim();
+        const dealType = deal.deal_type || "Other";
+
+        // WIP vs Invoiced
+        if (INVOICED_STATUSES.includes(status)) {
+          totalInvoiced += fee;
+        } else if (!DEAD_STATUSES.includes(status)) {
+          totalWIP += fee;
+        }
+
+        // Pipeline value: statuses before Completed/Invoiced
+        const isPreCompletion = !["Completed", "Invoiced", "Dead", "Leasing Comps", "Investment Comps"].includes(status);
+        if (isPreCompletion) {
+          pipelineValue += fee;
+        }
+
+        // By deal type
+        if (!byDealType[dealType]) byDealType[dealType] = { count: 0, fees: 0 };
+        byDealType[dealType].count += 1;
+        byDealType[dealType].fees += fee;
+
+        // By status
+        byStatus[status || "Unknown"] = (byStatus[status || "Unknown"] || 0) + 1;
+
+        // By agent (internal_agent is an array in the DB)
+        const agents: string[] = Array.isArray(deal.internal_agent) ? deal.internal_agent : deal.internal_agent ? [deal.internal_agent] : [];
+        for (const agent of agents) {
+          const name = agent.trim();
+          if (!name) continue;
+          if (!byAgent[name]) byAgent[name] = { count: 0, fees: 0 };
+          byAgent[name].count += 1;
+          byAgent[name].fees += fee;
+        }
+      }
+
+      // Recent activity: last 10 deals updated/created
+      const recentActivity = allDeals.slice(0, 10).map(d => ({
+        id: d.id,
+        name: d.name,
+        dealType: d.deal_type,
+        status: d.status,
+        fee: parseFloat(d.fee) || 0,
+        agent: Array.isArray(d.internal_agent) ? d.internal_agent.join(", ") : d.internal_agent || "",
+        updatedAt: d.updated_at || d.created_at,
+      }));
+
+      const totalFees = allDeals.reduce((s, d) => s + (parseFloat(d.fee) || 0), 0);
+      const averageDealSize = totalDeals > 0 ? totalFees / totalDeals : 0;
+
+      res.json({
+        totalDeals,
+        totalWIP,
+        totalInvoiced,
+        byDealType,
+        byStatus,
+        byAgent,
+        recentActivity,
+        pipelineValue,
+        averageDealSize,
+      });
+    } catch (err: any) {
+      console.error("[landsec-analytics] Error:", err?.message);
+      res.status(500).json({ message: "Failed to fetch Landsec analytics" });
+    }
+  });
+
   return httpServer;
 }
 

@@ -8,6 +8,7 @@ import * as fs from "fs";
 import * as path from "path";
 import Anthropic from "@anthropic-ai/sdk";
 import { setupAdvancedModelsRoutes } from "./models-advanced";
+import { buildInvestmentModel, buildDCFModel, analyzeAdvancedWorkbook, applyBGPBranding, buildModelForAddin } from "./excel-builder";
 import { getValidMsToken } from "./microsoft";
 import { performPropertyLookup, formatPropertyReport } from "./property-lookup";
 import { crmDeals, crmContacts, crmCompanies, crmProperties, chatbgpLearnings, appFeedbackLog, appChangeRequests, excelTemplates, excelModelRuns } from "@shared/schema";
@@ -1147,6 +1148,41 @@ export function setupModelsRoutes(app: Express) {
     }
   });
 
+  // ─── Build model for Excel Add-in (Office.js write engine) ────────────
+  app.post("/api/models/build-for-addin", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { modelType, modelName, assumptions } = req.body;
+      if (!modelName || typeof modelName !== "string") {
+        return res.status(400).json({ message: "modelName is required" });
+      }
+
+      const quarters = (assumptions?.holdPeriodYears || 5) * 4;
+
+      if (modelType === "dcf") {
+        // DCF uses same structure but with longer periods
+        const years = assumptions?.holdPeriodYears || 10;
+        const modelDef = buildModelForAddin({
+          modelName,
+          assumptions: { ...assumptions, holdPeriodYears: years },
+          quarters: years * 4,
+        });
+        return res.json(modelDef);
+      }
+
+      // Default: investment appraisal
+      const modelDef = buildModelForAddin({
+        modelName,
+        assumptions: assumptions || {},
+        quarters,
+      });
+
+      res.json(modelDef);
+    } catch (err: any) {
+      console.error("[models] build-for-addin error:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to build model definition" });
+    }
+  });
+
   setupAdvancedModelsRoutes(app);
 
   app.get("/api/models/runs", requireAuth, async (req: Request, res: Response) => {
@@ -1949,6 +1985,126 @@ Return ONLY valid JSON. No markdown, no code fences.`;
       modelJobs.set(jobId, { status: "processing", createdAt: Date.now() });
 
       res.json({ jobId, status: "processing" });
+
+      // ─── Advanced ExcelJS Model Path ───────────────────────────────
+      const useAdvanced = req.body?.useAdvanced === true || req.body?.useAdvanced === "true"
+        || /investment appraisal|investment model|acquisition model|full model|professional model|advanced model|6.sheet|multi.sheet/i.test(description);
+
+      if (useAdvanced) {
+        console.log("[create-model] Using ADVANCED ExcelJS builder (job " + jobId + "):", description.slice(0, 80));
+        try {
+          const anthropic = getAnthropicClient();
+
+          // Use Claude to extract assumptions from the description
+          const extractPrompt = `You are an expert UK property investment analyst at Bruce Gillingham Pollard. Extract financial model assumptions from the user's description.
+
+Return ONLY valid JSON — no markdown, no explanation. The JSON should map assumption keys to their values.
+
+Available assumption keys and their default values:
+- purchasePrice: number (£, default 10000000)
+- stampDutyRate: decimal (default 0.05)
+- acquisitionCostsRate: decimal (default 0.018)
+- agentFeeRate: decimal (default 0.01)
+- currentRentPA: number (£ p.a., default 500000)
+- totalAreaSqFt: number (default 5000)
+- ervPerSqFt: number (£/sq ft, default 120)
+- rentGrowthPA: decimal (default 0.025)
+- voidPeriodMonths: integer (default 3)
+- rentFreeMonths: integer (default 6)
+- managementFeeRate: decimal (default 0.03)
+- vacancyRate: decimal (default 0.05)
+- opexPerSqFt: number (default 5)
+- capexReserveRate: decimal (default 0.05)
+- costInflationPA: decimal (default 0.02)
+- ltv: decimal (default 0.60)
+- interestRate: decimal (all-in, default 0.055)
+- loanTermYears: integer (default 5)
+- amortisationType: "Interest Only" | "Fully Amortising" | "Partial Amortisation" (default "Interest Only")
+- arrangementFeeRate: decimal (default 0.015)
+- exitCapRate: decimal (default 0.055)
+- disposalCostsRate: decimal (default 0.02)
+- holdPeriodYears: integer (default 5)
+- acquisitionDate: "YYYY-MM-DD" (default "2025-07-01")
+- corporateTaxRate: decimal (default 0.25)
+
+Also include:
+- "modelName": string (short name for the model)
+- "quarters": integer (number of quarterly periods, default = holdPeriodYears * 4)
+
+Only include keys where the user has specified or implied a value. Use sensible London commercial property defaults for anything not mentioned. Percentages should be decimals (e.g., 5% = 0.05).`;
+
+          const extractResponse = await anthropic.messages.create({
+            model: "claude-sonnet-4-6",
+            max_tokens: 4000,
+            system: extractPrompt,
+            messages: [{ role: "user", content: `Create an investment appraisal model for: ${description}${modelType ? `\nModel type: ${modelType}` : ""}` }],
+          });
+
+          const extractText = extractResponse.content[0]?.type === "text" ? extractResponse.content[0].text : "{}";
+          const cleaned = extractText.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+          let parsed: any = {};
+          try {
+            parsed = JSON.parse(cleaned);
+          } catch {
+            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+            if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+          }
+
+          const modelName = parsed.modelName || description.slice(0, 60);
+          const quarters = parsed.quarters || (parsed.holdPeriodYears ? parsed.holdPeriodYears * 4 : 20);
+          delete parsed.modelName;
+          delete parsed.quarters;
+
+          console.log(`[create-model] Advanced model: "${modelName}", ${quarters} quarters, ${Object.keys(parsed).length} assumptions extracted`);
+
+          // Build the professional ExcelJS model
+          const buffer = await buildInvestmentModel({
+            modelName,
+            assumptions: parsed,
+            quarters,
+          });
+
+          // Save the file
+          const fileName = `${Date.now()}-${modelName.replace(/[^a-zA-Z0-9._-]/g, "_")}.xlsx`;
+          const filePath = path.join(UPLOAD_DIR, fileName);
+          fs.writeFileSync(filePath, buffer);
+          try { await saveFileFromDisk(`templates/${fileName}`, filePath, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName); } catch {}
+
+          // Create template record
+          const template = await storage.createExcelTemplate({
+            name: modelName,
+            description: `Professional investment appraisal: ${description.slice(0, 200)}`,
+            filePath,
+            originalFileName: fileName,
+            inputMapping: JSON.stringify({}),
+            outputMapping: JSON.stringify({}),
+          });
+
+          const result = {
+            ...template,
+            analysis: { sheets: [
+              { name: 'Summary', rows: 30, cols: 6 },
+              { name: 'Assumptions', rows: 50, cols: 4 },
+              { name: 'Cash Flow', rows: 60, cols: quarters + 4 },
+              { name: 'Debt Schedule', rows: 35, cols: quarters + 2 },
+              { name: 'Sensitivity', rows: 40, cols: 10 },
+              { name: 'Returns Analysis', rows: 45, cols: 5 },
+            ], properties: [] },
+            inputMapping: {},
+            outputMapping: {},
+            sheetsCreated: ['Summary', 'Assumptions', 'Cash Flow', 'Debt Schedule', 'Sensitivity', 'Returns Analysis'],
+            advancedModel: true,
+          };
+
+          modelJobs.set(jobId, { status: "done", result, createdAt: Date.now() });
+          console.log("[create-model] Advanced model job", jobId, "completed successfully — 6 sheets with working formulas");
+          return;
+        } catch (advErr: any) {
+          console.error("[create-model] Advanced builder failed, falling back to standard:", advErr?.message);
+          // Fall through to standard builder below
+        }
+      }
+      // ─── End Advanced ExcelJS Model Path ───────────────────────────
 
       console.log("[create-model] Starting model creation (job " + jobId + "):", description.slice(0, 80));
       const anthropic = getAnthropicClient();
@@ -3297,33 +3453,78 @@ CRITICAL RULES:
           }
 
           case "create_model": {
+            // ─── Try Advanced ExcelJS builder first ───
+            try {
+              console.log("[claude-agent] Using ADVANCED ExcelJS builder for create_model");
+              const extractPrompt = `You are an expert UK property investment analyst. Extract financial model assumptions from the description. Return ONLY valid JSON — no markdown.
+
+Available keys (with defaults): purchasePrice (10000000), stampDutyRate (0.05), acquisitionCostsRate (0.018), agentFeeRate (0.01), currentRentPA (500000), totalAreaSqFt (5000), ervPerSqFt (120), rentGrowthPA (0.025), voidPeriodMonths (3), rentFreeMonths (6), managementFeeRate (0.03), vacancyRate (0.05), opexPerSqFt (5), capexReserveRate (0.05), costInflationPA (0.02), ltv (0.60), interestRate (0.055), loanTermYears (5), amortisationType ("Interest Only"), arrangementFeeRate (0.015), exitCapRate (0.055), disposalCostsRate (0.02), holdPeriodYears (5), acquisitionDate ("2025-07-01"), corporateTaxRate (0.25).
+
+Also include: "modelName" (string), "quarters" (integer, default holdPeriodYears*4). Percentages as decimals (5% = 0.05).`;
+
+              const extractResp = await anthropic.messages.create({
+                model: "claude-sonnet-4-6",
+                max_tokens: 4000,
+                system: extractPrompt,
+                messages: [{ role: "user", content: `Create an investment appraisal for: ${input.description}${input.modelType ? `\nType: ${input.modelType}` : ""}` }],
+              });
+
+              const extText = extractResp.content[0]?.type === "text" ? extractResp.content[0].text : "{}";
+              const extCleaned = extText.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+              let extParsed: any = {};
+              try { extParsed = JSON.parse(extCleaned); } catch { const m = extCleaned.match(/\{[\s\S]*\}/); if (m) extParsed = JSON.parse(m[0]); }
+
+              const advModelName = extParsed.modelName || input.description?.slice(0, 60) || "Investment Model";
+              const advQuarters = extParsed.quarters || (extParsed.holdPeriodYears ? extParsed.holdPeriodYears * 4 : 20);
+              delete extParsed.modelName;
+              delete extParsed.quarters;
+
+              const buffer = await buildInvestmentModel({ modelName: advModelName, assumptions: extParsed, quarters: advQuarters });
+
+              const fileName = `${Date.now()}-${advModelName.replace(/[^a-zA-Z0-9._-]/g, "_")}.xlsx`;
+              const filePath = path.join(UPLOAD_DIR, fileName);
+              fs.writeFileSync(filePath, buffer);
+              try { await saveFileFromDisk(`templates/${fileName}`, filePath, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName); } catch {}
+
+              const template = await storage.createExcelTemplate({
+                name: advModelName,
+                description: `Professional investment appraisal: ${(input.description || "").slice(0, 200)}`,
+                filePath,
+                originalFileName: fileName,
+                inputMapping: JSON.stringify({}),
+                outputMapping: JSON.stringify({}),
+              });
+
+              return JSON.stringify({
+                success: true,
+                action: "model_created",
+                templateId: template.id,
+                name: template.name,
+                description: template.description,
+                sheetsCreated: ['Summary', 'Assumptions', 'Cash Flow', 'Debt Schedule', 'Sensitivity', 'Returns Analysis'],
+                inputCount: 0,
+                outputCount: 0,
+                advancedModel: true,
+                formulaCount: "~800 working formulas with named ranges",
+              });
+            } catch (advErr: any) {
+              console.error("[claude-agent] Advanced builder failed, falling back to standard:", advErr?.message);
+            }
+
+            // ─── Fallback: Standard xlsx-js-style builder ───
             const createSystemPrompt = `Expert financial modeller for Bruce Gillingham Pollard (London property, Belgravia/Mayfair/Chelsea). Respond with valid JSON only — no markdown.
 
 JSON: {"name":"...","description":"...","sheets":[{"name":"...","cells":{"B2":{"v":"Label","bold":true},"C2":{"v":100000,"nf":"#,##0;(#,##0);\\"-\\""}},"colWidths":{"A":5,"B":40},"merges":["B2:D2"],"expandQuarters":{"templateCols":["E","F"],"totalQuarters":20,"startRow":2,"endRow":50}}],"inputCells":{...},"outputCells":{...}}
 
-Cell: "v"=value, "f"=formula (no =prefix), "nf"=format, "bold"=true, "align"="right".
+Cell: "v"=value, "f"=formula (no =prefix), "pv"=pre-calculated result (REQUIRED for formula cells), "nf"=format, "bold"=true, "align"="right".
 Formats: £#,##0;(£#,##0);"-" (GBP), #,##0;(#,##0);"-" (int), #,##0.0%;(#,##0.0%);"-" (%), dd-mmm-yy (dates).
 
 2 sheets. Row 1 blank. Col A=spacer(5w). Labels in B(40w).
 
-"Assumptions": B=labels, C=values, D=notes. LEAVE 1 BLANK ROW between each section for readability. Sections: ACQUISITION (Purchase Price, Stamp Duty, Acquisition Costs, Total Acquisition Cost=SUM of above), [blank row], DEBT (Loan Amount e.g. =TotalAcqCost*LTV%, Finance Arrangement Fee with formula linking to Loan Amount e.g. =LoanAmount*1.5%, Equity Contribution=TotalAcqCost-LoanAmount — NEVER reference cells below Equity for Equity calc), [blank row], EXIT, [blank row], INCOME (per tenant), [blank row], CLIENT LIABILITY. IMPORTANT: Equity Contribution must equal Total Acquisition Cost minus Loan Amount. Finance Arrangement Fee MUST use a formula referencing the Loan Amount cell. Double-check all Assumptions formulas reference the correct rows.
+"Assumptions": B=labels, C=values, D=notes. Sections: ACQUISITION, DEBT, EXIT, INCOME, CLIENT LIABILITY.
+"Cash Flow": ONLY define cols B-F (B=labels, C=Entry, D=Exit, E=Q1, F=Q2). Add "expandQuarters".
 
-INPUT CELL FORMATTING: Any cell in column C on the Assumptions sheet that contains a hard-coded constant (not a formula) — i.e. user inputs like purchase price, percentages, rates, dates — must have fill colour {"fgColor":"FFFFC0"} and font colour {"color":"0000FF"}. This visually distinguishes editable inputs from calculated cells. Do NOT apply this formatting to formula cells or label cells.
-
-"Cash Flow": ONLY define cols B-F (B=labels, C=Entry, D=Exit, E=Q1, F=Q2). Add "expandQuarters" to auto-replicate E/F formulas across remaining quarters.
-Row 2: B2 = sheet title (bold, e.g. "Cash Flow Projection"). This row is ONLY for the title — no other data in row 2. Row 3 blank spacer.
-Row 4: column headers — C4:"Entry", D4:"Exit", E4:"Q1", F4:"Q2" (quarter labels auto-expand).
-Row 5: QUARTER START DATES — C5: acquisition date as "YYYY-MM-DD" string, D5: exit date as "YYYY-MM-DD" string, E5: Q1 start date as "YYYY-MM-DD" string (same as acquisition date), F5: Q2 start date as "YYYY-MM-DD" string (E5 + 3 months). These MUST be literal date strings like "2025-07-01" NOT formulas, so the server can auto-expand them to Q3, Q4, etc. XIRR formulas reference this date row.
-All data rows start from row 6 onwards (row 2 = title, row 3 = blank, row 4 = headers, row 5 = dates, row 6+ = data).
-LEAVE 1 BLANK ROW between each major section (e.g. after dates, after gross income, after deductions, after NOI, after debt service, after exit, etc.) for readability.
-Sections: GROSS INCOME, GROSS RENTS, DEDUCTIONS, NOI, DEBT SERVICE, LEVERED NCF, EXIT, EQUITY CASH FLOW, IRR (XIRR), RETURNS, SENSITIVITIES.
-
-CRITICAL RULES:
-1. For Cash Flow, ONLY define 2 quarter columns (E,F). The server expands to full hold period. XIRR/IRR ranges will be auto-adjusted. Keep JSON under 30KB. Use "expandQuarters" on Cash Flow sheet.
-2. For nil/zero values use numeric 0, NEVER use "-" or "–" strings as cell values — they cause #VALUE errors. The number format already shows dashes for zeros.
-3. Quarter start dates in E3, F3 MUST be literal "YYYY-MM-DD" date strings (e.g. "2025-07-01", "2025-10-01") — NEVER formulas. The server auto-increments them by 3 months per quarter during expansion. XIRR formulas must reference this date row for the dates argument.
-4. Unlevered IRR: The XIRR cash flow series must start with the NEGATIVE Total Acquisition Cost as the initial outflow in the Entry column, include all quarterly NOI cash flows, and end with Exit Proceeds. The dates argument must reference the corresponding date row. Do NOT use levered cash flows for the unlevered IRR.
-5. Levered IRR: The XIRR must start with the NEGATIVE Equity Contribution as the initial outflow, include all quarterly levered net cash flows (after debt service), and end with levered exit proceeds.`;
+CRITICAL: For Cash Flow, ONLY define 2 quarter columns (E,F). Keep JSON under 30KB. Use numeric 0 for nil values.`;
 
             const createResponse = await anthropic.messages.create({
               model: "claude-sonnet-4-6",

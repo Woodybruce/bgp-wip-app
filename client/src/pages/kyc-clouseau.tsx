@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Search,
   Shield,
@@ -33,7 +35,10 @@ import {
   Clock,
   Home,
   UserSearch,
+  ListChecks,
+  CalendarClock,
 } from "lucide-react";
+import { PageLayout } from "@/components/page-layout";
 
 interface InvestigationResult {
   subject: { name: string; companyNumber?: string; type: string };
@@ -187,6 +192,7 @@ function InvestigationHistory({ companyNumber }: { companyNumber: string }) {
                   {new Date(inv.conducted_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
                 </div>
                 <RiskBadge level={inv.risk_level} score={inv.risk_score} />
+                <DaysSinceBadge dateStr={inv.conducted_at} />
                 {inv.sanctions_match && (
                   <Badge variant="destructive" className="text-xs">Sanctions</Badge>
                 )}
@@ -271,6 +277,218 @@ function PropertiesOwnedSection({ propertiesOwned }: { propertiesOwned: any }) {
               ))}
             </tbody>
           </table>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function daysSince(dateStr: string): number {
+  const then = new Date(dateStr);
+  const now = new Date();
+  return Math.floor((now.getTime() - then.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function DaysSinceBadge({ dateStr }: { dateStr: string }) {
+  const days = daysSince(dateStr);
+  let color = "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400";
+  if (days > 365) color = "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400";
+  else if (days > 180) color = "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400";
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${color}`}>
+      <CalendarClock className="h-3 w-3" />
+      {days}d ago
+    </span>
+  );
+}
+
+interface BulkScreenResult {
+  name?: string;
+  companyNumber?: string;
+  riskLevel?: string | null;
+  riskScore?: number;
+  flags?: string[];
+  sanctionsMatch?: boolean;
+  error?: string;
+}
+
+function BulkScreenDialog() {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [companyNamesText, setCompanyNamesText] = useState("");
+  const [results, setResults] = useState<BulkScreenResult[]>([]);
+
+  const bulkMutation = useMutation({
+    mutationFn: async (companyNames: string[]) => {
+      const res = await apiRequest("POST", "/api/kyc-clouseau/bulk-screen", { companyNames });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setResults(data.results || []);
+      toast({ title: "Bulk Screen Complete", description: `${data.results?.length || 0} companies processed` });
+    },
+    onError: (err) => {
+      toast({ title: "Bulk Screen Failed", description: err instanceof Error ? err.message : "Unknown error", variant: "destructive" });
+    },
+  });
+
+  const handleRun = () => {
+    const names = companyNamesText
+      .split("\n")
+      .map((n) => n.trim())
+      .filter(Boolean);
+    if (names.length === 0) {
+      toast({ title: "No companies", description: "Paste at least one company name", variant: "destructive" });
+      return;
+    }
+    if (names.length > 20) {
+      toast({ title: "Too many companies", description: "Maximum 20 companies per bulk screen", variant: "destructive" });
+      return;
+    }
+    setResults([]);
+    bulkMutation.mutate(names);
+  };
+
+  const riskColors: Record<string, string> = {
+    low: "text-emerald-700 bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400",
+    medium: "text-amber-700 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400",
+    high: "text-orange-700 bg-orange-100 dark:bg-orange-900/30 dark:text-orange-400",
+    critical: "text-red-700 bg-red-100 dark:bg-red-900/30 dark:text-red-400",
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          <ListChecks className="h-4 w-4 mr-1.5" />
+          Bulk Screen
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ListChecks className="h-5 w-5" />
+            Bulk KYC Screening
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-medium mb-1 block">Company names (one per line)</label>
+            <Textarea
+              rows={6}
+              placeholder={"Acme Holdings Ltd\nFoo Property Investments\nBar Capital Partners"}
+              value={companyNamesText}
+              onChange={(e) => setCompanyNamesText(e.target.value)}
+              disabled={bulkMutation.isPending}
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Each company will be looked up on Companies House and screened against sanctions lists. Max 20 per run.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button onClick={handleRun} disabled={bulkMutation.isPending || !companyNamesText.trim()}>
+              {bulkMutation.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Screening {companyNamesText.split("\n").filter(Boolean).length} companies...
+                </>
+              ) : (
+                <>
+                  <Shield className="h-4 w-4 mr-2" />
+                  Run Bulk Screen
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+          {results.length > 0 && (
+            <div className="space-y-2 pt-2 border-t">
+              <h4 className="text-sm font-semibold">Results ({results.length})</h4>
+              {results.map((r, i) => (
+                <div key={i} className="flex items-center justify-between p-3 rounded-lg border text-sm">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium truncate">{r.name || "Unknown"}</p>
+                    {r.companyNumber && <p className="text-xs text-muted-foreground">{r.companyNumber}</p>}
+                    {r.error && <p className="text-xs text-destructive">{r.error}</p>}
+                    {r.flags && r.flags.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-0.5">{r.flags.length} flag(s)</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                    {r.sanctionsMatch && (
+                      <Badge variant="destructive" className="text-xs">Sanctions</Badge>
+                    )}
+                    {r.riskLevel ? (
+                      <Badge className={`text-xs ${riskColors[r.riskLevel] || ""}`}>
+                        {r.riskLevel} {r.riskScore !== undefined ? `(${r.riskScore})` : ""}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs text-muted-foreground">N/A</Badge>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ExpiringSection() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["kyc-expiring"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/kyc-clouseau/expiring");
+      return res.json();
+    },
+  });
+
+  const count = data?.count || 0;
+  const investigations = data?.investigations || [];
+
+  if (isLoading) return null;
+
+  if (count === 0) return null;
+
+  return (
+    <Card className="border-amber-200 dark:border-amber-800">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <CalendarClock className="h-4 w-4 text-amber-500" />
+          Expiring Investigations
+          <Badge variant="outline" className="text-amber-600 border-amber-300 dark:text-amber-400 dark:border-amber-700 ml-1">
+            {count}
+          </Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <p className="text-xs text-muted-foreground mb-3">
+          These investigations are older than 12 months and should be re-screened.
+        </p>
+        <div className="space-y-2 max-h-60 overflow-auto">
+          {investigations.slice(0, 15).map((inv: any) => (
+            <div key={inv.id} className="flex items-center gap-3 text-sm py-1.5 border-b last:border-0">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium truncate">{inv.subjectName}</p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  {inv.companyNumber && (
+                    <span className="text-xs text-muted-foreground">{inv.companyNumber}</span>
+                  )}
+                  <DaysSinceBadge dateStr={inv.conductedAt} />
+                  {inv.deal && (
+                    <span className="text-xs text-muted-foreground">Deal: {inv.deal.name}</span>
+                  )}
+                </div>
+              </div>
+              <RiskBadge level={inv.riskLevel} score={inv.riskScore} />
+            </div>
+          ))}
+          {count > 15 && (
+            <p className="text-xs text-muted-foreground text-center pt-1">
+              + {count - 15} more
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -427,18 +645,12 @@ export default function KycClouseau() {
   const isInvestigating = investigateMutation.isPending || individualMutation.isPending;
 
   return (
-    <div className="h-full flex flex-col">
-      <div className="border-b px-6 py-4 flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Scale className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold" data-testid="text-page-title">KYC Clouseau</h1>
-            <p className="text-sm text-muted-foreground">AI-Powered KYC & AML Investigation Tool</p>
-          </div>
-        </div>
-      </div>
+    <PageLayout
+      title="KYC Clouseau"
+      subtitle="AI-Powered KYC & AML Investigation Tool"
+      actions={<BulkScreenDialog />}
+      fullHeight
+    >
 
       {propertyContext && (
         <div className="border-b bg-amber-50 dark:bg-amber-950/30 px-6 py-3 flex-shrink-0">
@@ -810,6 +1022,9 @@ export default function KycClouseau() {
                     {investigation.companyProfile?.type && (
                       <span className="text-xs text-muted-foreground">{investigation.companyProfile.type}</span>
                     )}
+                    {investigation.timestamp && (
+                      <DaysSinceBadge dateStr={investigation.timestamp} />
+                    )}
                   </div>
                 </div>
                 <RiskBadge level={investigation.riskLevel} score={investigation.riskScore} />
@@ -1136,21 +1351,24 @@ export default function KycClouseau() {
           )}
 
           {!investigation && !individualResult && !isInvestigating && !investigateMutation.isError && !individualMutation.isError && (
-            <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
-              <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
-                <Scale className="h-8 w-8 text-primary" />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold">KYC Clouseau</h3>
-                <p className="text-sm text-muted-foreground mt-1 max-w-md">
-                  Your AI-powered KYC investigation tool. Search for any company or individual to get a comprehensive compliance analysis
-                  including ownership chains, sanctions screening, officer networks, and AI risk assessment.
-                </p>
+            <div className="p-6 space-y-6">
+              <ExpiringSection />
+              <div className="flex flex-col items-center justify-center gap-4 text-center py-12">
+                <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Scale className="h-8 w-8 text-primary" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold">KYC Clouseau</h3>
+                  <p className="text-sm text-muted-foreground mt-1 max-w-md">
+                    Your AI-powered KYC investigation tool. Search for any company or individual to get a comprehensive compliance analysis
+                    including ownership chains, sanctions screening, officer networks, and AI risk assessment.
+                  </p>
+                </div>
               </div>
             </div>
           )}
         </div>
       </div>
-    </div>
+    </PageLayout>
   );
 }

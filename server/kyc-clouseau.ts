@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { chFetch, discoverUltimateParent } from "./companies-house";
 import { pool } from "./db";
+import pLimit from "p-limit";
 
 const router = Router();
 
@@ -415,9 +416,10 @@ router.post("/api/kyc-clouseau/investigate", requireAuth, async (req: Request, r
       ? sanctionsResult.some((s: any) => s.status === "strong_match" || s.status === "potential_match")
       : false;
     try {
-      await pool.query(
+      const insertResult = await pool.query(
         `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, risk_level, risk_score, sanctions_match, result, conducted_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id`,
         [
           "company",
           result.subject.name,
@@ -430,6 +432,10 @@ router.post("/api/kyc-clouseau/investigate", requireAuth, async (req: Request, r
           userId,
         ]
       );
+      const investigationId = insertResult.rows[0]?.id;
+      if (investigationId) {
+        await logKycAudit(investigationId, "created", userId, `Company investigation: ${result.subject.name}`);
+      }
     } catch (dbErr: any) {
       console.warn("[kyc-clouseau] Failed to save investigation:", dbErr.message);
     }
@@ -850,9 +856,10 @@ Format with clear headers and be specific. This is a professional compliance doc
     // Save to kyc_investigations
     const userId = (req as any).user?.id || null;
     try {
-      await pool.query(
+      const insertResult = await pool.query(
         `INSERT INTO kyc_investigations (subject_type, subject_name, officer_name, risk_level, risk_score, sanctions_match, result, conducted_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id`,
         [
           "individual",
           name,
@@ -864,6 +871,10 @@ Format with clear headers and be specific. This is a professional compliance doc
           userId,
         ]
       );
+      const investigationId = insertResult.rows[0]?.id;
+      if (investigationId) {
+        await logKycAudit(investigationId, "created", userId, `Individual investigation: ${name}`);
+      }
     } catch (dbErr: any) {
       console.warn("[kyc-clouseau] Failed to save individual investigation:", dbErr.message);
     }
@@ -874,6 +885,192 @@ Format with clear headers and be specific. This is a professional compliance doc
     console.error("[kyc-clouseau] Individual investigation error:", err.message);
     const userMessage = sanitizeErrorMessage(err.message, "Individual investigation failed");
     res.status(500).json({ error: userMessage });
+  }
+});
+
+// Audit log helper
+async function logKycAudit(investigationId: number, action: string, performedBy: string | null, notes?: string) {
+  try {
+    await pool.query(
+      `INSERT INTO kyc_audit_log (investigation_id, action, performed_by, notes) VALUES ($1, $2, $3, $4)`,
+      [investigationId, action, performedBy, notes || null]
+    );
+  } catch (err: any) {
+    console.warn("[kyc-clouseau] Failed to write audit log:", err.message);
+  }
+}
+
+// Bulk screening endpoint
+router.post("/api/kyc-clouseau/bulk-screen", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { companyNames, companyIds } = req.body;
+    const names: string[] = companyNames || [];
+    const ids: string[] = companyIds || [];
+
+    if (names.length === 0 && ids.length === 0) {
+      return res.status(400).json({ error: "Provide companyNames (array) or companyIds (array of CRM company IDs)" });
+    }
+
+    // If CRM IDs provided, look up company names/numbers
+    const targets: { name?: string; companyNumber?: string; crmCompanyId?: string }[] = [];
+    for (const name of names) {
+      targets.push({ name: name.trim() });
+    }
+    if (ids.length > 0) {
+      const placeholders = ids.map((_: string, i: number) => `$${i + 1}`).join(",");
+      const crmResult = await pool.query(
+        `SELECT id, name, companies_house_number FROM crm_companies WHERE id IN (${placeholders})`,
+        ids
+      );
+      for (const row of crmResult.rows) {
+        targets.push({
+          name: row.name,
+          companyNumber: row.companies_house_number || undefined,
+          crmCompanyId: row.id,
+        });
+      }
+    }
+
+    if (targets.length === 0) {
+      return res.status(400).json({ error: "No valid targets found" });
+    }
+
+    if (targets.length > 20) {
+      return res.status(400).json({ error: "Maximum 20 companies per bulk screen" });
+    }
+
+    const userId = (req as any).user?.id || null;
+    const limit = pLimit(3);
+
+    const results = await Promise.allSettled(
+      targets.map((target) =>
+        limit(async () => {
+          try {
+            let targetNumber = target.companyNumber;
+            if (!targetNumber && target.name) {
+              const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(target.name)}&items_per_page=1`);
+              if (searchData.items?.length > 0) {
+                targetNumber = searchData.items[0].company_number;
+              } else {
+                return { name: target.name, error: "Company not found", riskLevel: null };
+              }
+            }
+
+            const companyData = await getCompanyData(targetNumber!);
+
+            const namesToScreen: string[] = [];
+            if (companyData.profile?.company_name) namesToScreen.push(companyData.profile.company_name);
+            const activeOfficers = (companyData.officers || []).filter((o: any) => !o.resigned_on);
+            activeOfficers.forEach((o: any) => { if (o.name) namesToScreen.push(o.name); });
+
+            const sanctionsResult = await screenSanctions(namesToScreen);
+            const risk = assessRisk(companyData, sanctionsResult);
+            const hasSanctionsMatch = sanctionsResult
+              ? sanctionsResult.some((s: any) => s.status === "strong_match" || s.status === "potential_match")
+              : false;
+
+            // Save to kyc_investigations
+            let investigationId: number | null = null;
+            try {
+              const insertResult = await pool.query(
+                `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, risk_level, risk_score, sanctions_match, result, conducted_by)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 RETURNING id`,
+                [
+                  "company",
+                  companyData.profile?.company_name || target.name,
+                  targetNumber,
+                  target.crmCompanyId || null,
+                  risk.level,
+                  risk.score,
+                  hasSanctionsMatch,
+                  JSON.stringify({ subject: { name: companyData.profile?.company_name || target.name, companyNumber: targetNumber }, riskScore: risk.score, riskLevel: risk.level, flags: risk.flags, sanctionsScreening: sanctionsResult }),
+                  userId,
+                ]
+              );
+              investigationId = insertResult.rows[0]?.id;
+            } catch (dbErr: any) {
+              console.warn("[kyc-clouseau] Bulk screen - failed to save investigation:", dbErr.message);
+            }
+
+            // Audit log
+            if (investigationId) {
+              await logKycAudit(investigationId, "created", userId, "Bulk screening");
+            }
+
+            return {
+              name: companyData.profile?.company_name || target.name,
+              companyNumber: targetNumber,
+              riskLevel: risk.level,
+              riskScore: risk.score,
+              flags: risk.flags,
+              sanctionsMatch: hasSanctionsMatch,
+              investigationId,
+            };
+          } catch (err: any) {
+            return { name: target.name, error: err.message, riskLevel: null };
+          }
+        })
+      )
+    );
+
+    const formattedResults = results.map((r, i) => {
+      if (r.status === "fulfilled") return r.value;
+      return { name: targets[i].name, error: r.reason?.message || "Unknown error", riskLevel: null };
+    });
+
+    console.log(`[kyc-clouseau] Bulk screening complete: ${formattedResults.length} companies processed`);
+    res.json({ results: formattedResults });
+  } catch (err: any) {
+    console.error("[kyc-clouseau] Bulk screening error:", err.message);
+    const userMessage = sanitizeErrorMessage(err.message, "Bulk screening failed");
+    res.status(500).json({ error: userMessage });
+  }
+});
+
+// Expiring investigations endpoint (older than 12 months)
+router.get("/api/kyc-clouseau/expiring", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `SELECT ki.id, ki.subject_type, ki.subject_name, ki.company_number, ki.crm_company_id,
+              ki.risk_level, ki.risk_score, ki.sanctions_match, ki.conducted_by, ki.conducted_at,
+              d.id as deal_id, d.name as deal_name, d.status as deal_status
+       FROM kyc_investigations ki
+       LEFT JOIN crm_deals d ON d.landlord_id = ki.crm_company_id
+          OR d.tenant_id = ki.crm_company_id
+          OR d.vendor_id = ki.crm_company_id
+          OR d.purchaser_id = ki.crm_company_id
+       WHERE ki.conducted_at < NOW() - INTERVAL '12 months'
+       ORDER BY ki.conducted_at ASC
+       LIMIT 100`
+    );
+
+    // Deduplicate by investigation id (joins may produce multiples)
+    const seen = new Set<number>();
+    const investigations: any[] = [];
+    for (const row of result.rows) {
+      if (!seen.has(row.id)) {
+        seen.add(row.id);
+        investigations.push({
+          id: row.id,
+          subjectType: row.subject_type,
+          subjectName: row.subject_name,
+          companyNumber: row.company_number,
+          crmCompanyId: row.crm_company_id,
+          riskLevel: row.risk_level,
+          riskScore: row.risk_score,
+          sanctionsMatch: row.sanctions_match,
+          conductedBy: row.conducted_by,
+          conductedAt: row.conducted_at,
+          deal: row.deal_id ? { id: row.deal_id, name: row.deal_name, status: row.deal_status } : null,
+        });
+      }
+    }
+
+    res.json({ investigations, count: investigations.length });
+  } catch (err: any) {
+    console.error("[kyc-clouseau] Expiring investigations error:", err.message);
+    res.status(500).json({ error: "Failed to fetch expiring investigations" });
   }
 });
 
@@ -919,6 +1116,9 @@ export async function runMonthlyReScreening() {
               `UPDATE kyc_investigations SET sanctions_match = true, notes = COALESCE(notes, '') || $1 WHERE id = $2`,
               [`\n[Re-screened ${new Date().toISOString()}] New sanctions match detected`, row.id]
             );
+            await logKycAudit(row.id, "re-screened", null, `Monthly re-screening: new sanctions match detected`);
+          } else {
+            await logKycAudit(row.id, "re-screened", null, `Monthly re-screening: clear`);
           }
         }
       } catch (err: any) {

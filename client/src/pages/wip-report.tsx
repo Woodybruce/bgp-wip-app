@@ -449,10 +449,295 @@ function ReconciliationTab() {
   );
 }
 
+interface AgentSummaryRow {
+  agent: string;
+  invoiced: number;
+  wip: number;
+}
+
+interface AgentDrilldownRow {
+  dealId: string;
+  name: string;
+  property: string | null;
+  tenant: string | null;
+  dealType: string | null;
+  totalFee: number;
+  allocatedAmount: number;
+  status: string | null;
+  stage: string;
+  team: string;
+  isInvoiced: boolean;
+  wip: number;
+  invoiced: number;
+}
+
+function AgentSummaryTab() {
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+
+  const { data: summaryData, isLoading } = useQuery<AgentSummaryRow[]>({
+    queryKey: ["/api/wip/agent-summary"],
+    queryFn: async () => {
+      const res = await fetch("/api/wip/agent-summary", { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed to fetch agent summary");
+      return res.json();
+    },
+  });
+
+  const { data: drilldownData, isLoading: drilldownLoading } = useQuery<AgentDrilldownRow[]>({
+    queryKey: ["/api/wip/agent-drilldown", selectedAgent],
+    queryFn: async () => {
+      if (!selectedAgent) return [];
+      const res = await fetch(`/api/wip/agent-drilldown/${encodeURIComponent(selectedAgent)}`, { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed to fetch agent drilldown");
+      return res.json();
+    },
+    enabled: !!selectedAgent,
+  });
+
+  const agents = summaryData || [];
+  const grandTotal = agents.reduce((s, a) => s + a.wip + a.invoiced, 0);
+  const maxBarValue = agents.length > 0 ? Math.max(...agents.map(a => a.wip + a.invoiced)) : 1;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-gray-500 text-lg">Loading agent summary...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 overflow-y-auto flex-1 min-h-0">
+      {/* Agent Bar Chart */}
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="agent-summary-chart">
+        <div className="bg-gray-50 border-b px-4 py-3">
+          <span className="text-sm font-semibold text-gray-700">Agent Fee Breakdown</span>
+        </div>
+        <div className="p-4 space-y-2">
+          {agents.map((a) => {
+            const total = a.wip + a.invoiced;
+            const widthPct = Math.max(1, (total / maxBarValue) * 100);
+            const isSelected = selectedAgent === a.agent;
+            return (
+              <div
+                key={a.agent}
+                className={`flex items-center gap-3 cursor-pointer rounded px-2 py-1.5 transition-colors ${
+                  isSelected ? "bg-green-50 ring-1 ring-green-300" : "hover:bg-gray-50"
+                }`}
+                onClick={() => setSelectedAgent(isSelected ? null : a.agent)}
+                data-testid={`agent-bar-${a.agent}`}
+              >
+                <span className="text-xs text-gray-700 w-36 text-right flex-shrink-0 truncate font-medium">
+                  {a.agent}
+                </span>
+                <div className="flex-1 h-6 bg-gray-100 rounded overflow-hidden relative flex">
+                  {a.wip > 0 && (
+                    <div
+                      className="h-full transition-all duration-500"
+                      style={{
+                        width: `${(a.wip / maxBarValue) * 100}%`,
+                        backgroundColor: isSelected ? "#16a34a" : "#86efac",
+                      }}
+                      title={`WIP: ${formatFullCurrency(a.wip)}`}
+                    />
+                  )}
+                  {a.invoiced > 0 && (
+                    <div
+                      className="h-full transition-all duration-500"
+                      style={{
+                        width: `${(a.invoiced / maxBarValue) * 100}%`,
+                        backgroundColor: isSelected ? "#15803d" : "#22c55e",
+                      }}
+                      title={`Invoiced: ${formatFullCurrency(a.invoiced)}`}
+                    />
+                  )}
+                </div>
+                <span className="text-xs font-mono text-gray-700 w-20 text-right flex-shrink-0">
+                  {formatCurrency(total)}
+                </span>
+              </div>
+            );
+          })}
+          {agents.length > 0 && (
+            <div className="flex items-center gap-3 pt-2 border-t mt-2">
+              <span className="text-xs w-36 text-right flex-shrink-0" />
+              <div className="flex gap-4 text-xs text-gray-500">
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: "#86efac" }} />
+                  WIP
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: "#22c55e" }} />
+                  Invoiced
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Agent Summary Table */}
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="agent-summary-table">
+        <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
+          <span className="text-sm font-semibold text-gray-700">Agent Summary</span>
+          <span className="text-xs text-gray-500">{agents.length} agents</span>
+        </div>
+        <ScrollableTable minWidth={700}>
+          <table className="w-full">
+            <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
+              <tr>
+                <th className="px-4 py-2 text-left font-medium text-gray-600">Agent Name</th>
+                <th className="px-4 py-2 text-right font-medium text-gray-600">WIP Amount</th>
+                <th className="px-4 py-2 text-right font-medium text-gray-600">Invoiced Amount</th>
+                <th className="px-4 py-2 text-right font-medium text-gray-600">Total</th>
+                <th className="px-4 py-2 text-right font-medium text-gray-600">% of Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 text-xs">
+              {agents.map((a) => {
+                const total = a.wip + a.invoiced;
+                const pct = grandTotal > 0 ? ((total / grandTotal) * 100).toFixed(1) : "0.0";
+                const isSelected = selectedAgent === a.agent;
+                return (
+                  <tr
+                    key={a.agent}
+                    className={`cursor-pointer transition-colors ${
+                      isSelected ? "bg-green-50" : "hover:bg-gray-50"
+                    }`}
+                    onClick={() => setSelectedAgent(isSelected ? null : a.agent)}
+                    data-testid={`agent-row-${a.agent}`}
+                  >
+                    <td className="px-4 py-2 text-gray-800 font-medium">{a.agent}</td>
+                    <td className="px-4 py-2 text-right font-mono text-gray-700">{formatFullCurrency(a.wip)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-green-700">{formatFullCurrency(a.invoiced)}</td>
+                    <td className="px-4 py-2 text-right font-mono text-gray-900 font-semibold">{formatFullCurrency(total)}</td>
+                    <td className="px-4 py-2 text-right text-gray-600">{pct}%</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot className="bg-gray-100 border-t font-semibold text-sm">
+              <tr>
+                <td className="px-4 py-2 text-gray-800">Total</td>
+                <td className="px-4 py-2 text-right font-mono text-gray-900">
+                  {formatFullCurrency(agents.reduce((s, a) => s + a.wip, 0))}
+                </td>
+                <td className="px-4 py-2 text-right font-mono text-green-700">
+                  {formatFullCurrency(agents.reduce((s, a) => s + a.invoiced, 0))}
+                </td>
+                <td className="px-4 py-2 text-right font-mono text-gray-900">
+                  {formatFullCurrency(grandTotal)}
+                </td>
+                <td className="px-4 py-2 text-right text-gray-600">100%</td>
+              </tr>
+            </tfoot>
+          </table>
+        </ScrollableTable>
+      </div>
+
+      {/* Agent Drilldown */}
+      {selectedAgent && (
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid="agent-drilldown">
+          <div className="bg-gray-50 border-b px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-gray-700">
+                Deals for {selectedAgent}
+              </span>
+              {drilldownData && (
+                <Badge variant="secondary" className="text-xs">
+                  {drilldownData.length} deals
+                </Badge>
+              )}
+            </div>
+            <button
+              onClick={() => setSelectedAgent(null)}
+              className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+            >
+              <X className="w-3 h-3" /> Close
+            </button>
+          </div>
+          {drilldownLoading ? (
+            <div className="px-4 py-8 text-center text-sm text-gray-500">Loading deals...</div>
+          ) : !drilldownData || drilldownData.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-gray-500">No deals found for this agent</div>
+          ) : (
+            <ScrollableTable minWidth={900}>
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Deal Name</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Property</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Type</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Total Fee</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-600">Allocated</th>
+                    <th className="px-3 py-2 text-center font-medium text-gray-600">Status</th>
+                    <th className="px-3 py-2 text-center font-medium text-gray-600">Stage</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 text-xs">
+                  {drilldownData.map((d) => (
+                    <tr key={d.dealId} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 text-gray-700">
+                        <Link href={`/deals/${d.dealId}`}>
+                          <span className="text-blue-600 hover:underline cursor-pointer">{d.name}</span>
+                        </Link>
+                      </td>
+                      <td className="px-3 py-2 text-gray-700 truncate max-w-[160px]">{d.property || "---"}</td>
+                      <td className="px-3 py-2">
+                        {d.dealType ? (
+                          <Badge className={`text-[10px] ${DEAL_TYPE_BADGE_COLORS[d.dealType] || "bg-gray-100 text-gray-800"}`}>
+                            {d.dealType}
+                          </Badge>
+                        ) : "---"}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-500">
+                        {formatFullCurrency(d.totalFee)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-gray-900 font-semibold">
+                        {formatFullCurrency(d.allocatedAmount)}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <Badge variant="secondary" className="text-[10px]">
+                          {d.status || "---"}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {d.stage === "invoiced" ? (
+                          <Badge className="text-[10px] bg-green-100 text-green-800">Invoiced</Badge>
+                        ) : d.stage === "wip" ? (
+                          <Badge className="text-[10px] bg-yellow-100 text-yellow-800">WIP</Badge>
+                        ) : (
+                          <span className="text-gray-500">{d.stage}</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-gray-100 border-t font-semibold text-xs">
+                  <tr>
+                    <td colSpan={3} className="px-3 py-2 text-gray-800">Total</td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-500">
+                      {formatFullCurrency(drilldownData.reduce((s, d) => s + d.totalFee, 0))}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-gray-900">
+                      {formatFullCurrency(drilldownData.reduce((s, d) => s + d.allocatedAmount, 0))}
+                    </td>
+                    <td colSpan={2} />
+                  </tr>
+                </tfoot>
+              </table>
+            </ScrollableTable>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function WipReport() {
   const { toast } = useToast();
   const { activeTeam } = useTeam();
-  const [activeTab, setActiveTab] = useState<"report" | "reconciliation">("report");
+  const [activeTab, setActiveTab] = useState<"report" | "reconciliation" | "agent-summary">("report");
 
   const { data: user } = useQuery<{ id: string; name: string; email: string; team: string; isAdmin?: boolean }>({
     queryKey: ["/api/auth/me"],
@@ -949,10 +1234,23 @@ export default function WipReport() {
             </Badge>
           )}
         </button>
+        <button
+          onClick={() => setActiveTab("agent-summary")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "agent-summary"
+              ? "border-green-600 text-green-700"
+              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+          }`}
+          data-testid="wip-tab-agent-summary"
+        >
+          Agent Summary
+        </button>
       </div>
 
       {activeTab === "reconciliation" ? (
         <ReconciliationTab />
+      ) : activeTab === "agent-summary" ? (
+        <AgentSummaryTab />
       ) : (
       <div className="flex gap-4 flex-1 min-h-0">
         <div className="flex-1 overflow-y-auto space-y-4 min-h-0">

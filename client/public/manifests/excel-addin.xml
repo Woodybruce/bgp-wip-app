@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xsi:type="TaskPaneApp">
+  <Id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</Id>
+  <Version>2.0.0</Version>
+  <ProviderName>Bruce Gillingham Pollard</ProviderName>
+  <DefaultLocale>en-GB</DefaultLocale>
+  <DisplayName DefaultValue="ChatBGP for Excel"/>
+  <Description DefaultValue="AI-powered Excel assistant with CRM integration, financial model building, and SharePoint file management for BGP."/>
+  <SupportUrl DefaultValue="https://chatbgp.app/help"/>
+  <AppDomains>
+    <AppDomain>chatbgp.app</AppDomain>
+  </AppDomains>
+  <Hosts>
+    <Host Name="Workbook"/>
+  </Hosts>
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://chatbgp.app/addin/excel"/>
+  </DefaultSettings>
+  <Permissions>ReadWriteDocument</Permissions>
+  <Requirements>
+    <Sets>
+      <Set Name="ExcelApi" MinVersion="1.1"/>
+    </Sets>
+  </Requirements>
+</OfficeApp>

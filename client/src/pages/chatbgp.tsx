@@ -443,19 +443,20 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
               })()}
             </div>
             {isOwn && message.id && (
-              <div className="absolute -bottom-1 left-0 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="absolute -bottom-1 left-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <button className="w-6 h-6 rounded-full bg-background border shadow-sm flex items-center justify-center" data-testid={`button-message-actions-${message.id}`}>
-                      <MoreHorizontal className="w-3 h-3" />
+                    {/* Larger touch target (44px min) for mobile */}
+                    <button className="w-8 h-8 min-w-[44px] min-h-[44px] rounded-full bg-background border shadow-sm flex items-center justify-center" style={{ touchAction: "manipulation" }} data-testid={`button-message-actions-${message.id}`}>
+                      <MoreHorizontal className="w-3.5 h-3.5" />
                     </button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-28">
-                    <DropdownMenuItem onClick={() => { setEditContent(message.content); setEditing(true); }} data-testid="button-edit-message">
-                      <Pencil className="w-3 h-3 mr-2" /> Edit
+                  <DropdownMenuContent align="start" className="w-32">
+                    <DropdownMenuItem onClick={() => { setEditContent(message.content); setEditing(true); }} className="min-h-[44px]" data-testid="button-edit-message">
+                      <Pencil className="w-3.5 h-3.5 mr-2" /> Edit
                     </DropdownMenuItem>
-                    <DropdownMenuItem className="text-destructive" onClick={() => onDelete?.(message.id!)} data-testid="button-delete-message">
-                      <Trash2 className="w-3 h-3 mr-2" /> Delete
+                    <DropdownMenuItem className="text-destructive min-h-[44px]" onClick={() => onDelete?.(message.id!)} data-testid="button-delete-message">
+                      <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -2973,6 +2974,8 @@ export default function ChatBGP() {
 
   return (
     <div className="flex h-full w-full max-w-full overflow-hidden relative" data-testid="chatbgp-page">
+      {/* Mobile: full-screen chat layout, sidebar hidden completely until toggled.
+          TODO: Future -- add swipe-to-reply gesture on messages for mobile touch UX. */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 bg-black/40 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
@@ -3155,7 +3158,7 @@ export default function ChatBGP() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 rounded-xl shrink-0 lg:hidden"
+                className="h-9 w-9 min-w-[44px] min-h-[44px] rounded-xl shrink-0 lg:hidden"
                 onClick={() => setSidebarOpen(true)}
                 data-testid="button-open-sidebar"
               >
@@ -3216,7 +3219,7 @@ export default function ChatBGP() {
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 rounded-xl shrink-0 lg:hidden"
+                className="h-9 w-9 min-w-[44px] min-h-[44px] rounded-xl shrink-0 lg:hidden"
                 onClick={() => setSidebarOpen(true)}
                 data-testid="button-open-sidebar"
               >

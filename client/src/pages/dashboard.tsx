@@ -68,6 +68,11 @@ import {
   SharePointWidget,
   StudiosWidget,
   MyPortfolioWidget,
+  LandsecAnalyticsWidget,
+  LandsecOverviewCard,
+  LandsecAgentPerformanceCard,
+  LandsecPipelineFunnel,
+  LandsecRecentActivity,
   WidgetPickerDialog,
   WIDGET_REGISTRY,
   DEFAULT_WIDGETS,
@@ -487,6 +492,17 @@ export default function Dashboard() {
         })
         .slice(0, 10);
     },
+  });
+
+  const { data: landsecAnalytics } = useQuery<any>({
+    queryKey: ["/api/portfolio/landsec/analytics"],
+    queryFn: async () => {
+      const res = await fetch("/api/portfolio/landsec/analytics", { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: isLandsecTeam,
+    staleTime: 5 * 60 * 1000,
   });
 
   const [dashboardViewMode, setDashboardViewMode] = useState<"team" | "individual">(() => {
@@ -1673,6 +1689,34 @@ export default function Dashboard() {
               ),
             };
           })(),
+          // === Landsec Deal Analytics: Overview Card ===
+          landsecAnalytics && landsecAnalytics.totalDeals > 0 ? {
+            id: "portfolio-landsec-overview",
+            label: "Landsec Overview",
+            defaultW: 6, defaultH: 12, minW: 4, minH: 8,
+            content: <LandsecOverviewCard data={landsecAnalytics} />,
+          } : null,
+          // === Landsec Deal Analytics: Agent Performance ===
+          landsecAnalytics && landsecAnalytics.totalDeals > 0 ? {
+            id: "portfolio-landsec-agents",
+            label: "Agent Performance",
+            defaultW: 6, defaultH: 12, minW: 4, minH: 8,
+            content: <LandsecAgentPerformanceCard data={landsecAnalytics} />,
+          } : null,
+          // === Landsec Deal Analytics: Pipeline Funnel ===
+          landsecAnalytics && landsecAnalytics.totalDeals > 0 ? {
+            id: "portfolio-landsec-pipeline",
+            label: "Deal Pipeline",
+            defaultW: 6, defaultH: 14, minW: 4, minH: 8,
+            content: <LandsecPipelineFunnel data={landsecAnalytics} />,
+          } : null,
+          // === Landsec Deal Analytics: Recent Activity ===
+          landsecAnalytics && landsecAnalytics.totalDeals > 0 ? {
+            id: "portfolio-landsec-activity",
+            label: "Recent Activity",
+            defaultW: 6, defaultH: 12, minW: 4, minH: 6,
+            content: <LandsecRecentActivity data={landsecAnalytics} />,
+          } : null,
         ].filter(Boolean) as any[];
 
         const visiblePortfolioItems = portfolioGridItems.filter((item: any) => !hiddenPortfolioBoards.includes(item.id));
@@ -1731,6 +1775,7 @@ export default function Dashboard() {
           "daily-digest": { w: 6, h: 9, minW: 4, minH: 5 },
           "my-tasks": { w: 6, h: 18, minW: 4, minH: 10 },
           "my-portfolio": { w: 6, h: 10, minW: 4, minH: 6 },
+          "landsec-analytics": { w: 12, h: 20, minW: 8, minH: 12 },
         };
 
         const renderWidget = (widgetId: string) => {
@@ -2421,6 +2466,8 @@ export default function Dashboard() {
         if (widgetId === "my-tasks") return <MyTasksWidget />;
 
         if (widgetId === "my-portfolio") return <MyPortfolioWidget key="my-portfolio" />;
+
+        if (widgetId === "landsec-analytics") return <LandsecAnalyticsWidget key="landsec-analytics" />;
 
         return null;
         };

@@ -402,6 +402,17 @@ app.use("/api/branding/assets", express.static(
               updated_at timestamp DEFAULT now()
             )
           `));
+
+          await db.execute(sql.raw(`
+            CREATE TABLE IF NOT EXISTS kyc_audit_log (
+              id serial PRIMARY KEY,
+              investigation_id integer NOT NULL,
+              action text NOT NULL,
+              performed_by varchar,
+              notes text,
+              created_at timestamp DEFAULT now()
+            )
+          `));
         } catch (err: any) {
           console.error("Startup migration error:", err?.message);
         }

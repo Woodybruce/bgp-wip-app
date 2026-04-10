@@ -950,12 +950,16 @@ export async function exportDocumentToPdf(content: string, title: string): Promi
   const pageW = 475;
   const leftM = 60;
   const rightEdge = leftM + pageW;
+  const bgpGreen = "#2E5E3F";
+  const bgpDarkGreen = "#1A3A28";
+  const generatedDate = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
   function drawHeader() {
-    if (logoExists) { try { doc.image(logoPath, leftM, 22, { width: 80 }); } catch {} }
-    doc.fontSize(8).fillColor("#999999").font("Helvetica-Bold")
-      .text("BRUCE GILLINGHAM POLLARD", leftM, 30, { align: "right", width: pageW });
-    doc.moveTo(leftM, 50).lineTo(rightEdge, 50).strokeColor("#cccccc").lineWidth(0.5).stroke();
+    doc.rect(0, 0, 595, 8).fill(bgpGreen);
+    if (logoExists) { try { doc.image(logoPath, leftM, 14, { width: 80 }); } catch {} }
+    doc.fontSize(7).fillColor("#FFFFFF").font("Helvetica-Bold")
+      .text("BRUCE GILLINGHAM POLLARD", leftM, 10, { align: "right", width: pageW });
+    doc.moveTo(leftM, 50).lineTo(rightEdge, 50).strokeColor(bgpGreen).lineWidth(0.5).stroke();
   }
 
   function newPage() { doc.addPage(); drawHeader(); return 72; }
@@ -970,21 +974,25 @@ export async function exportDocumentToPdf(content: string, title: string): Promi
     const plain = stripMd(trimmed);
 
     if (lineType === "blank") { y += 10; continue; }
-    if (y > 720) y = newPage();
+    if (y > 710) y = newPage();
 
     if (lineType === "hr") {
       y += 6;
-      doc.moveTo(leftM, y).lineTo(rightEdge, y).strokeColor("#cccccc").lineWidth(0.5).stroke();
+      doc.moveTo(leftM, y).lineTo(rightEdge, y).strokeColor(bgpGreen).lineWidth(0.5).stroke();
       y += 10;
     } else if (lineType === "heading" && !foundTitle) {
       foundTitle = true;
-      doc.font("Helvetica-Bold").fontSize(20).fillColor("#1a1a1a")
+      // BGP green bar above title
+      doc.rect(leftM, y - 2, pageW, 3).fill(bgpGreen);
+      y += 10;
+      doc.font("Helvetica-Bold").fontSize(20).fillColor(bgpDarkGreen)
         .text(plain, leftM, y, { align: "center", width: pageW });
       y = doc.y + 18;
     } else if (lineType === "heading") {
       y += 12;
-      if (y > 720) y = newPage();
-      doc.font("Helvetica-Bold").fontSize(14).fillColor("#1a1a1a")
+      if (y > 710) y = newPage();
+      const isSubSection = /^\d+\.\d+/.test(plain);
+      doc.font("Helvetica-Bold").fontSize(isSubSection ? 11 : 14).fillColor(isSubSection ? "#444444" : bgpGreen)
         .text(plain, leftM, y, { width: pageW });
       y = doc.y + 6;
     } else if (lineType === "bullet") {
@@ -999,7 +1007,7 @@ export async function exportDocumentToPdf(content: string, title: string): Promi
     } else if (lineType === "blockquote") {
       const quoteText = stripMd(trimmed.replace(/^>\s*/, ""));
       doc.save();
-      doc.moveTo(leftM + 20, y).lineTo(leftM + 20, y + 14).strokeColor("#cccccc").lineWidth(2).stroke();
+      doc.moveTo(leftM + 20, y).lineTo(leftM + 20, y + 14).strokeColor(bgpGreen).lineWidth(2).stroke();
       doc.restore();
       doc.font("Times-Italic").fontSize(10).fillColor("#555555")
         .text(quoteText, leftM + 30, y, { width: pageW - 30 });
@@ -1028,11 +1036,20 @@ export async function exportDocumentToPdf(content: string, title: string): Promi
   }
 
   const range = doc.bufferedPageRange();
+  const totalPages = range.count;
   for (let i = range.start; i < range.start + range.count; i++) {
     doc.switchToPage(i);
-    doc.moveTo(leftM, 775).lineTo(rightEdge, 775).strokeColor("#cccccc").lineWidth(0.5).stroke();
-    doc.fontSize(8).fillColor("#999999").font("Helvetica")
-      .text(`Bruce Gillingham Pollard — Confidential  |  Page ${i + 1}`, leftM, 780, { align: "center", width: pageW });
+    // BGP green header bar
+    doc.rect(0, 0, 595, 8).fill(bgpGreen);
+    doc.fontSize(7).fillColor("#FFFFFF").font("Helvetica-Bold")
+      .text("BRUCE GILLINGHAM POLLARD", leftM, 10, { align: "right", width: pageW });
+    // Footer separator
+    doc.moveTo(leftM, 770).lineTo(rightEdge, 770).strokeColor(bgpGreen).lineWidth(0.5).stroke();
+    // Footer: date left, confidentiality center, page right
+    doc.fontSize(7).fillColor("#888888").font("Helvetica");
+    doc.text(generatedDate, leftM, 776, { width: 150, align: "left" });
+    doc.text("Bruce Gillingham Pollard — Confidential", leftM + 130, 776, { width: 220, align: "center" });
+    doc.text(`Page ${i - range.start + 1} of ${totalPages}`, rightEdge - 80, 776, { width: 80, align: "right" });
   }
 
   doc.end();
@@ -2423,8 +2440,67 @@ Be concise, professional, and use British English. All document advice should al
 
       if (format === "docx") {
         const docxModule = await import("docx");
-        const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Header, Footer, BorderStyle, PageNumber, ImageRun } = docxModule;
+        const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, Header, Footer, BorderStyle, PageNumber, ImageRun, SectionType, PageBreak, Tab, TabStopType, TabStopPosition, ShadingType, Table, TableRow, TableCell, WidthType } = docxModule;
 
+        const bgpGreenHex = "2E5E3F";
+        const bgpDarkGreenHex = "1A3A28";
+        const bgpGoldHex = "C4A35A";
+        const generatedDate = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
+
+        // --- Cover page section ---
+        const coverChildren: any[] = [];
+        // Spacer for visual centering
+        coverChildren.push(new Paragraph({ spacing: { before: 4800 } }));
+        // Green accent line
+        coverChildren.push(new Paragraph({
+          spacing: { after: 200 },
+          border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: bgpGreenHex, space: 4 } },
+        }));
+        // Document title
+        coverChildren.push(new Paragraph({
+          children: [new TextRun({ text: docTitle, bold: true, font: "Calibri", size: 52, color: bgpDarkGreenHex })],
+          spacing: { after: 200 },
+          alignment: AlignmentType.LEFT,
+        }));
+        // Subtitle line
+        coverChildren.push(new Paragraph({
+          children: [new TextRun({ text: "BRUCE GILLINGHAM POLLARD", font: "Calibri", size: 20, color: bgpGreenHex, bold: true })],
+          spacing: { after: 100 },
+        }));
+        coverChildren.push(new Paragraph({
+          children: [new TextRun({ text: generatedDate, font: "Calibri", size: 18, color: "666666" })],
+          spacing: { after: 100 },
+        }));
+        if (documentType) {
+          coverChildren.push(new Paragraph({
+            children: [new TextRun({ text: documentType, font: "Calibri", size: 18, color: "888888", italics: true })],
+            spacing: { after: 200 },
+          }));
+        }
+        // Gold accent line
+        coverChildren.push(new Paragraph({
+          spacing: { before: 800 },
+          border: { bottom: { style: BorderStyle.SINGLE, size: 3, color: bgpGoldHex, space: 4 } },
+        }));
+        // Confidential notice
+        coverChildren.push(new Paragraph({
+          children: [new TextRun({ text: "CONFIDENTIAL", font: "Calibri", size: 16, color: "999999", bold: true })],
+          spacing: { before: 200 },
+        }));
+
+        // --- Table of Contents placeholder ---
+        const tocChildren: any[] = [];
+        tocChildren.push(new Paragraph({
+          children: [new TextRun({ text: "TABLE OF CONTENTS", bold: true, font: "Calibri", size: 24, color: bgpGreenHex })],
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 300 },
+        }));
+        tocChildren.push(new Paragraph({
+          children: [new TextRun({ text: "[Table of contents will auto-generate when document is opened in Microsoft Word — right-click here and select 'Update Field']", font: "Calibri", size: 20, color: "888888", italics: true })],
+          spacing: { after: 400 },
+        }));
+
+        // --- Content section ---
         const children: any[] = [];
         let foundTitle = false;
 
@@ -2437,7 +2513,7 @@ Be concise, professional, and use British English. All document advice should al
             continue;
           }
           if (lineType === "hr") {
-            children.push(new Paragraph({ spacing: { before: 160, after: 160 }, border: { bottom: { style: BorderStyle.SINGLE, size: 1, color: "cccccc", space: 1 } } }));
+            children.push(new Paragraph({ spacing: { before: 160, after: 160 }, border: { bottom: { style: BorderStyle.SINGLE, size: 1, color: bgpGreenHex, space: 1 } } }));
             continue;
           }
 
@@ -2446,23 +2522,25 @@ Be concise, professional, and use British English. All document advice should al
           if (lineType === "heading" && !foundTitle) {
             foundTitle = true;
             children.push(new Paragraph({
-              children: [new TextRun({ text: plain, bold: true, font: "Arial", size: 36, color: "1a1a1a" })],
+              children: [new TextRun({ text: plain, bold: true, font: "Calibri", size: 36, color: bgpDarkGreenHex })],
               heading: HeadingLevel.TITLE,
               spacing: { after: 240 },
               alignment: AlignmentType.CENTER,
+              border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: bgpGreenHex, space: 6 } },
             }));
           } else if (lineType === "heading") {
             const isSubSection = /^\d+\.\d+/.test(plain);
+            const isH3 = /^\d+\.\d+\.\d+/.test(plain);
             children.push(new Paragraph({
-              children: [new TextRun({ text: plain, bold: true, font: "Arial", size: isSubSection ? 22 : 26, color: "1a1a1a" })],
-              heading: isSubSection ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_1,
+              children: [new TextRun({ text: plain, bold: true, font: "Calibri", size: isH3 ? 20 : isSubSection ? 22 : 26, color: isH3 ? "666666" : isSubSection ? "444444" : bgpGreenHex })],
+              heading: isH3 ? HeadingLevel.HEADING_3 : isSubSection ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_1,
               spacing: { before: 320, after: 160 },
             }));
           } else if (lineType === "bullet") {
             const bulletText = plain.replace(/^[-•*]\s*/, "");
             const segs = parseInlineFormatting(bulletText);
             children.push(new Paragraph({
-              children: segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: s.italic, font: "Georgia", size: 22, color: "333333" })),
+              children: segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: s.italic, font: "Calibri", size: 22, color: "333333" })),
               bullet: { level: 0 },
               spacing: { after: 60 },
             }));
@@ -2472,22 +2550,22 @@ Be concise, professional, and use British English. All document advice should al
             const text = numMatch?.[2] || plain;
             const segs = parseInlineFormatting(text);
             children.push(new Paragraph({
-              children: [new TextRun({ text: num + " ", bold: true, font: "Arial", size: 24, color: "1a1a1a" }), ...segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: s.italic, font: "Georgia", size: 22, color: "333333" }))],
+              children: [new TextRun({ text: num + " ", bold: true, font: "Calibri", size: 24, color: bgpGreenHex }), ...segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: s.italic, font: "Calibri", size: 22, color: "333333" }))],
               spacing: { before: 200, after: 100 },
             }));
           } else if (lineType === "blockquote") {
             const quoteText = trimmed.replace(/^>\s*/, "");
             const segs = parseInlineFormatting(quoteText);
             children.push(new Paragraph({
-              children: segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: true, font: "Georgia", size: 21, color: "555555" })),
+              children: segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: true, font: "Calibri", size: 21, color: "555555" })),
               spacing: { after: 80 },
               indent: { left: 480 },
-              border: { left: { style: BorderStyle.SINGLE, size: 3, color: "cccccc", space: 12 } },
+              border: { left: { style: BorderStyle.SINGLE, size: 3, color: bgpGreenHex, space: 12 } },
             }));
           } else {
             const segs = parseInlineFormatting(trimmed);
             children.push(new Paragraph({
-              children: segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: s.italic, font: "Georgia", size: 22, color: "333333" })),
+              children: segs.map(s => new TextRun({ text: s.text, bold: s.bold, italics: s.italic, font: "Calibri", size: 22, color: "333333" })),
               spacing: { after: 100 },
               alignment: AlignmentType.JUSTIFIED,
             }));
@@ -2497,37 +2575,82 @@ Be concise, professional, and use British English. All document advice should al
         const doc = new Document({
           creator: "Bruce Gillingham Pollard",
           title: docTitle,
-          sections: [{
-            properties: {
-              page: { margin: { top: 1440, bottom: 1440, left: 1200, right: 1200 }, pageNumbers: { start: 1 } },
+          styles: {
+            default: {
+              heading1: {
+                run: { font: "Calibri", size: 26, bold: true, color: bgpGreenHex },
+                paragraph: { spacing: { before: 320, after: 160 } },
+              },
+              heading2: {
+                run: { font: "Calibri", size: 22, bold: true, color: "444444" },
+                paragraph: { spacing: { before: 240, after: 120 } },
+              },
+              heading3: {
+                run: { font: "Calibri", size: 20, bold: true, color: "666666" },
+                paragraph: { spacing: { before: 200, after: 100 } },
+              },
+              document: {
+                run: { font: "Calibri", size: 22, color: "333333" },
+              },
             },
-            headers: {
-              default: new Header({
-                children: [new Paragraph({
-                  children: [
-                    ...(logoBuffer ? [new ImageRun({ data: logoBuffer, transformation: { width: 120, height: 30 }, type: "png" }), new TextRun({ text: "   ", font: "Arial", size: 16 })] : []),
-                    new TextRun({ text: "BRUCE GILLINGHAM POLLARD", font: "Arial", size: 16, color: "999999", bold: true }),
-                  ],
-                  alignment: AlignmentType.RIGHT,
-                  spacing: { after: 200 },
-                  border: { bottom: { style: BorderStyle.SINGLE, size: 1, color: "cccccc", space: 8 } },
-                })],
-              }),
+          },
+          sections: [
+            // Cover page section
+            {
+              properties: {
+                page: { margin: { top: 1440, bottom: 1440, left: 1200, right: 1200 } },
+                type: SectionType.NEXT_PAGE,
+              },
+              headers: {
+                default: new Header({
+                  children: [new Paragraph({
+                    children: [
+                      ...(logoBuffer ? [new ImageRun({ data: logoBuffer, transformation: { width: 120, height: 30 }, type: "png" }), new TextRun({ text: "   ", font: "Calibri", size: 16 })] : []),
+                    ],
+                    alignment: AlignmentType.LEFT,
+                  })],
+                }),
+              },
+              children: coverChildren,
             },
-            footers: {
-              default: new Footer({
-                children: [new Paragraph({
-                  children: [
-                    new TextRun({ text: "Bruce Gillingham Pollard — Confidential  |  Page ", font: "Arial", size: 14, color: "999999" }),
-                    new TextRun({ children: [PageNumber.CURRENT], font: "Arial", size: 14, color: "999999" }),
-                  ],
-                  alignment: AlignmentType.CENTER,
-                  border: { top: { style: BorderStyle.SINGLE, size: 1, color: "cccccc", space: 8 } },
-                })],
-              }),
+            // TOC + Content section
+            {
+              properties: {
+                page: { margin: { top: 1440, bottom: 1440, left: 1200, right: 1200 }, pageNumbers: { start: 1 } },
+                type: SectionType.NEXT_PAGE,
+              },
+              headers: {
+                default: new Header({
+                  children: [new Paragraph({
+                    children: [
+                      ...(logoBuffer ? [new ImageRun({ data: logoBuffer, transformation: { width: 120, height: 30 }, type: "png" }), new TextRun({ text: "   ", font: "Calibri", size: 16 })] : []),
+                      new TextRun({ text: "BRUCE GILLINGHAM POLLARD", font: "Calibri", size: 16, color: bgpGreenHex, bold: true }),
+                    ],
+                    alignment: AlignmentType.RIGHT,
+                    spacing: { after: 200 },
+                    border: { bottom: { style: BorderStyle.SINGLE, size: 1, color: bgpGreenHex, space: 8 } },
+                  })],
+                }),
+              },
+              footers: {
+                default: new Footer({
+                  children: [new Paragraph({
+                    children: [
+                      new TextRun({ text: generatedDate, font: "Calibri", size: 14, color: "888888" }),
+                      new TextRun({ text: "          Bruce Gillingham Pollard — Confidential          ", font: "Calibri", size: 14, color: "888888" }),
+                      new TextRun({ text: "Page ", font: "Calibri", size: 14, color: "888888" }),
+                      new TextRun({ children: [PageNumber.CURRENT], font: "Calibri", size: 14, color: "888888" }),
+                      new TextRun({ text: " of ", font: "Calibri", size: 14, color: "888888" }),
+                      new TextRun({ children: [PageNumber.TOTAL_PAGES], font: "Calibri", size: 14, color: "888888" }),
+                    ],
+                    alignment: AlignmentType.CENTER,
+                    border: { top: { style: BorderStyle.SINGLE, size: 1, color: bgpGreenHex, space: 8 } },
+                  })],
+                }),
+              },
+              children: [...tocChildren, ...children],
             },
-            children,
-          }],
+          ],
         });
 
         const buffer = await Packer.toBuffer(doc);
@@ -2551,16 +2674,21 @@ Be concise, professional, and use British English. All document advice should al
         const pageW = 475;
         const leftM = 60;
         const rightEdge = leftM + pageW;
+        const bgpGreen = "#2E5E3F";
+        const bgpDarkGreen = "#1A3A28";
+        const generatedDate = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
         function drawHeader() {
+          // BGP green bar at top
+          doc.rect(0, 0, 595, 8).fill(bgpGreen);
           if (logoExists) {
             try {
-              doc.image(logoPath, leftM, 22, { width: 80 });
+              doc.image(logoPath, leftM, 14, { width: 80 });
             } catch {}
           }
-          doc.fontSize(8).fillColor("#999999").font("Helvetica-Bold")
-            .text("BRUCE GILLINGHAM POLLARD", leftM, 30, { align: "right", width: pageW });
-          doc.moveTo(leftM, 50).lineTo(rightEdge, 50).strokeColor("#cccccc").lineWidth(0.5).stroke();
+          doc.fontSize(7).fillColor("#FFFFFF").font("Helvetica-Bold")
+            .text("BRUCE GILLINGHAM POLLARD", leftM, 10, { align: "right", width: pageW });
+          doc.moveTo(leftM, 50).lineTo(rightEdge, 50).strokeColor(bgpGreen).lineWidth(0.5).stroke();
         }
 
         function newPage() {
@@ -2580,25 +2708,28 @@ Be concise, professional, and use British English. All document advice should al
 
           if (lineType === "blank") { y += 10; continue; }
 
-          if (y > 720) y = newPage();
+          if (y > 710) y = newPage();
 
           if (lineType === "hr") {
             y += 6;
-            doc.moveTo(leftM, y).lineTo(rightEdge, y).strokeColor("#cccccc").lineWidth(0.5).stroke();
+            doc.moveTo(leftM, y).lineTo(rightEdge, y).strokeColor(bgpGreen).lineWidth(0.5).stroke();
             y += 10;
             continue;
           }
 
           if (lineType === "heading" && !foundTitle) {
             foundTitle = true;
-            doc.font("Helvetica-Bold").fontSize(20).fillColor("#1a1a1a")
+            // BGP green accent bar above title
+            doc.rect(leftM, y - 2, pageW, 3).fill(bgpGreen);
+            y += 10;
+            doc.font("Helvetica-Bold").fontSize(20).fillColor(bgpDarkGreen)
               .text(plain, leftM, y, { align: "center", width: pageW });
             y = doc.y + 18;
           } else if (lineType === "heading") {
             const isSubSection = /^\d+\.\d+/.test(plain);
             y += isSubSection ? 6 : 12;
-            if (y > 720) y = newPage();
-            doc.font("Helvetica-Bold").fontSize(isSubSection ? 11 : 14).fillColor("#1a1a1a")
+            if (y > 710) y = newPage();
+            doc.font("Helvetica-Bold").fontSize(isSubSection ? 11 : 14).fillColor(isSubSection ? "#444444" : bgpGreen)
               .text(plain, leftM, y, { width: pageW });
             y = doc.y + 6;
           } else if (lineType === "bullet") {
@@ -2613,7 +2744,7 @@ Be concise, professional, and use British English. All document advice should al
           } else if (lineType === "blockquote") {
             const quoteText = stripMd(trimmed.replace(/^>\s*/, ""));
             doc.save();
-            doc.moveTo(leftM + 20, y).lineTo(leftM + 20, y + 14).strokeColor("#cccccc").lineWidth(2).stroke();
+            doc.moveTo(leftM + 20, y).lineTo(leftM + 20, y + 14).strokeColor(bgpGreen).lineWidth(2).stroke();
             doc.restore();
             doc.font("Times-Italic").fontSize(10).fillColor("#555555")
               .text(quoteText, leftM + 30, y, { width: pageW - 30 });
@@ -2642,11 +2773,19 @@ Be concise, professional, and use British English. All document advice should al
         }
 
         const range = doc.bufferedPageRange();
+        const totalPages = range.count;
         for (let i = range.start; i < range.start + range.count; i++) {
           doc.switchToPage(i);
-          doc.moveTo(leftM, 775).lineTo(rightEdge, 775).strokeColor("#cccccc").lineWidth(0.5).stroke();
-          doc.fontSize(8).fillColor("#999999").font("Helvetica")
-            .text(`Bruce Gillingham Pollard — Confidential  |  Page ${i + 1}`, leftM, 780, { align: "center", width: pageW });
+          // Green header bar overlay on each page (already drawn by drawHeader but reinforce for buffered pages)
+          doc.rect(0, 0, 595, 8).fill(bgpGreen);
+          doc.fontSize(7).fillColor("#FFFFFF").font("Helvetica-Bold")
+            .text("BRUCE GILLINGHAM POLLARD", leftM, 10, { align: "right", width: pageW });
+          // Footer
+          doc.moveTo(leftM, 770).lineTo(rightEdge, 770).strokeColor(bgpGreen).lineWidth(0.5).stroke();
+          doc.fontSize(7).fillColor("#888888").font("Helvetica");
+          doc.text(generatedDate, leftM, 776, { width: 150, align: "left" });
+          doc.text("Bruce Gillingham Pollard — Confidential", leftM + 130, 776, { width: 220, align: "center" });
+          doc.text(`Page ${i - range.start + 1} of ${totalPages}`, rightEdge - 80, 776, { width: 80, align: "right" });
         }
 
         doc.end();
@@ -2666,11 +2805,14 @@ Be concise, professional, and use British English. All document advice should al
         pptx.layout = "LAYOUT_WIDE";
 
         const brandDark = "232323";
+        const brandGreen = "2E5E3F";
+        const brandDarkGreen = "1A3A28";
+        const brandGold = "C4A35A";
         const brandPanel = "E7E5DF";
         const brandMid = "596264";
         const brandLight = "DDDFE0";
-        const brandFont = "Work Sans";
-        const brandFontMedium = "WorkSans-Medium";
+        const brandFont = "Calibri";
+        const brandFontAlt = "Arial";
 
         const whiteLogoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_WhiteWordmark_trimmed.png");
         const blackLogoPath = path.join(process.cwd(), "server", "assets", "branding", "BGP_BlackWordmark_trimmed.png");
@@ -2683,10 +2825,17 @@ Be concise, professional, and use British English. All document advice should al
           { rect: { x: 10.2, y: 0.69, w: 1.97, h: 0.31, fill: { color } } },
         ];
 
+        // BGP green header bar on all slide masters
+        const greenHeaderBar = { rect: { x: 0, y: 0, w: 13.34, h: 0.12, fill: { color: brandGreen } } };
+
+        // Slide number placeholder for content/section slides
+        const slideNumObj = { text: { text: "SLIDE {slideNumber}", options: { x: 12.0, y: 7.2, w: 1.2, h: 0.28, fontSize: 8, color: "999999", fontFace: brandFont, align: "right" as const } } };
+
         pptx.defineSlideMaster({
           title: "BGP_COVER",
           background: { color: brandDark },
           objects: [
+            greenHeaderBar,
             ...decorBars("FFFFFF"),
           ],
         });
@@ -2695,7 +2844,9 @@ Be concise, professional, and use British English. All document advice should al
           title: "BGP_SECTION",
           background: { color: brandDark },
           objects: [
+            greenHeaderBar,
             ...decorBars("FFFFFF"),
+            slideNumObj,
           ],
         });
 
@@ -2703,35 +2854,49 @@ Be concise, professional, and use British English. All document advice should al
           title: "BGP_CONTENT",
           background: { color: "FFFFFF" },
           objects: [
+            greenHeaderBar,
             ...decorBars(brandPanel),
+            slideNumObj,
           ],
         });
 
         pptx.defineSlideMaster({
           title: "BGP_QUOTE",
           background: { color: brandPanel },
-          objects: [],
+          objects: [
+            greenHeaderBar,
+            slideNumObj,
+          ],
         });
 
         pptx.defineSlideMaster({
           title: "BGP_END",
           background: { color: brandDark },
           objects: [
+            greenHeaderBar,
             ...decorBars("FFFFFF"),
           ],
         });
 
+        // Title slide
         const titleSlide = pptx.addSlide({ masterName: "BGP_COVER" });
         if (whiteLogoExists) {
           titleSlide.addImage({ path: whiteLogoPath, x: 10.4, y: 0.87, w: 2.95, h: 1.04 });
         }
+        // Green accent line above title
+        titleSlide.addShape(pptx.ShapeType.rect, { x: 0.6, y: 5.2, w: 2.0, h: 0.04, fill: { color: brandGreen } });
         titleSlide.addText(docTitle, {
-          x: 0.6, y: 5.5, w: 7.5, h: 1.4,
+          x: 0.6, y: 5.4, w: 7.5, h: 1.4,
           fontSize: 50, color: "FFFFFF", fontFace: brandFont, bold: false, valign: "bottom",
         });
         titleSlide.addText(
           `PREPARED FOR CLIENT, ${new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" }).toUpperCase()}`,
-          { x: 0.6, y: 7.2, w: 7.5, h: 0.44, fontSize: 20, color: "FFFFFF", fontFace: brandFontMedium, bold: false, letterSpacing: 2 }
+          { x: 0.6, y: 7.2, w: 7.5, h: 0.44, fontSize: 20, color: "FFFFFF", fontFace: brandFont, bold: false, letterSpacing: 2 }
+        );
+        // Slide number not shown on cover
+        titleSlide.addText(
+          new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }),
+          { x: 0.6, y: 7.0, w: 4.0, h: 0.24, fontSize: 10, color: brandMid, fontFace: brandFont }
         );
 
         const contentGroups: { heading: string; lines: string[]; isQuote: boolean }[] = [];
@@ -2766,9 +2931,11 @@ Be concise, professional, and use British English. All document advice should al
 
           if (group.heading && sectionIdx > 1) {
             const secSlide = pptx.addSlide({ masterName: "BGP_SECTION" });
+            // Green accent bar before section title
+            secSlide.addShape(pptx.ShapeType.rect, { x: 0.9, y: 0.5, w: 1.5, h: 0.04, fill: { color: brandGreen } });
             secSlide.addText(group.heading.toUpperCase(), {
               x: 0.9, y: 0.75, w: 6.0, h: 0.44,
-              fontSize: 20, color: "FFFFFF", fontFace: brandFontMedium, bold: false, letterSpacing: 2,
+              fontSize: 20, color: "FFFFFF", fontFace: brandFont, bold: false, letterSpacing: 2,
             });
           }
 
@@ -2778,7 +2945,12 @@ Be concise, professional, and use British English. All document advice should al
               .map(l => stripMd(l.trim().replace(/^>\s*/, "")))
               .filter(l => l)
               .join(" ");
-            quoteSlide.addText(`'${quoteText}'`, {
+            // Green quote mark accent
+            quoteSlide.addText("\u201C", {
+              x: 1.5, y: 1.5, w: 1.0, h: 1.0,
+              fontSize: 80, color: brandGreen, fontFace: brandFont, bold: true,
+            });
+            quoteSlide.addText(quoteText, {
               x: 2.5, y: 2.5, w: 8.5, h: 2.5,
               fontSize: 50, color: brandDark, fontFace: brandFont, bold: false, align: "center", valign: "middle",
             });
@@ -2795,7 +2967,7 @@ Be concise, professional, and use British English. All document advice should al
             if (group.heading) {
               slide.addText(group.heading.toUpperCase(), {
                 x: 0.4, y: 0.21, w: 5.0, h: 0.44,
-                fontSize: 20, color: brandDark, fontFace: brandFontMedium, bold: false, letterSpacing: 2,
+                fontSize: 20, color: brandDark, fontFace: brandFont, bold: false, letterSpacing: 2,
               });
             }
 
@@ -2810,11 +2982,11 @@ Be concise, professional, and use British English. All document advice should al
 
               if (lt === "heading") {
                 const isSubSection = /^\d+\.\d+/.test(plain);
-                textParts.push({ text: plain + "\n", options: { fontSize: isSubSection ? 18 : 24, bold: true, color: brandDark, fontFace: brandFont } });
+                textParts.push({ text: plain + "\n", options: { fontSize: isSubSection ? 18 : 24, bold: true, color: isSubSection ? brandMid : brandGreen, fontFace: brandFont } });
               } else if (lt === "bullet") {
-                textParts.push({ text: `  •  ${stripMd(plain.replace(/^[-•*]\s*/, ""))}\n`, options: { fontSize: 14, color: brandMid, fontFace: brandFont } });
+                textParts.push({ text: `  \u2014  ${stripMd(plain.replace(/^[-\u2022*]\s*/, ""))}\n`, options: { fontSize: 14, color: brandMid, fontFace: brandFont } });
               } else if (lt === "blockquote") {
-                textParts.push({ text: `"${stripMd(trimmed.replace(/^>\s*/, ""))}"\n`, options: { fontSize: 14, italic: true, color: brandMid, fontFace: brandFont } });
+                textParts.push({ text: `\u201C${stripMd(trimmed.replace(/^>\s*/, ""))}\u201D\n`, options: { fontSize: 14, italic: true, color: brandMid, fontFace: brandFont } });
               } else {
                 textParts.push({ text: plain + "\n", options: { fontSize: 14, color: brandDark, fontFace: brandFont } });
               }
@@ -2830,6 +3002,8 @@ Be concise, professional, and use British English. All document advice should al
         if (whiteLogoExists) {
           endSlide.addImage({ path: whiteLogoPath, x: 10.4, y: 0.87, w: 2.95, h: 1.04 });
         }
+        // Green accent line
+        endSlide.addShape(pptx.ShapeType.rect, { x: 0.6, y: 4.2, w: 2.0, h: 0.04, fill: { color: brandGreen } });
         endSlide.addText("Thank you", {
           x: 0.6, y: 4.5, w: 8.0, h: 1.4,
           fontSize: 66, color: "FFFFFF", fontFace: brandFont, bold: false,

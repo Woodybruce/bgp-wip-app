@@ -1469,6 +1469,9 @@ export const landRegistrySearches = pgTable("land_registry_searches", {
   aiSummary: jsonb("ai_summary"),
   ownership: jsonb("ownership"),
   crmPropertyId: varchar("crm_property_id"),
+  notes: text("notes"),
+  tags: jsonb("tags").default(sql`'[]'::jsonb`),
+  status: varchar("status").default("New"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1515,6 +1518,41 @@ export const leasingScheduleAudit = pgTable("leasing_schedule_audit", {
   newValue: text("new_value"),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+export const kycAuditLog = pgTable("kyc_audit_log", {
+  id: serial("id").primaryKey(),
+  investigationId: integer("investigation_id").notNull(),
+  action: text("action").notNull(), // created | updated | approved | rejected | re-screened
+  performedBy: varchar("performed_by"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertKycAuditLogSchema = createInsertSchema(kycAuditLog).omit({ id: true, createdAt: true });
+export type InsertKycAuditLog = z.infer<typeof insertKycAuditLogSchema>;
+export type KycAuditLog = typeof kycAuditLog.$inferSelect;
+
+export const imageStudioCollections = pgTable("image_studio_collections", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  coverImageId: varchar("cover_image_id"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertImageStudioCollectionSchema = createInsertSchema(imageStudioCollections).omit({ id: true, createdAt: true });
+export type InsertImageStudioCollection = z.infer<typeof insertImageStudioCollectionSchema>;
+export type ImageStudioCollection = typeof imageStudioCollections.$inferSelect;
+
+export const imageStudioCollectionImages = pgTable("image_studio_collection_images", {
+  id: serial("id").primaryKey(),
+  collectionId: varchar("collection_id").notNull(),
+  imageId: varchar("image_id").notNull(),
+  addedAt: timestamp("added_at").defaultNow(),
+});
+
+export type ImageStudioCollectionImage = typeof imageStudioCollectionImages.$inferSelect;
 
 export const loginSchema = z.object({
   username: z.string().min(1, "Username is required"),

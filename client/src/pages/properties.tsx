@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { PageLayout } from "@/components/page-layout";
 import {
   Table,
   TableBody,
@@ -99,6 +100,7 @@ import { buildUserColorMap } from "@/lib/agent-colors";
 import { AddressAutocomplete, InlineAddress, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS } from "@/lib/crm-options";
+import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import type { CrmProperty, CrmDeal, CrmContact, CrmCompany, CrmLead, User } from "@shared/schema";
 import {
   DropdownMenu,
@@ -4289,6 +4291,9 @@ function PropertiesList({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [activeView, setActiveView] = useState<"list" | "landlordHealth">("list");
+  const [viewMode, setViewMode] = useState<"table" | "card">(
+    typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
+  );
 
   const bulkUpdateMutation = useMutation({
     mutationFn: async ({ ids, field, value }: { ids: string[]; field: string; value: any }) => {
@@ -4555,15 +4560,11 @@ function PropertiesList({
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="properties-page">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Properties</h1>
-          <p className="text-sm text-muted-foreground">
-            {items.length} properties in the CRM{isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    <PageLayout
+      title="Properties"
+      subtitle={`${items.length} properties in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
+      actions={
+        <>
           <Button
             variant={activeView === "landlordHealth" ? "default" : "outline"}
             size="sm"
@@ -4580,8 +4581,11 @@ function PropertiesList({
             <Plus className="w-4 h-4 mr-2" />
             New Property
           </Button>
-        </div>
-      </div>
+        </>
+      }
+      className="space-y-6"
+      testId="properties-page"
+    >
 
       <CreatePropertyDialog open={createDialogOpen} onOpenChange={setCreateDialogOpen} />
 
@@ -4689,8 +4693,47 @@ function PropertiesList({
             )}
           </Button>
         )}
+        <ViewToggle view={viewMode} onToggle={setViewMode} />
       </div>
 
+      {viewMode === "card" ? (
+        <Card>
+          <CardContent className="p-0">
+            {isLoading ? (
+              <div className="p-4 space-y-3">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <Skeleton key={i} className="h-24 rounded-xl" />
+                ))}
+              </div>
+            ) : (
+              <MobileCardView
+                items={filteredItems.map((item): MobileCardItem => {
+                  const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
+                  const agentNames = allUsers.filter(u => assignedIds.includes(String(u.id))).map(u => u.name || "").join(", ");
+                  const teams = Array.isArray(item.bgpEngagement) ? item.bgpEngagement.join(", ") : (item.bgpEngagement || "");
+                  const assetClass = Array.isArray(item.assetClass) ? item.assetClass.join(", ") : (item.assetClass || "");
+                  return {
+                    id: item.id,
+                    title: item.name,
+                    subtitle: item.address ? (typeof item.address === "object" ? (item.address as any).line1 || "" : String(item.address)) : undefined,
+                    href: `/properties/${item.id}`,
+                    status: item.status || undefined,
+                    statusColor: BUILDING_ICON_COLORS[item.status || ""]?.replace("text-", "bg-") || "bg-muted-foreground",
+                    fields: [
+                      { label: "Asset Class", value: assetClass, badge: true },
+                      { label: "Team", value: teams },
+                      { label: "Tenure", value: item.tenure },
+                      { label: "BGP Contacts", value: agentNames },
+                      { label: "Sq Ft", value: item.sqft ? Number(item.sqft).toLocaleString() : null },
+                    ],
+                  };
+                })}
+                emptyMessage="No properties found"
+              />
+            )}
+          </CardContent>
+        </Card>
+      ) : (
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
@@ -4931,6 +4974,7 @@ function PropertiesList({
           )}
         </CardContent>
       </Card>
+      )}
 
       {selectedIds.size > 0 && (
         <div
@@ -5006,7 +5050,7 @@ function PropertiesList({
       </AlertDialog>
       </>}
 
-    </div>
+    </PageLayout>
   );
 }
 

@@ -672,6 +672,113 @@ body {
   --sidebar-ring: 50 80% 48%;
 }
 
+/* ─── Global Design Uniformity ─── */
+
+/* Smooth scroll behavior */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Consistent scrollbar styling */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+.dark *::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+}
+.dark *::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Consistent focus ring (BGP green) */
+*:focus-visible {
+  outline: 2px solid #2E5E3F;
+  outline-offset: 2px;
+}
+
+/* Consistent link color (BGP green) */
+a:not([class]) {
+  color: #2E5E3F;
+}
+a:not([class]):hover {
+  color: #1A3A28;
+}
+.dark a:not([class]) {
+  color: #7FBF95;
+}
+.dark a:not([class]):hover {
+  color: #A8D4B4;
+}
+
+/* Selection highlight color (BGP light green) */
+::selection {
+  background-color: #E8F0EB;
+  color: #1A3A28;
+}
+.dark ::selection {
+  background-color: rgba(46, 94, 63, 0.4);
+  color: #E8F0EB;
+}
+
+/* ─── End Design Uniformity ─── */
+
+/* ========================================================================
+   Mobile / Touch-friendly improvements
+   ======================================================================== */
+
+/* Minimum 44px touch targets on mobile for all interactive elements */
+@media (max-width: 767px) {
+  button:not([data-no-min-touch]):not(.inline-edit-btn):not([class*="h-5"]):not([class*="h-4"]):not([class*="w-5"]):not([class*="w-4"]),
+  [role="button"]:not([data-no-min-touch]):not(.inline-edit-btn) {
+    min-height: 44px;
+  }
+
+  /* Better spacing between clickable items in lists on mobile */
+  [data-sidebar="menu"] a,
+  [data-sidebar="menu"] button {
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
+  }
+}
+
+/* Disable hover visual effects on pure touch devices */
+@media (hover: none) {
+  .hover-elevate:hover:not(.no-default-hover-elevate)::after {
+    background-color: transparent;
+  }
+  .hover-elevate-2:hover:not(.no-default-hover-elevate)::after {
+    background-color: transparent;
+  }
+
+  /* Use active state instead for touch feedback */
+  button:active,
+  a:active,
+  [role="button"]:active {
+    opacity: 0.85;
+    transition: opacity 0.1s ease;
+  }
+}
+
+/* Bottom nav bar safe spacing — prevent content overlap */
+@media (max-width: 767px) {
+  .pb-bottom-nav {
+    padding-bottom: calc(3.5rem + env(safe-area-inset-bottom));
+  }
+}
+
+/* ─── End Mobile improvements ─── */
+
 .chatbgp-markdown h1 { font-size: 1.25rem; font-weight: 600; margin: 1rem 0 0.5rem; line-height: 1.4; }
 .chatbgp-markdown h2 { font-size: 1.1rem; font-weight: 600; margin: 0.875rem 0 0.375rem; line-height: 1.4; }
 .chatbgp-markdown h3 { font-size: 1rem; font-weight: 600; margin: 0.75rem 0 0.25rem; line-height: 1.4; }

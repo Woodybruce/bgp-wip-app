@@ -3518,6 +3518,91 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
+  app.get("/api/wip/agent-drilldown/:agentName", requireAuth, async (req, res) => {
+    try {
+      const senior = await isWipSenior(req);
+      const agentName = decodeURIComponent(req.params.agentName);
+
+      const deals = await db.select().from(crmDeals);
+      const allocations = await db.select().from(dealFeeAllocations);
+      const properties = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties);
+      const companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name }).from(crmCompanies);
+
+      const propMap = new Map(properties.map(p => [p.id, p.name]));
+      const compMap = new Map(companies.map(c => [c.id, c.name]));
+
+      const allocsByDeal = new Map<string, typeof allocations>();
+      for (const a of allocations) {
+        if (!allocsByDeal.has(a.dealId)) allocsByDeal.set(a.dealId, []);
+        allocsByDeal.get(a.dealId)!.push(a);
+      }
+
+      const INVOICED_STATUSES = ["Invoiced", "Billed"];
+      const EXCLUDED_STATUSES = ["Dead", "Leasing Comps", "Investment Comps"];
+      const result: any[] = [];
+
+      for (const deal of deals) {
+        if (EXCLUDED_STATUSES.includes(deal.status || "")) continue;
+        const totalFee = deal.fee || 0;
+        const isInvoiced = INVOICED_STATUSES.includes(deal.status || "");
+        const dealAllocs = allocsByDeal.get(deal.id);
+        let allocatedAmount = 0;
+        let isRelevant = false;
+
+        if (dealAllocs && dealAllocs.length > 0) {
+          const agentAlloc = dealAllocs.find(a => a.agentName.toLowerCase() === agentName.toLowerCase());
+          if (agentAlloc) {
+            isRelevant = true;
+            const pct = (agentAlloc.percentage || 0) / 100;
+            allocatedAmount = agentAlloc.fixedAmount || (totalFee * pct);
+          }
+        } else {
+          const agentNames = Array.isArray(deal.internalAgent) ? deal.internalAgent : (deal.internalAgent ? [deal.internalAgent] : []);
+          if (agentNames.some(n => n.toLowerCase() === agentName.toLowerCase())) {
+            isRelevant = true;
+            allocatedAmount = agentNames.length > 0 ? totalFee / agentNames.length : totalFee;
+          }
+        }
+
+        if (!isRelevant) continue;
+
+        const dealTeamArr = Array.isArray(deal.team) ? deal.team : (deal.team ? [deal.team] : []);
+        if (!senior && dealTeamArr.some(t => (t || "").toLowerCase() === "bgp")) continue;
+
+        const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
+        const tenantName = deal.tenantId ? compMap.get(deal.tenantId) || null : null;
+
+        function drilldownStage(status: string | null): string {
+          if (!status) return "pipeline";
+          if (INVOICED_STATUSES.includes(status)) return "invoiced";
+          if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
+          return "pipeline";
+        }
+
+        result.push({
+          dealId: deal.id,
+          name: deal.name,
+          property: propertyName,
+          tenant: tenantName,
+          dealType: deal.dealType || null,
+          totalFee: totalFee,
+          allocatedAmount: Math.round(allocatedAmount),
+          status: deal.status || null,
+          stage: drilldownStage(deal.status),
+          team: dealTeamArr.join(", "),
+          isInvoiced,
+          wip: isInvoiced ? 0 : Math.round(allocatedAmount),
+          invoiced: isInvoiced ? Math.round(allocatedAmount) : 0,
+        });
+      }
+
+      result.sort((a, b) => b.allocatedAmount - a.allocatedAmount);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/wip", requireAuth, async (req, res) => {
     try {
       const senior = await isWipSenior(req);
@@ -3534,6 +3619,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name }).from(crmCompanies);
       const invoices = await db.select().from(xeroInvoices);
       const wipRows = await db.select().from(wipEntries);
+      const allAllocations = await db.select().from(dealFeeAllocations);
+      const allocsByDealId = new Map<string, typeof allAllocations>();
+      for (const a of allAllocations) {
+        if (!allocsByDealId.has(a.dealId)) allocsByDealId.set(a.dealId, []);
+        allocsByDealId.get(a.dealId)!.push(a);
+      }
 
       const propMap = new Map(properties.map(p => [p.id, p.name]));
       const compMap = new Map(companies.map(c => [c.id, c.name]));
@@ -3625,34 +3716,98 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       );
       for (const deal of unmatchedDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
-        const agentStr = Array.isArray(deal.internalAgent) ? deal.internalAgent.join(", ") : (deal.internalAgent || null);
         const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
         const tenantName = deal.tenantId ? compMap.get(deal.tenantId) || null : null;
         const invoice = invoicesByDeal.get(deal.id);
         const stage = deriveStage(deal.status);
         const isInvoiced = stage === "invoiced";
+        const totalFee = deal.fee || 0;
+        const totalInvoiceAmt = invoice?.totalAmount || (isInvoiced ? totalFee : 0);
 
-        entries.push({
-          id: deal.id,
-          dealId: deal.id,
-          dealType: deal.dealType || null,
-          ref: deal.name,
-          groupName: deal.groupName || null,
-          project: propertyName,
-          tenant: tenantName,
-          team: teamStr,
-          agent: agentStr,
-          assetClass: deal.assetClass || null,
-          amtWip: isInvoiced ? 0 : (deal.fee || 0),
-          amtInvoice: invoice?.totalAmount || (isInvoiced ? (deal.fee || 0) : 0),
-          month: deriveMonth(deal),
-          dealStatus: deal.status || null,
-          stage,
-          invoiceNo: invoice?.invoiceNo || null,
-          orderNumber: null,
-          fiscalYear: deriveFiscalYear(deal),
-          source: "crm" as const,
-        });
+        const dealAllocations = allocsByDealId.get(deal.id);
+
+        if (dealAllocations && dealAllocations.length > 0) {
+          // Use fee allocations: one WIP entry per allocation
+          for (const alloc of dealAllocations) {
+            const pct = (alloc.percentage || 0) / 100;
+            const agentFee = alloc.fixedAmount || (totalFee * pct);
+            const agentInvoiceAmt = alloc.fixedAmount || (totalInvoiceAmt * pct);
+            entries.push({
+              id: `${deal.id}_${alloc.agentName}`,
+              dealId: deal.id,
+              dealType: deal.dealType || null,
+              ref: deal.name,
+              groupName: deal.groupName || null,
+              project: propertyName,
+              tenant: tenantName,
+              team: teamStr,
+              agent: alloc.agentName,
+              assetClass: deal.assetClass || null,
+              amtWip: isInvoiced ? 0 : agentFee,
+              amtInvoice: agentInvoiceAmt,
+              month: deriveMonth(deal),
+              dealStatus: deal.status || null,
+              stage,
+              invoiceNo: invoice?.invoiceNo || null,
+              orderNumber: null,
+              fiscalYear: deriveFiscalYear(deal),
+              source: "crm" as const,
+            });
+          }
+        } else {
+          // No allocations: split equally among internalAgent array, one row per agent
+          const agentNames = Array.isArray(deal.internalAgent) ? deal.internalAgent : (deal.internalAgent ? [deal.internalAgent] : []);
+          if (agentNames.length === 0) {
+            // No agents at all — still add as a single entry with null agent
+            entries.push({
+              id: deal.id,
+              dealId: deal.id,
+              dealType: deal.dealType || null,
+              ref: deal.name,
+              groupName: deal.groupName || null,
+              project: propertyName,
+              tenant: tenantName,
+              team: teamStr,
+              agent: null,
+              assetClass: deal.assetClass || null,
+              amtWip: isInvoiced ? 0 : totalFee,
+              amtInvoice: totalInvoiceAmt,
+              month: deriveMonth(deal),
+              dealStatus: deal.status || null,
+              stage,
+              invoiceNo: invoice?.invoiceNo || null,
+              orderNumber: null,
+              fiscalYear: deriveFiscalYear(deal),
+              source: "crm" as const,
+            });
+          } else {
+            const perAgentFee = totalFee / agentNames.length;
+            const perAgentInvoice = totalInvoiceAmt / agentNames.length;
+            for (const agentName of agentNames) {
+              entries.push({
+                id: `${deal.id}_${agentName}`,
+                dealId: deal.id,
+                dealType: deal.dealType || null,
+                ref: deal.name,
+                groupName: deal.groupName || null,
+                project: propertyName,
+                tenant: tenantName,
+                team: teamStr,
+                agent: agentName,
+                assetClass: deal.assetClass || null,
+                amtWip: isInvoiced ? 0 : perAgentFee,
+                amtInvoice: perAgentInvoice,
+                month: deriveMonth(deal),
+                dealStatus: deal.status || null,
+                stage,
+                invoiceNo: invoice?.invoiceNo || null,
+                orderNumber: null,
+                fiscalYear: deriveFiscalYear(deal),
+                source: "crm" as const,
+              });
+            }
+          }
+        }
       }
 
       if (!senior) {

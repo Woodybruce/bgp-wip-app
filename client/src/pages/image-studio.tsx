@@ -40,7 +40,11 @@ import {
   Plus,
   Wand2,
   StretchHorizontal,
+  FolderPlus,
+  Library,
+  Link,
 } from "lucide-react";
+import { PageLayout } from "@/components/page-layout";
 
 const CATEGORIES = [
   "All",
@@ -153,6 +157,24 @@ export default function ImageStudio() {
   const [aiEditImageId, setAiEditImageId] = useState<string | null>(null);
   const [aiEditImageName, setAiEditImageName] = useState("");
 
+  // Bulk tag state
+  const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
+  const [bulkTagInput, setBulkTagInput] = useState("");
+
+  // Bulk assign property state
+  const [bulkPropertyDialogOpen, setBulkPropertyDialogOpen] = useState(false);
+  const [bulkPropertyId, setBulkPropertyId] = useState("");
+  const [bulkPropertyAddress, setBulkPropertyAddress] = useState("");
+
+  // Collections state
+  const [collectionsTab, setCollectionsTab] = useState<"grid" | "collections">("grid");
+  const [createCollectionOpen, setCreateCollectionOpen] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState("");
+  const [newCollectionDesc, setNewCollectionDesc] = useState("");
+  const [viewingCollectionId, setViewingCollectionId] = useState<string | null>(null);
+  const [addToCollectionOpen, setAddToCollectionOpen] = useState(false);
+  const [addToCollectionTargetId, setAddToCollectionTargetId] = useState("");
+
   const [editForm, setEditForm] = useState({
     fileName: "",
     category: "",
@@ -242,6 +264,106 @@ export default function ImageStudio() {
       setSelectMode(false);
       setBulkCategory("");
       toast({ title: "Categorised", description: `${selectedIds.size} images updated` });
+    },
+  });
+
+  const bulkTagMutation = useMutation({
+    mutationFn: async ({ ids, tags }: { ids: string[]; tags: string[] }) => {
+      await apiRequest("POST", "/api/image-studio/bulk-tag", { ids, tags });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      setBulkTagDialogOpen(false);
+      setBulkTagInput("");
+      toast({ title: "Tagged", description: `Tags applied to ${selectedIds.size} images` });
+    },
+    onError: (e: Error) => toast({ title: "Tag Failed", description: e.message, variant: "destructive" }),
+  });
+
+  const bulkAssignPropertyMutation = useMutation({
+    mutationFn: async ({ ids, propertyId, address }: { ids: string[]; propertyId: string; address?: string }) => {
+      await apiRequest("POST", "/api/image-studio/bulk-assign-property", { ids, propertyId, address });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      setBulkPropertyDialogOpen(false);
+      setBulkPropertyId("");
+      setBulkPropertyAddress("");
+      toast({ title: "Assigned", description: `${selectedIds.size} images assigned to property` });
+    },
+    onError: (e: Error) => toast({ title: "Assign Failed", description: e.message, variant: "destructive" }),
+  });
+
+  // Properties list for the assign dialog
+  const { data: properties = [] } = useQuery<any[]>({
+    queryKey: ["/api/projects"],
+  });
+
+  // Collections queries
+  const { data: collections = [], isLoading: collectionsLoading } = useQuery<any[]>({
+    queryKey: ["/api/image-studio/collections"],
+  });
+
+  const { data: viewingCollection, isLoading: viewingCollectionLoading } = useQuery<any>({
+    queryKey: ["/api/image-studio/collections", viewingCollectionId],
+    enabled: !!viewingCollectionId,
+  });
+
+  const createCollectionMutation = useMutation({
+    mutationFn: async (data: { name: string; description?: string }) => {
+      const res = await apiRequest("POST", "/api/image-studio/collections", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      setCreateCollectionOpen(false);
+      setNewCollectionName("");
+      setNewCollectionDesc("");
+      toast({ title: "Created", description: "Collection created" });
+    },
+    onError: (e: Error) => toast({ title: "Create Failed", description: e.message, variant: "destructive" }),
+  });
+
+  const addToCollectionMutation = useMutation({
+    mutationFn: async ({ collectionId, imageIds }: { collectionId: string; imageIds: string[] }) => {
+      const res = await apiRequest("POST", `/api/image-studio/collections/${collectionId}/images`, { imageIds });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      if (viewingCollectionId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections", viewingCollectionId] });
+      }
+      setAddToCollectionOpen(false);
+      setAddToCollectionTargetId("");
+      setSelectedIds(new Set());
+      setSelectMode(false);
+      toast({ title: "Added", description: "Images added to collection" });
+    },
+    onError: (e: Error) => toast({ title: "Add Failed", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteCollectionMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/image-studio/collections/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      setViewingCollectionId(null);
+      toast({ title: "Deleted", description: "Collection deleted" });
+    },
+  });
+
+  const removeFromCollectionMutation = useMutation({
+    mutationFn: async ({ collectionId, imageId }: { collectionId: string; imageId: string }) => {
+      await apiRequest("DELETE", `/api/image-studio/collections/${collectionId}/images/${imageId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections"] });
+      if (viewingCollectionId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/image-studio/collections", viewingCollectionId] });
+      }
+      toast({ title: "Removed", description: "Image removed from collection" });
     },
   });
 
@@ -466,37 +588,11 @@ export default function ImageStudio() {
   }, {} as Record<string, number>);
 
   return (
-    <div className="flex flex-col h-full" data-testid="image-studio-page">
-      <div className="flex items-center justify-between p-4 border-b bg-background">
-        <div>
-          <h1 className="text-xl font-semibold flex items-center gap-2" data-testid="text-page-title">
-            <ImageIconLucide className="h-5 w-5" />
-            Image Studio
-            {linkedProperty && (
-              <Badge variant="outline" className="font-normal text-xs ml-1" data-testid="badge-linked-property">
-                <Building2 className="h-3 w-3 mr-1" />
-                {linkedProperty}
-              </Badge>
-            )}
-          </h1>
-          <div className="flex items-center gap-2 mt-1">
-            <button
-              onClick={() => setActiveSection("library")}
-              className={`text-sm px-2 py-0.5 rounded ${activeSection === "library" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-              data-testid="tab-library"
-            >
-              Library ({images.filter(i => i.category !== "Brands").length})
-            </button>
-            <button
-              onClick={() => setActiveSection("brands")}
-              className={`text-sm px-2 py-0.5 rounded ${activeSection === "brands" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
-              data-testid="tab-brands"
-            >
-              Brand Library ({images.filter(i => i.category === "Brands").length})
-            </button>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
+    <PageLayout
+      title={`Image Studio${linkedProperty ? ` — ${linkedProperty}` : ""}`}
+      subtitle={linkedProperty ? "Linked from property" : "Manage images, brands, street views and AI generation"}
+      actions={
+        <>
           <Button
             variant="outline"
             size="sm"
@@ -532,7 +628,34 @@ export default function ImageStudio() {
             <Upload className="h-4 w-4 mr-1" />
             Upload
           </Button>
-        </div>
+        </>
+      }
+      fullHeight
+      testId="image-studio-page"
+    >
+      {/* Section tabs */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b bg-background flex-shrink-0">
+        <button
+          onClick={() => { setActiveSection("library"); setCollectionsTab("grid"); }}
+          className={`text-sm px-2 py-0.5 rounded ${activeSection === "library" && collectionsTab === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          data-testid="tab-library"
+        >
+          Library ({images.filter(i => i.category !== "Brands").length})
+        </button>
+        <button
+          onClick={() => { setActiveSection("brands"); setCollectionsTab("grid"); }}
+          className={`text-sm px-2 py-0.5 rounded ${activeSection === "brands" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          data-testid="tab-brands"
+        >
+          Brand Library ({images.filter(i => i.category === "Brands").length})
+        </button>
+        <button
+          onClick={() => { setActiveSection("library"); setCollectionsTab("collections"); }}
+          className={`text-sm px-2 py-0.5 rounded ${collectionsTab === "collections" && activeSection === "library" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          data-testid="tab-collections"
+        >
+          Collections ({collections.length})
+        </button>
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -679,6 +802,7 @@ export default function ImageStudio() {
           </>
           ) : (
           <>
+          {collectionsTab === "grid" && (<>
           <div className="flex items-center gap-2 p-3 border-b">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -752,6 +876,33 @@ export default function ImageStudio() {
               <div className="flex-1" />
               {selectedIds.size > 0 && (
                 <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { setBulkTagInput(""); setBulkTagDialogOpen(true); }}
+                    data-testid="button-bulk-tag"
+                  >
+                    <Tag className="h-4 w-4 mr-1" />
+                    Tag All
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { setBulkPropertyId(""); setBulkPropertyAddress(""); setBulkPropertyDialogOpen(true); }}
+                    data-testid="button-bulk-assign-property"
+                  >
+                    <Building2 className="h-4 w-4 mr-1" />
+                    Assign to Property
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { setAddToCollectionTargetId(""); setAddToCollectionOpen(true); }}
+                    data-testid="button-add-to-collection"
+                  >
+                    <FolderPlus className="h-4 w-4 mr-1" />
+                    Add to Collection
+                  </Button>
                   <div className="flex items-center gap-1.5">
                     <Select value={bulkCategory} onValueChange={setBulkCategory}>
                       <SelectTrigger className="h-8 w-[150px] text-xs" data-testid="select-bulk-category">
@@ -792,7 +943,163 @@ export default function ImageStudio() {
               )}
             </div>
           )}
+          </>)}
 
+          {collectionsTab === "collections" ? (
+          <ScrollArea className="flex-1 p-3">
+            {viewingCollectionId ? (
+              <div>
+                <div className="mb-4 flex items-center gap-2">
+                  <button
+                    onClick={() => setViewingCollectionId(null)}
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+                    data-testid="button-back-to-collections"
+                  >
+                    ← Collections
+                  </button>
+                  <span className="text-muted-foreground">/</span>
+                  <h3 className="text-lg font-semibold" data-testid="text-collection-name">{viewingCollection?.name || "Loading..."}</h3>
+                  {viewingCollection?.description && (
+                    <span className="text-sm text-muted-foreground ml-2">{viewingCollection.description}</span>
+                  )}
+                  <div className="flex-1" />
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      if (confirm("Delete this collection? Images won't be deleted.")) {
+                        deleteCollectionMutation.mutate(viewingCollectionId);
+                      }
+                    }}
+                    data-testid="button-delete-collection"
+                  >
+                    <Trash2 className="h-4 w-4 mr-1" /> Delete Collection
+                  </Button>
+                </div>
+                {viewingCollectionLoading ? (
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                    {Array.from({ length: 6 }).map((_, i) => (
+                      <Skeleton key={i} className="aspect-square rounded-lg" />
+                    ))}
+                  </div>
+                ) : !viewingCollection?.images?.length ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-center">
+                    <FolderOpen className="h-12 w-12 text-muted-foreground/30 mb-3" />
+                    <p className="text-muted-foreground text-sm">This collection is empty. Select images and add them here.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                    {viewingCollection.images.map((img: any) => {
+                      const imageObj = {
+                        id: img.id,
+                        fileName: img.file_name,
+                        category: img.category,
+                        tags: img.tags,
+                        description: img.description,
+                        source: img.source,
+                        propertyId: img.property_id,
+                        area: img.area,
+                        address: img.address,
+                        brandName: img.brand_name,
+                        brandSector: img.brand_sector,
+                        propertyType: img.property_type,
+                        mimeType: img.mime_type,
+                        fileSize: img.file_size,
+                        width: img.width,
+                        height: img.height,
+                        thumbnailData: img.thumbnail_data,
+                        sharepointItemId: img.sharepoint_item_id,
+                        sharepointDriveId: img.sharepoint_drive_id,
+                        localPath: img.local_path,
+                        uploadedBy: img.uploaded_by,
+                        createdAt: img.created_at,
+                      };
+                      return (
+                        <div key={img.id} className="relative group">
+                          <ImageCard
+                            image={imageObj as any}
+                            onView={() => { setSelectedImage(imageObj as any); setLightboxOpen(true); }}
+                            onEdit={() => openEdit(imageObj as any)}
+                            onAiTag={() => aiTagMutation.mutate(img.id)}
+                            onAiEdit={() => { setAiEditImageId(img.id); setAiEditImageName(img.file_name || ""); setAiEditPrompt(""); setAiEditOpen(true); }}
+                            onDelete={() => {
+                              if (confirm("Remove from collection?")) {
+                                removeFromCollectionMutation.mutate({ collectionId: viewingCollectionId!, imageId: img.id });
+                              }
+                            }}
+                            aiTagging={aiTagMutation.isPending}
+                            selectMode={false}
+                            selected={false}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <div className="mb-4 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-semibold" data-testid="text-collections-title">Collections</h3>
+                    <p className="text-sm text-muted-foreground">{collections.length} {collections.length === 1 ? "collection" : "collections"}</p>
+                  </div>
+                  <Button size="sm" onClick={() => setCreateCollectionOpen(true)} data-testid="button-create-collection">
+                    <Plus className="h-4 w-4 mr-1" /> New Collection
+                  </Button>
+                </div>
+                {collectionsLoading ? (
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <Skeleton key={i} className="h-48 rounded-lg" />
+                    ))}
+                  </div>
+                ) : collections.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-center">
+                    <Library className="h-12 w-12 text-muted-foreground/30 mb-3" />
+                    <p className="text-lg font-medium text-muted-foreground mb-1">No Collections Yet</p>
+                    <p className="text-muted-foreground text-sm max-w-md">
+                      Create collections to organise your images into themed groups — e.g. "Q4 Marketing", "Mayfair Properties", or "Client Presentation".
+                    </p>
+                    <Button size="sm" className="mt-4" onClick={() => setCreateCollectionOpen(true)} data-testid="button-create-collection-empty">
+                      <Plus className="h-4 w-4 mr-1" /> Create First Collection
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {collections.map((col: any) => (
+                      <div
+                        key={col.id}
+                        className="group rounded-lg border bg-card overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all"
+                        onClick={() => setViewingCollectionId(col.id)}
+                        data-testid={`card-collection-${col.id}`}
+                      >
+                        <div className="aspect-video bg-muted relative">
+                          {col.cover_thumbnail ? (
+                            <img src={col.cover_thumbnail} alt={col.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <FolderOpen className="h-10 w-10 text-muted-foreground/30" />
+                            </div>
+                          )}
+                          <div className="absolute top-2 right-2">
+                            <Badge variant="secondary" className="text-xs">{col.image_count || 0}</Badge>
+                          </div>
+                        </div>
+                        <div className="p-3">
+                          <p className="font-medium text-sm truncate">{col.name}</p>
+                          {col.description && (
+                            <p className="text-xs text-muted-foreground truncate mt-0.5">{col.description}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </ScrollArea>
+          ) : (
           <ScrollArea className="flex-1 p-3">
             {isLoading ? (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
@@ -951,10 +1258,209 @@ export default function ImageStudio() {
               </div>
             )}
           </ScrollArea>
+          )}
           </>
           )}
         </div>
       </div>
+
+      {/* Bulk Tag Dialog */}
+      <Dialog open={bulkTagDialogOpen} onOpenChange={setBulkTagDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Tag className="h-5 w-5" /> Tag {selectedIds.size} Images
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Tags (comma separated)</Label>
+              <Input
+                placeholder="e.g. exterior, modern, glass, Mayfair"
+                value={bulkTagInput}
+                onChange={(e) => setBulkTagInput(e.target.value)}
+                data-testid="input-bulk-tag"
+              />
+              <p className="text-xs text-muted-foreground mt-1">These tags will be added to all selected images (existing tags are kept).</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkTagDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                const tags = bulkTagInput.split(",").map(t => t.trim()).filter(Boolean);
+                if (tags.length > 0) {
+                  bulkTagMutation.mutate({ ids: [...selectedIds], tags });
+                }
+              }}
+              disabled={!bulkTagInput.trim() || bulkTagMutation.isPending}
+              data-testid="button-bulk-tag-submit"
+            >
+              {bulkTagMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Tag className="h-4 w-4 mr-1" />}
+              Apply Tags
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Assign Property Dialog */}
+      <Dialog open={bulkPropertyDialogOpen} onOpenChange={setBulkPropertyDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5" /> Assign {selectedIds.size} Images to Property
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Property</Label>
+              <Select value={bulkPropertyId} onValueChange={(v) => {
+                setBulkPropertyId(v);
+                const prop = properties.find((p: any) => p.id === v);
+                if (prop) setBulkPropertyAddress(prop.name || prop.address || "");
+              }}>
+                <SelectTrigger data-testid="select-bulk-property">
+                  <SelectValue placeholder="Select a property..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {properties.map((p: any) => (
+                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Address Override (optional)</Label>
+              <Input
+                placeholder="Will use property name if left blank"
+                value={bulkPropertyAddress}
+                onChange={(e) => setBulkPropertyAddress(e.target.value)}
+                data-testid="input-bulk-property-address"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkPropertyDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (bulkPropertyId) {
+                  bulkAssignPropertyMutation.mutate({
+                    ids: [...selectedIds],
+                    propertyId: bulkPropertyId,
+                    address: bulkPropertyAddress || undefined,
+                  });
+                }
+              }}
+              disabled={!bulkPropertyId || bulkAssignPropertyMutation.isPending}
+              data-testid="button-bulk-assign-submit"
+            >
+              {bulkAssignPropertyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Link className="h-4 w-4 mr-1" />}
+              Assign to Property
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add to Collection Dialog */}
+      <Dialog open={addToCollectionOpen} onOpenChange={setAddToCollectionOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FolderPlus className="h-5 w-5" /> Add {selectedIds.size} Images to Collection
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {collections.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No collections yet. Create one first.</p>
+            ) : (
+              <div>
+                <Label>Collection</Label>
+                <Select value={addToCollectionTargetId} onValueChange={setAddToCollectionTargetId}>
+                  <SelectTrigger data-testid="select-add-to-collection">
+                    <SelectValue placeholder="Select a collection..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {collections.map((col: any) => (
+                      <SelectItem key={col.id} value={col.id}>
+                        {col.name} ({col.image_count || 0} images)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setAddToCollectionOpen(false); setCreateCollectionOpen(true); }}
+              data-testid="button-create-collection-from-add"
+            >
+              <Plus className="h-4 w-4 mr-1" /> Create New Collection
+            </Button>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddToCollectionOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (addToCollectionTargetId) {
+                  addToCollectionMutation.mutate({
+                    collectionId: addToCollectionTargetId,
+                    imageIds: [...selectedIds],
+                  });
+                }
+              }}
+              disabled={!addToCollectionTargetId || addToCollectionMutation.isPending}
+              data-testid="button-add-to-collection-submit"
+            >
+              {addToCollectionMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <FolderPlus className="h-4 w-4 mr-1" />}
+              Add to Collection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Collection Dialog */}
+      <Dialog open={createCollectionOpen} onOpenChange={setCreateCollectionOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FolderPlus className="h-5 w-5" /> Create Collection
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Collection Name</Label>
+              <Input
+                placeholder="e.g. Q4 Marketing Assets, Mayfair Properties"
+                value={newCollectionName}
+                onChange={(e) => setNewCollectionName(e.target.value)}
+                data-testid="input-collection-name"
+              />
+            </div>
+            <div>
+              <Label>Description (optional)</Label>
+              <Textarea
+                placeholder="Brief description of this collection"
+                value={newCollectionDesc}
+                onChange={(e) => setNewCollectionDesc(e.target.value)}
+                rows={2}
+                data-testid="textarea-collection-description"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateCollectionOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => createCollectionMutation.mutate({ name: newCollectionName, description: newCollectionDesc || undefined })}
+              disabled={!newCollectionName.trim() || createCollectionMutation.isPending}
+              data-testid="button-create-collection-submit"
+            >
+              {createCollectionMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Plus className="h-4 w-4 mr-1" />}
+              Create Collection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
         <DialogContent className="max-w-md">
@@ -1558,7 +2064,7 @@ export default function ImageStudio() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </PageLayout>
   );
 }
 

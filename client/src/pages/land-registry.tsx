@@ -61,6 +61,7 @@ import {
   Link2,
   Check,
 } from "lucide-react";
+import { PageLayout } from "@/components/page-layout";
 
 interface Transaction {
   id: string;
@@ -219,7 +220,23 @@ interface SavedSearch {
   aiSummary: PropertySummaryData | null;
   ownership: OwnershipData | null;
   crmPropertyId: string | null;
+  notes: string | null;
+  tags: string[];
+  status: string | null;
   createdAt: string;
+  linked_property?: { id: string; name: string; address: string; postcode: string } | null;
+}
+
+const SEARCH_STATUSES = ["New", "Investigating", "Contacted Owner", "No Interest", "Acquired"] as const;
+
+function statusColor(status: string | null): string {
+  switch (status) {
+    case "Investigating": return "bg-blue-500 text-white";
+    case "Contacted Owner": return "bg-amber-500 text-white";
+    case "No Interest": return "bg-gray-400 text-white";
+    case "Acquired": return "bg-emerald-500 text-white";
+    default: return "bg-gray-200 text-gray-700";
+  }
 }
 
 function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, label: string) => void }) {
@@ -283,11 +300,34 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
     },
   });
 
+  const updateSearchStatus = async (searchId: number, status: string) => {
+    try {
+      const res = await fetch(`/api/land-registry/searches/${searchId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ status }),
+      });
+      if (res.ok) {
+        setSavedSearches(prev => prev.map(s => s.id === searchId ? { ...s, status } : s));
+        toast({ title: "Status updated", description: `Search marked as "${status}"` });
+      }
+    } catch {
+      toast({ title: "Failed to update status", variant: "destructive" });
+    }
+  };
+
   useEffect(() => {
-    fetch("/api/land-registry/searches", { credentials: "include", headers: getAuthHeaders() })
+    fetch("/api/land-registry/searches/recent", { credentials: "include", headers: getAuthHeaders() })
       .then(r => r.ok ? r.json() : [])
       .then(data => setSavedSearches(Array.isArray(data) ? data : []))
-      .catch(() => {})
+      .catch(() => {
+        // Fallback to original endpoint
+        fetch("/api/land-registry/searches", { credentials: "include", headers: getAuthHeaders() })
+          .then(r => r.ok ? r.json() : [])
+          .then(data => setSavedSearches(Array.isArray(data) ? data : []))
+          .catch(() => {});
+      })
       .finally(() => setSearchesLoading(false));
   }, []);
 
@@ -739,58 +779,84 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
             <div>
               <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
                 <Activity className="w-4 h-4 text-muted-foreground" />
-                Recent Searches
+                Recent Searches ({savedSearches.length})
               </h3>
-              <div className="space-y-2">
-                {savedSearches.slice(0, 10).map((s) => {
-                  const linkedProperty = s.crmPropertyId ? allCrmProperties.find((p: any) => p.id === s.crmPropertyId) : null;
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {savedSearches.slice(0, 20).map((s) => {
+                  const linkedProperty = s.linked_property || (s.crmPropertyId ? allCrmProperties.find((p: any) => p.id === s.crmPropertyId) : null);
                   const filteredProperties = allCrmProperties.filter((p: any) =>
                     !crmPropertySearch || (p.name || "").toLowerCase().includes(crmPropertySearch.toLowerCase())
                   );
+                  const ownerName = s.ownership && typeof s.ownership === "object"
+                    ? ((s.ownership as OwnershipData).freeholders?.[0]?.name || null)
+                    : null;
                   return (
-                    <div key={s.id} className="rounded-lg border overflow-hidden">
+                    <Card key={s.id} className="overflow-hidden hover:shadow-md transition-shadow cursor-pointer group">
                       <button
                         onClick={() => loadSavedSearch(s)}
-                        className="w-full text-left p-3 hover:bg-muted/50 transition-colors flex items-center gap-3"
+                        className="w-full text-left p-3"
                         data-testid={`saved-search-${s.id}`}
                       >
-                        <MapPin className="w-4 h-4 text-muted-foreground shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{s.address}</p>
-                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                            {s.postcode && <span className="text-xs text-muted-foreground">{s.postcode}</span>}
-                            {s.freeholdsCount > 0 && <Badge variant="secondary" className="text-[10px]">{s.freeholdsCount} freeholds</Badge>}
-                            {s.leaseholdsCount > 0 && <Badge variant="secondary" className="text-[10px]">{s.leaseholdsCount} leaseholds</Badge>}
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <p className="text-sm font-medium truncate">{s.address}</p>
                           </div>
-                          {s.ownership && typeof s.ownership === "object" && (s.ownership as OwnershipData).summary && (
-                            <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{(s.ownership as OwnershipData).summary}</p>
+                          <Badge className={`text-[9px] shrink-0 ${statusColor(s.status)}`}>
+                            {s.status || "New"}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                          {s.postcode && <span className="text-xs text-muted-foreground font-mono">{s.postcode}</span>}
+                          {s.freeholdsCount > 0 && <Badge variant="secondary" className="text-[10px]">{s.freeholdsCount} freeholds</Badge>}
+                          {s.leaseholdsCount > 0 && <Badge variant="secondary" className="text-[10px]">{s.leaseholdsCount} leaseholds</Badge>}
+                        </div>
+                        {ownerName && (
+                          <div className="flex items-center gap-1.5 mb-1.5">
+                            <Users className="w-3 h-3 text-blue-500 shrink-0" />
+                            <span className="text-xs text-muted-foreground truncate">{ownerName}</span>
+                          </div>
+                        )}
+                        {s.ownership && typeof s.ownership === "object" && (s.ownership as OwnershipData).summary && (
+                          <p className="text-xs text-muted-foreground line-clamp-2">{(s.ownership as OwnershipData).summary}</p>
+                        )}
+                        <div className="text-[10px] text-muted-foreground mt-2">
+                          {new Date(s.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                        </div>
+                      </button>
+                      <div className="px-3 pb-2 flex items-center gap-2 border-t bg-muted/20 pt-2">
+                        <div className="flex-1 min-w-0">
+                          {linkedProperty ? (
+                            <div className="flex items-center gap-1.5">
+                              <Check className="w-3 h-3 text-green-600 shrink-0" />
+                              <Link href={`/properties/${(linkedProperty as any).id}`} className="text-xs font-medium text-primary hover:underline truncate">
+                                {(linkedProperty as any).name}
+                              </Link>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground">Not linked</span>
                           )}
                         </div>
-                        <div className="text-xs text-muted-foreground shrink-0">
-                          {new Date(s.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                        </div>
-                        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                      </button>
-                      <div className="px-3 pb-2 flex items-center gap-2 border-t bg-muted/20">
-                        {linkedProperty ? (
-                          <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                            <Check className="w-3 h-3 text-green-600 shrink-0" />
-                            <span className="text-xs text-muted-foreground">Linked:</span>
-                            <Link href={`/properties/${linkedProperty.id}`} className="text-xs font-medium text-primary hover:underline truncate">
-                              {linkedProperty.name}
-                            </Link>
-                          </div>
-                        ) : (
-                          <span className="text-xs text-muted-foreground flex-1">Not linked to a property</span>
-                        )}
+                        <Select
+                          value={s.status || "New"}
+                          onValueChange={(val) => updateSearchStatus(s.id, val)}
+                        >
+                          <SelectTrigger className="h-6 w-auto text-[10px] px-2 border-none bg-transparent gap-1" onClick={(e) => e.stopPropagation()}>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {SEARCH_STATUSES.map((st) => (
+                              <SelectItem key={st} value={st} className="text-xs">{st}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                         <Popover open={linkPopoverOpen === s.id} onOpenChange={(open) => {
                           setLinkPopoverOpen(open ? s.id : null);
                           if (!open) setCrmPropertySearch("");
                         }}>
                           <PopoverTrigger asChild>
-                            <Button variant="ghost" size="sm" className="h-6 text-xs px-2 shrink-0">
-                              <Link2 className="w-3 h-3 mr-1" />
-                              {linkedProperty ? "Change" : "Link"}
+                            <Button variant="ghost" size="sm" className="h-6 text-xs px-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                              <Link2 className="w-3 h-3" />
                             </Button>
                           </PopoverTrigger>
                           <PopoverContent className="w-72 p-2" align="end">
@@ -835,7 +901,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                           </PopoverContent>
                         </Popover>
                       </div>
-                    </div>
+                    </Card>
                   );
                 })}
               </div>
@@ -1875,32 +1941,19 @@ export default function LandRegistry() {
   const [activeTab, setActiveTab] = useState("property-search");
 
   return (
-    <div className="p-4 sm:p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-          Land Registry & Property Intelligence
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Address search, free market intelligence, title documents, yields, rents, planning & KYC investigation
-        </p>
-      </div>
-
+    <PageLayout
+      title="Land Registry & Property Intelligence"
+      subtitle="Address search, free market intelligence, title documents, yields, rents, planning & KYC investigation"
+      tabs={[
+        { label: "Property Search", value: "property-search" },
+        { label: "Price Paid", value: "price-paid" },
+        { label: "House Price Index", value: "hpi" },
+      ]}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      className="space-y-6"
+    >
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList data-testid="tabs-land-registry">
-          <TabsTrigger value="property-search" className="gap-1.5" data-testid="tab-property-search">
-            <MapPin className="w-3.5 h-3.5" />
-            Property Search
-          </TabsTrigger>
-          <TabsTrigger value="price-paid" className="gap-1.5" data-testid="tab-price-paid">
-            <PoundSterling className="w-3.5 h-3.5" />
-            Price Paid
-          </TabsTrigger>
-          <TabsTrigger value="hpi" className="gap-1.5" data-testid="tab-hpi">
-            <BarChart3 className="w-3.5 h-3.5" />
-            House Price Index
-          </TabsTrigger>
-        </TabsList>
-
         <TabsContent value="property-search">
           <PropertySearch onSelectPostcode={() => {}} />
         </TabsContent>
@@ -1913,6 +1966,6 @@ export default function LandRegistry() {
           <HousePriceIndex />
         </TabsContent>
       </Tabs>
-    </div>
+    </PageLayout>
   );
 }

@@ -25,6 +25,8 @@ import { useSocket } from "@/hooks/use-socket";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { useIsMobile, isNativeMobile, getForceDesktop, setForceDesktop } from "@/hooks/use-mobile";
 import MobileApp from "@/components/mobile-app";
+import { MobileBottomNav, BOTTOM_NAV_PATHS } from "@/components/mobile-bottom-nav";
+import { MobileSidebarOverlay } from "@/components/app-sidebar";
 import type { User } from "@shared/schema";
 
 const NotFound = lazy(() => import("@/pages/not-found"));
@@ -228,6 +230,7 @@ function AuthenticatedApp() {
   }, []);
 
   const nativeMobile = isNativeMobile();
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   if ((isMobile || nativeMobile) && (location === "/" || location === "/chatbgp")) {
     return <MobileApp initialTab="ai" />;
@@ -242,17 +245,24 @@ function AuthenticatedApp() {
   }
 
   if (isMobile || nativeMobile) {
+    const isBottomNavRoute = BOTTOM_NAV_PATHS.some(p => p !== "/" && location.startsWith(p));
     return (
       <div className="flex flex-col" style={{ height: "100dvh" }}>
         <div className="flex items-center gap-2 px-3 py-2 border-b shrink-0" style={{ paddingTop: "calc(0.5rem + env(safe-area-inset-top))" }}>
-          <button onClick={() => navigate("/")} className="p-1" data-testid="button-mobile-page-back">
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <span className="text-sm font-semibold">{location.replace("/", "").replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()) || "Dashboard"}</span>
+          {!isBottomNavRoute && (
+            <button onClick={() => navigate("/")} className="p-1" data-testid="button-mobile-page-back">
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+          )}
+          <span className="text-sm font-semibold flex-1">
+            {location === "/" ? "Dashboard" : location.replace(/^\//, "").replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+          </span>
         </div>
-        <div className="flex-1 overflow-y-auto min-h-0">
+        <div className="flex-1 overflow-y-auto min-h-0 pb-16">
           <Router />
         </div>
+        <MobileBottomNav onMoreTap={() => setMobileSidebarOpen(true)} />
+        <MobileSidebarOverlay open={mobileSidebarOpen} onClose={() => setMobileSidebarOpen(false)} />
       </div>
     );
   }

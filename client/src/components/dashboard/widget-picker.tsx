@@ -26,6 +26,7 @@ import {
   AlertTriangle,
   ListTodo,
   Briefcase,
+  Landmark,
 } from "lucide-react";
 import type { WidgetDefinition, BoardDefinition } from "./types";
 
@@ -48,6 +49,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
   { id: "daily-digest", name: "Daily Digest", description: "Proactive alerts: stuck deals, KYC gaps, cooling contacts", icon: AlertTriangle, category: "crm" },
   { id: "my-tasks", name: "My Tasks & Briefing", description: "Personal task list with AI daily briefing", icon: ListTodo, category: "overview" },
   { id: "my-portfolio", name: "My Portfolio", description: "Properties and deals assigned to you", icon: Briefcase, category: "crm" },
+  { id: "landsec-analytics", name: "Landsec Analytics", description: "Deep analytics for the Landsec portfolio: overview, agents, pipeline & activity", icon: Landmark, category: "crm" },
 ];
 
 export const DEFAULT_WIDGETS = WIDGET_REGISTRY.map(w => w.id);
@@ -67,6 +69,7 @@ export const BOARD_REGISTRY: BoardDefinition[] = [
   { id: "daily-digest-board", name: "Daily Digest", description: "Proactive alerts and action items", icon: AlertTriangle, widgetIds: ["daily-digest"] },
   { id: "tasks-briefing", name: "My Tasks & Briefing", description: "Personal tasks and AI daily briefing", icon: ListTodo, widgetIds: ["my-tasks"] },
   { id: "my-portfolio-board", name: "My Portfolio", description: "Properties and deals assigned to you", icon: Briefcase, widgetIds: ["my-portfolio"] },
+  { id: "landsec-analytics-board", name: "Landsec Analytics", description: "Portfolio overview, agent performance, pipeline & activity for Landsec", icon: Landmark, widgetIds: ["landsec-analytics"] },
 ];
 
 export const DEFAULT_BOARDS = BOARD_REGISTRY.map(b => b.id);

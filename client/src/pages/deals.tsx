@@ -100,6 +100,9 @@ import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineLinkSe
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS } from "@/lib/crm-options";
+import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
+import { PageLayout } from "@/components/page-layout";
+import { EmptyState } from "@/components/empty-state";
 
 const DEAL_STATUS_COLORS: Record<string, string> = {
   "Targeting": "bg-amber-500",
@@ -3386,6 +3389,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [hotsChecklistDeal, setHotsChecklistDeal] = useState<CrmDeal | null>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [teamFilterInitialised, setTeamFilterInitialised] = useState(false);
+  const [viewMode, setViewMode] = useState<"table" | "card">(
+    typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
+  );
 
   useEffect(() => {
     if (!teamFilterInitialised) {
@@ -3756,23 +3762,20 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   if (error) {
     return (
-      <div className="p-4 sm:p-6">
-        <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">{isCompsMode ? "Leasing Comps" : "WIP"}</h1>
-            <p className="text-sm text-muted-foreground">{isCompsMode ? "Comparable transactions" : "Work in Progress"}</p>
-          </div>
-        </div>
+      <PageLayout
+        title={isCompsMode ? "Leasing Comps" : "WIP"}
+        subtitle={isCompsMode ? "Comparable transactions" : "Work in Progress"}
+      >
         <Card>
           <CardContent className="py-12 text-center">
-            <AlertCircle className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-            <h3 className="font-medium mb-1">Could not load {isCompsMode ? "Leasing Comps" : "WIP"}</h3>
-            <p className="text-sm text-muted-foreground">
-              {(error as Error).message || "An error occurred while loading deals."}
-            </p>
+            <EmptyState
+              icon={AlertCircle}
+              title={`Could not load ${isCompsMode ? "Leasing Comps" : "WIP"}`}
+              description={(error as Error).message || "An error occurred while loading deals."}
+            />
           </CardContent>
         </Card>
-      </div>
+      </PageLayout>
     );
   }
 
@@ -3781,53 +3784,50 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const agentCompanies = companies.filter(c => c.companyType === "Agent");
 
   return (
-    <div className="p-4 sm:p-6 space-y-4 h-[calc(100vh-3rem)] flex flex-col" data-testid={isCompsMode ? "comps-page" : "deals-page"}>
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shrink-0">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">{isCompsMode ? "Leasing Comps" : "WIP"}</h1>
-          <p className="text-sm text-muted-foreground">
-            {isCompsMode
-              ? `${baseDeals.length} completed deal${baseDeals.length !== 1 ? "s" : ""} — comparable transactions`
-              : urlTeamParam
-                ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} · Filtered by ${urlTeamParam} team`
-                : activeTeam && activeTeam !== "all"
-                  ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} — ${activeTeam}`
-                  : `${deals.length} deal${deals.length !== 1 ? "s" : ""} in the CRM`}
-          </p>
-        </div>
-        {!isCompsMode && (
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={rentAnalysisRunning}
-              onClick={async () => {
-                setRentAnalysisRunning(true);
-                toast({ title: "Running rent analysis", description: "Calculating NER for all lease deals and emailing Tom Cater..." });
-                try {
-                  const res = await fetch("/api/crm/deals/bulk-rent-analysis", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ sendEmail: true }) });
-                  const data = await res.json();
-                  queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
-                  toast({ title: "Rent Analysis Complete", description: `${data.analysed} deals analysed, ${data.updated} updated${data.emailSent ? " — report sent to Tom" : ""}` });
-                } catch { toast({ title: "Error", description: "Rent analysis failed", variant: "destructive" }); }
-                setRentAnalysisRunning(false);
-              }}
-              data-testid="button-rent-analysis"
-            >
-              {rentAnalysisRunning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <BarChart3 className="w-4 h-4 mr-2" />}
-              Rent Analysis
-            </Button>
-            <Button variant="outline" onClick={() => setAiMatchOpen(true)} data-testid="button-ai-match">
-              <Brain className="w-4 h-4 mr-2" />
-              AI Match
-            </Button>
-            <Button onClick={() => setCreateOpen(true)} data-testid="button-create-deal">
-              <Plus className="w-4 h-4 mr-2" />
-              New Deal
-            </Button>
-          </div>
-        )}
-      </div>
+    <PageLayout
+      title={isCompsMode ? "Leasing Comps" : "WIP"}
+      subtitle={isCompsMode
+        ? `${baseDeals.length} completed deal${baseDeals.length !== 1 ? "s" : ""} — comparable transactions`
+        : urlTeamParam
+          ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} · Filtered by ${urlTeamParam} team`
+          : activeTeam && activeTeam !== "all"
+            ? `${filteredDeals.length} deal${filteredDeals.length !== 1 ? "s" : ""} — ${activeTeam}`
+            : `${deals.length} deal${deals.length !== 1 ? "s" : ""} in the CRM`}
+      actions={!isCompsMode ? (
+        <>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={rentAnalysisRunning}
+            onClick={async () => {
+              setRentAnalysisRunning(true);
+              toast({ title: "Running rent analysis", description: "Calculating NER for all lease deals and emailing Tom Cater..." });
+              try {
+                const res = await fetch("/api/crm/deals/bulk-rent-analysis", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ sendEmail: true }) });
+                const data = await res.json();
+                queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+                toast({ title: "Rent Analysis Complete", description: `${data.analysed} deals analysed, ${data.updated} updated${data.emailSent ? " — report sent to Tom" : ""}` });
+              } catch { toast({ title: "Error", description: "Rent analysis failed", variant: "destructive" }); }
+              setRentAnalysisRunning(false);
+            }}
+            data-testid="button-rent-analysis"
+          >
+            {rentAnalysisRunning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <BarChart3 className="w-4 h-4 mr-2" />}
+            Rent Analysis
+          </Button>
+          <Button variant="outline" onClick={() => setAiMatchOpen(true)} data-testid="button-ai-match">
+            <Brain className="w-4 h-4 mr-2" />
+            AI Match
+          </Button>
+          <Button onClick={() => setCreateOpen(true)} data-testid="button-create-deal">
+            <Plus className="w-4 h-4 mr-2" />
+            New Deal
+          </Button>
+        </>
+      ) : undefined}
+      className="h-[calc(100vh-3rem)] flex flex-col"
+      testId={isCompsMode ? "comps-page" : "deals-page"}
+    >
 
       <ScrollArea className="w-full shrink-0">
         <div className="flex items-center gap-3 pb-1">
@@ -3946,8 +3946,47 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             )}
           </Button>
         )}
+        <ViewToggle view={viewMode} onToggle={setViewMode} />
       </div>
 
+      {viewMode === "card" ? (
+        <Card className="flex-1 min-h-0 flex flex-col">
+          <CardContent className="p-0 flex-1 min-h-0 overflow-y-auto">
+            {isLoading ? (
+              <div className="p-4 space-y-3">
+                {[1, 2, 3, 4, 5].map((i) => (
+                  <Skeleton key={i} className="h-24 rounded-xl" />
+                ))}
+              </div>
+            ) : (
+              <MobileCardView
+                items={filteredDeals.map((deal): MobileCardItem => {
+                  const propName = deal.propertyId ? (properties.find(p => p.id === deal.propertyId)?.name || "") : "";
+                  const agents = Array.isArray(deal.internalAgent) ? deal.internalAgent.join(", ") : (deal.internalAgent || "");
+                  const teams = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || "");
+                  return {
+                    id: deal.id,
+                    title: propName || deal.name,
+                    subtitle: propName ? deal.name : undefined,
+                    href: `/deals/${deal.id}`,
+                    status: deal.status || undefined,
+                    statusColor: DEAL_STATUS_COLORS[deal.status || ""] || "bg-muted-foreground",
+                    fields: [
+                      { label: "Type", value: deal.dealType, badge: true },
+                      { label: "Team", value: teams },
+                      { label: "Agent", value: agents },
+                      { label: "Asset Class", value: deal.assetClass },
+                      { label: "Fee", value: deal.fee ? `\u00A3${Number(deal.fee).toLocaleString()}` : null },
+                      { label: "Rent PA", value: deal.rentPa ? `\u00A3${Number(deal.rentPa).toLocaleString()}` : null },
+                    ],
+                  };
+                })}
+                emptyMessage="No deals found"
+              />
+            )}
+          </CardContent>
+        </Card>
+      ) : (
       <Card className="flex-1 min-h-0 flex flex-col">
         <CardContent className="p-0 flex-1 min-h-0">
           {isLoading ? (
@@ -4510,6 +4549,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           )}
         </CardContent>
       </Card>
+      )}
 
       {!isCompsMode && (
         <>
@@ -4632,6 +4672,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </PageLayout>
   );
 }

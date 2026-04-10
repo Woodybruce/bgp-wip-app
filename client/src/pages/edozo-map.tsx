@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
+import { getAuthHeaders } from "@/lib/queryClient";
 import {
   Search,
   X,
@@ -2883,6 +2884,14 @@ export default function EdozoMap() {
   const searchTimeout = useRef<ReturnType<typeof setTimeout>>();
   const suppressSearchRef = useRef(false);
 
+  // Search history & CRM layers
+  const [recentSearches, setRecentSearches] = useState<any[]>([]);
+  const [crmProperties, setCrmProperties] = useState<any[]>([]);
+  const [showSearchHistory, setShowSearchHistory] = useState(false);
+  const [showCrmLayer, setShowCrmLayer] = useState(false);
+  const searchMarkersRef = useRef<L.LayerGroup | null>(null);
+  const crmMarkersRef = useRef<L.LayerGroup | null>(null);
+
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
@@ -2986,6 +2995,114 @@ export default function EdozoMap() {
       mapRef.current = null;
     };
   }, []);
+
+  // Fetch recent searches and CRM properties on mount
+  useEffect(() => {
+    const headers = { ...getAuthHeaders(), Authorization: `Bearer ${localStorage.getItem("bgp_token")}` };
+    fetch("/api/land-registry/searches/recent", { credentials: "include", headers })
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setRecentSearches(Array.isArray(data) ? data : []))
+      .catch(() => {
+        fetch("/api/land-registry/searches", { credentials: "include", headers })
+          .then(r => r.ok ? r.json() : [])
+          .then(data => setRecentSearches(Array.isArray(data) ? data.slice(0, 20) : []))
+          .catch(() => {});
+      });
+
+    fetch("/api/crm/properties", { credentials: "include", headers })
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        const props = Array.isArray(data) ? data : (data.data ?? []);
+        setCrmProperties(props);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Render search history pins on map
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (!searchMarkersRef.current) {
+      searchMarkersRef.current = L.layerGroup().addTo(mapRef.current);
+    }
+    searchMarkersRef.current.clearLayers();
+
+    if (!showSearchHistory) return;
+
+    for (const s of recentSearches) {
+      // Try to get lat/lng from intelligence data or skip
+      const coords = s.intelligence?.flood?.coordinates || s.intelligence?.planning?.coordinates;
+      if (!coords?.lat || !coords?.lng) continue;
+
+      const isAcquired = s.status === "Acquired";
+      const pinColor = isAcquired ? "#10b981" : "#ef4444"; // green for acquired, red for searches
+      const ownerName = s.ownership?.freeholders?.[0]?.name || "";
+
+      const marker = L.circleMarker([coords.lat, coords.lng], {
+        radius: 7,
+        fillColor: pinColor,
+        color: "#fff",
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.85,
+      });
+
+      const popupContent = `
+        <div style="font-size:12px;max-width:220px">
+          <strong>${s.address || "Unknown"}</strong>
+          ${s.postcode ? `<br/><span style="color:#666">${s.postcode}</span>` : ""}
+          ${ownerName ? `<br/><span style="color:#3b82f6;font-size:11px">Owner: ${ownerName}</span>` : ""}
+          ${s.status ? `<br/><span style="font-size:10px;background:${pinColor};color:white;padding:1px 6px;border-radius:8px;display:inline-block;margin-top:3px">${s.status}</span>` : ""}
+          <br/><span style="color:#999;font-size:10px">${new Date(s.created_at || s.createdAt).toLocaleDateString("en-GB")}</span>
+        </div>
+      `;
+
+      marker.bindPopup(popupContent, { closeButton: false, offset: L.point(0, -5) });
+      searchMarkersRef.current.addLayer(marker);
+    }
+  }, [showSearchHistory, recentSearches]);
+
+  // Render CRM property pins on map
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (!crmMarkersRef.current) {
+      crmMarkersRef.current = L.layerGroup().addTo(mapRef.current);
+    }
+    crmMarkersRef.current.clearLayers();
+
+    if (!showCrmLayer) return;
+
+    for (const p of crmProperties) {
+      if (!p.latitude || !p.longitude) continue;
+
+      const marker = L.circleMarker([p.latitude, p.longitude], {
+        radius: 7,
+        fillColor: "#3b82f6", // blue for CRM
+        color: "#fff",
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.85,
+      });
+
+      const popupContent = `
+        <div style="font-size:12px;max-width:220px">
+          <strong>${p.name || "CRM Property"}</strong>
+          ${p.address ? `<br/><span style="color:#666">${p.address}</span>` : ""}
+          ${p.postcode ? `<br/><span style="color:#666">${p.postcode}</span>` : ""}
+          <br/><span style="font-size:10px;background:#3b82f6;color:white;padding:1px 6px;border-radius:8px;display:inline-block;margin-top:3px">CRM Property</span>
+        </div>
+      `;
+
+      marker.bindPopup(popupContent, { closeButton: false, offset: L.point(0, -5) });
+      marker.on("click", () => {
+        if (p.postcode) {
+          setSelectedPostcode(p.postcode);
+          setCurrentArea(p.name || p.address || p.postcode);
+          loadPropertyData(p.postcode, undefined, p.address || undefined);
+        }
+      });
+      crmMarkersRef.current.addLayer(marker);
+    }
+  }, [showCrmLayer, crmProperties]);
 
   const handleSearch = useCallback(async (q: string) => {
     if (q.length < 2) { setSearchResults([]); return; }
@@ -3282,15 +3399,105 @@ export default function EdozoMap() {
 
         <div className="border-t" />
 
-        <div className="px-3 py-2.5 flex-1">
-          <p className="text-[11px] font-semibold text-gray-700 mb-3">Basket</p>
-          <div className="flex flex-col items-center justify-center py-4 text-gray-300">
-            <svg className="w-10 h-10 mb-2 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-            </svg>
-            <p className="text-[10px] text-gray-400">There are no products in your basket.</p>
+        <div className="px-3 py-2.5">
+          <p className="text-[11px] font-semibold text-gray-700 mb-2">Map Layers</p>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                <span className="text-[10px] text-gray-600">Search History</span>
+              </div>
+              <Switch
+                checked={showSearchHistory}
+                onCheckedChange={setShowSearchHistory}
+                className="h-4 w-7"
+                data-testid="toggle-search-history"
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                <span className="text-[10px] text-gray-600">CRM Properties</span>
+              </div>
+              <Switch
+                checked={showCrmLayer}
+                onCheckedChange={setShowCrmLayer}
+                className="h-4 w-7"
+                data-testid="toggle-crm-layer"
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                <span className="text-[10px] text-gray-600">Acquired</span>
+              </div>
+              <span className="text-[9px] text-gray-400">via status</span>
+            </div>
           </div>
         </div>
+
+        <div className="border-t" />
+
+        <ScrollArea className="flex-1">
+          <div className="px-3 py-2.5">
+            <p className="text-[11px] font-semibold text-gray-700 mb-2">
+              Recent Searches {recentSearches.length > 0 && <span className="font-normal text-gray-400">({recentSearches.length})</span>}
+            </p>
+            {recentSearches.length === 0 ? (
+              <p className="text-[10px] text-gray-400 py-3 text-center">No recent searches yet.</p>
+            ) : (
+              <div className="space-y-1">
+                {recentSearches.slice(0, 20).map((s: any) => {
+                  const isAcquired = s.status === "Acquired";
+                  const pinColor = isAcquired ? "text-emerald-500" : "text-red-400";
+                  const ownerName = s.ownership?.freeholders?.[0]?.name;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => {
+                        const coords = s.intelligence?.flood?.coordinates || s.intelligence?.planning?.coordinates;
+                        if (coords?.lat && coords?.lng && mapRef.current) {
+                          mapRef.current.flyTo([coords.lat, coords.lng], 17, { duration: 0.8 });
+                        }
+                        if (s.postcode) {
+                          setSelectedPostcode(s.postcode);
+                          setCurrentArea(s.address || s.postcode);
+                          loadPropertyData(s.postcode, undefined, s.address || undefined);
+                        }
+                      }}
+                      className="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors group/item"
+                      data-testid={`map-search-history-${s.id}`}
+                    >
+                      <div className="flex items-start gap-1.5">
+                        <MapPin className={`w-3 h-3 mt-0.5 shrink-0 ${pinColor}`} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-medium text-gray-800 truncate leading-tight">{s.address}</p>
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            {s.postcode && <span className="text-[9px] text-gray-400 font-mono">{s.postcode}</span>}
+                            {s.status && s.status !== "New" && (
+                              <span className={`text-[8px] px-1 py-0.5 rounded font-medium ${
+                                isAcquired ? "bg-emerald-100 text-emerald-700" :
+                                s.status === "Investigating" ? "bg-blue-100 text-blue-700" :
+                                s.status === "Contacted Owner" ? "bg-amber-100 text-amber-700" :
+                                "bg-gray-100 text-gray-600"
+                              }`}>{s.status}</span>
+                            )}
+                          </div>
+                          {ownerName && (
+                            <p className="text-[9px] text-gray-400 truncate mt-0.5">{ownerName}</p>
+                          )}
+                        </div>
+                        <span className="text-[8px] text-gray-300 shrink-0 mt-0.5">
+                          {new Date(s.created_at || s.createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
       </div>
 
       <div className="flex-1 relative">
