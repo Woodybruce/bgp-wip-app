@@ -23,14 +23,21 @@ function getCachedOwnership(key: string): any | null {
 }
 
 function setCachedOwnership(key: string, data: any): void {
-  ownershipCache.set(key, { data, expiresAt: Date.now() + OWNERSHIP_CACHE_TTL });
-  // Evict old entries periodically (keep cache under 500 entries)
-  if (ownershipCache.size > 500) {
+  // Evict expired entries first, then enforce hard cap
+  if (ownershipCache.size >= 500) {
     const now = Date.now();
     for (const [k, v] of ownershipCache) {
       if (now > v.expiresAt) ownershipCache.delete(k);
     }
+    // If still over limit after evicting expired, remove oldest entries
+    if (ownershipCache.size >= 500) {
+      const keys = [...ownershipCache.keys()];
+      for (let i = 0; i < 50 && i < keys.length; i++) {
+        ownershipCache.delete(keys[i]);
+      }
+    }
   }
+  ownershipCache.set(key, { data, expiresAt: Date.now() + OWNERSHIP_CACHE_TTL });
 }
 
 function extractLabel(obj: any): string {

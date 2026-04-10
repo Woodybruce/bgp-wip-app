@@ -78,7 +78,8 @@ async function ensureTable() {
       id SERIAL PRIMARY KEY,
       collection_id VARCHAR NOT NULL,
       image_id VARCHAR NOT NULL,
-      added_at TIMESTAMP DEFAULT NOW()
+      added_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(collection_id, image_id)
     )
   `);
   await pool.query(`

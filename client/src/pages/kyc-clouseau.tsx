@@ -138,8 +138,12 @@ function MarkdownContent({ content }: { content: string }) {
           return <div key={i} className="ml-4 flex gap-1"><span className="text-muted-foreground">•</span><span>{text}</span></div>;
         }
         if (line.trim() === "") return <div key={i} className="h-1" />;
-        const formatted = line.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
-        return <p key={i} dangerouslySetInnerHTML={{ __html: formatted }} />;
+        const parts = line.split(/\*\*(.*?)\*\*/g);
+        return (
+          <p key={i}>
+            {parts.map((part, j) => j % 2 === 1 ? <strong key={j}>{part}</strong> : <span key={j}>{part}</span>)}
+          </p>
+        );
       })}
     </div>
   );

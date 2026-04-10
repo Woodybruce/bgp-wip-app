@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -896,17 +896,19 @@ export default function WipReport() {
   }, [entries]);
 
   const filtersInitialized = useRef(false);
-  if (!filtersInitialized.current && entries.length > 0 && user) {
-    filtersInitialized.current = true;
-    setSelectedTeams(new Set(allTeams));
-    setSelectedMonths(new Set(allMonths));
-    setSelectedAgents(new Set(allAgents));
-    setSelectedStatuses(new Set(allStatuses));
-    if (allFiscalYears.length > 0) {
-      const currentFY = getCurrentFiscalYear();
-      setSelectedFiscalYears(new Set([allFiscalYears.includes(currentFY) ? currentFY : allFiscalYears[0]]));
+  useEffect(() => {
+    if (!filtersInitialized.current && entries.length > 0 && user) {
+      filtersInitialized.current = true;
+      setSelectedTeams(new Set(allTeams));
+      setSelectedMonths(new Set(allMonths));
+      setSelectedAgents(new Set(allAgents));
+      setSelectedStatuses(new Set(allStatuses));
+      if (allFiscalYears.length > 0) {
+        const currentFY = getCurrentFiscalYear();
+        setSelectedFiscalYears(new Set([allFiscalYears.includes(currentFY) ? currentFY : allFiscalYears[0]]));
+      }
     }
-  }
+  }, [entries, user, allTeams, allMonths, allAgents, allStatuses, allFiscalYears]);
 
   const sidebarFilteredEntries = useMemo(() => {
     return entries.filter((e) => {

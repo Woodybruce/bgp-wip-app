@@ -1559,6 +1559,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         percentage: a.allocationType === "percentage" ? Number(a.percentage) || 0 : null,
         fixedAmount: a.allocationType === "fixed" ? Number(a.fixedAmount) || 0 : null,
       })).filter((a: any) => a.agentName.length > 0);
+      // Validate percentage allocations don't exceed 100%
+      const totalPct = validated
+        .filter((a: any) => a.allocationType === "percentage")
+        .reduce((sum: number, a: any) => sum + (a.percentage || 0), 0);
+      if (totalPct > 100) {
+        return res.status(400).json({ error: `Percentage allocations sum to ${totalPct}%, cannot exceed 100%` });
+      }
       const result = await storage.setDealFeeAllocations(req.params.id, validated);
       res.json(result);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -3463,15 +3470,19 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const allocations = await db.select().from(dealFeeAllocations);
       const allocsByDeal = new Map<string, typeof allocations>();
       for (const a of allocations) {
-        if (!allocsByDeal.has(a.dealId)) allocsByDeal.set(a.dealId, []);
-        allocsByDeal.get(a.dealId)!.push(a);
+        const existing = allocsByDeal.get(a.dealId);
+        if (existing) {
+          existing.push(a);
+        } else {
+          allocsByDeal.set(a.dealId, [a]);
+        }
       }
 
       const INVOICED_STATUSES = ["Invoiced", "Billed"];
       const agentTotals = new Map<string, { invoiced: number; wip: number }>();
 
       for (const deal of deals) {
-        if (!deal.status || !deal.fee) continue;
+        if (!deal.status || deal.fee == null) continue;
         const dealTeamArr = Array.isArray(deal.team) ? deal.team : (deal.team ? [deal.team] : []);
         const dealTeamsLower = dealTeamArr.map(t => (t || "").toLowerCase());
         if (!senior && dealTeamsLower.includes("bgp")) continue;
@@ -3486,8 +3497,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         if (agents && agents.length > 0) {
           for (const alloc of agents) {
             if (!senior && WIP_RESTRICTED_AGENTS.has(alloc.agentName.toLowerCase())) continue;
-            const pct = (alloc.percentage || 0) / 100;
-            const agentFee = alloc.fixedAmount || (totalFee * pct);
+            const agentFee = alloc.fixedAmount || Math.round(totalFee * ((alloc.percentage || 0) / 100) * 100) / 100;
             const entry = agentTotals.get(alloc.agentName) || { invoiced: 0, wip: 0 };
             if (isInvoiced) entry.invoiced += agentFee;
             else entry.wip += agentFee;
@@ -3533,8 +3543,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       const allocsByDeal = new Map<string, typeof allocations>();
       for (const a of allocations) {
-        if (!allocsByDeal.has(a.dealId)) allocsByDeal.set(a.dealId, []);
-        allocsByDeal.get(a.dealId)!.push(a);
+        const existing = allocsByDeal.get(a.dealId);
+        if (existing) {
+          existing.push(a);
+        } else {
+          allocsByDeal.set(a.dealId, [a]);
+        }
       }
 
       const INVOICED_STATUSES = ["Invoiced", "Billed"];
@@ -3729,8 +3743,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         if (dealAllocations && dealAllocations.length > 0) {
           // Use fee allocations: one WIP entry per allocation
           for (const alloc of dealAllocations) {
-            const pct = (alloc.percentage || 0) / 100;
-            const agentFee = alloc.fixedAmount || (totalFee * pct);
+            const agentFee = alloc.fixedAmount || Math.round(totalFee * ((alloc.percentage || 0) / 100) * 100) / 100;
             const agentInvoiceAmt = alloc.fixedAmount || (totalInvoiceAmt * pct);
             entries.push({
               id: `${deal.id}_${alloc.agentName}`,
