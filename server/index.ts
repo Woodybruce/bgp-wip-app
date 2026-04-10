@@ -54,7 +54,7 @@ const httpServer = createServer(app);
 // Railway health check — unauthenticated, before all middleware
 app.get("/api/ping", (_req, res) => res.json({ status: "ok" }));
 
-const MAINTENANCE_MODE = true;
+const MAINTENANCE_MODE = false;
 const MAINTENANCE_ALLOWED_EMAILS = new Set([
   "woody@brucegillinghampollard.com",
 ]);
