@@ -1952,6 +1952,7 @@ export default function ChatBGP() {
   const [uploading, setUploading] = useState(false);
   const messageQueueRef = useRef<string[]>([]);
   const [queueLength, setQueueLength] = useState(0);
+  const [progressLabel, setProgressLabel] = useState("");
   const messagesRef = useRef<LocalMessage[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -2287,6 +2288,9 @@ export default function ChatBGP() {
                 const raw = line.slice(6);
                 try {
                   const parsed = JSON.parse(raw);
+                  if (parsed.progress) {
+                    setProgressLabel(parsed.progress);
+                  }
                   if (parsed.reply) {
                     lastData = raw;
                   }
@@ -2316,6 +2320,7 @@ export default function ChatBGP() {
       return attemptSend(1);
     },
     onSuccess: async (data: { reply: string; action?: any }) => {
+      setProgressLabel("");
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
       const threadId = activeThreadIdRef.current;
       if (threadId) {
@@ -3662,6 +3667,11 @@ export default function ChatBGP() {
                             <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "150ms" }} />
                             <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "300ms" }} />
                           </div>
+                          {progressLabel && (
+                            <span className="text-[11px] text-muted-foreground ml-1 animate-pulse">
+                              {progressLabel}
+                            </span>
+                          )}
                           {queueLength > 0 && (
                             <span className="text-[11px] text-muted-foreground ml-1" data-testid="text-queue-count">
                               +{queueLength} queued

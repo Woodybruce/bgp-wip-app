@@ -1106,6 +1106,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
   const { toast } = useToast();
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [input, setInput] = useState("");
+  const [panelProgressLabel, setPanelProgressLabel] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
@@ -1509,6 +1510,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
                   const raw = line.slice(6);
                   try {
                     const parsed = JSON.parse(raw);
+                    if (parsed.progress) setPanelProgressLabel(parsed.progress);
                     if (parsed.reply) {
                       lastData = raw;
                     }
@@ -1542,6 +1544,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
       }
     },
     onSuccess: async (data: { reply: string; action?: ChatAction; threadId: string; savedToThread?: boolean }) => {
+      setPanelProgressLabel("");
       const msg: LocalChatMessage = { role: "assistant", content: data.reply };
       if (data.action) {
         msg.action = data.action;
@@ -2670,10 +2673,15 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
                 {(aiSendMutation.isPending || chatbgpMentionMutation.isPending) && (
                   <div className="flex justify-start" data-testid="panel-loading-response">
                     <div className="bg-gray-100 dark:bg-gray-800 rounded-2xl rounded-bl-sm px-4 py-3">
-                      <div className="flex gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0ms" }} />
-                        <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "150ms" }} />
-                        <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "300ms" }} />
+                      <div className="flex items-center gap-2">
+                        <div className="flex gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0ms" }} />
+                          <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "150ms" }} />
+                          <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "300ms" }} />
+                        </div>
+                        {panelProgressLabel && (
+                          <span className="text-[11px] text-muted-foreground animate-pulse">{panelProgressLabel}</span>
+                        )}
                       </div>
                     </div>
                   </div>
