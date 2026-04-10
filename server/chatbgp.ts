@@ -8182,7 +8182,7 @@ export function setupChatBGPRoutes(app: Express) {
   });
 
   app.get("/api/chatbgp/status", requireAuth, (_req: Request, res: Response) => {
-    const hasKey = !!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+    const hasKey = !!(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY);
     res.json({ connected: hasKey });
   });
 
