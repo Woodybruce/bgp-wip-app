@@ -147,7 +147,7 @@ Return ONLY valid JSON:
 
       const anthropic = getAnthropicClient();
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
+        model: "claude-opus-4-6",
         max_tokens: 8192,
         system: "You are an expert property investment analyst. Analyse the Excel model's formulas and calculate how outputs change when inputs are varied. Use the actual formula logic visible in the workbook. Be precise with calculations.",
         messages: [
@@ -249,7 +249,7 @@ Return ONLY valid JSON:
         .join("\n");
 
       const aiResponse = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
+        model: "claude-opus-4-6",
         max_tokens: 4096,
         system: `You are a senior investment analyst at Bruce Gillingham Pollard (BGP), a London property consultancy. Write a professional investment memo. Structure it with these sections:
 1. EXECUTIVE SUMMARY (2-3 sentences)
@@ -366,7 +366,7 @@ Return ONLY valid JSON:
 }`;
 
       const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
+        model: "claude-opus-4-6",
         max_tokens: 8192,
         system: "You are an expert property investment analyst. Calculate model outputs for multiple scenarios using the Excel model's actual formulas. Be precise.",
         messages: [

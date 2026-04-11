@@ -427,6 +427,16 @@ app.use("/api/branding/assets", express.static(
               created_at timestamp DEFAULT now()
             )
           `));
+          await db.execute(sql.raw(`
+            CREATE TABLE IF NOT EXISTS file_storage (
+              storage_key VARCHAR PRIMARY KEY,
+              data BYTEA NOT NULL,
+              content_type VARCHAR NOT NULL DEFAULT 'application/octet-stream',
+              original_name VARCHAR,
+              size INTEGER,
+              created_at TIMESTAMP DEFAULT NOW()
+            )
+          `));
         } catch (err: any) {
           console.error("Startup migration error:", err?.message);
         }
