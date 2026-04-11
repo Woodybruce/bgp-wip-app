@@ -934,7 +934,16 @@ Respond with ONLY a JSON object (no markdown, no backticks):
 
       const rows = await db.execute(sql`
         SELECT
-          lrs.*,
+          lrs.id,
+          lrs.address,
+          lrs.postcode,
+          lrs.freeholds_count,
+          lrs.leaseholds_count,
+          lrs.status,
+          lrs.notes,
+          lrs.crm_property_id,
+          lrs.created_at,
+          lrs.user_id,
           (
             SELECT json_build_object(
               'id', p.id,
