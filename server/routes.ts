@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { pool } from "./db";
-import { requireAuth } from "./auth";
+import { requireAuth, getUserIdFromToken } from "./auth";
 import { resolveCompanyScope } from "./company-scope";
 import multer from "multer";
 import path from "path";
@@ -296,7 +296,19 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/chat-media/:filename", requireAuth, async (req, res) => {
+  // Chat media downloads — support both Bearer token and ?token= query param
+  // This allows mobile browsers to download files via plain <a href> links
+  app.get("/api/chat-media/:filename", async (req: Request, res) => {
+    // Allow auth via query param for direct mobile downloads
+    if (!req.session?.userId && !req.tokenUserId && req.query.token) {
+      try {
+        const userId = await getUserIdFromToken(req.query.token as string);
+        if (userId) req.tokenUserId = userId;
+      } catch {}
+    }
+    if (!req.session?.userId && !req.tokenUserId) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
     try {
       const filename = req.params.filename;
       if (filename.includes("..") || filename.includes("/")) return res.status(400).end();

@@ -80,7 +80,7 @@ async function createAuthToken(userId: string): Promise<string> {
   return token;
 }
 
-async function getUserIdFromToken(token: string): Promise<string | null> {
+export async function getUserIdFromToken(token: string): Promise<string | null> {
   const result = await pool.query(
     "SELECT user_id FROM auth_tokens WHERE token = $1 AND expires_at > NOW()",
     [token]

@@ -1,42 +1,25 @@
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Copy, Check, Download, Loader2 } from "lucide-react";
-import { getAuthHeaders } from "@/lib/queryClient";
+import { Copy, Check, Download } from "lucide-react";
 
 function AuthDownloadLink({ href, children }: { href: string; children: React.ReactNode }) {
-  const [downloading, setDownloading] = useState(false);
-  const handleClick = async (e: React.MouseEvent) => {
-    e.preventDefault();
-    if (downloading) return;
-    setDownloading(true);
-    try {
-      const res = await fetch(href, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) throw new Error(`Download failed (${res.status})`);
-      const blob = await res.blob();
-      const contentDisposition = res.headers.get("Content-Disposition");
-      let filename = href.split("/").pop() || "download";
-      if (contentDisposition) {
-        const match = contentDisposition.match(/filename="?([^";\n]+)"?/);
-        if (match) filename = match[1];
-      }
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error("Download error:", err);
-      alert("Download failed. Please try again.");
-    } finally {
-      setDownloading(false);
-    }
-  };
+  // Build a direct download URL with auth token in query string
+  // This lets mobile browsers handle the download natively via <a href>
+  // instead of JavaScript fetch() which mobile Safari/Chrome block
+  const token = localStorage.getItem("bgp_auth_token") || "";
+  const separator = href.includes("?") ? "&" : "?";
+  const directUrl = token ? `${href}${separator}token=${token}` : href;
+  const filename = href.split("/").pop()?.split("?")[0] || "download";
+
   return (
-    <a href={href} onClick={handleClick} className="inline-flex items-center gap-1.5 px-3 py-1.5 my-1 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 transition-colors text-sm font-medium no-underline cursor-pointer" data-testid="link-download-file">
-      {downloading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+    <a
+      href={directUrl}
+      download={filename}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1.5 px-3 py-2.5 my-1 rounded-lg bg-green-50 border border-green-200 text-green-700 hover:bg-green-100 active:bg-green-200 transition-colors text-sm font-medium no-underline cursor-pointer min-h-[44px]"
+      data-testid="link-download-file"
+    >
+      <Download className="w-4 h-4" />
       {children}
     </a>
   );
