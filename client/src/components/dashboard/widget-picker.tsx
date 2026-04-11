@@ -27,6 +27,7 @@ import {
   ListTodo,
   Briefcase,
   Landmark,
+  TrendingUp,
 } from "lucide-react";
 import type { WidgetDefinition, BoardDefinition } from "./types";
 
@@ -50,6 +51,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
   { id: "my-tasks", name: "My Tasks & Briefing", description: "Personal task list with AI daily briefing", icon: ListTodo, category: "overview" },
   { id: "my-portfolio", name: "My Portfolio", description: "Properties and deals assigned to you", icon: Briefcase, category: "crm" },
   { id: "landsec-analytics", name: "Landsec Analytics", description: "Deep analytics for the Landsec portfolio: overview, agents, pipeline & activity", icon: Landmark, category: "crm" },
+  { id: "kpi-overview", name: "KPI Overview", description: "Key metrics with sparkline trends and month-over-month changes", icon: TrendingUp, category: "overview" },
 ];
 
 export const DEFAULT_WIDGETS = WIDGET_REGISTRY.map(w => w.id);
@@ -70,6 +72,7 @@ export const BOARD_REGISTRY: BoardDefinition[] = [
   { id: "tasks-briefing", name: "My Tasks & Briefing", description: "Personal tasks and AI daily briefing", icon: ListTodo, widgetIds: ["my-tasks"] },
   { id: "my-portfolio-board", name: "My Portfolio", description: "Properties and deals assigned to you", icon: Briefcase, widgetIds: ["my-portfolio"] },
   { id: "landsec-analytics-board", name: "Landsec Analytics", description: "Portfolio overview, agent performance, pipeline & activity for Landsec", icon: Landmark, widgetIds: ["landsec-analytics"] },
+  { id: "kpi-overview-board", name: "KPI Overview", description: "Key metrics with sparkline trends", icon: TrendingUp, widgetIds: ["kpi-overview"] },
 ];
 
 export const DEFAULT_BOARDS = BOARD_REGISTRY.map(b => b.id);

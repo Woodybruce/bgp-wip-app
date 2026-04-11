@@ -4255,6 +4255,193 @@ ${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuc
     }
   });
 
+  // ===== Dashboard KPI Trends =====
+  app.get("/api/dashboard/kpi-trends", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      // Deals per month (last 6 months)
+      const dealsPerMonthResult = await pool.query(`
+        SELECT
+          to_char(date_trunc('month', created_at), 'YYYY-MM') as month,
+          COUNT(*)::int as count,
+          COALESCE(SUM(fee), 0)::float as total_fees
+        FROM crm_deals
+        WHERE created_at >= NOW() - INTERVAL '6 months'
+        GROUP BY date_trunc('month', created_at)
+        ORDER BY date_trunc('month', created_at) ASC
+      `);
+
+      // Properties per month (last 6 months)
+      const propertiesPerMonthResult = await pool.query(`
+        SELECT
+          to_char(date_trunc('month', created_at), 'YYYY-MM') as month,
+          COUNT(*)::int as count
+        FROM crm_properties
+        WHERE created_at >= NOW() - INTERVAL '6 months'
+        GROUP BY date_trunc('month', created_at)
+        ORDER BY date_trunc('month', created_at) ASC
+      `);
+
+      // Contacts per month (last 6 months)
+      const contactsPerMonthResult = await pool.query(`
+        SELECT
+          to_char(date_trunc('month', created_at), 'YYYY-MM') as month,
+          COUNT(*)::int as count
+        FROM crm_contacts
+        WHERE created_at >= NOW() - INTERVAL '6 months'
+        GROUP BY date_trunc('month', created_at)
+        ORDER BY date_trunc('month', created_at) ASC
+      `);
+
+      // Build 6-month arrays filling gaps with zero
+      const months: string[] = [];
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date();
+        d.setMonth(d.getMonth() - i);
+        months.push(d.toISOString().slice(0, 7));
+      }
+
+      const dealMap = new Map(dealsPerMonthResult.rows.map((r: any) => [r.month, { count: r.count, fees: r.total_fees }]));
+      const propMap = new Map(propertiesPerMonthResult.rows.map((r: any) => [r.month, r.count]));
+      const contactMap = new Map(contactsPerMonthResult.rows.map((r: any) => [r.month, r.count]));
+
+      const dealsPerMonth = months.map(m => (dealMap.get(m) as any)?.count || 0);
+      const feesPerMonth = months.map(m => (dealMap.get(m) as any)?.fees || 0);
+      const propertiesPerMonth = months.map(m => propMap.get(m) || 0);
+      const contactsPerMonth = months.map(m => contactMap.get(m) || 0);
+
+      // Current totals
+      const totalsResult = await pool.query(`
+        SELECT
+          (SELECT COUNT(*)::int FROM crm_deals) as total_deals,
+          (SELECT COALESCE(SUM(fee), 0)::float FROM crm_deals) as total_fees,
+          (SELECT COUNT(*)::int FROM crm_properties) as total_properties,
+          (SELECT COUNT(*)::int FROM crm_contacts) as total_contacts
+      `);
+      const totals = totalsResult.rows[0];
+
+      const calcChange = (arr: number[]) => {
+        const curr = arr[arr.length - 1] || 0;
+        const prev = arr[arr.length - 2] || 0;
+        if (prev === 0) return curr > 0 ? 100 : 0;
+        return Math.round(((curr - prev) / prev) * 100);
+      };
+
+      res.json({
+        months,
+        dealsPerMonth,
+        feesPerMonth,
+        propertiesPerMonth,
+        contactsPerMonth,
+        totalDeals: totals.total_deals,
+        totalFees: totals.total_fees,
+        totalProperties: totals.total_properties,
+        totalContacts: totals.total_contacts,
+        dealsChange: calcChange(dealsPerMonth),
+        feesChange: calcChange(feesPerMonth),
+        propertiesChange: calcChange(propertiesPerMonth),
+        contactsChange: calcChange(contactsPerMonth),
+      });
+    } catch (e: any) {
+      console.error("[kpi-trends] Error:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ===== Notifications Center =====
+  app.get("/api/notifications", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const notifications: any[] = [];
+
+      // Deals stuck in same status > 30 days
+      const stuckDeals = await pool.query(`
+        SELECT id, name, status, updated_at FROM crm_deals
+        WHERE status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn', 'Leasing Comps', 'Investment Comps')
+        AND updated_at < NOW() - INTERVAL '30 days'
+        ORDER BY updated_at ASC LIMIT 20
+      `);
+      for (const d of stuckDeals.rows) {
+        const ms = Date.now() - new Date(d.updated_at).getTime();
+        const days = isNaN(ms) ? 30 : Math.floor(ms / 86400000);
+        notifications.push({
+          id: `stuck-${d.id}`,
+          type: "stuck_deal",
+          title: `${d.name} stuck in ${d.status || "Unknown"}`,
+          description: `No update for ${days} days`,
+          severity: days > 60 ? "urgent" : "warning",
+          createdAt: d.updated_at,
+          dealId: d.id,
+        });
+      }
+
+      // Deals without fee allocated
+      const noFeeResult = await pool.query(`
+        SELECT COUNT(*)::int as count FROM crm_deals
+        WHERE (fee IS NULL OR fee = 0)
+        AND status NOT IN ('Dead', 'Withdrawn', 'Completed', 'Invoiced', 'Leasing Comps', 'Investment Comps')
+      `);
+      const noFeeCount = noFeeResult.rows[0]?.count || 0;
+      if (noFeeCount > 0) {
+        notifications.push({
+          id: "no-fee-deals",
+          type: "no_fee",
+          title: `${noFeeCount} deal${noFeeCount !== 1 ? "s" : ""} with no fee set`,
+          description: "Active deals without fee allocation need attention",
+          severity: noFeeCount > 10 ? "urgent" : "warning",
+          createdAt: new Date().toISOString(),
+        });
+      }
+
+      // KYC not approved on progressing deals
+      const kycGaps = await pool.query(`
+        SELECT id, name, status FROM crm_deals
+        WHERE kyc_approved = false
+        AND status IN ('SOLs', 'Exchanged', 'Completing', 'HOTs')
+        LIMIT 10
+      `);
+      for (const d of kycGaps.rows) {
+        notifications.push({
+          id: `kyc-${d.id}`,
+          type: "kyc_gap",
+          title: `KYC not approved: ${d.name}`,
+          description: `Deal in ${d.status} without KYC clearance`,
+          severity: "urgent",
+          createdAt: new Date().toISOString(),
+          dealId: d.id,
+        });
+      }
+
+      // Deals with stale completion dates (overdue)
+      const overdueDeals = await pool.query(`
+        SELECT id, name, completion_date, status FROM crm_deals
+        WHERE completion_date IS NOT NULL
+        AND completion_date::date < CURRENT_DATE
+        AND status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn', 'Leasing Comps', 'Investment Comps')
+        ORDER BY completion_date ASC
+        LIMIT 10
+      `);
+      for (const d of overdueDeals.rows) {
+        notifications.push({
+          id: `overdue-${d.id}`,
+          type: "overdue_completion",
+          title: `Overdue completion: ${d.name}`,
+          description: `Expected completion ${d.completion_date} has passed`,
+          severity: "warning",
+          createdAt: d.completion_date,
+          dealId: d.id,
+        });
+      }
+
+      // Sort: urgent first, then warning, then info
+      const severityOrder: Record<string, number> = { urgent: 0, warning: 1, info: 2 };
+      notifications.sort((a, b) => (severityOrder[a.severity] ?? 2) - (severityOrder[b.severity] ?? 2));
+
+      res.json(notifications);
+    } catch (e: any) {
+      console.error("[notifications] Error:", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   return httpServer;
 }
 

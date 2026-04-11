@@ -5,6 +5,7 @@ export { InvestmentTrackerWidget } from "./investment-tracker-widget";
 export { SharePointWidget } from "./sharepoint-widget";
 export { StudiosWidget } from "./studios-widget";
 export { MyPortfolioWidget } from "./portfolio-widget";
+export { KpiOverviewWidget } from "./kpi-overview-widget";
 export { LandsecAnalyticsWidget, LandsecOverviewCard, LandsecAgentPerformanceCard, LandsecPipelineFunnel, LandsecRecentActivity } from "./landsec-analytics-widget";
 export { WidgetPickerDialog, WIDGET_REGISTRY, BOARD_REGISTRY, DEFAULT_WIDGETS, DEFAULT_BOARDS, boardsToWidgets, widgetsToBoards } from "./widget-picker";
 export { formatCurrencyShort, formatCurrencyFull, getWipMonthSortKey, timeAgo } from "./helpers";

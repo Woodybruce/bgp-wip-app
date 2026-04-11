@@ -101,6 +101,7 @@ import { AddressAutocomplete, InlineAddress, buildGoogleMapsUrl } from "@/compon
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
+import { Breadcrumbs } from "@/components/breadcrumbs";
 import type { CrmProperty, CrmDeal, CrmContact, CrmCompany, CrmLead, User } from "@shared/schema";
 import {
   DropdownMenu,
@@ -119,6 +120,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { EmptyState } from "@/components/empty-state";
 
 const GROUP_TABS = [
   { id: "all", label: "All" },
@@ -3742,7 +3744,12 @@ function LinkedLandRegistryPanel({ propertyId }: { propertyId: string }) {
   });
 
   if (isLoading) {
-    return <p className="text-xs text-muted-foreground py-2">Loading...</p>;
+    return (
+      <div className="space-y-2 py-2">
+        <Skeleton className="h-4 w-full rounded" />
+        <Skeleton className="h-4 w-3/4 rounded" />
+      </div>
+    );
   }
 
   if (searches.length === 0) {
@@ -3894,6 +3901,14 @@ function PropertyDetail({ id }: { id: string }) {
         onOpenChange={setFolderDialogOpen}
       />
 
+      <div className="px-4 sm:px-6 pt-4 sm:pt-5">
+        <Breadcrumbs
+          items={[
+            { label: "Properties", href: "/properties" },
+            { label: property.name || "Untitled Property" },
+          ]}
+        />
+      </div>
       <div className="flex-1 flex min-h-0">
         <div className="flex-1 overflow-y-auto">
           <div className="p-4 sm:p-6 space-y-5">
@@ -4291,7 +4306,7 @@ function PropertiesList({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [activeView, setActiveView] = useState<"list" | "landlordHealth">("list");
-  const [viewMode, setViewMode] = useState<"table" | "card">(
+  const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
     typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
   );
 
@@ -4729,6 +4744,7 @@ function PropertiesList({
                   };
                 })}
                 emptyMessage="No properties found"
+                emptyIcon={Building2}
               />
             )}
           </CardContent>
@@ -4962,9 +4978,12 @@ function PropertiesList({
                   ))}
                   {filteredItems.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={2 + Object.values(visibleColumns).filter(v => v).length} className="text-center py-8 text-muted-foreground">
-                        <Building2 className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                        <p className="text-sm">No properties found</p>
+                      <TableCell colSpan={2 + Object.values(visibleColumns).filter(v => v).length} className="text-center py-12 text-muted-foreground">
+                        <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
+                          <Building2 className="w-6 h-6 text-muted-foreground" />
+                        </div>
+                        <p className="text-sm font-semibold text-foreground">No properties found</p>
+                        <p className="text-xs mt-1">Add a property or adjust your filters</p>
                       </TableCell>
                     </TableRow>
                   )}

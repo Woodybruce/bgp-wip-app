@@ -62,6 +62,7 @@ import {
   Check,
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
+import { EmptyState } from "@/components/empty-state";
 
 interface Transaction {
   id: string;
@@ -908,10 +909,18 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
             </div>
           )}
           {searchesLoading && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground justify-center py-4">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Loading recent searches...
+            <div className="space-y-3 p-4">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-20 w-full rounded-lg" />
+              ))}
             </div>
+          )}
+          {!searchesLoading && savedSearches.length === 0 && (
+            <EmptyState
+              icon={MapPin}
+              title="No searches yet"
+              description="Search for a property to get started"
+            />
           )}
         </div>
       )}

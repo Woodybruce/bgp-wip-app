@@ -105,6 +105,8 @@ import { CRM_OPTIONS } from "@/lib/crm-options";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
+import { DealKanban } from "@/components/deal-kanban";
+import { Breadcrumbs } from "@/components/breadcrumbs";
 
 const DEAL_STATUS_COLORS: Record<string, string> = {
   "Targeting": "bg-amber-500",
@@ -3077,6 +3079,12 @@ function DealDetail({ id, isComps = false }: { id: string; isComps?: boolean }) 
 
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid={`deal-detail-${id}`}>
+      <Breadcrumbs
+        items={[
+          { label: isComps ? "Comps" : "Deals", href: isComps ? "/comps" : "/deals" },
+          { label: linkedProperty?.name || deal.name },
+        ]}
+      />
       <div className="flex items-center gap-2 flex-wrap">
         <Link href={isComps ? "/comps" : "/deals"}>
           <Button variant="ghost" size="icon" data-testid="button-back-deals">
@@ -3582,8 +3590,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [hotsChecklistDeal, setHotsChecklistDeal] = useState<CrmDeal | null>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [teamFilterInitialised, setTeamFilterInitialised] = useState(false);
-  const [viewMode, setViewMode] = useState<"table" | "card">(
-    typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
+  const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
+    typeof window !== "undefined" && window.innerWidth < 768 ? "board" : "table"
   );
 
   useEffect(() => {
@@ -4147,10 +4155,24 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             )}
           </Button>
         )}
-        <ViewToggle view={viewMode} onToggle={setViewMode} />
+        <ViewToggle view={viewMode} onToggle={setViewMode} showBoard />
       </div>
 
-      {viewMode === "card" ? (
+      {viewMode === "board" ? (
+        isLoading ? (
+          <div className="flex gap-3 overflow-x-auto pb-4">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="min-w-[260px] w-[280px] shrink-0">
+                <Skeleton className="h-10 rounded-t-lg mb-2" />
+                <Skeleton className="h-32 rounded-lg mb-2" />
+                <Skeleton className="h-32 rounded-lg" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <DealKanban deals={filteredDeals} propertyMap={propertyMap} />
+        )
+      ) : viewMode === "card" ? (
         <Card className="flex-1 min-h-0 flex flex-col">
           <CardContent className="p-0 flex-1 min-h-0 overflow-y-auto">
             {isLoading ? (
@@ -4183,6 +4205,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   };
                 })}
                 emptyMessage="No deals found"
+                emptyIcon={BarChart3}
               />
             )}
           </CardContent>
@@ -4735,12 +4758,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   ))}
                   {filteredDeals.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="text-center py-8 text-muted-foreground">
-                        <BarChart3 className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                        <p className="text-sm">{isCompsMode ? "No comps found" : "No deals found"}</p>
-                        {hasFilters && (
-                          <p className="text-xs mt-1">Try adjusting your filters</p>
-                        )}
+                      <TableCell colSpan={3 + Object.values(visibleColumns).filter(v => v).length} className="text-center py-12 text-muted-foreground">
+                        <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
+                          <BarChart3 className="w-6 h-6 text-muted-foreground" />
+                        </div>
+                        <p className="text-sm font-semibold text-foreground">{isCompsMode ? "No comps found" : "No deals found"}</p>
+                        <p className="text-xs mt-1">
+                          {hasFilters ? "Create a deal or adjust your filters" : "Create a deal to get started"}
+                        </p>
                       </TableCell>
                     </TableRow>
                   )}

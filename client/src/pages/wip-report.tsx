@@ -25,6 +25,7 @@ import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type SortDirection = "asc" | "desc";
 
@@ -326,8 +327,10 @@ function ReconciliationTab() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-gray-500 text-lg">Loading reconciliation data...</div>
+      <div className="space-y-3 p-4">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Skeleton key={i} className="h-12 w-full rounded-lg" />
+        ))}
       </div>
     );
   }
@@ -502,8 +505,10 @@ function AgentSummaryTab() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-gray-500 text-lg">Loading agent summary...</div>
+      <div className="space-y-3 p-4">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Skeleton key={i} className="h-12 w-full rounded-lg" />
+        ))}
       </div>
     );
   }
@@ -1144,8 +1149,10 @@ export default function WipReport() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-[80vh]">
-        <div className="text-gray-500 text-lg">Loading WIP data...</div>
+      <div className="space-y-3 p-4">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <Skeleton key={i} className="h-12 w-full rounded-lg" />
+        ))}
       </div>
     );
   }

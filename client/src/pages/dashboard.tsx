@@ -69,6 +69,7 @@ import {
   SharePointWidget,
   StudiosWidget,
   MyPortfolioWidget,
+  KpiOverviewWidget,
   LandsecAnalyticsWidget,
   LandsecOverviewCard,
   LandsecAgentPerformanceCard,
@@ -801,9 +802,11 @@ export default function Dashboard() {
     .filter((id: string) => id !== "latest-news" && id !== "stats" && id !== "quick-access");
   const withNews = rawWidgets.includes("news-summary") ? rawWidgets : ["news-summary", ...rawWidgets];
   const withLeads = withNews.includes("my-leads") ? withNews : ["my-leads", ...withNews];
-  const topPair = ["my-leads", "news-summary"];
-  const reordered = withLeads.filter((id: string) => !topPair.includes(id));
-  reordered.unshift(...topPair);
+  const withKpi = withLeads.includes("kpi-overview") ? withLeads : [...withLeads, "kpi-overview"];
+  const topWidgets = ["my-leads", "news-summary", "kpi-overview"];
+  const reordered = withKpi.filter((id: string) => !topWidgets.includes(id));
+  reordered.unshift("kpi-overview");
+  reordered.unshift("my-leads", "news-summary");
   const tripleIds = ["today-diary", "key-instructions", "active-contacts"];
   const hasAll = tripleIds.every(id => reordered.includes(id));
   if (hasAll) {
@@ -1782,6 +1785,7 @@ export default function Dashboard() {
           "my-tasks": { w: 6, h: 18, minW: 4, minH: 10 },
           "my-portfolio": { w: 6, h: 10, minW: 4, minH: 6 },
           "landsec-analytics": { w: 12, h: 20, minW: 8, minH: 12 },
+          "kpi-overview": { w: 12, h: 5, minW: 6, minH: 4 },
         };
 
         const renderWidget = (widgetId: string) => {
@@ -2474,6 +2478,8 @@ export default function Dashboard() {
         if (widgetId === "my-portfolio") return <MyPortfolioWidget key="my-portfolio" />;
 
         if (widgetId === "landsec-analytics") return <LandsecAnalyticsWidget key="landsec-analytics" />;
+
+        if (widgetId === "kpi-overview") return <KpiOverviewWidget key="kpi-overview" />;
 
         return null;
         };

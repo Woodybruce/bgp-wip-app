@@ -1,7 +1,9 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Eye, Pencil } from "lucide-react";
+import { Eye, Pencil, Inbox } from "lucide-react";
 import { Link } from "wouter";
+import type { LucideIcon } from "lucide-react";
+import { EmptyState } from "@/components/empty-state";
 
 export type MobileCardField = {
   label: string;
@@ -29,12 +31,14 @@ function StatusDot({ color }: { color?: string }) {
   );
 }
 
-export function MobileCardView({ items, emptyMessage }: { items: MobileCardItem[]; emptyMessage?: string }) {
+export function MobileCardView({ items, emptyMessage, emptyIcon }: { items: MobileCardItem[]; emptyMessage?: string; emptyIcon?: LucideIcon }) {
   if (items.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-        <p className="text-sm">{emptyMessage || "No items found"}</p>
-      </div>
+      <EmptyState
+        icon={emptyIcon || Inbox}
+        title={emptyMessage || "No items found"}
+        description="Try adjusting your filters"
+      />
     );
   }
 
@@ -141,41 +145,41 @@ export function MobileCardView({ items, emptyMessage }: { items: MobileCardItem[
 }
 
 /**
- * Toggle button for switching between table and card views.
- * On mobile (< 768px), defaults to card view.
+ * Toggle button for switching between table, card and board views.
+ * On mobile (< 768px), defaults to board view.
  * On desktop, defaults to table view.
  */
 export function ViewToggle({
   view,
   onToggle,
+  showBoard = false,
 }: {
-  view: "table" | "card";
-  onToggle: (view: "table" | "card") => void;
+  view: "table" | "card" | "board";
+  onToggle: (view: "table" | "card" | "board") => void;
+  showBoard?: boolean;
 }) {
+  const options: { key: "table" | "card" | "board"; label: string }[] = [
+    { key: "table", label: "Table" },
+    { key: "card", label: "Cards" },
+    ...(showBoard ? [{ key: "board" as const, label: "Board" }] : []),
+  ];
+
   return (
     <div className="inline-flex items-center rounded-lg border bg-card p-0.5 gap-0.5">
-      <button
-        onClick={() => onToggle("table")}
-        className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-          view === "table"
-            ? "bg-primary text-primary-foreground"
-            : "text-muted-foreground hover:text-foreground"
-        }`}
-        data-testid="button-view-table"
-      >
-        Table
-      </button>
-      <button
-        onClick={() => onToggle("card")}
-        className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-          view === "card"
-            ? "bg-primary text-primary-foreground"
-            : "text-muted-foreground hover:text-foreground"
-        }`}
-        data-testid="button-view-card"
-      >
-        Cards
-      </button>
+      {options.map((opt) => (
+        <button
+          key={opt.key}
+          onClick={() => onToggle(opt.key)}
+          className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+            view === opt.key
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid={`button-view-${opt.key}`}
+        >
+          {opt.label}
+        </button>
+      ))}
     </div>
   );
 }

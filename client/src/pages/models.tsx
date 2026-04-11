@@ -53,6 +53,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import type { ExcelTemplate, ExcelModelRun } from "@shared/schema";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
 import type { CrmProperty } from "@shared/schema";
+import { EmptyState } from "@/components/empty-state";
 
 interface TemplateWithMeta extends Omit<ExcelTemplate, "inputMapping" | "outputMapping"> {
   inputMapping: Record<string, InputField>;
@@ -1057,8 +1058,10 @@ function SpreadsheetViewer({ endpoint, title, editable, outputs, outputMapping, 
           <div className="flex flex-1 min-h-0">
             <div className="flex-1 overflow-auto min-h-0">
               {isLoading ? (
-                <div className="flex items-center justify-center h-full">
-                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                <div className="space-y-3 p-4">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <Skeleton key={i} className="h-8 w-full rounded-lg" />
+                  ))}
                 </div>
               ) : data?.rows ? (
                 <table className="border-collapse text-[11px] font-mono">
@@ -3023,16 +3026,11 @@ export default function ModelsPage() {
           ) : templates && templates.length > 0 ? (
             templates.map((t) => <TemplateCard key={t.id} template={t} />)
           ) : (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                <FileSpreadsheet className="w-12 h-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium mb-2">No templates yet</h3>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Upload an Excel property model to get started. The system will detect the inputs and outputs automatically.
-                </p>
-                <TemplateUpload />
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={FileSpreadsheet}
+              title="No models yet"
+              description="Upload an Excel property model to get started. The system will detect the inputs and outputs automatically."
+            />
           )}
         </TabsContent>
 
@@ -3045,15 +3043,11 @@ export default function ModelsPage() {
           ) : runs && runs.length > 0 ? (
             runs.map((r) => <RunCard key={r.id} run={r} />)
           ) : (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12 text-center">
-                <TrendingUp className="w-12 h-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium mb-2">No model runs yet</h3>
-                <p className="text-sm text-muted-foreground">
-                  Select a template and run a model with your property inputs to see results here.
-                </p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={TrendingUp}
+              title="No model runs yet"
+              description="Select a template and run a model with your property inputs to see results here."
+            />
           )}
         </TabsContent>
 

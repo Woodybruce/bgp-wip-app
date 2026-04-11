@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { ConnectionStatus } from "@/components/connection-status";
 import { GlobalSearch } from "@/components/global-search";
+import { NotificationCenter } from "@/components/notification-center";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
 import bgpLogoLight from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import LoginPage from "@/pages/login";
@@ -311,6 +312,7 @@ function AuthenticatedApp() {
             </div>
             <div className="flex items-center gap-2">
               <ColorSchemeSelector />
+              <NotificationCenter />
               <button
                 data-testid="button-chat-toggle"
                 onClick={() => setChatOpen(prev => !prev)}

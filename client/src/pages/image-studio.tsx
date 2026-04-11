@@ -45,6 +45,7 @@ import {
   Link,
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
+import { EmptyState } from "@/components/empty-state";
 
 const CATEGORIES = [
   "All",
@@ -1183,14 +1184,15 @@ export default function ImageStudio() {
                 </div>
               </div>
             ) : filteredImages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <ImageIconLucide className="h-12 w-12 text-muted-foreground/30 mb-3" />
-                <p className="text-muted-foreground text-sm">
-                  {searchQuery || selectedCategory !== "All"
+              <div className="flex flex-col items-center justify-center py-12">
+                <EmptyState
+                  icon={ImageIconLucide}
+                  title="No images yet"
+                  description={searchQuery || selectedCategory !== "All"
                     ? "No images match your filters"
-                    : "No images yet. Upload some to get started."}
-                </p>
-                <div className="flex gap-2 mt-4">
+                    : "Upload images or capture from Street View"}
+                />
+                <div className="flex gap-2 mt-2">
                   <Button size="sm" onClick={() => setUploadDialogOpen(true)} data-testid="button-upload-empty">
                     <Upload className="h-4 w-4 mr-1" /> Upload Images
                   </Button>
