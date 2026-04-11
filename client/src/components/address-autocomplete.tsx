@@ -156,11 +156,24 @@ export function AddressAutocomplete({
     googleDebounceRef.current = setTimeout(() => {
       setGoogleLoading(true);
       autocompleteService.current!.getPlacePredictions(
-        { input, componentRestrictions: { country: "gb" } },
+        {
+          input,
+          componentRestrictions: { country: "gb" },
+          // Bias towards London commercial property area
+          locationBias: { center: { lat: 51.5074, lng: -0.1278 }, radius: 50000 },
+        } as any,
         (results, status) => {
           setGoogleLoading(false);
           if (status === google.maps.places.PlacesServiceStatus.OK && results) {
-            setGooglePredictions(results);
+            // Filter out broad regions (cities, postcodes, countries) — keep addresses + buildings
+            const filtered = results.filter(r => {
+              const types = r.types || [];
+              const isBroad = types.includes("postal_code") || types.includes("country") ||
+                types.includes("administrative_area_level_1") || types.includes("administrative_area_level_2") ||
+                types.includes("locality") && !types.includes("street_address") && !types.includes("premise");
+              return !isBroad;
+            });
+            setGooglePredictions(filtered.length > 0 ? filtered : results);
             setShowDropdown(true);
           } else {
             setGooglePredictions([]);
