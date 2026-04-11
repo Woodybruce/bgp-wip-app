@@ -210,9 +210,9 @@ body {
   --chart-3: 0 0% 55%;
   --chart-4: 0 0% 70%;
   --chart-5: 0 0% 85%;
-  --font-sans: "Tiempos Text", "Tiempos", Georgia, "Times New Roman", serif;
-  --font-serif: "Tiempos Text", "Tiempos", Georgia, "Times New Roman", serif;
-  --font-mono: Menlo, monospace;
+  --font-sans: "Tiempos Text", "Tiempos", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Tiempos Text", "Tiempos", ui-serif, "New York", "Charter", Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Roboto Mono", monospace;
   --radius: .5rem;
   --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
   --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);

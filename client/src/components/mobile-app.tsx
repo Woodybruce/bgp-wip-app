@@ -2030,7 +2030,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
         const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         setShowScrollBottom(distFromBottom > 200);
       }}>
-        <div className={`min-h-full flex flex-col ${messages.length > 0 ? "justify-end" : "justify-center"} ${isActiveThreadAi ? "space-y-6" : "space-y-3"}`}>
+        <div className={`min-h-full flex flex-col ${messages.length > 0 ? "justify-end" : "justify-center"} ${isActiveThreadAi ? "space-y-6" : "space-y-4"}`}>
         {messages.length === 0 && isActiveThreadAi && !threadId && (
           <div className="flex flex-col items-center justify-center h-full gap-6 py-10">
             <div className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-sm" style={{ backgroundColor: "hsl(var(--primary))" }}>
@@ -2117,7 +2117,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
 
         {queuedMessage && (
           <div className="flex justify-end">
-            <div className={`rounded-2xl px-4 py-3 text-[15px] leading-relaxed max-w-[80%] opacity-60 bg-black text-white rounded-br-sm`}>
+            <div className={`rounded-2xl px-4 py-3 text-[15px] leading-relaxed max-w-[80%] opacity-60 bg-black text-white rounded-br-md`}>
               <div className="whitespace-pre-wrap break-words">{queuedMessage.text}</div>
               <div className="text-[11px] mt-1 text-white/60">Queued — will send next</div>
             </div>
@@ -2316,90 +2316,92 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
             )}
           </div>
         ) : (
-          <div className="flex items-end gap-1.5">
-            <div className="p-2 text-gray-400 active:text-gray-600 cursor-pointer relative overflow-hidden" data-testid="button-mobile-photo" style={{ minWidth: 40, minHeight: 40 }}>
-              <Image className="w-6 h-6 pointer-events-none" />
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/*,video/*,audio/*,.xlsx,.xls,.csv,.pdf,.docx,.doc,.txt,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.mov,.pptx,.ppt"
-                multiple
-                className="absolute inset-0 opacity-0 cursor-pointer"
-                style={{ width: '100%', height: '100%', fontSize: '0', zIndex: 10 }}
-                onChange={(e) => {
-                  const files = Array.from(e.target.files || []);
-                  if (files.length > 0) setAttachedFiles(prev => [...prev, ...files].slice(0, 10));
-                  e.target.value = "";
-                }}
+          <div className="flex items-end gap-2">
+            <div className="flex-1 flex items-end rounded-[22px] border border-gray-200/80 bg-white shadow-sm overflow-hidden">
+              <div className="p-2.5 text-gray-400 active:text-gray-600 cursor-pointer relative overflow-hidden shrink-0" data-testid="button-mobile-photo" style={{ minWidth: 36, minHeight: 36 }}>
+                <Image className="w-5 h-5 pointer-events-none" />
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*,video/*,audio/*,.xlsx,.xls,.csv,.pdf,.docx,.doc,.txt,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.mov,.pptx,.ppt"
+                  multiple
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  style={{ width: '100%', height: '100%', fontSize: '0', zIndex: 10 }}
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    if (files.length > 0) setAttachedFiles(prev => [...prev, ...files].slice(0, 10));
+                    e.target.value = "";
+                  }}
+                />
+              </div>
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => setShowLinkMenu(prev => !prev)}
+                  className="p-2.5 text-gray-400 active:text-gray-600 cursor-pointer"
+                  data-testid="button-mobile-attach"
+                  style={{ minWidth: 36, minHeight: 36 }}
+                >
+                  <Paperclip className="w-5 h-5" />
+                </button>
+                {showLinkMenu && (
+                  <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowLinkMenu(false)} />
+                  <div className="absolute bottom-12 left-0 bg-white rounded-xl shadow-lg border border-gray-200 py-1 w-52 z-50">
+                    <button
+                      onClick={() => { setShowLinkSearch("property"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
+                      className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100"
+                      data-testid="button-link-property"
+                    >
+                      <Building className="w-5 h-5 text-gray-600" />
+                      <span>Link Property</span>
+                    </button>
+                    <button
+                      onClick={() => { setShowLinkSearch("deal"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
+                      className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100"
+                      data-testid="button-link-deal"
+                    >
+                      <Handshake className="w-5 h-5 text-gray-600" />
+                      <span>Link Deal</span>
+                    </button>
+                    <div className="border-t border-gray-100 my-1" />
+                    <label className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100 cursor-pointer">
+                      <File className="w-5 h-5 text-gray-600" />
+                      <span>Attach File</span>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || []);
+                          if (files.length > 0) setAttachedFiles(prev => [...prev, ...files].slice(0, 10));
+                          e.target.value = "";
+                          setShowLinkMenu(false);
+                        }}
+                      />
+                    </label>
+                  </div>
+                  </>
+                )}
+              </div>
+              <Textarea
+                ref={textareaRef}
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                placeholder="Message..."
+                className="flex-1 min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent text-[16px] py-3 pr-3 pl-0 text-gray-900 placeholder:text-gray-400 focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none"
+                rows={1}
+                data-testid="input-mobile-chat"
               />
             </div>
-            <div className="relative">
-              <button
-                onClick={() => setShowLinkMenu(prev => !prev)}
-                className="p-2 text-gray-400 active:text-gray-600 cursor-pointer"
-                data-testid="button-mobile-attach"
-                style={{ minWidth: 40, minHeight: 40 }}
-              >
-                <Paperclip className="w-6 h-6" />
-              </button>
-              {showLinkMenu && (
-                <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowLinkMenu(false)} />
-                <div className="absolute bottom-12 left-0 bg-white rounded-xl shadow-lg border border-gray-200 py-1 w-52 z-50">
-                  <button
-                    onClick={() => { setShowLinkSearch("property"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
-                    className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100"
-                    data-testid="button-link-property"
-                  >
-                    <Building className="w-5 h-5 text-gray-600" />
-                    <span>Link Property</span>
-                  </button>
-                  <button
-                    onClick={() => { setShowLinkSearch("deal"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
-                    className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100"
-                    data-testid="button-link-deal"
-                  >
-                    <Handshake className="w-5 h-5 text-gray-600" />
-                    <span>Link Deal</span>
-                  </button>
-                  <div className="border-t border-gray-100 my-1" />
-                  <label className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100 cursor-pointer">
-                    <File className="w-5 h-5 text-gray-600" />
-                    <span>Attach File</span>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => {
-                        const files = Array.from(e.target.files || []);
-                        if (files.length > 0) setAttachedFiles(prev => [...prev, ...files].slice(0, 10));
-                        e.target.value = "";
-                        setShowLinkMenu(false);
-                      }}
-                    />
-                  </label>
-                </div>
-                </>
-              )}
-            </div>
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              placeholder="Type a message..."
-              className="flex-1 min-h-[44px] max-h-[120px] resize-none rounded-2xl text-[16px] py-3 px-4 border-gray-200 bg-gray-50"
-              rows={1}
-              data-testid="input-mobile-chat"
-            />
             {!input.trim() && attachedFiles.length === 0 ? (
-              <button onClick={startRecording} disabled={isSending} className="w-11 h-11 rounded-full bg-black flex items-center justify-center disabled:bg-gray-300 shrink-0" data-testid="button-mobile-voice-record">
-                <Mic className="w-5 h-5 text-white" />
+              <button onClick={startRecording} disabled={isSending} className="w-10 h-10 rounded-full bg-gray-50 border border-gray-200 flex items-center justify-center disabled:opacity-30 shrink-0 mb-0.5" data-testid="button-mobile-voice-record">
+                <Mic className="w-5 h-5 text-gray-400" />
               </button>
             ) : (
-              <button onClick={handleSend} disabled={!!queuedMessage || uploading} className="w-11 h-11 rounded-full bg-black flex items-center justify-center disabled:bg-gray-300 shrink-0" data-testid="button-mobile-send">
-                <Send className="w-5 h-5 text-white" />
+              <button onClick={handleSend} disabled={!!queuedMessage || uploading} className="w-10 h-10 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0 mb-0.5 bg-black" data-testid="button-mobile-send">
+                <Send className="w-4 h-4 text-white" />
               </button>
             )}
           </div>
