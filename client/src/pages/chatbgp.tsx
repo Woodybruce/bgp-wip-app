@@ -29,7 +29,7 @@ import {
   ArrowLeft, Paperclip, FolderOpen, ChevronDown,
   Eye, Share2, Image, FileSpreadsheet, ExternalLink, Copy, Check,
   Mic, Square, MapPin, Folder, Globe, Hash, Tag,
-  Star, Archive, BookOpen, Brain, FileUp, MoreVertical,
+  Star, Archive, BookOpen, Brain, FileUp, MoreVertical, RotateCcw,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import type { UnitMarketingFile } from "@shared/schema";
@@ -386,13 +386,14 @@ function RenderMessageContent({ content, onActionClick }: { content: string; onA
   return <ChatBGPMarkdown content={content} />;
 }
 
-function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, completedActions }: {
+function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, completedActions, onRetry }: {
   message: LocalMessage;
   isOwn?: boolean;
   onEdit?: (msgId: string, content: string) => void;
   onDelete?: (msgId: string) => void;
   onActionClick?: (text: string) => void;
   completedActions?: Set<string>;
+  onRetry?: () => void;
 }) {
   const isUser = message.role === "user";
   const [editing, setEditing] = useState(false);
@@ -470,6 +471,17 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
 
   const { textParts, actionParts } = splitContentParts(message.content);
 
+  // Detect error messages for retry button
+  const isErrorMessage = message.role === "assistant" && (
+    message.content.startsWith("Sorry, I couldn't respond:") ||
+    message.content.includes("couldn't process") ||
+    message.content.includes("ran into an issue") ||
+    message.content.includes("Connection lost") ||
+    message.content.includes("AI service is busy") ||
+    message.content.includes("timed out") ||
+    message.content.includes("try again")
+  );
+
   return (
     <div className="flex gap-3" data-testid={`message-${message.role}`}>
       <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-1">
@@ -477,9 +489,19 @@ function MessageBubble({ message, isOwn, onEdit, onDelete, onActionClick, comple
       </div>
       <div className="flex-1 min-w-0">
         {textParts.length > 0 && (
-          <div className="text-sm leading-relaxed text-foreground">
+          <div className={`text-sm leading-relaxed ${isErrorMessage ? "text-destructive/80" : "text-foreground"}`}>
             <ChatBGPMarkdown content={textParts.join("\n")} />
           </div>
+        )}
+        {isErrorMessage && onRetry && (
+          <button
+            onClick={onRetry}
+            className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-primary/80 transition-colors px-3 py-1.5 rounded-md border border-primary/20 hover:border-primary/40 hover:bg-primary/5"
+            data-testid="button-retry"
+          >
+            <RotateCcw className="w-3 h-3" />
+            Retry
+          </button>
         )}
         {actionParts.length > 0 && (
           <div className="mt-2">
@@ -1954,6 +1976,7 @@ export default function ChatBGP() {
   const messageQueueRef = useRef<string[]>([]);
   const [queueLength, setQueueLength] = useState(0);
   const [progressLabel, setProgressLabel] = useState("");
+  const [streamingContent, setStreamingContent] = useState("");
   const messagesRef = useRef<LocalMessage[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -2278,6 +2301,8 @@ export default function ChatBGP() {
           const decoder = new TextDecoder();
           let buffer = "";
           let lastData = "";
+          let streamedText = "";
+          setStreamingContent("");
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
@@ -2289,8 +2314,16 @@ export default function ChatBGP() {
                 const raw = line.slice(6);
                 try {
                   const parsed = JSON.parse(raw);
+                  if (parsed.delta) {
+                    streamedText += parsed.delta;
+                    setStreamingContent(streamedText);
+                    setProgressLabel("");
+                  }
                   if (parsed.progress) {
                     setProgressLabel(parsed.progress);
+                    // Clear streaming content when tools are running (not the final response)
+                    streamedText = "";
+                    setStreamingContent("");
                   }
                   if (parsed.reply) {
                     lastData = raw;
@@ -2305,6 +2338,7 @@ export default function ChatBGP() {
               if (parsed.reply) lastData = buffer.slice(6);
             } catch {}
           }
+          setStreamingContent("");
           if (lastData) return JSON.parse(lastData);
           throw new Error("No response received");
         } catch (err: any) {
@@ -2322,6 +2356,7 @@ export default function ChatBGP() {
     },
     onSuccess: async (data: { reply: string; action?: any }) => {
       setProgressLabel("");
+      setStreamingContent("");
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
       const threadId = activeThreadIdRef.current;
       if (threadId) {
@@ -2334,13 +2369,18 @@ export default function ChatBGP() {
       setTimeout(() => processQueue(), 300);
     },
     onError: (err: any) => {
+      setStreamingContent("");
       let msg = "Failed to get a response. Please try again.";
       try {
         const raw = err?.message || "";
         if (raw.includes("timed out") || raw.includes("AbortError")) {
-          msg = raw;
-        } else if (raw === "Load failed" || raw === "Failed to fetch" || raw.includes("NetworkError")) {
-          msg = "Connection lost — please check your signal and try again.";
+          msg = "Request timed out after 5 minutes. Please try again.";
+        } else if (raw === "Load failed" || raw === "Failed to fetch" || raw.includes("NetworkError") || raw.includes("network")) {
+          msg = "Connection lost — retrying...";
+        } else if (raw.startsWith("429") || raw.includes("429") || raw.includes("503") || raw.includes("rate limit") || raw.includes("overloaded")) {
+          msg = "AI service is busy, please try again in a moment.";
+        } else if (raw.startsWith("413") || raw.includes("413") || raw.includes("too long") || raw.includes("too large")) {
+          msg = "Message too long — try breaking it into smaller parts.";
         } else {
           const jsonStart = raw.indexOf("{");
           if (jsonStart >= 0) {
@@ -2378,7 +2418,7 @@ export default function ChatBGP() {
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages, sendMutation.isPending]);
+  }, [messages, sendMutation.isPending, streamingContent]);
 
   const editMessageMutation = useMutation({
     mutationFn: async ({ messageId, content }: { messageId: string; content: string }) => {
@@ -2416,6 +2456,26 @@ export default function ChatBGP() {
       setPendingDeleteMsgId(null);
     }
   }, [pendingDeleteMsgId, deleteMessageMutation]);
+
+  const handleRetry = useCallback(() => {
+    // Remove the last assistant error message and resend the last user message
+    setMessages((prev) => {
+      const withoutError = [...prev];
+      // Remove the last message if it's an assistant error
+      if (withoutError.length > 0 && withoutError[withoutError.length - 1].role === "assistant") {
+        withoutError.pop();
+      }
+      return withoutError;
+    });
+    // Re-trigger the send with the current messages (minus the error)
+    setTimeout(() => {
+      const currentMsgs = messagesRef.current;
+      // Only resend if there are messages and the last one is from user
+      if (currentMsgs.length > 0 && currentMsgs[currentMsgs.length - 1].role === "user") {
+        sendMutation.mutate(currentMsgs);
+      }
+    }, 100);
+  }, [sendMutation]);
 
   const loadThread = async (threadId: string) => {
     setActiveThreadId(threadId);
@@ -3656,32 +3716,42 @@ export default function ChatBGP() {
                       onDelete={handleDeleteMessage}
                       onActionClick={handleActionClick}
                       completedActions={completedActions}
+                      onRetry={i === messages.length - 1 && msg.role === "assistant" && !sendMutation.isPending ? handleRetry : undefined}
                     />
                   ))}
                   {sendMutation.isPending && (
                     <div className="flex gap-3" data-testid="loading-response">
-                      <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                      <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-1">
                         <Sparkles className="w-3.5 h-3.5 text-primary" />
                       </div>
-                      <div className="pt-2">
-                        <div className="flex items-center gap-2">
-                          <div className="flex gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0ms" }} />
-                            <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "150ms" }} />
-                            <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "300ms" }} />
+                      {streamingContent ? (
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm leading-relaxed text-foreground">
+                            <ChatBGPMarkdown content={streamingContent} />
+                            <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
                           </div>
-                          {progressLabel && (
-                            <span className="text-[11px] text-muted-foreground ml-1 animate-pulse">
-                              {progressLabel}
-                            </span>
-                          )}
-                          {queueLength > 0 && (
-                            <span className="text-[11px] text-muted-foreground ml-1" data-testid="text-queue-count">
-                              +{queueLength} queued
-                            </span>
-                          )}
                         </div>
-                      </div>
+                      ) : (
+                        <div className="pt-2">
+                          <div className="flex items-center gap-2">
+                            <div className="flex gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0ms" }} />
+                              <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "150ms" }} />
+                              <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "300ms" }} />
+                            </div>
+                            {progressLabel && (
+                              <span className="text-[11px] text-muted-foreground ml-1 animate-pulse">
+                                {progressLabel}
+                              </span>
+                            )}
+                            {queueLength > 0 && (
+                              <span className="text-[11px] text-muted-foreground ml-1" data-testid="text-queue-count">
+                                +{queueLength} queued
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -523,7 +523,12 @@ export async function callClaude(params: any): Promise<any> {
     max_tokens: params.max_completion_tokens || params.max_tokens || 16384,
     messages,
   };
-  if (system) claudeParams.system = system;
+  // Support structured system prompt (array with cache_control) for prompt caching
+  if (params.systemArray) {
+    claudeParams.system = params.systemArray;
+  } else if (system) {
+    claudeParams.system = system;
+  }
 
   if (params.tools && params.tools.length > 0) {
     claudeParams.tools = convertToolsForClaude(params.tools);
@@ -593,6 +598,107 @@ export async function callClaude(params: any): Promise<any> {
       },
     }],
   };
+}
+
+/**
+ * Stream the final Claude response token-by-token via SSE.
+ * Used ONLY for the final text response (no tool calls expected).
+ * Each token is sent as: data: {"delta":"word "}\n\n
+ * Full text sent at end as: data: {"reply":"full text"}\n\n
+ */
+export async function callClaudeStreaming(
+  params: any,
+  onDelta: (token: string) => void,
+): Promise<any> {
+  const model = params.model || CHATBGP_MODEL;
+  const useDirectApi = model === CHATBGP_MODEL && process.env.ANTHROPIC_API_KEY;
+  const anthropic = getAnthropicClient(!!useDirectApi);
+  const { system, messages } = convertMessagesForClaude(params.messages);
+
+  const claudeParams: any = {
+    model,
+    max_tokens: params.max_completion_tokens || params.max_tokens || 16384,
+    messages,
+  };
+
+  // Support structured system prompt (array with cache_control)
+  if (params.systemArray) {
+    claudeParams.system = params.systemArray;
+  } else if (system) {
+    claudeParams.system = system;
+  }
+
+  // No tools for streaming — this is the final text-only response
+  // But allow passing them if needed for the last loop
+  if (params.tools && params.tools.length > 0) {
+    claudeParams.tools = convertToolsForClaude(params.tools);
+    claudeParams.tool_choice = { type: "auto" };
+  }
+
+  const MAX_RETRIES = 2;
+  const RETRY_DELAYS = [2000, 4000];
+
+  let lastErr: any;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const client = attempt === 0 ? anthropic : getAnthropicClient(false);
+      if (attempt > 0) claudeParams.model = model;
+
+      let fullText = "";
+      const toolCalls: any[] = [];
+
+      const stream = client.messages.stream(claudeParams);
+
+      stream.on("text", (text) => {
+        fullText += text;
+        onDelta(text);
+      });
+
+      const finalMessage = await stream.finalMessage();
+
+      // Also extract any tool_use blocks (shouldn't happen for final response, but handle gracefully)
+      for (const block of finalMessage.content) {
+        if (block.type === "tool_use") {
+          toolCalls.push({
+            id: block.id,
+            type: "function",
+            function: { name: block.name, arguments: JSON.stringify(block.input) },
+          });
+        }
+      }
+
+      return {
+        choices: [{
+          message: {
+            role: "assistant",
+            content: fullText || null,
+            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+          },
+        }],
+      };
+    } catch (err: any) {
+      lastErr = err;
+      const errStatus = err?.status;
+
+      if (attempt === 0 && useDirectApi) {
+        console.log("[ChatBGP] Streaming: Direct API key failed (status " + errStatus + "), falling back");
+        continue;
+      }
+
+      const isOverloaded = errStatus === 529 || errStatus === 429;
+      if (isOverloaded && attempt < MAX_RETRIES) {
+        const delay = RETRY_DELAYS[attempt] || 4000;
+        console.log(`[ChatBGP] Streaming overloaded (attempt ${attempt + 1}), retrying in ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+
+      throw err;
+    }
+  }
+
+  throw lastErr;
 }
 
 interface ToolCall {
@@ -8599,6 +8705,10 @@ export function setupChatBGPRoutes(app: Express) {
       safeSseWrite(`data: ${JSON.stringify({ progress: status })}\n\n`);
     };
 
+    const sendDelta = (token: string) => {
+      safeSseWrite(`data: ${JSON.stringify({ delta: token })}\n\n`);
+    };
+
     const sseThreadId = result.data.threadId;
 
     let verifiedThreadId: string | null = null;
@@ -8760,7 +8870,15 @@ export function setupChatBGPRoutes(app: Express) {
       } catch {
         systemPrompt2 = SYSTEM_PROMPT_FALLBACK;
       }
-      const systemContent2 = systemPrompt2 + currentUserContext + threadContext + knowledgeContext2 + businessLearnings2 + memoryContext + emailCalContext + crmCtx;
+      // Split system prompt: static (cacheable) vs dynamic (per-request)
+      const dynamicContext = currentUserContext + threadContext + knowledgeContext2 + businessLearnings2 + memoryContext + emailCalContext + crmCtx;
+      const systemContent2 = systemPrompt2 + dynamicContext;
+
+      // Build structured system prompt array for Anthropic prompt caching
+      const systemArray = [
+        { type: "text" as const, text: systemPrompt2, cache_control: { type: "ephemeral" as const } },
+        { type: "text" as const, text: dynamicContext },
+      ];
 
       const MAX_AI_MESSAGES = 80;
       const trimmedMessages = result.data.messages.length > MAX_AI_MESSAGES
@@ -8810,6 +8928,7 @@ export function setupChatBGPRoutes(app: Express) {
           ...processedMessages,
         ],
         max_completion_tokens: 16384,
+        systemArray, // structured system prompt for prompt caching
       };
 
       if (tools.length > 0) {
@@ -8828,8 +8947,7 @@ export function setupChatBGPRoutes(app: Express) {
       while (loopCount < maxLoops) {
         if (isOverDeadline()) {
           console.log(`[ChatBGP] Deadline reached after ${loopCount} loops`);
-          // Send a proper response instead of just breaking
-          const timeoutMsg = clientDisconnected 
+          const timeoutMsg = clientDisconnected
             ? "Connection lost. Please refresh and try again."
             : "Request took too long. I've completed what I could - please ask a follow-up question if you need more.";
           await sendResult({ reply: timeoutMsg, partial: true });
@@ -8842,24 +8960,41 @@ export function setupChatBGPRoutes(app: Express) {
           model: CHATBGP_MODEL,
           messages: conversationMessages,
           max_completion_tokens: 16384,
+          systemArray, // prompt caching on every call
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;
           loopOpts.tool_choice = "auto";
         }
 
-        const completion = await callClaude(loopOpts);
+        // Use streaming for the final text response (when tools are not passed, or last loop)
+        // For tool-calling rounds, use non-streaming to avoid partial delta noise
+        const useStreaming = isLastLoop || loopCount > 1;
+        let completion: any;
+        let streamedFinal = false;
+
+        if (useStreaming) {
+          // Stream with deltas — if tool_calls come back, deltas were just partial text (rare)
+          sendProgress("Composing response...");
+          completion = await callClaudeStreaming(loopOpts, (token) => {
+            sendDelta(token);
+          });
+          streamedFinal = true;
+        } else {
+          completion = await callClaude(loopOpts);
+        }
+
         const message = completion.choices[0]?.message;
         if (!message) break;
 
-        console.log(`[ChatBGP] Loop ${loopCount}: tool_calls=${message.tool_calls?.length || 0}, has_content=${!!message.content}`);
+        console.log(`[ChatBGP] Loop ${loopCount}: tool_calls=${message.tool_calls?.length || 0}, has_content=${!!message.content}, streamed=${streamedFinal}`);
 
         if (message.tool_calls && message.tool_calls.length > 0) {
           conversationMessages.push(message);
           const toolNames = (message.tool_calls as unknown as ToolCall[]).map(tc => tc.function.name);
-          const progressLabel = toolNames.length === 1 
+          const progressLabel = toolNames.length === 1
             ? getToolProgressLabel(toolNames[0])
-            : toolNames.length <= 3 
+            : toolNames.length <= 3
               ? toolNames.map(getToolProgressLabel).join(", ")
               : `Running ${toolNames.length} operations...`;
           sendProgress(progressLabel);
@@ -8899,7 +9034,7 @@ export function setupChatBGPRoutes(app: Express) {
           }
         } else {
           if (message.content) {
-            console.log(`[ChatBGP] Loop ${loopCount}: final text reply received`);
+            console.log(`[ChatBGP] Loop ${loopCount}: final text reply received (streamed=${streamedFinal})`);
             await sendResult({ reply: message.content, ...(lastAction ? { action: lastAction } : {}) });
 
             const lastUserMsg = result.data.messages.filter(m => m.role === "user").pop();
@@ -8937,7 +9072,7 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       clearInterval(heartbeat);
-      safeSseWrite(`data: ${JSON.stringify({ reply: errorMsg, error: !lastAssistantContent })}\n\n`);
+      safeSseWrite(`data: ${JSON.stringify({ reply: errorMsg, error: !lastAssistantContent, errorStatus: err?.status || 500 })}\n\n`);
       try { if (!res.writableEnded) res.end(); } catch {}
     }
   });
