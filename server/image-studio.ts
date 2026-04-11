@@ -56,7 +56,7 @@ async function generateWithDallE3(prompt: string, size: string): Promise<Buffer 
 }
 
 async function generateWithGemini(prompt: string, _size: string): Promise<Buffer | null> {
-  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_AI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
   if (!apiKey) return null;
   try {
@@ -105,7 +105,7 @@ async function generateWithGemini(prompt: string, _size: string): Promise<Buffer
 }
 
 async function editWithGemini(prompt: string, imageBase64: string, inputMime: string): Promise<Buffer | null> {
-  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_AI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
   if (!apiKey) return null;
   try {
