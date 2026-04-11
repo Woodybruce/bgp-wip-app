@@ -2892,6 +2892,17 @@ export default function EdozoMap() {
   const searchMarkersRef = useRef<L.LayerGroup | null>(null);
   const crmMarkersRef = useRef<L.LayerGroup | null>(null);
 
+  // OS Data layers
+  const [showOSBuildings, setShowOSBuildings] = useState(true);
+  const [showOSUprns, setShowOSUprns] = useState(false);
+  const [showOSSites, setShowOSSites] = useState(false);
+  const osBuildingLayerRef = useRef<L.LayerGroup | null>(null);
+  const osUprnLayerRef = useRef<L.LayerGroup | null>(null);
+  const osSiteLayerRef = useRef<L.LayerGroup | null>(null);
+  const osLastBboxRef = useRef<{ buildings: string; uprns: string; sites: string }>({ buildings: "", uprns: "", sites: "" });
+  const osDebounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const [mapZoom, setMapZoom] = useState(17);
+
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
@@ -2923,6 +2934,22 @@ export default function EdozoMap() {
     L.control.scale({ position: "bottomleft", imperial: false, maxWidth: 100 }).addTo(map);
 
     buildingLayerRef.current = L.layerGroup({ pane: "buildingPane" }).addTo(map);
+
+    // OS Data layer groups
+    const osPane = map.createPane("osPane");
+    osPane.style.zIndex = "440";
+    const osUprnPane = map.createPane("osUprnPane");
+    osUprnPane.style.zIndex = "445";
+    const osSitePane = map.createPane("osSitePane");
+    osSitePane.style.zIndex = "443";
+    osBuildingLayerRef.current = L.layerGroup({ pane: "osPane" }).addTo(map);
+    osUprnLayerRef.current = L.layerGroup({ pane: "osUprnPane" }).addTo(map);
+    osSiteLayerRef.current = L.layerGroup({ pane: "osSitePane" }).addTo(map);
+
+    // Track zoom for OS layer visibility
+    map.on("zoomend", () => {
+      setMapZoom(map.getZoom());
+    });
 
     const renderBuildings = (buildings: any[]) => {
       if (!buildingLayerRef.current || !mapRef.current) return;
@@ -3103,6 +3130,191 @@ export default function EdozoMap() {
       crmMarkersRef.current.addLayer(marker);
     }
   }, [showCrmLayer, crmProperties]);
+
+  // ─── OS Data Layers: fetch buildings / sites on map move ─────────
+  const [highlightedBuildingLayer, setHighlightedBuildingLayer] = useState<L.GeoJSON | null>(null);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const fetchOSData = () => {
+      if (osDebounceRef.current) clearTimeout(osDebounceRef.current);
+      osDebounceRef.current = setTimeout(() => {
+        const bounds = map.getBounds();
+        const zoom = map.getZoom();
+        const bboxStr = `${bounds.getSouth().toFixed(4)},${bounds.getWest().toFixed(4)},${bounds.getNorth().toFixed(4)},${bounds.getEast().toFixed(4)}`;
+        const headers: Record<string, string> = { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` };
+
+        // ── Buildings (zoom >= 16) ──
+        if (showOSBuildings && zoom >= 16) {
+          if (bboxStr !== osLastBboxRef.current.buildings) {
+            osLastBboxRef.current.buildings = bboxStr;
+            fetch(`/api/os/buildings?bbox=${bboxStr}`, { headers })
+              .then(r => r.ok ? r.json() : null)
+              .then(geojson => {
+                if (!geojson?.features || !osBuildingLayerRef.current) return;
+                osBuildingLayerRef.current.clearLayers();
+                const layer = L.geoJSON(geojson, {
+                  pane: "osPane",
+                  style: () => ({
+                    fillColor: "#3b82f6",
+                    fillOpacity: 0.15,
+                    color: "#2563eb",
+                    weight: 1.5,
+                    opacity: 0.6,
+                  }),
+                  onEachFeature: (_feature: any, featureLayer: any) => {
+                    featureLayer.on("click", (e: any) => {
+                      L.DomEvent.stopPropagation(e);
+                      // Highlight clicked building
+                      if (highlightedBuildingLayer) {
+                        highlightedBuildingLayer.setStyle({
+                          fillOpacity: 0.15,
+                        });
+                      }
+                      featureLayer.setStyle({ fillOpacity: 0.4 });
+                      setHighlightedBuildingLayer(featureLayer);
+
+                      // Calculate area from geometry
+                      const geom = _feature.geometry;
+                      let areaSqm = 0;
+                      if (geom?.type === "Polygon" || geom?.type === "MultiPolygon") {
+                        const coords = geom.type === "Polygon" ? [geom.coordinates] : geom.coordinates;
+                        for (const poly of coords) {
+                          const ring = poly[0];
+                          if (!ring) continue;
+                          const latLngs = ring.map((c: number[]) => [c[1], c[0]] as [number, number]);
+                          areaSqm += polygonAreaSqM(latLngs);
+                        }
+                      }
+                      areaSqm = Math.round(areaSqm);
+
+                      // Compute centroid
+                      const bounds = featureLayer.getBounds();
+                      const center = bounds.getCenter();
+
+                      const popupContent = document.createElement("div");
+                      popupContent.innerHTML = `
+                        <div style="font-size:12px;max-width:250px">
+                          <strong>Building</strong> &middot; ${areaSqm > 0 ? `${areaSqm}m&sup2;` : "area unknown"}
+                          <br/><span style="color:#666;font-size:10px">${center.lat.toFixed(5)}, ${center.lng.toFixed(5)}</span>
+                          <br/><button id="os-investigate-btn" style="margin-top:6px;padding:4px 10px;background:#4f46e5;color:white;border:none;border-radius:4px;font-size:11px;cursor:pointer">Investigate ownership</button>
+                        </div>
+                      `;
+                      const popup = L.popup({ closeButton: true, offset: L.point(0, -5) })
+                        .setLatLng(center)
+                        .setContent(popupContent)
+                        .openOn(map);
+
+                      // Attach click handler for investigate button
+                      setTimeout(() => {
+                        const btn = document.getElementById("os-investigate-btn");
+                        if (btn) {
+                          btn.addEventListener("click", async () => {
+                            popup.close();
+                            // Reverse geocode centroid to get postcode
+                            try {
+                              const rgResp = await fetch(`/api/reverse-geocode?lat=${center.lat}&lng=${center.lng}`, { headers });
+                              if (!rgResp.ok) return;
+                              const rgData = await rgResp.json();
+                              if (rgData.postcode) {
+                                setSelectedPostcode(rgData.postcode);
+                                setCurrentArea(rgData.displayAddr || rgData.postcode);
+                                loadPropertyData(rgData.postcode, undefined, rgData.displayAddr || undefined);
+                              }
+                            } catch (err) {
+                              console.error("[os-buildings] Reverse geocode error:", err);
+                            }
+                          });
+                        }
+                      }, 50);
+                    });
+                  },
+                });
+                osBuildingLayerRef.current.addLayer(layer);
+              })
+              .catch(err => console.error("[os-buildings] fetch error:", err));
+          }
+        } else if (osBuildingLayerRef.current) {
+          osBuildingLayerRef.current.clearLayers();
+          osLastBboxRef.current.buildings = "";
+        }
+
+        // ── Named Sites (zoom >= 14) ──
+        if (showOSSites && zoom >= 14) {
+          if (bboxStr !== osLastBboxRef.current.sites) {
+            osLastBboxRef.current.sites = bboxStr;
+            fetch(`/api/os/sites?bbox=${bboxStr}`, { headers })
+              .then(r => r.ok ? r.json() : null)
+              .then(geojson => {
+                if (!geojson?.features || !osSiteLayerRef.current) return;
+                osSiteLayerRef.current.clearLayers();
+                for (const feature of geojson.features) {
+                  const props = feature.properties || {};
+                  const theme = (props.SiteTheme || props.Theme || "").toLowerCase();
+                  const name = props.DistinctiveName1 || props.SiteName || props.Name || "Site";
+
+                  let color = "#6b7280"; // gray default
+                  if (theme.includes("transport")) color = "#3b82f6";
+                  else if (theme.includes("education")) color = "#22c55e";
+                  else if (theme.includes("health")) color = "#ef4444";
+                  else if (theme.includes("water")) color = "#06b6d4";
+
+                  // Get a center point from the geometry
+                  let center: L.LatLng | null = null;
+                  if (feature.geometry?.type === "Point") {
+                    center = L.latLng(feature.geometry.coordinates[1], feature.geometry.coordinates[0]);
+                  } else {
+                    try {
+                      const gj = L.geoJSON(feature);
+                      center = gj.getBounds().getCenter();
+                    } catch { continue; }
+                  }
+                  if (!center) continue;
+
+                  const marker = L.circleMarker(center, {
+                    radius: 5,
+                    fillColor: color,
+                    color: "#fff",
+                    weight: 1.5,
+                    opacity: 1,
+                    fillOpacity: 0.85,
+                    pane: "osSitePane",
+                  });
+                  marker.bindTooltip(name, {
+                    permanent: zoom >= 16,
+                    direction: "top",
+                    offset: L.point(0, -6),
+                    className: "text-[10px]",
+                  });
+                  marker.bindPopup(`
+                    <div style="font-size:12px;max-width:220px">
+                      <strong>${name}</strong>
+                      ${theme ? `<br/><span style="color:${color};font-size:10px;text-transform:capitalize">${theme}</span>` : ""}
+                    </div>
+                  `, { closeButton: false, offset: L.point(0, -5) });
+                  osSiteLayerRef.current.addLayer(marker);
+                }
+              })
+              .catch(err => console.error("[os-sites] fetch error:", err));
+          }
+        } else if (osSiteLayerRef.current) {
+          osSiteLayerRef.current.clearLayers();
+          osLastBboxRef.current.sites = "";
+        }
+      }, 500);
+    };
+
+    // Fetch on mount and on map move
+    fetchOSData();
+    map.on("moveend", fetchOSData);
+
+    return () => {
+      map.off("moveend", fetchOSData);
+      if (osDebounceRef.current) clearTimeout(osDebounceRef.current);
+    };
+  }, [showOSBuildings, showOSSites, mapZoom]);
 
   const handleSearch = useCallback(async (q: string) => {
     if (q.length < 2) { setSearchResults([]); return; }
@@ -3502,6 +3714,33 @@ export default function EdozoMap() {
 
       <div className="flex-1 relative">
         <div ref={mapContainerRef} className="w-full h-full" data-testid="edozo-map" />
+
+        {/* OS Data Layers floating control panel */}
+        <div className="absolute top-20 right-3 z-[1000] bg-white rounded-lg shadow-lg border p-3 space-y-2" data-testid="os-layer-panel">
+          <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Map Layers</p>
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showOSBuildings}
+              onChange={() => setShowOSBuildings(!showOSBuildings)}
+              className="rounded"
+              data-testid="toggle-os-buildings"
+            />
+            <span>Building Footprints</span>
+            {mapZoom < 16 && showOSBuildings && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
+          </label>
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showOSSites}
+              onChange={() => setShowOSSites(!showOSSites)}
+              className="rounded"
+              data-testid="toggle-os-sites"
+            />
+            <span>Named Sites</span>
+            {mapZoom < 14 && showOSSites && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
+          </label>
+        </div>
 
         {(selectedPostcode || loadingData) && (
           <PropertyPanel

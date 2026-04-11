@@ -268,6 +268,9 @@ export async function registerRoutes(
   const { registerImageStudioRoutes } = await import("./image-studio");
   registerImageStudioRoutes(app);
 
+  const { registerOSDataRoutes } = await import("./os-data");
+  registerOSDataRoutes(app);
+
   const express = await import("express");
 
   app.post("/api/admin/seed-data", express.default.json({ limit: "50mb" }), async (req: Request, res) => {
