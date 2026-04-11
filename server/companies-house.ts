@@ -83,8 +83,10 @@ export async function identifyBrandParent(
   try {
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const anthropic = new Anthropic({
-      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+      ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+        ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
+        : {}),
     });
 
     const chainStr = chain.map((c, i) => `${i + 1}. ${c.name} (${c.number})`).join("\n");
@@ -864,8 +866,10 @@ router.post("/api/title-search/auto-fill-from-postcode/:propertyId", async (req,
     try {
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
       const anthropic = new Anthropic({
-        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-        baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+        ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+          ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
+          : {}),
       });
 
       const enriched: any[] = [];
@@ -1378,8 +1382,10 @@ router.post("/api/ownership-intelligence", requireAuth, async (req, res) => {
     try {
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
       const anthropic = new Anthropic({
-        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-        baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+        ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+          ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
+          : {}),
       });
 
       const titlesStr = titles.slice(0, 15).map((t: any, i: number) => {

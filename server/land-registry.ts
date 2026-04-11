@@ -504,8 +504,7 @@ export function registerLandRegistryRoutes(app: Express) {
 
   app.post("/api/property-summary", requireAuth, async (req, res) => {
     try {
-      const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
-      const baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+      const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
       if (!apiKey) {
         return res.status(503).json({ error: "AI service not configured" });
       }
@@ -517,7 +516,12 @@ export function registerLandRegistryRoutes(app: Express) {
       const safeFreeholds = Array.isArray(freeholds) ? freeholds.slice(0, 30) : [];
       const safeLeaseholds = Array.isArray(leaseholds) ? leaseholds.slice(0, 30) : [];
 
-      const anthropic = new Anthropic({ apiKey, baseURL });
+      const anthropic = new Anthropic({
+        apiKey,
+        ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+          ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
+          : {}),
+      });
 
       const freeholdSummary = safeFreeholds.slice(0, 15).map((f: any, i: number) => {
         const tn = f.title_number || f.title || "unknown";
@@ -766,8 +770,10 @@ Respond with ONLY a JSON object (no markdown, no backticks):
       console.log(`[ai-match] Enriched ${titleData.length} titles for matching against "${propertyAddress}"`);
 
       const anthropic = new Anthropic({
-        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-        baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+        ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+          ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
+          : {}),
       });
 
       const response = await anthropic.messages.create({

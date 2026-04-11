@@ -321,8 +321,10 @@ async function autoDesignWithClaude(templateContent: string, templateName: strin
   if (!text) {
     try {
       const anthropic = new Anthropic({
-        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-        baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+        ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+          ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
+          : {}),
       });
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
@@ -1332,8 +1334,10 @@ export function setupDocumentTemplateRoutes(app: Express) {
       }
 
       const anthropic = new Anthropic({
-        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-        baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+        ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+          ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
+          : {}),
       });
 
       const contentPreview = templateContent.slice(0, 2000);
@@ -1525,8 +1529,10 @@ Return ONLY valid JSON:
       }
 
       const anthropic = new Anthropic({
-        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-        baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+        ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+          ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
+          : {}),
       });
 
       const systemPrompt = `You are a document design assistant for BGP (Bruce Gillingham Pollard), a premium London property firm. You help users refine the visual layout of A4 documents (595x842pt) in their document designer.

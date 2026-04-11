@@ -383,10 +383,14 @@ function getAnthropicClient(useDirect = false) {
       apiKey: process.env.ANTHROPIC_API_KEY,
     });
   }
-  return new Anthropic({
-    apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-    baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-  });
+  // Use integration key if available, otherwise fall back to direct key
+  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("No Anthropic API key configured");
+  const opts: any = { apiKey };
+  if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+    opts.baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+  }
+  return new Anthropic(opts);
 }
 
 function convertToolsForClaude(tools: any[]): any[] {
