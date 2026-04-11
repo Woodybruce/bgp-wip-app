@@ -1689,6 +1689,23 @@ export default function LeasingSchedulePage() {
     finally { setExporting(false); }
   };
 
+  const [downloadingExcel, setDownloadingExcel] = useState(false);
+  const handleDownloadExcel = async () => {
+    setDownloadingExcel(true);
+    try {
+      const res = await fetch("/api/leasing-schedule/export-excel", { headers: getAuthHeaders() });
+      if (!res.ok) { toast({ title: "Export failed", variant: "destructive" }); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const today = new Date().toISOString().slice(0, 10);
+      a.href = url; a.download = `BGP_Leasing_Schedule_${today}.xlsx`; a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Excel downloaded" });
+    } catch { toast({ title: "Export failed", variant: "destructive" }); }
+    finally { setDownloadingExcel(false); }
+  };
+
   const filtered = useMemo(() => {
     if (!search) return properties;
     const s = search.toLowerCase();
@@ -1730,10 +1747,16 @@ export default function LeasingSchedulePage() {
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search properties..." className="pl-8 h-8 text-xs w-[200px]" data-testid="search-properties" />
           </div>
           {properties.length > 0 && (
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={handleExportAll} disabled={exporting} data-testid="btn-export-all">
-              {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-              Export All
-            </Button>
+            <>
+              <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={handleDownloadExcel} disabled={downloadingExcel} data-testid="btn-download-excel">
+                {downloadingExcel ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                Download Excel
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={handleExportAll} disabled={exporting} data-testid="btn-export-all">
+                {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                Export All
+              </Button>
+            </>
           )}
         </div>
       </div>

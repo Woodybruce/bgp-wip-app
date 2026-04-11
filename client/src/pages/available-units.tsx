@@ -34,7 +34,7 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 
-const MARKETING_STATUSES = ["Reporting", "Available", "Negotiating", "Under Offer"];
+const MARKETING_STATUSES = ["Reporting", "Available", "Negotiating", "Under Offer", "Let", "Withdrawn"];
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
 const FLOORS = ["Basement", "Lower Ground", "Ground", "Mezzanine", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "Upper"];
 const CONDITIONS = ["Shell & Core", "Cat A", "Cat A+", "Cat B", "Fitted", "Turn Key", "As Is"];
@@ -53,6 +53,8 @@ const STATUS_COLORS: Record<string, string> = {
   "Available": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
   "Negotiating": "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
   "Under Offer": "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+  "Let": "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+  "Withdrawn": "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
 };
 
 const STATUS_LABEL_COLORS: Record<string, string> = {
@@ -60,6 +62,8 @@ const STATUS_LABEL_COLORS: Record<string, string> = {
   "Available": "bg-emerald-500",
   "Negotiating": "bg-blue-500",
   "Under Offer": "bg-amber-500",
+  "Let": "bg-green-500",
+  "Withdrawn": "bg-gray-500",
 };
 
 const ASSET_CLASS_COLORS: Record<string, string> = {

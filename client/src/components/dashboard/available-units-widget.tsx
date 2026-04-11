@@ -36,6 +36,8 @@ export function AvailableUnitsWidget() {
     Available: "bg-emerald-500",
     Negotiating: "bg-blue-500",
     "Under Offer": "bg-amber-500",
+    Let: "bg-green-500",
+    Withdrawn: "bg-gray-500",
   };
 
   return (

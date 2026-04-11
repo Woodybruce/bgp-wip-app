@@ -1204,4 +1204,143 @@ router.post("/api/leasing-schedule/export-multi-excel", requireAuth, async (req,
   }
 });
 
+router.get("/api/leasing-schedule/export-excel", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const user = await getUserInfo(pool, req);
+    if (!user) return res.status(401).json({ error: "Unauthorized" });
+
+    // Build query respecting privacy/access rules
+    let query = `
+      SELECT u.unit_name, u.zone AS floor, u.tenant_name, u.lease_expiry, u.lease_break,
+        u.rent_pa, u.sqft, u.status, p.name AS property_name
+      FROM leasing_schedule_units u
+      JOIN crm_properties p ON u.property_id = p.id
+    `;
+    if (!user.is_admin) {
+      query += `
+        WHERE (p.leasing_privacy_enabled = FALSE OR p.leasing_privacy_enabled IS NULL
+          OR EXISTS (SELECT 1 FROM crm_property_agents pa WHERE pa.property_id = p.id AND pa.user_id = $1))
+      `;
+    }
+    query += ` ORDER BY p.name, u.sort_order, u.zone, u.unit_name`;
+
+    const result = await pool.query(query, user.is_admin ? [] : [user.id]);
+    const rows = result.rows;
+
+    const ExcelJS = (await import("exceljs")).default;
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "BGP Dashboard";
+    const ws = wb.addWorksheet("Leasing Schedule");
+
+    const BGP_GREEN = "FF2E5E3F";
+    const WHITE_FONT = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+    const HEADER_FILL: any = { type: "pattern", pattern: "solid", fgColor: { argb: BGP_GREEN } };
+    const THIN_BORDER: any = {
+      top: { style: "thin", color: { argb: "FFB4B4B4" } },
+      left: { style: "thin", color: { argb: "FFB4B4B4" } },
+      bottom: { style: "thin", color: { argb: "FFB4B4B4" } },
+      right: { style: "thin", color: { argb: "FFB4B4B4" } },
+    };
+
+    ws.columns = [
+      { header: "Property", key: "property", width: 28 },
+      { header: "Unit", key: "unit", width: 22 },
+      { header: "Floor", key: "floor", width: 14 },
+      { header: "Tenant", key: "tenant", width: 26 },
+      { header: "Lease Start", key: "lease_start", width: 14 },
+      { header: "Lease End", key: "lease_end", width: 14 },
+      { header: "Break Date", key: "break_date", width: 14 },
+      { header: "Rent PA", key: "rent_pa", width: 16 },
+      { header: "Rent PSF", key: "rent_psf", width: 14 },
+      { header: "Area SqFt", key: "area_sqft", width: 14 },
+      { header: "Status", key: "status", width: 16 },
+    ];
+
+    // Style header row
+    const headerRow = ws.getRow(1);
+    headerRow.eachCell((cell: any) => {
+      cell.font = WHITE_FONT;
+      cell.fill = HEADER_FILL;
+      cell.alignment = { vertical: "middle" };
+      cell.border = THIN_BORDER;
+    });
+    headerRow.height = 24;
+
+    // Freeze top row & auto-filter
+    ws.views = [{ state: "frozen", ySplit: 1 }];
+    ws.autoFilter = { from: "A1", to: "K1" };
+
+    // Date & currency formats
+    const DATE_FMT = "DD/MM/YYYY";
+    const CURRENCY_FMT = "£#,##0";
+    const NUMBER_FMT = "#,##0";
+
+    // Populate data rows
+    for (const r of rows) {
+      const rentPsf = r.rent_pa && r.sqft ? Number(r.rent_pa) / Number(r.sqft) : null;
+      const dataRow = ws.addRow({
+        property: r.property_name || "",
+        unit: r.unit_name || "",
+        floor: r.floor || "",
+        tenant: r.tenant_name || "",
+        lease_start: null, // not tracked in DB
+        lease_end: r.lease_expiry ? new Date(r.lease_expiry) : null,
+        break_date: r.lease_break ? new Date(r.lease_break) : null,
+        rent_pa: r.rent_pa ? Number(r.rent_pa) : null,
+        rent_psf: rentPsf ? Math.round(rentPsf * 100) / 100 : null,
+        area_sqft: r.sqft ? Number(r.sqft) : null,
+        status: r.status || "",
+      });
+      dataRow.eachCell({ includeEmpty: true }, (cell: any) => { cell.border = THIN_BORDER; });
+
+      // Apply formats
+      dataRow.getCell("lease_start").numFmt = DATE_FMT;
+      dataRow.getCell("lease_end").numFmt = DATE_FMT;
+      dataRow.getCell("break_date").numFmt = DATE_FMT;
+      dataRow.getCell("rent_pa").numFmt = CURRENCY_FMT;
+      dataRow.getCell("rent_psf").numFmt = CURRENCY_FMT;
+      dataRow.getCell("area_sqft").numFmt = NUMBER_FMT;
+    }
+
+    // Totals row
+    const totalRowNum = rows.length + 2; // header=1, data=rows.length, total=+1
+    const totalsRow = ws.addRow({
+      property: "TOTALS",
+      unit: "",
+      floor: "",
+      tenant: `${rows.length} units`,
+      lease_start: null,
+      lease_end: null,
+      break_date: null,
+      rent_pa: rows.reduce((s, r) => s + (r.rent_pa ? Number(r.rent_pa) : 0), 0),
+      rent_psf: null,
+      area_sqft: rows.reduce((s, r) => s + (r.sqft ? Number(r.sqft) : 0), 0),
+      status: "",
+    });
+    totalsRow.eachCell({ includeEmpty: true }, (cell: any) => {
+      cell.font = { name: "Calibri", size: 11, bold: true };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF2F2F2" } };
+      cell.border = THIN_BORDER;
+    });
+    totalsRow.getCell("rent_pa").numFmt = CURRENCY_FMT;
+    totalsRow.getCell("area_sqft").numFmt = NUMBER_FMT;
+
+    const buf = await wb.xlsx.writeBuffer();
+
+    await logAudit(pool, {
+      propertyId: "all", userId: user.id, userName: user.username,
+      action: "export_excel",
+      newValue: `${rows.length} units exported to tabular Excel`,
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="BGP_Leasing_Schedule_${today}.xlsx"`);
+    res.send(Buffer.from(buf as ArrayBuffer));
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

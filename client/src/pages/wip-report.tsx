@@ -122,7 +122,8 @@ function parseMonth(m: string): { monthNum: number; calendarYear: number } | nul
   return { monthNum, calendarYear };
 }
 
-function getFiscalYear(m: string): number | null {
+function getFiscalYear(m: string | null | undefined): number | null {
+  if (!m) return null;
   const parsed = parseMonth(m);
   if (!parsed) return null;
   return parsed.monthNum >= 4 ? parsed.calendarYear + 1 : parsed.calendarYear;
@@ -892,15 +893,21 @@ export default function WipReport() {
 
   const allFiscalYears = useMemo(() => {
     const set = new Set<number>();
+    let hasNullFY = false;
     entries.forEach((e) => {
       if (e.fiscalYear) {
         set.add(e.fiscalYear);
       } else if (e.month) {
         const fy = getFiscalYear(e.month);
         if (fy) set.add(fy);
+        else hasNullFY = true;
+      } else {
+        hasNullFY = true;
       }
     });
-    return [...set].sort().reverse();
+    const sorted = [...set].sort().reverse();
+    if (hasNullFY) sorted.push(0);
+    return sorted;
   }, [entries]);
 
   const filtersInitialized = useRef(false);
@@ -927,6 +934,8 @@ export default function WipReport() {
         const fy = e.fiscalYear || (e.month ? getFiscalYear(e.month) : null);
         if (fy) {
           if (!selectedFiscalYears.has(fy)) return false;
+        } else {
+          if (!selectedFiscalYears.has(0)) return false;
         }
       }
       if (selectedMonths.size > 0 && selectedMonths.size < allMonths.length) {
@@ -1515,7 +1524,7 @@ export default function WipReport() {
                       className="h-3 w-3"
                       data-testid={`wip-filter-fy-${yr}`}
                     />
-                    <span>{yr}</span>
+                    <span>{yr === 0 ? "TBC" : yr}</span>
                   </label>
                 ))}
               </div>

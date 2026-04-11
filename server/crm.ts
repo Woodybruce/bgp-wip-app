@@ -3769,7 +3769,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
             return month >= 4 ? d.getFullYear() + 1 : d.getFullYear();
           }
         }
-        const created = deal.createdAt ? new Date(deal.createdAt) : new Date();
+        if (!deal.createdAt) return null;
+        const created = new Date(deal.createdAt);
         const month = created.getMonth() + 1;
         return month >= 4 ? created.getFullYear() + 1 : created.getFullYear();
       }
@@ -4768,7 +4769,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
             return month >= 4 ? d.getFullYear() + 1 : d.getFullYear();
           }
         }
-        const created = deal.createdAt ? new Date(deal.createdAt) : new Date();
+        if (!deal.createdAt) return null;
+        const created = new Date(deal.createdAt);
         const month = created.getMonth() + 1;
         return month >= 4 ? created.getFullYear() + 1 : created.getFullYear();
       }
