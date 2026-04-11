@@ -87,6 +87,8 @@ import {
   Image as ImageIcon,
   History,
   Shield,
+  Bookmark,
+  BookmarkCheck,
 } from "lucide-react";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
@@ -3876,6 +3878,46 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     return Object.values(columnFilters).reduce((sum, arr) => sum + arr.length, 0);
   }, [columnFilters]);
 
+  // --- Saved filter views (localStorage) ---
+  const SAVED_VIEWS_KEY = "bgp_saved_deal_views";
+  type SavedView = { name: string; filters: { search: string; activeGroup: string; columnFilters: Record<string, string[]> } };
+
+  const getSavedViews = useCallback((): SavedView[] => {
+    try { return JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY) || "[]"); } catch { return []; }
+  }, []);
+
+  const [savedViews, setSavedViews] = useState<SavedView[]>(getSavedViews);
+  const [savedViewsOpen, setSavedViewsOpen] = useState(false);
+
+  const handleSaveView = useCallback(() => {
+    const name = window.prompt("Name this saved view:");
+    if (!name?.trim()) return;
+    const view: SavedView = {
+      name: name.trim(),
+      filters: { search, activeGroup, columnFilters },
+    };
+    const views = [...getSavedViews(), view];
+    localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(views));
+    setSavedViews(views);
+    toast({ title: "View saved", description: `"${name.trim()}" has been saved.` });
+  }, [search, activeGroup, columnFilters, getSavedViews, toast]);
+
+  const handleApplyView = useCallback((view: SavedView) => {
+    setSearch(view.filters.search || "");
+    setActiveGroup(view.filters.activeGroup || "all");
+    setColumnFilters(view.filters.columnFilters || {});
+    setSavedViewsOpen(false);
+    toast({ title: "View applied", description: `Applied "${view.name}".` });
+  }, [toast]);
+
+  const handleDeleteView = useCallback((idx: number) => {
+    const views = getSavedViews().filter((_, i) => i !== idx);
+    localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(views));
+    setSavedViews(views);
+    toast({ title: "View deleted" });
+  }, [getSavedViews, toast]);
+  // --- End saved filter views ---
+
   const baseDeals = useMemo(() => {
     if (isCompsMode) {
       return deals.filter(d => COMPLETED_STATUSES.includes(d.status || ""));
@@ -4139,6 +4181,52 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
+        {hasFilters && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSaveView}
+            data-testid="button-save-view"
+          >
+            <Bookmark className="w-3.5 h-3.5 mr-1.5" />
+            Save View
+          </Button>
+        )}
+        {savedViews.length > 0 && (
+          <Popover open={savedViewsOpen} onOpenChange={setSavedViewsOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" data-testid="button-saved-views">
+                <BookmarkCheck className="w-3.5 h-3.5 mr-1.5" />
+                Saved Views
+                <Badge variant="secondary" className="ml-1.5 h-5 px-1.5 text-[10px]">{savedViews.length}</Badge>
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-64 p-2">
+              <div className="space-y-1">
+                {savedViews.map((view, idx) => (
+                  <div key={idx} className="flex items-center justify-between rounded-md hover:bg-muted px-2 py-1.5 group">
+                    <button
+                      className="text-sm text-left flex-1 truncate"
+                      onClick={() => handleApplyView(view)}
+                      data-testid={`saved-view-${idx}`}
+                    >
+                      {view.name}
+                    </button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                      onClick={(e) => { e.stopPropagation(); handleDeleteView(idx); }}
+                      data-testid={`delete-saved-view-${idx}`}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
         {hasFilters && (
           <Button
             variant="outline"

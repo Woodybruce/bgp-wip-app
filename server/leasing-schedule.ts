@@ -59,10 +59,10 @@ router.get("/api/leasing-schedule/properties", requireAuth, async (req, res) => 
       SELECT p.id, p.name, p.address, p.asset_class, p.bgp_engagement,
         p.leasing_privacy_enabled,
         c.name as landlord_name, c.id as landlord_id,
-        COUNT(u.id)::int as unit_count,
+        COUNT(CASE WHEN u.status != 'Archived' THEN 1 END)::int as unit_count,
         COUNT(CASE WHEN u.status = 'Occupied' THEN 1 END)::int as occupied_count,
         COUNT(CASE WHEN u.status = 'Vacant' THEN 1 END)::int as vacant_count,
-        COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' THEN 1 END)::int as expiring_soon
+        COUNT(CASE WHEN u.lease_expiry IS NOT NULL AND u.lease_expiry < NOW() + INTERVAL '12 months' AND u.status != 'Archived' THEN 1 END)::int as expiring_soon
       FROM crm_properties p
       JOIN leasing_schedule_units u ON u.property_id = p.id
       LEFT JOIN crm_companies c ON p.landlord_id = c.id
@@ -238,6 +238,37 @@ router.post("/api/leasing-schedule/unit", requireAuth, async (req, res) => {
     });
 
     res.json(result.rows[0]);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.patch("/api/leasing-schedule/units/:id/archive", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+
+    const unitCheck = await pool.query("SELECT * FROM leasing_schedule_units WHERE id = $1", [req.params.id]);
+    if (unitCheck.rows.length === 0) return res.status(404).json({ error: "Unit not found" });
+    const unit = unitCheck.rows[0];
+
+    const { allowed, user } = await checkPropertyAccess(pool, req, unit.property_id);
+    if (!allowed) return res.status(403).json({ error: "Access denied" });
+
+    const newStatus = unit.status === "Archived" ? "Vacant" : "Archived";
+    await pool.query("UPDATE leasing_schedule_units SET status = $2 WHERE id = $1", [req.params.id, newStatus]);
+
+    await logAudit(pool, {
+      unitId: req.params.id,
+      propertyId: unit.property_id,
+      userId: user.id,
+      userName: user.username,
+      action: newStatus === "Archived" ? "archive" : "unarchive",
+      fieldName: "status",
+      oldValue: unit.status,
+      newValue: newStatus,
+    });
+
+    res.json({ success: true, status: newStatus });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }

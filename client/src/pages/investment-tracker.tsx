@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import { CardContent } from "@/components/ui/card";
-import { useState, useMemo, useRef, Fragment } from "react";
+import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { Button } from "@/components/ui/button";
 
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
@@ -814,6 +814,8 @@ export default function InvestmentTrackerPage() {
   const [distItem, setDistItem] = useState<InvestmentTracker | null>(null);
   const [chartsExpanded, setChartsExpanded] = useState(false);
   const [filesItem, setFilesItem] = useState<InvestmentTracker | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 50;
   const { toast } = useToast();
 
   const { data: items = [], isLoading } = useQuery<InvestmentTracker[]>({
@@ -985,6 +987,13 @@ export default function InvestmentTrackerPage() {
     list = [...list].sort((a, b) => (statusOrder[a.status || "Reporting"] ?? 99) - (statusOrder[b.status || "Reporting"] ?? 99));
     return list;
   }, [boardItems, search, statusFilter, assetClassFilter, tenureFilter, agentFilter, bgpUsers]);
+
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const paginatedData = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter, assetClassFilter, tenureFilter, agentFilter, boardType]);
 
   const statusSummary = useMemo(() => {
     const c: Record<string, number> = {};
@@ -1348,7 +1357,7 @@ export default function InvestmentTrackerPage() {
                     </TableCell>
                   </TableRow>
                 )}
-                {filtered.map(item => (
+                {paginatedData.map(item => (
                   <TableRow key={item.id} className="text-xs" data-testid={`row-asset-${item.id}`}>
                     <TableCell className="px-1.5 py-1 font-medium">
                       <div>
@@ -1635,6 +1644,18 @@ export default function InvestmentTrackerPage() {
               </TableBody>
             </Table>
         </ScrollableTable>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t">
+            <span className="text-xs text-muted-foreground">
+              Showing {((page-1)*PAGE_SIZE)+1}–{Math.min(page*PAGE_SIZE, filtered.length)} of {filtered.length}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1}>Previous</Button>
+              <span className="text-xs">Page {page} of {totalPages}</span>
+              <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages, p+1))} disabled={page === totalPages}>Next</Button>
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Create / Edit Dialog */}

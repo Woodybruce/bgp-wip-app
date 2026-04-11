@@ -3790,6 +3790,15 @@ function LinkedLandRegistryPanel({ propertyId }: { propertyId: string }) {
 function PropertyDetail({ id }: { id: string }) {
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
+    refetchInterval: (query) => {
+      const p = query.state.data;
+      if (!p?.createdAt) return false;
+      const ageMs = Date.now() - new Date(p.createdAt).getTime();
+      const isRecent = ageMs < 5 * 60 * 1000;
+      const hasEnrichmentData = !!(p.proprietorName || p.landlordId || p.titleNumber);
+      if (isRecent && !hasEnrichmentData && p.address) return 10000;
+      return false;
+    },
   });
   const { data: allUsers = [] } = useQuery<User[]>({
     queryKey: ["/api/users"],
@@ -3961,6 +3970,21 @@ function PropertyDetail({ id }: { id: string }) {
                   {property.groupName && (
                     <Badge variant="outline" className="text-[10px]" data-testid="badge-property-group">{property.groupName}</Badge>
                   )}
+                  {(() => {
+                    if (!property.createdAt) return null;
+                    const ageMs = Date.now() - new Date(property.createdAt).getTime();
+                    const isRecent = ageMs < 5 * 60 * 1000;
+                    const hasEnrichmentData = !!(property.proprietorName || property.landlordId || property.titleNumber);
+                    if (isRecent && !hasEnrichmentData && property.address) {
+                      return (
+                        <Badge variant="outline" className="text-[10px] border-purple-300 text-purple-600 bg-purple-50 animate-pulse gap-1" data-testid="badge-enriching">
+                          <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                          Auto-enriching...
+                        </Badge>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
               )}
               <div className="flex items-center gap-2 ml-auto">
@@ -4369,6 +4393,16 @@ function PropertiesList({
 
   const { data: properties, isLoading, error } = useQuery<CrmProperty[]>({
     queryKey: ["/api/crm/properties"],
+    refetchInterval: (query) => {
+      const items = query.state.data;
+      if (!items?.length) return false;
+      const hasEnriching = items.some(p => {
+        if (!p.createdAt) return false;
+        const ageMs = Date.now() - new Date(p.createdAt).getTime();
+        return ageMs < 5 * 60 * 1000 && !(p.proprietorName || p.landlordId || p.titleNumber) && p.address;
+      });
+      return hasEnriching ? 15000 : false;
+    },
   });
 
   const { data: allUsers = [] } = useQuery<User[]>({
@@ -4859,9 +4893,26 @@ function PropertiesList({
                         <div className="flex items-center gap-2">
                           <Building2 className={`w-4 h-4 shrink-0 ${BUILDING_ICON_COLORS[item.status || ""] || "text-muted-foreground"}`} />
                           <div className="min-w-0">
-                            <Link href={`/properties/${item.id}`}>
-                              <span className="hover:underline block cursor-pointer">{item.name}</span>
-                            </Link>
+                            <div className="flex items-center gap-1.5">
+                              <Link href={`/properties/${item.id}`}>
+                                <span className="hover:underline block cursor-pointer">{item.name}</span>
+                              </Link>
+                              {(() => {
+                                if (!item.createdAt) return null;
+                                const ageMs = Date.now() - new Date(item.createdAt).getTime();
+                                const isRecent = ageMs < 5 * 60 * 1000;
+                                const hasEnrichmentData = !!(item.proprietorName || item.landlordId || item.titleNumber);
+                                if (isRecent && !hasEnrichmentData && item.address) {
+                                  return (
+                                    <span className="inline-flex items-center gap-1 text-[9px] text-purple-500 animate-pulse" data-testid={`enriching-${item.id}`}>
+                                      <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                      Enriching...
+                                    </span>
+                                  );
+                                }
+                                return null;
+                              })()}
+                            </div>
                             <div onClick={(e) => e.stopPropagation()}>
                               <InlineAddress
                                 value={addressToResult(item.address)}

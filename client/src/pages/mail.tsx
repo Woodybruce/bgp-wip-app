@@ -80,6 +80,7 @@ interface ComposeData {
   bcc: string;
   subject: string;
   body: string;
+  originalBody?: string;
 }
 
 function formatMailDate(dateStr: string) {
@@ -307,6 +308,7 @@ function ComposeModal({
   const [bcc, setBcc] = useState(initialData?.bcc || "");
   const [subject, setSubject] = useState(initialData?.subject || "");
   const [body, setBody] = useState(initialData?.body || "");
+  const [originalBody, setOriginalBody] = useState(initialData?.originalBody || "");
   const [showCcBcc, setShowCcBcc] = useState(!!(initialData?.cc || initialData?.bcc));
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -318,6 +320,7 @@ function ComposeModal({
       setBcc(initialData?.bcc || "");
       setSubject(initialData?.subject || "");
       setBody(initialData?.body || "");
+      setOriginalBody(initialData?.originalBody || "");
       setShowCcBcc(!!(initialData?.cc || initialData?.bcc));
     }
   }, [open, initialData]);
@@ -330,10 +333,13 @@ function ComposeModal({
       if (recipients.length === 0) throw new Error("At least one recipient is required");
       if (!subject.trim()) throw new Error("Subject is required");
 
+      const fullBody = originalBody
+        ? `${body}\n\n${originalBody}`.replace(/\n/g, "<br/>")
+        : body.replace(/\n/g, "<br/>");
       await apiRequest("POST", sendEndpoint, {
         recipients,
         subject: subject.trim(),
-        body: body.replace(/\n/g, "<br/>"),
+        body: fullBody,
         ccRecipients: ccRecipients.length > 0 ? ccRecipients : undefined,
         bccRecipients: bccRecipients.length > 0 ? bccRecipients : undefined,
       });
@@ -432,6 +438,13 @@ function ComposeModal({
             className="min-h-[250px] text-sm resize-none"
             data-testid="input-compose-body"
           />
+
+          {originalBody && (
+            <details className="mt-2 text-xs text-muted-foreground border-l-2 border-muted pl-3" data-testid="original-message-details">
+              <summary className="cursor-pointer hover:text-foreground">Show original message</summary>
+              <div className="mt-1 whitespace-pre-wrap">{originalBody}</div>
+            </details>
+          )}
         </div>
 
         <div className="flex items-center justify-between pt-2 border-t">
@@ -1089,14 +1102,15 @@ export function MailView({
   const buildReplyQuote = (msg: MailMessage) => {
     const fromStr = msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown";
     const dateStr = formatFullDate(msg.receivedDateTime);
-    return `\n\n\n--- Original Message ---\nFrom: ${fromStr}\nDate: ${dateStr}\nSubject: ${msg.subject || "(No subject)"}\n\n${msg.bodyPreview}`;
+    return `--- Original Message ---\nFrom: ${fromStr}\nDate: ${dateStr}\nSubject: ${msg.subject || "(No subject)"}\n\n${msg.bodyPreview}`;
   };
 
   const handleReply = (msg: MailMessage) => {
     setComposeData({
       to: msg.from?.emailAddress?.address || "",
       subject: msg.subject?.startsWith("Re:") ? msg.subject : `Re: ${msg.subject || ""}`,
-      body: buildReplyQuote(msg),
+      body: "",
+      originalBody: buildReplyQuote(msg),
     });
     setComposeOpen(true);
   };
@@ -1111,7 +1125,8 @@ export function MailView({
       to: toAddresses,
       cc: ccAddresses,
       subject: msg.subject?.startsWith("Re:") ? msg.subject : `Re: ${msg.subject || ""}`,
-      body: buildReplyQuote(msg),
+      body: "",
+      originalBody: buildReplyQuote(msg),
     });
     setComposeOpen(true);
   };
@@ -1120,7 +1135,8 @@ export function MailView({
     setComposeData({
       to: "",
       subject: msg.subject?.startsWith("Fwd:") ? msg.subject : `Fwd: ${msg.subject || ""}`,
-      body: buildReplyQuote(msg),
+      body: "",
+      originalBody: buildReplyQuote(msg),
     });
     setComposeOpen(true);
   };

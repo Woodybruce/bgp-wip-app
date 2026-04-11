@@ -125,13 +125,14 @@ function InlineEditCell({ unitId, field, value, onSave, className = "", placehol
 }
 
 function InlineStatusCell({ unitId, value, onSave }: { unitId: string; value: string; onSave: (id: string, field: string, value: string) => void }) {
-  const statuses = ["Occupied", "Vacant", "Under Offer", "In Negotiation"];
+  const statuses = ["Occupied", "Vacant", "Under Offer", "In Negotiation", "Archived"];
   const [open, setOpen] = useState(false);
   const colors: Record<string, string> = {
     "Occupied": "border-emerald-300 text-emerald-700 bg-emerald-50",
     "Vacant": "border-gray-300 text-gray-500 bg-gray-50",
     "Under Offer": "border-blue-300 text-blue-700 bg-blue-50",
     "In Negotiation": "border-amber-300 text-amber-700 bg-amber-50",
+    "Archived": "border-gray-300 text-gray-400 bg-gray-100 line-through",
   };
   return (
     <div className="relative">
@@ -621,6 +622,7 @@ function UnitEditDialog({ unit, open, onClose, onSave }: {
                 <SelectItem value="Vacant">Vacant</SelectItem>
                 <SelectItem value="Under Offer">Under Offer</SelectItem>
                 <SelectItem value="In Negotiation">In Negotiation</SelectItem>
+                <SelectItem value="Archived">Archived</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -775,6 +777,16 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
     },
   });
 
+  const archiveMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("PATCH", `/api/leasing-schedule/units/${id}/archive`),
+    onSuccess: (_data: any, _id: string) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
+      toast({ title: "Unit archived" });
+    },
+  });
+
+  const [includeArchived, setIncludeArchived] = useState(false);
+
   const inlineUpdate = (unitId: string, field: string, value: string) => {
     updateMutation.mutate({ id: unitId, [field]: value });
   };
@@ -782,8 +794,11 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const propertyName = units[0]?.property_name || "Property";
   const landlordName = units[0]?.landlord_name || "";
 
+  const archivedCount = useMemo(() => units.filter(u => u.status === "Archived").length, [units]);
+
   const filteredUnits = useMemo(() => {
     return units.filter(u => {
+      if (!includeArchived && u.status === "Archived") return false;
       if (search) {
         const s = search.toLowerCase();
         if (!u.unit_name?.toLowerCase().includes(s) && !u.zone?.toLowerCase().includes(s) &&
@@ -797,7 +812,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
       if (statFilter === "expired" && !isExpired(u.lease_expiry)) return false;
       return true;
     });
-  }, [units, search, statusFilter, statFilter]);
+  }, [units, search, statusFilter, statFilter, includeArchived]);
 
   const zoneGroups = useMemo(() => {
     const groups: Record<string, LeasingUnit[]> = {};
@@ -976,8 +991,19 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
             <SelectItem value="Vacant">Vacant</SelectItem>
             <SelectItem value="Under Offer">Under Offer</SelectItem>
             <SelectItem value="In Negotiation">In Negotiation</SelectItem>
+            <SelectItem value="Archived">Archived</SelectItem>
           </SelectContent>
         </Select>
+        {archivedCount > 0 && (
+          <button
+            onClick={() => setIncludeArchived(!includeArchived)}
+            className={`flex items-center gap-1.5 px-2.5 h-8 rounded-md border text-xs transition-colors ${includeArchived ? "border-gray-400 bg-gray-100 dark:bg-gray-700 text-foreground" : "border-gray-200 dark:border-gray-700 text-muted-foreground hover:bg-gray-50 dark:hover:bg-gray-800"}`}
+            data-testid="toggle-include-archived"
+          >
+            <Eye className="w-3 h-3" />
+            Archived ({archivedCount})
+          </button>
+        )}
         <Button variant="ghost" size="sm" className="text-xs h-8" onClick={() => setExpandedZones(new Set())} data-testid="btn-expand-all">
           {allExpanded ? "Collapse All" : "Expand All"}
         </Button>
@@ -1053,9 +1079,19 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                             <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} className="text-[10px] text-gray-600" placeholder="Updates" multiline />
                           </td>
                           <td className="px-3 py-2">
-                            <button onClick={() => { if (confirm("Remove this unit?")) deleteMutation.mutate(u.id); }} className="p-1 hover:bg-red-100 rounded" data-testid={`delete-${u.id}`}>
-                              <Trash2 className="w-3 h-3 text-gray-400" />
-                            </button>
+                            <div className="flex items-center gap-0.5">
+                              <button
+                                onClick={() => { if (confirm(u.status === "Archived" ? "Restore this unit from archive?" : "Archive this unit?")) archiveMutation.mutate(u.id); }}
+                                className={`p-1 rounded ${u.status === "Archived" ? "hover:bg-emerald-100 text-emerald-500" : "hover:bg-amber-100 text-gray-400"}`}
+                                title={u.status === "Archived" ? "Restore" : "Archive"}
+                                data-testid={`archive-${u.id}`}
+                              >
+                                {u.status === "Archived" ? <History className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
+                              </button>
+                              <button onClick={() => { if (confirm("Remove this unit permanently?")) deleteMutation.mutate(u.id); }} className="p-1 hover:bg-red-100 rounded" data-testid={`delete-${u.id}`}>
+                                <Trash2 className="w-3 h-3 text-gray-400" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1236,20 +1272,37 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
     onError: (err: any) => { toast({ title: "Failed to delete unit", description: err.message, variant: "destructive" }); },
   });
 
+  const archiveMutation = useMutation({
+    mutationFn: (id: string) => apiRequest("PATCH", `/api/leasing-schedule/units/${id}/archive`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
+      toast({ title: "Unit archived" });
+    },
+    onError: (err: any) => { toast({ title: "Archive failed", description: err.message, variant: "destructive" }); },
+  });
+
+  const [includeArchived, setIncludeArchived] = useState(false);
+
   const inlineUpdate = (unitId: string, field: string, value: string) => {
     updateMutation.mutate({ id: unitId, [field]: value });
   };
 
-  const stats = useMemo(() => ({
-    total: units.length,
-    occupied: units.filter(u => u.status === "Occupied").length,
-    vacant: units.filter(u => u.status === "Vacant").length,
-    expiring: units.filter(u => isExpiringSoon(u.lease_expiry)).length,
-    expired: units.filter(u => isExpired(u.lease_expiry)).length,
-  }), [units]);
+  const archivedCount = useMemo(() => units.filter(u => u.status === "Archived").length, [units]);
+
+  const stats = useMemo(() => {
+    const active = includeArchived ? units : units.filter(u => u.status !== "Archived");
+    return {
+      total: active.length,
+      occupied: active.filter(u => u.status === "Occupied").length,
+      vacant: active.filter(u => u.status === "Vacant").length,
+      expiring: active.filter(u => isExpiringSoon(u.lease_expiry)).length,
+      expired: active.filter(u => isExpired(u.lease_expiry)).length,
+    };
+  }, [units, includeArchived]);
 
   const filteredUnits = useMemo(() => {
     return units.filter(u => {
+      if (!includeArchived && u.status === "Archived") return false;
       if (search) {
         const s = search.toLowerCase();
         if (!u.unit_name?.toLowerCase().includes(s) && !u.zone?.toLowerCase().includes(s) &&
@@ -1262,7 +1315,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
       if (statusFilter === "expired" && !isExpired(u.lease_expiry)) return false;
       return true;
     });
-  }, [units, search, statusFilter]);
+  }, [units, search, statusFilter, includeArchived]);
 
   const zoneGroups = useMemo(() => {
     const groups: Record<string, LeasingUnit[]> = {};
@@ -1376,23 +1429,35 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        {[
-          { label: "Occupied", count: stats.occupied, color: "text-emerald-600 bg-emerald-50 border-emerald-200", key: "occupied" },
-          { label: "Vacant", count: stats.vacant, color: "text-gray-600 bg-gray-50 border-gray-200", key: "vacant" },
-          { label: "Expiring", count: stats.expiring, color: "text-amber-600 bg-amber-50 border-amber-200", key: "expiring" },
-          { label: "Expired", count: stats.expired, color: "text-red-600 bg-red-50 border-red-200", key: "expired" },
-        ].map(s => (
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 flex-1">
+          {[
+            { label: "Occupied", count: stats.occupied, color: "text-emerald-600 bg-emerald-50 border-emerald-200", key: "occupied" },
+            { label: "Vacant", count: stats.vacant, color: "text-gray-600 bg-gray-50 border-gray-200", key: "vacant" },
+            { label: "Expiring", count: stats.expiring, color: "text-amber-600 bg-amber-50 border-amber-200", key: "expiring" },
+            { label: "Expired", count: stats.expired, color: "text-red-600 bg-red-50 border-red-200", key: "expired" },
+          ].map(s => (
+            <button
+              key={s.key}
+              onClick={() => setStatusFilter(statusFilter === s.key ? null : s.key)}
+              className={`rounded-lg border px-3 py-2 text-left transition-all ${statusFilter === s.key ? "ring-2 ring-teal-400 " + s.color : "border-gray-200 dark:border-gray-700 hover:border-gray-300"}`}
+              data-testid={`stat-${s.key}`}
+            >
+              <div className={`text-lg font-bold ${statusFilter === s.key ? "" : "text-foreground"}`}>{s.count}</div>
+              <div className={`text-[10px] font-medium ${statusFilter === s.key ? "" : "text-muted-foreground"}`}>{s.label}</div>
+            </button>
+          ))}
+        </div>
+        {archivedCount > 0 && (
           <button
-            key={s.key}
-            onClick={() => setStatusFilter(statusFilter === s.key ? null : s.key)}
-            className={`rounded-lg border px-3 py-2 text-left transition-all ${statusFilter === s.key ? "ring-2 ring-teal-400 " + s.color : "border-gray-200 dark:border-gray-700 hover:border-gray-300"}`}
-            data-testid={`stat-${s.key}`}
+            onClick={() => setIncludeArchived(!includeArchived)}
+            className={`flex items-center gap-1 px-2 py-1 rounded border text-[10px] transition-colors ${includeArchived ? "border-gray-400 bg-gray-100 dark:bg-gray-700 text-foreground" : "border-gray-200 dark:border-gray-700 text-muted-foreground hover:bg-gray-50"}`}
+            data-testid="toggle-include-archived-prop"
           >
-            <div className={`text-lg font-bold ${statusFilter === s.key ? "" : "text-foreground"}`}>{s.count}</div>
-            <div className={`text-[10px] font-medium ${statusFilter === s.key ? "" : "text-muted-foreground"}`}>{s.label}</div>
+            <Eye className="w-3 h-3" />
+            Archived ({archivedCount})
           </button>
-        ))}
+        )}
       </div>
 
       {showAddUnit && <PropAddUnitForm propertyId={propertyId} onSave={(data: any) => addMutation.mutate(data)} onCancel={() => setShowAddUnit(false)} isPending={addMutation.isPending} />}
@@ -1441,7 +1506,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                     </thead>
                     <tbody className="text-xs">
                       {zoneUnits.map(u => (
-                        <tr key={u.id} className="border-b hover:bg-gray-50 dark:hover:bg-gray-900/50 group" data-testid={`unit-row-${u.id}`}>
+                        <tr key={u.id} className={`border-b hover:bg-gray-50 dark:hover:bg-gray-900/50 group ${u.status === "Archived" ? "opacity-50" : ""}`} data-testid={`unit-row-${u.id}`}>
                           <td className="px-2 py-1">
                             <InlineEditCell unitId={u.id} field="unit_name" value={u.unit_name || ""} onSave={inlineUpdate} className="font-medium" placeholder="Unit name" />
                           </td>
@@ -1474,13 +1539,23 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
                             <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} placeholder="Notes..." multiline />
                           </td>
                           <td className="px-2 py-1">
-                            <button
-                              onClick={() => { if (confirm("Delete this unit?")) deleteMutation.mutate(u.id); }}
-                              className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity"
-                              data-testid={`btn-delete-unit-${u.id}`}
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
+                            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => { if (confirm(u.status === "Archived" ? "Restore this unit?" : "Archive this unit?")) archiveMutation.mutate(u.id); }}
+                                className={u.status === "Archived" ? "text-emerald-500 hover:text-emerald-700" : "text-gray-400 hover:text-amber-600"}
+                                title={u.status === "Archived" ? "Restore" : "Archive"}
+                                data-testid={`btn-archive-unit-${u.id}`}
+                              >
+                                {u.status === "Archived" ? <History className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
+                              </button>
+                              <button
+                                onClick={() => { if (confirm("Delete this unit permanently?")) deleteMutation.mutate(u.id); }}
+                                className="text-red-400 hover:text-red-600"
+                                data-testid={`btn-delete-unit-${u.id}`}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
