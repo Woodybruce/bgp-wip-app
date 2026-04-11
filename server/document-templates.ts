@@ -546,6 +546,38 @@ async function generateImagesForDesign(visualDesign: any): Promise<void> {
   }
 }
 
+// --- DALL-E 3 image generation for document embedding (PPTX, DOCX, PDF) ---
+const IMAGE_DOCUMENT_TYPES = ["Pitch Deck", "Pitch Presentation", "Marketing Particulars", "Investment Deck", "Property Tour", "Case Study", "Leasing Deck", "Board Report", "Client Report"];
+
+function shouldGenerateDocImages(documentType?: string): boolean {
+  if (!documentType) return false;
+  return IMAGE_DOCUMENT_TYPES.some(t => documentType.toLowerCase().includes(t.toLowerCase()));
+}
+
+async function generateImageForDocument(prompt: string): Promise<string | null> {
+  try {
+    const OpenAI = (await import("openai")).default;
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    console.log(`[doc-images] Generating image: "${prompt.slice(0, 80)}..."`);
+    const resp = await openai.images.generate({
+      model: "dall-e-3",
+      prompt: `${prompt}. Professional commercial property photography style, high quality, clean composition.`,
+      n: 1,
+      size: "1792x1024",
+      quality: "hd",
+      response_format: "b64_json",
+    });
+    const b64 = resp.data[0]?.b64_json || null;
+    if (b64) {
+      console.log(`[doc-images] Image generated successfully (${Math.round(b64.length / 1024)}KB base64)`);
+    }
+    return b64;
+  } catch (e: any) {
+    console.warn("[doc-images] Generation failed:", e.message);
+    return null;
+  }
+}
+
 const UPLOADS_DIR = path.join(process.cwd(), "ChatBGP", "doc-templates");
 
 if (!fs.existsSync(UPLOADS_DIR)) {
@@ -863,14 +895,20 @@ Do NOT include HTML tags, CSS, or placeholder text like "[BGP LOGO]".`;
     }
   }
   if (!content) {
+    // Use Opus for high-value document types, Sonnet for routine docs
+    const OPUS_DOCUMENT_TYPES = ["Investment Memo", "Pitch Deck", "Pitch Presentation", "Marketing Particulars", "Board Report", "Client Report"];
+    const docModel = OPUS_DOCUMENT_TYPES.some(t => documentType?.toLowerCase().includes(t.toLowerCase()))
+      ? "claude-opus-4-6"
+      : CHATBGP_HELPER_MODEL;
+    console.log(`[doc-generate] Using model: ${docModel} for type: ${documentType || "unspecified"}`);
     const completion = await callClaude({
-      model: CHATBGP_HELPER_MODEL,
+      model: docModel,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
       temperature: 0.3,
-      max_completion_tokens: 4000,
+      max_completion_tokens: docModel === "claude-opus-4-6" ? 8192 : 4000,
     });
     content = completion.choices[0]?.message?.content || "No content generated.";
   }
@@ -2152,14 +2190,20 @@ Generate the complete document now.`;
         }
       }
       if (!content) {
+        // Use Opus for high-value document types, Sonnet for routine docs
+        const OPUS_DOCUMENT_TYPES = ["Investment Memo", "Pitch Deck", "Pitch Presentation", "Marketing Particulars", "Board Report", "Client Report"];
+        const docModel = OPUS_DOCUMENT_TYPES.some(t => documentType?.toLowerCase().includes(t.toLowerCase()))
+          ? "claude-opus-4-6"
+          : CHATBGP_HELPER_MODEL;
+        console.log(`[doc-generate] Using model: ${docModel} for type: ${documentType || "unspecified"}`);
         const completion = await callClaude({
-          model: CHATBGP_HELPER_MODEL,
+          model: docModel,
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
           temperature: 0.3,
-          max_completion_tokens: 4000,
+          max_completion_tokens: docModel === "claude-opus-4-6" ? 8192 : 4000,
         });
         content = completion.choices[0]?.message?.content || "No content generated.";
       }
@@ -2510,6 +2554,11 @@ Be concise, professional, and use British English. All document advice should al
         const children: any[] = [];
         let foundTitle = false;
 
+        // Determine if this document type should have generated images in DOCX
+        const docxNeedsImages = shouldGenerateDocImages(documentType) && !!process.env.OPENAI_API_KEY;
+        let docxImageCount = 0;
+        const DOCX_MAX_IMAGES = 2; // Limit to avoid excessive generation time
+
         for (const line of lines) {
           const trimmed = line.trim();
           const lineType = classifyLine(trimmed);
@@ -2534,6 +2583,23 @@ Be concise, professional, and use British English. All document advice should al
               alignment: AlignmentType.CENTER,
               border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: bgpGreenHex, space: 6 } },
             }));
+
+            // Generate a hero image after the title for pitch-quality DOCX documents
+            if (docxNeedsImages && docxImageCount < DOCX_MAX_IMAGES) {
+              console.log(`[doc-images] DOCX: Generating hero image for title...`);
+              const heroPrompt = `Professional hero image for a premium property document titled "${plain}". Elegant London commercial property, modern architecture, impressive facade.`;
+              const heroB64 = await generateImageForDocument(heroPrompt);
+              if (heroB64) {
+                const imgBuffer = Buffer.from(heroB64, "base64");
+                children.push(new Paragraph({
+                  children: [new ImageRun({ data: imgBuffer, transformation: { width: 600, height: 340 }, type: "png" })],
+                  spacing: { before: 200, after: 200 },
+                  alignment: AlignmentType.CENTER,
+                }));
+                docxImageCount++;
+                console.log(`[doc-images] DOCX: Hero image embedded (${docxImageCount}/${DOCX_MAX_IMAGES})`);
+              }
+            }
           } else if (lineType === "heading") {
             const isSubSection = /^\d+\.\d+/.test(plain);
             const isH3 = /^\d+\.\d+\.\d+/.test(plain);
@@ -2542,6 +2608,27 @@ Be concise, professional, and use British English. All document advice should al
               heading: isH3 ? HeadingLevel.HEADING_3 : isSubSection ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_1,
               spacing: { before: 320, after: 160 },
             }));
+
+            // Generate images for key sections in pitch-quality DOCX documents
+            if (docxNeedsImages && !isSubSection && !isH3 && docxImageCount < DOCX_MAX_IMAGES) {
+              const sectionLower = plain.toLowerCase();
+              const imageWorthy = ["property", "location", "overview", "market", "portfolio"].some(kw => sectionLower.includes(kw));
+              if (imageWorthy) {
+                console.log(`[doc-images] DOCX: Generating image for section "${plain}"...`);
+                const secPrompt = `Professional commercial property scene for document section "${plain}". Premium London real estate, high quality architectural photography.`;
+                const secB64 = await generateImageForDocument(secPrompt);
+                if (secB64) {
+                  const secImgBuffer = Buffer.from(secB64, "base64");
+                  children.push(new Paragraph({
+                    children: [new ImageRun({ data: secImgBuffer, transformation: { width: 600, height: 340 }, type: "png" })],
+                    spacing: { before: 160, after: 160 },
+                    alignment: AlignmentType.CENTER,
+                  }));
+                  docxImageCount++;
+                  console.log(`[doc-images] DOCX: Section image embedded for "${plain}" (${docxImageCount}/${DOCX_MAX_IMAGES})`);
+                }
+              }
+            }
           } else if (lineType === "bullet") {
             const bulletText = plain.replace(/^[-•*]\s*/, "");
             const segs = parseInlineFormatting(bulletText);
@@ -2703,6 +2790,11 @@ Be concise, professional, and use British English. All document advice should al
           return 72;
         }
 
+        // Determine if this document type should have generated images in PDF
+        const pdfNeedsImages = shouldGenerateDocImages(documentType) && !!process.env.OPENAI_API_KEY;
+        let pdfImageCount = 0;
+        const PDF_MAX_IMAGES = 2; // Limit to avoid excessive generation time
+
         drawHeader();
         let y = 72;
         let foundTitle = false;
@@ -2731,6 +2823,21 @@ Be concise, professional, and use British English. All document advice should al
             doc.font("Helvetica-Bold").fontSize(20).fillColor(bgpDarkGreen)
               .text(plain, leftM, y, { align: "center", width: pageW });
             y = doc.y + 18;
+
+            // Generate a hero image for the title section in pitch-quality PDFs
+            if (pdfNeedsImages && pdfImageCount < PDF_MAX_IMAGES) {
+              console.log(`[doc-images] PDF: Generating hero image for title...`);
+              const heroPrompt = `Professional hero image for a premium property document titled "${plain}". Elegant London commercial property, modern architecture, impressive facade or interior.`;
+              const heroB64 = await generateImageForDocument(heroPrompt);
+              if (heroB64) {
+                const imgBuffer = Buffer.from(heroB64, "base64");
+                y = newPage();
+                doc.image(imgBuffer, leftM, y, { width: pageW, height: 300 });
+                y += 310;
+                pdfImageCount++;
+                console.log(`[doc-images] PDF: Hero image embedded (${pdfImageCount}/${PDF_MAX_IMAGES})`);
+              }
+            }
           } else if (lineType === "heading") {
             const isSubSection = /^\d+\.\d+/.test(plain);
             y += isSubSection ? 6 : 12;
@@ -2738,6 +2845,25 @@ Be concise, professional, and use British English. All document advice should al
             doc.font("Helvetica-Bold").fontSize(isSubSection ? 11 : 14).fillColor(isSubSection ? "#444444" : bgpGreen)
               .text(plain, leftM, y, { width: pageW });
             y = doc.y + 6;
+
+            // Generate images for key sections in pitch-quality PDFs
+            if (pdfNeedsImages && !isSubSection && pdfImageCount < PDF_MAX_IMAGES) {
+              const sectionLower = plain.toLowerCase();
+              const imageWorthy = ["property", "location", "overview", "market", "portfolio"].some(kw => sectionLower.includes(kw));
+              if (imageWorthy) {
+                console.log(`[doc-images] PDF: Generating image for section "${plain}"...`);
+                const secPrompt = `Professional commercial property scene for document section "${plain}". Premium London real estate, high quality architectural photography.`;
+                const secB64 = await generateImageForDocument(secPrompt);
+                if (secB64) {
+                  const secImgBuffer = Buffer.from(secB64, "base64");
+                  if (y > 450) y = newPage();
+                  doc.image(secImgBuffer, leftM, y, { width: pageW, height: 220 });
+                  y += 230;
+                  pdfImageCount++;
+                  console.log(`[doc-images] PDF: Section image embedded for "${plain}" (${pdfImageCount}/${PDF_MAX_IMAGES})`);
+                }
+              }
+            }
           } else if (lineType === "bullet") {
             const bulletText = stripMd(plain.replace(/^[-•*]\s*/, ""));
             doc.font("Times-Roman").fontSize(10.5).fillColor("#333333")
@@ -2930,6 +3056,11 @@ Be concise, professional, and use British English. All document advice should al
           contentGroups.push({ heading: currentHeading, lines: [...currentLines], isQuote: currentIsQuote });
         }
 
+        // Determine if this document type should have generated images in slides
+        const pptxNeedsImages = shouldGenerateDocImages(documentType) && !!process.env.OPENAI_API_KEY;
+        let pptxImageCount = 0;
+        const PPTX_MAX_IMAGES = 3; // Limit to avoid excessive generation time
+
         let sectionIdx = 0;
         for (const group of contentGroups) {
           if (group.lines.every(l => !l.trim()) && !group.heading) continue;
@@ -2943,6 +3074,30 @@ Be concise, professional, and use British English. All document advice should al
               x: 0.9, y: 0.75, w: 6.0, h: 0.44,
               fontSize: 20, color: "FFFFFF", fontFace: brandFont, bold: false, letterSpacing: 2,
             });
+
+            // Generate a hero image for key sections in pitch-quality documents
+            if (pptxNeedsImages && pptxImageCount < PPTX_MAX_IMAGES) {
+              const sectionLower = group.heading.toLowerCase();
+              const imageWorthy = ["property", "location", "overview", "introduction", "market", "team", "case stud", "portfolio", "services", "track record"].some(kw => sectionLower.includes(kw));
+              if (imageWorthy) {
+                console.log(`[doc-images] PPTX: Generating image for section "${group.heading}"...`);
+                const imgPrompt = `Professional commercial property scene for a section titled "${group.heading}". Premium London commercial real estate, modern architecture, elegant interiors or impressive cityscapes.`;
+                const b64 = await generateImageForDocument(imgPrompt);
+                if (b64) {
+                  const imgSlide = pptx.addSlide({ masterName: "BGP_CONTENT" });
+                  imgSlide.addImage({
+                    data: `image/png;base64,${b64}`,
+                    x: 0.5, y: 0.5, w: 12.34, h: 6.5,
+                  });
+                  imgSlide.addText(group.heading.toUpperCase(), {
+                    x: 0.6, y: 6.5, w: 12.0, h: 0.5,
+                    fontSize: 10, color: brandMid, fontFace: brandFont, italic: true, align: "right",
+                  });
+                  pptxImageCount++;
+                  console.log(`[doc-images] PPTX: Image slide added for "${group.heading}" (${pptxImageCount}/${PPTX_MAX_IMAGES})`);
+                }
+              }
+            }
           }
 
           if (group.isQuote && group.lines.length <= 4) {

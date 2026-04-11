@@ -932,6 +932,125 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
+  // Combined capture + AI enhance endpoint — one-click professional property photography
+  app.post("/api/image-studio/capture-and-enhance", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { location, heading, pitch, fov, category, area, tags } = req.body;
+      if (!location) return res.status(400).json({ error: "location required" });
+
+      const apiKey = process.env.GOOGLE_API_KEY;
+      if (!apiKey) return res.status(400).json({ error: "Google API key not configured" });
+
+      const userId = req.session?.userId || (req as any).tokenUserId;
+
+      // Step 1: Capture the Street View image
+      console.log(`[capture-enhance] Capturing Street View for: ${location}`);
+      const params = new URLSearchParams({
+        size: "1200x800",
+        location,
+        heading: String(heading || 0),
+        pitch: String(pitch || 0),
+        fov: String(fov || 90),
+        key: apiKey,
+      });
+
+      const svResp = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params}`);
+      if (!svResp.ok) return res.status(400).json({ error: "Failed to fetch Street View" });
+
+      const rawBuffer = Buffer.from(await svResp.arrayBuffer());
+      const safeName = (location as string).replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-");
+
+      // Step 2: Save the raw capture
+      const rawFilename = `streetview-raw-${safeName}-${heading || 0}-${crypto.randomUUID().slice(0, 8)}.jpg`;
+      const rawFilePath = path.join(IMAGE_DIR, rawFilename);
+      fs.writeFileSync(rawFilePath, rawBuffer);
+
+      const rawThumb = await generateThumbnail(rawBuffer);
+
+      const baseTags = [...(tags || []), "Street View", "Google", "Exterior"].filter((v: any, i: any, a: any) => a.indexOf(v) === i);
+
+      const [rawRecord] = await db.insert(imageStudioImages).values({
+        fileName: `Street View (Raw) - ${location}`,
+        category: category || "Street Views",
+        tags: baseTags,
+        description: `Raw Google Street View capture of ${location} (heading: ${heading || 0}deg)`,
+        source: "streetview",
+        area: area || location,
+        mimeType: "image/jpeg",
+        fileSize: rawBuffer.length,
+        width: rawThumb.width,
+        height: rawThumb.height,
+        thumbnailData: rawThumb.thumbnail,
+        localPath: rawFilePath,
+        uploadedBy: userId,
+      }).returning();
+
+      console.log(`[capture-enhance] Raw capture saved: ${rawRecord.id}`);
+
+      // Step 3: AI enhance the captured image for professional quality
+      console.log(`[capture-enhance] Enhancing image with AI...`);
+      const enhancePrompt = "Enhance this Google Street View image to look like professional commercial property photography. Improve lighting, remove Google watermarks/UI elements, enhance colors for a warm professional look, sharpen building details, make the sky more appealing. Keep the actual building and street accurate.";
+      const rawBase64 = rawBuffer.toString("base64");
+      const inputMime = "image/jpeg";
+
+      let enhancedBuffer: Buffer | null = null;
+      let enhanceProvider = "unknown";
+
+      // Try DALL-E 3 first (generate enhanced version based on description)
+      const dallePrompt = `${enhancePrompt} Professional commercial property exterior photography of ${location}.`;
+      enhancedBuffer = await generateWithDallE3(dallePrompt, "landscape");
+      if (enhancedBuffer) enhanceProvider = "dall-e-3";
+
+      // Fall back to Gemini (supports actual image editing with inline data)
+      if (!enhancedBuffer) {
+        enhancedBuffer = await editWithGemini(enhancePrompt, rawBase64, inputMime);
+        if (enhancedBuffer) enhanceProvider = "gemini";
+      }
+
+      let enhancedRecord = null;
+      if (enhancedBuffer) {
+        console.log(`[capture-enhance] Enhancement successful with ${enhanceProvider}`);
+        const enhFilename = `streetview-enhanced-${safeName}-${heading || 0}-${crypto.randomUUID().slice(0, 8)}.png`;
+        const enhFilePath = path.join(IMAGE_DIR, enhFilename);
+        fs.writeFileSync(enhFilePath, enhancedBuffer);
+
+        const enhThumb = await generateThumbnail(enhancedBuffer);
+
+        const [inserted] = await db.insert(imageStudioImages).values({
+          fileName: `Street View (Enhanced) - ${location}`,
+          category: category || "Street Views",
+          tags: [...baseTags, "AI Enhanced", enhanceProvider],
+          description: `AI-enhanced Street View of ${location} (from raw capture, enhanced with ${enhanceProvider})`,
+          source: "ai-edited",
+          area: area || location,
+          mimeType: "image/png",
+          fileSize: enhancedBuffer.length,
+          width: enhThumb.width,
+          height: enhThumb.height,
+          thumbnailData: enhThumb.thumbnail,
+          localPath: enhFilePath,
+          uploadedBy: userId,
+        }).returning();
+
+        enhancedRecord = { ...inserted, provider: enhanceProvider };
+        console.log(`[capture-enhance] Enhanced image saved: ${inserted.id}`);
+      } else {
+        console.warn(`[capture-enhance] AI enhancement failed for ${location}, returning raw only`);
+      }
+
+      res.json({
+        raw: rawRecord,
+        enhanced: enhancedRecord,
+        message: enhancedRecord
+          ? `Street View captured and enhanced with ${enhanceProvider}`
+          : "Street View captured but AI enhancement failed — raw image saved",
+      });
+    } catch (e: any) {
+      console.error("[capture-enhance] Error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/image-studio/sync-status", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
     res.json({
       running: imageSyncRunning,
