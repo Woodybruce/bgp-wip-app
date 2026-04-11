@@ -1,4 +1,7 @@
-import { useState, useMemo, useCallback, useRef } from "react";
+// TODO: Deduplicate — this file shares ~60% of its code structure with investment-comps.tsx.
+// Consider extracting shared table logic, filter dropdowns, and inline-edit patterns
+// into a shared CompsTableCore component. See investment-comps.tsx for the same note.
+import { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -402,6 +405,11 @@ function NetRentCalculator({ onClose }: { onClose: () => void }) {
 export default function Comps() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
   const [activeArea, setActiveArea] = useState("All Areas");
   const [activeUseClass, setActiveUseClass] = useState("all");
   const [activeTxnType, setActiveTxnType] = useState("all");
@@ -477,8 +485,8 @@ export default function Comps() {
 
   const filtered = useMemo(() => {
     let result = comps;
-    if (search) {
-      const q = search.toLowerCase();
+    if (debouncedSearch) {
+      const q = debouncedSearch.toLowerCase();
       result = result.filter(c =>
         c.name?.toLowerCase().includes(q) ||
         c.tenant?.toLowerCase().includes(q) ||
@@ -510,7 +518,7 @@ export default function Comps() {
       return sortDir === "asc" ? sa.localeCompare(sb) : sb.localeCompare(sa);
     });
     return result;
-  }, [comps, search, activeArea, activeUseClass, activeTxnType, activeVerified, sortField, sortDir]);
+  }, [comps, debouncedSearch, activeArea, activeUseClass, activeTxnType, activeVerified, sortField, sortDir]);
 
   const stats = useMemo(() => {
     const total = comps.length;

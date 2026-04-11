@@ -1,4 +1,7 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+// TODO: Deduplicate — this file shares ~60% of its code structure with comps.tsx.
+// Consider extracting shared table logic, filter dropdowns, and inline-edit patterns
+// into a shared CompsTableCore component. See comps.tsx for the same note.
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -204,6 +207,11 @@ export default function InvestmentCompsPage() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(defaultCols);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [sortCol, setSortCol] = useState<string>("transactionDate");
@@ -330,8 +338,8 @@ export default function InvestmentCompsPage() {
     if (filterBuyer) items = items.filter(c => c.buyer === filterBuyer);
     if (filterSeller) items = items.filter(c => c.seller === filterSeller);
 
-    if (search) {
-      const q = search.toLowerCase();
+    if (debouncedSearch) {
+      const q = debouncedSearch.toLowerCase();
       items = items.filter(c =>
         (c.propertyName || "").toLowerCase().includes(q) ||
         (c.city || "").toLowerCase().includes(q) ||
@@ -355,7 +363,7 @@ export default function InvestmentCompsPage() {
         : String(bVal).localeCompare(String(aVal));
     });
     return items;
-  }, [comps, search, sortCol, sortDir, filterStatus, filterType, filterSubtype, filterCity, filterMarket, filterProperty, filterBuyer, filterSeller]);
+  }, [comps, debouncedSearch, sortCol, sortDir, filterStatus, filterType, filterSubtype, filterCity, filterMarket, filterProperty, filterBuyer, filterSeller]);
 
   const toggleSort = (col: string) => {
     if (sortCol === col) {

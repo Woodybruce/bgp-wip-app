@@ -71,6 +71,7 @@ const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
+const Reporting = lazy(() => import("@/pages/reporting"));
 
 
 function PageLoader() {
@@ -134,6 +135,7 @@ function Router() {
       <Route path="/land-registry" component={LandRegistry} />
       <Route path="/business-rates" component={VoaRatings} />
       <Route path="/board-report" component={BoardReport} />
+      <Route path="/reporting" component={Reporting} />
       <Route path="/leasing-schedule" component={LeasingSchedule} />
       <Route path="/leasing-schedule/:propertyId" component={LeasingSchedule} />
       <Route path="/tasks" component={TasksPage} />

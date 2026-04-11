@@ -685,6 +685,11 @@ function UnitEditDialog({ unit, open, onClose, onSave }: {
 function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
   const [editUnit, setEditUnit] = useState<LeasingUnit | null>(null);
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -799,8 +804,8 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const filteredUnits = useMemo(() => {
     return units.filter(u => {
       if (!includeArchived && u.status === "Archived") return false;
-      if (search) {
-        const s = search.toLowerCase();
+      if (debouncedSearch) {
+        const s = debouncedSearch.toLowerCase();
         if (!u.unit_name?.toLowerCase().includes(s) && !u.zone?.toLowerCase().includes(s) &&
           !u.positioning?.toLowerCase().includes(s) && !u.target_brands?.toLowerCase().includes(s) &&
           !u.updates?.toLowerCase().includes(s) && !u.agent_initials?.toLowerCase().includes(s)) return false;
@@ -812,7 +817,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
       if (statFilter === "expired" && !isExpired(u.lease_expiry)) return false;
       return true;
     });
-  }, [units, search, statusFilter, statFilter, includeArchived]);
+  }, [units, debouncedSearch, statusFilter, statFilter, includeArchived]);
 
   const zoneGroups = useMemo(() => {
     const groups: Record<string, LeasingUnit[]> = {};
@@ -1229,6 +1234,11 @@ function TargetCompanyNames({ targetCompanyIds, targetBrands }: { targetCompanyI
 export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [showAddUnit, setShowAddUnit] = useState(false);
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set(["__all__"]));
@@ -1303,8 +1313,8 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
   const filteredUnits = useMemo(() => {
     return units.filter(u => {
       if (!includeArchived && u.status === "Archived") return false;
-      if (search) {
-        const s = search.toLowerCase();
+      if (debouncedSearch) {
+        const s = debouncedSearch.toLowerCase();
         if (!u.unit_name?.toLowerCase().includes(s) && !u.zone?.toLowerCase().includes(s) &&
           !u.tenant_name?.toLowerCase().includes(s) && !u.target_brands?.toLowerCase().includes(s) &&
           !u.updates?.toLowerCase().includes(s)) return false;
@@ -1315,7 +1325,7 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
       if (statusFilter === "expired" && !isExpired(u.lease_expiry)) return false;
       return true;
     });
-  }, [units, search, statusFilter, includeArchived]);
+  }, [units, debouncedSearch, statusFilter, includeArchived]);
 
   const zoneGroups = useMemo(() => {
     const groups: Record<string, LeasingUnit[]> = {};
@@ -1737,6 +1747,11 @@ export default function LeasingSchedulePage() {
   const [, params] = useRoute("/leasing-schedule/:propertyId");
   const propertyId = params?.propertyId;
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
   const [exporting, setExporting] = useState(false);
 
   const { data: properties = [], isLoading } = useQuery<LeasingProperty[]>({
@@ -1782,12 +1797,12 @@ export default function LeasingSchedulePage() {
   };
 
   const filtered = useMemo(() => {
-    if (!search) return properties;
-    const s = search.toLowerCase();
+    if (!debouncedSearch) return properties;
+    const s = debouncedSearch.toLowerCase();
     return properties.filter(p =>
       p.name.toLowerCase().includes(s) || p.landlord_name?.toLowerCase().includes(s)
     );
-  }, [properties, search]);
+  }, [properties, debouncedSearch]);
 
   const byLandlord = useMemo(() => {
     const groups: Record<string, LeasingProperty[]> = {};

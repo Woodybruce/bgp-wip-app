@@ -1,3 +1,6 @@
+// TODO: This file (~4400 lines) needs major refactoring — extract chat views, property/deal
+// panels, and navigation into separate components. The bottom nav system provides an
+// alternative mobile navigation path. Be careful: this is deeply coupled and risky to refactor.
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getQueryFn, apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";

@@ -1605,6 +1605,138 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Related emails for a deal — searches user's Outlook inbox for emails mentioning the deal/property name
+  app.get("/api/crm/deals/:id/related-emails", requireAuth, async (req, res) => {
+    try {
+      const deal = await storage.getCrmDeal(req.params.id);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const { getValidMsToken } = await import("./microsoft");
+      const token = await getValidMsToken(req);
+      if (!token) {
+        return res.json({ connected: false, emails: [], message: "Microsoft 365 not connected" });
+      }
+
+      // Build search terms from deal name and linked property name
+      const searchTerms: string[] = [];
+      if (deal.name) searchTerms.push(deal.name);
+      if (deal.propertyId) {
+        const prop = await storage.getCrmProperty(deal.propertyId);
+        if (prop?.name && prop.name !== deal.name) searchTerms.push(prop.name);
+      }
+
+      if (searchTerms.length === 0) {
+        return res.json({ connected: true, emails: [] });
+      }
+
+      // Search for emails matching any of the terms
+      const query = searchTerms.map(t => `"${t.replace(/"/g, "")}"`).join(" OR ");
+      const url = "https://graph.microsoft.com/v1.0/me/messages?" + new URLSearchParams({
+        $search: query,
+        $top: "10",
+        $select: "id,subject,from,receivedDateTime,bodyPreview",
+        $orderby: "receivedDateTime desc",
+      });
+
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          return res.json({ connected: false, emails: [], message: "Microsoft token expired" });
+        }
+        return res.json({ connected: true, emails: [] });
+      }
+
+      const data = await response.json();
+      const emails = (data.value || []).map((msg: any) => ({
+        id: msg.id,
+        subject: msg.subject || "(No subject)",
+        from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown",
+        date: msg.receivedDateTime,
+        preview: (msg.bodyPreview || "").slice(0, 120).replace(/\n/g, " "),
+      }));
+
+      res.json({ connected: true, emails });
+    } catch (e: any) {
+      console.error("Related emails error:", e.message);
+      res.json({ connected: true, emails: [] });
+    }
+  });
+
+  // Related calendar events for a deal — searches user's Outlook calendar for events mentioning the deal/property name
+  app.get("/api/crm/deals/:id/related-events", requireAuth, async (req, res) => {
+    try {
+      const deal = await storage.getCrmDeal(req.params.id);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const { getValidMsToken } = await import("./microsoft");
+      const token = await getValidMsToken(req);
+      if (!token) {
+        return res.json({ connected: false, events: [], message: "Microsoft 365 not connected" });
+      }
+
+      // Build search terms from deal name and linked property name
+      const searchTerms: string[] = [];
+      if (deal.name) searchTerms.push(deal.name);
+      if (deal.propertyId) {
+        const prop = await storage.getCrmProperty(deal.propertyId);
+        if (prop?.name && prop.name !== deal.name) searchTerms.push(prop.name);
+      }
+
+      if (searchTerms.length === 0) {
+        return res.json({ connected: true, events: [] });
+      }
+
+      // Fetch upcoming calendar events (next 30 days) and filter client-side for matching terms
+      const now = new Date();
+      const endDate = new Date(now);
+      endDate.setDate(endDate.getDate() + 30);
+
+      const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${now.toISOString()}&endDateTime=${endDate.toISOString()}&$top=50&$orderby=start/dateTime&$select=subject,start,end,location,organizer,bodyPreview`;
+
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Prefer: 'outlook.timezone="Europe/London"',
+        },
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          return res.json({ connected: false, events: [], message: "Microsoft token expired" });
+        }
+        return res.json({ connected: true, events: [] });
+      }
+
+      const data = await response.json();
+      const allEvents = data.value || [];
+
+      // Filter events that mention any of the search terms in subject or body preview
+      const lowerTerms = searchTerms.map(t => t.toLowerCase());
+      const matchingEvents = allEvents.filter((evt: any) => {
+        const text = `${evt.subject || ""} ${evt.bodyPreview || ""}`.toLowerCase();
+        return lowerTerms.some(term => text.includes(term));
+      }).slice(0, 5);
+
+      const events = matchingEvents.map((evt: any) => ({
+        id: evt.id,
+        subject: evt.subject || "(No title)",
+        start: evt.start?.dateTime,
+        end: evt.end?.dateTime,
+        location: evt.location?.displayName || null,
+        organizer: evt.organizer?.emailAddress?.name || null,
+      }));
+
+      res.json({ connected: true, events });
+    } catch (e: any) {
+      console.error("Related events error:", e.message);
+      res.json({ connected: true, events: [] });
+    }
+  });
+
   app.delete("/api/crm/deals/:id", async (req, res) => {
     try {
       await storage.deleteCrmDeal(req.params.id);

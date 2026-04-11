@@ -501,6 +501,7 @@ export const crmProperties = pgTable("crm_properties", {
   bgpContactCrm: text("bgp_contact_crm"),
   bgpContactUserIds: text("bgp_contact_user_ids").array(),
   leasingPrivacyEnabled: boolean("leasing_privacy_enabled").default(false),
+  sharepointFolderUrl: text("sharepoint_folder_url"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

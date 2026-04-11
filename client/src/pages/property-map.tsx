@@ -177,6 +177,9 @@ export default function PropertyMap() {
   const searchBoxRef = useRef<google.maps.places.Autocomplete | null>(null);
   const searchMarkerRef = useRef<google.maps.Marker | null>(null);
 
+  const [mapZoom, setMapZoom] = useState(DEFAULT_ZOOM);
+  const MARKER_ZOOM_THRESHOLD = 12;
+
   const [activeTool, setActiveTool] = useState<MeasureTool>("none");
   const [selectedRadius, setSelectedRadius] = useState(200);
   const [customRadius, setCustomRadius] = useState("");
@@ -262,6 +265,10 @@ export default function PropertyMap() {
     googleMapRef.current = map;
     infoWindowRef.current = new google.maps.InfoWindow();
 
+    map.addListener("zoom_changed", () => {
+      setMapZoom(map.getZoom() || DEFAULT_ZOOM);
+    });
+
     if (mapSearchInputRef.current) {
       const autocomplete = new google.maps.places.Autocomplete(mapSearchInputRef.current, {
         types: ["address"],
@@ -326,6 +333,7 @@ export default function PropertyMap() {
     initMap();
   }, [initMap]);
 
+  // Create markers when filtered properties change
   useEffect(() => {
     if (!googleMapRef.current || !scriptReady) return;
 
@@ -334,6 +342,7 @@ export default function PropertyMap() {
 
     const bounds = new google.maps.LatLngBounds();
     let hasMarkers = false;
+    const showMarkers = mapZoom >= MARKER_ZOOM_THRESHOLD;
 
     for (const prop of filteredWithCoords) {
       const addr = prop.address as PropertyAddress;
@@ -345,7 +354,7 @@ export default function PropertyMap() {
 
       const marker = new google.maps.Marker({
         position: { lat, lng },
-        map: googleMapRef.current!,
+        map: showMarkers ? googleMapRef.current! : null,
         title: prop.name,
         icon: {
           path: google.maps.SymbolPath.CIRCLE,
@@ -392,6 +401,15 @@ export default function PropertyMap() {
       googleMapRef.current.setZoom(16);
     }
   }, [filteredWithCoords, scriptReady]);
+
+  // Toggle marker visibility based on zoom level to prevent overlap at low zoom
+  useEffect(() => {
+    if (!googleMapRef.current) return;
+    const showMarkers = mapZoom >= MARKER_ZOOM_THRESHOLD;
+    markersRef.current.forEach((m) => {
+      m.setMap(showMarkers ? googleMapRef.current! : null);
+    });
+  }, [mapZoom]);
 
   useEffect(() => {
     if (selectedProperty && googleMapRef.current) {
@@ -886,6 +904,12 @@ export default function PropertyMap() {
                 </div>
               </div>
               <div ref={mapRef} className="w-full h-full" data-testid="google-map-container" />
+              {mapZoom < MARKER_ZOOM_THRESHOLD && filteredWithCoords.length > 0 && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 bg-background/90 border rounded-lg px-4 py-2 shadow-sm text-xs text-muted-foreground flex items-center gap-2">
+                  <MapPin className="w-3.5 h-3.5" />
+                  Zoom in to see {filteredWithCoords.length} property markers
+                </div>
+              )}
             </>
           )}
         </div>
