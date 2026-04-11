@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "wouter";
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useTeam } from "@/lib/team-context";
+import { useBrand } from "@/lib/brand-context";
 import { DraggableGrid } from "@/components/draggable-grid";
 import {
   Building2,
@@ -426,6 +427,7 @@ function LoadingSkeleton() {
 export default function Dashboard() {
   const { data: user } = useQuery<User>({ queryKey: ["/api/auth/me"] });
   const { activeTeam } = useTeam();
+  const { brand, isLandsec: isBrandLandsec } = useBrand();
   const { toast } = useToast();
   const effectiveTeam = activeTeam && activeTeam !== "all" ? activeTeam : user?.team;
   const isLandsecTeam = effectiveTeam === "Landsec";
@@ -850,11 +852,15 @@ export default function Dashboard() {
     <div className="p-4 sm:p-6 space-y-6" data-testid="dashboard-page">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
-          <h1 className="text-2xl font-bold tracking-tight">
-            Welcome back, {user?.name?.split(" ")[0] || "there"}
+          <h1 className="text-2xl font-bold tracking-tight" style={isBrandLandsec ? { color: brand.primaryColor } : undefined}>
+            {isBrandLandsec ? "Landsec Portfolio Dashboard" : `Welcome back, ${user?.name?.split(" ")[0] || "there"}`}
           </h1>
           <p className="text-sm text-muted-foreground">
-            {currentTeam} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}
+            {isBrandLandsec ? (
+              <>{brand.footerText} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
+            ) : (
+              <>{currentTeam} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-1.5">

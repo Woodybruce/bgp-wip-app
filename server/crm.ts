@@ -25,6 +25,7 @@ import {
   crmPropertyAgents, crmPropertyTenants, crmPropertyClients, crmCompanies, crmCompanyDeals, users, dealFeeAllocations,
   crmContacts, newsArticles, wipEntries, investmentComps, insertInvestmentCompSchema,
   xeroInvoices, availableUnits, investmentTracker,
+  dealAuditLog,
 } from "@shared/schema";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
@@ -1187,16 +1188,90 @@ Only return the JSON object. If uncertain, return {"role": null}.`
   app.put("/api/crm/deals/:id", async (req, res) => {
     try {
       const oldDeal = await storage.getCrmDeal(req.params.id);
-      if (req.body.kycApproved === true && !oldDeal?.kycApproved) {
-        const userId = (req as any).session?.userId || (req as any).tokenUserId;
-        let approverName = "Unknown";
-        if (userId) {
-          const uRes = await pool.query(`SELECT name, email, username FROM users WHERE id = $1 LIMIT 1`, [userId]);
-          if (uRes.rows[0]) approverName = uRes.rows[0].name || uRes.rows[0].email || uRes.rows[0].username;
+
+      // --- Resolve current user for audit + approval ---
+      const userId = (req as any).session?.userId || (req as any).tokenUserId;
+      let changedByName = "Unknown";
+      let changedByEmail = "";
+      let isUserAdmin = false;
+      if (userId) {
+        const uRes = await pool.query(`SELECT name, email, username, is_admin FROM users WHERE id = $1 LIMIT 1`, [userId]);
+        if (uRes.rows[0]) {
+          changedByName = uRes.rows[0].name || uRes.rows[0].email || uRes.rows[0].username;
+          changedByEmail = (uRes.rows[0].email || "").toLowerCase();
+          isUserAdmin = !!uRes.rows[0].is_admin;
         }
-        req.body.kycApprovedAt = new Date();
-        req.body.kycApprovedBy = approverName;
       }
+
+      // --- Approval gate for Invoiced / Completed ---
+      const APPROVAL_STATUSES = ["Invoiced", "Completed"];
+      const SENIOR_EMAILS = new Set([
+        "woody@brucegillinghampollard.com",
+        "charlotte@brucegillinghampollard.com",
+        "rupert@brucegillinghampollard.com",
+        "jack@brucegillinghampollard.com",
+      ]);
+      const isSenior = isUserAdmin || SENIOR_EMAILS.has(changedByEmail);
+      if (req.body.status && oldDeal && oldDeal.status !== req.body.status && APPROVAL_STATUSES.includes(req.body.status)) {
+        if (!isSenior) {
+          // Log the rejected attempt
+          try {
+            await db.insert(dealAuditLog).values({
+              dealId: req.params.id,
+              field: "status",
+              oldValue: oldDeal.status || null,
+              newValue: req.body.status,
+              reason: `Approval rejected — ${changedByName} is not a senior approver`,
+              changedBy: userId || null,
+              changedByName,
+            });
+          } catch (_) {}
+          return res.status(403).json({ error: `Senior approval required to mark deals as ${req.body.status}` });
+        }
+      }
+
+      if (req.body.kycApproved === true && !oldDeal?.kycApproved) {
+        req.body.kycApprovedAt = new Date();
+        req.body.kycApprovedBy = changedByName;
+      }
+
+      // --- Audit: compare fields before applying update ---
+      const auditFields = [
+        "status", "fee", "internalAgent", "team", "dealType", "name", "pricing",
+        "yieldPercent", "feeAgreement", "rentPa", "capitalContribution", "rentFree",
+        "leaseLength", "breakOption", "completionDate", "tenureText", "assetClass",
+        "comments", "amlCheckCompleted", "totalAreaSqft", "basementAreaSqft",
+        "gfAreaSqft", "ffAreaSqft", "itzaAreaSqft", "propertyId", "landlordId",
+        "tenantId", "vendorId", "purchaserId", "invoicingEntityId", "kycApproved",
+        "feePercentage", "completionTiming", "invoicingNotes", "poNumber",
+      ];
+      const auditInserts: { dealId: string; field: string; oldValue: string | null; newValue: string | null; reason: string | null; changedBy: string | null; changedByName: string }[] = [];
+      if (oldDeal) {
+        for (const field of auditFields) {
+          if (req.body[field] === undefined) continue;
+          const oldVal = (oldDeal as any)[field];
+          const newVal = req.body[field];
+          const oldStr = oldVal == null ? null : Array.isArray(oldVal) ? oldVal.join(", ") : String(oldVal);
+          const newStr = newVal == null ? null : Array.isArray(newVal) ? newVal.join(", ") : String(newVal);
+          if (oldStr === newStr) continue;
+          auditInserts.push({
+            dealId: req.params.id,
+            field,
+            oldValue: oldStr,
+            newValue: newStr,
+            reason: field === "status" ? (req.body.changeReason || null) : null,
+            changedBy: userId || null,
+            changedByName,
+          });
+        }
+      }
+      // Insert audit rows (non-blocking)
+      if (auditInserts.length > 0) {
+        db.insert(dealAuditLog).values(auditInserts).catch((err: any) => {
+          console.error("[deal-audit] Error inserting audit log:", err?.message);
+        });
+      }
+
       const deal = await storage.updateCrmDeal(req.params.id, req.body);
 
       const rentFields = ["rentPa", "rentFree", "leaseLength", "capitalContribution", "totalAreaSqft"];
@@ -1517,6 +1592,16 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
 
       res.json(deal);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // Deal audit log endpoint
+  app.get("/api/crm/deals/:id/audit-log", async (req, res) => {
+    try {
+      const logs = await db.select().from(dealAuditLog)
+        .where(eq(dealAuditLog.dealId, req.params.id))
+        .orderBy(sql`created_at DESC`);
+      res.json(logs);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -4610,6 +4695,624 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       });
     } catch (e: any) {
       console.error("[wip-reconciliation] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────
+  // WIP Report — Excel Export
+  // ────────────────────────────────────────────────────────────
+  app.get("/api/wip/export-excel", requireAuth, async (req: any, res: any) => {
+    try {
+      const ExcelJS = await import("exceljs");
+      const senior = await isWipSenior(req);
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const currentUser = userId ? await storage.getUser(userId) : null;
+      const isAdmin = !!currentUser?.isAdmin;
+      const userTeam = currentUser?.team || null;
+
+      const INVOICED_STATUSES = ["Invoiced", "Billed"];
+      const EXCLUDED_STATUSES = ["Dead", "Leasing Comps", "Investment Comps"];
+
+      const deals = await db.select().from(crmDeals);
+      const properties = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties);
+      const companies = await db.select({ id: crmCompanies.id, name: crmCompanies.name }).from(crmCompanies);
+      const invoices = await db.select().from(xeroInvoices);
+      const wipRows = await db.select().from(wipEntries);
+      const allAllocations = await db.select().from(dealFeeAllocations);
+      const allocsByDealId = new Map<string, typeof allAllocations>();
+      for (const a of allAllocations) {
+        if (!allocsByDealId.has(a.dealId)) allocsByDealId.set(a.dealId, []);
+        allocsByDealId.get(a.dealId)!.push(a);
+      }
+
+      const propMap = new Map(properties.map(p => [p.id, p.name]));
+      const compMap = new Map(companies.map(c => [c.id, c.name]));
+
+      const invoicesByDeal = new Map<string, { totalAmount: number; invoiceNo: string | null; status: string | null }>();
+      for (const inv of invoices) {
+        const existing = invoicesByDeal.get(inv.dealId);
+        if (existing) {
+          existing.totalAmount += inv.totalAmount || 0;
+          if (inv.invoiceNumber) existing.invoiceNo = inv.invoiceNumber;
+        } else {
+          invoicesByDeal.set(inv.dealId, {
+            totalAmount: inv.totalAmount || 0,
+            invoiceNo: inv.invoiceNumber || null,
+            status: inv.status || null,
+          });
+        }
+      }
+
+      const dealByName = new Map<string, typeof deals[0]>();
+      const dealByProperty = new Map<string, typeof deals[0]>();
+      for (const d of deals) {
+        if (d.name) dealByName.set(d.name.toLowerCase().trim(), d);
+        const propName = d.propertyId ? propMap.get(d.propertyId) : null;
+        if (propName) dealByProperty.set(propName.toLowerCase().trim(), d);
+      }
+      const findDealExcel = (key: string) => dealByName.get(key) || dealByProperty.get(key);
+
+      function deriveStageExcel(status: string | null): string {
+        if (!status) return "pipeline";
+        if (INVOICED_STATUSES.includes(status)) return "invoiced";
+        if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
+        return "pipeline";
+      }
+
+      function deriveFiscalYearExcel(deal: any): number | null {
+        if (deal.completionDate) {
+          const d = new Date(deal.completionDate);
+          if (!isNaN(d.getTime())) {
+            const month = d.getMonth() + 1;
+            return month >= 4 ? d.getFullYear() + 1 : d.getFullYear();
+          }
+        }
+        const created = deal.createdAt ? new Date(deal.createdAt) : new Date();
+        const month = created.getMonth() + 1;
+        return month >= 4 ? created.getFullYear() + 1 : created.getFullYear();
+      }
+
+      function deriveMonthExcel(deal: any): string | null {
+        const dateStr = deal.completionDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
+        if (!dateStr) return null;
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return null;
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        return `${months[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
+      }
+
+      const usedDealIds = new Set<string>();
+
+      let entries: any[] = wipRows.map(r => {
+        const projectKey = (r.project || "").toLowerCase().trim();
+        const refKey = (r.ref || "").toLowerCase().trim();
+        const matchedDeal = findDealExcel(projectKey) || findDealExcel(refKey);
+        if (matchedDeal) usedDealIds.add(matchedDeal.id);
+        const tenantName = matchedDeal?.tenantId ? compMap.get(matchedDeal.tenantId) || null : null;
+        return {
+          id: r.id, dealId: matchedDeal?.id || null, dealType: matchedDeal?.dealType || null,
+          ref: r.ref, groupName: r.groupName, project: r.project, tenant: r.tenant || tenantName,
+          team: r.team, agent: r.agent, assetClass: matchedDeal?.assetClass || null,
+          amtWip: r.amtWip || 0, amtInvoice: r.amtInvoice || 0, month: r.month,
+          dealStatus: r.dealStatus, stage: r.stage, invoiceNo: r.invoiceNo,
+          fiscalYear: r.fiscalYear, source: "spreadsheet" as const,
+        };
+      });
+
+      const unmatchedDeals = deals.filter(d => !EXCLUDED_STATUSES.includes(d.status || "") && !usedDealIds.has(d.id));
+      for (const deal of unmatchedDeals) {
+        const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
+        const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
+        const tenantName = deal.tenantId ? compMap.get(deal.tenantId) || null : null;
+        const invoice = invoicesByDeal.get(deal.id);
+        const stage = deriveStageExcel(deal.status);
+        const isInvoiced = stage === "invoiced";
+        const totalFee = deal.fee || 0;
+        const totalInvoiceAmt = invoice?.totalAmount || (isInvoiced ? totalFee : 0);
+        const dealAllocations = allocsByDealId.get(deal.id);
+
+        if (dealAllocations && dealAllocations.length > 0) {
+          for (const alloc of dealAllocations) {
+            const allocPct = (alloc.percentage || 0) / 100;
+            const agentFee = alloc.fixedAmount || Math.round(totalFee * allocPct * 100) / 100;
+            const agentInvoiceAmt = alloc.fixedAmount || Math.round(totalInvoiceAmt * allocPct * 100) / 100;
+            entries.push({
+              id: `${deal.id}_${alloc.agentName}`, dealId: deal.id, dealType: deal.dealType || null,
+              ref: deal.name, groupName: deal.groupName || null, project: propertyName, tenant: tenantName,
+              team: teamStr, agent: alloc.agentName, assetClass: deal.assetClass || null,
+              amtWip: isInvoiced ? 0 : agentFee, amtInvoice: agentInvoiceAmt,
+              month: deriveMonthExcel(deal), dealStatus: deal.status || null, stage,
+              invoiceNo: invoice?.invoiceNo || null, fiscalYear: deriveFiscalYearExcel(deal), source: "crm" as const,
+            });
+          }
+        } else {
+          const agentNames = Array.isArray(deal.internalAgent) ? deal.internalAgent : (deal.internalAgent ? [deal.internalAgent] : []);
+          if (agentNames.length === 0) {
+            entries.push({
+              id: deal.id, dealId: deal.id, dealType: deal.dealType || null,
+              ref: deal.name, groupName: deal.groupName || null, project: propertyName, tenant: tenantName,
+              team: teamStr, agent: null, assetClass: deal.assetClass || null,
+              amtWip: isInvoiced ? 0 : totalFee, amtInvoice: totalInvoiceAmt,
+              month: deriveMonthExcel(deal), dealStatus: deal.status || null, stage,
+              invoiceNo: invoice?.invoiceNo || null, fiscalYear: deriveFiscalYearExcel(deal), source: "crm" as const,
+            });
+          } else {
+            const perAgentFee = totalFee / agentNames.length;
+            const perAgentInvoice = totalInvoiceAmt / agentNames.length;
+            for (const agentName of agentNames) {
+              entries.push({
+                id: `${deal.id}_${agentName}`, dealId: deal.id, dealType: deal.dealType || null,
+                ref: deal.name, groupName: deal.groupName || null, project: propertyName, tenant: tenantName,
+                team: teamStr, agent: agentName, assetClass: deal.assetClass || null,
+                amtWip: isInvoiced ? 0 : perAgentFee, amtInvoice: perAgentInvoice,
+                month: deriveMonthExcel(deal), dealStatus: deal.status || null, stage,
+                invoiceNo: invoice?.invoiceNo || null, fiscalYear: deriveFiscalYearExcel(deal), source: "crm" as const,
+              });
+            }
+          }
+        }
+      }
+
+      // Apply same access control as /api/wip
+      if (!senior) {
+        entries = entries.filter(e => {
+          if (e.team) {
+            const teams = (e.team as string).split(",").map((t: string) => t.trim().toLowerCase());
+            if (teams.some((t: string) => t === "bgp")) return false;
+          }
+          if (e.agent) {
+            const agents = (e.agent as string).split(",").map((a: string) => a.trim().toLowerCase());
+            if (agents.some((a: string) => WIP_RESTRICTED_AGENTS.has(a))) return false;
+          }
+          return true;
+        });
+      }
+      if (!isAdmin) {
+        if (!userTeam) {
+          entries = [];
+        } else {
+          const ut = userTeam.toLowerCase();
+          entries = entries.filter(e => {
+            if (!e.team) return false;
+            const teams = (e.team as string).split(",").map((t: string) => t.trim().toLowerCase());
+            return teams.some((t: string) => t === ut);
+          });
+        }
+      }
+
+      // Build workbook
+      const wb = new ExcelJS.default.Workbook();
+      wb.creator = "BGP Dashboard";
+      wb.created = new Date();
+
+      const BGP_GREEN = "2E5E3F";
+      const LIGHT_ROW = "F2F7F4";
+      const CURRENCY_FMT = "£#,##0";
+
+      const headerFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: `FF${BGP_GREEN}` } };
+      const headerFont = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+      const altFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: `FF${LIGHT_ROW}` } };
+
+      // Sheet 1 — WIP Report
+      const ws1 = wb.addWorksheet("WIP Report");
+      const cols = [
+        { header: "Ref", key: "ref", width: 28 },
+        { header: "Group", key: "groupName", width: 18 },
+        { header: "Project", key: "project", width: 28 },
+        { header: "Tenant", key: "tenant", width: 22 },
+        { header: "Team", key: "team", width: 14 },
+        { header: "Agent", key: "agent", width: 20 },
+        { header: "Deal Type", key: "dealType", width: 16 },
+        { header: "Asset Class", key: "assetClass", width: 16 },
+        { header: "WIP Amount", key: "amtWip", width: 16 },
+        { header: "Invoice Amount", key: "amtInvoice", width: 16 },
+        { header: "Month", key: "month", width: 12 },
+        { header: "Status", key: "dealStatus", width: 14 },
+        { header: "Stage", key: "stage", width: 12 },
+        { header: "Fiscal Year", key: "fiscalYear", width: 12 },
+      ];
+      ws1.columns = cols;
+
+      // Style header row
+      const headerRow1 = ws1.getRow(1);
+      headerRow1.eachCell(cell => {
+        cell.fill = headerFill;
+        cell.font = headerFont;
+        cell.alignment = { vertical: "middle", horizontal: "center" };
+      });
+      headerRow1.height = 28;
+
+      // Add data rows
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        const row = ws1.addRow({
+          ref: e.ref || "",
+          groupName: e.groupName || "",
+          project: e.project || "",
+          tenant: e.tenant || "",
+          team: e.team || "",
+          agent: e.agent || "",
+          dealType: e.dealType || "",
+          assetClass: e.assetClass || "",
+          amtWip: e.amtWip || 0,
+          amtInvoice: e.amtInvoice || 0,
+          month: e.month || "",
+          dealStatus: e.dealStatus || "",
+          stage: e.stage || "",
+          fiscalYear: e.fiscalYear || "",
+        });
+        row.getCell("amtWip").numFmt = CURRENCY_FMT;
+        row.getCell("amtInvoice").numFmt = CURRENCY_FMT;
+        if (i % 2 === 1) {
+          row.eachCell(cell => { cell.fill = altFill; });
+        }
+      }
+
+      // Totals footer
+      const totalsRow = ws1.addRow({
+        ref: "TOTAL",
+        amtWip: entries.reduce((s, e) => s + (e.amtWip || 0), 0),
+        amtInvoice: entries.reduce((s, e) => s + (e.amtInvoice || 0), 0),
+      });
+      totalsRow.font = { bold: true, size: 11 };
+      totalsRow.getCell("amtWip").numFmt = CURRENCY_FMT;
+      totalsRow.getCell("amtInvoice").numFmt = CURRENCY_FMT;
+      totalsRow.eachCell(cell => {
+        cell.border = { top: { style: "double" } };
+      });
+
+      ws1.views = [{ state: "frozen", ySplit: 1, xSplit: 0 }];
+      ws1.autoFilter = { from: "A1", to: `N${entries.length + 1}` };
+
+      // Sheet 2 — Agent Summary
+      const ws2 = wb.addWorksheet("Agent Summary");
+      const agentMap = new Map<string, { wip: number; invoiced: number }>();
+      for (const e of entries) {
+        const agent = e.agent || "Unassigned";
+        const existing = agentMap.get(agent) || { wip: 0, invoiced: 0 };
+        existing.wip += e.amtWip || 0;
+        existing.invoiced += e.amtInvoice || 0;
+        agentMap.set(agent, existing);
+      }
+      ws2.columns = [
+        { header: "Agent", key: "agent", width: 26 },
+        { header: "WIP", key: "wip", width: 18 },
+        { header: "Invoiced", key: "invoiced", width: 18 },
+        { header: "Total", key: "total", width: 18 },
+      ];
+      const headerRow2 = ws2.getRow(1);
+      headerRow2.eachCell(cell => { cell.fill = headerFill; cell.font = headerFont; cell.alignment = { vertical: "middle", horizontal: "center" }; });
+      headerRow2.height = 28;
+
+      let agentIdx = 0;
+      let totalWipSum = 0, totalInvoicedSum = 0;
+      for (const [agent, vals] of [...agentMap.entries()].sort((a, b) => (b[1].wip + b[1].invoiced) - (a[1].wip + a[1].invoiced))) {
+        const total = vals.wip + vals.invoiced;
+        totalWipSum += vals.wip;
+        totalInvoicedSum += vals.invoiced;
+        const row = ws2.addRow({ agent, wip: vals.wip, invoiced: vals.invoiced, total });
+        row.getCell("wip").numFmt = CURRENCY_FMT;
+        row.getCell("invoiced").numFmt = CURRENCY_FMT;
+        row.getCell("total").numFmt = CURRENCY_FMT;
+        if (agentIdx % 2 === 1) row.eachCell(cell => { cell.fill = altFill; });
+        agentIdx++;
+      }
+      const agentTotals = ws2.addRow({ agent: "TOTAL", wip: totalWipSum, invoiced: totalInvoicedSum, total: totalWipSum + totalInvoicedSum });
+      agentTotals.font = { bold: true, size: 11 };
+      agentTotals.getCell("wip").numFmt = CURRENCY_FMT;
+      agentTotals.getCell("invoiced").numFmt = CURRENCY_FMT;
+      agentTotals.getCell("total").numFmt = CURRENCY_FMT;
+      agentTotals.eachCell(cell => { cell.border = { top: { style: "double" } }; });
+      ws2.views = [{ state: "frozen", ySplit: 1, xSplit: 0 }];
+
+      // Sheet 3 — By Status
+      const ws3 = wb.addWorksheet("By Status");
+      const statusMap = new Map<string, { count: number; wip: number; invoiced: number }>();
+      for (const e of entries) {
+        const status = e.dealStatus || "Unknown";
+        const existing = statusMap.get(status) || { count: 0, wip: 0, invoiced: 0 };
+        existing.count++;
+        existing.wip += e.amtWip || 0;
+        existing.invoiced += e.amtInvoice || 0;
+        statusMap.set(status, existing);
+      }
+      ws3.columns = [
+        { header: "Status", key: "status", width: 20 },
+        { header: "Count", key: "count", width: 12 },
+        { header: "WIP", key: "wip", width: 18 },
+        { header: "Invoiced", key: "invoiced", width: 18 },
+        { header: "Total", key: "total", width: 18 },
+      ];
+      const headerRow3 = ws3.getRow(1);
+      headerRow3.eachCell(cell => { cell.fill = headerFill; cell.font = headerFont; cell.alignment = { vertical: "middle", horizontal: "center" }; });
+      headerRow3.height = 28;
+
+      let statusIdx = 0;
+      for (const [status, vals] of [...statusMap.entries()].sort((a, b) => (b[1].wip + b[1].invoiced) - (a[1].wip + a[1].invoiced))) {
+        const row = ws3.addRow({ status, count: vals.count, wip: vals.wip, invoiced: vals.invoiced, total: vals.wip + vals.invoiced });
+        row.getCell("wip").numFmt = CURRENCY_FMT;
+        row.getCell("invoiced").numFmt = CURRENCY_FMT;
+        row.getCell("total").numFmt = CURRENCY_FMT;
+        if (statusIdx % 2 === 1) row.eachCell(cell => { cell.fill = altFill; });
+        statusIdx++;
+      }
+      ws3.views = [{ state: "frozen", ySplit: 1, xSplit: 0 }];
+
+      // Send
+      const buffer = await wb.xlsx.writeBuffer();
+      const dateStr = new Date().toISOString().slice(0, 10);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="BGP_WIP_Report_${dateStr}.xlsx"`);
+      res.send(Buffer.from(buffer as ArrayBuffer));
+    } catch (e: any) {
+      console.error("[wip-export-excel] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────
+  // Board Report — Excel Export
+  // ────────────────────────────────────────────────────────────
+  app.get("/api/board-report/export-excel", requireAuth, async (_req: any, res: any) => {
+    try {
+      const ExcelJS = await import("exceljs");
+
+      const allDeals = await db.select().from(crmDeals);
+      const allAllocations = await db.select().from(dealFeeAllocations);
+      const now = new Date();
+      const yearStart = new Date(now.getFullYear(), 0, 1);
+
+      const statusCounts: Record<string, number> = {};
+      const teamCounts: Record<string, number> = {};
+      const dealTypeCounts: Record<string, number> = {};
+
+      let totalFeesYTD = 0;
+      let completedCount = 0;
+      let totalDays = 0;
+      let completedWithDays = 0;
+      const fees: number[] = [];
+      const topDeals: Array<{ name: string; fee: number; team: string; status: string; dealType: string }> = [];
+
+      for (const deal of allDeals) {
+        const status = deal.status || "Unknown";
+        statusCounts[status] = (statusCounts[status] || 0) + 1;
+
+        if (deal.team && Array.isArray(deal.team)) {
+          for (const t of deal.team) {
+            teamCounts[t] = (teamCounts[t] || 0) + 1;
+          }
+        }
+
+        const dt = deal.dealType || "Unknown";
+        dealTypeCounts[dt] = (dealTypeCounts[dt] || 0) + 1;
+
+        if (deal.fee && deal.fee > 0) {
+          fees.push(deal.fee);
+          topDeals.push({
+            name: deal.name || "Unnamed",
+            fee: deal.fee,
+            team: (deal.team || []).join(", "),
+            status: deal.status || "",
+            dealType: deal.dealType || "",
+          });
+
+          const completionStr = deal.completionDate || deal.updatedAt?.toISOString?.();
+          if (completionStr) {
+            const completionDate = new Date(completionStr);
+            if (completionDate >= yearStart && completionDate <= now) {
+              totalFeesYTD += deal.fee;
+            }
+          }
+        }
+
+        const isComplete = status === "Invoiced" || status === "Exchanged";
+        if (isComplete) completedCount++;
+
+        if (isComplete && deal.createdAt) {
+          const created = new Date(deal.createdAt);
+          const completed = deal.completionDate ? new Date(deal.completionDate) : (deal.updatedAt || now);
+          const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+          if (days > 0 && days < 1000) {
+            totalDays += days;
+            completedWithDays++;
+          }
+        }
+      }
+
+      topDeals.sort((a, b) => b.fee - a.fee);
+
+      const conversionRate = allDeals.length > 0 ? Math.round((completedCount / allDeals.length) * 100) : 0;
+      const avgDealSize = fees.length > 0 ? Math.round(fees.reduce((a, b) => a + b, 0) / fees.length) : 0;
+      const avgTimeToClose = completedWithDays > 0 ? Math.round(totalDays / completedWithDays) : 0;
+
+      // Build workbook
+      const wb = new ExcelJS.default.Workbook();
+      wb.creator = "BGP Dashboard";
+      wb.created = new Date();
+
+      const BGP_GREEN = "2E5E3F";
+      const LIGHT_ROW = "F2F7F4";
+      const CURRENCY_FMT = "£#,##0";
+
+      const headerFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: `FF${BGP_GREEN}` } };
+      const headerFont = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+      const altFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: `FF${LIGHT_ROW}` } };
+
+      // Sheet 1 — Executive Summary
+      const ws1 = wb.addWorksheet("Executive Summary");
+      ws1.columns = [
+        { header: "", key: "label", width: 30 },
+        { header: "", key: "value", width: 30 },
+      ];
+
+      // Title
+      const titleRow = ws1.addRow({ label: "BGP Board Report — Executive Summary" });
+      titleRow.font = { bold: true, size: 16, color: { argb: `FF${BGP_GREEN}` } };
+      ws1.mergeCells(titleRow.number, 1, titleRow.number, 2);
+      ws1.addRow({});
+
+      const dateRow = ws1.addRow({ label: "Generated", value: now.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) });
+      dateRow.font = { italic: true, color: { argb: "FF666666" } };
+      ws1.addRow({});
+
+      // KPIs
+      const kpiHeader = ws1.addRow({ label: "Key Performance Indicators" });
+      kpiHeader.font = { bold: true, size: 13, color: { argb: `FF${BGP_GREEN}` } };
+      ws1.addRow({});
+
+      const kpis = [
+        ["Total Deals in Pipeline", allDeals.length.toString()],
+        ["Fees Billed YTD", `£${totalFeesYTD.toLocaleString()}`],
+        ["Conversion Rate", `${conversionRate}%`],
+        ["Average Deal Size", `£${avgDealSize.toLocaleString()}`],
+        ["Average Time to Close", `${avgTimeToClose} days`],
+        ["Completed Deals", completedCount.toString()],
+      ];
+      for (const [label, value] of kpis) {
+        const row = ws1.addRow({ label, value });
+        row.getCell("label").font = { bold: true };
+      }
+      ws1.addRow({});
+
+      // Status breakdown
+      const statusHeader = ws1.addRow({ label: "Pipeline by Status" });
+      statusHeader.font = { bold: true, size: 13, color: { argb: `FF${BGP_GREEN}` } };
+      ws1.addRow({});
+      const statusTableHeader = ws1.addRow({ label: "Status", value: "Count" });
+      statusTableHeader.eachCell(cell => { cell.fill = headerFill; cell.font = headerFont; });
+      for (const [status, count] of Object.entries(statusCounts).sort((a, b) => b[1] - a[1])) {
+        ws1.addRow({ label: status, value: count.toString() });
+      }
+
+      // Sheet 2 — Pipeline
+      const ws2 = wb.addWorksheet("Pipeline");
+      ws2.columns = [
+        { header: "Deal Name", key: "name", width: 32 },
+        { header: "Status", key: "status", width: 16 },
+        { header: "Fee", key: "fee", width: 18 },
+        { header: "Team", key: "team", width: 20 },
+        { header: "Agent(s)", key: "agent", width: 24 },
+        { header: "Deal Type", key: "dealType", width: 16 },
+        { header: "Asset Class", key: "assetClass", width: 16 },
+      ];
+      const pipelineHeader = ws2.getRow(1);
+      pipelineHeader.eachCell(cell => { cell.fill = headerFill; cell.font = headerFont; cell.alignment = { vertical: "middle", horizontal: "center" }; });
+      pipelineHeader.height = 28;
+
+      const sortedDeals = [...allDeals].sort((a, b) => (b.fee || 0) - (a.fee || 0));
+      for (let i = 0; i < sortedDeals.length; i++) {
+        const deal = sortedDeals[i];
+        const row = ws2.addRow({
+          name: deal.name || "Unnamed",
+          status: deal.status || "",
+          fee: deal.fee || 0,
+          team: Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || ""),
+          agent: Array.isArray(deal.internalAgent) ? deal.internalAgent.join(", ") : (deal.internalAgent || ""),
+          dealType: deal.dealType || "",
+          assetClass: deal.assetClass || "",
+        });
+        row.getCell("fee").numFmt = CURRENCY_FMT;
+        if (i % 2 === 1) row.eachCell(cell => { cell.fill = altFill; });
+      }
+
+      // Totals
+      const pipelineTotals = ws2.addRow({
+        name: "TOTAL",
+        fee: allDeals.reduce((s, d) => s + (d.fee || 0), 0),
+      });
+      pipelineTotals.font = { bold: true, size: 11 };
+      pipelineTotals.getCell("fee").numFmt = CURRENCY_FMT;
+      pipelineTotals.eachCell(cell => { cell.border = { top: { style: "double" } }; });
+
+      ws2.views = [{ state: "frozen", ySplit: 1, xSplit: 0 }];
+      ws2.autoFilter = { from: "A1", to: `G${sortedDeals.length + 1}` };
+
+      // Sheet 3 — Fee Analysis
+      const ws3 = wb.addWorksheet("Fee Analysis");
+      ws3.columns = [
+        { header: "Category", key: "category", width: 24 },
+        { header: "Name", key: "name", width: 24 },
+        { header: "Deal Count", key: "count", width: 14 },
+        { header: "Total Fees", key: "totalFees", width: 18 },
+      ];
+      const feeHeader = ws3.getRow(1);
+      feeHeader.eachCell(cell => { cell.fill = headerFill; cell.font = headerFont; cell.alignment = { vertical: "middle", horizontal: "center" }; });
+      feeHeader.height = 28;
+
+      // By Team
+      const teamFees = new Map<string, { count: number; total: number }>();
+      for (const deal of allDeals) {
+        if (deal.team && Array.isArray(deal.team)) {
+          for (const t of deal.team) {
+            const existing = teamFees.get(t) || { count: 0, total: 0 };
+            existing.count++;
+            existing.total += deal.fee || 0;
+            teamFees.set(t, existing);
+          }
+        }
+      }
+      let feeRowIdx = 0;
+      for (const [name, vals] of [...teamFees.entries()].sort((a, b) => b[1].total - a[1].total)) {
+        const row = ws3.addRow({ category: "Team", name, count: vals.count, totalFees: vals.total });
+        row.getCell("totalFees").numFmt = CURRENCY_FMT;
+        if (feeRowIdx % 2 === 1) row.eachCell(cell => { cell.fill = altFill; });
+        feeRowIdx++;
+      }
+
+      // Separator
+      ws3.addRow({});
+      feeRowIdx = 0;
+
+      // By Agent
+      const agentFees = new Map<string, { count: number; total: number }>();
+      for (const deal of allDeals) {
+        const agents = Array.isArray(deal.internalAgent) ? deal.internalAgent : (deal.internalAgent ? [deal.internalAgent] : []);
+        const perAgent = (deal.fee || 0) / Math.max(agents.length, 1);
+        for (const agent of agents) {
+          const existing = agentFees.get(agent) || { count: 0, total: 0 };
+          existing.count++;
+          existing.total += perAgent;
+          agentFees.set(agent, existing);
+        }
+      }
+      for (const [name, vals] of [...agentFees.entries()].sort((a, b) => b[1].total - a[1].total)) {
+        const row = ws3.addRow({ category: "Agent", name, count: vals.count, totalFees: Math.round(vals.total) });
+        row.getCell("totalFees").numFmt = CURRENCY_FMT;
+        if (feeRowIdx % 2 === 1) row.eachCell(cell => { cell.fill = altFill; });
+        feeRowIdx++;
+      }
+
+      // Separator
+      ws3.addRow({});
+      feeRowIdx = 0;
+
+      // By Deal Type
+      const dtFees = new Map<string, { count: number; total: number }>();
+      for (const deal of allDeals) {
+        const dt = deal.dealType || "Unknown";
+        const existing = dtFees.get(dt) || { count: 0, total: 0 };
+        existing.count++;
+        existing.total += deal.fee || 0;
+        dtFees.set(dt, existing);
+      }
+      for (const [name, vals] of [...dtFees.entries()].sort((a, b) => b[1].total - a[1].total)) {
+        const row = ws3.addRow({ category: "Deal Type", name, count: vals.count, totalFees: vals.total });
+        row.getCell("totalFees").numFmt = CURRENCY_FMT;
+        if (feeRowIdx % 2 === 1) row.eachCell(cell => { cell.fill = altFill; });
+        feeRowIdx++;
+      }
+
+      ws3.views = [{ state: "frozen", ySplit: 1, xSplit: 0 }];
+
+      // Send
+      const buffer = await wb.xlsx.writeBuffer();
+      const dateStr = now.toISOString().slice(0, 10);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="BGP_Board_Report_${dateStr}.xlsx"`);
+      res.send(Buffer.from(buffer as ArrayBuffer));
+    } catch (e: any) {
+      console.error("[board-report-export-excel] Error:", e);
       res.status(500).json({ error: e.message });
     }
   });

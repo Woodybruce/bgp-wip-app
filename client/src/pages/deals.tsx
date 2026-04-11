@@ -85,6 +85,8 @@ import {
   XCircle,
   MessageCircle,
   Image as ImageIcon,
+  History,
+  Shield,
 } from "lucide-react";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
@@ -447,9 +449,9 @@ function dealToForm(deal: CrmDeal): DealFormData {
   };
 }
 
-function formToPayload(form: DealFormData): Record<string, unknown> {
+function formToPayload(form: DealFormData, changeReason?: string): Record<string, unknown> {
   const parseNum = (v: string) => { if (!v) return null; const n = parseFloat(v); return isNaN(n) ? null : n; };
-  return {
+  const payload: Record<string, unknown> = {
     name: form.name,
     groupName: form.groupName || null,
     dealType: form.dealType || null,
@@ -493,6 +495,8 @@ function formToPayload(form: DealFormData): Record<string, unknown> {
     invoicingEntityId: form.invoicingEntityId || null,
     poNumber: form.poNumber || null,
   };
+  if (changeReason) payload.changeReason = changeReason;
+  return payload;
 }
 
 
@@ -514,6 +518,24 @@ function DealFormDialog({
   const { toast } = useToast();
   const isEdit = !!deal;
   const [form, setForm] = useState<DealFormData>(deal ? dealToForm(deal) : { ...emptyForm });
+  const [changeReason, setChangeReason] = useState("");
+  const [approvalGateOpen, setApprovalGateOpen] = useState(false);
+  const [approvalGateMessage, setApprovalGateMessage] = useState("");
+
+  const statusChanged = isEdit && deal && form.status !== (deal.status || "");
+  const APPROVAL_STATUSES = ["Invoiced", "Completed"];
+  const isApprovalStatus = statusChanged && APPROVAL_STATUSES.includes(form.status);
+
+  const { data: currentUser } = useQuery<{ isAdmin?: boolean; email?: string }>({
+    queryKey: ["/api/auth/me"],
+  });
+  const SENIOR_EMAILS = new Set([
+    "woody@brucegillinghampollard.com",
+    "charlotte@brucegillinghampollard.com",
+    "rupert@brucegillinghampollard.com",
+    "jack@brucegillinghampollard.com",
+  ]);
+  const isSenior = !!currentUser?.isAdmin || (!!currentUser?.email && SENIOR_EMAILS.has(currentUser.email.toLowerCase()));
 
   const set = (field: keyof DealFormData, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -535,7 +557,7 @@ function DealFormDialog({
         const prop = properties.find(p => p.id === finalForm.propertyId);
         if (prop) finalForm.name = prop.name;
       }
-      const payload = formToPayload(finalForm);
+      const payload = formToPayload(finalForm, changeReason || undefined);
       if (isEdit) {
         await apiRequest("PUT", `/api/crm/deals/${deal.id}`, payload);
       } else {
@@ -547,7 +569,9 @@ function DealFormDialog({
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
       if (isEdit) {
         queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id] });
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id, "audit-log"] });
       }
+      setChangeReason("");
       onOpenChange(false);
 
       const invoicingChanged = form.invoicingEntityId && (!deal || form.invoicingEntityId !== (deal.invoicingEntityId || ""));
@@ -575,7 +599,13 @@ function DealFormDialog({
       }
     },
     onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      // Handle approval gate 403
+      if (err.message.includes("Senior approval required")) {
+        setApprovalGateMessage(err.message.replace(/^\d+:\s*/, "").replace(/^{?"?error"?:?\s*"?/, "").replace(/"?\s*}?$/, ""));
+        setApprovalGateOpen(true);
+      } else {
+        toast({ title: "Error", description: err.message, variant: "destructive" });
+      }
     },
   });
 
@@ -670,6 +700,30 @@ function DealFormDialog({
                   ))}
                 </SelectContent>
               </Select>
+              {isApprovalStatus && !isSenior && (
+                <div className="mt-1.5 flex items-center gap-1.5 text-amber-600 text-xs">
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>Senior approval required for <strong>{form.status}</strong></span>
+                </div>
+              )}
+              {isApprovalStatus && isSenior && (
+                <div className="mt-1.5 flex items-center gap-1.5 text-emerald-600 text-xs">
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>You will approve this as <strong>{form.status}</strong></span>
+                </div>
+              )}
+              {statusChanged && (
+                <div className="mt-2">
+                  <Label className="text-xs text-muted-foreground">Reason for status change (optional)</Label>
+                  <Input
+                    placeholder="e.g. Scope increase, Client approved terms..."
+                    value={changeReason}
+                    onChange={(e) => setChangeReason(e.target.value)}
+                    className="mt-1 text-sm"
+                    data-testid="input-change-reason"
+                  />
+                </div>
+              )}
             </div>
 
             <div>
@@ -998,6 +1052,26 @@ function DealFormDialog({
           </DialogFooter>
         </form>
       </DialogContent>
+
+      <AlertDialog open={approvalGateOpen} onOpenChange={setApprovalGateOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Shield className="w-5 h-5 text-amber-500" />
+              Approval Required
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>{approvalGateMessage || "This status change requires senior approval."}</p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Please ask a senior team member (Woody, Charlotte, Rupert, or Jack) to make this change, or contact them to approve it on your behalf.
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-approval-gate-close">Understood</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
@@ -2741,6 +2815,123 @@ function DealTimeline({ dealId }: { dealId: string }) {
   );
 }
 
+function DealAuditLog({ dealId }: { dealId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const { data: logs, isLoading } = useQuery<any[]>({
+    queryKey: ["/api/crm/deals", dealId, "audit-log"],
+    queryFn: async () => {
+      const res = await fetch(`/api/crm/deals/${dealId}/audit-log`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <Card data-testid="deal-audit-log">
+        <CardContent className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <History className="w-4 h-4" />
+            <h3 className="text-sm font-semibold">Change Log</h3>
+          </div>
+          <div className="space-y-3">
+            {[1,2,3].map(i => <Skeleton key={i} className="h-10 w-full" />)}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!logs?.length) return null;
+
+  const displayLogs = expanded ? logs : logs.slice(0, 8);
+
+  const formatFieldName = (field: string) => {
+    const map: Record<string, string> = {
+      status: "status", fee: "fee", internalAgent: "BGP contacts",
+      team: "team", dealType: "deal type", name: "name", pricing: "pricing",
+      yieldPercent: "yield", feeAgreement: "fee agreement", rentPa: "rent PA",
+      capitalContribution: "capital contribution", rentFree: "rent free",
+      leaseLength: "lease length", breakOption: "break option",
+      completionDate: "completion date", tenureText: "tenure", assetClass: "asset class",
+      comments: "comments", amlCheckCompleted: "AML check", totalAreaSqft: "total area",
+      propertyId: "property", landlordId: "landlord", tenantId: "tenant",
+      vendorId: "vendor", purchaserId: "purchaser", invoicingEntityId: "billing entity",
+      kycApproved: "KYC approved", feePercentage: "fee %",
+      completionTiming: "completion timing", invoicingNotes: "invoicing notes",
+      poNumber: "PO number",
+    };
+    return map[field] || field;
+  };
+
+  const formatValue = (field: string, val: string | null) => {
+    if (val == null || val === "null") return "empty";
+    if (field === "fee" || field === "pricing" || field === "rentPa" || field === "capitalContribution") {
+      const num = parseFloat(val);
+      if (!isNaN(num)) return new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", maximumFractionDigits: 0 }).format(num);
+    }
+    if (field === "kycApproved") return val === "true" ? "Yes" : "No";
+    return val;
+  };
+
+  return (
+    <Card data-testid="deal-audit-log">
+      <CardContent className="p-4">
+        <div className="flex items-center gap-2 mb-4">
+          <History className="w-4 h-4" />
+          <h3 className="text-sm font-semibold">Change Log</h3>
+          <Badge variant="secondary" className="text-[10px]">{logs.length}</Badge>
+        </div>
+        <div className="relative">
+          <div className="absolute left-3 top-0 bottom-0 w-px bg-border" />
+          <div className="space-y-3">
+            {displayLogs.map((log: any, idx: number) => {
+              const initials = (log.changedByName || "?")
+                .split(" ").map((w: string) => w[0]).join("").toUpperCase().slice(0, 2);
+              const ts = log.createdAt ? new Date(log.createdAt) : null;
+              const timeStr = ts ? ts.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) + " " + ts.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
+              return (
+                <div key={log.id || idx} className="flex items-start gap-3 relative" data-testid={`audit-log-${idx}`}>
+                  <div className="w-6 h-6 rounded-full bg-muted border flex items-center justify-center shrink-0 z-10" title={log.changedByName || ""}>
+                    <span className="text-[8px] font-bold text-muted-foreground">{initials}</span>
+                  </div>
+                  <div className="flex-1 min-w-0 pb-1">
+                    <p className="text-xs">
+                      <span className="font-medium">{log.changedByName || "Unknown"}</span>
+                      {" changed "}
+                      <span className="font-medium">{formatFieldName(log.field)}</span>
+                      {log.oldValue && log.oldValue !== "null" ? (
+                        <>{" from "}<span className="text-muted-foreground line-through">{formatValue(log.field, log.oldValue)}</span></>
+                      ) : null}
+                      {" to "}
+                      <span className="font-semibold">{formatValue(log.field, log.newValue)}</span>
+                    </p>
+                    {log.reason && (
+                      <p className="text-[10px] text-muted-foreground mt-0.5 italic">
+                        Reason: {log.reason}
+                      </p>
+                    )}
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{timeStr}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        {logs.length > 8 && (
+          <Button variant="ghost" size="sm" className="w-full mt-3 text-xs" onClick={() => setExpanded(!expanded)}>
+            {expanded ? "Show less" : `Show all ${logs.length} changes`}
+            {expanded ? <ChevronUp className="w-3 h-3 ml-1" /> : <ChevronDown className="w-3 h-3 ml-1" />}
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function DealDetail({ id, isComps = false }: { id: string; isComps?: boolean }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
@@ -3035,6 +3226,8 @@ function DealDetail({ id, isComps = false }: { id: string; isComps?: boolean }) 
       <DealKYCPanel deal={deal} companies={companies} />
 
       <DealTimeline dealId={id} />
+
+      <DealAuditLog dealId={id} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {linkedProperty && (
@@ -3504,6 +3697,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     enabled: mode === "wip",
   });
 
+  const [listApprovalGateOpen, setListApprovalGateOpen] = useState(false);
+  const [listApprovalGateMsg, setListApprovalGateMsg] = useState("");
   const inlineUpdateMutation = useMutation({
     mutationFn: async ({ id, field, value }: { id: string; field: string; value: unknown }) => {
       await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
@@ -3512,7 +3707,13 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
     },
     onError: (err: Error) => {
-      toast({ title: "Error saving", description: err.message, variant: "destructive" });
+      if (err.message.includes("Senior approval required")) {
+        const msg = err.message.replace(/^\d+:\s*/, "").replace(/^{?"?error"?:?\s*"?/, "").replace(/"?\s*}?$/, "");
+        setListApprovalGateMsg(msg);
+        setListApprovalGateOpen(true);
+      } else {
+        toast({ title: "Error saving", description: err.message, variant: "destructive" });
+      }
     },
   });
 
@@ -4669,6 +4870,26 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             >
               {bulkDeleteMutation.isPending ? "Deleting..." : "Delete"}
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={listApprovalGateOpen} onOpenChange={setListApprovalGateOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Shield className="w-5 h-5 text-amber-500" />
+              Approval Required
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <p>{listApprovalGateMsg || "This status change requires senior approval."}</p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Please ask a senior team member (Woody, Charlotte, Rupert, or Jack) to make this change.
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Understood</AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

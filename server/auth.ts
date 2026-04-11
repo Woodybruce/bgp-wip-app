@@ -72,7 +72,7 @@ const PgStore = connectPgSimple(session);
 
 async function createAuthToken(userId: string): Promise<string> {
   const token = crypto.randomBytes(48).toString("hex");
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8 hours
   await pool.query(
     "INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)",
     [token, userId, expiresAt]
@@ -154,8 +154,9 @@ export function setupAuth(app: Express) {
       secret: process.env.SESSION_SECRET || "bgp-dev-fallback-secret",
       resave: false,
       saveUninitialized: false,
+      rolling: true, // Extend session on activity (but cookie maxAge caps total lifetime)
       cookie: {
-        maxAge: 30 * 24 * 60 * 60 * 1000,
+        maxAge: 8 * 60 * 60 * 1000, // 8 hours
         httpOnly: true,
         secure: isProduction,
         sameSite: isProduction ? ("none" as const) : ("lax" as const),

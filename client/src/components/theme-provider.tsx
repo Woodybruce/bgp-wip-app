@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 
 type Theme = "light" | "dark";
-type ColorScheme = "bgp" | "claude" | "ocean" | "ember";
+type ColorScheme = "bgp" | "claude" | "ocean" | "ember" | "landsec";
 
 interface ThemeContextType {
   theme: Theme;
@@ -22,6 +22,7 @@ export const COLOR_SCHEMES: { id: ColorScheme; label: string; color: string; des
   { id: "claude", label: "Claude", color: "#d4a574", description: "Warm and elegant" },
   { id: "ocean", label: "Hot Pink", color: "#ec4899", description: "Bold and vibrant" },
   { id: "ember", label: "Lemon", color: "#eab308", description: "Bright and fresh" },
+  { id: "landsec", label: "Landsec", color: "#00263A", description: "Corporate navy" },
 ];
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {

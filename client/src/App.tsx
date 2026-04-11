@@ -12,6 +12,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ColorSchemeSelector } from "@/components/color-scheme-selector";
 import { TeamProvider, useTeam } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
+import { BrandProvider } from "@/lib/brand-context";
 import { EntitySidebarProvider } from "@/components/crm/entity-sidebar";
 import { ChatPanel } from "@/components/chat-panel";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -425,12 +426,14 @@ function App() {
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <TeamProvider>
-          <TooltipProvider>
-            <EntitySidebarProvider>
-              <AppContent />
-              <Toaster />
-            </EntitySidebarProvider>
-          </TooltipProvider>
+          <BrandProvider>
+            <TooltipProvider>
+              <EntitySidebarProvider>
+                <AppContent />
+                <Toaster />
+              </EntitySidebarProvider>
+            </TooltipProvider>
+          </BrandProvider>
         </TeamProvider>
       </QueryClientProvider>
     </ThemeProvider>

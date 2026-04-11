@@ -413,6 +413,20 @@ app.use("/api/branding/assets", express.static(
               created_at timestamp DEFAULT now()
             )
           `));
+
+          await db.execute(sql.raw(`
+            CREATE TABLE IF NOT EXISTS deal_audit_log (
+              id serial PRIMARY KEY,
+              deal_id varchar NOT NULL,
+              field text NOT NULL,
+              old_value text,
+              new_value text,
+              reason text,
+              changed_by varchar,
+              changed_by_name varchar,
+              created_at timestamp DEFAULT now()
+            )
+          `));
         } catch (err: any) {
           console.error("Startup migration error:", err?.message);
         }

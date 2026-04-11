@@ -1554,6 +1554,22 @@ export const imageStudioCollectionImages = pgTable("image_studio_collection_imag
 
 export type ImageStudioCollectionImage = typeof imageStudioCollectionImages.$inferSelect;
 
+export const dealAuditLog = pgTable("deal_audit_log", {
+  id: serial("id").primaryKey(),
+  dealId: varchar("deal_id").notNull(),
+  field: text("field").notNull(),
+  oldValue: text("old_value"),
+  newValue: text("new_value"),
+  reason: text("reason"),
+  changedBy: varchar("changed_by"),
+  changedByName: varchar("changed_by_name"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDealAuditLogSchema = createInsertSchema(dealAuditLog).omit({ id: true, createdAt: true });
+export type InsertDealAuditLog = z.infer<typeof insertDealAuditLogSchema>;
+export type DealAuditLog = typeof dealAuditLog.$inferSelect;
+
 export const loginSchema = z.object({
   username: z.string().min(1, "Username is required"),
   password: z.string().min(1, "Password is required"),

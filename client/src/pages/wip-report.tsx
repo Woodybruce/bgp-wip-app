@@ -16,10 +16,12 @@ import {
   Loader2,
   Link2,
   Plus,
+  Download,
 } from "lucide-react";
 import { ScrollableTable } from "@/components/scrollable-table";
 import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTeam } from "@/lib/team-context";
+import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
@@ -737,6 +739,7 @@ function AgentSummaryTab() {
 export default function WipReport() {
   const { toast } = useToast();
   const { activeTeam } = useTeam();
+  const { brand, isLandsec } = useBrand();
   const [activeTab, setActiveTab] = useState<"report" | "reconciliation" | "agent-summary">("report");
 
   const { data: user } = useQuery<{ id: string; name: string; email: string; team: string; isAdmin?: boolean }>({
@@ -1091,6 +1094,27 @@ export default function WipReport() {
 
   const handlePrint = () => window.print();
 
+  const handleExportExcel = async () => {
+    try {
+      const res = await fetch("/api/wip/export-excel", {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `BGP_WIP_Report_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast({ title: "Export failed", description: err.message, variant: "destructive" });
+    }
+  };
+
   const handleSyncXero = async () => {
     setSyncingXero(true);
     try {
@@ -1142,9 +1166,23 @@ export default function WipReport() {
 
       <div className="flex items-center justify-between flex-shrink-0 mb-4">
         <div className="flex items-center gap-4">
-          <img src={bgpLogo} alt="BGP" className="h-12 w-auto invert" data-testid="wip-bgp-logo" />
+          {isLandsec ? (
+            <div
+              className="h-12 px-4 rounded flex items-center justify-center"
+              style={{ backgroundColor: brand.primaryColor }}
+              data-testid="wip-landsec-logo"
+            >
+              <span className="text-white font-bold text-lg tracking-tight">Landsec</span>
+            </div>
+          ) : (
+            <img src={bgpLogo} alt="BGP" className="h-12 w-auto invert" data-testid="wip-bgp-logo" />
+          )}
           <div>
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="wip-report-title">
+            <h1
+              className="text-2xl font-bold tracking-tight"
+              style={isLandsec ? { color: brand.primaryColor } : undefined}
+              data-testid="wip-report-title"
+            >
               WIP Report
               {(() => {
                 const teamLabel = isWipAdmin
@@ -1199,6 +1237,10 @@ export default function WipReport() {
           >
             {syncingXero ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
             {syncingXero ? "Syncing..." : "Sync Xero"}
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleExportExcel} data-testid="wip-export-excel-button">
+            <Download className="h-4 w-4 mr-1" />
+            Download Excel
           </Button>
           <Button variant="outline" size="sm" onClick={handlePrint} data-testid="wip-print-button">
             <Printer className="h-4 w-4 mr-1" />

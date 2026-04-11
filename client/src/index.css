@@ -686,6 +686,65 @@ body {
   --sidebar-ring: 50 80% 48%;
 }
 
+/* Landsec scheme: corporate navy/blue for Landsec white-label view */
+:root.scheme-landsec {
+  --primary: 200 100% 11%;
+  --primary-foreground: 0 0% 100%;
+  --accent: 197 100% 44%;
+  --accent-foreground: 200 100% 8%;
+  --muted: 200 15% 93%;
+  --muted-foreground: 200 10% 42%;
+  --card: 0 0% 100%;
+  --card-foreground: 200 30% 10%;
+  --border: 200 12% 87%;
+  --input: 200 12% 78%;
+  --ring: 197 100% 44%;
+  --font-sans: "Tiempos Text", "Tiempos", Georgia, "Times New Roman", serif;
+  --sidebar: 200 100% 11%;
+  --sidebar-foreground: 0 0% 95%;
+  --sidebar-border: 200 60% 18%;
+  --sidebar-primary: 197 100% 44%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 200 50% 18%;
+  --sidebar-accent-foreground: 0 0% 95%;
+  --sidebar-ring: 197 80% 50%;
+}
+.dark.scheme-landsec {
+  --primary: 197 100% 55%;
+  --primary-foreground: 200 100% 6%;
+  --accent: 200 40% 15%;
+  --accent-foreground: 197 50% 85%;
+  --muted: 200 15% 13%;
+  --muted-foreground: 200 10% 58%;
+  --card: 200 20% 9%;
+  --card-foreground: 200 10% 92%;
+  --border: 200 15% 18%;
+  --input: 200 12% 22%;
+  --ring: 197 100% 50%;
+  --sidebar: 200 60% 8%;
+  --sidebar-foreground: 200 10% 92%;
+  --sidebar-border: 200 30% 16%;
+  --sidebar-primary: 197 100% 50%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 200 30% 14%;
+  --sidebar-accent-foreground: 200 15% 88%;
+  --sidebar-ring: 197 80% 48%;
+}
+
+/* Landsec scheme: remap hardcoded green/emerald to Landsec blue tones */
+.scheme-landsec .text-emerald-600, .scheme-landsec .text-emerald-500, .scheme-landsec .text-green-600, .scheme-landsec .text-green-700 { color: hsl(200 100% 11%) !important; }
+.scheme-landsec .text-emerald-400 { color: hsl(197 100% 44%) !important; }
+.scheme-landsec .bg-emerald-600, .scheme-landsec .bg-green-600 { background-color: hsl(200 100% 11%) !important; }
+.scheme-landsec .bg-emerald-500, .scheme-landsec .bg-green-500 { background-color: hsl(197 100% 44%) !important; }
+.scheme-landsec .bg-emerald-100, .scheme-landsec .bg-green-100 { background-color: hsl(197 40% 92%) !important; }
+.scheme-landsec .bg-emerald-50, .scheme-landsec .bg-green-50 { background-color: hsl(197 30% 96%) !important; }
+.scheme-landsec .border-emerald-600, .scheme-landsec .border-green-600 { border-color: hsl(200 100% 11%) !important; }
+.scheme-landsec .border-emerald-200, .scheme-landsec .border-green-200 { border-color: hsl(197 30% 85%) !important; }
+.scheme-landsec .ring-emerald-500, .scheme-landsec .ring-green-500 { --tw-ring-color: hsl(197 100% 44%) !important; }
+.scheme-landsec .hover\:bg-emerald-700:hover { background-color: hsl(200 80% 14%) !important; }
+.scheme-landsec .hover\:bg-green-50:hover { background-color: hsl(197 30% 94%) !important; }
+.scheme-landsec .focus-visible\:ring-emerald-500:focus-visible { --tw-ring-color: hsl(197 100% 44%) !important; }
+
 /* ─── Global Design Uniformity ─── */
 
 /* Smooth scroll behavior */

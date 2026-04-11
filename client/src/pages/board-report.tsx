@@ -3,8 +3,9 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Area, AreaChart,
 } from "recharts";
-import { TrendingUp, DollarSign, Target, Clock, Printer, RefreshCw } from "lucide-react";
+import { TrendingUp, DollarSign, Target, Clock, Printer, RefreshCw, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { getAuthHeaders } from "@/lib/queryClient";
 
 const COLORS = [
   "#818cf8", "#a78bfa", "#c084fc", "#e879f9", "#f472b6",
@@ -104,6 +105,27 @@ export default function BoardReport() {
     queryKey: ["/api/board-report"],
   });
 
+  const handleExportExcel = async () => {
+    try {
+      const res = await fetch("/api/board-report/export-excel", {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `BGP_Board_Report_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error("Board report export failed:", err);
+    }
+  };
+
   if (isLoading || !data) {
     return (
       <div className="min-h-screen bg-[#0f0f23] flex items-center justify-center">
@@ -146,6 +168,15 @@ export default function BoardReport() {
               data-testid="button-refresh"
             >
               <RefreshCw className="w-4 h-4 mr-2" /> Refresh
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportExcel}
+              className="border-white/20 text-white/80 hover:bg-white/10 hover:text-white"
+              data-testid="button-export-excel"
+            >
+              <Download className="w-4 h-4 mr-2" /> Download Excel
             </Button>
             <Button
               variant="outline"

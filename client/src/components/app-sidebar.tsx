@@ -64,6 +64,7 @@ import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useTeam, TEAMS } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
+import { useBrand } from "@/lib/brand-context";
 import type { User } from "@shared/schema";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
 import { History } from "lucide-react";
@@ -200,6 +201,7 @@ export function AppSidebar() {
   const { data: user } = useQuery<User>({ queryKey: ["/api/auth/me"] });
   const { activeTeam, setActiveTeam, userTeam, additionalTeams } = useTeam();
   const { colorScheme, setColorScheme } = useTheme();
+  const { brand, isLandsec } = useBrand();
 
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout");
@@ -217,9 +219,21 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarHeader className="p-3 pt-5 pb-5">
         <Link href="/">
-          <div className="cursor-pointer overflow-hidden h-16 flex items-center justify-center">
-            <img src={bgpLogoWhite} alt="Bruce Gillingham Pollard" className="w-full scale-[2] object-cover" />
-          </div>
+          {isLandsec ? (
+            <div className="cursor-pointer flex flex-col items-center justify-center h-16 gap-1">
+              <span
+                className="text-lg font-bold tracking-tight text-sidebar-foreground"
+                style={{ color: brand.accentColor }}
+              >
+                {brand.headerText}
+              </span>
+              <span className="text-[10px] text-sidebar-foreground/50">Powered by BGP</span>
+            </div>
+          ) : (
+            <div className="cursor-pointer overflow-hidden h-16 flex items-center justify-center">
+              <img src={bgpLogoWhite} alt="Bruce Gillingham Pollard" className="w-full scale-[2] object-cover" />
+            </div>
+          )}
         </Link>
       </SidebarHeader>
 
