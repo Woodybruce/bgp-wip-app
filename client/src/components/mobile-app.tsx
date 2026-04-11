@@ -775,12 +775,12 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
         </div>
         <div className="flex-1 min-w-0 text-left">
           <div className="flex items-center justify-between gap-2">
-            <span className={`text-[16px] truncate ${hasUnseen ? "font-bold text-gray-900" : "font-semibold text-gray-800"}`}>{displayTitle}</span>
-            <span className={`text-[12px] shrink-0 ${hasUnseen ? "text-black font-semibold" : "text-gray-400"}`}>
+            <span className={`text-[16px] tracking-tight truncate ${hasUnseen ? "font-bold text-gray-900" : "font-semibold text-gray-800"}`}>{displayTitle}</span>
+            <span className="text-[12px] shrink-0 font-medium" style={hasUnseen ? { color: "hsl(var(--primary))" } : { color: "hsl(var(--muted-foreground))" }}>
               {timeStr}
             </span>
           </div>
-          <div className="flex items-center justify-between mt-0.5">
+          <div className="flex items-center justify-between mt-0.5 gap-2">
             <p className={`text-[14px] truncate leading-snug ${hasUnseen ? "text-gray-900 font-medium" : "text-gray-500"}`}>
               {thread.lastMessage ? (
                 <><span className="font-semibold">{thread.lastMessage.senderName.split(" ")[0]}: </span>{thread.lastMessage.content}</>
@@ -789,16 +789,16 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
               )}
             </p>
             {hasUnseen && (
-              <span className="w-2.5 h-2.5 rounded-full shrink-0 ml-2" style={{ backgroundColor: "hsl(var(--primary))" }} />
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} />
             )}
           </div>
           {(thread.propertyName || thread.linkedName) && (
-            <div className="flex items-center gap-2 mt-1">
+            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
               {thread.propertyName && (
-                <span className="text-[11px] text-gray-400 flex items-center gap-1 bg-gray-100 rounded-md px-1.5 py-0.5"><Building2 className="w-3 h-3" />{thread.propertyName}</span>
+                <span className="text-[11px] text-gray-500 flex items-center gap-1 bg-gray-100 rounded-full px-2 py-0.5"><Building2 className="w-3 h-3" />{thread.propertyName}</span>
               )}
               {thread.linkedName && (
-                <span className="text-[11px] text-gray-400 flex items-center gap-1 bg-gray-100 rounded-md px-1.5 py-0.5">
+                <span className="text-[11px] text-gray-500 flex items-center gap-1 bg-gray-100 rounded-full px-2 py-0.5">
                   <Building2 className="w-3 h-3" />
                   {thread.linkedName}
                 </span>
@@ -2030,15 +2030,15 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
         const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         setShowScrollBottom(distFromBottom > 200);
       }}>
-        <div className={`min-h-full flex flex-col ${messages.length > 0 ? "justify-end" : "justify-center"} ${isActiveThreadAi ? "space-y-6" : "space-y-3"}`}>
+        <div className={`min-h-full flex flex-col ${messages.length > 0 ? "justify-end" : "justify-center"} ${isActiveThreadAi ? "space-y-6" : "space-y-4"}`}>
         {messages.length === 0 && isActiveThreadAi && !threadId && (
-          <div className="flex flex-col items-center justify-center h-full gap-6 py-10">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-sm" style={{ backgroundColor: "hsl(var(--primary))" }}>
+          <div className="flex flex-col items-center justify-center h-full gap-7 py-10">
+            <div className="w-[68px] h-[68px] rounded-[22px] flex items-center justify-center shadow-sm" style={{ backgroundColor: "hsl(var(--primary))" }}>
               <Sparkles className="w-8 h-8 text-white" />
             </div>
             <div className="text-center">
-              <h3 className="font-bold text-[22px] text-gray-900 tracking-tight">ChatBGP</h3>
-              <p className="text-[15px] text-gray-400 mt-1.5">Your AI property assistant</p>
+              <h3 className="font-semibold text-[26px] text-gray-900 tracking-tight leading-none">ChatBGP</h3>
+              <p className="text-[15px] text-gray-500 mt-2">Your AI property assistant</p>
             </div>
             <div className="grid grid-cols-2 gap-2.5 w-full max-w-sm">
               {AI_SUGGESTIONS.map(s => (
@@ -2049,7 +2049,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                     setMessages([userMsg]);
                     aiSendMutation.mutate({ newMessages: [userMsg], files: [], tid: threadId });
                   }}
-                  className="text-[14px] text-left px-4 py-3.5 rounded-2xl border border-gray-200 active:bg-gray-50 text-gray-600 bg-white shadow-sm leading-snug"
+                  className="text-[14px] text-left px-4 py-3.5 rounded-2xl border border-gray-100 active:bg-gray-50 text-gray-700 bg-white shadow-sm leading-snug font-medium transition-colors"
                   data-testid={`mobile-suggestion-${s.slice(0, 10)}`}
                 >
                   {s}
@@ -2117,7 +2117,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
 
         {queuedMessage && (
           <div className="flex justify-end">
-            <div className={`rounded-2xl px-4 py-3 text-[15px] leading-relaxed max-w-[80%] opacity-60 bg-black text-white rounded-br-sm`}>
+            <div className={`rounded-2xl px-4 py-3 text-[15px] leading-relaxed max-w-[80%] opacity-60 bg-black text-white rounded-br-md`}>
               <div className="whitespace-pre-wrap break-words">{queuedMessage.text}</div>
               <div className="text-[11px] mt-1 text-white/60">Queued — will send next</div>
             </div>
@@ -2316,90 +2316,92 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
             )}
           </div>
         ) : (
-          <div className="flex items-end gap-1.5">
-            <div className="p-2 text-gray-400 active:text-gray-600 cursor-pointer relative overflow-hidden" data-testid="button-mobile-photo" style={{ minWidth: 40, minHeight: 40 }}>
-              <Image className="w-6 h-6 pointer-events-none" />
-              <input
-                ref={imageInputRef}
-                type="file"
-                accept="image/*,video/*,audio/*,.xlsx,.xls,.csv,.pdf,.docx,.doc,.txt,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.mov,.pptx,.ppt"
-                multiple
-                className="absolute inset-0 opacity-0 cursor-pointer"
-                style={{ width: '100%', height: '100%', fontSize: '0', zIndex: 10 }}
-                onChange={(e) => {
-                  const files = Array.from(e.target.files || []);
-                  if (files.length > 0) setAttachedFiles(prev => [...prev, ...files].slice(0, 10));
-                  e.target.value = "";
-                }}
+          <div className="flex items-end gap-2">
+            <div className="flex-1 flex items-end rounded-[22px] border border-gray-200/80 bg-white shadow-sm overflow-hidden">
+              <div className="p-2.5 text-gray-400 active:text-gray-600 cursor-pointer relative overflow-hidden shrink-0" data-testid="button-mobile-photo" style={{ minWidth: 36, minHeight: 36 }}>
+                <Image className="w-5 h-5 pointer-events-none" />
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*,video/*,audio/*,.xlsx,.xls,.csv,.pdf,.docx,.doc,.txt,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.mov,.pptx,.ppt"
+                  multiple
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  style={{ width: '100%', height: '100%', fontSize: '0', zIndex: 10 }}
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files || []);
+                    if (files.length > 0) setAttachedFiles(prev => [...prev, ...files].slice(0, 10));
+                    e.target.value = "";
+                  }}
+                />
+              </div>
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => setShowLinkMenu(prev => !prev)}
+                  className="p-2.5 text-gray-400 active:text-gray-600 cursor-pointer"
+                  data-testid="button-mobile-attach"
+                  style={{ minWidth: 36, minHeight: 36 }}
+                >
+                  <Paperclip className="w-5 h-5" />
+                </button>
+                {showLinkMenu && (
+                  <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowLinkMenu(false)} />
+                  <div className="absolute bottom-12 left-0 bg-white rounded-xl shadow-lg border border-gray-200 py-1 w-52 z-50">
+                    <button
+                      onClick={() => { setShowLinkSearch("property"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
+                      className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100"
+                      data-testid="button-link-property"
+                    >
+                      <Building className="w-5 h-5 text-gray-600" />
+                      <span>Link Property</span>
+                    </button>
+                    <button
+                      onClick={() => { setShowLinkSearch("deal"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
+                      className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100"
+                      data-testid="button-link-deal"
+                    >
+                      <Handshake className="w-5 h-5 text-gray-600" />
+                      <span>Link Deal</span>
+                    </button>
+                    <div className="border-t border-gray-100 my-1" />
+                    <label className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100 cursor-pointer">
+                      <File className="w-5 h-5 text-gray-600" />
+                      <span>Attach File</span>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || []);
+                          if (files.length > 0) setAttachedFiles(prev => [...prev, ...files].slice(0, 10));
+                          e.target.value = "";
+                          setShowLinkMenu(false);
+                        }}
+                      />
+                    </label>
+                  </div>
+                  </>
+                )}
+              </div>
+              <Textarea
+                ref={textareaRef}
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                placeholder="Message..."
+                className="flex-1 min-h-[44px] max-h-[120px] resize-none border-0 bg-transparent text-[16px] py-3 pr-3 pl-0 text-gray-900 placeholder:text-gray-400 focus-visible:ring-0 focus-visible:ring-offset-0 shadow-none"
+                rows={1}
+                data-testid="input-mobile-chat"
               />
             </div>
-            <div className="relative">
-              <button
-                onClick={() => setShowLinkMenu(prev => !prev)}
-                className="p-2 text-gray-400 active:text-gray-600 cursor-pointer"
-                data-testid="button-mobile-attach"
-                style={{ minWidth: 40, minHeight: 40 }}
-              >
-                <Paperclip className="w-6 h-6" />
-              </button>
-              {showLinkMenu && (
-                <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowLinkMenu(false)} />
-                <div className="absolute bottom-12 left-0 bg-white rounded-xl shadow-lg border border-gray-200 py-1 w-52 z-50">
-                  <button
-                    onClick={() => { setShowLinkSearch("property"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
-                    className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100"
-                    data-testid="button-link-property"
-                  >
-                    <Building className="w-5 h-5 text-gray-600" />
-                    <span>Link Property</span>
-                  </button>
-                  <button
-                    onClick={() => { setShowLinkSearch("deal"); setShowLinkMenu(false); setLinkSearchQuery(""); }}
-                    className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100"
-                    data-testid="button-link-deal"
-                  >
-                    <Handshake className="w-5 h-5 text-gray-600" />
-                    <span>Link Deal</span>
-                  </button>
-                  <div className="border-t border-gray-100 my-1" />
-                  <label className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100 cursor-pointer">
-                    <File className="w-5 h-5 text-gray-600" />
-                    <span>Attach File</span>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={(e) => {
-                        const files = Array.from(e.target.files || []);
-                        if (files.length > 0) setAttachedFiles(prev => [...prev, ...files].slice(0, 10));
-                        e.target.value = "";
-                        setShowLinkMenu(false);
-                      }}
-                    />
-                  </label>
-                </div>
-                </>
-              )}
-            </div>
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              placeholder="Type a message..."
-              className="flex-1 min-h-[44px] max-h-[120px] resize-none rounded-2xl text-[16px] py-3 px-4 border-gray-200 bg-gray-50"
-              rows={1}
-              data-testid="input-mobile-chat"
-            />
             {!input.trim() && attachedFiles.length === 0 ? (
-              <button onClick={startRecording} disabled={isSending} className="w-11 h-11 rounded-full bg-black flex items-center justify-center disabled:bg-gray-300 shrink-0" data-testid="button-mobile-voice-record">
-                <Mic className="w-5 h-5 text-white" />
+              <button onClick={startRecording} disabled={isSending} className="w-10 h-10 rounded-full bg-gray-50 border border-gray-200 flex items-center justify-center disabled:opacity-30 shrink-0 mb-0.5" data-testid="button-mobile-voice-record">
+                <Mic className="w-5 h-5 text-gray-400" />
               </button>
             ) : (
-              <button onClick={handleSend} disabled={!!queuedMessage || uploading} className="w-11 h-11 rounded-full bg-black flex items-center justify-center disabled:bg-gray-300 shrink-0" data-testid="button-mobile-send">
-                <Send className="w-5 h-5 text-white" />
+              <button onClick={handleSend} disabled={!!queuedMessage || uploading} className="w-10 h-10 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0 mb-0.5 bg-black" data-testid="button-mobile-send">
+                <Send className="w-4 h-4 text-white" />
               </button>
             )}
           </div>
@@ -2493,31 +2495,31 @@ function MobileDocumentStudio() {
 
   return (
     <div className="flex-1 overflow-y-auto px-4">
-      <div className="flex items-center gap-2.5 mb-4">
-        <div className="w-9 h-9 rounded-lg bg-blue-500/10 flex items-center justify-center">
-          <Sparkles className="w-4.5 h-4.5 text-blue-600" />
+      <div className="flex items-center gap-3 mb-5">
+        <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center shrink-0">
+          <Sparkles className="w-5 h-5 text-blue-600" />
         </div>
         <div>
-          <h2 className="text-[16px] font-bold text-gray-900">Document Studio</h2>
-          <p className="text-[12px] text-gray-500">Tap a template to generate on desktop</p>
+          <h2 className="text-[18px] font-semibold text-gray-900 tracking-tight">Document Studio</h2>
+          <p className="text-[13px] text-gray-500">Tap a template to generate on desktop</p>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         {docTypes.map((doc, i) => (
           <div
             key={i}
-            className="rounded-xl border border-gray-200 overflow-hidden bg-white active:bg-gray-50"
+            className="rounded-2xl border border-gray-100 shadow-sm overflow-hidden bg-white active:bg-gray-50 transition-colors"
             onClick={() => {
               navigate("/templates");
               toast({ title: "Opening Document Studio", description: `Open "${doc.label}" on desktop for full editing` });
             }}
             data-testid={`mobile-doc-${i}`}
           >
-            <div className="flex items-center justify-center py-3 bg-[#f8f7f4] border-b border-gray-100">
+            <div className="flex items-center justify-center py-3.5 bg-[#f8f7f4] border-b border-gray-100">
               <MobileDocPreview design={doc.preview} scale={0.1} />
             </div>
-            <div className="px-3 py-2.5">
-              <div className="text-[13px] font-semibold text-gray-900 leading-tight">{doc.label}</div>
+            <div className="px-3.5 py-3">
+              <div className="text-[14px] font-semibold text-gray-900 leading-tight tracking-tight">{doc.label}</div>
             </div>
           </div>
         ))}
@@ -3338,7 +3340,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   <button
                     key={st}
                     onClick={() => { setMoreSubTab(st); if (st !== "tracker") { setTrackerStatusFilter(null); setTrackerSearch(""); setShowStatusDropdown(false); } }}
-                    className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${moreSubTab === st ? "bg-white text-black shadow-sm" : "text-gray-500"}`}
+                    className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${moreSubTab === st ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
                     data-testid={`more-tab-${st}`}
                   >
                     {st === "people" ? "People" : st === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : st === "news" ? "News" : "Docs"}
@@ -3350,17 +3352,17 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             {moreSubTab === "people" && (
               <div className="flex-1 flex flex-col min-h-0">
                 <div className="px-4 pb-2 shrink-0">
-                  <div className="flex bg-gray-100 rounded-lg p-0.5 mb-3">
+                  <div className="flex bg-gray-100 rounded-xl p-1 mb-3">
                     <button
                       onClick={() => setPeopleToggle("contacts")}
-                      className={`flex-1 py-1.5 text-[12px] font-medium rounded-md transition-all ${peopleToggle === "contacts" ? "bg-white text-black shadow-sm" : "text-gray-500"}`}
+                      className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${peopleToggle === "contacts" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
                       data-testid="people-toggle-contacts"
                     >
                       Contacts {contacts ? `(${contacts.length})` : ""}
                     </button>
                     <button
                       onClick={() => setPeopleToggle("companies")}
-                      className={`flex-1 py-1.5 text-[12px] font-medium rounded-md transition-all ${peopleToggle === "companies" ? "bg-white text-black shadow-sm" : "text-gray-500"}`}
+                      className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${peopleToggle === "companies" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
                       data-testid="people-toggle-companies"
                     >
                       Companies {companies ? `(${companies.length})` : ""}
@@ -3438,7 +3440,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                       ) : filteredContacts.map(c => (
                         <div
                           key={c.id}
-                          className="w-full flex items-center gap-3 p-3 bg-gray-50 rounded-xl text-left"
+                          className="w-full flex items-center gap-3 p-3 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
                           data-testid={`contact-card-${c.id}`}
                         >
                           <button
@@ -3451,30 +3453,30 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                                 toast({ title: "Failed to update favourite", description: err.message, variant: "destructive" });
                               }
                             }}
-                            className="shrink-0"
+                            className="shrink-0 w-8 h-8 flex items-center justify-center -ml-1"
                             data-testid={`star-contact-${c.id}`}
                           >
                             <Star className={`w-5 h-5 ${c.isFavourite ? "text-amber-500 fill-amber-500" : "text-gray-300"}`} />
                           </button>
                           <button onClick={() => navigate(`/contacts/${c.id}`)} className="flex items-center gap-3 flex-1 min-w-0">
-                            <div className="w-10 h-10 rounded-full bg-black text-white flex items-center justify-center shrink-0">
-                              <span className="text-sm font-bold">{c.name?.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
+                            <div className="w-11 h-11 rounded-full bg-gray-900 text-white flex items-center justify-center shrink-0">
+                              <span className="text-[13px] font-semibold tracking-tight">{c.name?.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
                             </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-[15px] font-medium text-gray-900 truncate">{c.name}</div>
+                            <div className="flex-1 min-w-0 text-left">
+                              <div className="text-[15px] font-semibold text-gray-900 truncate tracking-tight">{c.name}</div>
                               <div className="text-[13px] text-gray-500 truncate">
                                 {[c.role, c.companyName].filter(Boolean).join(" · ") || "No details"}
                               </div>
                             </div>
                           </button>
                           {c.phone && (
-                            <a href={`tel:${c.phone}`} onClick={(e) => e.stopPropagation()} className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center shrink-0">
-                              <Phone className="w-4 h-4 text-emerald-600" />
+                            <a href={`tel:${c.phone}`} onClick={(e) => e.stopPropagation()} className="w-11 h-11 rounded-full bg-emerald-50 flex items-center justify-center shrink-0 active:bg-emerald-100">
+                              <Phone className="w-[18px] h-[18px] text-emerald-600" />
                             </a>
                           )}
                           {c.email && (
-                            <a href={`mailto:${c.email}`} onClick={(e) => e.stopPropagation()} className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
-                              <Mail className="w-4 h-4 text-blue-600" />
+                            <a href={`mailto:${c.email}`} onClick={(e) => e.stopPropagation()} className="w-11 h-11 rounded-full bg-blue-50 flex items-center justify-center shrink-0 active:bg-blue-100">
+                              <Mail className="w-[18px] h-[18px] text-blue-600" />
                             </a>
                           )}
                         </div>
@@ -3494,14 +3496,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         <button
                           key={c.id}
                           onClick={() => navigate(`/companies/${c.id}`)}
-                          className="w-full flex items-center gap-3 p-3 bg-gray-50 rounded-xl active:bg-gray-100 text-left"
+                          className="w-full flex items-center gap-3 p-3 bg-white border border-gray-100 rounded-2xl shadow-sm active:bg-gray-50 text-left transition-colors"
                           data-testid={`company-card-${c.id}`}
                         >
-                          <div className="w-10 h-10 rounded-full bg-gray-800 text-white flex items-center justify-center shrink-0">
+                          <div className="w-11 h-11 rounded-full bg-gray-900 text-white flex items-center justify-center shrink-0">
                             <Building2 className="w-5 h-5" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="text-[15px] font-medium text-gray-900 truncate">{c.name}</div>
+                            <div className="text-[15px] font-semibold text-gray-900 truncate tracking-tight">{c.name}</div>
                             <div className="text-[13px] text-gray-500 truncate">
                               {[c.companyType, c.groupName].filter(Boolean).join(" · ") || c.domain || ""}
                             </div>
@@ -3532,32 +3534,32 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                       return (
                         <div className="mb-3">
                           <div className="grid grid-cols-2 gap-3">
-                            <div className="bg-emerald-50 rounded-xl p-3.5 border border-emerald-200" data-testid="summary-invoiced">
-                              <div className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wide mb-1">
+                            <div className="bg-emerald-50/70 rounded-2xl p-4" data-testid="summary-invoiced">
+                              <div className="text-[12px] font-medium text-emerald-700/80 mb-1.5">
                                 {isWoody ? "Total Invoiced" : "My Invoiced"}
                               </div>
-                              <div className="text-[20px] font-bold text-emerald-700">
+                              <div className="text-[22px] font-bold text-emerald-700 tracking-tight tabular-nums">
                                 £{(isWoody ? totalInvoiced : myInvoiced).toLocaleString()}
                               </div>
                             </div>
-                            <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-200" data-testid="summary-wip">
-                              <div className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide mb-1">
+                            <div className="bg-amber-50/70 rounded-2xl p-4" data-testid="summary-wip">
+                              <div className="text-[12px] font-medium text-amber-700/80 mb-1.5">
                                 {isWoody ? "Total WIP" : "My WIP"}
                               </div>
-                              <div className="text-[20px] font-bold text-amber-700">
+                              <div className="text-[22px] font-bold text-amber-700 tracking-tight tabular-nums">
                                 £{(isWoody ? totalWip : myWip).toLocaleString()}
                               </div>
                             </div>
                           </div>
                           {isWoody && (
-                            <div className="grid grid-cols-2 gap-3 mt-2">
-                              <div className="bg-emerald-50/50 rounded-xl p-2.5 border border-emerald-100">
-                                <div className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wide">My Invoiced</div>
-                                <div className="text-[16px] font-bold text-emerald-600">£{myInvoiced.toLocaleString()}</div>
+                            <div className="grid grid-cols-2 gap-3 mt-2.5">
+                              <div className="bg-emerald-50/40 rounded-2xl p-3">
+                                <div className="text-[11px] font-medium text-emerald-600/70">My Invoiced</div>
+                                <div className="text-[17px] font-semibold text-emerald-700 tracking-tight tabular-nums">£{myInvoiced.toLocaleString()}</div>
                               </div>
-                              <div className="bg-amber-50/50 rounded-xl p-2.5 border border-amber-100">
-                                <div className="text-[10px] font-semibold text-amber-500 uppercase tracking-wide">My WIP</div>
-                                <div className="text-[16px] font-bold text-amber-600">£{myWip.toLocaleString()}</div>
+                              <div className="bg-amber-50/40 rounded-2xl p-3">
+                                <div className="text-[11px] font-medium text-amber-600/70">My WIP</div>
+                                <div className="text-[17px] font-semibold text-amber-700 tracking-tight tabular-nums">£{myWip.toLocaleString()}</div>
                               </div>
                             </div>
                           )}
@@ -3572,32 +3574,32 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                       return (
                         <div className="mb-3">
                           <div className="grid grid-cols-2 gap-3">
-                            <div className="bg-emerald-50 rounded-xl p-3.5 border border-emerald-200" data-testid="summary-invoiced">
-                              <div className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wide mb-1">
+                            <div className="bg-emerald-50/70 rounded-2xl p-4" data-testid="summary-invoiced">
+                              <div className="text-[12px] font-medium text-emerald-700/80 mb-1.5">
                                 {isWoody ? "Total Invoiced" : "My Invoiced"}
                               </div>
-                              <div className="text-[20px] font-bold text-emerald-700">
+                              <div className="text-[22px] font-bold text-emerald-700 tracking-tight tabular-nums">
                                 £{(isWoody ? totalInvoiced : myInvoiced).toLocaleString()}
                               </div>
                             </div>
-                            <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-200" data-testid="summary-wip">
-                              <div className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide mb-1">
+                            <div className="bg-amber-50/70 rounded-2xl p-4" data-testid="summary-wip">
+                              <div className="text-[12px] font-medium text-amber-700/80 mb-1.5">
                                 {isWoody ? "Total WIP" : "My WIP"}
                               </div>
-                              <div className="text-[20px] font-bold text-amber-700">
+                              <div className="text-[22px] font-bold text-amber-700 tracking-tight tabular-nums">
                                 £{(isWoody ? totalWip : myWip).toLocaleString()}
                               </div>
                             </div>
                           </div>
                           {isWoody && (
-                            <div className="grid grid-cols-2 gap-3 mt-2">
-                              <div className="bg-emerald-50/50 rounded-xl p-2.5 border border-emerald-100">
-                                <div className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wide">My Invoiced</div>
-                                <div className="text-[16px] font-bold text-emerald-600">£{myInvoiced.toLocaleString()}</div>
+                            <div className="grid grid-cols-2 gap-3 mt-2.5">
+                              <div className="bg-emerald-50/40 rounded-2xl p-3">
+                                <div className="text-[11px] font-medium text-emerald-600/70">My Invoiced</div>
+                                <div className="text-[17px] font-semibold text-emerald-700 tracking-tight tabular-nums">£{myInvoiced.toLocaleString()}</div>
                               </div>
-                              <div className="bg-amber-50/50 rounded-xl p-2.5 border border-amber-100">
-                                <div className="text-[10px] font-semibold text-amber-500 uppercase tracking-wide">My WIP</div>
-                                <div className="text-[16px] font-bold text-amber-600">£{myWip.toLocaleString()}</div>
+                              <div className="bg-amber-50/40 rounded-2xl p-3">
+                                <div className="text-[11px] font-medium text-amber-600/70">My WIP</div>
+                                <div className="text-[17px] font-semibold text-amber-700 tracking-tight tabular-nums">£{myWip.toLocaleString()}</div>
                               </div>
                             </div>
                           )}
@@ -3607,17 +3609,17 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   })()}
 
                   {isInvestmentTeam && (
-                    <div className="flex bg-gray-100 rounded-lg p-0.5 mb-3">
+                    <div className="flex bg-gray-100 rounded-xl p-1 mb-3">
                       <button
                         onClick={() => { setTrackerBoardType("Purchases"); setTrackerStatusFilter(null); }}
-                        className={`flex-1 py-1.5 text-[12px] font-medium rounded-md transition-all ${trackerBoardType === "Purchases" ? "bg-white text-black shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${trackerBoardType === "Purchases" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
                         data-testid="board-toggle-purchases"
                       >
                         Purchases ({investmentItems?.filter(i => (i.boardType || "Purchases") === "Purchases").length || 0})
                       </button>
                       <button
                         onClick={() => { setTrackerBoardType("Sales"); setTrackerStatusFilter(null); }}
-                        className={`flex-1 py-1.5 text-[12px] font-medium rounded-md transition-all ${trackerBoardType === "Sales" ? "bg-white text-black shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${trackerBoardType === "Sales" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
                         data-testid="board-toggle-sales"
                       >
                         Sales ({investmentItems?.filter(i => i.boardType === "Sales").length || 0})
@@ -3628,8 +3630,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-none">
                     <button
                       onClick={() => { setTrackerStatusFilter(null); }}
-                      className={`shrink-0 px-3 py-2 rounded-lg text-[12px] font-semibold border-2 transition-all ${
-                        !trackerStatusFilter ? "bg-black text-white border-black" : "bg-gray-100 text-gray-600 border-gray-200"
+                      className={`shrink-0 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all ${
+                        !trackerStatusFilter ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600"
                       }`}
                       data-testid="status-filter-all"
                     >
@@ -3643,14 +3645,13 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         <button
                           key={status}
                           onClick={() => setTrackerStatusFilter(isActive ? null : status)}
-                          className={`shrink-0 px-3 py-2 rounded-lg text-[12px] font-semibold border-2 transition-all ${
-                            isActive ? `${color.bg} text-white ${color.border}` : `bg-white ${color.border} border-opacity-50`
+                          className={`shrink-0 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all ${
+                            isActive ? `${color.bg} text-white` : "bg-gray-100 text-gray-700"
                           }`}
-                          style={!isActive ? { color: "inherit" } : undefined}
                           data-testid={`status-filter-${status.toLowerCase().replace(/\s+/g, "-")}`}
                         >
                           <span className="flex items-center gap-1.5">
-                            <span className={`w-2.5 h-2.5 rounded-sm ${isActive ? "bg-white/80" : color.bg}`} />
+                            <span className={`w-2 h-2 rounded-full ${isActive ? "bg-white/80" : color.bg}`} />
                             {status} ({count})
                           </span>
                         </button>
@@ -3733,24 +3734,25 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           <button
                             key={item.id}
                             onClick={() => setSelectedDealId(item.id)}
-                            className={`w-full p-3.5 rounded-xl active:bg-gray-100 text-left border-l-4 bg-gray-50 ${statusColor.border}`}
+                            className={`relative w-full p-4 pl-[18px] rounded-2xl active:bg-gray-50 text-left bg-white border border-gray-100 shadow-sm overflow-hidden`}
                             data-testid={`inv-card-${item.id}`}
                           >
+                            <span className={`absolute left-0 top-3 bottom-3 w-[3px] rounded-full ${statusColor.bg}`} />
                             <div className="flex items-start justify-between gap-2 mb-1.5">
-                              <div className="text-[15px] font-semibold text-gray-900 truncate flex-1">{item.assetName}</div>
+                              <div className="text-[16px] font-semibold text-gray-900 truncate flex-1 tracking-tight">{item.assetName}</div>
                               {item.status && (
-                                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${statusColor.bg} ${statusColor.text}`}>
+                                <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${statusColor.bg} ${statusColor.text}`}>
                                   {item.status}
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-4 text-[13px] text-gray-500">
-                              {item.guidePrice && <span className="font-medium text-gray-700">£{item.guidePrice.toLocaleString()}</span>}
+                            <div className="flex items-center gap-3 text-[13px] text-gray-500 tabular-nums">
+                              {item.guidePrice && <span className="font-semibold text-gray-800">£{item.guidePrice.toLocaleString()}</span>}
                               {item.niy && <span>{item.niy}% NIY</span>}
                               {item.tenure && <span>{item.tenure}</span>}
                               {item.boardType && <span className={item.boardType === "Sales" ? "text-blue-600" : "text-emerald-600"}>{item.boardType}</span>}
                             </div>
-                            {item.client && <div className="text-[13px] text-gray-400 mt-1 truncate">{item.client}</div>}
+                            {item.client && <div className="text-[12px] text-gray-400 mt-1.5 truncate">{item.client}</div>}
                           </button>
                         );
                       })}
@@ -3768,30 +3770,31 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           <button
                             key={item.id}
                             onClick={() => setSelectedUnitId(item.id)}
-                            className={`w-full p-3.5 rounded-xl active:bg-gray-100 text-left border-l-4 bg-gray-50 ${statusColor.border}`}
+                            className={`relative w-full p-4 pl-[18px] rounded-2xl active:bg-gray-50 text-left bg-white border border-gray-100 shadow-sm overflow-hidden`}
                             data-testid={`let-card-${item.id}`}
                           >
+                            <span className={`absolute left-0 top-3 bottom-3 w-[3px] rounded-full ${statusColor.bg}`} />
                             <div className="flex items-start justify-between gap-2 mb-1.5">
                               <div className="flex-1 min-w-0">
-                                <div className="text-[15px] font-semibold text-gray-900 truncate">{item.unitName}</div>
+                                <div className="text-[16px] font-semibold text-gray-900 truncate tracking-tight">{item.unitName}</div>
                                 {item.propertyName && (
-                                  <div className="text-[12px] text-gray-400 truncate">{item.propertyName}</div>
+                                  <div className="text-[12px] text-gray-400 truncate mt-0.5">{item.propertyName}</div>
                                 )}
                               </div>
                               {item.marketingStatus && (
-                                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${statusColor.bg} ${statusColor.text}`}>
+                                <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${statusColor.bg} ${statusColor.text}`}>
                                   {item.marketingStatus}
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-4 text-[13px] text-gray-500">
+                            <div className="flex items-center gap-3 text-[13px] text-gray-500 tabular-nums">
                               {item.sqft && <span>{item.sqft.toLocaleString()} sq ft</span>}
-                              {item.askingRent && <span className="font-medium text-gray-700">£{item.askingRent.toLocaleString()} pa</span>}
+                              {item.askingRent && <span className="font-semibold text-gray-800">£{item.askingRent.toLocaleString()} pa</span>}
                               {item.floor && <span>{item.floor}</span>}
                               {item.useClass && <span className="text-blue-600">{item.useClass}</span>}
                             </div>
                             {(item.viewingsCount > 0 || item.condition) && (
-                              <div className="flex items-center gap-3 text-[12px] text-gray-400 mt-1">
+                              <div className="flex items-center gap-3 text-[12px] text-gray-400 mt-1.5">
                                 {item.viewingsCount > 0 && <span>{item.viewingsCount} viewing{item.viewingsCount > 1 ? "s" : ""}</span>}
                                 {item.condition && <span>{item.condition}</span>}
                               </div>
@@ -3829,27 +3832,30 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         href={article.url || "#"}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="block bg-gray-50 rounded-xl overflow-hidden active:bg-gray-100"
+                        className="block bg-white rounded-2xl overflow-hidden border border-gray-100 shadow-sm active:bg-gray-50 transition-colors"
                         data-testid={`news-card-${article.id}`}
                       >
                         {article.imageUrl && (
-                          <div className="h-40 w-full overflow-hidden">
+                          <div className="aspect-[16/9] w-full overflow-hidden bg-gray-50">
                             <img src={article.imageUrl} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                           </div>
                         )}
-                        <div className="p-3.5">
-                          <div className="flex items-center gap-2 mb-1.5">
-                            {article.sourceName && <span className="text-[11px] font-semibold text-gray-500 uppercase">{article.sourceName}</span>}
+                        <div className="p-4">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            {article.sourceName && <span className="text-[11px] font-medium text-gray-500">{article.sourceName}</span>}
                             {article.publishedAt && (
-                              <span className="text-[11px] text-gray-400">
-                                {new Date(article.publishedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                              </span>
+                              <>
+                                <span className="text-gray-300">·</span>
+                                <span className="text-[11px] text-gray-400">
+                                  {new Date(article.publishedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                                </span>
+                              </>
                             )}
                             {article.category && (
-                              <span className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-gray-200 text-gray-600">{article.category}</span>
+                              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">{article.category}</span>
                             )}
                           </div>
-                          <div className="text-[15px] font-semibold text-gray-900 leading-snug mb-1">{article.title}</div>
+                          <div className="text-[16px] font-semibold text-gray-900 leading-snug mb-1.5 tracking-tight">{article.title}</div>
                           {(article.aiSummary || article.summary) && (
                             <div className="text-[13px] text-gray-500 leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
                           )}
