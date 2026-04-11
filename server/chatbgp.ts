@@ -16,7 +16,7 @@ import { escapeLike } from "./utils/escape-like";
 
 const CHATBGP_MODEL = "claude-opus-4-6";        // Main chat: Opus for intelligence
 const CHATBGP_OPUS_MODEL = "claude-opus-4-6";   // Same
-const CHATBGP_HELPER_MODEL = "claude-sonnet-4-6"; // Background tasks: Sonnet for speed
+const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001"; // Background tasks: Haiku for cost savings
 
 function sanitiseForPdf(text: string): string {
   const emojiMap: Record<string, string> = {

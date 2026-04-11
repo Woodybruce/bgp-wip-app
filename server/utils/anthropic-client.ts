@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 export const CHATBGP_MODEL = "claude-sonnet-4-6";
-export const CHATBGP_HELPER_MODEL = "claude-sonnet-4-6";
+export const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001";
 
 export function getAnthropicClient(useDirect = false) {
   if (useDirect && process.env.ANTHROPIC_API_KEY) {

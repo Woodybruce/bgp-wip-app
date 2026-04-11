@@ -9,6 +9,155 @@ import sharp from "sharp";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import OpenAI from "openai";
+
+// --- Multi-provider image generation helpers ---
+
+async function generateWithFlux(prompt: string, size: string): Promise<Buffer | null> {
+  const key = process.env.FAL_KEY;
+  if (!key) return null;
+  try {
+    const res = await fetch("https://fal.run/fal-ai/flux-pro/v1.1", {
+      method: "POST",
+      headers: { "Authorization": `Key ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        prompt,
+        image_size: size === "landscape" ? "landscape_16_9" : size === "portrait" ? "portrait_16_9" : "square",
+        num_images: 1,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.images?.[0]?.url) return null;
+    const imgRes = await fetch(data.images[0].url);
+    return Buffer.from(await imgRes.arrayBuffer());
+  } catch { return null; }
+}
+
+async function generateWithDallE3(prompt: string, size: string): Promise<Buffer | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const openai = new OpenAI({ apiKey });
+    const response = await openai.images.generate({
+      model: "dall-e-3",
+      prompt,
+      n: 1,
+      size: size === "landscape" ? "1792x1024" : size === "portrait" ? "1024x1792" : "1024x1024",
+      quality: "hd",
+      response_format: "b64_json",
+    });
+    if (!response.data[0]?.b64_json) return null;
+    return Buffer.from(response.data[0].b64_json, "base64");
+  } catch (e: any) {
+    console.warn("[image-studio] DALL-E 3 failed:", e.message);
+    return null;
+  }
+}
+
+async function generateWithGemini(prompt: string, _size: string): Promise<Buffer | null> {
+  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_AI_API_KEY;
+  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+  if (!apiKey) return null;
+  try {
+    const { GoogleGenAI, Modality } = await import("@google/genai");
+    const aiOpts: any = { apiKey };
+    if (baseUrl) aiOpts.httpOptions = { apiVersion: "", baseUrl };
+    const ai = new GoogleGenAI(aiOpts);
+
+    const MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
+    for (const model of MODELS) {
+      try {
+        console.log(`[image-studio] Gemini generate: trying ${model}`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 90000);
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            config: { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any },
+          });
+          clearTimeout(timeout);
+
+          if (response && typeof response === "object" && "candidates" in response) {
+            const candidate = (response as any).candidates?.[0];
+            const imagePart = candidate?.content?.parts?.find((part: any) => part.inlineData);
+            if (imagePart?.inlineData?.data) {
+              console.log(`[image-studio] Gemini generate: success with ${model}`);
+              return Buffer.from(imagePart.inlineData.data, "base64");
+            }
+          }
+        } catch (innerErr: any) {
+          clearTimeout(timeout);
+          throw innerErr;
+        }
+      } catch (err: any) {
+        const msg = err?.message || "";
+        if (msg.includes("UNSUPPORTED_MODEL") || msg.includes("not supported") || msg.includes("not found") || msg.includes("abort")) continue;
+        console.warn(`[image-studio] Gemini model ${model} error:`, msg);
+      }
+    }
+    return null;
+  } catch (e: any) {
+    console.warn("[image-studio] Gemini generation failed:", e.message);
+    return null;
+  }
+}
+
+async function editWithGemini(prompt: string, imageBase64: string, inputMime: string): Promise<Buffer | null> {
+  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_AI_API_KEY;
+  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+  if (!apiKey) return null;
+  try {
+    const { GoogleGenAI, Modality } = await import("@google/genai");
+    const aiOpts: any = { apiKey };
+    if (baseUrl) aiOpts.httpOptions = { apiVersion: "", baseUrl };
+    const ai = new GoogleGenAI(aiOpts);
+
+    const MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
+    for (const model of MODELS) {
+      try {
+        console.log(`[image-studio] Gemini edit: trying ${model}`);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 90000);
+        try {
+          const response = await ai.models.generateContent({
+            model,
+            contents: [{
+              role: "user",
+              parts: [
+                { inlineData: { mimeType: inputMime, data: imageBase64 } },
+                { text: prompt },
+              ],
+            }],
+            config: { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any },
+          });
+          clearTimeout(timeout);
+
+          if (response && typeof response === "object" && "candidates" in response) {
+            const candidate = (response as any).candidates?.[0];
+            const imagePart = candidate?.content?.parts?.find((part: any) => part.inlineData);
+            if (imagePart?.inlineData?.data) {
+              console.log(`[image-studio] Gemini edit: success with ${model}`);
+              return Buffer.from(imagePart.inlineData.data, "base64");
+            }
+          }
+        } catch (innerErr: any) {
+          clearTimeout(timeout);
+          throw innerErr;
+        }
+      } catch (err: any) {
+        const msg = err?.message || "";
+        if (msg.includes("UNSUPPORTED_MODEL") || msg.includes("not supported") || msg.includes("not found") || msg.includes("abort")) continue;
+        console.warn(`[image-studio] Gemini edit model ${model} error:`, msg);
+      }
+    }
+    return null;
+  } catch (e: any) {
+    console.warn("[image-studio] Gemini edit failed:", e.message);
+    return null;
+  }
+}
 
 const IMAGE_DIR = path.join(process.cwd(), "uploads", "image-studio");
 if (!fs.existsSync(IMAGE_DIR)) fs.mkdirSync(IMAGE_DIR, { recursive: true });
@@ -318,80 +467,59 @@ export function registerImageStudioRoutes(app: Express) {
 
   app.post("/api/image-studio/ai-generate", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const { prompt, category, area, tags } = req.body;
+      const { prompt, category, area, tags, size } = req.body;
       const trimmedPrompt = (prompt || "").trim();
       if (!trimmedPrompt) return res.status(400).json({ error: "Prompt is required" });
       if (trimmedPrompt.length > 1000) return res.status(400).json({ error: "Prompt too long (max 1000 characters)" });
 
       const userId = req.session?.userId || (req as any).tokenUserId;
 
-      const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-      const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
-      if (!apiKey || !baseUrl) return res.status(500).json({ error: "AI image generation not configured" });
-
-      const { GoogleGenAI, Modality } = await import("@google/genai");
-      const ai = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: "", baseUrl } });
-
       const fullPrompt = `Professional, high quality property photography style: ${trimmedPrompt}. Suitable for a premium London commercial property agency. Clean, modern, 4K resolution.`;
+      const sizeHint = size || "landscape";
 
-      const MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
-      let imageData: string | null = null;
-      let imageMimeType = "image/png";
+      // Try providers in order: fal.ai Flux > DALL-E 3 > Gemini (if configured)
+      let imageBuffer: Buffer | null = null;
+      let provider = "unknown";
 
-      for (const model of MODELS) {
-        try {
-          console.log(`[image-studio] AI generate: trying ${model}`);
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 90000);
-          try {
-            const response = await ai.models.generateContent({
-              model,
-              contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-              config: { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any },
-            });
-            clearTimeout(timeout);
+      // Try Flux first (best quality for property renders)
+      console.log("[image-studio] AI generate: trying Flux...");
+      imageBuffer = await generateWithFlux(fullPrompt, sizeHint);
+      if (imageBuffer) provider = "flux-pro";
 
-            if (response && typeof response === "object" && "candidates" in response) {
-              const candidate = (response as any).candidates?.[0];
-              const imagePart = candidate?.content?.parts?.find((part: any) => part.inlineData);
-              if (imagePart?.inlineData?.data) {
-                imageData = imagePart.inlineData.data;
-                imageMimeType = imagePart.inlineData.mimeType || "image/png";
-                console.log(`[image-studio] AI generate: success with ${model}`);
-                break;
-              }
-            }
-            console.log(`[image-studio] AI generate: ${model} returned no image`);
-          } catch (innerErr: any) {
-            clearTimeout(timeout);
-            throw innerErr;
-          }
-        } catch (err: any) {
-          const msg = err?.message || "";
-          if (msg.includes("UNSUPPORTED_MODEL") || msg.includes("not supported") || msg.includes("not found") || msg.includes("abort")) continue;
-          throw err;
-        }
+      // Fall back to DALL-E 3
+      if (!imageBuffer) {
+        console.log("[image-studio] AI generate: trying DALL-E 3...");
+        imageBuffer = await generateWithDallE3(fullPrompt, sizeHint);
+        if (imageBuffer) provider = "dall-e-3";
       }
 
-      if (!imageData) return res.status(500).json({ error: "AI image generation failed — no model returned an image" });
+      // Fall back to Gemini (if configured)
+      if (!imageBuffer) {
+        console.log("[image-studio] AI generate: trying Gemini...");
+        imageBuffer = await generateWithGemini(fullPrompt, sizeHint);
+        if (imageBuffer) provider = "gemini";
+      }
 
-      const buffer = Buffer.from(imageData, "base64");
-      const ext = imageMimeType.includes("png") ? ".png" : ".jpg";
+      if (!imageBuffer) return res.status(500).json({ error: "No image generation provider available" });
+
+      console.log(`[image-studio] AI generate: success with ${provider}`);
+
+      const ext = ".png";
       const filename = `ai-${crypto.randomUUID()}${ext}`;
       const filePath = path.join(IMAGE_DIR, filename);
-      fs.writeFileSync(filePath, buffer);
+      fs.writeFileSync(filePath, imageBuffer);
 
-      const { thumbnail, width, height } = await generateThumbnail(buffer);
+      const { thumbnail, width, height } = await generateThumbnail(imageBuffer);
 
       const [inserted] = await db.insert(imageStudioImages).values({
         fileName: `AI: ${trimmedPrompt.slice(0, 60)}`,
         category: category || "Generated",
-        tags: [...(tags || []), "AI Generated"].filter((v: any, i: any, a: any) => a.indexOf(v) === i),
+        tags: [...(tags || []), "AI Generated", provider].filter((v: any, i: any, a: any) => a.indexOf(v) === i),
         description: trimmedPrompt,
         source: "ai-generated",
         area: area || null,
-        mimeType: imageMimeType,
-        fileSize: buffer.length,
+        mimeType: "image/png",
+        fileSize: imageBuffer.length,
         width,
         height,
         thumbnailData: thumbnail,
@@ -399,7 +527,7 @@ export function registerImageStudioRoutes(app: Express) {
         uploadedBy: userId,
       }).returning();
 
-      res.json(inserted);
+      res.json({ ...inserted, provider });
     } catch (e: any) {
       console.error("[image-studio] AI generate error:", e.message);
       res.status(500).json({ error: e.message });
@@ -420,83 +548,51 @@ export function registerImageStudioRoutes(app: Express) {
       if (image.uploadedBy && image.uploadedBy !== userId) return res.status(403).json({ error: "Not authorised to edit this image" });
       if (!image.localPath || !fs.existsSync(image.localPath)) return res.status(400).json({ error: "Image file not found" });
 
-      const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-      const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
-      if (!apiKey || !baseUrl) return res.status(500).json({ error: "AI not configured" });
-
-      const { GoogleGenAI, Modality } = await import("@google/genai");
-      const ai = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: "", baseUrl } });
-
-      const imageBuffer = fs.readFileSync(image.localPath);
-      const base64 = imageBuffer.toString("base64");
+      const sourceBuffer = fs.readFileSync(image.localPath);
+      const base64 = sourceBuffer.toString("base64");
       const inputMime = image.mimeType || "image/jpeg";
 
       const fullPrompt = `Edit this image: ${trimmedEdit}. Keep the overall composition and quality. Professional property photography standard.`;
 
-      const MODELS = ["gemini-2.5-flash-preview-image", "gemini-2.5-flash-image", "gemini-2.0-flash-exp"];
-      let resultData: string | null = null;
-      let resultMime = "image/png";
+      // Try providers in order: DALL-E 3 > Gemini (if configured)
+      // Note: Flux doesn't support image editing, only generation
+      // DALL-E 3 edit uses variations approach — generate a new image with the edit prompt and reference
+      let resultBuffer: Buffer | null = null;
+      let provider = "unknown";
 
-      for (const model of MODELS) {
-        try {
-          console.log(`[image-studio] AI edit: trying ${model}`);
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), 90000);
-          try {
-            const response = await ai.models.generateContent({
-              model,
-              contents: [{
-                role: "user",
-                parts: [
-                  { inlineData: { mimeType: inputMime, data: base64 } },
-                  { text: fullPrompt },
-                ],
-              }],
-              config: { responseModalities: [Modality.TEXT, Modality.IMAGE], abortSignal: controller.signal as any },
-            });
-            clearTimeout(timeout);
+      // Try DALL-E 3 (generate a new version based on edit description)
+      console.log("[image-studio] AI edit: trying DALL-E 3...");
+      const dalleEditPrompt = `${fullPrompt} Based on an existing property photograph.`;
+      resultBuffer = await generateWithDallE3(dalleEditPrompt, "landscape");
+      if (resultBuffer) provider = "dall-e-3";
 
-            if (response && typeof response === "object" && "candidates" in response) {
-              const candidate = (response as any).candidates?.[0];
-              const imagePart = candidate?.content?.parts?.find((part: any) => part.inlineData);
-              if (imagePart?.inlineData?.data) {
-                resultData = imagePart.inlineData.data;
-                resultMime = imagePart.inlineData.mimeType || "image/png";
-                console.log(`[image-studio] AI edit: success with ${model}`);
-                break;
-              }
-            }
-            console.log(`[image-studio] AI edit: ${model} returned no image`);
-          } catch (innerErr: any) {
-            clearTimeout(timeout);
-            throw innerErr;
-          }
-        } catch (err: any) {
-          const msg = err?.message || "";
-          if (msg.includes("UNSUPPORTED_MODEL") || msg.includes("not supported") || msg.includes("not found") || msg.includes("abort")) continue;
-          throw err;
-        }
+      // Fall back to Gemini (supports actual image editing with inline data)
+      if (!resultBuffer) {
+        console.log("[image-studio] AI edit: trying Gemini...");
+        resultBuffer = await editWithGemini(fullPrompt, base64, inputMime);
+        if (resultBuffer) provider = "gemini";
       }
 
-      if (!resultData) return res.status(500).json({ error: "AI editing failed — no model returned a result" });
+      if (!resultBuffer) return res.status(500).json({ error: "AI editing failed — no provider returned a result" });
 
-      const buffer = Buffer.from(resultData, "base64");
-      const ext = resultMime.includes("png") ? ".png" : ".jpg";
+      console.log(`[image-studio] AI edit: success with ${provider}`);
+
+      const ext = ".png";
       const filename = `edited-${crypto.randomUUID()}${ext}`;
       const filePath = path.join(IMAGE_DIR, filename);
-      fs.writeFileSync(filePath, buffer);
+      fs.writeFileSync(filePath, resultBuffer);
 
-      const { thumbnail, width, height } = await generateThumbnail(buffer);
+      const { thumbnail, width, height } = await generateThumbnail(resultBuffer);
 
       const [inserted] = await db.insert(imageStudioImages).values({
         fileName: `Edit: ${trimmedEdit.slice(0, 50)} (from ${image.fileName})`,
         category: image.category || "Generated",
-        tags: [...(image.tags || []), "AI Edited"].filter((v: any, i: any, a: any) => a.indexOf(v) === i),
+        tags: [...(image.tags || []), "AI Edited", provider].filter((v: any, i: any, a: any) => a.indexOf(v) === i),
         description: `AI edit of "${image.fileName}": ${trimmedEdit}`,
         source: "ai-edited",
         area: image.area,
-        mimeType: resultMime,
-        fileSize: buffer.length,
+        mimeType: "image/png",
+        fileSize: resultBuffer.length,
         width,
         height,
         thumbnailData: thumbnail,
@@ -505,7 +601,7 @@ export function registerImageStudioRoutes(app: Express) {
         propertyId: image.propertyId,
       }).returning();
 
-      res.json(inserted);
+      res.json({ ...inserted, provider });
     } catch (e: any) {
       console.error("[image-studio] AI edit error:", e.message);
       res.status(500).json({ error: e.message });
