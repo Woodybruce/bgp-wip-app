@@ -3534,32 +3534,32 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                       return (
                         <div className="mb-3">
                           <div className="grid grid-cols-2 gap-3">
-                            <div className="bg-emerald-50 rounded-xl p-3.5 border border-emerald-200" data-testid="summary-invoiced">
-                              <div className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wide mb-1">
+                            <div className="bg-emerald-50/70 rounded-2xl p-4" data-testid="summary-invoiced">
+                              <div className="text-[12px] font-medium text-emerald-700/80 mb-1.5">
                                 {isWoody ? "Total Invoiced" : "My Invoiced"}
                               </div>
-                              <div className="text-[20px] font-bold text-emerald-700">
+                              <div className="text-[22px] font-bold text-emerald-700 tracking-tight tabular-nums">
                                 £{(isWoody ? totalInvoiced : myInvoiced).toLocaleString()}
                               </div>
                             </div>
-                            <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-200" data-testid="summary-wip">
-                              <div className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide mb-1">
+                            <div className="bg-amber-50/70 rounded-2xl p-4" data-testid="summary-wip">
+                              <div className="text-[12px] font-medium text-amber-700/80 mb-1.5">
                                 {isWoody ? "Total WIP" : "My WIP"}
                               </div>
-                              <div className="text-[20px] font-bold text-amber-700">
+                              <div className="text-[22px] font-bold text-amber-700 tracking-tight tabular-nums">
                                 £{(isWoody ? totalWip : myWip).toLocaleString()}
                               </div>
                             </div>
                           </div>
                           {isWoody && (
-                            <div className="grid grid-cols-2 gap-3 mt-2">
-                              <div className="bg-emerald-50/50 rounded-xl p-2.5 border border-emerald-100">
-                                <div className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wide">My Invoiced</div>
-                                <div className="text-[16px] font-bold text-emerald-600">£{myInvoiced.toLocaleString()}</div>
+                            <div className="grid grid-cols-2 gap-3 mt-2.5">
+                              <div className="bg-emerald-50/40 rounded-2xl p-3">
+                                <div className="text-[11px] font-medium text-emerald-600/70">My Invoiced</div>
+                                <div className="text-[17px] font-semibold text-emerald-700 tracking-tight tabular-nums">£{myInvoiced.toLocaleString()}</div>
                               </div>
-                              <div className="bg-amber-50/50 rounded-xl p-2.5 border border-amber-100">
-                                <div className="text-[10px] font-semibold text-amber-500 uppercase tracking-wide">My WIP</div>
-                                <div className="text-[16px] font-bold text-amber-600">£{myWip.toLocaleString()}</div>
+                              <div className="bg-amber-50/40 rounded-2xl p-3">
+                                <div className="text-[11px] font-medium text-amber-600/70">My WIP</div>
+                                <div className="text-[17px] font-semibold text-amber-700 tracking-tight tabular-nums">£{myWip.toLocaleString()}</div>
                               </div>
                             </div>
                           )}
@@ -3574,32 +3574,32 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                       return (
                         <div className="mb-3">
                           <div className="grid grid-cols-2 gap-3">
-                            <div className="bg-emerald-50 rounded-xl p-3.5 border border-emerald-200" data-testid="summary-invoiced">
-                              <div className="text-[11px] font-semibold text-emerald-600 uppercase tracking-wide mb-1">
+                            <div className="bg-emerald-50/70 rounded-2xl p-4" data-testid="summary-invoiced">
+                              <div className="text-[12px] font-medium text-emerald-700/80 mb-1.5">
                                 {isWoody ? "Total Invoiced" : "My Invoiced"}
                               </div>
-                              <div className="text-[20px] font-bold text-emerald-700">
+                              <div className="text-[22px] font-bold text-emerald-700 tracking-tight tabular-nums">
                                 £{(isWoody ? totalInvoiced : myInvoiced).toLocaleString()}
                               </div>
                             </div>
-                            <div className="bg-amber-50 rounded-xl p-3.5 border border-amber-200" data-testid="summary-wip">
-                              <div className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide mb-1">
+                            <div className="bg-amber-50/70 rounded-2xl p-4" data-testid="summary-wip">
+                              <div className="text-[12px] font-medium text-amber-700/80 mb-1.5">
                                 {isWoody ? "Total WIP" : "My WIP"}
                               </div>
-                              <div className="text-[20px] font-bold text-amber-700">
+                              <div className="text-[22px] font-bold text-amber-700 tracking-tight tabular-nums">
                                 £{(isWoody ? totalWip : myWip).toLocaleString()}
                               </div>
                             </div>
                           </div>
                           {isWoody && (
-                            <div className="grid grid-cols-2 gap-3 mt-2">
-                              <div className="bg-emerald-50/50 rounded-xl p-2.5 border border-emerald-100">
-                                <div className="text-[10px] font-semibold text-emerald-500 uppercase tracking-wide">My Invoiced</div>
-                                <div className="text-[16px] font-bold text-emerald-600">£{myInvoiced.toLocaleString()}</div>
+                            <div className="grid grid-cols-2 gap-3 mt-2.5">
+                              <div className="bg-emerald-50/40 rounded-2xl p-3">
+                                <div className="text-[11px] font-medium text-emerald-600/70">My Invoiced</div>
+                                <div className="text-[17px] font-semibold text-emerald-700 tracking-tight tabular-nums">£{myInvoiced.toLocaleString()}</div>
                               </div>
-                              <div className="bg-amber-50/50 rounded-xl p-2.5 border border-amber-100">
-                                <div className="text-[10px] font-semibold text-amber-500 uppercase tracking-wide">My WIP</div>
-                                <div className="text-[16px] font-bold text-amber-600">£{myWip.toLocaleString()}</div>
+                              <div className="bg-amber-50/40 rounded-2xl p-3">
+                                <div className="text-[11px] font-medium text-amber-600/70">My WIP</div>
+                                <div className="text-[17px] font-semibold text-amber-700 tracking-tight tabular-nums">£{myWip.toLocaleString()}</div>
                               </div>
                             </div>
                           )}
@@ -3609,17 +3609,17 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   })()}
 
                   {isInvestmentTeam && (
-                    <div className="flex bg-gray-100 rounded-lg p-0.5 mb-3">
+                    <div className="flex bg-gray-100 rounded-xl p-1 mb-3">
                       <button
                         onClick={() => { setTrackerBoardType("Purchases"); setTrackerStatusFilter(null); }}
-                        className={`flex-1 py-1.5 text-[12px] font-medium rounded-md transition-all ${trackerBoardType === "Purchases" ? "bg-white text-black shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${trackerBoardType === "Purchases" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
                         data-testid="board-toggle-purchases"
                       >
                         Purchases ({investmentItems?.filter(i => (i.boardType || "Purchases") === "Purchases").length || 0})
                       </button>
                       <button
                         onClick={() => { setTrackerBoardType("Sales"); setTrackerStatusFilter(null); }}
-                        className={`flex-1 py-1.5 text-[12px] font-medium rounded-md transition-all ${trackerBoardType === "Sales" ? "bg-white text-black shadow-sm" : "text-gray-500"}`}
+                        className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${trackerBoardType === "Sales" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
                         data-testid="board-toggle-sales"
                       >
                         Sales ({investmentItems?.filter(i => i.boardType === "Sales").length || 0})
@@ -3630,8 +3630,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-none">
                     <button
                       onClick={() => { setTrackerStatusFilter(null); }}
-                      className={`shrink-0 px-3 py-2 rounded-lg text-[12px] font-semibold border-2 transition-all ${
-                        !trackerStatusFilter ? "bg-black text-white border-black" : "bg-gray-100 text-gray-600 border-gray-200"
+                      className={`shrink-0 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all ${
+                        !trackerStatusFilter ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600"
                       }`}
                       data-testid="status-filter-all"
                     >
@@ -3645,14 +3645,13 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         <button
                           key={status}
                           onClick={() => setTrackerStatusFilter(isActive ? null : status)}
-                          className={`shrink-0 px-3 py-2 rounded-lg text-[12px] font-semibold border-2 transition-all ${
-                            isActive ? `${color.bg} text-white ${color.border}` : `bg-white ${color.border} border-opacity-50`
+                          className={`shrink-0 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all ${
+                            isActive ? `${color.bg} text-white` : "bg-gray-100 text-gray-700"
                           }`}
-                          style={!isActive ? { color: "inherit" } : undefined}
                           data-testid={`status-filter-${status.toLowerCase().replace(/\s+/g, "-")}`}
                         >
                           <span className="flex items-center gap-1.5">
-                            <span className={`w-2.5 h-2.5 rounded-sm ${isActive ? "bg-white/80" : color.bg}`} />
+                            <span className={`w-2 h-2 rounded-full ${isActive ? "bg-white/80" : color.bg}`} />
                             {status} ({count})
                           </span>
                         </button>
@@ -3735,24 +3734,25 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           <button
                             key={item.id}
                             onClick={() => setSelectedDealId(item.id)}
-                            className={`w-full p-3.5 rounded-xl active:bg-gray-100 text-left border-l-4 bg-gray-50 ${statusColor.border}`}
+                            className={`relative w-full p-4 pl-[18px] rounded-2xl active:bg-gray-50 text-left bg-white border border-gray-100 shadow-sm overflow-hidden`}
                             data-testid={`inv-card-${item.id}`}
                           >
+                            <span className={`absolute left-0 top-3 bottom-3 w-[3px] rounded-full ${statusColor.bg}`} />
                             <div className="flex items-start justify-between gap-2 mb-1.5">
-                              <div className="text-[15px] font-semibold text-gray-900 truncate flex-1">{item.assetName}</div>
+                              <div className="text-[16px] font-semibold text-gray-900 truncate flex-1 tracking-tight">{item.assetName}</div>
                               {item.status && (
-                                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${statusColor.bg} ${statusColor.text}`}>
+                                <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${statusColor.bg} ${statusColor.text}`}>
                                   {item.status}
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-4 text-[13px] text-gray-500">
-                              {item.guidePrice && <span className="font-medium text-gray-700">£{item.guidePrice.toLocaleString()}</span>}
+                            <div className="flex items-center gap-3 text-[13px] text-gray-500 tabular-nums">
+                              {item.guidePrice && <span className="font-semibold text-gray-800">£{item.guidePrice.toLocaleString()}</span>}
                               {item.niy && <span>{item.niy}% NIY</span>}
                               {item.tenure && <span>{item.tenure}</span>}
                               {item.boardType && <span className={item.boardType === "Sales" ? "text-blue-600" : "text-emerald-600"}>{item.boardType}</span>}
                             </div>
-                            {item.client && <div className="text-[13px] text-gray-400 mt-1 truncate">{item.client}</div>}
+                            {item.client && <div className="text-[12px] text-gray-400 mt-1.5 truncate">{item.client}</div>}
                           </button>
                         );
                       })}
@@ -3770,30 +3770,31 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           <button
                             key={item.id}
                             onClick={() => setSelectedUnitId(item.id)}
-                            className={`w-full p-3.5 rounded-xl active:bg-gray-100 text-left border-l-4 bg-gray-50 ${statusColor.border}`}
+                            className={`relative w-full p-4 pl-[18px] rounded-2xl active:bg-gray-50 text-left bg-white border border-gray-100 shadow-sm overflow-hidden`}
                             data-testid={`let-card-${item.id}`}
                           >
+                            <span className={`absolute left-0 top-3 bottom-3 w-[3px] rounded-full ${statusColor.bg}`} />
                             <div className="flex items-start justify-between gap-2 mb-1.5">
                               <div className="flex-1 min-w-0">
-                                <div className="text-[15px] font-semibold text-gray-900 truncate">{item.unitName}</div>
+                                <div className="text-[16px] font-semibold text-gray-900 truncate tracking-tight">{item.unitName}</div>
                                 {item.propertyName && (
-                                  <div className="text-[12px] text-gray-400 truncate">{item.propertyName}</div>
+                                  <div className="text-[12px] text-gray-400 truncate mt-0.5">{item.propertyName}</div>
                                 )}
                               </div>
                               {item.marketingStatus && (
-                                <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${statusColor.bg} ${statusColor.text}`}>
+                                <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full shrink-0 ${statusColor.bg} ${statusColor.text}`}>
                                   {item.marketingStatus}
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-4 text-[13px] text-gray-500">
+                            <div className="flex items-center gap-3 text-[13px] text-gray-500 tabular-nums">
                               {item.sqft && <span>{item.sqft.toLocaleString()} sq ft</span>}
-                              {item.askingRent && <span className="font-medium text-gray-700">£{item.askingRent.toLocaleString()} pa</span>}
+                              {item.askingRent && <span className="font-semibold text-gray-800">£{item.askingRent.toLocaleString()} pa</span>}
                               {item.floor && <span>{item.floor}</span>}
                               {item.useClass && <span className="text-blue-600">{item.useClass}</span>}
                             </div>
                             {(item.viewingsCount > 0 || item.condition) && (
-                              <div className="flex items-center gap-3 text-[12px] text-gray-400 mt-1">
+                              <div className="flex items-center gap-3 text-[12px] text-gray-400 mt-1.5">
                                 {item.viewingsCount > 0 && <span>{item.viewingsCount} viewing{item.viewingsCount > 1 ? "s" : ""}</span>}
                                 {item.condition && <span>{item.condition}</span>}
                               </div>
