@@ -115,9 +115,8 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
     );
   }
 
-  const logoUrl = d && !primaryFailed
-    ? `https://www.google.com/s2/favicons?domain=${d}&sz=${Math.min(size * 2, 128)}`
-    : `https://www.google.com/s2/favicons?domain=${guessedDomain}&sz=${Math.min(size * 2, 128)}`;
+  const targetDomain = d && !primaryFailed ? d : guessedDomain;
+  const logoUrl = `https://logo.clearbit.com/${targetDomain}?size=${Math.min(size * 3, 512)}`;
 
   return (
     <img

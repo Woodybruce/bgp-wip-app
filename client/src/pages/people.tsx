@@ -55,9 +55,10 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
     );
   }
 
-  const logoUrl = d && !primaryFailed
-    ? `https://www.google.com/s2/favicons?domain=${d}&sz=${Math.min(px * 2, 128)}`
-    : `https://www.google.com/s2/favicons?domain=${guessed}&sz=${Math.min(px * 2, 128)}`;
+  // Use Clearbit Logo API for crisp HD logos (up to 512px)
+  // Falls back to Google Favicons if Clearbit doesn't have the logo
+  const targetDomain = d && !primaryFailed ? d : guessed;
+  const logoUrl = `https://logo.clearbit.com/${targetDomain}?size=${Math.min(px * 3, 512)}`;
 
   return (
     <img
