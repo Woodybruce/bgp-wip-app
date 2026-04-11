@@ -104,7 +104,7 @@ export function setupAdvancedModelsRoutes(app: Express) {
 
       const template = await storage.getExcelTemplate(req.params.id);
       if (!template) return res.status(404).json({ message: "Template not found" });
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) return res.status(500).json({ message: "AI not configured" });
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) return res.status(500).json({ message: "AI not configured" });
 
       const wb = XLSX.readFile(template.filePath);
       const richContext = extractRichWorkbookContext(wb, 60);
@@ -335,7 +335,7 @@ Be specific with numbers. Use professional property investment language. Keep it
       const outputMapping = JSON.parse(template.outputMapping || "{}");
       const RUNS_DIR = path.join(process.cwd(), "ChatBGP", "runs");
 
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(500).json({ message: "AI not configured" });
       }
 

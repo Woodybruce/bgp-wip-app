@@ -8190,7 +8190,7 @@ export function setupChatBGPRoutes(app: Express) {
     const files = req.files as Express.Multer.File[];
     let messages: Array<{ role: "user" | "assistant"; content: any }> = [];
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ message: "AI API key not configured" });
       }
 
@@ -8561,7 +8561,7 @@ export function setupChatBGPRoutes(app: Express) {
   }
 
   app.post("/api/chatbgp/chat", requireAuth, async (req: Request, res: Response) => {
-    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
       return res.status(503).json({ message: "AI API key not configured" });
     }
 
@@ -8939,7 +8939,7 @@ export function setupChatBGPRoutes(app: Express) {
   });
 
   app.post("/api/chatbgp/excel-chat", requireAuth, async (req: Request, res: Response) => {
-    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+    if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
       return res.status(503).json({ message: "AI API key not configured" });
     }
 
@@ -9069,7 +9069,7 @@ ${crmCtx}`;
         return res.status(400).json({ message: "Microsoft 365 not connected. Please connect via SharePoint page first." });
       }
 
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ message: "AI API key not configured" });
       }
 

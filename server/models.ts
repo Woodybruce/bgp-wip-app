@@ -1572,7 +1572,7 @@ export function setupModelsRoutes(app: Express) {
       const template = await storage.getExcelTemplate(req.params.id as string);
       if (!template) return res.status(404).json({ message: "Template not found" });
 
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(500).json({ message: "AI integration not configured" });
       }
 
@@ -1783,7 +1783,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         return res.status(404).json({ message: "Run file not found" });
       }
 
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(500).json({ message: "AI integration not configured" });
       }
 
@@ -1823,7 +1823,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
         return res.status(400).json({ message: "No documents uploaded" });
       }
 
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(500).json({ message: "Anthropic AI integration not configured" });
       }
 
@@ -1868,7 +1868,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
       if (!templateId) {
         return res.status(400).json({ message: "Template ID is required" });
       }
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(500).json({ message: "Anthropic AI integration not configured" });
       }
 
@@ -2359,7 +2359,7 @@ CRITICAL RULES:
         return res.status(400).json({ message: "Question is required" });
       }
 
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(500).json({ message: "AI integration not configured" });
       }
 
