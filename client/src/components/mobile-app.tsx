@@ -3440,7 +3440,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                       ) : filteredContacts.map(c => (
                         <div
                           key={c.id}
-                          className="w-full flex items-center gap-3 p-3 bg-gray-50 rounded-xl text-left"
+                          className="w-full flex items-center gap-3 p-3 bg-white border border-gray-100 rounded-2xl shadow-sm text-left"
                           data-testid={`contact-card-${c.id}`}
                         >
                           <button
@@ -3453,30 +3453,30 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                                 toast({ title: "Failed to update favourite", description: err.message, variant: "destructive" });
                               }
                             }}
-                            className="shrink-0"
+                            className="shrink-0 w-8 h-8 flex items-center justify-center -ml-1"
                             data-testid={`star-contact-${c.id}`}
                           >
                             <Star className={`w-5 h-5 ${c.isFavourite ? "text-amber-500 fill-amber-500" : "text-gray-300"}`} />
                           </button>
                           <button onClick={() => navigate(`/contacts/${c.id}`)} className="flex items-center gap-3 flex-1 min-w-0">
-                            <div className="w-10 h-10 rounded-full bg-black text-white flex items-center justify-center shrink-0">
-                              <span className="text-sm font-bold">{c.name?.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
+                            <div className="w-11 h-11 rounded-full bg-gray-900 text-white flex items-center justify-center shrink-0">
+                              <span className="text-[13px] font-semibold tracking-tight">{c.name?.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
                             </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="text-[15px] font-medium text-gray-900 truncate">{c.name}</div>
+                            <div className="flex-1 min-w-0 text-left">
+                              <div className="text-[15px] font-semibold text-gray-900 truncate tracking-tight">{c.name}</div>
                               <div className="text-[13px] text-gray-500 truncate">
                                 {[c.role, c.companyName].filter(Boolean).join(" · ") || "No details"}
                               </div>
                             </div>
                           </button>
                           {c.phone && (
-                            <a href={`tel:${c.phone}`} onClick={(e) => e.stopPropagation()} className="w-8 h-8 rounded-full bg-emerald-50 flex items-center justify-center shrink-0">
-                              <Phone className="w-4 h-4 text-emerald-600" />
+                            <a href={`tel:${c.phone}`} onClick={(e) => e.stopPropagation()} className="w-11 h-11 rounded-full bg-emerald-50 flex items-center justify-center shrink-0 active:bg-emerald-100">
+                              <Phone className="w-[18px] h-[18px] text-emerald-600" />
                             </a>
                           )}
                           {c.email && (
-                            <a href={`mailto:${c.email}`} onClick={(e) => e.stopPropagation()} className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
-                              <Mail className="w-4 h-4 text-blue-600" />
+                            <a href={`mailto:${c.email}`} onClick={(e) => e.stopPropagation()} className="w-11 h-11 rounded-full bg-blue-50 flex items-center justify-center shrink-0 active:bg-blue-100">
+                              <Mail className="w-[18px] h-[18px] text-blue-600" />
                             </a>
                           )}
                         </div>
@@ -3496,14 +3496,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         <button
                           key={c.id}
                           onClick={() => navigate(`/companies/${c.id}`)}
-                          className="w-full flex items-center gap-3 p-3 bg-gray-50 rounded-xl active:bg-gray-100 text-left"
+                          className="w-full flex items-center gap-3 p-3 bg-white border border-gray-100 rounded-2xl shadow-sm active:bg-gray-50 text-left transition-colors"
                           data-testid={`company-card-${c.id}`}
                         >
-                          <div className="w-10 h-10 rounded-full bg-gray-800 text-white flex items-center justify-center shrink-0">
+                          <div className="w-11 h-11 rounded-full bg-gray-900 text-white flex items-center justify-center shrink-0">
                             <Building2 className="w-5 h-5" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="text-[15px] font-medium text-gray-900 truncate">{c.name}</div>
+                            <div className="text-[15px] font-semibold text-gray-900 truncate tracking-tight">{c.name}</div>
                             <div className="text-[13px] text-gray-500 truncate">
                               {[c.companyType, c.groupName].filter(Boolean).join(" · ") || c.domain || ""}
                             </div>
