@@ -2495,31 +2495,31 @@ function MobileDocumentStudio() {
 
   return (
     <div className="flex-1 overflow-y-auto px-4">
-      <div className="flex items-center gap-2.5 mb-4">
-        <div className="w-9 h-9 rounded-lg bg-blue-500/10 flex items-center justify-center">
-          <Sparkles className="w-4.5 h-4.5 text-blue-600" />
+      <div className="flex items-center gap-3 mb-5">
+        <div className="w-10 h-10 rounded-2xl bg-blue-500/10 flex items-center justify-center shrink-0">
+          <Sparkles className="w-5 h-5 text-blue-600" />
         </div>
         <div>
-          <h2 className="text-[16px] font-bold text-gray-900">Document Studio</h2>
-          <p className="text-[12px] text-gray-500">Tap a template to generate on desktop</p>
+          <h2 className="text-[18px] font-semibold text-gray-900 tracking-tight">Document Studio</h2>
+          <p className="text-[13px] text-gray-500">Tap a template to generate on desktop</p>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3">
         {docTypes.map((doc, i) => (
           <div
             key={i}
-            className="rounded-xl border border-gray-200 overflow-hidden bg-white active:bg-gray-50"
+            className="rounded-2xl border border-gray-100 shadow-sm overflow-hidden bg-white active:bg-gray-50 transition-colors"
             onClick={() => {
               navigate("/templates");
               toast({ title: "Opening Document Studio", description: `Open "${doc.label}" on desktop for full editing` });
             }}
             data-testid={`mobile-doc-${i}`}
           >
-            <div className="flex items-center justify-center py-3 bg-[#f8f7f4] border-b border-gray-100">
+            <div className="flex items-center justify-center py-3.5 bg-[#f8f7f4] border-b border-gray-100">
               <MobileDocPreview design={doc.preview} scale={0.1} />
             </div>
-            <div className="px-3 py-2.5">
-              <div className="text-[13px] font-semibold text-gray-900 leading-tight">{doc.label}</div>
+            <div className="px-3.5 py-3">
+              <div className="text-[14px] font-semibold text-gray-900 leading-tight tracking-tight">{doc.label}</div>
             </div>
           </div>
         ))}
@@ -3340,7 +3340,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                   <button
                     key={st}
                     onClick={() => { setMoreSubTab(st); if (st !== "tracker") { setTrackerStatusFilter(null); setTrackerSearch(""); setShowStatusDropdown(false); } }}
-                    className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${moreSubTab === st ? "bg-white text-black shadow-sm" : "text-gray-500"}`}
+                    className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${moreSubTab === st ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
                     data-testid={`more-tab-${st}`}
                   >
                     {st === "people" ? "People" : st === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : st === "news" ? "News" : "Docs"}
@@ -3352,17 +3352,17 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             {moreSubTab === "people" && (
               <div className="flex-1 flex flex-col min-h-0">
                 <div className="px-4 pb-2 shrink-0">
-                  <div className="flex bg-gray-100 rounded-lg p-0.5 mb-3">
+                  <div className="flex bg-gray-100 rounded-xl p-1 mb-3">
                     <button
                       onClick={() => setPeopleToggle("contacts")}
-                      className={`flex-1 py-1.5 text-[12px] font-medium rounded-md transition-all ${peopleToggle === "contacts" ? "bg-white text-black shadow-sm" : "text-gray-500"}`}
+                      className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${peopleToggle === "contacts" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
                       data-testid="people-toggle-contacts"
                     >
                       Contacts {contacts ? `(${contacts.length})` : ""}
                     </button>
                     <button
                       onClick={() => setPeopleToggle("companies")}
-                      className={`flex-1 py-1.5 text-[12px] font-medium rounded-md transition-all ${peopleToggle === "companies" ? "bg-white text-black shadow-sm" : "text-gray-500"}`}
+                      className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${peopleToggle === "companies" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
                       data-testid="people-toggle-companies"
                     >
                       Companies {companies ? `(${companies.length})` : ""}
