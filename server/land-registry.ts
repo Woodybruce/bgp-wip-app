@@ -857,7 +857,7 @@ Respond with ONLY a JSON object (no markdown, no backticks):
       const { crmPropertyId } = req.body;
       const [updated] = await db.update(landRegistrySearches)
         .set({ crmPropertyId: crmPropertyId ?? null })
-        .where(eq(landRegistrySearches.id, searchId))
+        .where(sql`${landRegistrySearches.id} = ${searchId} AND user_id = ${userId}`)
         .returning();
       if (!updated) return res.status(404).json({ error: "Search not found" });
       res.json(updated);
@@ -935,17 +935,18 @@ Respond with ONLY a JSON object (no markdown, no backticks):
       const rows = await db.execute(sql`
         SELECT
           lrs.*,
-          CASE WHEN lrs.crm_property_id IS NOT NULL THEN (
+          (
             SELECT json_build_object(
               'id', p.id,
-              'name', p.name,
+              'name', COALESCE(p.name, ''),
               'address', COALESCE(p.address, ''),
               'postcode', COALESCE(p.postcode, '')
             )
             FROM crm_properties p
-            WHERE p.id = lrs.crm_property_id
+            WHERE lrs.crm_property_id IS NOT NULL
+              AND p.id = lrs.crm_property_id
             LIMIT 1
-          ) ELSE NULL END AS linked_property
+          ) AS linked_property
         FROM land_registry_searches lrs
         WHERE lrs.user_id = ${userId}
         ORDER BY lrs.created_at DESC

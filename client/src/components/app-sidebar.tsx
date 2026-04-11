@@ -345,6 +345,7 @@ export function AppSidebar() {
  * bottom nav (Home, ChatBGP, Properties, Deals are in the bottom nav).
  */
 const mobileOverlayItems = [
+  { title: "Properties", url: "/properties", icon: Building2 },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Requirements", url: "/requirements", icon: FileText },
   { title: "People Hub", url: "/contacts", icon: Users },
@@ -364,6 +365,8 @@ const mobileOverlayItems = [
   { title: "Land Registry", url: "/land-registry", icon: Landmark },
   { title: "Business Rates", url: "/business-rates", icon: Receipt },
   { title: "Turnover Data", url: "/turnover", icon: BarChart3 },
+  { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles },
+  { title: "Office Add-ins", url: "/addins", icon: FileSpreadsheet },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
@@ -408,8 +411,9 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
             const Icon = item.icon;
             const active = isActive(item.url);
             return (
-              <Link key={item.url} href={item.url} onClick={onClose}>
+              <Link key={item.url} href={item.url}>
                 <div
+                  onClick={onClose}
                   className={`flex items-center gap-3 px-4 py-3 mx-2 rounded-lg text-sm font-medium transition-colors min-h-[44px] ${
                     active
                       ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400"

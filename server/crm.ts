@@ -3658,12 +3658,16 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         }
       }
 
-      const dealByProject = new Map<string, typeof deals[0]>();
+      // Build lookup maps — use separate maps to avoid name/property overwrites
+      const dealByName = new Map<string, typeof deals[0]>();
+      const dealByProperty = new Map<string, typeof deals[0]>();
       for (const d of deals) {
-        if (d.name) dealByProject.set(d.name.toLowerCase().trim(), d);
+        if (d.name) dealByName.set(d.name.toLowerCase().trim(), d);
         const propName = d.propertyId ? propMap.get(d.propertyId) : null;
-        if (propName) dealByProject.set(propName.toLowerCase().trim(), d);
+        if (propName) dealByProperty.set(propName.toLowerCase().trim(), d);
       }
+      // Combined lookup: check name first, then property
+      const findDeal = (key: string) => dealByName.get(key) || dealByProperty.get(key);
 
       function deriveStage(status: string | null): string {
         if (!status) return "pipeline";
@@ -3698,7 +3702,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       let entries: any[] = wipRows.map(r => {
         const projectKey = (r.project || "").toLowerCase().trim();
-        const matchedDeal = dealByProject.get(projectKey);
+        const refKey = (r.ref || "").toLowerCase().trim();
+        const matchedDeal = findDeal(projectKey) || findDeal(refKey);
         if (matchedDeal) usedDealIds.add(matchedDeal.id);
         const tenantName = matchedDeal?.tenantId ? compMap.get(matchedDeal.tenantId) || null : null;
 

@@ -637,21 +637,21 @@ export default function ImageStudio() {
       {/* Section tabs */}
       <div className="flex items-center gap-2 px-4 py-2 border-b bg-background flex-shrink-0">
         <button
-          onClick={() => { setActiveSection("library"); setCollectionsTab("grid"); }}
+          onClick={() => { setActiveSection("library"); setCollectionsTab("grid"); setSelectMode(false); setSelectedIds(new Set()); }}
           className={`text-sm px-2 py-0.5 rounded ${activeSection === "library" && collectionsTab === "grid" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-library"
         >
           Library ({images.filter(i => i.category !== "Brands").length})
         </button>
         <button
-          onClick={() => { setActiveSection("brands"); setCollectionsTab("grid"); }}
+          onClick={() => { setActiveSection("brands"); setCollectionsTab("grid"); setSelectMode(false); setSelectedIds(new Set()); }}
           className={`text-sm px-2 py-0.5 rounded ${activeSection === "brands" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-brands"
         >
           Brand Library ({images.filter(i => i.category === "Brands").length})
         </button>
         <button
-          onClick={() => { setActiveSection("library"); setCollectionsTab("collections"); }}
+          onClick={() => { setActiveSection("library"); setCollectionsTab("collections"); setSelectMode(false); setSelectedIds(new Set()); }}
           className={`text-sm px-2 py-0.5 rounded ${collectionsTab === "collections" && activeSection === "library" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
           data-testid="tab-collections"
         >
