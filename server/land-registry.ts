@@ -933,8 +933,8 @@ Respond with ONLY a JSON object (no markdown, no backticks):
             SELECT json_build_object(
               'id', p.id,
               'name', p.name,
-              'address', p.address,
-              'postcode', p.postcode
+              'address', COALESCE(p.address, ''),
+              'postcode', COALESCE(p.postcode, '')
             )
             FROM crm_properties p
             WHERE p.id = lrs.crm_property_id
