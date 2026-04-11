@@ -775,12 +775,12 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
         </div>
         <div className="flex-1 min-w-0 text-left">
           <div className="flex items-center justify-between gap-2">
-            <span className={`text-[16px] truncate ${hasUnseen ? "font-bold text-gray-900" : "font-semibold text-gray-800"}`}>{displayTitle}</span>
-            <span className={`text-[12px] shrink-0 ${hasUnseen ? "text-black font-semibold" : "text-gray-400"}`}>
+            <span className={`text-[16px] tracking-tight truncate ${hasUnseen ? "font-bold text-gray-900" : "font-semibold text-gray-800"}`}>{displayTitle}</span>
+            <span className="text-[12px] shrink-0 font-medium" style={hasUnseen ? { color: "hsl(var(--primary))" } : { color: "hsl(var(--muted-foreground))" }}>
               {timeStr}
             </span>
           </div>
-          <div className="flex items-center justify-between mt-0.5">
+          <div className="flex items-center justify-between mt-0.5 gap-2">
             <p className={`text-[14px] truncate leading-snug ${hasUnseen ? "text-gray-900 font-medium" : "text-gray-500"}`}>
               {thread.lastMessage ? (
                 <><span className="font-semibold">{thread.lastMessage.senderName.split(" ")[0]}: </span>{thread.lastMessage.content}</>
@@ -789,16 +789,16 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
               )}
             </p>
             {hasUnseen && (
-              <span className="w-2.5 h-2.5 rounded-full shrink-0 ml-2" style={{ backgroundColor: "hsl(var(--primary))" }} />
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} />
             )}
           </div>
           {(thread.propertyName || thread.linkedName) && (
-            <div className="flex items-center gap-2 mt-1">
+            <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
               {thread.propertyName && (
-                <span className="text-[11px] text-gray-400 flex items-center gap-1 bg-gray-100 rounded-md px-1.5 py-0.5"><Building2 className="w-3 h-3" />{thread.propertyName}</span>
+                <span className="text-[11px] text-gray-500 flex items-center gap-1 bg-gray-100 rounded-full px-2 py-0.5"><Building2 className="w-3 h-3" />{thread.propertyName}</span>
               )}
               {thread.linkedName && (
-                <span className="text-[11px] text-gray-400 flex items-center gap-1 bg-gray-100 rounded-md px-1.5 py-0.5">
+                <span className="text-[11px] text-gray-500 flex items-center gap-1 bg-gray-100 rounded-full px-2 py-0.5">
                   <Building2 className="w-3 h-3" />
                   {thread.linkedName}
                 </span>
