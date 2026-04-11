@@ -1969,6 +1969,8 @@ export default function ChatBGP() {
   const [activeProjectView, setActiveProjectView] = useState<{ type: string; id: string; name: string; threads: any[]; dealChildren: any[] } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const userScrolledUpRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [filePreviews, setFilePreviews] = useState<Map<number, string>>(new Map());
@@ -2275,7 +2277,9 @@ export default function ChatBGP() {
     mutationFn: async (newMessages: LocalMessage[]) => {
       const attemptSend = async (attempt: number): Promise<any> => {
         const controller = new AbortController();
+        abortControllerRef.current = controller;
         const timeoutId = setTimeout(() => controller.abort(), 300000);
+        let streamedText = "";
         try {
           const headers: Record<string, string> = { "Content-Type": "application/json" };
           const token = localStorage.getItem("bgp_auth_token");
@@ -2301,7 +2305,6 @@ export default function ChatBGP() {
           const decoder = new TextDecoder();
           let buffer = "";
           let lastData = "";
-          let streamedText = "";
           setStreamingContent("");
           while (true) {
             const { done, value } = await reader.read();
@@ -2343,7 +2346,10 @@ export default function ChatBGP() {
           throw new Error("No response received");
         } catch (err: any) {
           clearTimeout(timeoutId);
-          if (err.name === "AbortError") throw new Error("Request timed out after 5 minutes. Please try again.");
+          if (err.name === "AbortError") {
+            if (streamedText) return { reply: streamedText };
+            throw new Error("Request timed out after 5 minutes. Please try again.");
+          }
           const isNetworkError = err.message === "Failed to fetch" || err.message === "Load failed" || err.message?.includes("NetworkError") || err.message?.includes("network");
           if (isNetworkError && attempt < 2) {
             await new Promise(r => setTimeout(r, 2000 * attempt));
@@ -2416,8 +2422,26 @@ export default function ChatBGP() {
     }
   }, [status?.connected, initialThreadId]);
 
+  const isNearBottom = useCallback(() => {
+    if (!scrollRef.current) return true;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+    return scrollHeight - scrollTop - clientHeight < 100;
+  }, []);
+
+  // Track user scroll position
   useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    const el = scrollRef.current;
+    if (!el) return;
+    const handler = () => { userScrolledUpRef.current = !isNearBottom(); };
+    el.addEventListener("scroll", handler, { passive: true });
+    return () => el.removeEventListener("scroll", handler);
+  }, [isNearBottom]);
+
+  // Auto-scroll only when user is near bottom
+  useEffect(() => {
+    if (!userScrolledUpRef.current && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
   }, [messages, sendMutation.isPending, streamingContent]);
 
   const editMessageMutation = useMutation({
@@ -2616,10 +2640,16 @@ export default function ChatBGP() {
     };
   }, []);
 
+  const handleStop = useCallback(() => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+  }, []);
+
   const handleSend = async () => {
     const text = input.trim();
     const hasFiles = attachedFiles.length > 0;
     if ((!text && !hasFiles) || uploading) return;
+    userScrolledUpRef.current = false;
 
     let uploadedAttachments: Array<{ url: string; name: string; size: number; type: string }> = [];
     if (hasFiles) {
@@ -2642,7 +2672,7 @@ export default function ChatBGP() {
     const content = [text, fileText].filter(Boolean).join("\n\n") || "Shared files";
 
     setInput("");
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
+    if (textareaRef.current) textareaRef.current.style.height = "44px";
 
     if (sendMutation.isPending) {
       messageQueueRef.current.push(content);
@@ -3370,7 +3400,25 @@ export default function ChatBGP() {
             </>
           ) : (
           <>
-          <div className="flex-1 flex flex-col min-w-0">
+          <div
+            className="flex-1 flex flex-col min-w-0 relative"
+            onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+            onDragLeave={(le) => { if (!le.currentTarget.contains(le.relatedTarget as Node)) setIsDragOver(false); }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDragOver(false);
+              const files = Array.from(e.dataTransfer.files);
+              if (files.length) setAttachedFiles(prev => [...prev, ...files].slice(0, 20));
+            }}
+          >
+            {isDragOver && (
+              <div className="absolute inset-0 z-50 bg-primary/5 border-2 border-dashed border-primary rounded-xl flex items-center justify-center backdrop-blur-[2px] transition-all">
+                <div className="flex flex-col items-center gap-2">
+                  <FileUp className="w-8 h-8 text-primary/70" />
+                  <p className="text-primary font-medium text-sm">Drop files here</p>
+                </div>
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto" ref={scrollRef}>
               {headerSearchOpen ? (
                 <div className="p-4 space-y-1 max-w-3xl mx-auto" data-testid="header-search-results">
@@ -3592,11 +3640,16 @@ export default function ChatBGP() {
                         <Textarea
                           ref={textareaRef}
                           value={input}
-                          onChange={(e) => setInput(e.target.value)}
+                          onChange={(e) => {
+                            setInput(e.target.value);
+                            const ta = e.target;
+                            ta.style.height = "auto";
+                            ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+                          }}
                           onKeyDown={handleKeyDown}
                           onPaste={handlePaste}
                           placeholder="Reply..."
-                          className="w-full resize-none min-h-[80px] max-h-[160px] border-0 px-4 pt-4 pb-12 text-[16px] focus-visible:ring-0 bg-transparent"
+                          className="w-full resize-none min-h-[80px] max-h-[200px] border-0 px-4 pt-4 pb-12 text-[16px] focus-visible:ring-0 bg-transparent"
                           rows={2}
                           data-testid="input-chat-message-home"
                         />
@@ -3720,32 +3773,28 @@ export default function ChatBGP() {
                     />
                   ))}
                   {sendMutation.isPending && (
-                    <div className="flex gap-3" data-testid="loading-response">
+                    <div className="flex gap-3 animate-in fade-in duration-300" data-testid="loading-response">
                       <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-1">
                         <Sparkles className="w-3.5 h-3.5 text-primary" />
                       </div>
                       {streamingContent ? (
-                        <div className="flex-1 min-w-0">
+                        <div className="flex-1 min-w-0 animate-in fade-in duration-200">
                           <div className="text-sm leading-relaxed text-foreground">
                             <ChatBGPMarkdown content={streamingContent} />
-                            <span className="inline-block w-2 h-4 bg-primary/60 animate-pulse ml-0.5 align-text-bottom rounded-sm" />
+                            <span className="inline-block w-[3px] h-[1.1em] bg-primary/70 ml-0.5 align-text-bottom rounded-[1px] animate-[cursor-blink_1s_steps(2)_infinite]" />
                           </div>
                         </div>
                       ) : (
-                        <div className="pt-2">
-                          <div className="flex items-center gap-2">
-                            <div className="flex gap-1.5">
-                              <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0ms" }} />
-                              <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "150ms" }} />
-                              <span className="w-2 h-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "300ms" }} />
-                            </div>
-                            {progressLabel && (
-                              <span className="text-[11px] text-muted-foreground ml-1 animate-pulse">
-                                {progressLabel}
+                        <div className="pt-1 animate-in fade-in duration-300">
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-sm text-muted-foreground">
+                              {progressLabel || "ChatBGP is thinking"}
+                              <span className="inline-flex w-[18px]">
+                                <span className="animate-[ellipsis_1.4s_steps(4)_infinite]">...</span>
                               </span>
-                            )}
+                            </span>
                             {queueLength > 0 && (
-                              <span className="text-[11px] text-muted-foreground ml-1" data-testid="text-queue-count">
+                              <span className="text-[11px] text-muted-foreground/70 bg-muted px-1.5 py-0.5 rounded-full" data-testid="text-queue-count">
                                 +{queueLength} queued
                               </span>
                             )}
@@ -3809,7 +3858,12 @@ export default function ChatBGP() {
                   <span className="text-xs text-red-600 dark:text-red-400 font-medium">Recording {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, "0")}</span>
                 </div>
               )}
-              <div className="flex items-end gap-2 max-w-3xl mx-auto">
+              <div className="relative flex items-end gap-2 max-w-3xl mx-auto">
+                {queueLength > 0 && (
+                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[11px] text-muted-foreground bg-muted/80 px-2 py-0.5 rounded-full animate-in fade-in duration-200">
+                    {queueLength} message{queueLength > 1 ? 's' : ''} queued
+                  </div>
+                )}
                 <div className="flex items-center gap-1 shrink-0 pb-1">
                   <label
                     htmlFor="chatbgp-file-upload"
@@ -3831,15 +3885,29 @@ export default function ChatBGP() {
                 <Textarea
                   ref={textareaRef}
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={(e) => {
+                    setInput(e.target.value);
+                    const ta = e.target;
+                    ta.style.height = "auto";
+                    ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+                  }}
                   onKeyDown={handleKeyDown}
                   onPaste={handlePaste}
                   placeholder="Ask ChatBGP..."
-                  className="flex-1 resize-none min-h-[44px] max-h-[120px] rounded-2xl bg-muted/50 border-0 px-4 py-3 text-[16px] focus-visible:ring-1 transition-colors"
+                  className="flex-1 resize-none min-h-[44px] max-h-[200px] rounded-2xl bg-muted/50 border-0 px-4 py-3 text-[16px] focus-visible:ring-1 transition-colors"
                   rows={1}
                   data-testid="input-chat-message"
                 />
-                {isRecording ? (
+                {sendMutation.isPending ? (
+                  <button
+                    onClick={handleStop}
+                    className="p-2.5 rounded-full shrink-0 mb-0.5 bg-red-500/10 text-red-500 hover:bg-red-500/20 transition-colors"
+                    title="Stop generating"
+                    data-testid="button-stop-generating"
+                  >
+                    <Square className="w-5 h-5" />
+                  </button>
+                ) : isRecording ? (
                   <button
                     onClick={stopRecording}
                     className="p-2.5 rounded-full shrink-0 mb-0.5 bg-red-500 text-white animate-pulse transition-colors"
