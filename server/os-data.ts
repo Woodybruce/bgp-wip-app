@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 
-const OS_API_KEY = process.env.OS_API_KEY || "";
+function getOsKey(): string { return process.env.OS_API_KEY || ""; }
 const WFS_BASE = "https://api.os.uk/features/v1/wfs";
 
 // Simple in-memory cache: key -> { data, expires }
@@ -44,12 +44,12 @@ async function fetchWFS(
     service: "WFS",
     version: "2.0.0",
     request: "GetFeature",
-    typeNames: typeName,
-    outputFormat: "GEOJSON",
+    typeNames: typeName.includes(":") ? typeName : `osfeatures:${typeName}`,
+    outputFormat: "GeoJSON",
     srsName: "urn:ogc:def:crs:EPSG::4326",
     bbox: `${bbox},urn:ogc:def:crs:EPSG::4326`,
     count: String(maxFeatures),
-    key: OS_API_KEY,
+    key: getOsKey(),
   });
 
   const url = `${WFS_BASE}?${params.toString()}`;
@@ -73,7 +73,7 @@ export function registerOSDataRoutes(app: Express): void {
       if (!bbox || typeof bbox !== "string") {
         return res.status(400).json({ error: "bbox query parameter required (swLat,swLng,neLat,neLng)" });
       }
-      if (!OS_API_KEY) {
+      if (!getOsKey()) {
         return res.status(503).json({ error: "OS_API_KEY not configured" });
       }
 
@@ -97,7 +97,7 @@ export function registerOSDataRoutes(app: Express): void {
       if (!bbox || typeof bbox !== "string") {
         return res.status(400).json({ error: "bbox query parameter required" });
       }
-      if (!OS_API_KEY) {
+      if (!getOsKey()) {
         return res.status(503).json({ error: "OS_API_KEY not configured" });
       }
 
@@ -121,7 +121,7 @@ export function registerOSDataRoutes(app: Express): void {
       if (!bbox || typeof bbox !== "string") {
         return res.status(400).json({ error: "bbox query parameter required" });
       }
-      if (!OS_API_KEY) {
+      if (!getOsKey()) {
         return res.status(503).json({ error: "OS_API_KEY not configured" });
       }
 
@@ -145,11 +145,11 @@ export function registerOSDataRoutes(app: Express): void {
       if (!query || typeof query !== "string") {
         return res.status(400).json({ error: "query parameter required" });
       }
-      if (!OS_API_KEY) {
+      if (!getOsKey()) {
         return res.status(503).json({ error: "OS_API_KEY not configured" });
       }
 
-      const url = `https://api.os.uk/search/places/v1/find?query=${encodeURIComponent(query)}&key=${OS_API_KEY}&maxresults=20&dataset=DPA`;
+      const url = `https://api.os.uk/search/places/v1/find?query=${encodeURIComponent(query)}&key=${getOsKey()}&maxresults=20&dataset=DPA`;
       const resp = await fetch(url, { headers: { Accept: "application/json" } });
 
       if (resp.status === 401) {
@@ -176,11 +176,11 @@ export function registerOSDataRoutes(app: Express): void {
       if (!uprn) {
         return res.status(400).json({ error: "UPRN parameter required" });
       }
-      if (!OS_API_KEY) {
+      if (!getOsKey()) {
         return res.status(503).json({ error: "OS_API_KEY not configured" });
       }
 
-      const url = `https://api.os.uk/search/places/v1/uprn?uprn=${encodeURIComponent(uprn)}&key=${OS_API_KEY}&dataset=DPA`;
+      const url = `https://api.os.uk/search/places/v1/uprn?uprn=${encodeURIComponent(uprn)}&key=${getOsKey()}&dataset=DPA`;
       const resp = await fetch(url, { headers: { Accept: "application/json" } });
 
       if (resp.status === 401) {
@@ -201,7 +201,7 @@ export function registerOSDataRoutes(app: Express): void {
 
   // ─── OS API Key for client ────────────────────────────────────
   app.get("/api/config/os-key", requireAuth, (_req: Request, res: Response) => {
-    res.json({ key: OS_API_KEY });
+    res.json({ key: getOsKey() });
   });
 
   console.log("[os-data] Ordnance Survey routes registered");
