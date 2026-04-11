@@ -544,7 +544,7 @@ body {
   --border: 30 15% 86%;
   --input: 30 15% 78%;
   --ring: 25 50% 50%;
-  --font-sans: "Tiempos Text", "Tiempos", Georgia, "Times New Roman", serif;
+  --font-sans: "Tiempos Text", "Tiempos", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
   --sidebar: 35 20% 95%;
   --sidebar-foreground: 25 20% 12%;
   --sidebar-border: 30 15% 86%;
@@ -604,7 +604,7 @@ body {
   --border: 330 60% 82%;
   --input: 330 50% 75%;
   --ring: 330 100% 50%;
-  --font-sans: "Tiempos Text", "Tiempos", Georgia, "Times New Roman", serif;
+  --font-sans: "Tiempos Text", "Tiempos", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
   --sidebar: 330 100% 45%;
   --sidebar-foreground: 0 0% 100%;
   --sidebar-border: 330 100% 38%;
@@ -652,7 +652,7 @@ body {
   --border: 48 70% 78%;
   --input: 48 50% 72%;
   --ring: 50 100% 50%;
-  --font-sans: "Tiempos Text", "Tiempos", Georgia, "Times New Roman", serif;
+  --font-sans: "Tiempos Text", "Tiempos", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
   --sidebar: 50 100% 50%;
   --sidebar-foreground: 45 100% 8%;
   --sidebar-border: 48 100% 42%;
@@ -699,7 +699,7 @@ body {
   --border: 200 12% 87%;
   --input: 200 12% 78%;
   --ring: 197 100% 44%;
-  --font-sans: "Tiempos Text", "Tiempos", Georgia, "Times New Roman", serif;
+  --font-sans: "Tiempos Text", "Tiempos", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
   --sidebar: 200 100% 11%;
   --sidebar-foreground: 0 0% 95%;
   --sidebar-border: 200 60% 18%;
