@@ -93,7 +93,7 @@ function isSafeUrl(url: string) {
 }
 
 function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] {
-  const tokenRegex = /!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]+)\]\((https?:\/\/[^)]+)\)|\[([^\]]+)\]\((\/api\/chat-media\/[^)]+)\)|\*\*(.+?)\*\*|`([^`]+)`|(https?:\/\/[^\s<>)\]]+)/g;
+  const tokenRegex = /!\[([^\]]*)\]\(([^)]+)\)|\[([^\]]+)\]\((\/api\/chat-media\/[^)]+)\)|\[([^\]]+)\]\((https?:\/\/[^)]+)\)|\[([^\]]+)\]\((\/[^)]+)\)|\*\*(.+?)\*\*|`([^`]+)`|(https?:\/\/[^\s<>)\]]+)/g;
   const result: (string | JSX.Element)[] = [];
   let lastIndex = 0;
   let match;
@@ -103,6 +103,7 @@ function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] 
     if (match.index > lastIndex) result.push(text.slice(lastIndex, match.index));
 
     if (match[1] !== undefined && match[2]) {
+      // ![alt](url) — image
       if (isSafeUrl(match[2])) {
         result.push(
           <a key={`${keyPrefix}-${key++}`} href={match[2]} target="_blank" rel="noopener noreferrer" className="block my-1">
@@ -113,18 +114,26 @@ function parseInline(text: string, keyPrefix: string): (string | JSX.Element)[] 
         result.push(match[0]);
       }
     } else if (match[3] && match[4]) {
-      result.push(<a key={`${keyPrefix}-${key++}`} href={match[4]} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">{match[3]}</a>);
-    } else if (match[5] && match[6]) {
+      // [text](/api/chat-media/...) — download link
       result.push(
-        <AuthDownloadLink key={`${keyPrefix}-${key++}`} href={match[6]}>{match[5]}</AuthDownloadLink>
+        <AuthDownloadLink key={`${keyPrefix}-${key++}`} href={match[4]}>{match[3]}</AuthDownloadLink>
       );
-    } else if (match[7]) {
-      result.push(<strong key={`${keyPrefix}-${key++}`} className="font-semibold">{match[7]}</strong>);
-    } else if (match[8]) {
-      result.push(<code key={`${keyPrefix}-${key++}`}>{match[8]}</code>);
+    } else if (match[5] && match[6]) {
+      // [text](https://...) — external link
+      result.push(<a key={`${keyPrefix}-${key++}`} href={match[6]} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2">{match[5]}</a>);
+    } else if (match[7] && match[8]) {
+      // [text](/path) — internal app link
+      result.push(<a key={`${keyPrefix}-${key++}`} href={match[8]} className="text-primary underline underline-offset-2">{match[7]}</a>);
     } else if (match[9]) {
-      const url = match[9].replace(/[.,;:!?]+$/, "");
-      const trailing = match[9].slice(url.length);
+      // **bold**
+      result.push(<strong key={`${keyPrefix}-${key++}`} className="font-semibold">{match[9]}</strong>);
+    } else if (match[10]) {
+      // `code`
+      result.push(<code key={`${keyPrefix}-${key++}`}>{match[10]}</code>);
+    } else if (match[11]) {
+      // bare https://url
+      const url = match[11].replace(/[.,;:!?]+$/, "");
+      const trailing = match[11].slice(url.length);
       result.push(<a key={`${keyPrefix}-${key++}`} href={url} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 break-all">{url}</a>);
       if (trailing) result.push(trailing);
     }
