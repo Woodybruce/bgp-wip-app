@@ -3832,27 +3832,30 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                         href={article.url || "#"}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="block bg-gray-50 rounded-xl overflow-hidden active:bg-gray-100"
+                        className="block bg-white rounded-2xl overflow-hidden border border-gray-100 shadow-sm active:bg-gray-50 transition-colors"
                         data-testid={`news-card-${article.id}`}
                       >
                         {article.imageUrl && (
-                          <div className="h-40 w-full overflow-hidden">
+                          <div className="aspect-[16/9] w-full overflow-hidden bg-gray-50">
                             <img src={article.imageUrl} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
                           </div>
                         )}
-                        <div className="p-3.5">
-                          <div className="flex items-center gap-2 mb-1.5">
-                            {article.sourceName && <span className="text-[11px] font-semibold text-gray-500 uppercase">{article.sourceName}</span>}
+                        <div className="p-4">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                            {article.sourceName && <span className="text-[11px] font-medium text-gray-500">{article.sourceName}</span>}
                             {article.publishedAt && (
-                              <span className="text-[11px] text-gray-400">
-                                {new Date(article.publishedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                              </span>
+                              <>
+                                <span className="text-gray-300">·</span>
+                                <span className="text-[11px] text-gray-400">
+                                  {new Date(article.publishedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                                </span>
+                              </>
                             )}
                             {article.category && (
-                              <span className="text-[11px] font-medium px-1.5 py-0.5 rounded bg-gray-200 text-gray-600">{article.category}</span>
+                              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">{article.category}</span>
                             )}
                           </div>
-                          <div className="text-[15px] font-semibold text-gray-900 leading-snug mb-1">{article.title}</div>
+                          <div className="text-[16px] font-semibold text-gray-900 leading-snug mb-1.5 tracking-tight">{article.title}</div>
                           {(article.aiSummary || article.summary) && (
                             <div className="text-[13px] text-gray-500 leading-relaxed line-clamp-3">{article.aiSummary || article.summary}</div>
                           )}
