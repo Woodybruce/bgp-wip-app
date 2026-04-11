@@ -2032,13 +2032,13 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
       }}>
         <div className={`min-h-full flex flex-col ${messages.length > 0 ? "justify-end" : "justify-center"} ${isActiveThreadAi ? "space-y-6" : "space-y-4"}`}>
         {messages.length === 0 && isActiveThreadAi && !threadId && (
-          <div className="flex flex-col items-center justify-center h-full gap-6 py-10">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-sm" style={{ backgroundColor: "hsl(var(--primary))" }}>
+          <div className="flex flex-col items-center justify-center h-full gap-7 py-10">
+            <div className="w-[68px] h-[68px] rounded-[22px] flex items-center justify-center shadow-sm" style={{ backgroundColor: "hsl(var(--primary))" }}>
               <Sparkles className="w-8 h-8 text-white" />
             </div>
             <div className="text-center">
-              <h3 className="font-bold text-[22px] text-gray-900 tracking-tight">ChatBGP</h3>
-              <p className="text-[15px] text-gray-400 mt-1.5">Your AI property assistant</p>
+              <h3 className="font-semibold text-[26px] text-gray-900 tracking-tight leading-none">ChatBGP</h3>
+              <p className="text-[15px] text-gray-500 mt-2">Your AI property assistant</p>
             </div>
             <div className="grid grid-cols-2 gap-2.5 w-full max-w-sm">
               {AI_SUGGESTIONS.map(s => (
@@ -2049,7 +2049,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                     setMessages([userMsg]);
                     aiSendMutation.mutate({ newMessages: [userMsg], files: [], tid: threadId });
                   }}
-                  className="text-[14px] text-left px-4 py-3.5 rounded-2xl border border-gray-200 active:bg-gray-50 text-gray-600 bg-white shadow-sm leading-snug"
+                  className="text-[14px] text-left px-4 py-3.5 rounded-2xl border border-gray-100 active:bg-gray-50 text-gray-700 bg-white shadow-sm leading-snug font-medium transition-colors"
                   data-testid={`mobile-suggestion-${s.slice(0, 10)}`}
                 >
                   {s}
