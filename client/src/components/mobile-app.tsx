@@ -116,7 +116,7 @@ const formatFileSize = (bytes: number) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-type MoreSubTab = "people" | "tracker" | "news" | "docs";
+type MoreSubTab = "tracker" | "news" | "docs";
 
 function ActionCard({ action }: { action: ChatAction }) {
   const { toast } = useToast();
@@ -2536,7 +2536,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [showChat, setShowChat] = useState(initialTab === "ai");
   const [chatSearch, setChatSearch] = useState("");
-  const [moreSubTab, setMoreSubTab] = useState<MoreSubTab>("people");
+  const [moreSubTab, setMoreSubTab] = useState<MoreSubTab>("tracker");
   const [peopleToggle, setPeopleToggle] = useState<"contacts" | "companies">("contacts");
   const [peopleSearch, setPeopleSearch] = useState("");
   const [trackerSearch, setTrackerSearch] = useState("");
@@ -2635,7 +2635,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     isFavourite: boolean | null;
   }>>({
     queryKey: ["/api/crm/contacts"],
-    enabled: (tab === "menu" && moreSubTab === "people" && peopleToggle === "contacts") || !!selectedDealId,
+    enabled: !!selectedDealId,
   });
 
   const { data: companies, isLoading: companiesLoading } = useQuery<Array<{
@@ -2643,7 +2643,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     headOfficeAddress: string | null; groupName: string | null;
   }>>({
     queryKey: ["/api/crm/companies"],
-    enabled: (tab === "menu" && moreSubTab === "people" && peopleToggle === "companies") || !!selectedDealId,
+    enabled: !!selectedDealId,
   });
 
   const { data: investmentItems, isLoading: investmentLoading } = useQuery<Array<{
@@ -3029,7 +3029,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
       <div className="bg-[#1C1917] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] shrink-0">
         <div className="flex items-center justify-between px-5 pb-3">
           <h1 className="text-[22px] font-semibold tracking-tight">
-            {tab === "chats" ? "Chats" : tab === "ai" ? (showMobileMarketingFiles ? "Marketing" : "ChatBGP") : moreSubTab === "people" ? "People" : moreSubTab === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : "News"}
+            {tab === "chats" ? "Chats" : tab === "ai" ? (showMobileMarketingFiles ? "Marketing" : "ChatBGP") : moreSubTab === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : moreSubTab === "news" ? "News" : "Docs"}
           </h1>
           <div className="flex items-center gap-2">
             {tab === "chats" && (
@@ -3336,189 +3336,18 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
           <div className="pb-4 flex flex-col h-full">
             <div className="px-4 pt-3 pb-2 shrink-0">
               <div className="flex bg-[#F5F5F4] rounded-xl p-1">
-                {(["people", "tracker", "news", "docs"] as MoreSubTab[]).map(st => (
+                {(["tracker", "news", "docs"] as MoreSubTab[]).map(st => (
                   <button
                     key={st}
                     onClick={() => { setMoreSubTab(st); if (st !== "tracker") { setTrackerStatusFilter(null); setTrackerSearch(""); setShowStatusDropdown(false); } }}
                     className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${moreSubTab === st ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
                     data-testid={`more-tab-${st}`}
                   >
-                    {st === "people" ? "People" : st === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : st === "news" ? "News" : "Docs"}
+                    {st === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : st === "news" ? "News" : "Docs"}
                   </button>
                 ))}
               </div>
             </div>
-
-            {moreSubTab === "people" && (
-              <div className="flex-1 flex flex-col min-h-0">
-                <div className="px-4 pb-2 shrink-0">
-                  <div className="flex bg-[#F5F5F4] rounded-xl p-1 mb-3">
-                    <button
-                      onClick={() => setPeopleToggle("contacts")}
-                      className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${peopleToggle === "contacts" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
-                      data-testid="people-toggle-contacts"
-                    >
-                      Contacts {contacts ? `(${contacts.length})` : ""}
-                    </button>
-                    <button
-                      onClick={() => setPeopleToggle("companies")}
-                      className={`flex-1 py-2 text-[13px] font-medium rounded-lg transition-all ${peopleToggle === "companies" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
-                      data-testid="people-toggle-companies"
-                    >
-                      Companies {companies ? `(${companies.length})` : ""}
-                    </button>
-                  </div>
-                  <div className="flex gap-2 items-center">
-                    <div className="relative flex-1">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      <Input
-                        value={peopleSearch}
-                        onChange={(e) => setPeopleSearch(e.target.value)}
-                        placeholder={peopleToggle === "contacts" ? "Search contacts..." : "Search companies..."}
-                        className="h-10 pl-9 pr-9 text-sm rounded-xl bg-[#F5F5F4] border-0 placeholder:text-gray-400"
-                        data-testid="input-people-search"
-                      />
-                      {peopleSearch && (
-                        <button onClick={() => setPeopleSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2">
-                          <X className="w-4 h-4 text-gray-400" />
-                        </button>
-                      )}
-                    </div>
-                    {peopleToggle === "contacts" && (
-                      <button
-                        onClick={() => setShowFavouritesOnly(!showFavouritesOnly)}
-                        className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 transition-all ${showFavouritesOnly ? "bg-amber-100" : "bg-gray-100"}`}
-                        data-testid="button-favourites-filter"
-                      >
-                        <Star className={`w-5 h-5 ${showFavouritesOnly ? "text-amber-500 fill-amber-500" : "text-gray-400"}`} />
-                      </button>
-                    )}
-                    {peopleToggle === "contacts" && (
-                      <label
-                        className="h-10 w-10 rounded-xl bg-gray-100 flex items-center justify-center shrink-0 cursor-pointer active:bg-gray-200"
-                        data-testid="button-import-contacts"
-                      >
-                        <Upload className="w-5 h-5 text-gray-400" />
-                        <input
-                          type="file"
-                          accept=".vcf,.vcard"
-                          className="hidden"
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            try {
-                              const text = await file.text();
-                              const resp = await apiRequest("POST", "/api/crm/contacts/import-vcf", { vcfText: text });
-                              const result = await resp.json();
-                              queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
-                              toast({
-                                title: "Contacts imported",
-                                description: `${result.imported} added, ${result.skippedPersonal || 0} personal skipped, ${result.skippedDuplicate || 0} duplicates skipped`,
-                              });
-                            } catch (err: any) {
-                              toast({ title: "Import failed", description: err.message, variant: "destructive" });
-                            }
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                    )}
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto px-4">
-                  {(contactsLoading || companiesLoading) && (
-                    <div className="flex items-center justify-center py-16">
-                      <div className="w-8 h-8 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
-                    </div>
-                  )}
-                  {peopleToggle === "contacts" && !contactsLoading && (
-                    <div className="space-y-2">
-                      {filteredContacts.length === 0 ? (
-                        <div className="text-center py-16 text-gray-400 text-[15px]">
-                          {showFavouritesOnly ? "No favourite contacts yet — tap the star on a contact to add them" : peopleSearch ? "No contacts found" : "No contacts yet"}
-                        </div>
-                      ) : filteredContacts.map(c => (
-                        <div
-                          key={c.id}
-                          className="w-full flex items-center gap-3 p-3.5 bg-white border border-[#E7E5E4] rounded-2xl text-left"
-                          data-testid={`contact-card-${c.id}`}
-                        >
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              try {
-                                await apiRequest("PATCH", `/api/crm/contacts/${c.id}/favourite`, { isFavourite: !c.isFavourite });
-                                queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
-                              } catch (err: any) {
-                                toast({ title: "Failed to update favourite", description: err.message, variant: "destructive" });
-                              }
-                            }}
-                            className="shrink-0 w-8 h-8 flex items-center justify-center -ml-1"
-                            data-testid={`star-contact-${c.id}`}
-                          >
-                            <Star className={`w-5 h-5 ${c.isFavourite ? "text-amber-500 fill-amber-500" : "text-[#D6D3D1]"}`} />
-                          </button>
-                          <button onClick={() => navigate(`/contacts/${c.id}`)} className="flex items-center gap-3 flex-1 min-w-0">
-                            <div className="w-11 h-11 rounded-full bg-[#292524] text-white flex items-center justify-center shrink-0">
-                              <span className="text-[13px] font-semibold tracking-tight">{c.name?.split(" ").map(n => n[0]).join("").slice(0, 2)}</span>
-                            </div>
-                            <div className="flex-1 min-w-0 text-left">
-                              <div className="text-[15px] font-semibold text-[#1C1917] truncate tracking-tight">{c.name}</div>
-                              <div className="text-[13px] text-[#78716C] truncate">
-                                {[c.role, c.companyName].filter(Boolean).join(" · ") || "No details"}
-                              </div>
-                            </div>
-                          </button>
-                          {c.phone && (
-                            <a href={`tel:${c.phone}`} onClick={(e) => e.stopPropagation()} className="w-11 h-11 rounded-full bg-[#F5F5F4] flex items-center justify-center shrink-0 active:bg-[#E7E5E4]">
-                              <Phone className="w-[18px] h-[18px] text-[#44403C]" />
-                            </a>
-                          )}
-                          {c.email && (
-                            <a href={`mailto:${c.email}`} onClick={(e) => e.stopPropagation()} className="w-11 h-11 rounded-full bg-[#F5F5F4] flex items-center justify-center shrink-0 active:bg-[#E7E5E4]">
-                              <Mail className="w-[18px] h-[18px] text-[#44403C]" />
-                            </a>
-                          )}
-                        </div>
-                      ))}
-                      {filteredContacts.length >= 100 && (
-                        <div className="text-center py-3 text-[13px] text-gray-400">Showing first 100 results — refine your search</div>
-                      )}
-                    </div>
-                  )}
-                  {peopleToggle === "companies" && !companiesLoading && (
-                    <div className="space-y-2">
-                      {filteredCompanies.length === 0 ? (
-                        <div className="text-center py-16 text-gray-400 text-[15px]">
-                          {peopleSearch ? "No companies found" : "No companies yet"}
-                        </div>
-                      ) : filteredCompanies.map(c => (
-                        <button
-                          key={c.id}
-                          onClick={() => navigate(`/companies/${c.id}`)}
-                          className="w-full flex items-center gap-3 p-3 bg-white border border-gray-100 rounded-2xl shadow-sm active:bg-gray-50 text-left transition-colors"
-                          data-testid={`company-card-${c.id}`}
-                        >
-                          <div className="w-11 h-11 rounded-full bg-gray-900 text-white flex items-center justify-center shrink-0">
-                            <Building2 className="w-5 h-5" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[15px] font-semibold text-gray-900 truncate tracking-tight">{c.name}</div>
-                            <div className="text-[13px] text-gray-500 truncate">
-                              {[c.companyType, c.groupName].filter(Boolean).join(" · ") || c.domain || ""}
-                            </div>
-                          </div>
-                          <ChevronDown className="w-4 h-4 text-gray-300 -rotate-90 shrink-0" />
-                        </button>
-                      ))}
-                      {filteredCompanies.length >= 100 && (
-                        <div className="text-center py-3 text-[13px] text-gray-400">Showing first 100 results — refine your search</div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
 
             {moreSubTab === "tracker" && (
               <div className="flex-1 flex flex-col min-h-0">

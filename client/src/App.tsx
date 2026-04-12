@@ -72,6 +72,7 @@ const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
 const Reporting = lazy(() => import("@/pages/reporting"));
+const TodayPage = lazy(() => import("@/pages/today"));
 
 
 function PageLoader() {
@@ -111,6 +112,7 @@ function Router() {
       <Route path="/deals" component={DealsHub} />
       <Route path="/deals/:rest*" component={DealsHub} />
       <Route path="/requirements" component={Requirements} />
+      <Route path="/today" component={TodayPage} />
       <Route path="/news" component={News} />
       <Route path="/diary" component={DiaryRedirect} />
       <Route path="/companies" component={PeoplePage} />
