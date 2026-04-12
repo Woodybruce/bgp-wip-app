@@ -612,7 +612,7 @@ async function notifyRelevantTeamMembers(
         <p style="color:#666;font-size:13px;"><strong>Original email:</strong> "${subject}" from ${fromName || fromEmail}</p>
         ${teamsLine}
         <hr style="border: none; border-top: 1px solid #eee; margin: 16px 0;">
-        <p style="color: #999; font-size: 11px;">This is an automated intelligence briefing from ChatBGP. <a href="https://chatbgp.app/chatbgp">Open ChatBGP</a> for more detail.</p>
+        <p style="color: #999; font-size: 11px;">This is an automated intelligence briefing from ChatBGP. <a href="https://bgp-wip-app-production.up.railway.app/chatbgp">Open ChatBGP</a> for more detail.</p>
       </div>
     `;
 
@@ -851,7 +851,7 @@ function formatReplyHtml(reply: string, actions: ProcessedAction[]): string {
         <ul style="color: #666; font-size: 13px;">${actionList}</ul>
       ` : ""}
       <hr style="border: none; border-top: 1px solid #eee; margin: 16px 0;">
-      <p style="color: #999; font-size: 11px;">This is an automated response from ChatBGP. For complex requests, please use the <a href="https://chatbgp.app/chatbgp">ChatBGP dashboard</a>.</p>
+      <p style="color: #999; font-size: 11px;">This is an automated response from ChatBGP. For complex requests, please use the <a href="https://bgp-wip-app-production.up.railway.app/chatbgp">ChatBGP dashboard</a>.</p>
     </div>
   `;
 }

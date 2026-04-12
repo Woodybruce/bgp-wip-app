@@ -5,9 +5,9 @@
   "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6e7f8a9b",
   "developer": {
     "name": "Bruce Gillingham Pollard",
-    "websiteUrl": "https://chatbgp.app",
-    "privacyUrl": "https://chatbgp.app",
-    "termsOfUseUrl": "https://chatbgp.app"
+    "websiteUrl": "https://bgp-wip-app-production.up.railway.app",
+    "privacyUrl": "https://bgp-wip-app-production.up.railway.app",
+    "termsOfUseUrl": "https://bgp-wip-app-production.up.railway.app"
   },
   "name": {
     "short": "BGP Dashboard",
@@ -18,37 +18,37 @@
     "full": "The BGP Dashboard brings your property CRM directly into Microsoft Teams. View active deals, search contacts and companies, browse property news, access the WIP Report, Investment Tracker, and ChatBGP AI assistant — all without leaving Teams."
   },
   "icons": {
-    "outline": "https://chatbgp.app/favicon.png",
-    "color": "https://chatbgp.app/icon-192.png"
+    "outline": "https://bgp-wip-app-production.up.railway.app/favicon.png",
+    "color": "https://bgp-wip-app-production.up.railway.app/icon-192.png"
   },
   "accentColor": "#1a1a1a",
   "staticTabs": [
     {
       "entityId": "bgp-dashboard",
       "name": "Dashboard",
-      "contentUrl": "https://chatbgp.app/addin/teams",
-      "websiteUrl": "https://chatbgp.app",
+      "contentUrl": "https://bgp-wip-app-production.up.railway.app/addin/teams",
+      "websiteUrl": "https://bgp-wip-app-production.up.railway.app",
       "scopes": ["personal"]
     },
     {
       "entityId": "bgp-chatbgp",
       "name": "ChatBGP",
-      "contentUrl": "https://chatbgp.app/chatbgp",
-      "websiteUrl": "https://chatbgp.app/chatbgp",
+      "contentUrl": "https://bgp-wip-app-production.up.railway.app/chatbgp",
+      "websiteUrl": "https://bgp-wip-app-production.up.railway.app/chatbgp",
       "scopes": ["personal"]
     }
   ],
   "configurableTabs": [
     {
-      "configurationUrl": "https://chatbgp.app/addin/teams",
+      "configurationUrl": "https://bgp-wip-app-production.up.railway.app/addin/teams",
       "canUpdateConfiguration": true,
       "scopes": ["team", "groupChat"]
     }
   ],
   "permissions": ["identity", "messageTeamMembers"],
-  "validDomains": ["chatbgp.app"],
+  "validDomains": ["bgp-wip-app-production.up.railway.app"],
   "webApplicationInfo": {
     "id": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6e7f8a9b",
-    "resource": "https://chatbgp.app"
+    "resource": "https://bgp-wip-app-production.up.railway.app"
   }
 }

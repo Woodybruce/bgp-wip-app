@@ -11,7 +11,7 @@ const XERO_TOKEN_URL = "https://identity.xero.com/connect/token";
 const XERO_API_BASE = "https://api.xero.com/api.xro/2.0";
 const XERO_CONNECTIONS_URL = "https://api.xero.com/connections";
 
-const TRUSTED_HOSTS = ["chatbgp.app", "bgp-dashboard-flow.replit.app", "9578f23f-37ae-4acf-944d-42a112fa681a-00-w7prqguaevhh.worf.replit.dev"];
+const TRUSTED_HOSTS = ["bgp-wip-app-production.up.railway.app", "chatbgp.app", "bgp-dashboard-flow.replit.app", "9578f23f-37ae-4acf-944d-42a112fa681a-00-w7prqguaevhh.worf.replit.dev"];
 
 const XERO_INVOICED_STATUSES = ["AUTHORISED", "PAID"];
 const DEAL_ALREADY_INVOICED = ["Invoiced", "Billed"];
@@ -64,7 +64,7 @@ declare module "express-session" {
 }
 
 function getRedirectUri(_req: Request): string {
-  return "https://chatbgp.app/api/xero/callback";
+  return "https://bgp-wip-app-production.up.railway.app/api/xero/callback";
 }
 
 export async function refreshXeroToken(session: any): Promise<string | null> {
