@@ -8,15 +8,15 @@
   <DefaultLocale>en-GB</DefaultLocale>
   <DisplayName DefaultValue="ChatBGP for Excel"/>
   <Description DefaultValue="AI-powered Excel assistant with CRM integration, financial model building, and SharePoint file management for BGP."/>
-  <SupportUrl DefaultValue="https://bgp-wip-app-production.up.railway.app/help"/>
+  <SupportUrl DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/help"/>
   <AppDomains>
-    <AppDomain>bgp-wip-app-production.up.railway.app</AppDomain>
+    <AppDomain>bgp-wip-app-production-efac.up.railway.app</AppDomain>
   </AppDomains>
   <Hosts>
     <Host Name="Workbook"/>
   </Hosts>
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://bgp-wip-app-production.up.railway.app/addin/excel"/>
+    <SourceLocation DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/addin/excel"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
   <Requirements>

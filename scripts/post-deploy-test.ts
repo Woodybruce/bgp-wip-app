@@ -2,7 +2,7 @@
 
 import * as fs from "fs";
 
-const PROD_URL = process.env.DEPLOY_URL || "https://bgp-wip-app-production.up.railway.app";
+const PROD_URL = process.env.DEPLOY_URL || "https://bgp-wip-app-production-efac.up.railway.app";
 let AUTH_HEADER = process.env.TEST_AUTH || "";
 const LOGIN_EMAIL = process.env.TEST_EMAIL || "woody@brucegillinghampollard.com";
 const LOGIN_PASS = process.env.TEST_PASSWORD || "";

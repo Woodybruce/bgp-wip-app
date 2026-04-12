@@ -52,7 +52,7 @@ function AddinTeams() {
     <div className="min-h-screen bg-background text-foreground">
       <AddinHeader title="BGP Dashboard" subtitle="Teams">
         <a
-          href="https://bgp-wip-app-production.up.railway.app"
+          href="https://bgp-wip-app-production-efac.up.railway.app"
           target="_blank"
           rel="noopener noreferrer"
           data-testid="link-open-dashboard"
@@ -121,7 +121,7 @@ function AddinTeams() {
               ].map((link) => (
                 <a
                   key={link.path}
-                  href={`https://bgp-wip-app-production.up.railway.app${link.path}`}
+                  href={`https://bgp-wip-app-production-efac.up.railway.app${link.path}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   data-testid={`link-${link.label.toLowerCase().replace(/\s/g, "-")}`}

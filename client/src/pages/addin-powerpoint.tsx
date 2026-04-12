@@ -316,7 +316,7 @@ function AddinPowerPoint() {
 
       <div className="fixed bottom-0 left-0 right-0 p-2 bg-background border-t" style={{ maxWidth: 400 }}>
         <a
-          href="https://bgp-wip-app-production.up.railway.app"
+          href="https://bgp-wip-app-production-efac.up.railway.app"
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
