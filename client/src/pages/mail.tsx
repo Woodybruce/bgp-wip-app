@@ -786,12 +786,13 @@ function MessageDetail({
         <Button
           variant="ghost"
           size="sm"
-          className="text-xs gap-1.5"
+          className="text-xs gap-1.5 shrink-0"
           onClick={() => window.open(`https://outlook.office365.com/mail/inbox`, "_blank")}
           data-testid="button-open-outlook"
         >
-          <ExternalLink className="w-3.5 h-3.5" />
-          Open in Outlook
+          <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+          <span className="hidden sm:inline">Open in Outlook</span>
+          <span className="sm:hidden">Outlook</span>
         </Button>
       </div>
 

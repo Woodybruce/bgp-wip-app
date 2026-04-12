@@ -35,8 +35,7 @@ function PageLoader() {
 }
 
 function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm" | "md" | "lg" }) {
-  const [primaryFailed, setPrimaryFailed] = useState(false);
-  const [guessedFailed, setGuessedFailed] = useState(false);
+  const [failCount, setFailCount] = useState(0);
 
   const sizeClass = size === "sm" ? "w-8 h-8" : size === "lg" ? "w-14 h-14" : "w-10 h-10";
   const textSize = size === "sm" ? "text-xs" : size === "lg" ? "text-lg" : "text-sm";
@@ -44,31 +43,34 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
 
   const domain = company.domainUrl || company.logoUrl || company.domain;
   const d = extractDomain(domain || null);
-  const guessed = (!d || primaryFailed) ? guessDomain(company.name) : null;
+  const guessed = guessDomain(company.name);
 
-  if ((!d || primaryFailed) && (!guessed || guessedFailed)) {
+  // Build ordered list of logo URLs to try
+  const logoSources: string[] = [];
+  if (d) {
+    logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(px * 3, 512)}`);
+    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
+  }
+  if (guessed && guessed !== d) {
+    logoSources.push(`https://logo.clearbit.com/${guessed}?size=${Math.min(px * 3, 512)}`);
+    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${guessed}&size=128`);
+  }
+
+  if (failCount >= logoSources.length) {
     const initials = (company.name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
     return (
-      <div className={`${sizeClass} rounded-lg bg-muted flex items-center justify-center ${textSize} font-semibold text-muted-foreground border`}>
+      <div className={`${sizeClass} rounded-lg bg-muted flex items-center justify-center ${textSize} font-semibold text-muted-foreground border shrink-0`}>
         {initials}
       </div>
     );
   }
 
-  // Use Clearbit Logo API for crisp HD logos (up to 512px)
-  // Falls back to Google Favicons if Clearbit doesn't have the logo
-  const targetDomain = d && !primaryFailed ? d : guessed;
-  const logoUrl = `https://logo.clearbit.com/${targetDomain}?size=${Math.min(px * 3, 512)}`;
-
   return (
     <img
-      src={logoUrl}
+      src={logoSources[failCount]}
       alt={company.name}
-      className={`${sizeClass} rounded-lg object-contain bg-white border`}
-      onError={() => {
-        if (d && !primaryFailed) setPrimaryFailed(true);
-        else setGuessedFailed(true);
-      }}
+      className={`${sizeClass} rounded-lg object-contain bg-white border shrink-0`}
+      onError={() => setFailCount(c => c + 1)}
     />
   );
 }
@@ -221,23 +223,23 @@ function LandlordsTab({
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-4 mt-3 pt-3 border-t text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1 shrink-0">
                       <Building className="w-3 h-3" />
                       {compProps.length} {compProps.length === 1 ? "property" : "properties"}
                     </span>
-                    <span className="flex items-center gap-1">
+                    <span className="flex items-center gap-1 shrink-0">
                       <Handshake className="w-3 h-3" />
                       {compDeals.length} {compDeals.length === 1 ? "deal" : "deals"}
                     </span>
-                    <span className="flex items-center gap-1">
+                    <span className="flex items-center gap-1 shrink-0">
                       <Users className="w-3 h-3" />
                       {compContacts.length} {compContacts.length === 1 ? "contact" : "contacts"}
                     </span>
                     {onScopeLandlord && (
                       <button
                         onClick={(e) => { e.preventDefault(); e.stopPropagation(); onScopeLandlord(company.id); }}
-                        className="ml-auto flex items-center gap-1 text-primary hover:text-primary/80 font-medium"
+                        className="ml-auto flex items-center gap-1 text-primary hover:text-primary/80 font-medium shrink-0 whitespace-nowrap"
                         data-testid={`button-scope-${company.id}`}
                       >
                         <Users className="w-3 h-3" />
@@ -525,7 +527,7 @@ function AgentsTab({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <Link href={`/companies/${company.id}`} onClick={(e: any) => e.stopPropagation()}>
-                      <h3 className="font-semibold text-sm hover:underline">{company.name}</h3>
+                      <h3 className="font-semibold text-sm hover:underline truncate">{company.name}</h3>
                     </Link>
                     {company.domainUrl && (
                       <a
@@ -550,7 +552,7 @@ function AgentsTab({
                       ) : null;
                     })()}
                     {company.description && (
-                      <span className="text-xs text-muted-foreground truncate max-w-[200px]">{company.description}</span>
+                      <span className="text-xs text-muted-foreground truncate flex-1">{company.description}</span>
                     )}
                   </div>
                 </div>

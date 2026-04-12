@@ -148,13 +148,22 @@ function extractDomainForLogo(raw: string | null | undefined): string | null {
 }
 
 export function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | undefined; name: string | null | undefined; size?: number }) {
-  const [primaryFailed, setPrimaryFailed] = useState(false);
-  const [guessedFailed, setGuessedFailed] = useState(false);
+  const [failCount, setFailCount] = useState(0);
 
   const d = extractDomainForLogo(domain);
-  const guessedDomain = (!d || primaryFailed) ? guessDomain(name) : null;
+  const guessedDomain = guessDomain(name);
 
-  if ((!d || primaryFailed) && (!guessedDomain || guessedFailed)) {
+  const logoSources: string[] = [];
+  if (d) {
+    logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
+    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
+  }
+  if (guessedDomain && guessedDomain !== d) {
+    logoSources.push(`https://logo.clearbit.com/${guessedDomain}?size=${Math.min(size * 3, 512)}`);
+    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${guessedDomain}&size=128`);
+  }
+
+  if (failCount >= logoSources.length) {
     const initials = (name || "?").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
     return (
       <div
@@ -167,19 +176,13 @@ export function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | n
     );
   }
 
-  const targetDomain = d && !primaryFailed ? d : guessedDomain;
-  const logoUrl = `https://logo.clearbit.com/${targetDomain}?size=${Math.min(size * 3, 512)}`;
-
   return (
     <img
-      src={logoUrl}
+      src={logoSources[failCount]}
       alt={name || "Company logo"}
       className="rounded-lg shrink-0 object-contain bg-white border"
       style={{ width: size, height: size }}
-      onError={() => {
-        if (d && !primaryFailed) setPrimaryFailed(true);
-        else setGuessedFailed(true);
-      }}
+      onError={() => setFailCount(c => c + 1)}
       data-testid="company-logo"
     />
   );
