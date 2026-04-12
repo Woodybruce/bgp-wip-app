@@ -20,7 +20,7 @@ export function MobileBottomNav({ onMoreTap }: { onMoreTap: () => void }) {
 
   return (
     <nav
-      className="fixed bottom-0 left-0 right-0 z-50 bg-white dark:bg-background border-t border-border/60 md:hidden"
+      className="fixed bottom-0 left-0 right-0 z-50 bg-[#FAF9F7] dark:bg-background border-t border-[#E7E5E4] md:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       data-testid="mobile-bottom-nav"
     >
@@ -40,13 +40,13 @@ export function MobileBottomNav({ onMoreTap }: { onMoreTap: () => void }) {
               }}
               className={`flex flex-col items-center justify-center gap-0.5 min-w-[56px] min-h-[44px] px-2 py-1.5 rounded-lg transition-colors ${
                 active
-                  ? "text-emerald-600 dark:text-emerald-400"
+                  ? "text-[#1C1917] dark:text-white"
                   : "text-muted-foreground"
               }`}
               data-testid={`bottom-nav-${item.label.toLowerCase()}`}
             >
-              <Icon className={`w-[22px] h-[22px] ${active ? "text-emerald-600 dark:text-emerald-400" : ""}`} />
-              <span className={`text-[10px] font-semibold ${active ? "text-emerald-600 dark:text-emerald-400" : ""}`}>
+              <Icon className={`w-[22px] h-[22px] ${active ? "text-[#1C1917] dark:text-white" : ""}`} />
+              <span className={`text-[10px] font-semibold ${active ? "text-[#1C1917] dark:text-white" : ""}`}>
                 {item.label}
               </span>
             </button>
