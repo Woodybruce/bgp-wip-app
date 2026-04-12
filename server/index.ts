@@ -315,16 +315,22 @@ app.use("/api/branding/assets", express.static(
       log(`serving on port ${port}`);
       // startEmailProcessor(); // DISABLED - maintenance mode
       setTimeout(() => startHealthCheck(), 10000);
-      setTimeout(() => startAutoEnrichment(), 30000);
-      setTimeout(async () => {
-        try {
-          const { startImageSync } = await import("./image-studio");
-          startImageSync();
-        } catch (e: any) {
-          console.error("[image-sync] Failed to start:", e.message);
-        }
-      }, 60000);
-      setTimeout(() => startArchivist(), 300000);
+      // Background crawls only run in production — too slow/fragile over local internet
+      const isProduction = process.env.NODE_ENV === "production";
+      if (isProduction) {
+        setTimeout(() => startAutoEnrichment(), 30000);
+        setTimeout(async () => {
+          try {
+            const { startImageSync } = await import("./image-studio");
+            startImageSync();
+          } catch (e: any) {
+            console.error("[image-sync] Failed to start:", e.message);
+          }
+        }, 60000);
+        setTimeout(() => startArchivist(), 300000);
+      } else {
+        console.log("[dev] Skipping background crawls (image-sync, archivist, auto-enrich) — production only");
+      }
       // KYC monthly re-screening cron (check daily, run on 1st of month)
       setInterval(() => {
         const now = new Date();
