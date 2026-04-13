@@ -268,6 +268,9 @@ export async function registerRoutes(
   const { registerImageStudioRoutes } = await import("./image-studio");
   registerImageStudioRoutes(app);
 
+  const { registerIntegrationsStatusRoutes } = await import("./integrations-status");
+  registerIntegrationsStatusRoutes(app);
+
   const { registerOSDataRoutes } = await import("./os-data");
   registerOSDataRoutes(app);
 

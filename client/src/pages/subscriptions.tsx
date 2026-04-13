@@ -2,8 +2,27 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { ExternalLink, Search, Building2, FileText, MapPin, Newspaper, ShieldCheck, Mail, HardDrive, Rocket, Presentation, LineChart, Palette, Globe, ChevronDown, ChevronUp } from "lucide-react";
+import { ExternalLink, Search, Building2, FileText, MapPin, Newspaper, ShieldCheck, Mail, HardDrive, Rocket, Presentation, LineChart, Palette, Globe, ChevronDown, ChevronUp, KeyRound, CheckCircle2, XCircle, RefreshCw } from "lucide-react";
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+
+type IntegrationItem = {
+  key: string;
+  label: string;
+  group: string;
+  configured: boolean;
+  resolvedFrom: string | null;
+  masked: string | null;
+  fallbacks: string[];
+};
+type IntegrationsStatus = {
+  total: number;
+  configured: number;
+  missing: number;
+  items: IntegrationItem[];
+  grouped: Record<string, IntegrationItem[]>;
+};
 
 interface Subscription {
   name: string;
@@ -186,6 +205,15 @@ export default function Subscriptions() {
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
+  const [keysExpanded, setKeysExpanded] = useState(false);
+
+  const { data: keyStatus, isLoading: keysLoading, refetch: refetchKeys, isFetching: keysFetching } = useQuery<IntegrationsStatus>({
+    queryKey: ["/api/integrations/status"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/integrations/status");
+      return res.json();
+    },
+  });
 
   const filtered = subscriptions.filter((s) => {
     const matchSearch = !search || s.name.toLowerCase().includes(search.toLowerCase()) || s.description.toLowerCase().includes(search.toLowerCase());
@@ -206,6 +234,103 @@ export default function Subscriptions() {
           </p>
         </div>
       </div>
+
+      <Card data-testid="integrations-status-panel">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                <KeyRound className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold">API Keys & Environment</h2>
+                <p className="text-xs text-muted-foreground">
+                  {keysLoading ? (
+                    "Checking configured keys…"
+                  ) : keyStatus ? (
+                    <>
+                      <span className="text-primary font-medium">{keyStatus.configured}</span> configured
+                      {keyStatus.missing > 0 ? (
+                        <>
+                          {" · "}
+                          <span className="text-destructive font-medium">{keyStatus.missing}</span> missing
+                        </>
+                      ) : null}
+                      {" · "}
+                      {keyStatus.total} total
+                    </>
+                  ) : (
+                    "Status unavailable"
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => refetchKeys()}
+                disabled={keysFetching}
+                data-testid="button-refresh-key-status"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${keysFetching ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setKeysExpanded((v) => !v)}
+                data-testid="button-toggle-key-status"
+              >
+                {keysExpanded ? <ChevronUp className="w-3.5 h-3.5 mr-1.5" /> : <ChevronDown className="w-3.5 h-3.5 mr-1.5" />}
+                {keysExpanded ? "Hide" : "Show"}
+              </Button>
+            </div>
+          </div>
+
+          {keysExpanded && keyStatus && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 pt-1">
+              {Object.entries(keyStatus.grouped).map(([group, items]) => (
+                <div key={group} className="space-y-1.5">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{group}</p>
+                  {items.map((item) => (
+                    <div
+                      key={item.key}
+                      className="flex items-center justify-between gap-2 text-xs"
+                      data-testid={`key-status-${item.key}`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        {item.configured ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-primary shrink-0" />
+                        ) : (
+                          <XCircle className="w-3.5 h-3.5 text-destructive shrink-0" />
+                        )}
+                        <span className="truncate">{item.label}</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground shrink-0 font-mono">
+                        {item.configured ? (
+                          <>
+                            {item.resolvedFrom && item.resolvedFrom !== item.key ? (
+                              <span className="text-amber-600 dark:text-amber-400 mr-1" title={`Resolved from fallback: ${item.resolvedFrom}`}>
+                                ↻
+                              </span>
+                            ) : null}
+                            {item.masked}
+                          </>
+                        ) : (
+                          "not set"
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 max-w-sm">
