@@ -32,6 +32,7 @@ import {
   Calculator, Building2, MapPin, Scale, CheckCircle2,
   MoreHorizontal, Ruler, Loader2, Newspaper, Sparkles,
   FileText, Upload, X, Paperclip, FileDown, Info, Presentation,
+  TrendingUp, Inbox, ArrowRight,
 } from "lucide-react";
 import type { CrmComp } from "@shared/schema";
 import jsPDF from "jspdf";
@@ -78,14 +79,13 @@ const DEFAULT_PDF_TEMPLATE: PdfTemplateConfig = {
     { key: "zoneARate", label: "Zone A (psf)", enabled: true },
     { key: "overallRate", label: "Overall (psf)", enabled: true },
     { key: "netEffectiveRent", label: "Net Effective", enabled: true },
-    { key: "passingRent", label: "Passing Rent", enabled: true },
     { key: "niaSqft", label: "NIA (sq ft)", enabled: true },
     { key: "itzaSqft", label: "ITZA (sq ft)", enabled: true },
-    { key: "term", label: "Term", enabled: true },
+    { key: "term", label: "Term (yrs)", enabled: true },
     { key: "rentFree", label: "Rent Free", enabled: true },
     { key: "breakClause", label: "Break", enabled: true },
     { key: "ltActStatus", label: "L&T Act", enabled: true },
-    { key: "fitoutContribution", label: "Fitout Contrib.", enabled: true },
+    { key: "fitoutContribution", label: "Tenant Incentive", enabled: true },
     { key: "sourceEvidence", label: "Source", enabled: true },
   ],
   showBadges: true,
@@ -386,8 +386,43 @@ function preferredAreaField(useClass: string | null | undefined): "niaSqft" | "g
 
 function parseNum(v: string | null | undefined): number {
   if (!v) return 0;
-  const n = parseFloat(String(v).replace(/[^0-9.-]/g, ""));
+  // If stepped (contains /), return the first step — used as "headline" year 1.
+  const first = String(v).split("/")[0];
+  const n = parseFloat(first.replace(/[^0-9.-]/g, ""));
   return isNaN(n) ? 0 : n;
+}
+
+// Parse a stepped rent string like "100000/110000/120000" or "100k/110k" into numbers.
+function parseSteppedRent(v: string | null | undefined): number[] {
+  if (!v) return [];
+  return String(v).split("/").map(part => {
+    const t = part.trim().toLowerCase().replace(/[£,\s]/g, "");
+    const mul = t.endsWith("k") ? 1000 : t.endsWith("m") ? 1_000_000 : 1;
+    const numStr = t.replace(/[km]$/, "");
+    const n = parseFloat(numStr);
+    return isNaN(n) ? 0 : n * mul;
+  }).filter(n => n > 0);
+}
+
+function formatGBP(n: number, compact = false): string {
+  if (!Number.isFinite(n) || n === 0) return "";
+  if (compact && Math.abs(n) >= 1000) {
+    if (Math.abs(n) >= 1_000_000) return "£" + (n / 1_000_000).toLocaleString("en-GB", { maximumFractionDigits: 1 }) + "M";
+    return "£" + (n / 1000).toLocaleString("en-GB", { maximumFractionDigits: 0 }) + "K";
+  }
+  return "£" + n.toLocaleString("en-GB", { maximumFractionDigits: 2 });
+}
+
+function formatInt(n: number): string {
+  if (!Number.isFinite(n) || n === 0) return "";
+  return n.toLocaleString("en-GB", { maximumFractionDigits: 0 });
+}
+
+function formatSteppedRent(v: string | null | undefined, compact = false): string {
+  const steps = parseSteppedRent(v);
+  if (steps.length === 0) return "";
+  if (steps.length === 1) return formatGBP(steps[0], compact);
+  return steps.map(s => formatGBP(s, true)).join(" → ");
 }
 
 function parseMonths(v: string | null | undefined): number {
@@ -412,18 +447,340 @@ function parseYears(v: string | null | undefined): number {
   return isNaN(n) ? 0 : n;
 }
 
-// Compute net effective rent: headline less straight-line amortised incentives over lease term.
+// Compute net effective rent: averaged (stepped) headline minus straight-line amortised
+// incentives (rent free value + tenant incentive / capital contribution) over lease term.
 function computeNetEffective(comp: CrmComp): number {
-  const headline = parseNum(comp.headlineRent);
-  if (!headline) return 0;
-  const rfMonths = parseMonths(comp.rentFreeMonths || comp.rentFree);
-  const fitout = parseNum(comp.fitoutContribution);
+  const steps = parseSteppedRent(comp.headlineRent);
+  if (steps.length === 0) return 0;
   const term = parseYears(comp.term);
-  if (!term) return headline;
-  const rfValue = (headline / 12) * rfMonths;
-  const totalIncentives = rfValue + fitout;
+  const y1 = steps[0];
+  // Average headline across the lease term. If steps are fewer than term, the final step
+  // is held for the remaining years (standard stepped-rent convention).
+  let avgHeadline = y1;
+  if (term > 0) {
+    let totalRent = 0;
+    for (let y = 0; y < term; y++) {
+      const step = steps[Math.min(y, steps.length - 1)];
+      totalRent += step;
+    }
+    avgHeadline = totalRent / term;
+  } else if (steps.length > 1) {
+    avgHeadline = steps.reduce((a, b) => a + b, 0) / steps.length;
+  }
+  const rfMonths = parseMonths(comp.rentFreeMonths || comp.rentFree);
+  const rfValue = (y1 / 12) * rfMonths; // rent free is valued at year-1 rent
+  const incentive = parseNum(comp.fitoutContribution); // Tenant incentive / capital contribution
+  const totalIncentives = rfValue + incentive;
+  if (!term) return avgHeadline;
   const annualisedIncentive = totalIncentives / term;
-  return headline - annualisedIncentive;
+  return avgHeadline - annualisedIncentive;
+}
+
+// UK RPI / CPI annual averages — last 10 years (ONS published annual % change).
+// Used by the indexation calculator for RPI / CPI lease reviews. Update annually.
+const UK_INDEX_DATA: { year: number; rpi: number; cpi: number }[] = [
+  { year: 2015, rpi: 1.0, cpi: 0.0 },
+  { year: 2016, rpi: 1.8, cpi: 0.7 },
+  { year: 2017, rpi: 3.6, cpi: 2.7 },
+  { year: 2018, rpi: 3.3, cpi: 2.5 },
+  { year: 2019, rpi: 2.6, cpi: 1.8 },
+  { year: 2020, rpi: 1.5, cpi: 0.9 },
+  { year: 2021, rpi: 4.1, cpi: 2.6 },
+  { year: 2022, rpi: 11.6, cpi: 9.1 },
+  { year: 2023, rpi: 9.7, cpi: 7.3 },
+  { year: 2024, rpi: 3.6, cpi: 2.5 },
+];
+
+// Inline-edit cell that stores raw numbers but displays them with thousands separators.
+// Editing exposes the raw digits; on save we strip non-numeric characters before persisting.
+function NumberCell({
+  value, onSave, suffix = "", className = "",
+}: { value: string | null | undefined; onSave: (v: string) => void; suffix?: string; className?: string }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (editing) { inputRef.current?.focus(); inputRef.current?.select(); } }, [editing]);
+  const n = parseNum(value);
+  const display = n ? formatInt(n) + (suffix ? ` ${suffix}` : "") : "";
+
+  const save = () => {
+    const cleaned = draft.replace(/[^0-9.-]/g, "");
+    if (cleaned !== (value || "")) onSave(cleaned);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        inputMode="decimal"
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
+        className={`w-20 px-1.5 py-0.5 text-xs border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 ${className}`}
+        data-testid="number-cell-input"
+      />
+    );
+  }
+  return (
+    <span
+      onClick={() => { setDraft(n ? String(n) : ""); setEditing(true); }}
+      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
+      data-testid="number-cell-display"
+    >
+      {display || "—"}
+    </span>
+  );
+}
+
+// Currency edit cell with £ + thousands separators. Stores raw number string.
+function CurrencyCell({
+  value, onSave, compact = false, className = "",
+}: { value: string | null | undefined; onSave: (v: string) => void; compact?: boolean; className?: string }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (editing) { inputRef.current?.focus(); inputRef.current?.select(); } }, [editing]);
+  const n = parseNum(value);
+  const display = formatGBP(n, compact);
+
+  const save = () => {
+    const cleaned = draft.replace(/[^0-9.-]/g, "");
+    if (cleaned !== (value || "")) onSave(cleaned);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        inputMode="decimal"
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
+        className={`w-24 px-1.5 py-0.5 text-xs border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 ${className}`}
+        data-testid="currency-cell-input"
+      />
+    );
+  }
+  return (
+    <span
+      onClick={() => { setDraft(n ? String(n) : ""); setEditing(true); }}
+      className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
+      data-testid="currency-cell-display"
+    >
+      {display || "—"}
+    </span>
+  );
+}
+
+// Stepped headline rent cell — accepts "/"-delimited annual amounts (e.g. "100000/110000/120000").
+// Display compactly as "£100K → £110K → £120K".
+function SteppedRentCell({
+  value, onSave, className = "",
+}: { value: string | null | undefined; onSave: (v: string) => void; className?: string }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (editing) { inputRef.current?.focus(); inputRef.current?.select(); } }, [editing]);
+  const display = formatSteppedRent(value);
+  const steps = parseSteppedRent(value);
+
+  const save = () => {
+    // Normalise: strip £ and commas, keep / as separator.
+    const cleaned = draft
+      .split("/")
+      .map(p => p.trim().replace(/[£,\s]/g, ""))
+      .filter(p => p.length > 0)
+      .join("/");
+    if (cleaned !== (value || "")) onSave(cleaned);
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") setEditing(false); }}
+        placeholder="100000 or 100000/110000/120000"
+        className={`w-44 px-1.5 py-0.5 text-xs border border-primary/40 rounded bg-background focus:outline-none focus:ring-1 focus:ring-primary/30 ${className}`}
+        data-testid="stepped-rent-input"
+      />
+    );
+  }
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            onClick={() => { setDraft(steps.length > 1 ? steps.join("/") : (steps[0] ? String(steps[0]) : "")); setEditing(true); }}
+            className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
+            data-testid="stepped-rent-display"
+          >
+            {display || "—"}
+            {steps.length > 1 && <span className="ml-1 text-[9px] text-amber-600 font-semibold">STEP</span>}
+          </span>
+        </TooltipTrigger>
+        {steps.length > 1 && (
+          <TooltipContent side="top" className="text-xs">
+            <div className="font-semibold mb-1">Stepped headline rent</div>
+            {steps.map((s, i) => (
+              <div key={i}>Year {i + 1}{i === steps.length - 1 ? "+" : ""}: £{s.toLocaleString("en-GB")}</div>
+            ))}
+            <div className="text-[10px] text-muted-foreground mt-1">Edit with "/" between years</div>
+          </TooltipContent>
+        )}
+        {steps.length <= 1 && (
+          <TooltipContent side="top" className="text-xs">
+            Enter "/" between years for stepped rent (e.g. 100000/110000/120000)
+          </TooltipContent>
+        )}
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function RpiCpiCalculator() {
+  const [baseRent, setBaseRent] = useState("");
+  const [startYear, setStartYear] = useState<number>(UK_INDEX_DATA[0].year);
+  const [endYear, setEndYear] = useState<number>(UK_INDEX_DATA[UK_INDEX_DATA.length - 1].year);
+  const [index, setIndex] = useState<"rpi" | "cpi">("rpi");
+  const [cap, setCap] = useState("");
+  const [collar, setCollar] = useState("");
+
+  const rent = parseFloat(baseRent.replace(/[^0-9.-]/g, "")) || 0;
+  const capN = parseFloat(cap) || Infinity;
+  const collarN = parseFloat(collar) || -Infinity;
+
+  const range = UK_INDEX_DATA.filter(d => d.year > startYear && d.year <= endYear);
+  let factor = 1;
+  const breakdown = range.map(d => {
+    const raw = index === "rpi" ? d.rpi : d.cpi;
+    const capped = Math.max(collarN, Math.min(capN, raw));
+    factor *= 1 + capped / 100;
+    return { ...d, raw, capped, factor };
+  });
+  const cumulativePct = (factor - 1) * 100;
+  const newRent = rent * factor;
+  const yearsSpan = endYear - startYear;
+  const cagr = yearsSpan > 0 ? (Math.pow(factor, 1 / yearsSpan) - 1) * 100 : 0;
+
+  return (
+    <div className="space-y-4" data-testid="rpi-cpi-calculator">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Index</label>
+          <Select value={index} onValueChange={v => setIndex(v as "rpi" | "cpi")}>
+            <SelectTrigger className="h-9" data-testid="rpi-select-index"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="rpi">RPI (Retail Price Index)</SelectItem>
+              <SelectItem value="cpi">CPI (Consumer Price Index)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Base Rent (£ pa)</label>
+          <Input type="text" inputMode="decimal" value={baseRent} onChange={e => setBaseRent(e.target.value)} placeholder="250,000" className="h-9" data-testid="rpi-base-rent" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">From Year</label>
+          <Select value={String(startYear)} onValueChange={v => setStartYear(Number(v))}>
+            <SelectTrigger className="h-9" data-testid="rpi-start-year"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {UK_INDEX_DATA.map(d => <SelectItem key={d.year} value={String(d.year)}>{d.year}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">To Year</label>
+          <Select value={String(endYear)} onValueChange={v => setEndYear(Number(v))}>
+            <SelectTrigger className="h-9" data-testid="rpi-end-year"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {UK_INDEX_DATA.map(d => <SelectItem key={d.year} value={String(d.year)}>{d.year}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Cap (% pa)</label>
+          <Input type="number" value={cap} onChange={e => setCap(e.target.value)} placeholder="e.g. 4" className="h-9" data-testid="rpi-cap" />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Collar (% pa)</label>
+          <Input type="number" value={collar} onChange={e => setCollar(e.target.value)} placeholder="e.g. 1" className="h-9" data-testid="rpi-collar" />
+        </div>
+      </div>
+
+      <div className="bg-muted/50 rounded-xl p-4 space-y-3">
+        <h4 className="text-sm font-semibold flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Indexation Result</h4>
+        <div className="grid grid-cols-2 gap-y-2 gap-x-4">
+          <div>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Cumulative Uplift</p>
+            <p className="text-sm font-bold">{cumulativePct.toFixed(2)}%</p>
+          </div>
+          <div>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Equivalent CAGR</p>
+            <p className="text-sm font-bold">{cagr.toFixed(2)}% pa</p>
+          </div>
+          {rent > 0 && (
+            <>
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Base Rent</p>
+                <p className="text-sm font-semibold">£{rent.toLocaleString("en-GB")}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Indexed Rent</p>
+                <p className="text-sm font-bold text-green-600">£{Math.round(newRent).toLocaleString("en-GB")}</p>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Annual {index.toUpperCase()} (last 10 years)</h4>
+        <div className="border rounded-lg overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-muted/40">
+              <tr>
+                <th className="text-left px-2 py-1.5 font-semibold">Year</th>
+                <th className="text-right px-2 py-1.5 font-semibold">RPI</th>
+                <th className="text-right px-2 py-1.5 font-semibold">CPI</th>
+                <th className="text-right px-2 py-1.5 font-semibold">Applied</th>
+                <th className="text-right px-2 py-1.5 font-semibold">Cumulative</th>
+              </tr>
+            </thead>
+            <tbody>
+              {UK_INDEX_DATA.map(d => {
+                const inRange = d.year > startYear && d.year <= endYear;
+                const row = breakdown.find(b => b.year === d.year);
+                return (
+                  <tr key={d.year} className={`border-t ${inRange ? "" : "text-muted-foreground/60"}`}>
+                    <td className="px-2 py-1">{d.year}</td>
+                    <td className="text-right px-2 py-1">{d.rpi.toFixed(1)}%</td>
+                    <td className="text-right px-2 py-1">{d.cpi.toFixed(1)}%</td>
+                    <td className="text-right px-2 py-1">{row ? row.capped.toFixed(2) + "%" : "—"}{row && row.capped !== row.raw ? <span className="text-[9px] text-amber-600 ml-1">capped</span> : ""}</td>
+                    <td className="text-right px-2 py-1 font-mono">{row ? "×" + row.factor.toFixed(4) : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-2">
+          Source: UK ONS — annual averages of monthly Retail Price Index (RPI) and Consumer Price Index (CPI). Apply the cap/collar to each year's indexation before compounding (standard UK lease convention).
+        </p>
+      </div>
+    </div>
+  );
 }
 
 function NetRentCalculator({ onClose }: { onClose: () => void }) {
@@ -552,6 +909,8 @@ export default function Comps() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [createOpen, setCreateOpen] = useState(false);
   const [calcOpen, setCalcOpen] = useState(false);
+  const [rpiOpen, setRpiOpen] = useState(false);
+  const [confirmLead, setConfirmLead] = useState<CrmComp | null>(null);
   const [selectedComp, setSelectedComp] = useState<CrmComp | null>(null);
   const [deleteComp, setDeleteComp] = useState<{ id: string; name: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -617,8 +976,19 @@ export default function Comps() {
     },
   });
 
+  // A "lead" is an unverified comp extracted by AI from news / email / SharePoint.
+  // Confirm Lead toggles `verified` to true and the row drops out of the leads filter.
+  const isLead = (c: CrmComp) =>
+    !c.verified && (
+      ["News Feed", "Team Email", "SharePoint File"].includes(c.sourceEvidence || "")
+      || c.createdBy === "AI Auto-Extract"
+    );
+
+  const leadComps = useMemo(() => comps.filter(isLead), [comps]);
+  const confirmedComps = useMemo(() => comps.filter(c => !isLead(c)), [comps]);
+
   const filtered = useMemo(() => {
-    let result = comps;
+    let result = confirmedComps;
     if (debouncedSearch) {
       const q = debouncedSearch.toLowerCase();
       result = result.filter(c =>
@@ -692,15 +1062,15 @@ export default function Comps() {
     const headers = [
       "Property", "Tenant", "Landlord", "Area", "Postcode", "Use Class", "Transaction Type",
       "Date", "Headline Rent", "Zone A Rate", "Overall Rate", "Net Effective Rent",
-      "NIA (sqft)", "GIA (sqft)", "ITZA (sqft)", "Rent Free", "Fitout Contribution",
-      "Passing Rent", "Term", "Break", "L&T Act", "Measurement Standard",
+      "NIA (sqft)", "GIA (sqft)", "ITZA (sqft)", "Rent Free (mths)", "Tenant Incentive",
+      "Term (yrs)", "Break", "L&T Act", "Measurement Standard",
       "Source", "Verified", "Comments",
     ];
     const rows = filtered.map(c => [
       c.name, c.tenant, c.landlord, c.areaLocation, c.postcode, c.useClass, c.transactionType,
       c.completionDate, c.headlineRent, c.zoneARate, c.overallRate, c.netEffectiveRent,
-      c.niaSqft, c.giaSqft, c.itzaSqft, c.rentFree, c.fitoutContribution,
-      c.passingRent, c.term, c.breakClause, c.ltActStatus, c.measurementStandard,
+      c.niaSqft, c.giaSqft, c.itzaSqft, c.rentFreeMonths || c.rentFree, c.fitoutContribution,
+      c.term, c.breakClause, c.ltActStatus, c.measurementStandard,
       c.sourceEvidence, c.verified ? "Yes" : "No", c.comments,
     ]);
     const csv = [headers.join(","), ...rows.map(r => r.map(v => `"${(v || "").toString().replace(/"/g, '""')}"`).join(","))].join("\n");
@@ -817,6 +1187,15 @@ export default function Comps() {
                 <Scale className="w-3.5 h-3.5 mr-1.5" />
                 Comps
               </TabsTrigger>
+              <TabsTrigger value="leads" data-testid="tab-comps-leads">
+                <Inbox className="w-3.5 h-3.5 mr-1.5" />
+                Leads
+                {leadComps.length > 0 && (
+                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold">
+                    {leadComps.length}
+                  </span>
+                )}
+              </TabsTrigger>
               <TabsTrigger value="pdf-template" data-testid="tab-comps-pdf-template">
                 <Presentation className="w-3.5 h-3.5 mr-1.5" />
                 PDF Template
@@ -856,6 +1235,10 @@ export default function Comps() {
             <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={() => setCalcOpen(true)} data-testid="button-open-calculator">
               <Calculator className="w-3.5 h-3.5" />
               Net Rent Calc
+            </Button>
+            <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={() => setRpiOpen(true)} data-testid="button-open-rpi-calc">
+              <TrendingUp className="w-3.5 h-3.5" />
+              RPI/CPI
             </Button>
             <Button variant="outline" size="sm" className="gap-1.5 h-8" onClick={exportToExcel} data-testid="button-export-comps">
               <Download className="w-3.5 h-3.5" />
@@ -991,7 +1374,7 @@ export default function Comps() {
             )}
           </div>
         ) : (
-          <table className="w-full" data-testid="comps-table">
+          <table className="w-full min-w-[1900px]" data-testid="comps-table">
             <thead className="sticky top-0 bg-background border-b z-10 text-sm">
               <tr>
                 <th className="px-2 py-2.5 w-8">
@@ -1017,9 +1400,9 @@ export default function Comps() {
                 <SortHeader field="niaSqft">NIA (sqft)</SortHeader>
                 <SortHeader field="giaSqft">GIA (sqft)</SortHeader>
                 <SortHeader field="itzaSqft">ITZA</SortHeader>
-                <SortHeader field="term">Term</SortHeader>
-                <SortHeader field="rentFree">Rent Free</SortHeader>
-                <SortHeader field="passingRent">Passing Rent</SortHeader>
+                <SortHeader field="term">Term (yrs)</SortHeader>
+                <SortHeader field="rentFree">Rent Free (mths)</SortHeader>
+                <SortHeader field="fitoutContribution">Tenant Incentive</SortHeader>
                 <SortHeader field="ltActStatus">L&T Act</SortHeader>
                 <SortHeader field="verified">Verified</SortHeader>
                 <th className="px-2 py-2.5 w-8" />
@@ -1087,7 +1470,7 @@ export default function Comps() {
                     <InlineText value={comp.completionDate || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "completionDate", value: v })} />
                   </td>
                   <td className="px-2 py-1.5 font-semibold whitespace-nowrap">
-                    <InlineText value={comp.headlineRent || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "headlineRent", value: v })} />
+                    <SteppedRentCell value={comp.headlineRent || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "headlineRent", value: v })} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-blue-600 font-semibold">
                     <FormulaCell
@@ -1101,6 +1484,7 @@ export default function Comps() {
                       }}
                       formulaLabel="Zone A = Rent ÷ ITZA"
                       disabled={!parseNum(comp.headlineRent) || !parseNum(comp.itzaSqft)}
+                      currency
                     />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
@@ -1116,6 +1500,7 @@ export default function Comps() {
                       }}
                       formulaLabel={`Overall = Rent ÷ ${preferredAreaField(comp.useClass) === "giaSqft" ? "GIA" : "NIA"}${!parseNum(comp[preferredAreaField(comp.useClass)]) ? " (falling back to other area)" : ""}`}
                       disabled={!parseNum(comp.headlineRent) || (!parseNum(comp.niaSqft) && !parseNum(comp.giaSqft))}
+                      currency
                     />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-green-600 font-semibold">
@@ -1127,8 +1512,9 @@ export default function Comps() {
                         if (!ne) return null;
                         return Math.round(ne).toString();
                       }}
-                      formulaLabel="Net Eff = Headline − (Rent free £ + Fitout £) ÷ Term"
+                      formulaLabel="Net Eff = Avg headline (across stepped rents) − (Rent free £ + Tenant incentive £) ÷ Term"
                       disabled={!parseNum(comp.headlineRent) || !parseYears(comp.term)}
+                      currency
                     />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-green-700 font-semibold">
@@ -1147,25 +1533,26 @@ export default function Comps() {
                         (!parseNum(comp.netEffectiveRent) && (!parseNum(comp.headlineRent) || !parseYears(comp.term))) ||
                         (!parseNum(comp.niaSqft) && !parseNum(comp.giaSqft))
                       }
+                      currency
                     />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <InlineText value={comp.niaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "niaSqft", value: v })} />
+                    <NumberCell value={comp.niaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "niaSqft", value: v })} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <InlineText value={comp.giaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "giaSqft", value: v })} />
+                    <NumberCell value={comp.giaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "giaSqft", value: v })} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <InlineText value={comp.itzaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "itzaSqft", value: v })} />
+                    <NumberCell value={comp.itzaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "itzaSqft", value: v })} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <InlineText value={comp.term || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "term", value: v })} />
+                    <NumberCell value={comp.term || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "term", value: v })} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <InlineText value={comp.rentFree || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "rentFree", value: v })} />
+                    <NumberCell value={comp.rentFreeMonths || comp.rentFree || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "rentFreeMonths", value: v })} />
                   </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">
-                    <InlineText value={comp.passingRent || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "passingRent", value: v })} />
+                  <td className="px-2 py-1.5 whitespace-nowrap text-amber-700">
+                    <CurrencyCell value={comp.fitoutContribution || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "fitoutContribution", value: v })} />
                   </td>
                   <td className="px-2 py-1.5">
                     <InlineLabelSelect
@@ -1218,6 +1605,114 @@ export default function Comps() {
         )}
       </div>
       </div>
+      </TabsContent>
+
+      <TabsContent value="leads" className="flex-1 overflow-auto mt-0 p-4 data-[state=inactive]:hidden" forceMount>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <Inbox className="w-4 h-4 text-amber-600" />
+              Unconfirmed Leads
+              <span className="text-xs font-normal text-muted-foreground">
+                ({leadComps.length} extracted from news, emails &amp; SharePoint)
+              </span>
+            </h3>
+            <p className="text-xs text-muted-foreground mt-0.5">Click a lead to review and confirm into the main comps table.</p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 h-8"
+            disabled={scanning}
+            onClick={async () => {
+              setScanning(true);
+              try {
+                const res = await fetch("/api/news-feed/extract-comps", { method: "POST", credentials: "include", headers: { Authorization: `Bearer ${localStorage.getItem("bgp_auth_token")}` } });
+                if (!res.ok) throw new Error(`Server error ${res.status}`);
+                await res.json();
+                queryClient.invalidateQueries({ queryKey: ["/api/crm/comps"] });
+                toast({ title: "Scan complete" });
+              } catch (e: any) { toast({ title: "Error", description: e?.message || "Scan failed", variant: "destructive" }); }
+              setScanning(false);
+            }}
+          >
+            {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            Scan All Sources
+          </Button>
+        </div>
+
+        {leadComps.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-64 text-center">
+            <Inbox className="w-12 h-12 text-muted-foreground/20 mb-3" />
+            <h3 className="text-sm font-semibold mb-1">No leads waiting</h3>
+            <p className="text-xs text-muted-foreground">Run "Scan All Sources" to extract new comps from news, team emails and SharePoint files.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {leadComps.map(lead => {
+              const sourceColor =
+                lead.sourceEvidence === "News Feed" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
+                lead.sourceEvidence === "Team Email" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" :
+                lead.sourceEvidence === "SharePoint File" ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400" :
+                "bg-muted text-muted-foreground";
+              const headlineDisplay = formatSteppedRent(lead.headlineRent);
+              return (
+                <button
+                  key={lead.id}
+                  onClick={() => setConfirmLead(lead)}
+                  className="text-left p-4 border rounded-xl bg-card hover:border-primary/50 hover:shadow-sm transition-all space-y-2"
+                  data-testid={`lead-card-${lead.id}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="font-semibold text-sm leading-tight">{lead.name || "Untitled"}</div>
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ${sourceColor}`}>
+                      {lead.sourceEvidence || "AI"}
+                    </span>
+                  </div>
+                  {(lead.tenant || lead.areaLocation) && (
+                    <div className="text-xs text-muted-foreground">
+                      {lead.tenant}{lead.tenant && lead.areaLocation ? " · " : ""}{lead.areaLocation}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {lead.useClass && <span className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{lead.useClass}</span>}
+                    {lead.transactionType && <span className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{lead.transactionType}</span>}
+                    {lead.completionDate && <span className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{lead.completionDate}</span>}
+                  </div>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] pt-2 border-t">
+                    {headlineDisplay && (
+                      <div>
+                        <div className="text-[9px] uppercase text-muted-foreground">Headline</div>
+                        <div className="font-semibold">{headlineDisplay}</div>
+                      </div>
+                    )}
+                    {lead.zoneARate && (
+                      <div>
+                        <div className="text-[9px] uppercase text-muted-foreground">Zone A</div>
+                        <div className="font-semibold">{formatGBP(parseNum(lead.zoneARate))}</div>
+                      </div>
+                    )}
+                    {lead.term && (
+                      <div>
+                        <div className="text-[9px] uppercase text-muted-foreground">Term</div>
+                        <div>{formatInt(parseNum(lead.term))} yrs</div>
+                      </div>
+                    )}
+                    {lead.itzaSqft && (
+                      <div>
+                        <div className="text-[9px] uppercase text-muted-foreground">ITZA</div>
+                        <div>{formatInt(parseNum(lead.itzaSqft))} sq ft</div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="pt-2 flex items-center justify-end text-xs text-primary font-medium">
+                    Review &amp; confirm <ArrowRight className="w-3.5 h-3.5 ml-1" />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </TabsContent>
 
       <TabsContent value="pdf-template" className="flex-1 overflow-auto mt-0 p-6">
@@ -1312,10 +1807,9 @@ export default function Comps() {
                     <DetailField label="Headline Rent" value={selectedComp.headlineRent} field="headlineRent" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "headlineRent", value: v })} />
                     <DetailField label="Zone A (psf)" value={selectedComp.zoneARate} field="zoneARate" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "zoneARate", value: v })} />
                     <DetailField label="Overall (psf)" value={selectedComp.overallRate} field="overallRate" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "overallRate", value: v })} />
-                    <DetailField label="Passing Rent" value={selectedComp.passingRent} field="passingRent" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "passingRent", value: v })} />
                     <DetailField label="Net Effective" value={selectedComp.netEffectiveRent} field="netEffectiveRent" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "netEffectiveRent", value: v })} />
-                    <DetailField label="Rent Free" value={selectedComp.rentFree} field="rentFree" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "rentFree", value: v })} />
-                    <DetailField label="Fitout Contribution" value={selectedComp.fitoutContribution} field="fitoutContribution" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "fitoutContribution", value: v })} />
+                    <DetailField label="Rent Free (mths)" value={selectedComp.rentFreeMonths || selectedComp.rentFree} field="rentFreeMonths" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "rentFreeMonths", value: v })} />
+                    <DetailField label="Tenant Incentive" value={selectedComp.fitoutContribution} field="fitoutContribution" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "fitoutContribution", value: v })} />
                     <DetailField label="£ psf (NIA)" value={selectedComp.rentPsfNia} field="rentPsfNia" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "rentPsfNia", value: v })} />
                     <DetailField label="£ psf (GIA)" value={selectedComp.rentPsfGia} field="rentPsfGia" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "rentPsfGia", value: v })} />
                   </div>
@@ -1511,6 +2005,88 @@ export default function Comps() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={rpiOpen} onOpenChange={setRpiOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <TrendingUp className="w-5 h-5" />
+              RPI / CPI Indexation Calculator
+            </DialogTitle>
+          </DialogHeader>
+          <RpiCpiCalculator />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!confirmLead} onOpenChange={(open) => { if (!open) setConfirmLead(null); }}>
+        <DialogContent className="max-w-lg">
+          {confirmLead && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Inbox className="w-5 h-5 text-amber-600" />
+                  Confirm Lead
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div className="p-3 rounded-lg border bg-muted/30">
+                  <div className="font-semibold text-sm">{confirmLead.name}</div>
+                  {confirmLead.tenant && <div className="text-xs text-muted-foreground">{confirmLead.tenant}</div>}
+                  {confirmLead.areaLocation && <div className="text-xs text-muted-foreground">{confirmLead.areaLocation}{confirmLead.postcode ? `, ${confirmLead.postcode}` : ""}</div>}
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  {confirmLead.useClass && <div><span className="text-muted-foreground">Use Class:</span> <span className="font-semibold">{confirmLead.useClass}</span></div>}
+                  {confirmLead.transactionType && <div><span className="text-muted-foreground">Type:</span> <span className="font-semibold">{confirmLead.transactionType}</span></div>}
+                  {confirmLead.completionDate && <div><span className="text-muted-foreground">Date:</span> <span className="font-semibold">{confirmLead.completionDate}</span></div>}
+                  {confirmLead.term && <div><span className="text-muted-foreground">Term:</span> <span className="font-semibold">{confirmLead.term}</span></div>}
+                  {confirmLead.headlineRent && <div className="col-span-2"><span className="text-muted-foreground">Headline Rent:</span> <span className="font-semibold">{formatSteppedRent(confirmLead.headlineRent) || confirmLead.headlineRent}</span></div>}
+                  {confirmLead.zoneARate && <div><span className="text-muted-foreground">Zone A:</span> <span className="font-semibold">£{confirmLead.zoneARate}</span></div>}
+                  {confirmLead.itzaSqft && <div><span className="text-muted-foreground">ITZA:</span> <span className="font-semibold">{formatInt(parseNum(confirmLead.itzaSqft))} sq ft</span></div>}
+                  {confirmLead.niaSqft && <div><span className="text-muted-foreground">NIA:</span> <span className="font-semibold">{formatInt(parseNum(confirmLead.niaSqft))} sq ft</span></div>}
+                </div>
+                {confirmLead.comments && (
+                  <div className="text-xs">
+                    <div className="text-muted-foreground mb-1">Notes / Source</div>
+                    <div className="p-2 rounded bg-muted/30 whitespace-pre-wrap">{confirmLead.comments}</div>
+                  </div>
+                )}
+                <div className="text-[11px] text-muted-foreground bg-amber-50 dark:bg-amber-950/20 p-2 rounded border border-amber-200 dark:border-amber-900">
+                  Confirming this lead marks it as <span className="font-semibold">verified</span> and moves it into the main Leasing Comps table.
+                </div>
+              </div>
+              <DialogFooter className="mt-4 gap-2">
+                <Button variant="outline" onClick={() => setConfirmLead(null)} data-testid="button-cancel-confirm-lead">Cancel</Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    if (confirmLead) {
+                      deleteMutation.mutate(confirmLead.id);
+                      setConfirmLead(null);
+                    }
+                  }}
+                  data-testid="button-discard-lead"
+                >
+                  <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Discard
+                </Button>
+                <Button
+                  className="bg-green-600 hover:bg-green-700"
+                  onClick={() => {
+                    if (confirmLead) {
+                      updateMutation.mutate({ id: confirmLead.id, field: "verified", value: true });
+                      toast({ title: "Lead confirmed", description: `${confirmLead.name} added to Leasing Comps` });
+                      setConfirmLead(null);
+                    }
+                  }}
+                  data-testid="button-confirm-lead"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Confirm Lead
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={!!deleteComp} onOpenChange={open => { if (!open) setDeleteComp(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1608,12 +2184,14 @@ function FormulaCell({
   compute,
   formulaLabel,
   disabled,
+  currency,
 }: {
   value: string;
   onSave: (v: string) => void;
   compute: () => string | null;
   formulaLabel: string;
   disabled?: boolean;
+  currency?: boolean;
 }) {
   const handleCompute = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1622,7 +2200,11 @@ function FormulaCell({
   };
   return (
     <div className="flex items-center gap-1 group">
-      <InlineText value={value} onSave={onSave} />
+      {currency ? (
+        <CurrencyCell value={value} onSave={onSave} />
+      ) : (
+        <InlineText value={value} onSave={onSave} />
+      )}
       <TooltipProvider delayDuration={200}>
         <Tooltip>
           <TooltipTrigger asChild>
