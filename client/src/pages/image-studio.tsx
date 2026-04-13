@@ -46,6 +46,8 @@ import {
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
+import { AddressAutocomplete } from "@/components/address-autocomplete";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const CATEGORIES = [
   "All",
@@ -182,6 +184,7 @@ export default function ImageStudio() {
   const [streetViewPitch, setStreetViewPitch] = useState(0);
   const [streetViewFov, setStreetViewFov] = useState(90);
   const [streetViewPreviewUrl, setStreetViewPreviewUrl] = useState("");
+  const [streetViewEnhanceAi, setStreetViewEnhanceAi] = useState(true);
 
   const [stockQuery, setStockQuery] = useState("");
   const [stockResults, setStockResults] = useState<any[]>([]);
@@ -574,7 +577,10 @@ export default function ImageStudio() {
 
   const captureStreetViewMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/image-studio/capture-streetview", {
+      const endpoint = streetViewEnhanceAi
+        ? "/api/image-studio/capture-and-enhance"
+        : "/api/image-studio/capture-streetview";
+      const res = await apiRequest("POST", endpoint, {
         location: streetViewAddress,
         heading: streetViewHeading,
         pitch: streetViewPitch,
@@ -583,11 +589,17 @@ export default function ImageStudio() {
       });
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
       setStreetViewDialogOpen(false);
-      toast({ title: "Captured", description: "Street View image saved to library" });
+      const enhanced = data?.enhanced;
+      toast({
+        title: enhanced ? "Captured & AI-enhanced" : "Captured",
+        description: enhanced
+          ? `Saved raw + AI-enhanced version (${enhanced.provider || "AI"})`
+          : "Street View image saved to library",
+      });
     },
     onError: (e: Error) => toast({ title: "Capture Failed", description: e.message, variant: "destructive" }),
   });
@@ -1672,50 +1684,24 @@ export default function ImageStudio() {
           <div className="space-y-4">
             <div>
               <Label>Property Address</Label>
-              <Input
-                placeholder="e.g. 10 Hanover Square, London W1S 1JB"
-                value={streetViewAddress}
-                onChange={(e) => setStreetViewAddress(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleStreetViewPreview()}
-                data-testid="input-streetview-address"
+              <AddressAutocomplete
+                value={streetViewAddress ? { formatted: streetViewAddress, placeId: "" } : null}
+                onChange={(addr) => {
+                  setStreetViewAddress(addr?.formatted || "");
+                  setStreetViewPreviewUrl("");
+                }}
+                placeholder="Start typing an address..."
               />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Powered by Google Places. Google picks the best camera angle for the selected location.
+              </p>
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <Label className="text-xs">Heading (0-360°)</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={360}
-                  value={streetViewHeading}
-                  onChange={(e) => setStreetViewHeading(Number(e.target.value))}
-                  data-testid="input-streetview-heading"
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Pitch (-90 to 90°)</Label>
-                <Input
-                  type="number"
-                  min={-90}
-                  max={90}
-                  value={streetViewPitch}
-                  onChange={(e) => setStreetViewPitch(Number(e.target.value))}
-                  data-testid="input-streetview-pitch"
-                />
-              </div>
-              <div>
-                <Label className="text-xs">FOV (10-120°)</Label>
-                <Input
-                  type="number"
-                  min={10}
-                  max={120}
-                  value={streetViewFov}
-                  onChange={(e) => setStreetViewFov(Number(e.target.value))}
-                  data-testid="input-streetview-fov"
-                />
-              </div>
-            </div>
-            <Button onClick={handleStreetViewPreview} className="w-full" data-testid="button-streetview-preview">
+            <Button
+              onClick={handleStreetViewPreview}
+              className="w-full"
+              disabled={!streetViewAddress.trim()}
+              data-testid="button-streetview-preview"
+            >
               <Camera className="h-4 w-4 mr-2" /> Preview Street View
             </Button>
             {streetViewPreviewUrl && (
@@ -1728,6 +1714,20 @@ export default function ImageStudio() {
                     data-testid="img-streetview-preview"
                   />
                 </div>
+                <label className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-sm cursor-pointer">
+                  <Checkbox
+                    checked={streetViewEnhanceAi}
+                    onCheckedChange={(checked) => setStreetViewEnhanceAi(!!checked)}
+                    data-testid="checkbox-streetview-enhance"
+                  />
+                  <span>
+                    <span className="font-medium">Enhance with AI for marketing</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Removes Google watermarks, improves lighting and sky, sharpens the building.
+                      Saves both raw and enhanced versions to the library.
+                    </span>
+                  </span>
+                </label>
                 <Button
                   onClick={() => captureStreetViewMutation.mutate()}
                   className="w-full"
@@ -1736,10 +1736,12 @@ export default function ImageStudio() {
                 >
                   {captureStreetViewMutation.isPending ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : streetViewEnhanceAi ? (
+                    <Sparkles className="h-4 w-4 mr-2" />
                   ) : (
                     <Download className="h-4 w-4 mr-2" />
                   )}
-                  Save to Library
+                  {streetViewEnhanceAi ? "Save + AI Enhance" : "Save to Library"}
                 </Button>
               </div>
             )}
