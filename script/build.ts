@@ -1,6 +1,6 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile, copyFile, mkdir } from "fs/promises";
+import { rm, readFile, writeFile, copyFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import pg from "pg";
 
@@ -89,6 +89,23 @@ async function buildAll() {
 
   console.log("building client...");
   await viteBuild();
+
+  // Bump the Service Worker cache name to the build timestamp so old caches
+  // (and the stale HTML/asset map they hold) get evicted on next deploy.
+  const swPath = "dist/public/sw.js";
+  if (existsSync(swPath)) {
+    try {
+      const buildStamp = `bgp-${Date.now()}`;
+      const swSrc = await readFile(swPath, "utf-8");
+      const swBumped = swSrc.replace(/var CACHE_NAME = '[^']+';/, `var CACHE_NAME = '${buildStamp}';`);
+      if (swBumped !== swSrc) {
+        await writeFile(swPath, swBumped);
+        console.log(`Service worker cache name bumped to ${buildStamp}`);
+      }
+    } catch (err: any) {
+      console.warn("SW cache bump failed:", err?.message);
+    }
+  }
 
   console.log("building server...");
   const pkg = JSON.parse(await readFile("package.json", "utf-8"));
