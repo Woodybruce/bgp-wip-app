@@ -2,11 +2,11 @@
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
            xsi:type="TaskPaneApp">
-  <Id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</Id>
-  <Version>2.0.1</Version>
+  <Id>73f41e37-23c8-4a24-bb23-f72e7f7319e8</Id>
+  <Version>2.1.0</Version>
   <ProviderName>Bruce Gillingham Pollard</ProviderName>
   <DefaultLocale>en-GB</DefaultLocale>
-  <DisplayName DefaultValue="ChatBGP for Excel"/>
+  <DisplayName DefaultValue="ChatBGP for Excel v2"/>
   <Description DefaultValue="AI-powered Excel assistant with CRM integration, financial model building, and SharePoint file management for BGP."/>
   <IconUrl DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/icon-192.png"/>
   <HighResolutionIconUrl DefaultValue="https://bgp-wip-app-production-efac.up.railway.app/icon-192.png"/>
