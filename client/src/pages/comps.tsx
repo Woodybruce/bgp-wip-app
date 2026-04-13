@@ -32,10 +32,11 @@ import {
   Calculator, Building2, MapPin, Scale, CheckCircle2,
   MoreHorizontal, Ruler, Loader2, Newspaper, Sparkles,
   FileText, Upload, X, Paperclip, FileDown, Info, Presentation,
-  TrendingUp, Inbox, ArrowRight,
+  TrendingUp, Inbox, ArrowRight, Eye, ExternalLink,
 } from "lucide-react";
 import type { CrmComp } from "@shared/schema";
 import jsPDF from "jspdf";
+import { Link } from "wouter";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
 
 interface CompFile {
@@ -994,6 +995,27 @@ export default function Comps() {
     queryKey: ["/api/crm/properties"],
   });
 
+  // Maps normalized property name → id, so comps with no propertyId can still
+  // link to the property board when their name matches a known property.
+  const propertyByName = useMemo(() => {
+    const m = new Map<string, string>();
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    properties.forEach((p: any) => {
+      if (p?.id && p?.name) m.set(norm(p.name), p.id);
+    });
+    return m;
+  }, [properties]);
+
+  const propertyLinkFor = useCallback((comp: CrmComp): string => {
+    if (comp.propertyId) return `/properties/${comp.propertyId}`;
+    if (comp.name) {
+      const norm = comp.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      const match = propertyByName.get(norm);
+      if (match) return `/properties/${match}`;
+    }
+    return "/properties";
+  }, [propertyByName]);
+
   const { data: deals = [] } = useQuery<{ id: string; name: string; status?: string | null }[]>({
     queryKey: ["/api/crm/deals"],
   });
@@ -1475,6 +1497,7 @@ export default function Comps() {
           <table className="border-collapse" data-testid="comps-table" style={{ tableLayout: "fixed" }}>
             <colgroup>
               <col style={{ width: 36 }} />
+              <col style={{ width: 36 }} />
               <col style={{ width: 220 }} />
               <col style={{ width: 130 }} />
               <col style={{ width: 100 }} />
@@ -1496,7 +1519,6 @@ export default function Comps() {
               <col style={{ width: 130 }} />
               <col style={{ width: 60 }} />
               <col style={{ width: 240 }} />
-              <col style={{ width: 36 }} />
             </colgroup>
             <thead className="sticky top-0 bg-background border-b z-10 text-sm">
               <tr>
@@ -1509,6 +1531,7 @@ export default function Comps() {
                     data-testid="checkbox-select-all"
                   />
                 </th>
+                <th className="px-2 py-2.5" />
                 <SortHeader field="name">Property</SortHeader>
                 <SortHeader field="tenant">Tenant</SortHeader>
                 <SortHeader field="areaLocation">Area</SortHeader>
@@ -1530,7 +1553,6 @@ export default function Comps() {
                 <SortHeader field="dealId">Deal</SortHeader>
                 <SortHeader field="verified">Ver.</SortHeader>
                 <SortHeader field="comments">Comments</SortHeader>
-                <th className="px-2 py-2.5" />
               </tr>
             </thead>
             <tbody className="text-xs">
@@ -1552,14 +1574,35 @@ export default function Comps() {
                       }}
                     />
                   </td>
+                  <td className="px-2 py-1.5">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button className="p-1 rounded hover:bg-muted transition-colors" data-testid={`comp-menu-${comp.id}`}>
+                          <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start">
+                        <DropdownMenuItem onClick={() => setSelectedComp(comp)}>
+                          <Eye className="w-3.5 h-3.5 mr-2" /> View Details
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => startPdfExport([comp])}>
+                          <FileDown className="w-3.5 h-3.5 mr-2" /> Export PDF
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem className="text-destructive" onClick={() => setDeleteComp({ id: comp.id, name: comp.name })}>
+                          <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </td>
                   <td className="px-2 py-1.5 align-top">
-                    <button
-                      className="text-left font-medium hover:text-primary transition-colors truncate block w-full"
-                      onClick={() => setSelectedComp(comp)}
+                    <Link
+                      href={propertyLinkFor(comp)}
+                      className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block w-full"
                       data-testid={`comp-name-${comp.id}`}
                     >
                       {comp.name}
-                    </button>
+                    </Link>
                     <div className="flex items-center gap-1 flex-wrap">
                       {comp.postcode && <span className="text-[10px] text-muted-foreground">{comp.postcode}</span>}
                       {comp.sourceEvidence === "News Feed" && <span className="text-[9px] px-1 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">News</span>}
@@ -1730,25 +1773,6 @@ export default function Comps() {
                       className="block max-w-[230px] whitespace-normal"
                     />
                   </td>
-                  <td className="px-2 py-1.5">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button className="p-1 rounded hover:bg-muted transition-colors" data-testid={`comp-menu-${comp.id}`}>
-                          <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => setSelectedComp(comp)}>View Details</DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => startPdfExport([comp])}>
-                          <FileDown className="w-3.5 h-3.5 mr-2" /> Export PDF
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-destructive" onClick={() => setDeleteComp({ id: comp.id, name: comp.name })}>
-                          <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1859,6 +1883,14 @@ export default function Comps() {
                         <td className="px-2 py-1.5">
                           <div className="flex items-center gap-1">
                             <button
+                              onClick={() => setConfirmLead(lead)}
+                              className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                              data-testid={`button-review-lead-${lead.id}`}
+                              title="Review — open lead summary"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                            <button
                               onClick={() => {
                                 updateMutation.mutate({ id: lead.id, field: "verified", value: true });
                                 toast({ title: "Lead verified", description: `${lead.name || "Lead"} moved to comps` });
@@ -1880,13 +1912,13 @@ export default function Comps() {
                           </div>
                         </td>
                         <td className="px-2 py-1.5 truncate">
-                          <button
-                            className="text-left font-medium hover:text-primary transition-colors truncate block w-full"
-                            onClick={() => setConfirmLead(lead)}
+                          <Link
+                            href={propertyLinkFor(lead)}
+                            className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block w-full"
                             data-testid={`lead-name-${lead.id}`}
                           >
                             {lead.name || "Untitled"}
-                          </button>
+                          </Link>
                           {lead.postcode && <div className="text-[10px] text-muted-foreground">{lead.postcode}</div>}
                         </td>
                         <td className="px-2 py-1.5 truncate">{lead.tenant || "—"}</td>
