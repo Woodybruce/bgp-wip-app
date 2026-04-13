@@ -23,14 +23,19 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Search, Plus, Trash2, ChevronUp, ChevronDown, FilterX, Download,
   Calculator, Building2, MapPin, Scale, CheckCircle2,
   MoreHorizontal, Ruler, Loader2, Newspaper, Sparkles,
-  FileText, Upload, X, Paperclip, FileDown,
+  FileText, Upload, X, Paperclip, FileDown, Info, Presentation,
 } from "lucide-react";
 import type { CrmComp } from "@shared/schema";
 import jsPDF from "jspdf";
+import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
 
 interface CompFile {
   id: string;
@@ -291,6 +296,135 @@ const formatRate = (v: string | null | undefined) => {
   if (isNaN(n)) return v;
   return "£" + n.toLocaleString("en-GB", { maximumFractionDigits: 2 }) + " psf";
 };
+
+// RICS Code of Measuring Practice 6th Edition + RICS Property Measurement 2nd Edition (2018)
+// Mapping of use class -> primary/secondary measurement basis and the rental analysis convention.
+// This is the professional standard that dictates whether rent is analysed on GIA / NIA / ITZA / IPMS.
+const RICS_USE_CLASS_GUIDE: Record<string, {
+  primary: string;
+  secondary?: string;
+  analysis: string;
+  zoned: boolean;
+  notes: string;
+}> = {
+  "E(a) Retail": {
+    primary: "ITZA",
+    secondary: "NIA",
+    analysis: "Zone A (ITZA) — 6.1m (20ft) zones, halving back",
+    zoned: true,
+    notes: "Shop units zoned per RICS Code of Measuring Practice 6th Ed. Ground floor retail analysed on ITZA; ancillary / upper parts at fractions of ZA. NIA used as a sense-check. GIA typically only for rating.",
+  },
+  "A1 (Legacy)": {
+    primary: "ITZA",
+    secondary: "NIA",
+    analysis: "Zone A (ITZA) — 6.1m (20ft) zones",
+    zoned: true,
+    notes: "Legacy A1 retail — same ITZA convention as E(a) per RICS Code of Measuring Practice.",
+  },
+  "E(b) F&B": {
+    primary: "NIA",
+    secondary: "GIA",
+    analysis: "Overall £ psf on NIA (ITZA rarely applied)",
+    zoned: false,
+    notes: "F&B units typically analysed on NIA overall. Zoning only applied where unit has shop-like frontage. Kitchens, WCs, stores excluded from NIA.",
+  },
+  "A3 (Legacy)": {
+    primary: "NIA",
+    secondary: "GIA",
+    analysis: "Overall £ psf on NIA",
+    zoned: false,
+    notes: "Legacy A3 — analysed on NIA overall, same as E(b).",
+  },
+  "E(c) Office": {
+    primary: "IPMS 3 Office",
+    secondary: "NIA",
+    analysis: "Overall £ psf on NIA (or IPMS 3)",
+    zoned: false,
+    notes: "Offices now measured to IPMS 3 Office per RICS Property Measurement 2nd Ed (2018). NIA still widely reported for comparability with pre-2018 evidence.",
+  },
+  "E": {
+    primary: "NIA",
+    secondary: "ITZA",
+    analysis: "Depends on sub-use — retail: ITZA; office: NIA/IPMS 3",
+    zoned: false,
+    notes: "Class E covers retail, office, medical, financial. Apply the measurement basis for the actual occupation.",
+  },
+  "B2 Industrial": {
+    primary: "GIA",
+    analysis: "Overall £ psf on GIA",
+    zoned: false,
+    notes: "Industrial / manufacturing measured to GIA (to the internal face of external walls, including all internal walls, columns and piers). IPMS 2 Industrial is the emerging alternative.",
+  },
+  "B8 Storage": {
+    primary: "GIA",
+    analysis: "Overall £ psf on GIA",
+    zoned: false,
+    notes: "Warehouse / storage analysed on GIA per RICS Code of Measuring Practice.",
+  },
+  "C3 Residential": {
+    primary: "GIA",
+    secondary: "IPMS 2 Residential",
+    analysis: "£ psf on GIA (or IPMS 2 Residential)",
+    zoned: false,
+    notes: "Residential measured to GIA in the UK convention, or IPMS 2 Residential for international comparability.",
+  },
+  "Sui Generis": {
+    primary: "GIA",
+    analysis: "Overall £ psf, typically on GIA",
+    zoned: false,
+    notes: "Sui Generis uses (cinema, casino, betting shop) do not fall within Class E — analyse to the measurement basis most appropriate to occupation, usually GIA.",
+  },
+};
+
+// For a given use class, what field should formula buttons compute the overall rate against?
+function preferredAreaField(useClass: string | null | undefined): "niaSqft" | "giaSqft" {
+  if (!useClass) return "niaSqft";
+  const guide = RICS_USE_CLASS_GUIDE[useClass];
+  if (guide?.primary === "GIA") return "giaSqft";
+  return "niaSqft";
+}
+
+function parseNum(v: string | null | undefined): number {
+  if (!v) return 0;
+  const n = parseFloat(String(v).replace(/[^0-9.-]/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+
+function parseMonths(v: string | null | undefined): number {
+  if (!v) return 0;
+  const s = String(v).toLowerCase();
+  // Accept "12", "12 months", "1 year", "18m", "2 years"
+  const yrMatch = s.match(/([\d.]+)\s*(?:y|yr|year)/);
+  if (yrMatch) return parseFloat(yrMatch[1]) * 12;
+  const moMatch = s.match(/([\d.]+)\s*(?:m|mo|month)?/);
+  if (moMatch) return parseFloat(moMatch[1]);
+  return 0;
+}
+
+function parseYears(v: string | null | undefined): number {
+  if (!v) return 0;
+  const s = String(v).toLowerCase();
+  const yrMatch = s.match(/([\d.]+)\s*(?:y|yr|year)/);
+  if (yrMatch) return parseFloat(yrMatch[1]);
+  const moMatch = s.match(/([\d.]+)\s*(?:m|mo|month)/);
+  if (moMatch) return parseFloat(moMatch[1]) / 12;
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+// Compute net effective rent: headline less straight-line amortised incentives over lease term.
+function computeNetEffective(comp: CrmComp): number {
+  const headline = parseNum(comp.headlineRent);
+  if (!headline) return 0;
+  const rfMonths = parseMonths(comp.rentFreeMonths || comp.rentFree);
+  const fitout = parseNum(comp.fitoutContribution);
+  const term = parseYears(comp.term);
+  if (!term) return headline;
+  const rfValue = (headline / 12) * rfMonths;
+  const totalIncentives = rfValue + fitout;
+  const annualisedIncentive = totalIncentives / term;
+  return headline - annualisedIncentive;
+}
 
 function NetRentCalculator({ onClose }: { onClose: () => void }) {
   const [headlineRent, setHeadlineRent] = useState("");
@@ -667,7 +801,7 @@ export default function Comps() {
   });
 
   return (
-    <div className="h-full flex flex-col" data-testid="leasing-comps-page">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col" data-testid="leasing-comps-page">
       <div className="border-b px-4 py-3 shrink-0">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-3">
@@ -678,7 +812,18 @@ export default function Comps() {
               <h1 className="text-2xl font-bold tracking-tight" data-testid="text-comps-title">Leasing Comps</h1>
               <p className="text-sm text-muted-foreground">Rent review evidence & comparable transactions</p>
             </div>
+            <TabsList className="ml-4">
+              <TabsTrigger value="table" data-testid="tab-comps-table">
+                <Scale className="w-3.5 h-3.5 mr-1.5" />
+                Comps
+              </TabsTrigger>
+              <TabsTrigger value="pdf-template" data-testid="tab-comps-pdf-template">
+                <Presentation className="w-3.5 h-3.5 mr-1.5" />
+                PDF Template
+              </TabsTrigger>
+            </TabsList>
           </div>
+          {activeTab === "table" && (
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
@@ -721,8 +866,11 @@ export default function Comps() {
               Add Comp
             </Button>
           </div>
+          )}
         </div>
 
+        {activeTab === "table" && (
+        <>
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-4 text-xs">
             <span className="flex items-center gap-1.5"><Scale className="w-3.5 h-3.5 text-muted-foreground" /> <span className="font-semibold">{stats.total}</span> comps</span>
@@ -792,9 +940,11 @@ export default function Comps() {
             </button>
           ))}
         </div>
+        </>
+        )}
       </div>
 
-      {selectedIds.size > 0 && (
+      {activeTab === "table" && selectedIds.size > 0 && (
         <div className="flex items-center gap-3 px-4 py-2 bg-muted/50 border-b text-xs">
           <span className="font-medium">{selectedIds.size} selected</span>
           <Button
@@ -820,6 +970,8 @@ export default function Comps() {
         </div>
       )}
 
+      <TabsContent value="table" className="flex-1 overflow-auto mt-0 data-[state=inactive]:hidden" forceMount>
+      <div className="h-full flex flex-col">
       <div className="flex-1 overflow-auto">
         {isLoading ? (
           <div className="flex items-center justify-center h-64">
@@ -861,7 +1013,9 @@ export default function Comps() {
                 <SortHeader field="zoneARate">Zone A (psf)</SortHeader>
                 <SortHeader field="overallRate">Overall (psf)</SortHeader>
                 <SortHeader field="netEffectiveRent">Net Effective</SortHeader>
+                <SortHeader field="effectiveRatePsf">Net Eff. (psf)</SortHeader>
                 <SortHeader field="niaSqft">NIA (sqft)</SortHeader>
+                <SortHeader field="giaSqft">GIA (sqft)</SortHeader>
                 <SortHeader field="itzaSqft">ITZA</SortHeader>
                 <SortHeader field="term">Term</SortHeader>
                 <SortHeader field="rentFree">Rent Free</SortHeader>
@@ -936,16 +1090,70 @@ export default function Comps() {
                     <InlineText value={comp.headlineRent || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "headlineRent", value: v })} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-blue-600 font-semibold">
-                    <InlineText value={comp.zoneARate || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "zoneARate", value: v })} />
+                    <FormulaCell
+                      value={comp.zoneARate || ""}
+                      onSave={v => updateMutation.mutate({ id: comp.id, field: "zoneARate", value: v })}
+                      compute={() => {
+                        const rent = parseNum(comp.headlineRent);
+                        const itza = parseNum(comp.itzaSqft);
+                        if (!rent || !itza) return null;
+                        return (rent / itza).toFixed(2);
+                      }}
+                      formulaLabel="Zone A = Rent ÷ ITZA"
+                      disabled={!parseNum(comp.headlineRent) || !parseNum(comp.itzaSqft)}
+                    />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <InlineText value={comp.overallRate || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "overallRate", value: v })} />
+                    <FormulaCell
+                      value={comp.overallRate || ""}
+                      onSave={v => updateMutation.mutate({ id: comp.id, field: "overallRate", value: v })}
+                      compute={() => {
+                        const rent = parseNum(comp.headlineRent);
+                        const pref = preferredAreaField(comp.useClass);
+                        const area = parseNum(comp[pref]) || parseNum(comp.niaSqft) || parseNum(comp.giaSqft);
+                        if (!rent || !area) return null;
+                        return (rent / area).toFixed(2);
+                      }}
+                      formulaLabel={`Overall = Rent ÷ ${preferredAreaField(comp.useClass) === "giaSqft" ? "GIA" : "NIA"}${!parseNum(comp[preferredAreaField(comp.useClass)]) ? " (falling back to other area)" : ""}`}
+                      disabled={!parseNum(comp.headlineRent) || (!parseNum(comp.niaSqft) && !parseNum(comp.giaSqft))}
+                    />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-green-600 font-semibold">
-                    <InlineText value={comp.netEffectiveRent || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "netEffectiveRent", value: v })} />
+                    <FormulaCell
+                      value={comp.netEffectiveRent || ""}
+                      onSave={v => updateMutation.mutate({ id: comp.id, field: "netEffectiveRent", value: v })}
+                      compute={() => {
+                        const ne = computeNetEffective(comp);
+                        if (!ne) return null;
+                        return Math.round(ne).toString();
+                      }}
+                      formulaLabel="Net Eff = Headline − (Rent free £ + Fitout £) ÷ Term"
+                      disabled={!parseNum(comp.headlineRent) || !parseYears(comp.term)}
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 whitespace-nowrap text-green-700 font-semibold">
+                    <FormulaCell
+                      value={comp.effectiveRatePsf || ""}
+                      onSave={v => updateMutation.mutate({ id: comp.id, field: "effectiveRatePsf", value: v })}
+                      compute={() => {
+                        const ne = parseNum(comp.netEffectiveRent) || computeNetEffective(comp);
+                        const pref = preferredAreaField(comp.useClass);
+                        const area = parseNum(comp[pref]) || parseNum(comp.niaSqft) || parseNum(comp.giaSqft);
+                        if (!ne || !area) return null;
+                        return (ne / area).toFixed(2);
+                      }}
+                      formulaLabel={`Net Eff psf = Net Effective ÷ ${preferredAreaField(comp.useClass) === "giaSqft" ? "GIA" : "NIA"}`}
+                      disabled={
+                        (!parseNum(comp.netEffectiveRent) && (!parseNum(comp.headlineRent) || !parseYears(comp.term))) ||
+                        (!parseNum(comp.niaSqft) && !parseNum(comp.giaSqft))
+                      }
+                    />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
                     <InlineText value={comp.niaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "niaSqft", value: v })} />
+                  </td>
+                  <td className="px-2 py-1.5 whitespace-nowrap">
+                    <InlineText value={comp.giaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "giaSqft", value: v })} />
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
                     <InlineText value={comp.itzaSqft || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "itzaSqft", value: v })} />
@@ -1009,6 +1217,12 @@ export default function Comps() {
           </table>
         )}
       </div>
+      </div>
+      </TabsContent>
+
+      <TabsContent value="pdf-template" className="flex-1 overflow-auto mt-0 p-6">
+        <CompPdfTemplateEditor />
+      </TabsContent>
 
       <Dialog open={!!selectedComp} onOpenChange={(open) => { if (!open) setSelectedComp(null); }}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
@@ -1031,6 +1245,25 @@ export default function Comps() {
                     <DetailField label="Postcode" value={selectedComp.postcode} field="postcode" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "postcode", value: v })} />
                     <DetailField label="Use Class" value={selectedComp.useClass} field="useClass" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "useClass", value: v })} />
                     <DetailField label="Demise" value={selectedComp.demise} field="demise" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "demise", value: v })} />
+                    {selectedComp.useClass && RICS_USE_CLASS_GUIDE[selectedComp.useClass] && (
+                      <div className="mt-2 p-2 rounded border bg-blue-50/50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900 space-y-1" data-testid="rics-guidance">
+                        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-400">
+                          <Info className="w-3 h-3" /> RICS Measurement
+                        </div>
+                        <div className="text-[11px]">
+                          <span className="font-semibold">Primary:</span> {RICS_USE_CLASS_GUIDE[selectedComp.useClass].primary}
+                          {RICS_USE_CLASS_GUIDE[selectedComp.useClass].secondary && (
+                            <> · <span className="font-semibold">Secondary:</span> {RICS_USE_CLASS_GUIDE[selectedComp.useClass].secondary}</>
+                          )}
+                        </div>
+                        <div className="text-[11px]">
+                          <span className="font-semibold">Analysis:</span> {RICS_USE_CLASS_GUIDE[selectedComp.useClass].analysis}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground leading-relaxed">
+                          {RICS_USE_CLASS_GUIDE[selectedComp.useClass].notes}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="space-y-3">
@@ -1059,6 +1292,18 @@ export default function Comps() {
                     <DetailField label="Frontage (ft)" value={selectedComp.frontageFt} field="frontageFt" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "frontageFt", value: v })} />
                     <DetailField label="Depth (ft)" value={selectedComp.depthFt} field="depthFt" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "depthFt", value: v })} />
                     <DetailField label="Measurement Std" value={selectedComp.measurementStandard} field="measurementStandard" id={selectedComp.id} onSave={(v) => updateMutation.mutate({ id: selectedComp.id, field: "measurementStandard", value: v })} />
+                    {selectedComp.useClass && RICS_USE_CLASS_GUIDE[selectedComp.useClass] && !selectedComp.measurementStandard && (
+                      <button
+                        onClick={() => {
+                          const rec = RICS_USE_CLASS_GUIDE[selectedComp.useClass!].primary;
+                          updateMutation.mutate({ id: selectedComp.id, field: "measurementStandard", value: rec });
+                        }}
+                        className="text-[10px] text-blue-600 hover:underline text-left"
+                        data-testid="button-apply-rics-measurement"
+                      >
+                        Apply RICS recommended: {RICS_USE_CLASS_GUIDE[selectedComp.useClass].primary}
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="space-y-3">
@@ -1193,6 +1438,13 @@ export default function Comps() {
                     {USE_CLASS_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                   </SelectContent>
                 </Select>
+                {newUseClass && RICS_USE_CLASS_GUIDE[newUseClass] && (
+                  <p className="text-[10px] text-muted-foreground mt-1" data-testid="text-rics-create-hint">
+                    <Info className="w-2.5 h-2.5 inline mr-0.5 -mt-0.5" />
+                    RICS: measure on <span className="font-semibold">{RICS_USE_CLASS_GUIDE[newUseClass].primary}</span>
+                    {RICS_USE_CLASS_GUIDE[newUseClass].secondary && ` / ${RICS_USE_CLASS_GUIDE[newUseClass].secondary}`}
+                  </p>
+                )}
               </div>
               <div>
                 <label className="text-xs font-medium mb-1 block">Transaction Type</label>
@@ -1337,7 +1589,7 @@ export default function Comps() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </Tabs>
   );
 }
 
@@ -1346,6 +1598,50 @@ function DetailField({ label, value, field, id, onSave }: { label: string; value
     <div className="flex items-center gap-2">
       <span className="text-[10px] text-muted-foreground w-28 shrink-0">{label}</span>
       <InlineText value={value || ""} onSave={onSave} className="flex-1 text-xs" />
+    </div>
+  );
+}
+
+function FormulaCell({
+  value,
+  onSave,
+  compute,
+  formulaLabel,
+  disabled,
+}: {
+  value: string;
+  onSave: (v: string) => void;
+  compute: () => string | null;
+  formulaLabel: string;
+  disabled?: boolean;
+}) {
+  const handleCompute = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const next = compute();
+    if (next != null) onSave(next);
+  };
+  return (
+    <div className="flex items-center gap-1 group">
+      <InlineText value={value} onSave={onSave} />
+      <TooltipProvider delayDuration={200}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={handleCompute}
+              disabled={disabled}
+              className="opacity-40 hover:opacity-100 group-hover:opacity-80 transition-opacity disabled:cursor-not-allowed disabled:opacity-20 p-0.5"
+              data-testid="button-formula-compute"
+              aria-label={formulaLabel}
+            >
+              <Calculator className="w-3 h-3 text-blue-600" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-xs">
+            {disabled ? "Add the inputs (Headline rent, Term, Area, ITZA) to enable" : formulaLabel}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     </div>
   );
 }
