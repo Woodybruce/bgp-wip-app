@@ -17,6 +17,21 @@ export function serveStatic(app: Express) {
     next();
   });
 
+  // Standalone HTML for the Excel task pane — bypasses the React bundle
+  // entirely so the add-in works inside Office's restricted webview even
+  // when the main SPA bundle can't boot.
+  app.get(["/addin/excel", "/addin/excel/"], (_req, res) => {
+    const standalone = path.resolve(distPath, "addin-excel.html");
+    res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
+    if (fs.existsSync(standalone)) {
+      res.sendFile(standalone);
+    } else {
+      res.sendFile(path.resolve(distPath, "index.html"));
+    }
+  });
+
   app.use(express.static(distPath, {
     setHeaders: (res, filePath) => {
       if (filePath.endsWith('.html')) {
