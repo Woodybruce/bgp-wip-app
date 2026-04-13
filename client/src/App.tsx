@@ -374,7 +374,10 @@ function AddinRouter() {
 function AppContent() {
   const { setUserTeam, setUserId, setAdditionalTeams } = useTeam();
   const [location] = useLocation();
-  const isAddin = location.startsWith("/addin/");
+  // Also check window.location directly — wouter's location may not reflect
+  // the initial pathname in iframe contexts (Office task panes).
+  const isAddin = location.startsWith("/addin/") ||
+    (typeof window !== "undefined" && window.location.pathname.startsWith("/addin/"));
   const { data: user, isLoading } = useQuery<User | null>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),

@@ -19,7 +19,28 @@
     <link rel="preload" as="font" type="font/woff2" href="/fonts/tiempos-text-vf-roman.woff2" crossorigin>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Visible fallback while the JS bundle boots. If the bundle fails to
+           load (e.g. inside an Office task pane webview), this stays on screen
+           and the diagnostic script below surfaces any error. -->
+      <div id="boot-fallback" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; color: #111; min-height: 100vh; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; background: #fff;">
+        <div style="font-size: 13px; font-weight: 600; letter-spacing: 0.02em; margin-bottom: 8px;">BGP Dashboard</div>
+        <div style="font-size: 11px; color: #666;">Loading…</div>
+        <div id="boot-error" style="font-size: 10px; color: #b91c1c; margin-top: 16px; max-width: 260px; white-space: pre-wrap; word-break: break-word;"></div>
+      </div>
+    </div>
+    <script>
+      // Surface any script errors to the boot fallback so Office task panes
+      // (which have no visible console) can still show what went wrong.
+      window.addEventListener('error', function(e) {
+        var el = document.getElementById('boot-error');
+        if (el) el.textContent = 'Error: ' + (e.message || 'unknown') + (e.filename ? '\n' + e.filename : '');
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        var el = document.getElementById('boot-error');
+        if (el) el.textContent = 'Promise rejection: ' + (e.reason && e.reason.message ? e.reason.message : String(e.reason));
+      });
+    </script>
     <script type="module" src="/src/main.tsx"></script>
     <script>
       if (window.location.pathname.startsWith('/addin/')) {
