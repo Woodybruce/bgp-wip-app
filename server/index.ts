@@ -341,7 +341,7 @@ app.use("/api/branding/assets", express.static(
   httpServer.listen(
     {
       port,
-      host: "0.0.0.0",
+      host: "::",
     },
     () => {
       log(`serving on port ${port}`);
