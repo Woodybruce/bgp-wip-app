@@ -4172,11 +4172,27 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         property_id AS "propertyId", buyer_company_id AS "buyerCompanyId",
         seller_company_id AS "sellerCompanyId", source,
         created_at AS "createdAt"
-        FROM investment_comps ORDER BY created_at DESC LIMIT 500`);
+        FROM investment_comps ORDER BY created_at DESC`);
       console.log(`[investment-comps] returned ${result.rows.length} rows`);
       res.json(result.rows);
     } catch (e: any) {
       console.error("[investment-comps] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/investment-comps/counts", requireAuth, async (_req, res) => {
+    try {
+      const result = await pool.query(`
+        SELECT COALESCE(source, 'unknown') AS source, COUNT(*)::int AS count
+        FROM investment_comps
+        GROUP BY COALESCE(source, 'unknown')
+        ORDER BY count DESC
+      `);
+      const total = result.rows.reduce((acc: number, r: any) => acc + r.count, 0);
+      res.json({ total, bySource: result.rows });
+    } catch (e: any) {
+      console.error("[investment-comps/counts] Error:", e);
       res.status(500).json({ error: e.message });
     }
   });
