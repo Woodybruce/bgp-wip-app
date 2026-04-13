@@ -94,7 +94,12 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   async function handleMicrosoftLogin() {
     setIsSsoLoading(true);
 
-    async function attemptSso(): Promise<boolean> {
+    type SsoOutcome =
+      | { kind: "redirected" }
+      | { kind: "server_error"; status: number; message: string }
+      | { kind: "network_error" };
+
+    async function attemptSso(): Promise<SsoOutcome> {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 15000);
       try {
@@ -105,37 +110,45 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         clearTimeout(timeout);
         if (!res.ok) {
           const text = await res.text().catch(() => "");
+          let message = text;
+          try { message = JSON.parse(text).message || text; } catch {}
           console.error("[login] SSO request failed:", res.status, text);
-          return false;
+          return { kind: "server_error", status: res.status, message: message || `HTTP ${res.status}` };
         }
         const data = await res.json();
         if (data.authUrl) {
           window.location.href = data.authUrl;
-          return true;
-        } else {
-          toast({
-            title: "Microsoft sign-in unavailable",
-            description: data.message || "Could not start Microsoft login.",
-            variant: "destructive",
-          });
-          return true;
+          return { kind: "redirected" };
         }
+        return { kind: "server_error", status: 200, message: data.message || "Could not start Microsoft login." };
       } catch (err: any) {
         clearTimeout(timeout);
         console.error("[login] SSO fetch error:", err?.message || err);
-        return false;
+        return { kind: "network_error" };
       }
     }
 
-    if (await attemptSso()) return;
-    await new Promise(r => setTimeout(r, 1500));
-    if (await attemptSso()) return;
+    let outcome = await attemptSso();
+    if (outcome.kind === "network_error") {
+      await new Promise(r => setTimeout(r, 1500));
+      outcome = await attemptSso();
+    }
 
-    toast({
-      title: "Connection error",
-      description: "Could not reach the server. Check your internet connection and try again.",
-      variant: "destructive",
-    });
+    if (outcome.kind === "redirected") return;
+
+    if (outcome.kind === "server_error") {
+      toast({
+        title: "Microsoft sign-in unavailable",
+        description: outcome.message,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Connection error",
+        description: "Could not reach the server. Check your internet connection and try again.",
+        variant: "destructive",
+      });
+    }
     setIsSsoLoading(false);
   }
 
