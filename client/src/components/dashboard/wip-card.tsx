@@ -346,7 +346,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
 
   if (isLoading) {
     return (
-      <div className="space-y-3" data-testid="wip-dashboard-card">
+      <div className="space-y-3 pb-6" data-testid="wip-dashboard-card">
         <Skeleton className="h-8 w-64" />
         <div className="grid grid-cols-3 gap-3"><Skeleton className="h-48" /><Skeleton className="h-48" /><Skeleton className="h-48" /></div>
       </div>
@@ -379,7 +379,7 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
   }
 
   return (
-    <div className="space-y-3" data-testid="wip-dashboard-card">
+    <div className="space-y-3 pb-6" data-testid="wip-dashboard-card">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-bold text-gray-900" data-testid="wip-dash-title">{title}</h2>

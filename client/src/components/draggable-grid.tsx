@@ -230,7 +230,7 @@ export function DraggableGrid({
                     )}
                   </div>
                 )}
-                <div className={`flex-1 overflow-hidden ${editing ? "rounded-b-md" : ""}`}>
+                <div className={`flex-1 overflow-auto ${editing ? "rounded-b-md" : ""}`}>
                   {item.content}
                 </div>
               </div>
