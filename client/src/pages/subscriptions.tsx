@@ -342,12 +342,30 @@ export default function Subscriptions() {
                   ) : (
                     <XCircle className="w-4 h-4 text-destructive mt-0.5 shrink-0" />
                   )}
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="font-semibold">
                       {label}
                       {result.status ? <span className="text-muted-foreground font-normal ml-1">({result.status})</span> : null}
                     </p>
                     <p className="text-muted-foreground leading-snug">{result.message}</p>
+                    {label === "Xero" && !result.ok && result.message.toLowerCase().includes("session") && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-[11px] mt-1.5"
+                        onClick={async () => {
+                          try {
+                            const r = await apiRequest("GET", "/api/xero/auth");
+                            const data = await r.json();
+                            if (data?.url) window.location.href = data.url;
+                          } catch {}
+                        }}
+                        data-testid="button-connect-xero"
+                      >
+                        <ExternalLink className="w-3 h-3 mr-1" />
+                        Connect Xero
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}
