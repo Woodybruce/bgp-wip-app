@@ -10,6 +10,25 @@
  */
 
 import * as ExcelJS from "exceljs";
+import * as fs from "fs";
+import * as path from "path";
+
+// ─── BGP Brand Logo ─────────────────────────────────────────────────────────
+
+// Resolve the BGP logo across dev and production build paths.
+function loadBGPLogo(): Buffer | null {
+  const candidates = [
+    path.join(process.cwd(), "server", "assets", "BGP_BlackHolder.png"),
+    path.join(process.cwd(), "dist", "server", "assets", "BGP_BlackHolder.png"),
+    path.join(process.cwd(), "client", "src", "assets", "BGP_BlackHolder.png"),
+  ];
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) return fs.readFileSync(p);
+    } catch {}
+  }
+  return null;
+}
 
 // ─── BGP Brand Colors ───────────────────────────────────────────────────────
 
@@ -382,20 +401,32 @@ function buildAssumptionsSheet(wb: ExcelJS.Workbook, assumptions: Record<string,
       // Data validation
       if (item.validation) {
         if (item.validation.type === 'list' && item.validation.values) {
-          valCell.dataValidation = {
-            type: 'list',
-            allowBlank: false,
-            formulae: [item.validation.values.map((v: string) => `"${v}"`).join(',')],
-            showErrorMessage: true,
-            errorTitle: 'Invalid',
-            error: `Please select from: ${item.validation.values.join(', ')}`,
-          };
+          // Excel list-validation expects a single quoted, comma-separated string.
+          // Individual items must not contain commas (Excel's list separator) or
+          // double quotes. Strip them defensively so we never emit malformed XML
+          // that Excel has to "repair" on open.
+          const sanitised = item.validation.values
+            .map((v: string) => String(v).replace(/[",]/g, ' ').trim())
+            .filter(Boolean);
+          const joined = sanitised.join(',');
+          // Excel caps the list formula at 255 characters. If we exceed, skip
+          // data validation entirely rather than writing an invalid file.
+          if (joined.length > 0 && joined.length <= 255) {
+            valCell.dataValidation = {
+              type: 'list',
+              allowBlank: false,
+              formulae: [`"${joined}"`],
+              showErrorMessage: true,
+              errorTitle: 'Invalid',
+              error: `Please select from: ${sanitised.join(', ')}`,
+            };
+          }
         } else if (item.validation.type === 'whole') {
           valCell.dataValidation = {
             type: 'whole',
             operator: 'between',
             allowBlank: false,
-            formulae: [item.validation.min ?? 0, item.validation.max ?? 100],
+            formulae: [String(item.validation.min ?? 0), String(item.validation.max ?? 100)],
             showErrorMessage: true,
             errorTitle: 'Invalid',
             error: `Enter a whole number between ${item.validation.min ?? 0} and ${item.validation.max ?? 100}`,
@@ -1511,12 +1542,27 @@ function buildSummarySheet(wb: ExcelJS.Workbook, modelName: string): ExcelJS.Wor
   wsRef.getColumn(5).width = 28;
   wsRef.getColumn(6).width = 18;
 
+  // BGP Logo — embedded in the title bar
+  const logoBuffer = loadBGPLogo();
+  if (logoBuffer) {
+    try {
+      const imageId = wb.addImage({ buffer: logoBuffer as any, extension: 'png' });
+      wsRef.addImage(imageId, {
+        tl: { col: 5.1, row: 0.1 },
+        ext: { width: 140, height: 50 },
+        editAs: 'oneCell',
+      });
+    } catch {
+      // If image embedding fails, fall back to text-only title.
+    }
+  }
+
   // Title
   wsRef.mergeCells('B1:F1');
   const titleCell = wsRef.getCell('B1');
   titleCell.value = modelName.toUpperCase();
   applyStyle(titleCell, 'title');
-  wsRef.getRow(1).height = 40;
+  wsRef.getRow(1).height = 50;
   for (let c = 1; c <= 6; c++) {
     wsRef.getCell(1, c).fill = FILL_TITLE;
   }

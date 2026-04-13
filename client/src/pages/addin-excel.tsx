@@ -1565,38 +1565,55 @@ function AddinExcel() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (window.Office) {
+    // Office.js is injected from index.html when the path starts with /addin/.
+    // Because it's loaded async (after React mounts), window.Office may not yet
+    // exist when this effect runs. Poll briefly and then register onReady.
+    let cancelled = false;
+
+    const register = () => {
+      if (cancelled || !window.Office) return false;
       window.Office.onReady((info: any) => {
+        if (cancelled) return;
         if (info.host === "Excel") {
           readFullWorkbook().then(wb => {
-            if (wb) {
-              setWorkbookInfo(wb);
-              setExcelContext(formatWorkbookContext(wb));
+            if (cancelled || !wb) return;
+            setWorkbookInfo(wb);
+            setExcelContext(formatWorkbookContext(wb));
 
-              let welcomeContent = `I can see your Excel file! Here's what I'm looking at:\n\n`;
-              welcomeContent += `**File:** ${wb.fileName}\n\n`;
-              welcomeContent += `**Sheets:**\n`;
-              for (const sheet of wb.sheets) {
-                const active = sheet.isActive ? " (currently active" + (sheet.frozenRows > 0 || sheet.frozenCols > 0 ? `, with frozen ${sheet.frozenRows > 0 ? "rows" : ""}${sheet.frozenRows > 0 && sheet.frozenCols > 0 ? "/" : ""}${sheet.frozenCols > 0 ? "columns" : ""}` : "") + ")" : "";
-                welcomeContent += `- **${sheet.name}**${active} — ${sheet.rows} rows x ${sheet.cols} columns\n`;
-                if (sheet.headers.length > 0) {
-                  welcomeContent += `  Columns: ${sheet.headers.slice(0, 12).join(", ")}${sheet.headers.length > 12 ? ` (+${sheet.headers.length - 12} more)` : ""}\n`;
-                }
+            let welcomeContent = `I can see your Excel file! Here's what I'm looking at:\n\n`;
+            welcomeContent += `**File:** ${wb.fileName}\n\n`;
+            welcomeContent += `**Sheets:**\n`;
+            for (const sheet of wb.sheets) {
+              const active = sheet.isActive ? " (currently active" + (sheet.frozenRows > 0 || sheet.frozenCols > 0 ? `, with frozen ${sheet.frozenRows > 0 ? "rows" : ""}${sheet.frozenRows > 0 && sheet.frozenCols > 0 ? "/" : ""}${sheet.frozenCols > 0 ? "columns" : ""}` : "") + ")" : "";
+              welcomeContent += `- **${sheet.name}**${active} — ${sheet.rows} rows x ${sheet.cols} columns\n`;
+              if (sheet.headers.length > 0) {
+                welcomeContent += `  Columns: ${sheet.headers.slice(0, 12).join(", ")}${sheet.headers.length > 12 ? ` (+${sheet.headers.length - 12} more)` : ""}\n`;
               }
-              welcomeContent += `\nI can also cross-reference this against **BGP's CRM** — properties, deals, contacts, and companies.\n\n`;
-              welcomeContent += `How can I help you with this workbook?`;
-
-              setMessages([{
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: welcomeContent,
-                timestamp: new Date(),
-              }]);
             }
+            welcomeContent += `\nI can also cross-reference this against **BGP's CRM** — properties, deals, contacts, and companies.\n\n`;
+            welcomeContent += `How can I help you with this workbook?`;
+
+            setMessages([{
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: welcomeContent,
+              timestamp: new Date(),
+            }]);
           });
         }
       });
+      return true;
+    };
+
+    if (!register()) {
+      const interval = setInterval(() => {
+        if (register()) clearInterval(interval);
+      }, 150);
+      // Give up after ~10s so we don't poll forever on non-Office hosts.
+      setTimeout(() => clearInterval(interval), 10000);
+      return () => { cancelled = true; clearInterval(interval); };
     }
+    return () => { cancelled = true; };
   }, []);
 
   const handleReadSheet = async () => {

@@ -2532,7 +2532,6 @@ function ClaudeModelStudio() {
   const { toast } = useToast();
   const [description, setDescription] = useState("");
   const [modelType, setModelType] = useState("");
-  const [useAdvanced, setUseAdvanced] = useState(true);
   const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
 
@@ -2559,7 +2558,7 @@ function ClaudeModelStudio() {
         const formData = new FormData();
         formData.append("description", description.trim());
         if (modelType) formData.append("modelType", modelType);
-        if (useAdvanced) formData.append("useAdvanced", "true");
+        formData.append("useAdvanced", "true");
         files.forEach(f => formData.append("documents", f));
         startRes = await fetch("/api/models/create-model", {
           method: "POST",
@@ -2575,7 +2574,7 @@ function ClaudeModelStudio() {
           body: JSON.stringify({
             description: description.trim(),
             modelType: modelType || undefined,
-            useAdvanced,
+            useAdvanced: true,
           }),
         });
       }
@@ -2664,15 +2663,6 @@ function ClaudeModelStudio() {
     { label: "BGP Portfolio Summary", desc: "A portfolio summary model tracking multiple properties with rental income, yields, void rates, WAULT, and total portfolio valuation" },
     { label: "BGP Acquisition Comparison", desc: "A side-by-side acquisition comparison for 3 properties comparing purchase price, net initial yield, reversionary yield, capital value per sq ft, and risk scoring" },
     { label: "BGP Tenant Covenant Analysis", desc: "A tenant covenant analysis model with financials (revenue, profit, net assets), Dun & Bradstreet score, and covenant strength grading" },
-  ];
-
-  const suggestedQuestions = [
-    "What models do I have? Summarise them",
-    "Read the base model and explain what it calculates",
-    "Fix any formula errors you find",
-    "Duplicate the base model as 'Belgravia Test'",
-    "Update the purchase price to £5m",
-    "What are the IRR and yield outputs?",
   ];
 
   const isBusy = createMutation.isPending || askMutation.isPending;
@@ -2825,20 +2815,6 @@ function ClaudeModelStudio() {
           </div>
         )}
 
-        <div className="flex items-center gap-3 text-xs">
-          <label className="flex items-center gap-1.5 cursor-pointer select-none" data-testid="toggle-advanced-model">
-            <Checkbox
-              checked={useAdvanced}
-              onCheckedChange={(v) => setUseAdvanced(!!v)}
-              className="h-3.5 w-3.5"
-            />
-            <span className="text-muted-foreground">Professional model</span>
-          </label>
-          {useAdvanced && (
-            <span className="text-[10px] text-emerald-600 font-medium">6 sheets with working formulas, named ranges, sensitivity tables</span>
-          )}
-        </div>
-
         <div className="flex gap-2">
           <Button
             onClick={() => createMutation.mutate()}
@@ -2850,12 +2826,12 @@ function ClaudeModelStudio() {
             {createMutation.isPending ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                {useAdvanced ? "Building professional model..." : "Building model..."}
+                Building model...
               </>
             ) : (
               <>
                 <Sparkles className="w-4 h-4 mr-2" />
-                {useAdvanced ? "Create Professional Model" : "Create Model"}{files.length > 0 ? ` (${files.length} file${files.length > 1 ? "s" : ""})` : ""}
+                Create Model{files.length > 0 ? ` (${files.length} file${files.length > 1 ? "s" : ""})` : ""}
               </>
             )}
           </Button>
@@ -2881,28 +2857,6 @@ function ClaudeModelStudio() {
           <p className="text-xs text-muted-foreground text-center">
             This usually takes 30-60 seconds — Claude is writing all the formulas and building the spreadsheet
           </p>
-        )}
-
-        {conversation.length === 0 && !isBusy && (
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground font-medium">Or ask Claude about your existing models:</p>
-            <div className="flex flex-wrap gap-1.5">
-              {suggestedQuestions.map((q, i) => (
-                <Badge
-                  key={i}
-                  variant="outline"
-                  className="cursor-pointer hover:bg-accent text-xs"
-                  onClick={() => {
-                    setDescription(q);
-                    askMutation.mutate(q);
-                  }}
-                  data-testid={`button-claude-suggested-${i}`}
-                >
-                  {q}
-                </Badge>
-              ))}
-            </div>
-          </div>
         )}
       </CardContent>
     </Card>

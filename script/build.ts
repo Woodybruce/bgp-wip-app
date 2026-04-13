@@ -1,6 +1,6 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile, copyFile } from "fs/promises";
+import { rm, readFile, copyFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import pg from "pg";
 
@@ -150,6 +150,17 @@ async function buildAll() {
   if (existsSync("server/seed-company-deals.sql.gz")) {
     await copyFile("server/seed-company-deals.sql.gz", "dist/seed-company-deals.sql.gz");
     console.log("copied seed-company-deals.sql.gz to dist/");
+  }
+
+  // Copy brand assets used by server-side Excel/PDF builders
+  if (existsSync("server/assets")) {
+    await mkdir("dist/server/assets", { recursive: true });
+    for (const f of ["BGP_BlackHolder.png", "BGP_WhiteHolder.png"]) {
+      if (existsSync(`server/assets/${f}`)) {
+        await copyFile(`server/assets/${f}`, `dist/server/assets/${f}`);
+        console.log(`copied server/assets/${f} to dist/server/assets/`);
+      }
+    }
   }
 }
 

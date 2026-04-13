@@ -1986,9 +1986,8 @@ Return ONLY valid JSON. No markdown, no code fences.`;
 
       res.json({ jobId, status: "processing" });
 
-      // ─── Advanced ExcelJS Model Path ───────────────────────────────
-      const useAdvanced = req.body?.useAdvanced === true || req.body?.useAdvanced === "true"
-        || /investment appraisal|investment model|acquisition model|full model|professional model|advanced model|6.sheet|multi.sheet/i.test(description);
+      // ─── Advanced ExcelJS Model Path (always used — all models are professional) ─
+      const useAdvanced = true;
 
       if (useAdvanced) {
         console.log("[create-model] Using ADVANCED ExcelJS builder (job " + jobId + "):", description.slice(0, 80));

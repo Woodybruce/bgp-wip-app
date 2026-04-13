@@ -30,7 +30,10 @@
       }
     </script>
     <script>
-      if ('serviceWorker' in navigator) {
+      // Service worker interferes with Office Add-ins (they run in an embedded
+      // webview that can't reach an offline cache). Skip registration on any
+      // /addin/ path so the extension always loads a fresh copy from the server.
+      if ('serviceWorker' in navigator && !window.location.pathname.startsWith('/addin/')) {
         var refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', function() {
           if (!refreshing) {
