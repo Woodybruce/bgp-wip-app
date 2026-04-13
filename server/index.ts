@@ -11,6 +11,38 @@ process.on("uncaughtException", (err) => {
 });
 import { registerRoutes } from "./routes";
 import { pool } from "./db";
+
+// Auto-migrate: add columns/tables that may be missing after database restore
+(async () => {
+  try {
+    await pool.query(`
+      ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false;
+      ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT;
+      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS po_number TEXT;
+      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved BOOLEAN DEFAULT false;
+      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP;
+      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT;
+      ALTER TABLE knowledge_base ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'sharepoint';
+      CREATE TABLE IF NOT EXISTS user_tasks (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), user_id VARCHAR NOT NULL, title TEXT NOT NULL, description TEXT, due_date TIMESTAMP, priority TEXT DEFAULT 'medium', status TEXT DEFAULT 'todo', category TEXT, linked_deal_id VARCHAR, linked_property_id VARCHAR, linked_contact_id VARCHAR, sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), completed_at TIMESTAMP);
+      CREATE TABLE IF NOT EXISTS system_activity_log (id SERIAL PRIMARY KEY, source TEXT NOT NULL, action TEXT NOT NULL, detail TEXT, count INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT now());
+      CREATE TABLE IF NOT EXISTS image_studio_images (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), file_name TEXT NOT NULL, category TEXT DEFAULT 'Uncategorised', tags TEXT[] DEFAULT '{}', description TEXT, source TEXT DEFAULT 'upload', property_id VARCHAR, area TEXT, address TEXT, brand_name TEXT, brand_sector TEXT, property_type TEXT, mime_type TEXT DEFAULT 'image/jpeg', file_size INTEGER, width INTEGER, height INTEGER, thumbnail_data TEXT, sharepoint_item_id TEXT, sharepoint_drive_id TEXT, local_path TEXT, uploaded_by VARCHAR, created_at TIMESTAMP DEFAULT now());
+      CREATE TABLE IF NOT EXISTS image_studio_collections (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT NOT NULL, description TEXT, cover_image_id VARCHAR, created_by VARCHAR, created_at TIMESTAMP DEFAULT now());
+      CREATE TABLE IF NOT EXISTS image_studio_collection_images (id SERIAL PRIMARY KEY, collection_id VARCHAR NOT NULL, image_id VARCHAR NOT NULL, added_at TIMESTAMP DEFAULT now());
+      CREATE TABLE IF NOT EXISTS deleted_sharepoint_images (id SERIAL PRIMARY KEY, sharepoint_drive_id TEXT NOT NULL, sharepoint_item_id TEXT NOT NULL, deleted_at TIMESTAMP DEFAULT now());
+      CREATE TABLE IF NOT EXISTS comp_files (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), comp_id VARCHAR NOT NULL, file_name TEXT NOT NULL, file_path TEXT NOT NULL, file_size INTEGER, mime_type TEXT, created_at TIMESTAMP DEFAULT now());
+      CREATE TABLE IF NOT EXISTS land_registry_searches (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, address TEXT NOT NULL, postcode TEXT, freeholds_count INTEGER DEFAULT 0, leaseholds_count INTEGER DEFAULT 0, freeholds JSONB, leaseholds JSONB, intelligence JSONB, ai_summary JSONB, ownership JSONB, crm_property_id VARCHAR, notes TEXT, tags JSONB DEFAULT '[]', status VARCHAR DEFAULT 'New', created_at TIMESTAMP DEFAULT now());
+      CREATE TABLE IF NOT EXISTS leasing_schedule_units (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), property_id VARCHAR NOT NULL, unit_name TEXT, zone TEXT, positioning TEXT, tenant_name TEXT, agent_initials TEXT, lease_expiry TIMESTAMP, lease_break TIMESTAMP, rent_review TIMESTAMP, landlord_break TIMESTAMP, rent_pa REAL, sqft REAL, mat_psqft REAL, lfl_percent REAL, occ_cost_percent REAL, financial_notes TEXT, target_brands TEXT, optimum_target TEXT, priority TEXT, status TEXT, updates TEXT, target_company_ids TEXT[], sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now());
+      CREATE TABLE IF NOT EXISTS leasing_schedule_audit (id SERIAL PRIMARY KEY, unit_id VARCHAR, property_id VARCHAR NOT NULL, user_id VARCHAR NOT NULL, user_name TEXT NOT NULL, action TEXT NOT NULL, field_name TEXT, old_value TEXT, new_value TEXT, created_at TIMESTAMP DEFAULT now());
+      CREATE TABLE IF NOT EXISTS kyc_audit_log (id SERIAL PRIMARY KEY, investigation_id INTEGER NOT NULL, action TEXT NOT NULL, performed_by VARCHAR, notes TEXT, created_at TIMESTAMP DEFAULT now());
+      CREATE TABLE IF NOT EXISTS deal_audit_log (id SERIAL PRIMARY KEY, deal_id VARCHAR NOT NULL, field TEXT NOT NULL, old_value TEXT, new_value TEXT, reason TEXT, changed_by VARCHAR, changed_by_name VARCHAR, created_at TIMESTAMP DEFAULT now());
+    `);
+    // Fix type mismatch separately (may already be correct)
+    try { await pool.query("ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text"); } catch {}
+    console.log("[auto-migrate] Schema migration complete");
+  } catch (e: any) {
+    console.log("[auto-migrate] Migration note:", e.message);
+  }
+})();
 import { setupAuth } from "./auth";
 import { setupMicrosoftRoutes } from "./microsoft";
 import { setupMondayRoutes } from "./monday";
