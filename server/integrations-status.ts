@@ -47,7 +47,12 @@ const KEYS: KeyDef[] = [
 
   // Microsoft / Office add-in
   { name: "AZURE_CLIENT_ID", label: "Azure Client ID", group: "Microsoft" },
-  { name: "AZURE_SECRET_V2", label: "Azure Client Secret", group: "Microsoft" },
+  {
+    name: "AZURE_SECRET_V2",
+    label: "Azure Client Secret",
+    group: "Microsoft",
+    fallbacks: ["AZURE_CLIENT_SECRET"],
+  },
   { name: "AZURE_TENANT_ID", label: "Azure Tenant ID", group: "Microsoft" },
 
   // Comms / collab
