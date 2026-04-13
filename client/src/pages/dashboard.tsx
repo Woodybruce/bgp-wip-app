@@ -854,17 +854,22 @@ export default function Dashboard() {
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid="dashboard-page">
       <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold tracking-tight" style={isBrandLandsec ? { color: brand.primaryColor } : undefined}>
-            {isBrandLandsec ? "Landsec Portfolio Dashboard" : `Welcome back, ${user?.name?.split(" ")[0] || "there"}`}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {isBrandLandsec ? (
-              <>{brand.footerText} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
-            ) : (
-              <>{currentTeam} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
-            )}
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+            <Home className="w-5 h-5 text-primary" />
+          </div>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-bold tracking-tight">
+              {isBrandLandsec ? "Landsec Portfolio Dashboard" : `Welcome back, ${user?.name?.split(" ")[0] || "there"}`}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {isBrandLandsec ? (
+                <>{brand.footerText} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
+              ) : (
+                <>{currentTeam} · {dashboardViewMode === "team" ? "Team view" : "Individual view"}</>
+              )}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-1.5">
           {dashboardEditing && (

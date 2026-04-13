@@ -1795,11 +1795,16 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
       <ContactFormDialog open={!!editingContact} onOpenChange={(open) => { if (!open) setEditingContact(null); }} contact={editingContact} companies={companies} />
 
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">People Hub</h1>
-          <p className="text-sm text-muted-foreground">
-            {contacts?.length || 0} contacts in CRM{teamFilter ? ` · Filtered by ${teamFilter} team` : ""}
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <Users className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">People Hub</h1>
+            <p className="text-sm text-muted-foreground">
+              {contacts?.length || 0} contacts in CRM{teamFilter ? ` · Filtered by ${teamFilter} team` : ""}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Link href="/contacts?tab=archive">

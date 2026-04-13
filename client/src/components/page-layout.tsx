@@ -1,8 +1,11 @@
 import { cn } from "@/lib/utils";
+import type { LucideIcon } from "lucide-react";
 
 interface PageLayoutProps {
   title: string;
   subtitle?: string;
+  /** Optional lucide icon rendered in the standard w-10 h-10 primary/10 container */
+  icon?: LucideIcon;
   actions?: React.ReactNode;
   tabs?: { label: string; value: string; count?: number }[];
   activeTab?: string;
@@ -18,6 +21,7 @@ interface PageLayoutProps {
 export function PageLayout({
   title,
   subtitle,
+  icon: Icon,
   actions,
   tabs,
   activeTab,
@@ -36,15 +40,22 @@ export function PageLayout({
         {/* Header */}
         <div className="border-b px-4 sm:px-6 py-4 flex-shrink-0">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-            <div>
-              <h1 className="text-xl font-semibold" data-testid="text-page-title">
-                {title}
-              </h1>
-              {subtitle && (
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  {subtitle}
-                </p>
+            <div className="flex items-center gap-3">
+              {Icon && (
+                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                  <Icon className="w-5 h-5 text-primary" />
+                </div>
               )}
+              <div>
+                <h1 className="text-xl font-semibold" data-testid="text-page-title">
+                  {title}
+                </h1>
+                {subtitle && (
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    {subtitle}
+                  </p>
+                )}
+              </div>
             </div>
             {actions && (
               <div className="flex items-center gap-2 flex-shrink-0">
@@ -94,15 +105,22 @@ export function PageLayout({
     >
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-            {title}
-          </h1>
-          {subtitle && (
-            <p className="text-sm text-muted-foreground mt-0.5">
-              {subtitle}
-            </p>
+        <div className="flex items-center gap-3">
+          {Icon && (
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+              <Icon className="w-5 h-5 text-primary" />
+            </div>
           )}
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
+              {title}
+            </h1>
+            {subtitle && (
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {subtitle}
+              </p>
+            )}
+          </div>
         </div>
         {actions && (
           <div className="flex items-center gap-2 flex-shrink-0">

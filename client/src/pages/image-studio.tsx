@@ -695,6 +695,7 @@ export default function ImageStudio() {
   return (
     <PageLayout
       title={`Image Studio${linkedProperty ? ` — ${linkedProperty}` : ""}`}
+      icon={Camera}
       subtitle={linkedProperty ? "Linked from property" : "Manage images, brands, street views and AI generation"}
       actions={
         <>

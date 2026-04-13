@@ -1165,13 +1165,18 @@ export default function News() {
   return (
     <div className="p-4 sm:p-6 space-y-5" data-testid="news-page">
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-            News
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            AI-powered property news, intelligence and lead generation
-          </p>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+            <Newspaper className="w-5 h-5 text-primary" />
+          </div>
+          <div className="space-y-1">
+            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
+              News
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              AI-powered property news, intelligence and lead generation
+            </p>
+          </div>
         </div>
         {intelStatus?.emailAddress && (
           <div className="flex items-center gap-2 bg-muted px-3 py-1.5 rounded-md">

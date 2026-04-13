@@ -495,14 +495,16 @@ export default function TasksPage() {
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 
             <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-2xl font-bold flex items-center gap-2">
-                  <ListTodo className="w-6 h-6 text-primary" />
-                  My Tasks
-                </h1>
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  {activeTasks.length} open{overdueTasks.length > 0 ? ` · ${overdueTasks.length} overdue` : ""}{todayTasks.length > 0 ? ` · ${todayTasks.length} due today` : ""}
-                </p>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                  <ListTodo className="w-5 h-5 text-primary" />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold tracking-tight">My Tasks</h1>
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    {activeTasks.length} open{overdueTasks.length > 0 ? ` · ${overdueTasks.length} overdue` : ""}{todayTasks.length > 0 ? ` · ${todayTasks.length} due today` : ""}
+                  </p>
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <Button

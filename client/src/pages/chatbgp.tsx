@@ -767,7 +767,7 @@ function PropertyProjectView({
         <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-6">
           <Building2 className="w-8 h-8 text-primary" />
         </div>
-        <h1 className="text-[28px] font-bold text-center mb-1 tracking-tight" data-testid="text-project-name">{project.name}</h1>
+        <h1 className="text-3xl font-bold text-center mb-1 tracking-tight" data-testid="text-project-name">{project.name}</h1>
         {addressStr && (
           <p className="text-sm text-muted-foreground flex items-center gap-1.5 mb-8">
             <MapPin className="w-3.5 h-3.5" />

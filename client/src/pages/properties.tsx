@@ -4272,6 +4272,7 @@ function PropertiesList({
   return (
     <PageLayout
       title="Properties"
+      icon={Building2}
       subtitle={`${items.length} properties in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
       actions={
         <>

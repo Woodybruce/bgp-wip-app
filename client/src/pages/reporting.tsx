@@ -204,6 +204,7 @@ export default function Reporting() {
   return (
     <PageLayout
       title="Reporting & Analytics"
+      icon={TrendingUp}
       subtitle="Key performance metrics and pipeline insights"
       testId="page-reporting"
     >

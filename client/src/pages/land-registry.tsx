@@ -1952,6 +1952,7 @@ export default function LandRegistry() {
   return (
     <PageLayout
       title="Land Registry & Property Intelligence"
+      icon={Landmark}
       subtitle="Address search, free market intelligence, title documents, yields, rents, planning & KYC investigation"
       tabs={[
         { label: "Property Search", value: "property-search" },

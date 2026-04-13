@@ -651,6 +651,7 @@ export default function KycClouseau() {
   return (
     <PageLayout
       title="KYC Clouseau"
+      icon={ShieldCheck}
       subtitle="AI-Powered KYC & AML Investigation Tool"
       actions={<BulkScreenDialog />}
       fullHeight

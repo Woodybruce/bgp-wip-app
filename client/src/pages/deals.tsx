@@ -3746,6 +3746,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     return (
       <PageLayout
         title={isCompsMode ? "Leasing Comps" : "WIP"}
+        icon={Handshake}
         subtitle={isCompsMode ? "Comparable transactions" : "Work in Progress"}
       >
         <Card>
@@ -3768,6 +3769,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   return (
     <PageLayout
       title={isCompsMode ? "Leasing Comps" : "WIP"}
+      icon={Handshake}
       subtitle={isCompsMode
         ? `${baseDeals.length} completed deal${baseDeals.length !== 1 ? "s" : ""} — comparable transactions`
         : urlTeamParam
