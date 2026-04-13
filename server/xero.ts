@@ -63,7 +63,22 @@ declare module "express-session" {
   }
 }
 
-function getRedirectUri(_req: Request): string {
+function getRedirectUri(req: Request): string {
+  // Explicit override wins — must match a URL registered in the Xero
+  // developer app exactly. Set XERO_REDIRECT_URI if the app is reachable
+  // under a custom domain (e.g. https://chatbgp.app/api/xero/callback).
+  const override = process.env.XERO_REDIRECT_URI;
+  if (override && override.trim()) return override.trim();
+
+  // Otherwise derive from the incoming request so every trusted host works
+  // automatically, as long as each one is registered in the Xero app.
+  const fwdProto = (req.headers["x-forwarded-proto"] as string | undefined)?.split(",")[0]?.trim();
+  const fwdHost = (req.headers["x-forwarded-host"] as string | undefined)?.split(",")[0]?.trim();
+  const host = fwdHost || (req.headers.host as string | undefined);
+  const proto = fwdProto || (host && host.startsWith("localhost") ? "http" : "https");
+  if (host) return `${proto}://${host}/api/xero/callback`;
+
+  // Last-ditch fallback — the Railway production URL.
   return "https://bgp-wip-app-production-efac.up.railway.app/api/xero/callback";
 }
 
