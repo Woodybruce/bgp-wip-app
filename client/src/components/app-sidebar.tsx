@@ -70,9 +70,8 @@ import type { User } from "@shared/schema";
 import { useRecentItems, type RecentItem } from "@/hooks/use-recent-items";
 import { History } from "lucide-react";
 
-const coreNav = [
+const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Today", url: "/today", icon: Sun },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "Deals", url: "/deals", icon: BarChart3 },
@@ -80,8 +79,6 @@ const coreNav = [
   { title: "People Hub", url: "/contacts", icon: Users },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
   { title: "Comps", url: "/comps", icon: Scale },
-  { title: "Investment Comps", url: "/investment-comps", icon: TrendingUp },
-  { title: "Reporting", url: "/reporting", icon: TrendingUp },
 ];
 
 const aiNav = [
@@ -97,7 +94,8 @@ const microsoftNav = [
   { title: "Mail", url: "/mail", icon: Mail },
 ];
 
-const adminNav = [
+const adminNavBase = [
+  { title: "Reporting", url: "/reporting", icon: TrendingUp },
   { title: "Board Report", url: "/board-report", icon: Presentation },
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
   { title: "News", url: "/news", icon: Newspaper, badge: "AI" },
@@ -206,6 +204,14 @@ export function AppSidebar() {
   const { activeTeam, setActiveTeam, userTeam, additionalTeams } = useTeam();
   const { colorScheme, setColorScheme } = useTheme();
   const { brand, isLandsec } = useBrand();
+
+  // Reporting lives in Core for Landsec tenants, otherwise it's hidden in Admin.
+  const coreNav = isLandsec
+    ? [...coreNavBase, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
+    : coreNavBase;
+  const adminNav = isLandsec
+    ? adminNavBase.filter(i => i.url !== "/reporting")
+    : adminNavBase;
 
   const handleLogout = async () => {
     await apiRequest("POST", "/api/auth/logout");
@@ -393,6 +399,10 @@ const mobileOverlayItems = [
 
 export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [location] = useLocation();
+  const { isLandsec } = useBrand();
+
+  // Hide Reporting in mobile overlay for non-Landsec tenants (parity with desktop).
+  const items = isLandsec ? mobileOverlayItems : mobileOverlayItems.filter(i => i.url !== "/reporting");
 
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
@@ -428,7 +438,7 @@ export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose
           </button>
         </div>
         <div className="flex-1 overflow-y-auto py-2">
-          {mobileOverlayItems.map((item) => {
+          {items.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.url);
             return (

@@ -51,18 +51,15 @@ const CATEGORIES = [
   "All",
   "Brands",
   "Properties",
-  "Areas",
   "Marketing",
   "Events",
   "Headshots",
   "Floor Plans",
   "Interiors",
-  "Exteriors",
+  "Shop Fronts",
   "Street Views",
   "Generated",
-  "Stock",
   "Uncategorised",
-  "Other",
 ];
 
 const PROPERTY_TYPES = [
@@ -1715,7 +1712,7 @@ export default function ImageStudio() {
                               imageUrl: result.urls.regular,
                               fileName: result.description || "Stock Image",
                               photographer: result.photographer,
-                              category: "Stock",
+                              category: "Marketing",
                             })
                           }
                           data-testid={`button-import-stock-${result.id}`}
@@ -1979,7 +1976,7 @@ export default function ImageStudio() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {["Generated", "Exteriors", "Interiors", "Floor Plans", "Properties", "Areas", "Marketing", "Other"].map((c) => (
+                    {["Generated", "Shop Fronts", "Interiors", "Floor Plans", "Properties", "Marketing"].map((c) => (
                       <SelectItem key={c} value={c}>{c}</SelectItem>
                     ))}
                   </SelectContent>
