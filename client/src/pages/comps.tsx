@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { InlineText, InlineLabelSelect } from "@/components/inline-edit";
+import { InlineText, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -996,22 +996,53 @@ export default function Comps() {
     queryKey: ["/api/crm/properties"],
   });
 
+  const { data: companies = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/companies"],
+  });
+
+  const propertyOptions = useMemo(() =>
+    properties.map((p: any) => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name)),
+    [properties]
+  );
+
+  const companyOptions = useMemo(() =>
+    companies.map((c: any) => ({ id: c.id, name: c.name })).sort((a, b) => a.name.localeCompare(b.name)),
+    [companies]
+  );
+
+  const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
   // Maps normalized property name → id, so comps with no propertyId can still
   // link to the property board when their name matches a known property.
   const propertyByName = useMemo(() => {
     const m = new Map<string, string>();
-    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
     properties.forEach((p: any) => {
-      if (p?.id && p?.name) m.set(norm(p.name), p.id);
+      if (p?.id && p?.name) m.set(normName(p.name), p.id);
     });
     return m;
   }, [properties]);
 
+  // Enrichment-backed lookup: match tenant/landlord free-text to a CRM company
+  // by normalized name. Companies come from /api/crm/companies which auto-enriches
+  // via Apollo/AI in the background, so this map updates as enrichment runs.
+  const companyByName = useMemo(() => {
+    const m = new Map<string, string>();
+    companies.forEach((c: any) => {
+      if (c?.id && c?.name) m.set(normName(c.name), c.id);
+    });
+    return m;
+  }, [companies]);
+
+  const findCompanyId = useCallback((name: string | null | undefined): string | null => {
+    if (!name) return null;
+    const n = normName(name);
+    return companyByName.get(n) || null;
+  }, [companyByName]);
+
   const propertyLinkFor = useCallback((comp: CrmComp): string => {
     if (comp.propertyId) return `/properties/${comp.propertyId}`;
     if (comp.name) {
-      const norm = comp.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-      const match = propertyByName.get(norm);
+      const match = propertyByName.get(normName(comp.name));
       if (match) return `/properties/${match}`;
     }
     return "/properties";
@@ -1075,6 +1106,36 @@ export default function Comps() {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/comps"] });
       setCreateOpen(false);
       toast({ title: "Comp created" });
+    },
+  });
+
+  // Create a new CRM company from a tenant/landlord string on a comp and kick
+  // off Apollo enrichment in the background, then navigate to the new record.
+  const createAndEnrichCompany = useMutation({
+    mutationFn: async (name: string) => {
+      const cleanName = name.trim();
+      if (!cleanName) throw new Error("Name required");
+      const created = await apiRequest("POST", "/api/crm/companies", { name: cleanName }).then(r => r.json());
+      if (created?.id) {
+        // Fire-and-forget: enrichment populates industry/domain/employees/etc.
+        try {
+          await apiRequest("POST", "/api/apollo/enrich-company", { companyId: created.id });
+        } catch {
+          // Apollo might not be configured or the name might not match — that's fine,
+          // the company was still created and manually editable.
+        }
+      }
+      return created;
+    },
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      toast({ title: "Company added to CRM", description: "Enrichment started — Apollo is filling in details." });
+      if (created?.id) {
+        window.location.href = `/companies?highlight=${created.id}`;
+      }
+    },
+    onError: (err: any) => {
+      toast({ title: "Couldn't add company", description: err?.message || "Unknown error", variant: "destructive" });
     },
   });
 
@@ -1611,13 +1672,22 @@ export default function Comps() {
                     </DropdownMenu>
                   </td>
                   <td className="px-2 py-1.5 align-top">
-                    <Link
-                      href={propertyLinkFor(comp)}
-                      className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block w-full"
-                      data-testid={`comp-name-${comp.id}`}
-                    >
-                      {comp.name}
-                    </Link>
+                    <div className="flex items-center gap-1">
+                      <Link
+                        href={propertyLinkFor(comp)}
+                        className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block"
+                        data-testid={`comp-name-${comp.id}`}
+                      >
+                        {comp.name}
+                      </Link>
+                      <InlineLinkSelect
+                        value={comp.propertyId}
+                        options={propertyOptions}
+                        href={comp.propertyId ? `/properties/${comp.propertyId}` : undefined}
+                        onSave={(v) => updateMutation.mutate({ id: comp.id, field: "propertyId", value: v })}
+                        compact
+                      />
+                    </div>
                     <div className="flex items-center gap-1 flex-wrap">
                       {comp.postcode && <span className="text-[10px] text-muted-foreground">{comp.postcode}</span>}
                       {comp.sourceEvidence === "News Feed" && <span className="text-[9px] px-1 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">News</span>}
@@ -1632,7 +1702,35 @@ export default function Comps() {
                     </div>
                   </td>
                   <td className="px-2 py-1.5 truncate">
-                    <InlineText value={comp.tenant || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "tenant", value: v })} className="block truncate" />
+                    <div className="flex items-center gap-1">
+                      <InlineText value={comp.tenant || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "tenant", value: v })} className="block truncate" />
+                      {comp.tenant && (() => {
+                        const companyId = findCompanyId(comp.tenant);
+                        if (companyId) {
+                          return (
+                            <Link
+                              href={`/companies?highlight=${companyId}`}
+                              className="shrink-0 p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-primary transition-colors"
+                              title="Open matched CRM company"
+                              data-testid={`tenant-link-${comp.id}`}
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                            </Link>
+                          );
+                        }
+                        return (
+                          <button
+                            onClick={() => createAndEnrichCompany.mutate(comp.tenant!)}
+                            disabled={createAndEnrichCompany.isPending}
+                            className="shrink-0 p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-primary transition-colors"
+                            title="Add to CRM & enrich via Apollo"
+                            data-testid={`tenant-enrich-${comp.id}`}
+                          >
+                            {createAndEnrichCompany.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                          </button>
+                        );
+                      })()}
+                    </div>
                   </td>
                   <td className="px-2 py-1.5 truncate">
                     <InlineText value={comp.areaLocation || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "areaLocation", value: v })} className="block truncate" />
@@ -1979,7 +2077,24 @@ export default function Comps() {
             });
           }}
         />
-        <CompPdfTemplateEditor />
+        <Tabs defaultValue="leasing-template" className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="leasing-template" data-testid="tab-pdf-scope-leasing">
+              <Scale className="w-3.5 h-3.5 mr-1.5" />
+              Leasing Template
+            </TabsTrigger>
+            <TabsTrigger value="investment-template" data-testid="tab-pdf-scope-investment">
+              <TrendingUp className="w-3.5 h-3.5 mr-1.5" />
+              Investment Template
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="leasing-template">
+            <CompPdfTemplateEditor scope="leasing" />
+          </TabsContent>
+          <TabsContent value="investment-template">
+            <CompPdfTemplateEditor scope="investment" />
+          </TabsContent>
+        </Tabs>
       </TabsContent>
 
       <Dialog open={!!selectedComp} onOpenChange={(open) => { if (!open) setSelectedComp(null); }}>

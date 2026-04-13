@@ -46,22 +46,36 @@ function hexToRgb(hex: string): number[] {
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
 }
 
-export function CompPdfTemplateEditor() {
+export function CompPdfTemplateEditor({ scope = "leasing" }: { scope?: "leasing" | "investment" } = {}) {
   const { toast } = useToast();
   const [dirty, setDirty] = useState(false);
+
+  const endpoint = scope === "investment" ? "/api/investment-comp-pdf-template" : "/api/comp-pdf-template";
+  const titleLabel = scope === "investment" ? "Investment Comp PDF Template" : "Comp PDF Template";
+  const subtitle = scope === "investment"
+    ? "Customise the PDF export used on the Investment Comps tab"
+    : "Customise the PDF export used on the Leasing Comps page";
 
   const { data: currentUser } = useQuery<{ team?: string; isAdmin?: boolean }>({
     queryKey: ["/api/auth/me"],
   });
 
   const userTeam = (currentUser?.team || "").toLowerCase();
-  const canEdit = currentUser?.isAdmin || ["lease advisory", "london leasing", "national leasing"].includes(userTeam);
+  const leasingTeams = ["lease advisory", "london leasing", "national leasing"];
+  const canEdit = currentUser?.isAdmin ||
+    (scope === "investment" ? userTeam === "investment" : leasingTeams.includes(userTeam));
 
   const { data: template, isLoading } = useQuery<CompPdfTemplateConfig>({
-    queryKey: ["/api/comp-pdf-template"],
+    queryKey: [endpoint],
   });
 
   const [config, setConfig] = useState<CompPdfTemplateConfig | null>(null);
+
+  // Reset config when scope changes so switching tabs loads the right template.
+  useEffect(() => {
+    setConfig(null);
+    setDirty(false);
+  }, [scope]);
 
   useEffect(() => {
     if (template && !config) setConfig(template);
@@ -69,13 +83,13 @@ export function CompPdfTemplateEditor() {
 
   const saveMutation = useMutation({
     mutationFn: async (data: CompPdfTemplateConfig) => {
-      const res = await apiRequest("PUT", "/api/comp-pdf-template", data);
+      const res = await apiRequest("PUT", endpoint, data);
       return res.json();
     },
     onSuccess: (saved) => {
       setConfig(saved);
       setDirty(false);
-      queryClient.invalidateQueries({ queryKey: ["/api/comp-pdf-template"] });
+      queryClient.invalidateQueries({ queryKey: [endpoint] });
       toast({ title: "Template saved", description: "Changes will apply to all future comp PDF exports." });
     },
     onError: (err: any) => {
@@ -127,9 +141,9 @@ export function CompPdfTemplateEditor() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold" data-testid="text-pdf-templates-title">Comp PDF Template</h2>
+          <h2 className="text-lg font-semibold" data-testid="text-pdf-templates-title">{titleLabel}</h2>
           <p className="text-sm text-muted-foreground">
-            Customise the PDF export used on the Leasing Comps page
+            {subtitle}
           </p>
           {config.lastUpdatedBy && (
             <p className="text-xs text-muted-foreground mt-1">

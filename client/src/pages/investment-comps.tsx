@@ -17,10 +17,17 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
   Upload, Search, Trash2, Columns3, X, ChevronUp, ChevronDown, FilterX,
-  TrendingUp, Building2, MapPin, DollarSign, Percent,
+  TrendingUp, Building2, MapPin, DollarSign, Percent, Plus, Download, FileDown, Loader2,
 } from "lucide-react";
 import type { InvestmentComp, CrmProperty, CrmCompany } from "@shared/schema";
+import jsPDF from "jspdf";
 
 const STATUS_COLORS: Record<string, string> = {
   "Sale": "bg-green-600 text-white",
@@ -46,6 +53,228 @@ const TYPE_COLORS: Record<string, string> = {
 const SUBTYPE_COLORS: Record<string, string> = {
   Centers: "bg-indigo-500",
   Shops: "bg-teal-500",
+};
+
+// Mirrors the AREA_GROUPS pill row on the leasing tab — investment comps are
+// UK-wide (RCA data), so we group by region rather than London sub-markets.
+const REGION_GROUPS = [
+  "All Regions",
+  "London",
+  "South East",
+  "South West",
+  "Midlands",
+  "North West",
+  "North East",
+  "Yorkshire",
+  "Wales",
+  "Scotland",
+  "Northern Ireland",
+  "Other",
+];
+
+function matchesRegion(comp: InvestmentComp, region: string): boolean {
+  if (region === "All Regions") return true;
+  if (region === "Other") return !comp.region && !comp.market;
+  const hay = `${comp.region || ""} ${comp.market || ""} ${comp.city || ""}`.toLowerCase();
+  return hay.includes(region.toLowerCase());
+}
+
+function generateInvestmentCompsPdf(comps: InvestmentComp[], tpl?: InvestmentPdfTemplate) {
+  const t = { ...DEFAULT_INVESTMENT_PDF_TEMPLATE, ...tpl };
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const pageW = 210;
+  const margin = 15;
+  const contentW = pageW - margin * 2;
+  const brandColor = (t.brandColor || [25, 25, 25]) as [number, number, number];
+  const accentColor = (t.accentColor || [0, 82, 136]) as [number, number, number];
+  const lightGray: [number, number, number] = [245, 245, 245];
+  const medGray: [number, number, number] = [140, 140, 140];
+  let y = 0;
+
+  const checkPage = (needed: number) => {
+    if (y + needed > 280) {
+      doc.addPage();
+      y = 15;
+    }
+  };
+
+  doc.setFillColor(...brandColor);
+  doc.rect(0, 0, pageW, 28, "F");
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16);
+  doc.setFont("helvetica", "bold");
+  doc.text(t.headerTitle, margin, 13);
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "normal");
+  doc.text(t.headerSubtitle, margin, 20);
+  doc.setTextColor(200, 200, 200);
+  if (t.showDate) {
+    doc.text(new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }), pageW - margin, 20, { align: "right" });
+  }
+  if (t.showCount) {
+    doc.text(`${comps.length} transaction${comps.length !== 1 ? "s" : ""}`, pageW - margin, 13, { align: "right" });
+  }
+  y = 35;
+
+  const templateFields = t.fields.filter(f => f.enabled);
+  const cols = t.columns;
+
+  comps.forEach((comp, idx) => {
+    const blockH = 52;
+    checkPage(blockH);
+
+    if (idx > 0) {
+      doc.setDrawColor(220, 220, 220);
+      doc.line(margin, y - 3, pageW - margin, y - 3);
+      y += 2;
+    }
+
+    doc.setFillColor(...accentColor);
+    doc.rect(margin, y, 2, 8, "F");
+    doc.setTextColor(...brandColor);
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    const title = comp.propertyName || "Untitled";
+    doc.text(title, margin + 5, y + 6);
+
+    if (comp.postalCode) {
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(...medGray);
+      doc.text(comp.postalCode, margin + 5 + doc.getTextWidth(title) + 3, y + 6);
+    }
+
+    if (t.showBadges) {
+      const badges: string[] = [];
+      if (comp.status) badges.push(comp.status);
+      if (comp.transactionType) badges.push(comp.transactionType);
+      if (comp.subtype) badges.push(comp.subtype);
+      if (comp.transactionDate) badges.push(formatDate(comp.transactionDate));
+      if (badges.length > 0) {
+        let bx = pageW - margin;
+        doc.setFontSize(6);
+        badges.reverse().forEach(b => {
+          const tw = doc.getTextWidth(b) + 4;
+          doc.setFillColor(...lightGray);
+          doc.roundedRect(bx - tw, y + 1, tw, 5, 1, 1, "F");
+          doc.setTextColor(...medGray);
+          doc.text(b, bx - tw + 2, y + 4.5);
+          bx -= tw + 2;
+        });
+      }
+    }
+    y += 12;
+
+    const compData = comp as Record<string, any>;
+    const valueFor = (key: string): string => {
+      const raw = compData[key];
+      if (raw == null) return "";
+      if (key === "price") return formatCurrency(raw);
+      if (key === "pricePsf" || key === "pricePerUnit") return formatPsf(raw);
+      if (key === "capRate") return formatPercent(raw);
+      if (key === "occupancy") return formatOccupancy(raw);
+      if (key === "areaSqft" || key === "yearBuilt" || key === "numBuildings" || key === "numFloors") {
+        return typeof raw === "number" ? raw.toLocaleString("en-GB") : String(raw);
+      }
+      if (key === "transactionDate") return formatDate(raw);
+      return String(raw);
+    };
+    const populated = templateFields
+      .map(f => [f.label, valueFor(f.key)] as [string, string])
+      .filter(([, v]) => v);
+
+    const colW = contentW / cols;
+    populated.forEach(([label, value], i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      if (col === 0 && row > 0) checkPage(8);
+      const cx = margin + col * colW;
+      const cy = y + row * 8;
+      doc.setFontSize(5.5);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(...medGray);
+      doc.text(label.toUpperCase(), cx, cy);
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(...brandColor);
+      doc.text(value, cx, cy + 4);
+    });
+    const totalRows = Math.ceil(populated.length / cols);
+    y += totalRows * 8 + 4;
+
+    if (t.showNotes && comp.comments) {
+      checkPage(10);
+      doc.setFontSize(5.5);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(...medGray);
+      doc.text("NOTES", margin, y);
+      doc.setFontSize(6.5);
+      doc.setTextColor(80, 80, 80);
+      const lines = doc.splitTextToSize(comp.comments, contentW);
+      doc.text(lines.slice(0, 3), margin, y + 4);
+      y += 4 + Math.min(lines.length, 3) * 3 + 2;
+    }
+
+    y += 4;
+  });
+
+  doc.setDrawColor(...brandColor);
+  doc.line(margin, 282, pageW - margin, 282);
+  doc.setFontSize(5);
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(...medGray);
+  doc.text(t.footerText, pageW / 2, 287, { align: "center" });
+
+  const fileName = comps.length === 1
+    ? `BGP_Investment_${(comps[0].propertyName || "export").replace(/[^a-zA-Z0-9]/g, "_")}.pdf`
+    : `BGP_Investment_Comps_${new Date().toISOString().slice(0, 10)}.pdf`;
+  doc.save(fileName);
+}
+
+interface InvestmentPdfField { key: string; label: string; enabled: boolean }
+interface InvestmentPdfTemplate {
+  headerTitle: string;
+  headerSubtitle: string;
+  footerText: string;
+  brandColor: number[];
+  accentColor: number[];
+  showDate: boolean;
+  showCount: boolean;
+  showBadges: boolean;
+  showNotes: boolean;
+  columns: number;
+  fields: InvestmentPdfField[];
+}
+
+const DEFAULT_INVESTMENT_PDF_TEMPLATE: InvestmentPdfTemplate = {
+  headerTitle: "BRUCE GILLINGHAM POLLARD",
+  headerSubtitle: "Investment Comparable Transactions",
+  footerText: "Bruce Gillingham Pollard | Confidential | brucegillinghampollard.com",
+  brandColor: [25, 25, 25],
+  accentColor: [0, 82, 136],
+  showDate: true,
+  showCount: true,
+  showBadges: true,
+  showNotes: true,
+  columns: 4,
+  fields: [
+    { key: "address", label: "Address", enabled: true },
+    { key: "city", label: "City", enabled: true },
+    { key: "market", label: "Market", enabled: true },
+    { key: "transactionDate", label: "Date", enabled: true },
+    { key: "price", label: "Price", enabled: true },
+    { key: "pricePsf", label: "Price £/sf", enabled: true },
+    { key: "capRate", label: "Cap Rate", enabled: true },
+    { key: "areaSqft", label: "Area (sqft)", enabled: true },
+    { key: "yearBuilt", label: "Year Built", enabled: true },
+    { key: "occupancy", label: "Occupancy", enabled: true },
+    { key: "buyer", label: "Buyer", enabled: true },
+    { key: "seller", label: "Seller", enabled: true },
+    { key: "buyerBroker", label: "Buyer Broker", enabled: false },
+    { key: "sellerBroker", label: "Seller Broker", enabled: false },
+    { key: "lender", label: "Lender", enabled: false },
+    { key: "pricePerUnit", label: "£/Unit", enabled: false },
+  ],
 };
 
 const formatCurrency = (v: number | null | undefined) => {
@@ -225,8 +454,11 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
   const [filterProperty, setFilterProperty] = useState("");
   const [filterBuyer, setFilterBuyer] = useState("");
   const [filterSeller, setFilterSeller] = useState("");
+  const [activeRegion, setActiveRegion] = useState("All Regions");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [pdfExporting, setPdfExporting] = useState(false);
 
-  const hasActiveFilters = filterStatus || filterType || filterSubtype || filterCity || filterMarket || filterProperty || filterBuyer || filterSeller;
+  const hasActiveFilters = filterStatus || filterType || filterSubtype || filterCity || filterMarket || filterProperty || filterBuyer || filterSeller || activeRegion !== "All Regions";
 
   const clearAllFilters = useCallback(() => {
     setFilterStatus("");
@@ -237,6 +469,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
     setFilterProperty("");
     setFilterBuyer("");
     setFilterSeller("");
+    setActiveRegion("All Regions");
   }, []);
 
   const { data: comps = [], isLoading } = useQuery<InvestmentComp[]>({
@@ -326,6 +559,24 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
     },
   });
 
+  const createMutation = useMutation({
+    mutationFn: async (data: Partial<InvestmentComp>) => {
+      return apiRequest("POST", "/api/investment-comps", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/investment-comps"] });
+      setCreateOpen(false);
+      toast({ title: "Investment comp created" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Create failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const { data: investmentPdfTemplate } = useQuery<InvestmentPdfTemplate>({
+    queryKey: ["/api/investment-comp-pdf-template"],
+  });
+
   const filtered = useMemo(() => {
     let items = comps;
 
@@ -337,6 +588,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
     if (filterProperty) items = items.filter(c => c.propertyName === filterProperty);
     if (filterBuyer) items = items.filter(c => c.buyer === filterBuyer);
     if (filterSeller) items = items.filter(c => c.seller === filterSeller);
+    if (activeRegion !== "All Regions") items = items.filter(c => matchesRegion(c, activeRegion));
 
     if (debouncedSearch) {
       const q = debouncedSearch.toLowerCase();
@@ -363,7 +615,7 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
         : String(bVal).localeCompare(String(aVal));
     });
     return items;
-  }, [comps, debouncedSearch, sortCol, sortDir, filterStatus, filterType, filterSubtype, filterCity, filterMarket, filterProperty, filterBuyer, filterSeller]);
+  }, [comps, debouncedSearch, sortCol, sortDir, filterStatus, filterType, filterSubtype, filterCity, filterMarket, filterProperty, filterBuyer, filterSeller, activeRegion]);
 
   const toggleSort = (col: string) => {
     if (sortCol === col) {
@@ -616,6 +868,96 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
     return { total, cities, sales };
   }, [comps]);
 
+  const exportToCsv = useCallback(() => {
+    const headers = [
+      "Property", "Address", "City", "Market", "Region", "Postcode",
+      "Status", "Transaction Type", "Subtype", "Transaction Date",
+      "Price (£)", "Price £/sf", "£/Unit", "Cap Rate", "Occupancy",
+      "Area (sqft)", "Year Built", "# Buildings", "# Floors", "Land (acres)",
+      "Buyer", "Buyer Broker", "Seller", "Seller Broker", "Lender",
+      "Source", "Comments",
+    ];
+    const rows = filtered.map(c => [
+      c.propertyName, c.address, c.city, c.market, c.region, c.postalCode,
+      c.status, c.transactionType, c.subtype, c.transactionDate,
+      c.price, c.pricePsf, c.pricePerUnit, c.capRate, c.occupancy,
+      c.areaSqft, c.yearBuilt, c.numBuildings, c.numFloors, c.landAreaAcres,
+      c.buyer, c.buyerBroker, c.seller, c.sellerBroker, c.lender,
+      c.source, c.comments,
+    ]);
+    const csv = [headers.join(","), ...rows.map(r => r.map(v => `"${(v ?? "").toString().replace(/"/g, '""')}"`).join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `BGP_Investment_Comps_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [filtered]);
+
+  const exportToPdf = useCallback(async () => {
+    if (!filtered.length) {
+      toast({ title: "Nothing to export", description: "Current filters return no comps", variant: "destructive" });
+      return;
+    }
+    setPdfExporting(true);
+    try {
+      generateInvestmentCompsPdf(filtered, investmentPdfTemplate);
+      toast({ title: "PDF exported", description: `${filtered.length} comp${filtered.length !== 1 ? "s" : ""} exported` });
+    } catch (err: any) {
+      toast({ title: "PDF export failed", description: err?.message || "Unknown error", variant: "destructive" });
+    } finally {
+      setPdfExporting(false);
+    }
+  }, [filtered, investmentPdfTemplate, toast]);
+
+  // Add Comp dialog state
+  const [newName, setNewName] = useState("");
+  const [newAddress, setNewAddress] = useState("");
+  const [newCity, setNewCity] = useState("");
+  const [newMarket, setNewMarket] = useState("");
+  const [newStatus, setNewStatus] = useState("");
+  const [newTxnType, setNewTxnType] = useState("");
+  const [newSubtype, setNewSubtype] = useState("");
+  const [newDate, setNewDate] = useState("");
+  const [newPrice, setNewPrice] = useState("");
+  const [newCapRate, setNewCapRate] = useState("");
+  const [newArea, setNewArea] = useState("");
+  const [newBuyer, setNewBuyer] = useState("");
+  const [newSeller, setNewSeller] = useState("");
+
+  const resetCreateForm = () => {
+    setNewName(""); setNewAddress(""); setNewCity(""); setNewMarket("");
+    setNewStatus(""); setNewTxnType(""); setNewSubtype(""); setNewDate("");
+    setNewPrice(""); setNewCapRate(""); setNewArea(""); setNewBuyer(""); setNewSeller("");
+  };
+
+  const handleCreate = () => {
+    if (!newName.trim()) {
+      toast({ title: "Property name required", variant: "destructive" });
+      return;
+    }
+    const payload: Partial<InvestmentComp> = {
+      propertyName: newName.trim(),
+      address: newAddress.trim() || null,
+      city: newCity.trim() || null,
+      market: newMarket.trim() || null,
+      status: newStatus || null,
+      transactionType: newTxnType || null,
+      subtype: newSubtype || null,
+      transactionDate: newDate || null,
+      price: newPrice ? Number(newPrice) : null,
+      capRate: newCapRate ? Number(newCapRate) / 100 : null,
+      areaSqft: newArea ? Number(newArea) : null,
+      buyer: newBuyer.trim() || null,
+      seller: newSeller.trim() || null,
+      source: "Manual",
+    };
+    createMutation.mutate(payload, {
+      onSuccess: () => resetCreateForm(),
+    });
+  };
+
   return (
     <div className="h-full flex flex-col" data-testid="investment-comps-page">
       <div className="border-b px-4 py-3 shrink-0">
@@ -676,6 +1018,28 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               {importMutation.isPending ? "Importing..." : "Import RCA"}
             </Button>
 
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 h-8"
+              onClick={exportToCsv}
+              data-testid="button-export-csv"
+            >
+              <Download className="w-3.5 h-3.5" /> Export
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 h-8"
+              disabled={pdfExporting}
+              onClick={exportToPdf}
+              data-testid="button-export-pdf"
+            >
+              {pdfExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+              PDF
+            </Button>
+
             <Popover>
               <PopoverTrigger asChild>
                 <Button variant="outline" size="sm" className="gap-1.5 h-8" data-testid="button-columns">
@@ -697,6 +1061,15 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
                 ))}
               </PopoverContent>
             </Popover>
+
+            <Button
+              size="sm"
+              className="gap-1.5 h-8"
+              onClick={() => { resetCreateForm(); setCreateOpen(true); }}
+              data-testid="button-add-comp"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add Comp
+            </Button>
           </div>
         </div>
 
@@ -724,11 +1097,55 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
               </button>
             )}
           </div>
+          <Select value={filterStatus || "all"} onValueChange={(v) => setFilterStatus(v === "all" ? "" : v)}>
+            <SelectTrigger className="h-8 w-32 text-xs" data-testid="select-toolbar-status">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              {STATUS_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filterType || "all"} onValueChange={(v) => setFilterType(v === "all" ? "" : v)}>
+            <SelectTrigger className="h-8 w-36 text-xs" data-testid="select-toolbar-type">
+              <SelectValue placeholder="Type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Types</SelectItem>
+              {TYPE_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={filterSubtype || "all"} onValueChange={(v) => setFilterSubtype(v === "all" ? "" : v)}>
+            <SelectTrigger className="h-8 w-32 text-xs" data-testid="select-toolbar-subtype">
+              <SelectValue placeholder="Subtype" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Subtypes</SelectItem>
+              {SUBTYPE_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+            </SelectContent>
+          </Select>
           {hasActiveFilters && (
             <Button variant="ghost" size="sm" onClick={clearAllFilters} className="h-8 gap-1 text-xs" data-testid="button-clear-filters">
               <FilterX className="w-3.5 h-3.5" /> Clear
             </Button>
           )}
+        </div>
+
+        <div className="flex items-center gap-1.5 mt-3 flex-wrap">
+          {REGION_GROUPS.map(region => (
+            <button
+              key={region}
+              onClick={() => setActiveRegion(region)}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-colors ${
+                activeRegion === region
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid={`region-tab-${region}`}
+            >
+              {region}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -843,6 +1260,92 @@ export default function InvestmentCompsPage({ embedded = false }: { embedded?: b
           </tbody>
         </table>
       </div>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Add Investment Comp</DialogTitle>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-muted-foreground">Property Name *</label>
+              <Input value={newName} onChange={e => setNewName(e.target.value)} data-testid="input-new-name" />
+            </div>
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-muted-foreground">Address</label>
+              <Input value={newAddress} onChange={e => setNewAddress(e.target.value)} data-testid="input-new-address" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">City</label>
+              <Input value={newCity} onChange={e => setNewCity(e.target.value)} data-testid="input-new-city" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Market / Region</label>
+              <Input value={newMarket} onChange={e => setNewMarket(e.target.value)} data-testid="input-new-market" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Status</label>
+              <Select value={newStatus || "none"} onValueChange={v => setNewStatus(v === "none" ? "" : v)}>
+                <SelectTrigger data-testid="select-new-status"><SelectValue placeholder="Select status" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">—</SelectItem>
+                  {STATUS_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Transaction Type</label>
+              <Select value={newTxnType || "none"} onValueChange={v => setNewTxnType(v === "none" ? "" : v)}>
+                <SelectTrigger data-testid="select-new-type"><SelectValue placeholder="Select type" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">—</SelectItem>
+                  {TYPE_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Subtype</label>
+              <Select value={newSubtype || "none"} onValueChange={v => setNewSubtype(v === "none" ? "" : v)}>
+                <SelectTrigger data-testid="select-new-subtype"><SelectValue placeholder="Select subtype" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">—</SelectItem>
+                  {SUBTYPE_OPTIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Transaction Date</label>
+              <Input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} data-testid="input-new-date" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Price (£)</label>
+              <Input type="number" value={newPrice} onChange={e => setNewPrice(e.target.value)} data-testid="input-new-price" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Cap Rate (%)</label>
+              <Input type="number" step="0.01" value={newCapRate} onChange={e => setNewCapRate(e.target.value)} placeholder="e.g. 5.25" data-testid="input-new-caprate" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Area (sqft)</label>
+              <Input type="number" value={newArea} onChange={e => setNewArea(e.target.value)} data-testid="input-new-area" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Buyer</label>
+              <Input value={newBuyer} onChange={e => setNewBuyer(e.target.value)} data-testid="input-new-buyer" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Seller</label>
+              <Input value={newSeller} onChange={e => setNewSeller(e.target.value)} data-testid="input-new-seller" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button onClick={handleCreate} disabled={createMutation.isPending} data-testid="button-submit-new-comp">
+              {createMutation.isPending ? "Creating..." : "Create"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

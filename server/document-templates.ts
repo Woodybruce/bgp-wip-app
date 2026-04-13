@@ -3341,4 +3341,128 @@ Be concise, professional, and use British English. All document advice should al
       res.status(500).json({ message: err.message });
     }
   });
+
+  // Investment-comps PDF template — parallel to the leasing template above but
+  // with investment-specific default fields. Editable by admins + Investment team.
+  const INVESTMENT_COMP_PDF_TEMPLATE_KEY = "investment_comp_pdf_template";
+  const INVESTMENT_TEAMS = ["investment"];
+
+  const DEFAULT_INVESTMENT_COMP_PDF_TEMPLATE = {
+    headerTitle: "BRUCE GILLINGHAM POLLARD",
+    headerSubtitle: "Investment Comparable Transactions",
+    footerText: "Bruce Gillingham Pollard | Confidential | brucegillinghampollard.com",
+    brandColor: [25, 25, 25],
+    accentColor: [0, 82, 136],
+    showLogo: true,
+    showDate: true,
+    showCount: true,
+    fields: [
+      { key: "address", label: "Address", enabled: true },
+      { key: "city", label: "City", enabled: true },
+      { key: "market", label: "Market", enabled: true },
+      { key: "transactionDate", label: "Date", enabled: true },
+      { key: "price", label: "Price", enabled: true },
+      { key: "pricePsf", label: "Price £/sf", enabled: true },
+      { key: "capRate", label: "Cap Rate", enabled: true },
+      { key: "areaSqft", label: "Area (sqft)", enabled: true },
+      { key: "yearBuilt", label: "Year Built", enabled: true },
+      { key: "occupancy", label: "Occupancy", enabled: true },
+      { key: "buyer", label: "Buyer", enabled: true },
+      { key: "seller", label: "Seller", enabled: true },
+      { key: "buyerBroker", label: "Buyer Broker", enabled: false },
+      { key: "sellerBroker", label: "Seller Broker", enabled: false },
+      { key: "lender", label: "Lender", enabled: false },
+      { key: "pricePerUnit", label: "£/Unit", enabled: false },
+    ],
+    showBadges: true,
+    showNotes: true,
+    showAttachedFiles: false,
+    columns: 4,
+    lastUpdatedBy: null as string | null,
+    lastUpdatedAt: null as string | null,
+  };
+
+  app.get("/api/investment-comp-pdf-template", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const result = await pool.query(
+        `SELECT value FROM system_settings WHERE key = $1`,
+        [INVESTMENT_COMP_PDF_TEMPLATE_KEY]
+      );
+      if (result.rows.length > 0 && result.rows[0].value) {
+        res.json({ ...DEFAULT_INVESTMENT_COMP_PDF_TEMPLATE, ...result.rows[0].value });
+      } else {
+        res.json(DEFAULT_INVESTMENT_COMP_PDF_TEMPLATE);
+      }
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/investment-comp-pdf-template", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ message: "Not authenticated" });
+
+      const userResult = await pool.query(`SELECT name, team, is_admin FROM users WHERE id = $1`, [userId]);
+      if (userResult.rows.length === 0) return res.status(404).json({ message: "User not found" });
+
+      const user = userResult.rows[0];
+      const userTeam = (user.team || "").toLowerCase();
+      const canEdit = user.is_admin || INVESTMENT_TEAMS.includes(userTeam);
+
+      if (!canEdit) {
+        return res.status(403).json({ message: "Only Investment team members and admins can edit this template" });
+      }
+
+      const body = req.body;
+      if (typeof body.headerTitle !== "string" || typeof body.headerSubtitle !== "string" || typeof body.footerText !== "string") {
+        return res.status(400).json({ message: "headerTitle, headerSubtitle, and footerText must be strings" });
+      }
+      if (!Array.isArray(body.brandColor) || body.brandColor.length !== 3 || !body.brandColor.every((c: any) => typeof c === "number" && c >= 0 && c <= 255)) {
+        return res.status(400).json({ message: "brandColor must be an array of 3 numbers (0-255)" });
+      }
+      if (!Array.isArray(body.accentColor) || body.accentColor.length !== 3 || !body.accentColor.every((c: any) => typeof c === "number" && c >= 0 && c <= 255)) {
+        return res.status(400).json({ message: "accentColor must be an array of 3 numbers (0-255)" });
+      }
+      if (!Array.isArray(body.fields) || !body.fields.every((f: any) => typeof f.key === "string" && typeof f.label === "string" && typeof f.enabled === "boolean")) {
+        return res.status(400).json({ message: "fields must be an array of { key, label, enabled }" });
+      }
+      const columns = Number(body.columns);
+      if (isNaN(columns) || columns < 1 || columns > 8) {
+        return res.status(400).json({ message: "columns must be between 1 and 8" });
+      }
+
+      const template = {
+        headerTitle: String(body.headerTitle).slice(0, 200),
+        headerSubtitle: String(body.headerSubtitle).slice(0, 200),
+        footerText: String(body.footerText).slice(0, 300),
+        brandColor: body.brandColor.map((c: number) => Math.round(c)),
+        accentColor: body.accentColor.map((c: number) => Math.round(c)),
+        showLogo: !!body.showLogo,
+        showDate: !!body.showDate,
+        showCount: !!body.showCount,
+        showBadges: !!body.showBadges,
+        showNotes: !!body.showNotes,
+        showAttachedFiles: !!body.showAttachedFiles,
+        columns,
+        fields: body.fields.slice(0, 30).map((f: any) => ({
+          key: String(f.key).slice(0, 50),
+          label: String(f.label).slice(0, 50),
+          enabled: !!f.enabled,
+        })),
+        lastUpdatedBy: user.name || "Unknown",
+        lastUpdatedAt: new Date().toISOString(),
+      };
+
+      await pool.query(
+        `INSERT INTO system_settings (key, value, updated_at) VALUES ($1, $2, now())
+         ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()`,
+        [INVESTMENT_COMP_PDF_TEMPLATE_KEY, JSON.stringify(template)]
+      );
+
+      res.json(template);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
 }
