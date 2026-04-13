@@ -365,23 +365,6 @@ export function setupAuth(app: Express) {
     return `${protocol}://${host}/api/auth/microsoft/callback`;
   }
 
-  app.get("/api/auth/microsoft/diagnose", (_req: Request, res: Response) => {
-    const secret = (process.env.AZURE_SECRET_V2 || process.env.AZURE_CLIENT_SECRET || "").trim();
-    const clientId = (process.env.AZURE_CLIENT_ID || "").trim();
-    const tenantId = (process.env.AZURE_TENANT_ID || "").trim();
-    const fingerprint = secret ? `${secret.slice(0, 2)}…${secret.slice(-2)}` : null;
-    res.json({
-      clientIdLen: clientId.length,
-      clientIdPreview: clientId ? `${clientId.slice(0, 8)}…${clientId.slice(-4)}` : null,
-      tenantIdLen: tenantId.length,
-      tenantIdPreview: tenantId ? `${tenantId.slice(0, 8)}…${tenantId.slice(-4)}` : null,
-      secretLen: secret.length,
-      secretFingerprint: fingerprint,
-      secretSource: process.env.AZURE_SECRET_V2 ? "AZURE_SECRET_V2" : process.env.AZURE_CLIENT_SECRET ? "AZURE_CLIENT_SECRET" : null,
-      secretHasWhitespace: /\s/.test(secret),
-    });
-  });
-
   app.get("/api/auth/microsoft", async (req: Request, res: Response) => {
     try {
       const client = getSsoMsalClient();
