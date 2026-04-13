@@ -37,6 +37,7 @@ import {
   ImageIcon,
   ListTodo,
   Ruler,
+  Sun,
 } from "lucide-react";
 import {
   Sidebar,
@@ -71,6 +72,7 @@ import { History } from "lucide-react";
 
 const coreNav = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Today", url: "/today", icon: Sun },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "Deals", url: "/deals", icon: BarChart3 },
@@ -78,6 +80,7 @@ const coreNav = [
   { title: "People Hub", url: "/contacts", icon: Users },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
   { title: "Comps", url: "/comps", icon: Scale },
+  { title: "Investment Comps", url: "/investment-comps", icon: TrendingUp },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
 ];
 
@@ -360,12 +363,14 @@ export function AppSidebar() {
  * bottom nav (Home, ChatBGP, Properties, Deals are in the bottom nav).
  */
 const mobileOverlayItems = [
+  { title: "Today", url: "/today", icon: Sun },
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Requirements", url: "/requirements", icon: FileText },
   { title: "People Hub", url: "/contacts", icon: Users },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
   { title: "Comps", url: "/comps", icon: Scale },
+  { title: "Investment Comps", url: "/investment-comps", icon: TrendingUp },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
   { title: "Document Studio", url: "/templates", icon: FileTextIcon },
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon },

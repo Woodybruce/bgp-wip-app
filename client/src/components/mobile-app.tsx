@@ -2782,21 +2782,21 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
   }, [companies, peopleSearch]);
 
   const investmentStatusColors: Record<string, { bg: string; text: string; border: string }> = {
-    "Live": { bg: "bg-blue-500", text: "text-white", border: "border-blue-500" },
-    "Available": { bg: "bg-emerald-500", text: "text-white", border: "border-emerald-500" },
-    "Speculative": { bg: "bg-purple-500", text: "text-white", border: "border-purple-500" },
-    "Completed": { bg: "bg-green-600", text: "text-white", border: "border-green-600" },
-    "Under Offer": { bg: "bg-amber-500", text: "text-white", border: "border-amber-500" },
-    "Exchanged": { bg: "bg-teal-500", text: "text-white", border: "border-teal-500" },
-    "Withdrawn": { bg: "bg-red-500", text: "text-white", border: "border-red-500" },
+    "Live": { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200" },
+    "Available": { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
+    "Speculative": { bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-200" },
+    "Completed": { bg: "bg-green-50", text: "text-green-700", border: "border-green-200" },
+    "Under Offer": { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" },
+    "Exchanged": { bg: "bg-teal-50", text: "text-teal-700", border: "border-teal-200" },
+    "Withdrawn": { bg: "bg-stone-100", text: "text-stone-500", border: "border-stone-200" },
   };
 
   const lettingStatusColors: Record<string, { bg: string; text: string; border: string }> = {
-    "Available": { bg: "bg-emerald-500", text: "text-white", border: "border-emerald-500" },
-    "Under Offer": { bg: "bg-amber-500", text: "text-white", border: "border-amber-500" },
-    "Let": { bg: "bg-blue-500", text: "text-white", border: "border-blue-500" },
-    "Let Agreed": { bg: "bg-teal-500", text: "text-white", border: "border-teal-500" },
-    "Withdrawn": { bg: "bg-red-500", text: "text-white", border: "border-red-500" },
+    "Available": { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200" },
+    "Under Offer": { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200" },
+    "Let": { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200" },
+    "Let Agreed": { bg: "bg-teal-50", text: "text-teal-700", border: "border-teal-200" },
+    "Withdrawn": { bg: "bg-stone-100", text: "text-stone-500", border: "border-stone-200" },
   };
 
   const boardFilteredInvestmentItems = useMemo(() => {
@@ -3487,22 +3487,17 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                       All ({isInvestmentTeam ? boardFilteredInvestmentItems.length : (lettingItems?.length || 0)})
                     </button>
                     {Object.entries(trackerStatusCounts).map(([status, count]) => {
-                      const colors = isInvestmentTeam ? investmentStatusColors : lettingStatusColors;
-                      const color = colors[status] || { bg: "bg-gray-400", text: "text-white", border: "border-gray-400" };
                       const isActive = trackerStatusFilter === status;
                       return (
                         <button
                           key={status}
                           onClick={() => setTrackerStatusFilter(isActive ? null : status)}
                           className={`shrink-0 px-3.5 py-2 rounded-full text-[13px] font-medium transition-all ${
-                            isActive ? `${color.bg} text-white` : "bg-gray-100 text-gray-700"
+                            isActive ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-700"
                           }`}
                           data-testid={`status-filter-${status.toLowerCase().replace(/\s+/g, "-")}`}
                         >
-                          <span className="flex items-center gap-1.5">
-                            <span className={`w-2 h-2 rounded-full ${isActive ? "bg-white/80" : color.bg}`} />
-                            {status} ({count})
-                          </span>
+                          {status} ({count})
                         </button>
                       );
                     })}
@@ -3528,7 +3523,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           onClick={() => setShowStatusDropdown(!showStatusDropdown)}
                           className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold transition-all ${
                             trackerStatusFilter
-                              ? `${(isInvestmentTeam ? investmentStatusColors : lettingStatusColors)[trackerStatusFilter]?.bg || "bg-gray-400"} text-white`
+                              ? "bg-gray-900 text-white"
                               : "bg-gray-200 text-gray-600"
                           }`}
                           data-testid="button-status-dropdown"
@@ -3583,10 +3578,9 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           <button
                             key={item.id}
                             onClick={() => setSelectedDealId(item.id)}
-                            className={`relative w-full p-4 pl-[18px] rounded-2xl active:bg-gray-50 text-left bg-white border border-gray-100 shadow-sm overflow-hidden`}
+                            className={`w-full p-4 rounded-2xl active:bg-gray-50 text-left bg-white border border-gray-100`}
                             data-testid={`inv-card-${item.id}`}
                           >
-                            <span className={`absolute left-0 top-3 bottom-3 w-[3px] rounded-full ${statusColor.bg}`} />
                             <div className="flex items-start justify-between gap-2 mb-1.5">
                               <div className="text-[16px] font-semibold text-gray-900 truncate flex-1 tracking-tight">{item.assetName}</div>
                               {item.status && (
@@ -3619,10 +3613,9 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                           <button
                             key={item.id}
                             onClick={() => setSelectedUnitId(item.id)}
-                            className={`relative w-full p-4 pl-[18px] rounded-2xl active:bg-gray-50 text-left bg-white border border-gray-100 shadow-sm overflow-hidden`}
+                            className={`w-full p-4 rounded-2xl active:bg-gray-50 text-left bg-white border border-gray-100`}
                             data-testid={`let-card-${item.id}`}
                           >
-                            <span className={`absolute left-0 top-3 bottom-3 w-[3px] rounded-full ${statusColor.bg}`} />
                             <div className="flex items-start justify-between gap-2 mb-1.5">
                               <div className="flex-1 min-w-0">
                                 <div className="text-[16px] font-semibold text-gray-900 truncate tracking-tight">{item.unitName}</div>
@@ -3916,7 +3909,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 <h2 className="text-[18px] font-bold text-gray-900 truncate">{selectedDeal.assetName}</h2>
                 <div className="flex items-center gap-2 mt-0.5">
                   {selectedDeal.status && (
-                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${(investmentStatusColors[selectedDeal.status] || { bg: "bg-gray-400", text: "text-white" }).bg} ${(investmentStatusColors[selectedDeal.status] || { bg: "bg-gray-400", text: "text-white" }).text}`}>
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${(investmentStatusColors[selectedDeal.status] || { bg: "bg-stone-100", text: "text-stone-600" }).bg} ${(investmentStatusColors[selectedDeal.status] || { bg: "bg-stone-100", text: "text-stone-600" }).text}`}>
                       {selectedDeal.status}
                     </span>
                   )}
@@ -4155,7 +4148,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
 
             <div className="overflow-y-auto flex-1 px-5">
               {selectedUnit.marketingStatus && (() => {
-                const sc = lettingStatusColors[selectedUnit.marketingStatus || ""] || { bg: "bg-gray-400", text: "text-white" };
+                const sc = lettingStatusColors[selectedUnit.marketingStatus || ""] || { bg: "bg-stone-100", text: "text-stone-600" };
                 return (
                   <div className="mb-4">
                     <span className={`text-[13px] font-semibold px-3 py-1 rounded-full ${sc.bg} ${sc.text}`}>
