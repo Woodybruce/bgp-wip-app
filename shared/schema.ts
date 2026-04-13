@@ -575,6 +575,30 @@ export const crmDeals = pgTable("crm_deals", {
   kycApprovedAt: timestamp("kyc_approved_at"),
   kycApprovedBy: text("kyc_approved_by"),
   hotsCompletedAt: timestamp("hots_completed_at"),
+  // AML/MLR 2017 compliance fields
+  amlRiskLevel: text("aml_risk_level"), // low, medium, high, critical
+  amlSourceOfFunds: text("aml_source_of_funds"), // mortgage, cash, investment, pension, inheritance, sale_proceeds, other
+  amlSourceOfFundsNotes: text("aml_source_of_funds_notes"),
+  amlSourceOfWealth: text("aml_source_of_wealth"), // employment, business, inheritance, investment, property, other
+  amlSourceOfWealthNotes: text("aml_source_of_wealth_notes"),
+  amlPepStatus: text("aml_pep_status"), // clear, pep_domestic, pep_foreign, pep_associate, pep_family
+  amlPepNotes: text("aml_pep_notes"),
+  amlEddRequired: boolean("aml_edd_required").default(false),
+  amlEddReason: text("aml_edd_reason"), // pep, high_risk_country, super_prime, complex_structure, suspicious, other
+  amlEddCompletedAt: timestamp("aml_edd_completed_at"),
+  amlEddCompletedBy: text("aml_edd_completed_by"),
+  amlEddNotes: text("aml_edd_notes"),
+  amlIdVerified: boolean("aml_id_verified").default(false),
+  amlIdVerifiedAt: timestamp("aml_id_verified_at"),
+  amlIdVerifiedBy: text("aml_id_verified_by"),
+  amlIdDocType: text("aml_id_doc_type"), // passport, driving_licence, national_id, other
+  amlAddressVerified: boolean("aml_address_verified").default(false),
+  amlAddressDocType: text("aml_address_doc_type"), // utility_bill, bank_statement, council_tax, other
+  amlSarFiled: boolean("aml_sar_filed").default(false),
+  amlSarReference: text("aml_sar_reference"),
+  amlSarFiledAt: timestamp("aml_sar_filed_at"),
+  amlComplianceNotes: text("aml_compliance_notes"),
+  amlChecklist: jsonb("aml_checklist"), // structured JSON checklist of all compliance steps
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

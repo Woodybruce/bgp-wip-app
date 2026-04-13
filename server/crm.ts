@@ -1235,6 +1235,27 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         req.body.kycApprovedBy = changedByName;
       }
 
+      // Auto-detect EDD requirement based on deal value and risk factors
+      if (req.body.pricing !== undefined || req.body.amlPepStatus !== undefined) {
+        const pricing = req.body.pricing ?? oldDeal?.pricing ?? 0;
+        const pepStatus = req.body.amlPepStatus ?? oldDeal?.amlPepStatus;
+        const assetClass = req.body.assetClass ?? oldDeal?.assetClass ?? "";
+        const isLondon = (oldDeal?.name || "").toLowerCase().includes("london") || assetClass.toLowerCase().includes("london");
+        const superPrimeThreshold = isLondon ? 5_000_000 : 1_000_000;
+        const eddReasons: string[] = [];
+        if (pricing >= superPrimeThreshold) eddReasons.push("super_prime");
+        if (pepStatus && pepStatus !== "clear") eddReasons.push("pep");
+        if (eddReasons.length > 0 && !oldDeal?.amlEddRequired) {
+          req.body.amlEddRequired = true;
+          req.body.amlEddReason = eddReasons.join(",");
+        }
+      }
+
+      if (req.body.amlEddCompletedAt === undefined && req.body.amlEddNotes && !oldDeal?.amlEddCompletedAt) {
+        req.body.amlEddCompletedAt = new Date();
+        req.body.amlEddCompletedBy = changedByName;
+      }
+
       // --- Audit: compare fields before applying update ---
       const auditFields = [
         "status", "fee", "internalAgent", "team", "dealType", "name", "pricing",
@@ -1244,6 +1265,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         "gfAreaSqft", "ffAreaSqft", "itzaAreaSqft", "propertyId", "landlordId",
         "tenantId", "vendorId", "purchaserId", "invoicingEntityId", "kycApproved",
         "feePercentage", "completionTiming", "invoicingNotes", "poNumber",
+        "amlRiskLevel", "amlSourceOfFunds", "amlSourceOfWealth", "amlPepStatus",
+        "amlEddRequired", "amlIdVerified", "amlAddressVerified", "amlSarFiled",
       ];
       const auditInserts: { dealId: string; field: string; oldValue: string | null; newValue: string | null; reason: string | null; changedBy: string | null; changedByName: string }[] = [];
       if (oldDeal) {

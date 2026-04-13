@@ -2734,6 +2734,367 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
   );
 }
 
+const SOURCE_OF_FUNDS_OPTIONS = [
+  { value: "mortgage", label: "Mortgage" },
+  { value: "cash", label: "Cash / Own Funds" },
+  { value: "investment", label: "Investment Proceeds" },
+  { value: "pension", label: "Pension" },
+  { value: "inheritance", label: "Inheritance" },
+  { value: "sale_proceeds", label: "Sale Proceeds" },
+  { value: "business_income", label: "Business Income" },
+  { value: "loan", label: "Third Party Loan" },
+  { value: "other", label: "Other" },
+];
+
+const SOURCE_OF_WEALTH_OPTIONS = [
+  { value: "employment", label: "Employment / Salary" },
+  { value: "business", label: "Business Ownership" },
+  { value: "inheritance", label: "Inheritance" },
+  { value: "investment", label: "Investments / Dividends" },
+  { value: "property", label: "Property Sales" },
+  { value: "gift", label: "Gift" },
+  { value: "other", label: "Other" },
+];
+
+const PEP_STATUS_OPTIONS = [
+  { value: "clear", label: "Not a PEP" },
+  { value: "pep_domestic", label: "Domestic PEP" },
+  { value: "pep_foreign", label: "Foreign PEP" },
+  { value: "pep_family", label: "PEP Family Member" },
+  { value: "pep_associate", label: "PEP Close Associate" },
+];
+
+const ID_DOC_OPTIONS = [
+  { value: "passport", label: "Passport" },
+  { value: "driving_licence", label: "Driving Licence" },
+  { value: "national_id", label: "National ID Card" },
+  { value: "other", label: "Other Government ID" },
+];
+
+const ADDRESS_DOC_OPTIONS = [
+  { value: "utility_bill", label: "Utility Bill (< 3 months)" },
+  { value: "bank_statement", label: "Bank Statement (< 3 months)" },
+  { value: "council_tax", label: "Council Tax Bill" },
+  { value: "mortgage_statement", label: "Mortgage Statement" },
+  { value: "other", label: "Other" },
+];
+
+const EDD_REASON_LABELS: Record<string, string> = {
+  super_prime: "Super-prime transaction value",
+  pep: "Politically Exposed Person",
+  high_risk_country: "High-risk third country",
+  complex_structure: "Complex ownership structure",
+  suspicious: "Suspicious indicators",
+  other: "Other risk factors",
+};
+
+export function DealAMLChecklist({ deal }: { deal: CrmDeal }) {
+  const { toast } = useToast();
+  const [saving, setSaving] = useState<string | null>(null);
+
+  const updateField = async (field: string, value: any) => {
+    setSaving(field);
+    try {
+      await apiRequest("PUT", `/api/crm/deals/${deal.id}`, { [field]: value });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const updateFields = async (fields: Record<string, any>) => {
+    setSaving("multi");
+    try {
+      await apiRequest("PUT", `/api/crm/deals/${deal.id}`, fields);
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const d = deal as any;
+  const pricing = d.pricing || 0;
+  const isLondon = (d.name || "").toLowerCase().includes("london") || (d.assetClass || "").toLowerCase().includes("london");
+  const superPrimeThreshold = isLondon ? 5_000_000 : 1_000_000;
+  const isSuperPrime = pricing >= superPrimeThreshold;
+
+  // Calculate overall compliance progress
+  const checks = [
+    { label: "Companies House KYC", done: !!d.kycApproved },
+    { label: "Identity verified", done: !!d.amlIdVerified },
+    { label: "Address verified", done: !!d.amlAddressVerified },
+    { label: "Source of funds", done: !!d.amlSourceOfFunds },
+    { label: "Source of wealth", done: !!d.amlSourceOfWealth },
+    { label: "PEP screening", done: !!d.amlPepStatus },
+    { label: "Sanctions screening", done: d.amlCheckCompleted === "Yes" || d.amlCheckCompleted === "Completed" },
+  ];
+  if (d.amlEddRequired) {
+    checks.push({ label: "Enhanced Due Diligence", done: !!d.amlEddCompletedAt });
+  }
+  const completedCount = checks.filter(c => c.done).length;
+  const totalChecks = checks.length;
+  const progressPct = Math.round((completedCount / totalChecks) * 100);
+
+  const riskLevel = d.amlRiskLevel || (isSuperPrime ? "high" : d.amlPepStatus && d.amlPepStatus !== "clear" ? "high" : "");
+  const riskColor = riskLevel === "critical" ? "bg-red-600" : riskLevel === "high" ? "bg-red-500" : riskLevel === "medium" ? "bg-amber-500" : riskLevel === "low" ? "bg-green-600" : "bg-muted";
+
+  return (
+    <Card data-testid="deal-aml-checklist">
+      <CardContent className="p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Shield className="w-4 h-4" />
+            <h3 className="text-sm font-semibold">MLR 2017 Compliance Checklist</h3>
+            {riskLevel && (
+              <Badge className={`text-[9px] ${riskColor} text-white capitalize`}>{riskLevel} risk</Badge>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span>{completedCount}/{totalChecks} complete</span>
+            <div className="w-20 h-1.5 rounded-full bg-muted overflow-hidden">
+              <div className="h-full rounded-full bg-green-500 transition-all" style={{ width: `${progressPct}%` }} />
+            </div>
+          </div>
+        </div>
+
+        {isSuperPrime && !d.amlEddRequired && (
+          <div className="flex items-center gap-2 p-2 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200">
+            <ShieldAlert className="w-4 h-4 shrink-0" />
+            <span>Super-prime transaction ({pricing >= 5_000_000 ? "£5M+" : "£1M+"}) — Enhanced Due Diligence required under MLR 2017</span>
+            <Button size="sm" variant="outline" className="ml-auto text-[10px] h-6" onClick={() => updateFields({ amlEddRequired: true, amlEddReason: "super_prime" })}>
+              Flag EDD
+            </Button>
+          </div>
+        )}
+
+        {/* Risk Level */}
+        <div className="space-y-1.5">
+          <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Overall Risk Assessment</label>
+          <div className="flex gap-1.5">
+            {["low", "medium", "high", "critical"].map(level => (
+              <Button
+                key={level}
+                variant={riskLevel === level ? "default" : "outline"}
+                size="sm"
+                className={`text-[10px] h-7 capitalize ${riskLevel === level ? (level === "low" ? "bg-green-600 hover:bg-green-700" : level === "medium" ? "bg-amber-500 hover:bg-amber-600" : level === "high" ? "bg-red-500 hover:bg-red-600" : "bg-red-700 hover:bg-red-800") : ""}`}
+                onClick={() => updateField("amlRiskLevel", level)}
+                disabled={saving === "amlRiskLevel"}
+              >
+                {level}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        {/* CDD Section: Identity & Address */}
+        <div className="space-y-2">
+          <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Customer Due Diligence — Identity</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="rounded-md border p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">ID Verification</span>
+                {d.amlIdVerified ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <div className="w-3.5 h-3.5 rounded-full border-2 border-dashed border-muted-foreground/40" />}
+              </div>
+              <Select value={d.amlIdDocType || ""} onValueChange={(v) => updateFields({ amlIdDocType: v, amlIdVerified: true, amlIdVerifiedAt: new Date().toISOString() })}>
+                <SelectTrigger className="h-7 text-[11px]"><SelectValue placeholder="Select ID document type..." /></SelectTrigger>
+                <SelectContent>
+                  {ID_DOC_OPTIONS.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {d.amlIdVerifiedAt && <p className="text-[10px] text-muted-foreground">Verified {new Date(d.amlIdVerifiedAt).toLocaleDateString("en-GB")}{d.amlIdVerifiedBy ? ` by ${d.amlIdVerifiedBy}` : ""}</p>}
+            </div>
+
+            <div className="rounded-md border p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">Address Verification</span>
+                {d.amlAddressVerified ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <div className="w-3.5 h-3.5 rounded-full border-2 border-dashed border-muted-foreground/40" />}
+              </div>
+              <Select value={d.amlAddressDocType || ""} onValueChange={(v) => updateFields({ amlAddressDocType: v, amlAddressVerified: true })}>
+                <SelectTrigger className="h-7 text-[11px]"><SelectValue placeholder="Select proof of address..." /></SelectTrigger>
+                <SelectContent>
+                  {ADDRESS_DOC_OPTIONS.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+
+        {/* Source of Funds & Wealth */}
+        <div className="space-y-2">
+          <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Source of Funds & Wealth</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="rounded-md border p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">Source of Funds</span>
+                {d.amlSourceOfFunds ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <div className="w-3.5 h-3.5 rounded-full border-2 border-dashed border-muted-foreground/40" />}
+              </div>
+              <Select value={d.amlSourceOfFunds || ""} onValueChange={(v) => updateField("amlSourceOfFunds", v)}>
+                <SelectTrigger className="h-7 text-[11px]"><SelectValue placeholder="How is this transaction funded?" /></SelectTrigger>
+                <SelectContent>
+                  {SOURCE_OF_FUNDS_OPTIONS.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Textarea
+                placeholder="Additional details on funding source..."
+                className="text-[11px] min-h-[48px]"
+                defaultValue={d.amlSourceOfFundsNotes || ""}
+                onBlur={(e) => { if (e.target.value !== (d.amlSourceOfFundsNotes || "")) updateField("amlSourceOfFundsNotes", e.target.value); }}
+              />
+            </div>
+
+            <div className="rounded-md border p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">Source of Wealth</span>
+                {d.amlSourceOfWealth ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> : <div className="w-3.5 h-3.5 rounded-full border-2 border-dashed border-muted-foreground/40" />}
+              </div>
+              <Select value={d.amlSourceOfWealth || ""} onValueChange={(v) => updateField("amlSourceOfWealth", v)}>
+                <SelectTrigger className="h-7 text-[11px]"><SelectValue placeholder="Origin of customer's wealth?" /></SelectTrigger>
+                <SelectContent>
+                  {SOURCE_OF_WEALTH_OPTIONS.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Textarea
+                placeholder="Additional details on wealth origin..."
+                className="text-[11px] min-h-[48px]"
+                defaultValue={d.amlSourceOfWealthNotes || ""}
+                onBlur={(e) => { if (e.target.value !== (d.amlSourceOfWealthNotes || "")) updateField("amlSourceOfWealthNotes", e.target.value); }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* PEP Screening */}
+        <div className="space-y-2">
+          <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">PEP & Sanctions Screening</label>
+          <div className="rounded-md border p-2.5 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium">PEP Status</span>
+              {d.amlPepStatus === "clear" ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500" /> :
+               d.amlPepStatus && d.amlPepStatus !== "clear" ? <ShieldAlert className="w-3.5 h-3.5 text-red-500" /> :
+               <div className="w-3.5 h-3.5 rounded-full border-2 border-dashed border-muted-foreground/40" />}
+            </div>
+            <Select value={d.amlPepStatus || ""} onValueChange={(v) => updateField("amlPepStatus", v)}>
+              <SelectTrigger className="h-7 text-[11px]"><SelectValue placeholder="PEP screening result..." /></SelectTrigger>
+              <SelectContent>
+                {PEP_STATUS_OPTIONS.map(o => <SelectItem key={o.value} value={o.value} className="text-xs">{o.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {d.amlPepStatus && d.amlPepStatus !== "clear" && (
+              <div className="p-1.5 rounded bg-red-50 border border-red-200 text-[10px] text-red-700 dark:bg-red-950/30 dark:border-red-800 dark:text-red-300">
+                PEP identified — Enhanced Due Diligence and senior management approval required (MLR 2017 Reg 35)
+              </div>
+            )}
+            <Textarea
+              placeholder="PEP screening notes..."
+              className="text-[11px] min-h-[36px]"
+              defaultValue={d.amlPepNotes || ""}
+              onBlur={(e) => { if (e.target.value !== (d.amlPepNotes || "")) updateField("amlPepNotes", e.target.value); }}
+            />
+          </div>
+        </div>
+
+        {/* Enhanced Due Diligence */}
+        {(d.amlEddRequired || isSuperPrime || (d.amlPepStatus && d.amlPepStatus !== "clear")) && (
+          <div className="space-y-2">
+            <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+              <ShieldAlert className="w-3 h-3 text-red-500" />
+              Enhanced Due Diligence (EDD)
+            </label>
+            <div className="rounded-md border border-red-200 bg-red-50/50 p-2.5 space-y-2 dark:bg-red-950/20 dark:border-red-800">
+              {d.amlEddReason && (
+                <div className="flex flex-wrap gap-1">
+                  {d.amlEddReason.split(",").map((r: string) => (
+                    <Badge key={r} variant="outline" className="text-[9px] border-red-300 text-red-700 dark:text-red-300">{EDD_REASON_LABELS[r] || r}</Badge>
+                  ))}
+                </div>
+              )}
+              <Textarea
+                placeholder="EDD findings and additional measures taken..."
+                className="text-[11px] min-h-[60px]"
+                defaultValue={d.amlEddNotes || ""}
+                onBlur={(e) => { if (e.target.value !== (d.amlEddNotes || "")) updateField("amlEddNotes", e.target.value); }}
+              />
+              {d.amlEddCompletedAt ? (
+                <p className="text-[10px] text-green-600">
+                  <CheckCircle2 className="w-3 h-3 inline mr-1" />
+                  EDD completed {new Date(d.amlEddCompletedAt).toLocaleDateString("en-GB")}{d.amlEddCompletedBy ? ` by ${d.amlEddCompletedBy}` : ""}
+                </p>
+              ) : (
+                <Button size="sm" variant="outline" className="text-[10px] h-7 border-red-300 text-red-700 hover:bg-red-100 dark:text-red-300 dark:hover:bg-red-950"
+                  onClick={() => updateFields({ amlEddCompletedAt: new Date().toISOString() })}
+                  disabled={saving === "multi"}>
+                  <CheckCircle2 className="w-3 h-3 mr-1" /> Mark EDD Complete
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* SAR Section */}
+        <div className="space-y-2">
+          <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Suspicious Activity Report (SAR)</label>
+          <div className="rounded-md border p-2.5 space-y-1.5">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="sar-filed"
+                  checked={!!d.amlSarFiled}
+                  onCheckedChange={(checked) => updateField("amlSarFiled", !!checked)}
+                />
+                <label htmlFor="sar-filed" className="text-xs">SAR filed with NCA</label>
+              </div>
+              {d.amlSarFiled && d.amlSarFiledAt && (
+                <span className="text-[10px] text-muted-foreground">Filed {new Date(d.amlSarFiledAt).toLocaleDateString("en-GB")}</span>
+              )}
+            </div>
+            {d.amlSarFiled && (
+              <Input
+                placeholder="NCA reference number..."
+                className="h-7 text-[11px]"
+                defaultValue={d.amlSarReference || ""}
+                onBlur={(e) => { if (e.target.value !== (d.amlSarReference || "")) updateField("amlSarReference", e.target.value); }}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Compliance Notes */}
+        <div className="space-y-1.5">
+          <label className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Compliance Notes</label>
+          <Textarea
+            placeholder="Any additional compliance observations, risk factors, or actions taken..."
+            className="text-[11px] min-h-[48px]"
+            defaultValue={d.amlComplianceNotes || ""}
+            onBlur={(e) => { if (e.target.value !== (d.amlComplianceNotes || "")) updateField("amlComplianceNotes", e.target.value); }}
+          />
+        </div>
+
+        {/* Checklist Summary */}
+        <div className="rounded-md bg-muted/30 border p-2.5">
+          <p className="text-[10px] font-medium text-muted-foreground mb-1.5 uppercase tracking-wider">Compliance Checklist</p>
+          <div className="grid grid-cols-2 gap-1">
+            {checks.map((c, i) => (
+              <div key={i} className="flex items-center gap-1.5 text-[11px]">
+                {c.done ? <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" /> : <div className="w-3 h-3 rounded-full border border-muted-foreground/30 shrink-0" />}
+                <span className={c.done ? "text-foreground" : "text-muted-foreground"}>{c.label}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[9px] text-muted-foreground mt-2">
+            Money Laundering Regulations 2017 / RICS Professional Statement on AML / HMRC Guidance for Estate Agency Businesses
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function DealTimeline({ dealId }: { dealId: string }) {
   const { data: timeline, isLoading } = useQuery<any[]>({
     queryKey: ["/api/deals", dealId, "timeline"],

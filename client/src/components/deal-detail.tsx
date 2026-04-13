@@ -64,6 +64,7 @@ import {
   FeeAllocationCard,
   XeroInvoiceSection,
   DealKYCPanel,
+  DealAMLChecklist,
   DealTimeline,
   DealAuditLog,
   DealRelatedEmails,
@@ -477,6 +478,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </Dialog>
 
       <DealKYCPanel deal={deal} companies={companies} />
+
+      <DealAMLChecklist deal={deal} />
 
       <DealTimeline dealId={id} />
 
