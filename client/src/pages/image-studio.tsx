@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useSearch } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
@@ -111,6 +111,29 @@ const LONDON_SUBAREAS = [
   "Kensington",
   "Battersea",
   "Stratford",
+];
+
+const STOCK_SEARCH_SUGGESTIONS = [
+  "London skyline",
+  "City of London",
+  "Canary Wharf",
+  "Modern office",
+  "Open plan office",
+  "Office reception",
+  "Coworking space",
+  "Retail shop front",
+  "High street",
+  "Shopping centre",
+  "Warehouse",
+  "Mixed use building",
+  "Meeting room",
+  "Boardroom",
+  "Georgian townhouse",
+  "Mayfair",
+  "Soho",
+  "Shoreditch",
+  "Commercial property exterior",
+  "Business district",
 ];
 
 const UK_CITIES = [
@@ -604,11 +627,11 @@ export default function ImageStudio() {
     onError: (e: Error) => toast({ title: "Capture Failed", description: e.message, variant: "destructive" }),
   });
 
-  const handleStockSearch = useCallback(async () => {
-    if (!stockQuery.trim()) return;
+  const handleStockSearchFor = useCallback(async (query: string) => {
+    if (!query.trim()) return;
     setStockLoading(true);
     try {
-      const res = await apiRequest("POST", "/api/image-studio/stock-search", { query: stockQuery });
+      const res = await apiRequest("POST", "/api/image-studio/stock-search", { query });
       const data = await res.json();
       setStockResults(data.results || []);
       if (data.message) toast({ title: "Note", description: data.message });
@@ -617,7 +640,36 @@ export default function ImageStudio() {
     } finally {
       setStockLoading(false);
     }
-  }, [stockQuery, toast]);
+  }, [toast]);
+
+  const handleStockSearch = useCallback(() => handleStockSearchFor(stockQuery), [handleStockSearchFor, stockQuery]);
+
+  const stockIdeas = useMemo(() => {
+    const ideas: string[] = [];
+    const type = (propertyTypeFilter || "").trim();
+    const area = (areaFilter || "").trim();
+    const linked = (linkedProperty || "").trim();
+
+    if (type === "Office") ideas.push("Modern office", "Office reception", "Open plan office");
+    else if (type === "Retail" || type === "F&B") ideas.push("Retail shop front", "High street", "Shopping centre");
+    else if (type === "Industrial") ideas.push("Warehouse", "Logistics hub", "Industrial estate");
+    else if (type === "Mixed Use") ideas.push("Mixed use building", "Urban regeneration");
+    else if (type === "Leisure") ideas.push("Gym interior", "Cinema lobby", "Hotel lobby");
+    else if (type === "Residential") ideas.push("Apartment block", "Luxury apartment interior");
+
+    if (area) {
+      ideas.push(area);
+      if (/mayfair|belgravia|knightsbridge|chelsea|kensington/i.test(area)) ideas.push("Georgian townhouse");
+      if (/city|canary/i.test(area)) ideas.push("London skyline");
+      if (/shoreditch|soho|fitzrovia/i.test(area)) ideas.push("Urban street scene");
+    } else if (!linked) {
+      ideas.push("London skyline", "Commercial property exterior");
+    }
+
+    if (linked) ideas.push(`${linked} exterior`);
+
+    return Array.from(new Set(ideas)).slice(0, 6);
+  }, [propertyTypeFilter, areaFilter, linkedProperty]);
 
   const openEdit = (img: ImageStudioImage) => {
     setEditForm({
@@ -1764,12 +1816,35 @@ export default function ImageStudio() {
                 onChange={(e) => setStockQuery(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleStockSearch()}
                 className="flex-1"
+                list="stock-search-suggestions"
                 data-testid="input-stock-search"
               />
               <Button onClick={handleStockSearch} disabled={stockLoading} data-testid="button-stock-search-go">
                 {stockLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
               </Button>
             </div>
+            <datalist id="stock-search-suggestions">
+              {STOCK_SEARCH_SUGGESTIONS.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
+            {stockIdeas.length > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                  <Sparkles className="h-3 w-3" /> Ideas
+                </span>
+                {stockIdeas.map((idea) => (
+                  <button
+                    key={idea}
+                    onClick={() => { setStockQuery(idea); void handleStockSearchFor(idea); }}
+                    className="px-2.5 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground hover:bg-primary hover:text-primary-foreground transition-colors"
+                    data-testid={`chip-stock-idea-${idea.toLowerCase().replace(/\s/g, "-")}`}
+                  >
+                    {idea}
+                  </button>
+                ))}
+              </div>
+            )}
             <ScrollArea className="h-[50vh]">
               {stockResults.length > 0 ? (
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
