@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
 import { apiRequest, getQueryFn, getAuthHeaders } from "@/lib/queryClient";
 import {
   FolderOpen,
@@ -31,6 +32,11 @@ import {
   ArrowUp,
   ArrowDown,
   Check,
+  Search,
+  LayoutGrid,
+  List as ListIcon,
+  Copy,
+  Upload,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -90,6 +96,31 @@ function isPreviewable(item: DriveItem) {
   const name = item.name.toLowerCase();
   return isImageFile(item) || name.endsWith(".pdf") || name.endsWith(".doc") || name.endsWith(".docx") || name.endsWith(".pptx") || name.endsWith(".ppt") || name.endsWith(".xlsx") || name.endsWith(".xls");
 }
+
+type FileCategory = "all" | "folders" | "docs" | "spreadsheets" | "presentations" | "pdfs" | "images" | "videos";
+
+function getCategory(item: DriveItem): Exclude<FileCategory, "all"> | "other" {
+  if (item.folder) return "folders";
+  const n = item.name.toLowerCase();
+  if (n.endsWith(".pdf")) return "pdfs";
+  if (n.endsWith(".doc") || n.endsWith(".docx") || n.endsWith(".txt") || n.endsWith(".rtf")) return "docs";
+  if (n.endsWith(".xlsx") || n.endsWith(".xls") || n.endsWith(".csv")) return "spreadsheets";
+  if (n.endsWith(".ppt") || n.endsWith(".pptx")) return "presentations";
+  if (isImageFile(item)) return "images";
+  if (n.endsWith(".mp4") || n.endsWith(".mov") || n.endsWith(".avi") || n.endsWith(".mkv")) return "videos";
+  return "other";
+}
+
+const FILTER_CHIPS: { key: FileCategory; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "folders", label: "Folders" },
+  { key: "docs", label: "Docs" },
+  { key: "spreadsheets", label: "Sheets" },
+  { key: "presentations", label: "Slides" },
+  { key: "pdfs", label: "PDFs" },
+  { key: "images", label: "Images" },
+  { key: "videos", label: "Videos" },
+];
 
 function getThumbnailUrl(item: DriveItem, driveId: string | null, size: "small" | "medium" | "large" = "medium") {
   const itemDriveId = item.parentReference?.driveId || driveId;
@@ -464,6 +495,11 @@ export default function SharePoint() {
   const [previewItem, setPreviewItem] = useState<DriveItem | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("modified");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState<FileCategory>("all");
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
   const currentFolderId = folderStack.length > 0 ? folderStack[folderStack.length - 1].id : undefined;
   const { toast } = useToast();
 
@@ -499,8 +535,15 @@ export default function SharePoint() {
 
   const files = filesData?.items;
 
-  // Folders always grouped first; sort within each group by chosen key/direction.
-  const sortedFiles = files ? [...files].sort((a, b) => {
+  // Filter by search query + type, then sort (folders always grouped first).
+  const trimmedQuery = searchQuery.trim().toLowerCase();
+  const filteredFiles = files ? files.filter(item => {
+    if (trimmedQuery && !item.name.toLowerCase().includes(trimmedQuery)) return false;
+    if (typeFilter !== "all" && getCategory(item) !== typeFilter) return false;
+    return true;
+  }) : [];
+
+  const sortedFiles = [...filteredFiles].sort((a, b) => {
     if (a.folder && !b.folder) return -1;
     if (!a.folder && b.folder) return 1;
     const dirMul = sortDir === "asc" ? 1 : -1;
@@ -516,7 +559,56 @@ export default function SharePoint() {
     const dateA = a.lastModifiedDateTime ? new Date(a.lastModifiedDateTime).getTime() : 0;
     const dateB = b.lastModifiedDateTime ? new Date(b.lastModifiedDateTime).getTime() : 0;
     return (dateA - dateB) * dirMul;
-  }) : [];
+  });
+
+  const uploadFiles = useCallback(async (fileList: File[]) => {
+    if (fileList.length === 0) return;
+    setUploadProgress({ current: 0, total: fileList.length });
+    let uploaded = 0;
+    let failed = 0;
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      setUploadProgress({ current: i + 1, total: fileList.length });
+      const fd = new FormData();
+      fd.append("file", file);
+      if (driveId) fd.append("driveId", driveId);
+      if (currentFolderId) fd.append("folderId", currentFolderId);
+      try {
+        const res = await fetch("/api/microsoft/files/upload", {
+          method: "POST",
+          credentials: "include",
+          headers: getAuthHeaders(),
+          body: fd,
+        });
+        if (res.ok) uploaded++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }
+    setUploadProgress(null);
+    queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
+    if (failed === 0) {
+      toast({ title: "Uploaded", description: `${uploaded} file${uploaded === 1 ? "" : "s"} uploaded.` });
+    } else if (uploaded === 0) {
+      toast({ title: "Upload failed", description: `All ${failed} file(s) failed to upload.`, variant: "destructive" });
+    } else {
+      toast({ title: "Partial upload", description: `${uploaded} succeeded, ${failed} failed.`, variant: "destructive" });
+    }
+  }, [driveId, currentFolderId, toast]);
+
+  const copyLink = useCallback(async (item: DriveItem) => {
+    if (!item.webUrl) {
+      toast({ title: "No link available", variant: "destructive" });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(item.webUrl);
+      toast({ title: "Link copied", description: item.name });
+    } catch {
+      toast({ title: "Could not copy link", variant: "destructive" });
+    }
+  }, [toast]);
 
   if (statusLoading) {
     return (
@@ -646,79 +738,189 @@ export default function SharePoint() {
         </Button>
       )}
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
-          <CardTitle className="text-sm font-semibold">
-            {folderStack.length > 0 ? folderStack[folderStack.length - 1].name : "All Files"}
-          </CardTitle>
-          <div className="flex items-center gap-3">
-            {sortedFiles.length > 0 && (
-              <span className="text-xs text-muted-foreground">{sortedFiles.length} items</span>
-            )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
+      <Card
+        className={isDragging ? "ring-2 ring-primary/60 border-primary/60" : ""}
+        onDragEnter={(e) => { e.preventDefault(); if (e.dataTransfer?.types?.includes("Files")) setIsDragging(true); }}
+        onDragOver={(e) => { e.preventDefault(); }}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          setIsDragging(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setIsDragging(false);
+          const dropped = Array.from(e.dataTransfer?.files || []);
+          if (dropped.length > 0) uploadFiles(dropped);
+        }}
+      >
+        <CardHeader className="flex flex-col gap-3 pb-3">
+          <div className="flex flex-row items-center justify-between gap-2">
+            <CardTitle className="text-sm font-semibold">
+              {folderStack.length > 0 ? folderStack[folderStack.length - 1].name : "All Files"}
+            </CardTitle>
+            <div className="flex items-center gap-3">
+              {sortedFiles.length > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {sortedFiles.length}{files && sortedFiles.length !== files.length ? ` of ${files.length}` : ""} items
+                </span>
+              )}
+              <div className="flex items-center border rounded-md overflow-hidden">
                 <Button
-                  variant="ghost"
+                  variant={viewMode === "list" ? "secondary" : "ghost"}
                   size="sm"
-                  className="h-7 px-2 text-xs gap-1.5"
-                  data-testid="button-sort"
+                  className="h-7 px-2 rounded-none"
+                  onClick={() => setViewMode("list")}
+                  title="List view"
+                  data-testid="view-list"
                 >
-                  <ArrowUpDown className="w-3.5 h-3.5" />
-                  Sort: {SORT_LABELS[sortKey]}
-                  {sortDir === "asc" ? (
-                    <ArrowUp className="w-3 h-3" />
-                  ) : (
-                    <ArrowDown className="w-3 h-3" />
-                  )}
+                  <ListIcon className="w-3.5 h-3.5" />
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuLabel className="text-xs">Sort by</DropdownMenuLabel>
-                {(["name", "modified", "size"] as SortKey[]).map((key) => (
+                <Button
+                  variant={viewMode === "grid" ? "secondary" : "ghost"}
+                  size="sm"
+                  className="h-7 px-2 rounded-none"
+                  onClick={() => setViewMode("grid")}
+                  title="Grid view"
+                  data-testid="view-grid"
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+              <label className="cursor-pointer">
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const picked = Array.from(e.target.files || []);
+                    if (picked.length > 0) uploadFiles(picked);
+                    e.target.value = "";
+                  }}
+                  data-testid="input-upload-file"
+                />
+                <span className="inline-flex items-center gap-1.5 h-7 px-2 text-xs rounded-md border hover:bg-accent">
+                  <Upload className="w-3.5 h-3.5" />
+                  Upload
+                </span>
+              </label>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs gap-1.5"
+                    data-testid="button-sort"
+                  >
+                    <ArrowUpDown className="w-3.5 h-3.5" />
+                    Sort: {SORT_LABELS[sortKey]}
+                    {sortDir === "asc" ? (
+                      <ArrowUp className="w-3 h-3" />
+                    ) : (
+                      <ArrowDown className="w-3 h-3" />
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuLabel className="text-xs">Sort by</DropdownMenuLabel>
+                  {(["name", "modified", "size"] as SortKey[]).map((key) => (
+                    <DropdownMenuItem
+                      key={key}
+                      onClick={() => setSortKey(key)}
+                      data-testid={`sort-by-${key}`}
+                    >
+                      <Check
+                        className={`w-3.5 h-3.5 mr-2 ${
+                          sortKey === key ? "opacity-100" : "opacity-0"
+                        }`}
+                      />
+                      {SORT_LABELS[key]}
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-xs">Direction</DropdownMenuLabel>
                   <DropdownMenuItem
-                    key={key}
-                    onClick={() => setSortKey(key)}
-                    data-testid={`sort-by-${key}`}
+                    onClick={() => setSortDir("asc")}
+                    data-testid="sort-dir-asc"
                   >
                     <Check
                       className={`w-3.5 h-3.5 mr-2 ${
-                        sortKey === key ? "opacity-100" : "opacity-0"
+                        sortDir === "asc" ? "opacity-100" : "opacity-0"
                       }`}
                     />
-                    {SORT_LABELS[key]}
+                    <ArrowUp className="w-3.5 h-3.5 mr-1.5" />
+                    Ascending
                   </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel className="text-xs">Direction</DropdownMenuLabel>
-                <DropdownMenuItem
-                  onClick={() => setSortDir("asc")}
-                  data-testid="sort-dir-asc"
+                  <DropdownMenuItem
+                    onClick={() => setSortDir("desc")}
+                    data-testid="sort-dir-desc"
+                  >
+                    <Check
+                      className={`w-3.5 h-3.5 mr-2 ${
+                        sortDir === "desc" ? "opacity-100" : "opacity-0"
+                      }`}
+                    />
+                    <ArrowDown className="w-3.5 h-3.5 mr-1.5" />
+                    Descending
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1 min-w-0">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search this folder…"
+                className="h-8 pl-8 pr-8 text-sm"
+                data-testid="input-file-search"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear search"
                 >
-                  <Check
-                    className={`w-3.5 h-3.5 mr-2 ${
-                      sortDir === "asc" ? "opacity-100" : "opacity-0"
-                    }`}
-                  />
-                  <ArrowUp className="w-3.5 h-3.5 mr-1.5" />
-                  Ascending
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => setSortDir("desc")}
-                  data-testid="sort-dir-desc"
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar -mx-1 px-1">
+              {FILTER_CHIPS.map(chip => (
+                <button
+                  key={chip.key}
+                  type="button"
+                  onClick={() => setTypeFilter(chip.key)}
+                  className={`shrink-0 text-xs px-2.5 h-7 rounded-full border transition-colors ${
+                    typeFilter === chip.key
+                      ? "bg-foreground text-background border-foreground"
+                      : "bg-background text-muted-foreground hover:text-foreground"
+                  }`}
+                  data-testid={`filter-${chip.key}`}
                 >
-                  <Check
-                    className={`w-3.5 h-3.5 mr-2 ${
-                      sortDir === "desc" ? "opacity-100" : "opacity-0"
-                    }`}
-                  />
-                  <ArrowDown className="w-3.5 h-3.5 mr-1.5" />
-                  Descending
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  {chip.label}
+                </button>
+              ))}
+            </div>
           </div>
         </CardHeader>
-        <CardContent className="p-0">
+        {uploadProgress && (
+          <div className="px-4 pb-2 text-xs text-muted-foreground flex items-center gap-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            Uploading {uploadProgress.current} of {uploadProgress.total}…
+          </div>
+        )}
+        <CardContent className="p-0 relative">
+          {isDragging && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-primary/5 border-2 border-dashed border-primary/40 rounded-b-lg pointer-events-none">
+              <div className="text-center">
+                <Upload className="w-8 h-8 mx-auto mb-2 text-primary" />
+                <p className="text-sm font-medium text-primary">Drop to upload</p>
+              </div>
+            </div>
+          )}
           {filesLoading ? (
             <div className="p-4 space-y-2">
               {[1, 2, 3, 4, 5].map((i) => (
@@ -743,7 +945,70 @@ export default function SharePoint() {
           ) : sortedFiles.length === 0 ? (
             <div className="p-8 text-center">
               <CloudOff className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-              <p className="text-sm text-muted-foreground">No files found in this folder</p>
+              <p className="text-sm text-muted-foreground">
+                {trimmedQuery || typeFilter !== "all"
+                  ? "No files match your filters"
+                  : "No files found in this folder"}
+              </p>
+              {(trimmedQuery || typeFilter !== "all") && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => { setSearchQuery(""); setTypeFilter("all"); }}
+                >
+                  Clear filters
+                </Button>
+              )}
+            </div>
+          ) : viewMode === "grid" ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 p-4">
+              {sortedFiles.map((item) => (
+                <div
+                  key={item.id}
+                  className={`group relative rounded-lg border bg-card hover:border-primary/40 hover:shadow-sm transition-all cursor-pointer overflow-hidden ${
+                    item.folder ? "" : isPreviewable(item) ? "" : "cursor-default"
+                  }`}
+                  onClick={item.folder ? () => openFolder(item) : isPreviewable(item) ? () => setPreviewItem(item) : undefined}
+                  data-testid={`file-grid-${item.id}`}
+                >
+                  <div className="aspect-square bg-muted/40 flex items-center justify-center">
+                    <FileThumbnail item={item} driveId={driveId} size="large" />
+                  </div>
+                  <div className="p-2.5 border-t">
+                    <p className="text-xs font-medium truncate" title={item.name}>{item.name}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {item.folder
+                        ? `${item.folder.childCount} items`
+                        : formatSize(item.size) || "—"}
+                    </p>
+                  </div>
+                  {!item.folder && (
+                    <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5 bg-background/90 backdrop-blur-sm rounded-md border p-0.5">
+                      {item.webUrl && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          title="Copy link"
+                          onClick={(e) => { e.stopPropagation(); copyLink(item); }}
+                        >
+                          <Copy className="w-3 h-3" />
+                        </Button>
+                      )}
+                      <a
+                        href={item["@microsoft.graph.downloadUrl"] || `/api/microsoft/files/content?driveId=${item.parentReference?.driveId || driveId || ""}&itemId=${item.id}&fileName=${encodeURIComponent(item.name)}`}
+                        download={item.name}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Button variant="ghost" size="icon" className="h-6 w-6" title="Download">
+                          <Download className="w-3 h-3" />
+                        </Button>
+                      </a>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           ) : (
             <div className="divide-y">
@@ -779,6 +1044,18 @@ export default function SharePoint() {
                             onClick={(e) => { e.stopPropagation(); setPreviewItem(item); }}
                           >
                             <Eye className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                        {item.webUrl && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            title="Copy link"
+                            onClick={(e) => { e.stopPropagation(); copyLink(item); }}
+                            data-testid={`button-copy-link-${item.id}`}
+                          >
+                            <Copy className="w-3.5 h-3.5" />
                           </Button>
                         )}
                         <a
