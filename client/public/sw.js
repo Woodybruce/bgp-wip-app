@@ -1,4 +1,4 @@
-var CACHE_NAME = 'bgp-v19';
+var CACHE_NAME = 'bgp-v20';
 var SHARE_CACHE = 'bgp-share-target';
 var PRECACHE_URLS = [
   '/',
@@ -152,6 +152,12 @@ self.addEventListener('fetch', function(event) {
   if (event.request.method !== 'GET') return;
 
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws')) {
+    return;
+  }
+
+  // Never intercept Office Add-in traffic — task panes need fresh bundles
+  // every time and can't rely on cached responses.
+  if (url.pathname.startsWith('/addin/')) {
     return;
   }
 

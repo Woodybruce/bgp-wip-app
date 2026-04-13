@@ -31,8 +31,19 @@
     </script>
     <script>
       // Service worker interferes with Office Add-ins (they run in an embedded
-      // webview that can't reach an offline cache). Skip registration on any
-      // /addin/ path so the extension always loads a fresh copy from the server.
+      // webview that can't reach an offline cache). On /addin/ paths, actively
+      // unregister any previously installed SW and wipe its caches so stale
+      // bundles can't serve the task pane.
+      if ('serviceWorker' in navigator && window.location.pathname.startsWith('/addin/')) {
+        navigator.serviceWorker.getRegistrations().then(function(regs) {
+          regs.forEach(function(reg) { reg.unregister().catch(function(){}); });
+        }).catch(function(){});
+        if (window.caches && caches.keys) {
+          caches.keys().then(function(keys) {
+            keys.forEach(function(k) { caches.delete(k).catch(function(){}); });
+          }).catch(function(){});
+        }
+      }
       if ('serviceWorker' in navigator && !window.location.pathname.startsWith('/addin/')) {
         var refreshing = false;
         navigator.serviceWorker.addEventListener('controllerchange', function() {

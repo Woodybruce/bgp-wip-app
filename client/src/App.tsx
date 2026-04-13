@@ -23,6 +23,9 @@ import { NotificationCenter } from "@/components/notification-center";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
 import bgpLogoLight from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import LoginPage from "@/pages/login";
+// Eagerly import Excel add-in — Office task panes run in a restricted webview
+// where lazy chunk loads can fail silently, leaving a blank panel.
+import AddinExcel from "@/pages/addin-excel";
 import { useSocket } from "@/hooks/use-socket";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { useIsMobile, isNativeMobile, getForceDesktop, setForceDesktop } from "@/hooks/use-mobile";
@@ -59,7 +62,6 @@ const LeasingSchedule = lazy(() => import("@/pages/leasing-schedule"));
 const UploadPage = lazy(() => import("@/pages/upload"));
 const MarketingFilesPage = lazy(() => import("@/pages/marketing-files"));
 const AddinOutlook = lazy(() => import("@/pages/addin-outlook"));
-const AddinExcel = lazy(() => import("@/pages/addin-excel"));
 const AddinWord = lazy(() => import("@/pages/addin-word"));
 const AddinTeams = lazy(() => import("@/pages/addin-teams"));
 const AddinPowerPoint = lazy(() => import("@/pages/addin-powerpoint"));
@@ -354,16 +356,18 @@ function AuthenticatedApp() {
 
 function AddinRouter() {
   return (
-    <Suspense fallback={<PageLoader />}>
-      <Switch>
-        <Route path="/addin/outlook" component={AddinOutlook} />
-        <Route path="/addin/excel" component={AddinExcel} />
-        <Route path="/addin/word" component={AddinWord} />
-        <Route path="/addin/teams" component={AddinTeams} />
-        <Route path="/addin/powerpoint" component={AddinPowerPoint} />
-        <Route path="/addin/adobe" component={AddinAdobe} />
-      </Switch>
-    </Suspense>
+    <ErrorBoundary fallbackMessage="The Excel add-in failed to load. Try closing and reopening the task pane.">
+      <Suspense fallback={<PageLoader />}>
+        <Switch>
+          <Route path="/addin/outlook" component={AddinOutlook} />
+          <Route path="/addin/excel" component={AddinExcel} />
+          <Route path="/addin/word" component={AddinWord} />
+          <Route path="/addin/teams" component={AddinTeams} />
+          <Route path="/addin/powerpoint" component={AddinPowerPoint} />
+          <Route path="/addin/adobe" component={AddinAdobe} />
+        </Switch>
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 
