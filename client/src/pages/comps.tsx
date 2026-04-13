@@ -38,6 +38,7 @@ import type { CrmComp } from "@shared/schema";
 import jsPDF from "jspdf";
 import { Link } from "wouter";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
+import InvestmentCompsPage from "@/pages/investment-comps";
 
 interface CompFile {
   id: string;
@@ -1280,13 +1281,27 @@ export default function Comps() {
               <Scale className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight" data-testid="text-comps-title">Leasing Comps</h1>
-              <p className="text-sm text-muted-foreground">Rent review evidence & comparable transactions</p>
+              <h1 className="text-2xl font-bold tracking-tight" data-testid="text-comps-title">
+                {activeTab === "investment" ? "Investment Comps"
+                  : activeTab === "leads" ? "Comps Leads"
+                  : activeTab === "pdf-template" ? "PDF Template"
+                  : "Leasing Comps"}
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                {activeTab === "investment" ? "Capital markets comparable transactions"
+                  : activeTab === "leads" ? "Unconfirmed comps extracted from news, emails & files"
+                  : activeTab === "pdf-template" ? "Customise the PDF export template"
+                  : "Rent review evidence & comparable transactions"}
+              </p>
             </div>
             <TabsList className="ml-4">
               <TabsTrigger value="table" data-testid="tab-comps-table">
                 <Scale className="w-3.5 h-3.5 mr-1.5" />
-                Comps
+                Leasing
+              </TabsTrigger>
+              <TabsTrigger value="investment" data-testid="tab-comps-investment">
+                <TrendingUp className="w-3.5 h-3.5 mr-1.5" />
+                Investment
               </TabsTrigger>
               <TabsTrigger value="leads" data-testid="tab-comps-leads">
                 <Inbox className="w-3.5 h-3.5 mr-1.5" />
@@ -1779,6 +1794,10 @@ export default function Comps() {
           </table>
         )}
       </div>
+      </TabsContent>
+
+      <TabsContent value="investment" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden">
+        <InvestmentCompsPage embedded />
       </TabsContent>
 
       <TabsContent value="leads" className="flex-1 overflow-auto mt-0 p-4 data-[state=inactive]:hidden" forceMount>

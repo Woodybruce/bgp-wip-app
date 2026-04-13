@@ -376,7 +376,6 @@ const mobileOverlayItems = [
   { title: "People Hub", url: "/contacts", icon: Users },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
   { title: "Comps", url: "/comps", icon: Scale },
-  { title: "Investment Comps", url: "/investment-comps", icon: TrendingUp },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
   { title: "Document Studio", url: "/templates", icon: FileTextIcon },
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
