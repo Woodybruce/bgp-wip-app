@@ -649,6 +649,65 @@ function SteppedRentCell({
   );
 }
 
+// Inline-edit cell for linking a comp to a Deal. Shows deal name + edit on click.
+function DealCell({
+  value, deals, onSave,
+}: { value: string; deals: { id: string; name: string }[]; onSave: (dealId: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [search, setSearch] = useState("");
+  const current = deals.find(d => d.id === value);
+
+  if (editing) {
+    const filtered = search
+      ? deals.filter(d => d.name.toLowerCase().includes(search.toLowerCase())).slice(0, 8)
+      : deals.slice(0, 8);
+    return (
+      <div className="relative">
+        <Input
+          autoFocus
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          onBlur={() => setTimeout(() => setEditing(false), 150)}
+          placeholder={current?.name || "Search deal..."}
+          className="h-7 text-xs"
+        />
+        <div className="absolute z-50 mt-1 w-56 max-h-48 overflow-y-auto bg-popover border rounded-md shadow-md">
+          {value && (
+            <button
+              onMouseDown={() => { onSave(""); setEditing(false); }}
+              className="w-full text-left px-2 py-1.5 text-xs hover:bg-muted text-destructive"
+            >
+              <X className="w-3 h-3 inline mr-1" /> Unlink deal
+            </button>
+          )}
+          {filtered.map(d => (
+            <button
+              key={d.id}
+              onMouseDown={() => { onSave(d.id); setEditing(false); }}
+              className="w-full text-left px-2 py-1.5 text-xs hover:bg-muted block truncate"
+            >
+              {d.name}
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <div className="px-2 py-2 text-xs text-muted-foreground">No matching deals</div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => { setSearch(""); setEditing(true); }}
+      className={`text-xs hover:bg-muted/60 rounded px-1.5 py-0.5 truncate block w-full text-left ${current ? "text-blue-700 dark:text-blue-400 font-medium" : "text-muted-foreground italic"}`}
+      data-testid="deal-cell"
+    >
+      {current?.name || "Link deal"}
+    </button>
+  );
+}
+
 function RpiCpiCalculator() {
   const [baseRent, setBaseRent] = useState("");
   const [startYear, setStartYear] = useState<number>(UK_INDEX_DATA[0].year);
@@ -935,6 +994,15 @@ export default function Comps() {
     queryKey: ["/api/crm/properties"],
   });
 
+  const { data: deals = [] } = useQuery<{ id: string; name: string; status?: string | null }[]>({
+    queryKey: ["/api/crm/deals"],
+  });
+  const dealById = useMemo(() => {
+    const m = new Map<string, { id: string; name: string }>();
+    deals.forEach(d => m.set(d.id, d));
+    return m;
+  }, [deals]);
+
   const updateMutation = useMutation({
     mutationFn: async ({ id, field, value }: { id: string; field: string; value: any }) => {
       await apiRequest("PUT", `/api/crm/comps/${id}`, { [field]: value });
@@ -962,6 +1030,17 @@ export default function Comps() {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/comps"] });
       setSelectedIds(new Set());
       toast({ title: `${selectedIds.size} comps deleted` });
+    },
+  });
+
+  const bulkVerifyMutation = useMutation({
+    mutationFn: async ({ ids, verified }: { ids: string[]; verified: boolean }) => {
+      await Promise.all(ids.map(id => apiRequest("PUT", `/api/crm/comps/${id}`, { verified })));
+    },
+    onSuccess: (_d, { ids, verified }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/comps"] });
+      setSelectedIds(new Set());
+      toast({ title: verified ? `${ids.length} leads verified` : `${ids.length} comps unverified` });
     },
   });
 
@@ -1327,9 +1406,29 @@ export default function Comps() {
         )}
       </div>
 
-      {activeTab === "table" && selectedIds.size > 0 && (
+      {(activeTab === "table" || activeTab === "leads") && selectedIds.size > 0 && (
         <div className="flex items-center gap-3 px-4 py-2 bg-muted/50 border-b text-xs">
           <span className="font-medium">{selectedIds.size} selected</span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 text-xs text-green-700 border-green-200 hover:bg-green-50"
+            disabled={bulkVerifyMutation.isPending}
+            onClick={() => bulkVerifyMutation.mutate({ ids: Array.from(selectedIds), verified: true })}
+            data-testid="button-bulk-verify"
+          >
+            <CheckCircle2 className="w-3 h-3" /> Verify
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 text-xs text-amber-700 border-amber-200 hover:bg-amber-50"
+            disabled={bulkVerifyMutation.isPending}
+            onClick={() => bulkVerifyMutation.mutate({ ids: Array.from(selectedIds), verified: false })}
+            data-testid="button-bulk-unverify"
+          >
+            <X className="w-3 h-3" /> Unverify
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -1345,7 +1444,7 @@ export default function Comps() {
             Export PDF
           </Button>
           <Button variant="destructive" size="sm" className="h-7 gap-1 text-xs" onClick={() => setBulkDeleteOpen(true)}>
-            <Trash2 className="w-3 h-3" /> Delete
+            <Trash2 className="w-3 h-3" /> Discard
           </Button>
           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setSelectedIds(new Set())}>
             Clear
@@ -1353,9 +1452,8 @@ export default function Comps() {
         </div>
       )}
 
-      <TabsContent value="table" className="flex-1 overflow-auto mt-0 data-[state=inactive]:hidden" forceMount>
-      <div className="h-full flex flex-col">
-      <div className="flex-1 overflow-auto">
+      <TabsContent value="table" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden" forceMount>
+      <div className="h-full overflow-auto">
         {isLoading ? (
           <div className="flex items-center justify-center h-64">
             <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full" />
@@ -1374,10 +1472,35 @@ export default function Comps() {
             )}
           </div>
         ) : (
-          <table className="w-full min-w-[1900px]" data-testid="comps-table">
+          <table className="border-collapse" data-testid="comps-table" style={{ tableLayout: "fixed" }}>
+            <colgroup>
+              <col style={{ width: 36 }} />
+              <col style={{ width: 220 }} />
+              <col style={{ width: 130 }} />
+              <col style={{ width: 100 }} />
+              <col style={{ width: 110 }} />
+              <col style={{ width: 130 }} />
+              <col style={{ width: 90 }} />
+              <col style={{ width: 130 }} />
+              <col style={{ width: 90 }} />
+              <col style={{ width: 90 }} />
+              <col style={{ width: 110 }} />
+              <col style={{ width: 90 }} />
+              <col style={{ width: 70 }} />
+              <col style={{ width: 70 }} />
+              <col style={{ width: 70 }} />
+              <col style={{ width: 56 }} />
+              <col style={{ width: 64 }} />
+              <col style={{ width: 110 }} />
+              <col style={{ width: 130 }} />
+              <col style={{ width: 130 }} />
+              <col style={{ width: 60 }} />
+              <col style={{ width: 240 }} />
+              <col style={{ width: 36 }} />
+            </colgroup>
             <thead className="sticky top-0 bg-background border-b z-10 text-sm">
               <tr>
-                <th className="px-2 py-2.5 w-8">
+                <th className="px-2 py-2.5">
                   <Checkbox
                     checked={selectedIds.size === filtered.length && filtered.length > 0}
                     onCheckedChange={(checked) => {
@@ -1386,26 +1509,28 @@ export default function Comps() {
                     data-testid="checkbox-select-all"
                   />
                 </th>
-                <SortHeader field="name" className="min-w-[180px]">Property</SortHeader>
+                <SortHeader field="name">Property</SortHeader>
                 <SortHeader field="tenant">Tenant</SortHeader>
                 <SortHeader field="areaLocation">Area</SortHeader>
                 <SortHeader field="useClass">Use Class</SortHeader>
                 <SortHeader field="transactionType">Txn Type</SortHeader>
                 <SortHeader field="completionDate">Date</SortHeader>
-                <SortHeader field="headlineRent">Headline Rent</SortHeader>
-                <SortHeader field="zoneARate">Zone A (psf)</SortHeader>
-                <SortHeader field="overallRate">Overall (psf)</SortHeader>
-                <SortHeader field="netEffectiveRent">Net Effective</SortHeader>
-                <SortHeader field="effectiveRatePsf">Net Eff. (psf)</SortHeader>
-                <SortHeader field="niaSqft">NIA (sqft)</SortHeader>
-                <SortHeader field="giaSqft">GIA (sqft)</SortHeader>
+                <SortHeader field="headlineRent">Headline</SortHeader>
+                <SortHeader field="zoneARate">Zone A</SortHeader>
+                <SortHeader field="overallRate">Overall</SortHeader>
+                <SortHeader field="netEffectiveRent">Net Eff.</SortHeader>
+                <SortHeader field="effectiveRatePsf">Net psf</SortHeader>
+                <SortHeader field="niaSqft">NIA</SortHeader>
+                <SortHeader field="giaSqft">GIA</SortHeader>
                 <SortHeader field="itzaSqft">ITZA</SortHeader>
-                <SortHeader field="term">Term (yrs)</SortHeader>
-                <SortHeader field="rentFree">Rent Free (mths)</SortHeader>
-                <SortHeader field="fitoutContribution">Tenant Incentive</SortHeader>
+                <SortHeader field="term">Term</SortHeader>
+                <SortHeader field="rentFreeMonths">RF (m)</SortHeader>
+                <SortHeader field="fitoutContribution">Incentive</SortHeader>
                 <SortHeader field="ltActStatus">L&T Act</SortHeader>
-                <SortHeader field="verified">Verified</SortHeader>
-                <th className="px-2 py-2.5 w-8" />
+                <SortHeader field="dealId">Deal</SortHeader>
+                <SortHeader field="verified">Ver.</SortHeader>
+                <SortHeader field="comments">Comments</SortHeader>
+                <th className="px-2 py-2.5" />
               </tr>
             </thead>
             <tbody className="text-xs">
@@ -1427,28 +1552,32 @@ export default function Comps() {
                       }}
                     />
                   </td>
-                  <td className="px-2 py-1.5">
+                  <td className="px-2 py-1.5 align-top">
                     <button
-                      className="text-left font-medium hover:text-primary transition-colors truncate max-w-[200px] block"
+                      className="text-left font-medium hover:text-primary transition-colors truncate block w-full"
                       onClick={() => setSelectedComp(comp)}
                       data-testid={`comp-name-${comp.id}`}
                     >
                       {comp.name}
                     </button>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 flex-wrap">
                       {comp.postcode && <span className="text-[10px] text-muted-foreground">{comp.postcode}</span>}
                       {comp.sourceEvidence === "News Feed" && <span className="text-[9px] px-1 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">News</span>}
                       {comp.sourceEvidence === "Team Email" && <span className="text-[9px] px-1 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">Email</span>}
                       {comp.sourceEvidence === "SharePoint File" && <span className="text-[9px] px-1 rounded bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400">File</span>}
                       {comp.sourceEvidence === "BGP Direct" && <span className="text-[9px] px-1 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">BGP</span>}
-                      {comp.dealId && <span className="text-[9px] px-1 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Deal</span>}
+                      {comp.dealId && dealById.get(comp.dealId) && (
+                        <span className="text-[9px] px-1 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 truncate max-w-[140px]" title={dealById.get(comp.dealId)?.name}>
+                          {dealById.get(comp.dealId)?.name}
+                        </span>
+                      )}
                     </div>
                   </td>
-                  <td className="px-2 py-1.5">
-                    <InlineText value={comp.tenant || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "tenant", value: v })} className="max-w-[120px]" />
+                  <td className="px-2 py-1.5 truncate">
+                    <InlineText value={comp.tenant || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "tenant", value: v })} className="block truncate" />
                   </td>
-                  <td className="px-2 py-1.5">
-                    <InlineText value={comp.areaLocation || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "areaLocation", value: v })} className="max-w-[100px]" />
+                  <td className="px-2 py-1.5 truncate">
+                    <InlineText value={comp.areaLocation || ""} onSave={v => updateMutation.mutate({ id: comp.id, field: "areaLocation", value: v })} className="block truncate" />
                   </td>
                   <td className="px-2 py-1.5">
                     <InlineLabelSelect
@@ -1566,6 +1695,19 @@ export default function Comps() {
                       onSave={v => updateMutation.mutate({ id: comp.id, field: "ltActStatus", value: v })}
                     />
                   </td>
+                  <td className="px-2 py-1.5">
+                    <DealCell
+                      value={comp.dealId || ""}
+                      deals={deals}
+                      onSave={(dealId) => {
+                        // Linking a comp to a deal also marks it as verified — it's now part of a deal pack.
+                        updateMutation.mutate({ id: comp.id, field: "dealId", value: dealId || null });
+                        if (dealId && !comp.verified) {
+                          updateMutation.mutate({ id: comp.id, field: "verified", value: true });
+                        }
+                      }}
+                    />
+                  </td>
                   <td className="px-2 py-1.5 text-center">
                     <button
                       onClick={() => updateMutation.mutate({ id: comp.id, field: "verified", value: !comp.verified })}
@@ -1578,6 +1720,15 @@ export default function Comps() {
                         <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/30" />
                       )}
                     </button>
+                  </td>
+                  <td className="px-2 py-1.5 align-top">
+                    <InlineText
+                      value={comp.comments || ""}
+                      onSave={v => updateMutation.mutate({ id: comp.id, field: "comments", value: v })}
+                      multiline
+                      maxLines={2}
+                      className="block max-w-[230px] whitespace-normal"
+                    />
                   </td>
                   <td className="px-2 py-1.5">
                     <DropdownMenu>
@@ -1603,7 +1754,6 @@ export default function Comps() {
             </tbody>
           </table>
         )}
-      </div>
       </div>
       </TabsContent>
 
@@ -1648,74 +1798,136 @@ export default function Comps() {
             <p className="text-xs text-muted-foreground">Run "Scan All Sources" to extract new comps from news, team emails and SharePoint files.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {leadComps.map(lead => {
-              const sourceColor =
-                lead.sourceEvidence === "News Feed" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
-                lead.sourceEvidence === "Team Email" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" :
-                lead.sourceEvidence === "SharePoint File" ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400" :
-                "bg-muted text-muted-foreground";
-              const headlineDisplay = formatSteppedRent(lead.headlineRent);
-              return (
-                <button
-                  key={lead.id}
-                  onClick={() => setConfirmLead(lead)}
-                  className="text-left p-4 border rounded-xl bg-card hover:border-primary/50 hover:shadow-sm transition-all space-y-2"
-                  data-testid={`lead-card-${lead.id}`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="font-semibold text-sm leading-tight">{lead.name || "Untitled"}</div>
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded shrink-0 ${sourceColor}`}>
-                      {lead.sourceEvidence || "AI"}
-                    </span>
-                  </div>
-                  {(lead.tenant || lead.areaLocation) && (
-                    <div className="text-xs text-muted-foreground">
-                      {lead.tenant}{lead.tenant && lead.areaLocation ? " · " : ""}{lead.areaLocation}
-                    </div>
-                  )}
-                  <div className="flex flex-wrap gap-2 text-xs">
-                    {lead.useClass && <span className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{lead.useClass}</span>}
-                    {lead.transactionType && <span className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{lead.transactionType}</span>}
-                    {lead.completionDate && <span className="px-1.5 py-0.5 rounded bg-muted text-[10px]">{lead.completionDate}</span>}
-                  </div>
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] pt-2 border-t">
-                    {headlineDisplay && (
-                      <div>
-                        <div className="text-[9px] uppercase text-muted-foreground">Headline</div>
-                        <div className="font-semibold">{headlineDisplay}</div>
-                      </div>
-                    )}
-                    {lead.zoneARate && (
-                      <div>
-                        <div className="text-[9px] uppercase text-muted-foreground">Zone A</div>
-                        <div className="font-semibold">{formatGBP(parseNum(lead.zoneARate))}</div>
-                      </div>
-                    )}
-                    {lead.term && (
-                      <div>
-                        <div className="text-[9px] uppercase text-muted-foreground">Term</div>
-                        <div>{formatInt(parseNum(lead.term))} yrs</div>
-                      </div>
-                    )}
-                    {lead.itzaSqft && (
-                      <div>
-                        <div className="text-[9px] uppercase text-muted-foreground">ITZA</div>
-                        <div>{formatInt(parseNum(lead.itzaSqft))} sq ft</div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="pt-2 flex items-center justify-end text-xs text-primary font-medium">
-                    Review &amp; confirm <ArrowRight className="w-3.5 h-3.5 ml-1" />
-                  </div>
-                </button>
-              );
-            })}
+          <div className="border rounded-lg overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs" style={{ tableLayout: "fixed" }}>
+                <colgroup>
+                  <col style={{ width: 36 }} />
+                  <col style={{ width: 130 }} />
+                  <col style={{ width: 220 }} />
+                  <col style={{ width: 130 }} />
+                  <col style={{ width: 100 }} />
+                  <col style={{ width: 110 }} />
+                  <col style={{ width: 130 }} />
+                  <col style={{ width: 90 }} />
+                  <col style={{ width: 90 }} />
+                  <col style={{ width: 90 }} />
+                </colgroup>
+                <thead className="bg-muted/40 border-b text-[11px] uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th className="px-2 py-2">
+                      <Checkbox
+                        checked={selectedIds.size === leadComps.length && leadComps.length > 0}
+                        onCheckedChange={(checked) => {
+                          setSelectedIds(checked ? new Set(leadComps.map(l => l.id)) : new Set());
+                        }}
+                        data-testid="checkbox-leads-select-all"
+                      />
+                    </th>
+                    <th className="px-2 py-2 text-left">Action</th>
+                    <th className="px-2 py-2 text-left">Property</th>
+                    <th className="px-2 py-2 text-left">Tenant</th>
+                    <th className="px-2 py-2 text-left">Area</th>
+                    <th className="px-2 py-2 text-left">Use Class</th>
+                    <th className="px-2 py-2 text-left">Headline</th>
+                    <th className="px-2 py-2 text-left">Zone A</th>
+                    <th className="px-2 py-2 text-left">Date</th>
+                    <th className="px-2 py-2 text-left">Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leadComps.map(lead => {
+                    const sourceColor =
+                      lead.sourceEvidence === "News Feed" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
+                      lead.sourceEvidence === "Team Email" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" :
+                      lead.sourceEvidence === "SharePoint File" ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400" :
+                      "bg-muted text-muted-foreground";
+                    return (
+                      <tr key={lead.id} className={`border-b hover:bg-muted/30 ${selectedIds.has(lead.id) ? "bg-primary/5" : ""}`} data-testid={`lead-row-${lead.id}`}>
+                        <td className="px-2 py-1.5">
+                          <Checkbox
+                            checked={selectedIds.has(lead.id)}
+                            onCheckedChange={(checked) => {
+                              setSelectedIds(prev => {
+                                const next = new Set(prev);
+                                checked ? next.add(lead.id) : next.delete(lead.id);
+                                return next;
+                              });
+                            }}
+                          />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                updateMutation.mutate({ id: lead.id, field: "verified", value: true });
+                                toast({ title: "Lead verified", description: `${lead.name || "Lead"} moved to comps` });
+                              }}
+                              className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-600 hover:bg-green-700 text-white transition-colors"
+                              data-testid={`button-verify-lead-${lead.id}`}
+                              title="Verify — move to comp schedule"
+                            >
+                              <CheckCircle2 className="w-3 h-3 inline -mt-0.5" /> Verify
+                            </button>
+                            <button
+                              onClick={() => deleteMutation.mutate(lead.id)}
+                              className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-600 hover:bg-red-700 text-white transition-colors"
+                              data-testid={`button-discard-lead-${lead.id}`}
+                              title="Reject — delete this lead"
+                            >
+                              <X className="w-3 h-3 inline -mt-0.5" />
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-2 py-1.5 truncate">
+                          <button
+                            className="text-left font-medium hover:text-primary transition-colors truncate block w-full"
+                            onClick={() => setConfirmLead(lead)}
+                            data-testid={`lead-name-${lead.id}`}
+                          >
+                            {lead.name || "Untitled"}
+                          </button>
+                          {lead.postcode && <div className="text-[10px] text-muted-foreground">{lead.postcode}</div>}
+                        </td>
+                        <td className="px-2 py-1.5 truncate">{lead.tenant || "—"}</td>
+                        <td className="px-2 py-1.5 truncate">{lead.areaLocation || "—"}</td>
+                        <td className="px-2 py-1.5 truncate">{lead.useClass || "—"}</td>
+                        <td className="px-2 py-1.5 font-semibold whitespace-nowrap">{formatSteppedRent(lead.headlineRent) || "—"}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap text-blue-600 font-semibold">{lead.zoneARate ? formatGBP(parseNum(lead.zoneARate)) : "—"}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap">{lead.completionDate || "—"}</td>
+                        <td className="px-2 py-1.5">
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${sourceColor}`}>
+                            {lead.sourceEvidence || "AI"}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </TabsContent>
 
-      <TabsContent value="pdf-template" className="flex-1 overflow-auto mt-0 p-6">
+      <TabsContent value="pdf-template" className="flex-1 overflow-auto mt-0 p-6 space-y-6">
+        <DealCompPackPanel
+          deals={deals}
+          comps={comps}
+          onExport={(targetComps) => startPdfExport(targetComps)}
+          onAddCompsToDeal={(dealId, ids) => {
+            // Adding comps to a deal also marks them verified — this is the
+            // "add to PDF template summary sheet" → "moves to verified" flow.
+            ids.forEach(id => {
+              updateMutation.mutate({ id, field: "dealId", value: dealId });
+              updateMutation.mutate({ id, field: "verified", value: true });
+            });
+            toast({
+              title: `${ids.length} comp${ids.length !== 1 ? "s" : ""} added to deal`,
+              description: "Comps marked as verified and linked to the deal pack.",
+            });
+          }}
+        />
         <CompPdfTemplateEditor />
       </TabsContent>
 
@@ -2224,6 +2436,239 @@ function FormulaCell({
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
+    </div>
+  );
+}
+
+function DealCompPackPanel({
+  deals, comps, onExport, onAddCompsToDeal,
+}: {
+  deals: { id: string; name: string; status?: string | null }[];
+  comps: CrmComp[];
+  onExport: (targetComps: CrmComp[]) => void;
+  onAddCompsToDeal: (dealId: string, compIds: string[]) => void;
+}) {
+  const [selectedDealId, setSelectedDealId] = useState<string>("");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerSelection, setPickerSelection] = useState<Set<string>>(new Set());
+  const [pickerSearch, setPickerSearch] = useState("");
+
+  const selectedDeal = useMemo(
+    () => deals.find(d => d.id === selectedDealId),
+    [deals, selectedDealId],
+  );
+
+  const linkedComps = useMemo(
+    () => comps.filter(c => c.dealId === selectedDealId),
+    [comps, selectedDealId],
+  );
+
+  const availableComps = useMemo(() => {
+    const q = pickerSearch.trim().toLowerCase();
+    return comps
+      .filter(c => c.dealId !== selectedDealId)
+      .filter(c => !q || (c.name || "").toLowerCase().includes(q) || (c.tenant || "").toLowerCase().includes(q))
+      .slice(0, 80);
+  }, [comps, selectedDealId, pickerSearch]);
+
+  const togglePickerId = (id: string) => {
+    setPickerSelection(prev => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
+  const handleConfirmAdd = () => {
+    if (!selectedDealId || pickerSelection.size === 0) return;
+    onAddCompsToDeal(selectedDealId, Array.from(pickerSelection));
+    setPickerSelection(new Set());
+    setPickerSearch("");
+    setPickerOpen(false);
+  };
+
+  return (
+    <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <FileDown className="w-4 h-4 text-primary" />
+            Deal Comp Pack
+          </h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Link comps to a live deal, then export a comp pack summary sheet. Adding a comp here marks it verified.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={selectedDealId || "__none__"} onValueChange={(v) => setSelectedDealId(v === "__none__" ? "" : v)}>
+            <SelectTrigger className="h-8 w-64 text-xs">
+              <SelectValue placeholder="Select a deal..." />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">— Choose deal —</SelectItem>
+              {deals.map(d => (
+                <SelectItem key={d.id} value={d.id}>
+                  {d.name}{d.status ? ` · ${d.status}` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!selectedDealId}
+            onClick={() => { setPickerSelection(new Set()); setPickerSearch(""); setPickerOpen(true); }}
+            data-testid="button-add-comps-to-deal"
+          >
+            <Plus className="w-3.5 h-3.5 mr-1" /> Add comps
+          </Button>
+          <Button
+            size="sm"
+            disabled={!selectedDealId || linkedComps.length === 0}
+            onClick={() => onExport(linkedComps)}
+            data-testid="button-export-deal-pack"
+          >
+            <FileDown className="w-3.5 h-3.5 mr-1" /> Export comp pack
+          </Button>
+        </div>
+      </div>
+
+      {selectedDeal ? (
+        <div className="space-y-2">
+          <div className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">{linkedComps.length}</span>{" "}
+            comp{linkedComps.length !== 1 ? "s" : ""} linked to{" "}
+            <span className="font-medium text-foreground">{selectedDeal.name}</span>
+          </div>
+          {linkedComps.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic p-3 border border-dashed rounded">
+              No comps linked yet. Click "Add comps" to attach existing comps, or link them individually from the table (Deal column).
+            </div>
+          ) : (
+            <div className="border rounded overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="text-left px-2 py-1.5 font-medium">Property</th>
+                    <th className="text-left px-2 py-1.5 font-medium">Tenant</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Area</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Headline</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Zone A</th>
+                    <th className="text-left px-2 py-1.5 font-medium">Verified</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {linkedComps.map(c => (
+                    <tr key={c.id} className="border-t">
+                      <td className="px-2 py-1.5 truncate max-w-[220px]">{c.name || "—"}</td>
+                      <td className="px-2 py-1.5 truncate max-w-[160px]">{c.tenant || "—"}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{c.areaSqft || "—"}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{c.headlineRent || "—"}</td>
+                      <td className="px-2 py-1.5 text-right tabular-nums">{c.zoneARate || "—"}</td>
+                      <td className="px-2 py-1.5">
+                        {c.verified ? (
+                          <span className="text-green-700 dark:text-green-400 inline-flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" /> Verified
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">Unverified</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-xs text-muted-foreground italic">
+          Pick a deal above to start building its comp pack.
+        </div>
+      )}
+
+      <Dialog open={pickerOpen} onOpenChange={setPickerOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>
+              Add comps to {selectedDeal?.name || "deal"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="px-1 pb-2">
+            <Input
+              value={pickerSearch}
+              onChange={(e) => setPickerSearch(e.target.value)}
+              placeholder="Search property or tenant..."
+              className="h-8 text-xs"
+            />
+          </div>
+          <div className="flex-1 overflow-auto border rounded">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/50 sticky top-0">
+                <tr>
+                  <th className="w-8 px-2 py-1.5"></th>
+                  <th className="text-left px-2 py-1.5 font-medium">Property</th>
+                  <th className="text-left px-2 py-1.5 font-medium">Tenant</th>
+                  <th className="text-right px-2 py-1.5 font-medium">Area</th>
+                  <th className="text-right px-2 py-1.5 font-medium">Headline</th>
+                  <th className="text-left px-2 py-1.5 font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {availableComps.map(c => (
+                  <tr
+                    key={c.id}
+                    className="border-t hover:bg-muted/40 cursor-pointer"
+                    onClick={() => togglePickerId(c.id)}
+                  >
+                    <td className="px-2 py-1.5">
+                      <Checkbox
+                        checked={pickerSelection.has(c.id)}
+                        onCheckedChange={() => togglePickerId(c.id)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </td>
+                    <td className="px-2 py-1.5 truncate max-w-[220px]">{c.name || "—"}</td>
+                    <td className="px-2 py-1.5 truncate max-w-[160px]">{c.tenant || "—"}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{c.areaSqft || "—"}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{c.headlineRent || "—"}</td>
+                    <td className="px-2 py-1.5">
+                      {c.verified ? (
+                        <span className="text-green-700 dark:text-green-400">Verified</span>
+                      ) : (
+                        <span className="text-muted-foreground">Lead</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {availableComps.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-2 py-4 text-center text-muted-foreground italic">
+                      No comps match your search.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <DialogFooter className="gap-2">
+            <div className="text-xs text-muted-foreground mr-auto self-center">
+              {pickerSelection.size} selected
+            </div>
+            <Button variant="outline" size="sm" onClick={() => setPickerOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={pickerSelection.size === 0}
+              onClick={handleConfirmAdd}
+              data-testid="button-confirm-add-comps"
+            >
+              Add {pickerSelection.size} comp{pickerSelection.size !== 1 ? "s" : ""}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
