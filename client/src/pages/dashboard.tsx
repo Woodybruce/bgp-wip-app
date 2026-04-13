@@ -1775,7 +1775,7 @@ export default function Dashboard() {
           "new-requirements": { w: 6, h: 8, minW: 4, minH: 5 },
           "activity-alerts": { w: 6, h: 8, minW: 4, minH: 5 },
           "available-units": { w: 12, h: 10, minW: 6, minH: 6 },
-          "agent-pipeline": { w: 12, h: 14, minW: 6, minH: 8 },
+          "agent-pipeline": { w: 12, h: 22, minW: 6, minH: 14 },
           "inbox": { w: 12, h: 16, minW: 6, minH: 8 },
           "sharepoint": { w: 6, h: 12, minW: 4, minH: 6 },
           "studios": { w: 6, h: 12, minW: 4, minH: 6 },
