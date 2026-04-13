@@ -1781,7 +1781,7 @@ export default function Dashboard() {
           "activity-alerts": { w: 6, h: 8, minW: 4, minH: 5 },
           "available-units": { w: 12, h: 10, minW: 6, minH: 6 },
           "agent-pipeline": { w: 12, h: 22, minW: 6, minH: 14 },
-          "inbox": { w: 12, h: 16, minW: 6, minH: 8 },
+          "inbox": { w: 12, h: 20, minW: 6, minH: 10 },
           "sharepoint": { w: 6, h: 12, minW: 4, minH: 6 },
           "studios": { w: 6, h: 12, minW: 4, minH: 6 },
           "properties-deals": { w: 12, h: 14, minW: 6, minH: 8 },
@@ -2327,8 +2327,8 @@ export default function Dashboard() {
 
 
         if (widgetId === "inbox") return (
-          <Card key="inbox" className="overflow-hidden">
-            <CardHeader className="flex flex-row items-center justify-between gap-2 py-2 px-3">
+          <Card key="inbox" className="overflow-hidden h-full flex flex-col">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 py-2 px-3 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <MailIcon className="w-4 h-4 text-blue-500" />
                 <CardTitle className="text-sm font-semibold">Inbox</CardTitle>
@@ -2339,7 +2339,7 @@ export default function Dashboard() {
                 </Button>
               </Link>
             </CardHeader>
-            <div className="h-[700px]" data-testid="dash-inbox-embed">
+            <div className="flex-1 min-h-0" data-testid="dash-inbox-embed">
               <MailView mailType="personal" />
             </div>
           </Card>

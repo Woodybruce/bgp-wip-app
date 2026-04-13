@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -346,16 +347,16 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
 
   if (isLoading) {
     return (
-      <div className="space-y-3 pb-6" data-testid="wip-dashboard-card">
+      <Card className="p-4 space-y-3" data-testid="wip-dashboard-card">
         <Skeleton className="h-8 w-64" />
         <div className="grid grid-cols-3 gap-3"><Skeleton className="h-48" /><Skeleton className="h-48" /><Skeleton className="h-48" /></div>
-      </div>
+      </Card>
     );
   }
 
   if (wipEntries.length === 0) {
     return (
-      <div className="bg-white border border-gray-200 rounded-lg p-8 text-center" data-testid="wip-dashboard-card">
+      <Card className="p-8 text-center" data-testid="wip-dashboard-card">
         <BarChart3 className="w-8 h-8 mx-auto mb-2 text-gray-300" />
         <p className="text-sm text-gray-500">No deals with fees found</p>
         <p className="text-xs text-gray-400 mt-1">Add fees to deals on the WIP board to see data here</p>
@@ -364,22 +365,22 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
             Go to WIP Report <ArrowRight className="w-3.5 h-3.5 ml-1" />
           </Button>
         </Link>
-      </div>
+      </Card>
     );
   }
 
   if (teamEntries.length === 0) {
     return (
-      <div className="bg-white border border-gray-200 rounded-lg p-8 text-center" data-testid="wip-dashboard-card">
+      <Card className="p-8 text-center" data-testid="wip-dashboard-card">
         <BarChart3 className="w-8 h-8 mx-auto mb-2 text-gray-300" />
         <p className="text-sm text-gray-500">No WIP entries found for {displayTeam}</p>
         <p className="text-xs text-gray-400 mt-1">Try selecting a different team</p>
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className="space-y-3 pb-6" data-testid="wip-dashboard-card">
+    <Card className="p-4 space-y-3" data-testid="wip-dashboard-card">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-bold text-gray-900" data-testid="wip-dash-title">{title}</h2>
@@ -553,6 +554,6 @@ export function WipDashboardCard({ user }: { user: User | undefined }) {
           />
         </div>
       </div>
-    </div>
+    </Card>
   );
 }
