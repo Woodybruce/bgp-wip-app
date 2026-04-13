@@ -27,7 +27,19 @@ import {
   FileVideo,
   FileArchive,
   Presentation,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Check,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { User } from "@shared/schema";
 import { useState, useEffect, useCallback } from "react";
 import { queryClient } from "@/lib/queryClient";
@@ -437,10 +449,21 @@ function TeamFoldersSection({
   );
 }
 
+type SortKey = "name" | "modified" | "size";
+type SortDir = "asc" | "desc";
+
+const SORT_LABELS: Record<SortKey, string> = {
+  name: "Name",
+  modified: "Modified",
+  size: "Size",
+};
+
 export default function SharePoint() {
   const [folderStack, setFolderStack] = useState<{ id: string; name: string }[]>([]);
   const [driveId, setDriveId] = useState<string | null>(null);
   const [previewItem, setPreviewItem] = useState<DriveItem | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("modified");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
   const currentFolderId = folderStack.length > 0 ? folderStack[folderStack.length - 1].id : undefined;
   const { toast } = useToast();
 
@@ -476,14 +499,23 @@ export default function SharePoint() {
 
   const files = filesData?.items;
 
-  // Sort: folders first (alphabetical), then files by last modified (newest first)
+  // Folders always grouped first; sort within each group by chosen key/direction.
   const sortedFiles = files ? [...files].sort((a, b) => {
     if (a.folder && !b.folder) return -1;
     if (!a.folder && b.folder) return 1;
-    if (a.folder && b.folder) return a.name.localeCompare(b.name);
+    const dirMul = sortDir === "asc" ? 1 : -1;
+    if (sortKey === "name") {
+      return a.name.localeCompare(b.name) * dirMul;
+    }
+    if (sortKey === "size") {
+      // Folders don't have a size, fall back to name.
+      if (a.folder && b.folder) return a.name.localeCompare(b.name);
+      return ((a.size ?? 0) - (b.size ?? 0)) * dirMul;
+    }
+    // modified
     const dateA = a.lastModifiedDateTime ? new Date(a.lastModifiedDateTime).getTime() : 0;
     const dateB = b.lastModifiedDateTime ? new Date(b.lastModifiedDateTime).getTime() : 0;
-    return dateB - dateA;
+    return (dateA - dateB) * dirMul;
   }) : [];
 
   if (statusLoading) {
@@ -619,9 +651,72 @@ export default function SharePoint() {
           <CardTitle className="text-sm font-semibold">
             {folderStack.length > 0 ? folderStack[folderStack.length - 1].name : "All Files"}
           </CardTitle>
-          {sortedFiles.length > 0 && (
-            <span className="text-xs text-muted-foreground">{sortedFiles.length} items</span>
-          )}
+          <div className="flex items-center gap-3">
+            {sortedFiles.length > 0 && (
+              <span className="text-xs text-muted-foreground">{sortedFiles.length} items</span>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs gap-1.5"
+                  data-testid="button-sort"
+                >
+                  <ArrowUpDown className="w-3.5 h-3.5" />
+                  Sort: {SORT_LABELS[sortKey]}
+                  {sortDir === "asc" ? (
+                    <ArrowUp className="w-3 h-3" />
+                  ) : (
+                    <ArrowDown className="w-3 h-3" />
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-44">
+                <DropdownMenuLabel className="text-xs">Sort by</DropdownMenuLabel>
+                {(["name", "modified", "size"] as SortKey[]).map((key) => (
+                  <DropdownMenuItem
+                    key={key}
+                    onClick={() => setSortKey(key)}
+                    data-testid={`sort-by-${key}`}
+                  >
+                    <Check
+                      className={`w-3.5 h-3.5 mr-2 ${
+                        sortKey === key ? "opacity-100" : "opacity-0"
+                      }`}
+                    />
+                    {SORT_LABELS[key]}
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-xs">Direction</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={() => setSortDir("asc")}
+                  data-testid="sort-dir-asc"
+                >
+                  <Check
+                    className={`w-3.5 h-3.5 mr-2 ${
+                      sortDir === "asc" ? "opacity-100" : "opacity-0"
+                    }`}
+                  />
+                  <ArrowUp className="w-3.5 h-3.5 mr-1.5" />
+                  Ascending
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setSortDir("desc")}
+                  data-testid="sort-dir-desc"
+                >
+                  <Check
+                    className={`w-3.5 h-3.5 mr-2 ${
+                      sortDir === "desc" ? "opacity-100" : "opacity-0"
+                    }`}
+                  />
+                  <ArrowDown className="w-3.5 h-3.5 mr-1.5" />
+                  Descending
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           {filesLoading ? (
