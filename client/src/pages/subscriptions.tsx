@@ -2,7 +2,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { ExternalLink, Search, Building2, FileText, MapPin, Newspaper, ShieldCheck, Mail, HardDrive, Rocket, Presentation, LineChart, Palette, Globe, ChevronDown, ChevronUp, KeyRound, CheckCircle2, XCircle, RefreshCw } from "lucide-react";
+import { ExternalLink, Search, Building2, FileText, MapPin, Newspaper, ShieldCheck, Mail, HardDrive, Rocket, Presentation, LineChart, Palette, Globe, ChevronDown, ChevronUp, KeyRound, CheckCircle2, XCircle, RefreshCw, Zap, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -23,6 +23,8 @@ type IntegrationsStatus = {
   items: IntegrationItem[];
   grouped: Record<string, IntegrationItem[]>;
 };
+type PingResult = { ok: boolean; status?: number; message: string };
+type PingResponse = { apollo: PingResult; companiesHouse: PingResult; xero: PingResult };
 
 interface Subscription {
   name: string;
@@ -215,6 +217,24 @@ export default function Subscriptions() {
     },
   });
 
+  const [pingResult, setPingResult] = useState<PingResponse | null>(null);
+  const [pinging, setPinging] = useState(false);
+  const runPing = async () => {
+    setPinging(true);
+    try {
+      const res = await apiRequest("GET", "/api/integrations/ping");
+      setPingResult(await res.json());
+    } catch (err: any) {
+      setPingResult({
+        apollo: { ok: false, message: "Request failed" },
+        companiesHouse: { ok: false, message: "Request failed" },
+        xero: { ok: false, message: "Request failed" },
+      });
+    } finally {
+      setPinging(false);
+    }
+  };
+
   const filtered = subscriptions.filter((s) => {
     const matchSearch = !search || s.name.toLowerCase().includes(search.toLowerCase()) || s.description.toLowerCase().includes(search.toLowerCase());
     const matchCategory = !selectedCategory || s.category === selectedCategory;
@@ -270,6 +290,17 @@ export default function Subscriptions() {
                 variant="outline"
                 size="sm"
                 className="h-8 text-xs"
+                onClick={runPing}
+                disabled={pinging}
+                data-testid="button-ping-integrations"
+              >
+                {pinging ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Zap className="w-3.5 h-3.5 mr-1.5" />}
+                Test Apollo / Xero / CH
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
                 onClick={() => refetchKeys()}
                 disabled={keysFetching}
                 data-testid="button-refresh-key-status"
@@ -289,6 +320,39 @@ export default function Subscriptions() {
               </Button>
             </div>
           </div>
+
+          {pingResult && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 pt-1">
+              {([
+                { label: "Apollo.io", result: pingResult.apollo, testId: "ping-apollo" },
+                { label: "Companies House", result: pingResult.companiesHouse, testId: "ping-companies-house" },
+                { label: "Xero", result: pingResult.xero, testId: "ping-xero" },
+              ] as const).map(({ label, result, testId }) => (
+                <div
+                  key={label}
+                  className={`flex items-start gap-2 rounded-md border px-3 py-2 text-xs ${
+                    result.ok
+                      ? "border-primary/30 bg-primary/5"
+                      : "border-destructive/30 bg-destructive/5"
+                  }`}
+                  data-testid={testId}
+                >
+                  {result.ok ? (
+                    <CheckCircle2 className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-destructive mt-0.5 shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <p className="font-semibold">
+                      {label}
+                      {result.status ? <span className="text-muted-foreground font-normal ml-1">({result.status})</span> : null}
+                    </p>
+                    <p className="text-muted-foreground leading-snug">{result.message}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {keysExpanded && keyStatus && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 pt-1">

@@ -87,6 +87,105 @@ function resolveKey(def: KeyDef): { configured: boolean; source: string | null; 
   return { configured: false, source: null, masked: null };
 }
 
+type PingResult = { ok: boolean; status?: number; message: string };
+
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return await Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms)),
+  ]);
+}
+
+async function pingApollo(): Promise<PingResult> {
+  const key = process.env.APOLLO_API_KEY;
+  if (!key) return { ok: false, message: "APOLLO_API_KEY not set" };
+  try {
+    // /people/match with an obviously-empty query: authed requests return 200
+    // with an empty person; unauth returns 401. This does not consume credits
+    // when no match is found.
+    const res = await withTimeout(
+      fetch("https://api.apollo.io/api/v1/people/match", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Api-Key": key },
+        body: JSON.stringify({ reveal_personal_emails: false }),
+      }),
+      8000,
+    );
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, status: res.status, message: "Apollo rejected the key (401/403)" };
+    }
+    return { ok: true, status: res.status, message: "Apollo reachable and key accepted" };
+  } catch (err: any) {
+    return { ok: false, message: `Apollo ping failed: ${err?.message || "unknown error"}` };
+  }
+}
+
+async function pingCompaniesHouse(): Promise<PingResult> {
+  const key = process.env.COMPANIES_HOUSE_API_KEY;
+  if (!key) return { ok: false, message: "COMPANIES_HOUSE_API_KEY not set" };
+  try {
+    const auth = Buffer.from(`${key}:`).toString("base64");
+    // Company 00000006 is "MARINE AND GENERAL MUTUAL LIFE ASSURANCE SOCIETY",
+    // a long-defunct historic record that's guaranteed to exist.
+    const res = await withTimeout(
+      fetch("https://api.company-information.service.gov.uk/company/00000006", {
+        headers: { Authorization: `Basic ${auth}` },
+      }),
+      8000,
+    );
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, status: res.status, message: "Companies House rejected the key (401/403)" };
+    }
+    if (res.status === 429) {
+      return { ok: false, status: 429, message: "Companies House rate-limit hit" };
+    }
+    if (!res.ok) {
+      return { ok: false, status: res.status, message: `Companies House returned ${res.status}` };
+    }
+    return { ok: true, status: res.status, message: "Companies House reachable and key accepted" };
+  } catch (err: any) {
+    return { ok: false, message: `Companies House ping failed: ${err?.message || "unknown error"}` };
+  }
+}
+
+async function pingXero(req: Request): Promise<PingResult> {
+  const clientId = process.env.XERO_CLIENT_ID;
+  const clientSecret = process.env.XERO_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return { ok: false, message: "XERO_CLIENT_ID / XERO_CLIENT_SECRET not set" };
+  }
+  // Xero uses the OAuth2 authorisation-code flow — the client creds alone
+  // can't be used to call the API. Check that a user session has tokens and,
+  // if it does, hit /connections to verify they're live.
+  const session = req.session as any;
+  const tokens = session?.xeroTokens;
+  if (!tokens?.accessToken) {
+    return {
+      ok: false,
+      message: "Client credentials set. No Xero session yet — connect via Admin → Xero to test end-to-end.",
+    };
+  }
+  try {
+    const res = await withTimeout(
+      fetch("https://api.xero.com/connections", {
+        headers: { Authorization: `Bearer ${tokens.accessToken}`, Accept: "application/json" },
+      }),
+      8000,
+    );
+    if (res.status === 401) {
+      return { ok: false, status: 401, message: "Xero token expired or revoked — reconnect required" };
+    }
+    if (!res.ok) {
+      return { ok: false, status: res.status, message: `Xero returned ${res.status}` };
+    }
+    const json = (await res.json()) as Array<{ tenantName?: string }>;
+    const tenant = Array.isArray(json) && json[0]?.tenantName ? ` (${json[0].tenantName})` : "";
+    return { ok: true, status: res.status, message: `Xero connected${tenant}` };
+  } catch (err: any) {
+    return { ok: false, message: `Xero ping failed: ${err?.message || "unknown error"}` };
+  }
+}
+
 export function registerIntegrationsStatusRoutes(app: Express) {
   app.get("/api/integrations/status", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
     const items = KEYS.map((def) => {
@@ -117,5 +216,15 @@ export function registerIntegrationsStatusRoutes(app: Express) {
       items,
       grouped,
     });
+  });
+
+  // Live connectivity checks — actually hit each upstream API.
+  app.get("/api/integrations/ping", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    const [apollo, companiesHouse, xero] = await Promise.all([
+      pingApollo(),
+      pingCompaniesHouse(),
+      pingXero(req),
+    ]);
+    res.json({ apollo, companiesHouse, xero });
   });
 }
