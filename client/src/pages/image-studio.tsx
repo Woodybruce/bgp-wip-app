@@ -88,6 +88,48 @@ const BRAND_SECTORS = [
   "Other",
 ];
 
+const LONDON_SUBAREAS = [
+  "Mayfair",
+  "City of London",
+  "Canary Wharf",
+  "Soho",
+  "Fitzrovia",
+  "Covent Garden",
+  "Marylebone",
+  "Belgravia",
+  "Knightsbridge",
+  "Shoreditch",
+  "King's Cross",
+  "Westminster",
+  "Victoria",
+  "Paddington",
+  "Hammersmith",
+  "South Bank",
+  "Chelsea",
+  "Kensington",
+  "Battersea",
+  "Stratford",
+];
+
+const UK_CITIES = [
+  "Manchester",
+  "Birmingham",
+  "Leeds",
+  "Bristol",
+  "Edinburgh",
+  "Glasgow",
+  "Liverpool",
+  "Newcastle",
+  "Cambridge",
+  "Oxford",
+  "Brighton",
+  "Reading",
+  "Cardiff",
+  "Sheffield",
+  "Nottingham",
+  "Belfast",
+];
+
 export default function ImageStudio() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -707,8 +749,42 @@ export default function ImageStudio() {
                 value={areaFilter}
                 onChange={(e) => setAreaFilter(e.target.value)}
                 className="h-8 text-sm"
+                list="property-area-suggestions"
                 data-testid="input-area-filter"
               />
+              <datalist id="property-area-suggestions">
+                {LONDON_SUBAREAS.map((a) => (
+                  <option key={`london-${a}`} value={a}>{`London — ${a}`}</option>
+                ))}
+                {UK_CITIES.map((c) => (
+                  <option key={`uk-${c}`} value={c}>{c}</option>
+                ))}
+              </datalist>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {LONDON_SUBAREAS.slice(0, 6).map((a) => (
+                  <button
+                    key={`chip-${a}`}
+                    onClick={() => setAreaFilter(a)}
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors ${
+                      areaFilter === a
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    }`}
+                    data-testid={`chip-area-${a.toLowerCase().replace(/\s/g, "-")}`}
+                  >
+                    {a}
+                  </button>
+                ))}
+                {areaFilter && (
+                  <button
+                    onClick={() => setAreaFilter("")}
+                    className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-muted text-muted-foreground hover:bg-muted/80"
+                    data-testid="chip-area-clear"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
             </>
           )}
         </div>
