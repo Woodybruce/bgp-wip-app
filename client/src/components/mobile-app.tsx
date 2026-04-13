@@ -116,7 +116,7 @@ const formatFileSize = (bytes: number) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-type MoreSubTab = "tracker" | "news" | "docs";
+type MoreSubTab = "tracker" | "reqs" | "news" | "docs";
 
 function ActionCard({ action }: { action: ChatAction }) {
   const { toast } = useToast();
@@ -2732,6 +2732,26 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
     enabled: tab === "menu" && moreSubTab === "news",
   });
 
+  const { data: reqsLeasing, isLoading: reqsLeasingLoading } = useQuery<Array<{
+    id: string; name: string; status: string | null; groupName: string | null;
+    use: string[] | null; size: string[] | null; requirementLocations: string[] | null;
+    requirementDate: string | null; contacted: boolean | null; detailsSent: boolean | null;
+    viewing: boolean | null; shortlisted: boolean | null; underOffer: boolean | null;
+  }>>({
+    queryKey: ["/api/crm/requirements-leasing"],
+    enabled: tab === "menu" && moreSubTab === "reqs",
+  });
+
+  const { data: reqsInvestment, isLoading: reqsInvestmentLoading } = useQuery<Array<{
+    id: string; name: string; status: string | null; groupName: string | null;
+    targetSectors: string[] | null; targetLocations: string[] | null;
+    lotSizeMin: number | null; lotSizeMax: number | null;
+    targetYield: number | null;
+  }>>({
+    queryKey: ["/api/crm/requirements-investment"],
+    enabled: tab === "menu" && moreSubTab === "reqs",
+  });
+
   const filteredContacts = useMemo(() => {
     if (!contacts) return [];
     let result = contacts;
@@ -3029,7 +3049,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
       <div className="bg-[#1C1917] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] shrink-0">
         <div className="flex items-center justify-between px-5 pb-3">
           <h1 className="text-[22px] font-semibold tracking-tight">
-            {tab === "chats" ? "Chats" : tab === "ai" ? (showMobileMarketingFiles ? "Marketing" : "ChatBGP") : moreSubTab === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : moreSubTab === "news" ? "News" : "Docs"}
+            {tab === "chats" ? "Chats" : tab === "ai" ? (showMobileMarketingFiles ? "Marketing" : "ChatBGP") : moreSubTab === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : moreSubTab === "reqs" ? "Requirements" : moreSubTab === "news" ? "News" : "Docs"}
           </h1>
           <div className="flex items-center gap-2">
             {tab === "chats" && (
@@ -3336,14 +3356,14 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
           <div className="pb-4 flex flex-col h-full">
             <div className="px-4 pt-3 pb-2 shrink-0">
               <div className="flex bg-[#F5F5F4] rounded-xl p-1">
-                {(["tracker", "news", "docs"] as MoreSubTab[]).map(st => (
+                {(["tracker", "reqs", "news", "docs"] as MoreSubTab[]).map(st => (
                   <button
                     key={st}
                     onClick={() => { setMoreSubTab(st); if (st !== "tracker") { setTrackerStatusFilter(null); setTrackerSearch(""); setShowStatusDropdown(false); } }}
                     className={`flex-1 py-2 text-[13px] font-semibold rounded-lg transition-all ${moreSubTab === st ? "bg-white text-gray-900 shadow-sm" : "text-gray-500"}`}
                     data-testid={`more-tab-${st}`}
                   >
-                    {st === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : st === "news" ? "News" : "Docs"}
+                    {st === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : st === "reqs" ? "Reqs" : st === "news" ? "News" : "Docs"}
                   </button>
                 ))}
               </div>
@@ -3693,6 +3713,83 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {moreSubTab === "reqs" && (
+              <div className="flex-1 flex flex-col min-h-0">
+                <div className="px-4 pb-2 shrink-0">
+                  <div className="flex bg-[#F5F5F4] rounded-xl p-1 mb-3">
+                    <button className="flex-1 py-2 text-[13px] font-medium rounded-lg bg-white text-gray-900 shadow-sm">
+                      Leasing {reqsLeasing ? `(${reqsLeasing.length})` : ""}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto px-4">
+                  {(reqsLeasingLoading || reqsInvestmentLoading) && (
+                    <div className="flex items-center justify-center py-16">
+                      <div className="w-8 h-8 border-2 border-gray-300 border-t-black rounded-full animate-spin" />
+                    </div>
+                  )}
+                  {!reqsLeasingLoading && (
+                    <div className="space-y-2">
+                      {(!reqsLeasing || reqsLeasing.length === 0) ? (
+                        <div className="text-center py-16 text-[#A8A29E] text-[15px]">No requirements yet</div>
+                      ) : reqsLeasing.map(r => (
+                        <button
+                          key={r.id}
+                          onClick={() => navigate(`/requirements`)}
+                          className="w-full flex items-center gap-3 p-3.5 bg-white dark:bg-card border border-[#E7E5E4]/60 rounded-2xl text-left active:bg-[#F5F5F4]"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[14px] font-semibold text-[#1C1917] dark:text-white truncate tracking-tight">{r.name}</div>
+                            <div className="text-[12px] text-[#A8A29E] truncate mt-0.5">
+                              {[r.groupName, r.use?.join(", "), r.size?.join(", ")].filter(Boolean).join(" · ") || "No details"}
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                              {r.requirementLocations?.slice(0, 2).map((loc, i) => (
+                                <span key={i} className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-[#F5F5F4] text-[#78716C]">{loc}</span>
+                              ))}
+                              {r.contacted && <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">Contacted</span>}
+                              {r.viewing && <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-600">Viewing</span>}
+                              {r.underOffer && <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600">Under Offer</span>}
+                            </div>
+                          </div>
+                          <ChevronDown className="w-4 h-4 text-[#D6D3D1] -rotate-90 shrink-0" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!reqsInvestmentLoading && reqsInvestment && reqsInvestment.length > 0 && (
+                    <>
+                      <div className="text-[13px] font-semibold text-[#78716C] mt-5 mb-2 px-1">Investment Requirements</div>
+                      <div className="space-y-2">
+                        {reqsInvestment.map(r => (
+                          <button
+                            key={r.id}
+                            onClick={() => navigate(`/requirements`)}
+                            className="w-full flex items-center gap-3 p-3.5 bg-white dark:bg-card border border-[#E7E5E4]/60 rounded-2xl text-left active:bg-[#F5F5F4]"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[14px] font-semibold text-[#1C1917] dark:text-white truncate tracking-tight">{r.name}</div>
+                              <div className="text-[12px] text-[#A8A29E] truncate mt-0.5">
+                                {[r.groupName, r.targetSectors?.join(", ")].filter(Boolean).join(" · ") || "No details"}
+                              </div>
+                              {r.targetLocations && r.targetLocations.length > 0 && (
+                                <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                                  {r.targetLocations.slice(0, 3).map((loc, i) => (
+                                    <span key={i} className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-[#F5F5F4] text-[#78716C]">{loc}</span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <ChevronDown className="w-4 h-4 text-[#D6D3D1] -rotate-90 shrink-0" />
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             )}
 
