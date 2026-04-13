@@ -361,10 +361,17 @@ function AddinRouter() {
         <Switch>
           <Route path="/addin/outlook" component={AddinOutlook} />
           <Route path="/addin/excel" component={AddinExcel} />
+          <Route path="/addin/excel/:rest*" component={AddinExcel} />
           <Route path="/addin/word" component={AddinWord} />
           <Route path="/addin/teams" component={AddinTeams} />
           <Route path="/addin/powerpoint" component={AddinPowerPoint} />
           <Route path="/addin/adobe" component={AddinAdobe} />
+          <Route>
+            <div style={{ padding: 16, fontFamily: "sans-serif", fontSize: 12 }}>
+              <div style={{ fontWeight: 600, marginBottom: 8 }}>Add-in route not matched</div>
+              <div style={{ color: "#666" }}>path: {window.location.pathname}</div>
+            </div>
+          </Route>
         </Switch>
       </Suspense>
     </ErrorBoundary>

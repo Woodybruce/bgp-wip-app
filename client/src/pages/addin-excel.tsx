@@ -152,39 +152,74 @@ function AddinLogin({ onLogin }: { onLogin: (token: string, name: string) => voi
     setLoading(false);
   };
 
+  // Inline styles on the outer wrapper so the login screen is visible even
+  // if Tailwind CSS hasn't loaded (restricted Office task pane webviews can
+  // fail to fetch the /assets/*.css bundle).
   return (
-    <div className="flex flex-col items-center justify-center h-screen bg-background px-6">
-      <div className="w-full max-w-[280px]">
-        <div className="flex flex-col items-center mb-8">
-          <img src={bgpLogoBlack} alt="BGP" className="w-36 h-auto mb-4 opacity-90" />
-          <h2 className="text-base font-semibold tracking-tight">ChatBGP for Excel</h2>
-          <p className="text-[11px] text-muted-foreground mt-1">Sign in to get started</p>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight: "100vh",
+        width: "100%",
+        padding: "24px",
+        boxSizing: "border-box",
+        background: "#ffffff",
+        color: "#111111",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+      }}
+    >
+      <div style={{ width: "100%", maxWidth: 280 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 24 }}>
+          <img src={bgpLogoBlack} alt="BGP" style={{ width: 144, height: "auto", marginBottom: 16, opacity: 0.9 }} />
+          <h2 style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-0.01em", margin: 0 }}>ChatBGP for Excel</h2>
+          <p style={{ fontSize: 11, color: "#6b7280", marginTop: 4, margin: 0 }}>Sign in to get started</p>
         </div>
-        <form onSubmit={handleSubmit} className="space-y-2.5">
-          <Input
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <input
             type="text"
             placeholder="Email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="text-[13px] h-10 rounded-xl border-border/50 bg-muted/30 focus-visible:bg-background transition-colors"
             autoFocus
             data-testid="input-login-email"
+            style={{
+              fontSize: 13, height: 40, padding: "0 12px",
+              borderRadius: 12, border: "1px solid rgba(0,0,0,0.15)",
+              background: "rgba(0,0,0,0.03)", outline: "none",
+            }}
           />
-          <Input
+          <input
             type="password"
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="text-[13px] h-10 rounded-xl border-border/50 bg-muted/30 focus-visible:bg-background transition-colors"
             data-testid="input-login-password"
+            style={{
+              fontSize: 13, height: 40, padding: "0 12px",
+              borderRadius: 12, border: "1px solid rgba(0,0,0,0.15)",
+              background: "rgba(0,0,0,0.03)", outline: "none",
+            }}
           />
           {error && (
-            <p className="text-[11px] text-destructive px-1" data-testid="text-login-error">{error}</p>
+            <p style={{ fontSize: 11, color: "#b91c1c", padding: "0 4px", margin: 0 }} data-testid="text-login-error">{error}</p>
           )}
-          <Button type="submit" className="w-full text-[13px] h-10 rounded-xl font-medium" disabled={loading} data-testid="button-login-submit">
-            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
+          <button
+            type="submit"
+            disabled={loading}
+            data-testid="button-login-submit"
+            style={{
+              width: "100%", height: 40, borderRadius: 12, fontSize: 13, fontWeight: 500,
+              background: "#111", color: "#fff", border: "none", cursor: loading ? "wait" : "pointer",
+              display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+              opacity: loading ? 0.7 : 1,
+            }}
+          >
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
             Sign In
-          </Button>
+          </button>
         </form>
       </div>
     </div>
