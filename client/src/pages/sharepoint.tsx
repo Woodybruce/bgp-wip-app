@@ -22,9 +22,14 @@ import {
   CheckCircle2,
   AlertCircle,
   Star,
+  X,
+  Eye,
+  FileVideo,
+  FileArchive,
+  Presentation,
 } from "lucide-react";
 import type { User } from "@shared/schema";
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -38,6 +43,11 @@ interface DriveItem {
   file?: { mimeType: string };
   "@microsoft.graph.downloadUrl"?: string;
   parentReference?: { driveId: string };
+  thumbnails?: Array<{
+    large?: { url: string; width: number; height: number };
+    medium?: { url: string; width: number; height: number };
+    small?: { url: string; width: number; height: number };
+  }>;
 }
 
 interface TeamFolder {
@@ -50,10 +60,29 @@ interface TeamFolder {
 function getFileIcon(item: DriveItem) {
   if (item.folder) return FolderOpen;
   const name = item.name.toLowerCase();
-  if (name.endsWith(".xlsx") || name.endsWith(".csv")) return FileSpreadsheet;
-  if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg")) return FileImage;
-  if (name.endsWith(".doc") || name.endsWith(".docx") || name.endsWith(".pdf")) return FileText;
+  if (name.endsWith(".xlsx") || name.endsWith(".csv") || name.endsWith(".xls")) return FileSpreadsheet;
+  if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".gif") || name.endsWith(".webp") || name.endsWith(".svg")) return FileImage;
+  if (name.endsWith(".doc") || name.endsWith(".docx") || name.endsWith(".pdf") || name.endsWith(".txt")) return FileText;
+  if (name.endsWith(".pptx") || name.endsWith(".ppt")) return Presentation;
+  if (name.endsWith(".mp4") || name.endsWith(".mov") || name.endsWith(".avi")) return FileVideo;
+  if (name.endsWith(".zip") || name.endsWith(".rar") || name.endsWith(".7z")) return FileArchive;
   return File;
+}
+
+function isImageFile(item: DriveItem) {
+  const name = item.name.toLowerCase();
+  return name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".gif") || name.endsWith(".webp") || name.endsWith(".svg");
+}
+
+function isPreviewable(item: DriveItem) {
+  const name = item.name.toLowerCase();
+  return isImageFile(item) || name.endsWith(".pdf") || name.endsWith(".doc") || name.endsWith(".docx") || name.endsWith(".pptx") || name.endsWith(".ppt") || name.endsWith(".xlsx") || name.endsWith(".xls");
+}
+
+function getThumbnailUrl(item: DriveItem, driveId: string | null, size: "small" | "medium" | "large" = "medium") {
+  const itemDriveId = item.parentReference?.driveId || driveId;
+  if (!itemDriveId) return null;
+  return `/api/microsoft/files/thumbnail?driveId=${itemDriveId}&itemId=${item.id}&size=${size}`;
 }
 
 function formatSize(bytes?: number) {
@@ -84,10 +113,110 @@ const teamColors: Record<string, string> = {
   "Office / Corporate": "bg-gray-500/10 text-gray-600 dark:text-gray-400",
 };
 
+function FileThumbnail({ item, driveId, size = "small" }: { item: DriveItem; driveId: string | null; size?: "small" | "medium" | "large" }) {
+  const [imgError, setImgError] = useState(false);
+  const hasThumbnail = item.thumbnails && item.thumbnails.length > 0;
+  const thumbUrl = getThumbnailUrl(item, driveId, size);
+
+  if (!item.folder && (hasThumbnail || isImageFile(item)) && thumbUrl && !imgError) {
+    return (
+      <div className={`rounded-md overflow-hidden bg-muted flex items-center justify-center shrink-0 ${
+        size === "small" ? "w-10 h-10" : size === "medium" ? "w-16 h-16" : "w-24 h-24"
+      }`}>
+        <img
+          src={thumbUrl}
+          alt={item.name}
+          className="w-full h-full object-cover"
+          onError={() => setImgError(true)}
+          loading="lazy"
+        />
+      </div>
+    );
+  }
+
+  const Icon = getFileIcon(item);
+  return (
+    <div className={`rounded-md flex items-center justify-center shrink-0 ${
+      size === "small" ? "w-10 h-10" : size === "medium" ? "w-16 h-16" : "w-24 h-24"
+    } ${item.folder ? "bg-blue-500/10 text-blue-500" : "bg-muted text-muted-foreground"}`}>
+      <Icon className={size === "small" ? "w-4 h-4" : size === "medium" ? "w-6 h-6" : "w-8 h-8"} />
+    </div>
+  );
+}
+
+function FilePreviewPanel({ item, driveId, onClose }: { item: DriveItem; driveId: string | null; onClose: () => void }) {
+  const thumbUrl = getThumbnailUrl(item, driveId, "large");
+  const isImage = isImageFile(item);
+  const downloadUrl = item["@microsoft.graph.downloadUrl"] || `/api/microsoft/files/content?driveId=${item.parentReference?.driveId || driveId || ""}&itemId=${item.id}&fileName=${encodeURIComponent(item.name)}`;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-background rounded-xl shadow-2xl max-w-3xl w-full mx-4 max-h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-3.5 border-b">
+          <div className="flex items-center gap-3 min-w-0">
+            <FileThumbnail item={item} driveId={driveId} size="small" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold truncate">{item.name}</p>
+              <p className="text-xs text-muted-foreground">
+                {formatSize(item.size)} {item.lastModifiedDateTime && `· ${formatDate(item.lastModifiedDateTime)}`}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <a href={downloadUrl} download={item.name}>
+              <Button variant="ghost" size="icon" className="h-8 w-8" title="Download">
+                <Download className="w-4 h-4" />
+              </Button>
+            </a>
+            {item.webUrl && (
+              <a href={item.webUrl} target="_blank" rel="noopener noreferrer">
+                <Button variant="ghost" size="icon" className="h-8 w-8" title="Open in SharePoint">
+                  <ExternalLink className="w-4 h-4" />
+                </Button>
+              </a>
+            )}
+            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClose}>
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto p-6 flex items-center justify-center bg-muted/30 min-h-[300px]">
+          {isImage && thumbUrl ? (
+            <img
+              src={thumbUrl}
+              alt={item.name}
+              className="max-w-full max-h-[60vh] object-contain rounded-lg shadow-sm"
+            />
+          ) : item.webUrl ? (
+            <div className="text-center space-y-4">
+              <div className="w-20 h-20 rounded-2xl bg-muted flex items-center justify-center mx-auto">
+                {(() => { const Icon = getFileIcon(item); return <Icon className="w-10 h-10 text-muted-foreground" />; })()}
+              </div>
+              <div>
+                <p className="text-sm font-medium">{item.name}</p>
+                <p className="text-xs text-muted-foreground mt-1">{formatSize(item.size)}</p>
+              </div>
+              <a href={item.webUrl} target="_blank" rel="noopener noreferrer">
+                <Button size="sm" className="mt-2">
+                  <ExternalLink className="w-3.5 h-3.5 mr-1.5" />
+                  Open in SharePoint
+                </Button>
+              </a>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Preview not available</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ConnectPrompt() {
   const [connecting, setConnecting] = useState(false);
+  const { toast } = useToast();
 
-  const handleConnect = async () => {
+  const handleConnect = useCallback(async () => {
     setConnecting(true);
     const authWindow = window.open("about:blank", "_blank");
     try {
@@ -102,7 +231,43 @@ function ConnectPrompt() {
       if (authWindow) authWindow.close();
       setConnecting(false);
     }
-  };
+  }, []);
+
+  // Listen for OAuth completion from popup
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === "microsoft_connected") {
+        setConnecting(false);
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
+        toast({ title: "Connected to Microsoft 365", description: "Your SharePoint files are now available." });
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [toast]);
+
+  // Also poll status while connecting, in case postMessage doesn't work
+  useEffect(() => {
+    if (!connecting) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch("/api/microsoft/status", { credentials: "include", headers: getAuthHeaders() });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.connected) {
+            setConnecting(false);
+            queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
+            queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
+            toast({ title: "Connected to Microsoft 365", description: "Your SharePoint files are now available." });
+          }
+        }
+      } catch {}
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [connecting, toast]);
 
   return (
     <div className="p-4 sm:p-6">
@@ -123,11 +288,18 @@ function ConnectPrompt() {
             </p>
           </div>
           <Button onClick={handleConnect} disabled={connecting} data-testid="button-connect-microsoft">
-            {connecting ? "Sign-in tab opened..." : "Connect Microsoft 365"}
+            {connecting ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Waiting for sign-in...
+              </>
+            ) : (
+              "Connect Microsoft 365"
+            )}
           </Button>
           {connecting && (
             <p className="text-xs text-muted-foreground mt-2">
-              Complete sign-in in the new tab, then come back here and refresh the page.
+              Complete sign-in in the new tab — this page will update automatically.
             </p>
           )}
         </CardContent>
@@ -268,14 +440,17 @@ function TeamFoldersSection({
 export default function SharePoint() {
   const [folderStack, setFolderStack] = useState<{ id: string; name: string }[]>([]);
   const [driveId, setDriveId] = useState<string | null>(null);
+  const [previewItem, setPreviewItem] = useState<DriveItem | null>(null);
   const currentFolderId = folderStack.length > 0 ? folderStack[folderStack.length - 1].id : undefined;
+  const { toast } = useToast();
 
   const { data: status, isLoading: statusLoading } = useQuery<{ connected: boolean }>({
     queryKey: ["/api/microsoft/status"],
     queryFn: getQueryFn({ on401: "returnNull" }),
+    refetchInterval: 30000,
   });
 
-  const { data: filesData, isLoading: filesLoading } = useQuery<{ items: DriveItem[]; driveId: string | null }>({
+  const { data: filesData, isLoading: filesLoading, error: filesError } = useQuery<{ items: DriveItem[]; driveId: string | null }>({
     queryKey: ["/api/microsoft/files", currentFolderId || "root", driveId || ""],
     queryFn: async () => {
       const params = new URLSearchParams();
@@ -284,6 +459,10 @@ export default function SharePoint() {
       const qs = params.toString();
       const url = `/api/microsoft/files${qs ? `?${qs}` : ""}`;
       const res = await fetch(url, { credentials: "include", headers: getAuthHeaders() });
+      if (res.status === 401) {
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
+        throw new Error("Session expired — reconnecting...");
+      }
       if (!res.ok) throw new Error("Failed to fetch files");
       const data = await res.json();
       if (data.driveId && !driveId) {
@@ -292,9 +471,20 @@ export default function SharePoint() {
       return data;
     },
     enabled: status?.connected === true,
+    retry: 1,
   });
 
   const files = filesData?.items;
+
+  // Sort: folders first (alphabetical), then files by last modified (newest first)
+  const sortedFiles = files ? [...files].sort((a, b) => {
+    if (a.folder && !b.folder) return -1;
+    if (!a.folder && b.folder) return 1;
+    if (a.folder && b.folder) return a.name.localeCompare(b.name);
+    const dateA = a.lastModifiedDateTime ? new Date(a.lastModifiedDateTime).getTime() : 0;
+    const dateB = b.lastModifiedDateTime ? new Date(b.lastModifiedDateTime).getTime() : 0;
+    return dateB - dateA;
+  }) : [];
 
   if (statusLoading) {
     return (
@@ -324,6 +514,52 @@ export default function SharePoint() {
   const goBack = () => {
     setFolderStack(folderStack.slice(0, -1));
   };
+
+  const handleReconnect = async () => {
+    // First try: just refresh the status/token silently
+    queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
+
+    // Check if that worked
+    try {
+      const res = await fetch("/api/microsoft/status", { credentials: "include", headers: getAuthHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.connected) {
+          toast({ title: "Reconnected", description: "Microsoft 365 connection refreshed." });
+          return;
+        }
+      }
+    } catch {}
+
+    // If silent refresh didn't work, open a new auth popup
+    const authWindow = window.open("about:blank", "_blank");
+    try {
+      const res = await apiRequest("GET", "/api/microsoft/auth");
+      const data = await res.json();
+      if (authWindow) {
+        authWindow.location.href = data.authUrl;
+      }
+    } catch {
+      if (authWindow) authWindow.close();
+      toast({ title: "Reconnect failed", description: "Could not start Microsoft sign-in.", variant: "destructive" });
+    }
+  };
+
+  // Listen for OAuth completion from popup (for reconnect flow)
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === "microsoft_connected") {
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/files"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/microsoft/team-folders"] });
+        toast({ title: "Reconnected to Microsoft 365" });
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [toast]);
 
   const breadcrumb = [{ id: "root", name: "BGP SharePoint" }, ...folderStack];
 
@@ -358,13 +594,8 @@ export default function SharePoint() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={async () => {
-              await apiRequest("POST", "/api/microsoft/disconnect");
-              setDriveId(null);
-              setFolderStack([]);
-              queryClient.invalidateQueries({ queryKey: ["/api/microsoft/status"] });
-            }}
-            data-testid="button-disconnect-microsoft"
+            onClick={handleReconnect}
+            data-testid="button-reconnect-microsoft"
           >
             <RefreshCw className="w-3.5 h-3.5 mr-1" />
             Reconnect
@@ -388,35 +619,51 @@ export default function SharePoint() {
           <CardTitle className="text-sm font-semibold">
             {folderStack.length > 0 ? folderStack[folderStack.length - 1].name : "All Files"}
           </CardTitle>
+          {sortedFiles.length > 0 && (
+            <span className="text-xs text-muted-foreground">{sortedFiles.length} items</span>
+          )}
         </CardHeader>
         <CardContent className="p-0">
           {filesLoading ? (
             <div className="p-4 space-y-2">
-              {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="flex items-center gap-3 px-4 py-3">
+                  <Skeleton className="w-10 h-10 rounded-md shrink-0" />
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-4 w-48" />
+                    <Skeleton className="h-3 w-24" />
+                  </div>
+                </div>
+              ))}
             </div>
-          ) : !files || files.length === 0 ? (
+          ) : filesError ? (
+            <div className="p-8 text-center">
+              <AlertCircle className="w-10 h-10 text-destructive mx-auto mb-3" />
+              <p className="text-sm text-muted-foreground">Couldn't load files — try reconnecting</p>
+              <Button variant="outline" size="sm" className="mt-3" onClick={handleReconnect}>
+                <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                Reconnect
+              </Button>
+            </div>
+          ) : sortedFiles.length === 0 ? (
             <div className="p-8 text-center">
               <CloudOff className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
               <p className="text-sm text-muted-foreground">No files found in this folder</p>
             </div>
           ) : (
             <div className="divide-y">
-              {files.map((item) => {
-                const Icon = getFileIcon(item);
+              {sortedFiles.map((item) => {
+                const downloadUrl = item["@microsoft.graph.downloadUrl"] || `/api/microsoft/files/content?driveId=${item.parentReference?.driveId || driveId || ""}&itemId=${item.id}&fileName=${encodeURIComponent(item.name)}`;
                 return (
                   <div
                     key={item.id}
-                    className={`flex items-center gap-3 px-4 py-3 hover:bg-accent/50 ${
-                      item.folder ? "cursor-pointer" : ""
+                    className={`flex items-center gap-3 px-4 py-2.5 hover:bg-accent/50 transition-colors ${
+                      item.folder || isPreviewable(item) ? "cursor-pointer" : ""
                     }`}
-                    onClick={item.folder ? () => openFolder(item) : undefined}
+                    onClick={item.folder ? () => openFolder(item) : isPreviewable(item) ? () => setPreviewItem(item) : undefined}
                     data-testid={`file-item-${item.id}`}
                   >
-                    <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${
-                      item.folder ? "bg-blue-500/10 text-blue-500" : "bg-muted text-muted-foreground"
-                    }`}>
-                      <Icon className="w-4 h-4" />
-                    </div>
+                    <FileThumbnail item={item} driveId={driveId} size="small" />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{item.name}</p>
                       <p className="text-xs text-muted-foreground">
@@ -428,8 +675,19 @@ export default function SharePoint() {
                     </div>
                     {!item.folder && (
                       <div className="flex items-center gap-0.5 shrink-0">
+                        {isPreviewable(item) && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            title="Preview"
+                            onClick={(e) => { e.stopPropagation(); setPreviewItem(item); }}
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
                         <a
-                          href={item["@microsoft.graph.downloadUrl"] || `/api/microsoft/files/content?driveId=${item.parentReference?.driveId || driveId || ""}&itemId=${item.id}&fileName=${encodeURIComponent(item.name)}`}
+                          href={downloadUrl}
                           download={item.name}
                           onClick={(e) => e.stopPropagation()}
                         >
@@ -458,6 +716,10 @@ export default function SharePoint() {
           )}
         </CardContent>
       </Card>
+
+      {previewItem && (
+        <FilePreviewPanel item={previewItem} driveId={driveId} onClose={() => setPreviewItem(null)} />
+      )}
     </div>
   );
 }

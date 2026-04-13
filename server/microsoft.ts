@@ -327,7 +327,10 @@ export function setupMicrosoftRoutes(app: Express) {
         console.log("MSAL cache saved to database for user", req.session.userId);
       }
 
-      res.redirect("/?microsoft_connected=true");
+      res.send(`<html><body><script>
+        if (window.opener) { window.opener.postMessage({ type: "microsoft_connected" }, "*"); window.close(); }
+        else { window.location.href = "/sharepoint"; }
+      </script></body></html>`);
     } catch (err: any) {
       console.error("Microsoft callback token exchange error:", err.message || err);
       res.redirect("/?microsoft_error=" + encodeURIComponent(err.message || "token_exchange_failed"));
@@ -485,7 +488,7 @@ export function setupMicrosoftRoutes(app: Express) {
         }
       }
 
-      const response = await fetch(url + "?$top=100&$orderby=name&$select=id,name,size,lastModifiedDateTime,webUrl,folder,file,parentReference", {
+      const response = await fetch(url + "?$top=100&$orderby=name&$select=id,name,size,lastModifiedDateTime,webUrl,folder,file,parentReference&$expand=thumbnails", {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -534,6 +537,32 @@ export function setupMicrosoftRoutes(app: Express) {
       res.send(buffer);
     } catch (err: any) {
       console.error("File content error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/microsoft/files/thumbnail", async (req: Request, res: Response) => {
+    const token = await getValidMsToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Not connected to Microsoft 365" });
+    }
+    try {
+      const driveId = req.query.driveId as string;
+      const itemId = req.query.itemId as string;
+      const size = (req.query.size as string) || "large";
+      if (!driveId || !itemId) return res.status(400).json({ message: "driveId and itemId required" });
+      const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/thumbnails/0/${size}/content`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" });
+      if (!r.ok) {
+        return res.status(r.status).json({ error: `Thumbnail not available` });
+      }
+      const contentType = r.headers.get("content-type") || "image/jpeg";
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=300");
+      const buffer = Buffer.from(await r.arrayBuffer());
+      res.send(buffer);
+    } catch (err: any) {
+      console.error("Thumbnail error:", err.message);
       res.status(500).json({ error: err.message });
     }
   });

@@ -231,8 +231,8 @@ export function AppSidebar() {
               <span className="text-[10px] text-sidebar-foreground/50">Powered by BGP</span>
             </div>
           ) : (
-            <div className="cursor-pointer overflow-hidden h-16 flex items-center justify-center">
-              <img src={bgpLogoWhite} alt="Bruce Gillingham Pollard" className="w-full scale-[2] object-cover" />
+            <div className="cursor-pointer overflow-hidden h-16 flex items-center justify-center px-3">
+              <img src={bgpLogoWhite} alt="Bruce Gillingham Pollard" className="w-full h-auto max-h-12 object-contain" />
             </div>
           )}
         </Link>
