@@ -5,6 +5,10 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -815,6 +819,8 @@ export default function InvestmentTrackerPage() {
   const [chartsExpanded, setChartsExpanded] = useState(false);
   const [filesItem, setFilesItem] = useState<InvestmentTracker | null>(null);
   const [page, setPage] = useState(1);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const PAGE_SIZE = 50;
   const { toast } = useToast();
 
@@ -994,6 +1000,48 @@ export default function InvestmentTrackerPage() {
   useEffect(() => {
     setPage(1);
   }, [search, statusFilter, assetClassFilter, tenureFilter, agentFilter, boardType]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [boardType]);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = (checked: boolean) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (checked) {
+        for (const item of paginatedData) next.add(item.id);
+      } else {
+        for (const item of paginatedData) next.delete(item.id);
+      }
+      return next;
+    });
+  };
+
+  const bulkDelete = async () => {
+    const ids = Array.from(selectedIds);
+    await Promise.all(ids.map(id => apiRequest("DELETE", `/api/investment-tracker/${id}`).catch(() => null)));
+    queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
+    setSelectedIds(new Set());
+    setBulkDeleteOpen(false);
+    toast({ title: `Deleted ${ids.length} asset${ids.length === 1 ? "" : "s"}` });
+  };
+
+  const bulkSetStatus = async (status: string) => {
+    const ids = Array.from(selectedIds);
+    await Promise.all(ids.map(id => apiRequest("PATCH", `/api/investment-tracker/${id}`, { status }).catch(() => null)));
+    queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
+    setSelectedIds(new Set());
+    toast({ title: `Updated ${ids.length} asset${ids.length === 1 ? "" : "s"} to ${status}` });
+  };
 
   const statusSummary = useMemo(() => {
     const c: Record<string, number> = {};
@@ -1312,12 +1360,64 @@ export default function InvestmentTrackerPage() {
       )}
 
       {/* Table */}
-      
+
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-primary/5 border border-primary/20 rounded-md shrink-0" data-testid="bulk-actions-bar">
+          <span className="text-xs font-medium" data-testid="text-selected-count">
+            {selectedIds.size} selected
+          </span>
+          <div className="flex-1" />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-7 text-xs gap-1" data-testid="button-bulk-status">
+                Change status
+                <ChevronDown className="h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {STATUSES.map(s => (
+                <DropdownMenuItem key={s} onClick={() => bulkSetStatus(s)} data-testid={`bulk-status-${s.toLowerCase().replace(/\s/g, "-")}`}>
+                  <span className={`inline-block w-2 h-2 rounded-full mr-2 ${STATUS_LABEL_COLORS[s]}`} />
+                  {s}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs text-red-600 hover:text-red-700 gap-1"
+            onClick={() => setBulkDeleteOpen(true)}
+            data-testid="button-bulk-delete"
+          >
+            <Trash2 className="h-3 w-3" />
+            Delete
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => setSelectedIds(new Set())}
+            data-testid="button-bulk-clear"
+          >
+            Clear
+          </Button>
+        </div>
+      )}
+
       <Card className="flex-1 min-h-0 overflow-hidden">
         <ScrollableTable minWidth={2100}>
             <Table className="table-fixed">
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-[36px] px-2">
+                    <Checkbox
+                      checked={paginatedData.length > 0 && paginatedData.every(i => selectedIds.has(i.id))}
+                      onCheckedChange={(c) => toggleSelectAllVisible(!!c)}
+                      aria-label="Select all"
+                      data-testid="checkbox-select-all"
+                    />
+                  </TableHead>
                   <TableHead className="w-[180px]">Asset</TableHead>
                   <FilterHead label="Asset Class" value={assetClassFilter} options={ASSET_CLASSES} onChange={setAssetClassFilter} colorMap={ASSET_CLASS_COLORS} className="w-[90px]" />
                   <FilterHead label="Tenure" value={tenureFilter} options={TENURES} onChange={setTenureFilter} className="w-[70px]" />
@@ -1352,14 +1452,22 @@ export default function InvestmentTrackerPage() {
               <TableBody>
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={boardType === "Purchases" ? 20 : 19} className="text-center py-8 text-muted-foreground text-sm">
+                    <TableCell colSpan={boardType === "Purchases" ? 21 : 20} className="text-center py-8 text-muted-foreground text-sm">
                       {boardItems.length === 0 ? `No ${boardType.toLowerCase()} tracked yet. Click 'Add Asset' to start.` : "No assets match your filters."}
                     </TableCell>
                   </TableRow>
                 )}
                 {paginatedData.map(item => (
-                  <TableRow key={item.id} className="text-xs" data-testid={`row-asset-${item.id}`}>
-                    <TableCell className="px-1.5 py-1 font-medium">
+                  <TableRow key={item.id} className={`text-xs ${selectedIds.has(item.id) ? "bg-primary/5" : ""}`} data-testid={`row-asset-${item.id}`}>
+                    <TableCell className="px-2 py-1.5">
+                      <Checkbox
+                        checked={selectedIds.has(item.id)}
+                        onCheckedChange={() => toggleSelect(item.id)}
+                        aria-label={`Select ${item.assetName}`}
+                        data-testid={`checkbox-select-${item.id}`}
+                      />
+                    </TableCell>
+                    <TableCell className="px-2 py-1.5 font-medium">
                       <div>
                         <InlineText
                           value={item.assetName}
@@ -1371,7 +1479,7 @@ export default function InvestmentTrackerPage() {
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="px-1.5 py-1">
+                    <TableCell className="px-2 py-1.5">
                       <InlineLabelSelect
                         value={item.assetType || ""}
                         options={ASSET_CLASSES}
@@ -1379,7 +1487,7 @@ export default function InvestmentTrackerPage() {
                         onSave={v => inlineUpdate(item.id, "assetType", v || null)}
                       />
                     </TableCell>
-                    <TableCell className="px-1.5 py-1">
+                    <TableCell className="px-2 py-1.5">
                       <InlineSelect
                         value={item.tenure || ""}
                         options={TENURES}
@@ -1387,7 +1495,7 @@ export default function InvestmentTrackerPage() {
                         className="text-xs"
                       />
                     </TableCell>
-                    <TableCell className="px-1.5 py-1 text-right font-medium">
+                    <TableCell className="px-2 py-1.5 text-right font-medium">
                       <InlineNumber
                         value={item.guidePrice}
                         onSave={v => inlineUpdate(item.id, "guidePrice", v)}
@@ -1396,7 +1504,7 @@ export default function InvestmentTrackerPage() {
                         className="text-xs text-right"
                       />
                     </TableCell>
-                    <TableCell className="px-1.5 py-1 text-right">
+                    <TableCell className="px-2 py-1.5 text-right">
                       <InlineNumber
                         value={item.niy}
                         onSave={v => inlineUpdate(item.id, "niy", v)}
@@ -1405,7 +1513,7 @@ export default function InvestmentTrackerPage() {
                         className="text-xs text-right"
                       />
                     </TableCell>
-                    <TableCell className="px-1.5 py-1 text-right">
+                    <TableCell className="px-2 py-1.5 text-right">
                       <InlineNumber
                         value={item.sqft}
                         onSave={v => inlineUpdate(item.id, "sqft", v)}
@@ -1413,7 +1521,7 @@ export default function InvestmentTrackerPage() {
                         className="text-xs text-right"
                       />
                     </TableCell>
-                    <TableCell className="px-1.5 py-1 text-right">
+                    <TableCell className="px-2 py-1.5 text-right">
                       <InlineNumber
                         value={item.currentRent}
                         onSave={v => inlineUpdate(item.id, "currentRent", v)}
@@ -1422,7 +1530,7 @@ export default function InvestmentTrackerPage() {
                         className="text-xs text-right"
                       />
                     </TableCell>
-                    <TableCell className="px-1.5 py-1">
+                    <TableCell className="px-2 py-1.5">
                       <div className="space-y-0.5">
                         <CrmPicker
                           items={companyItems}
@@ -1474,7 +1582,7 @@ export default function InvestmentTrackerPage() {
                     </TableCell>
                     {boardType === "Purchases" ? (
                       <>
-                        <TableCell className="px-1.5 py-1">
+                        <TableCell className="px-2 py-1.5">
                           <div className="space-y-0.5">
                             <CrmPicker
                               items={companyItems}
@@ -1524,7 +1632,7 @@ export default function InvestmentTrackerPage() {
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell className="px-1.5 py-1">
+                        <TableCell className="px-2 py-1.5">
                           <InlineDate
                             value={item.bidDeadline || ""}
                             onSave={v => inlineUpdate(item.id, "bidDeadline", v || null)}
@@ -1534,7 +1642,7 @@ export default function InvestmentTrackerPage() {
                       </>
                     ) : (
                       <>
-                        <TableCell className="px-1.5 py-1">
+                        <TableCell className="px-2 py-1.5">
                           <CrmPicker
                             items={companyItems}
                             value={item.buyer || ""}
@@ -1544,7 +1652,7 @@ export default function InvestmentTrackerPage() {
                             testId={`picker-buyer-${item.id}`}
                           />
                         </TableCell>
-                        <TableCell className="px-1.5 py-1">
+                        <TableCell className="px-2 py-1.5">
                           <InlineDate
                             value={item.marketingDate || ""}
                             onSave={v => inlineUpdate(item.id, "marketingDate", v || null)}
@@ -1553,7 +1661,7 @@ export default function InvestmentTrackerPage() {
                         </TableCell>
                       </>
                     )}
-                    <TableCell className="px-1.5 py-1 text-right">
+                    <TableCell className="px-2 py-1.5 text-right">
                       <InlineNumber
                         value={item.fee}
                         onSave={v => inlineUpdate(item.id, "fee", v)}
@@ -1562,7 +1670,7 @@ export default function InvestmentTrackerPage() {
                         className="text-xs text-right"
                       />
                     </TableCell>
-                    <TableCell className="px-1.5 py-1">
+                    <TableCell className="px-2 py-1.5">
                       <InlineLabelSelect
                         value={item.status || "Reporting"}
                         options={STATUSES}
@@ -1570,7 +1678,7 @@ export default function InvestmentTrackerPage() {
                         onSave={v => inlineUpdate(item.id, "status", v)}
                       />
                     </TableCell>
-                    <TableCell className="px-1.5 py-1">
+                    <TableCell className="px-2 py-1.5">
                       <InlineAgentMultiSelect
                         value={item.agentUserIds || []}
                         users={bgpUsers}
@@ -1579,27 +1687,27 @@ export default function InvestmentTrackerPage() {
                         colorMap={userIdColorMap}
                       />
                     </TableCell>
-                    <TableCell className="px-1 py-1 text-center">
+                    <TableCell className="px-2 py-1.5 text-center">
                       <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-0.5 px-1" onClick={() => setFilesItem(item)} data-testid={`button-files-${item.id}`}>
                         <Paperclip className="w-3 h-3" />{marketingFileCounts[item.id] || 0}
                       </Button>
                     </TableCell>
-                    <TableCell className="px-1 py-1 text-center">
+                    <TableCell className="px-2 py-1.5 text-center">
                       <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-0.5 px-1" onClick={() => setViewingsItem(item)} data-testid={`button-viewings-${item.id}`}>
                         <Eye className="w-3 h-3" />{counts?.viewings[item.id] || 0}
                       </Button>
                     </TableCell>
-                    <TableCell className="px-1 py-1 text-center">
+                    <TableCell className="px-2 py-1.5 text-center">
                       <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-0.5 px-1" onClick={() => setOffersItem(item)} data-testid={`button-offers-${item.id}`}>
                         <FileText className="w-3 h-3" />{counts?.offers[item.id] || 0}
                       </Button>
                     </TableCell>
-                    <TableCell className="px-1 py-1 text-center">
+                    <TableCell className="px-2 py-1.5 text-center">
                       <Button variant="ghost" size="sm" className="h-6 text-[10px] gap-0.5 px-1" onClick={() => setDistItem(item)} data-testid={`button-sentto-${item.id}`}>
                         <Send className="w-3 h-3" />{counts?.distributions[item.id] || 0}
                       </Button>
                     </TableCell>
-                    <TableCell className="px-1.5 py-1">
+                    <TableCell className="px-2 py-1.5">
                       <InlineText
                         value={item.notes || ""}
                         onSave={(val) => inlineUpdate(item.id, "notes", val || null)}
@@ -1608,7 +1716,7 @@ export default function InvestmentTrackerPage() {
                         maxLines={2}
                       />
                     </TableCell>
-                    <TableCell className="px-1.5 py-1">
+                    <TableCell className="px-2 py-1.5">
                       {item.dealId ? (
                         <div className="flex items-center gap-1">
                           <a href={`/deals/${item.dealId}`} className="text-[10px] text-blue-600 hover:underline truncate max-w-[80px]" data-testid={`link-deal-${item.id}`}>
@@ -1629,7 +1737,7 @@ export default function InvestmentTrackerPage() {
                         </div>
                       )}
                     </TableCell>
-                    <TableCell className="px-1 py-1">
+                    <TableCell className="px-2 py-1.5">
                       <div className="flex gap-0.5">
                         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setEditItem(item); setForm(itemToForm(item)); }} data-testid={`button-edit-${item.id}`}>
                           <Pencil className="w-3 h-3" />
@@ -1883,6 +1991,20 @@ export default function InvestmentTrackerPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteItem(null)}>Cancel</Button>
             <Button variant="destructive" onClick={() => deleteItem && deleteMutation.mutate(deleteItem.id)} data-testid="button-confirm-delete">Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Delete confirm */}
+      <Dialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {selectedIds.size} asset{selectedIds.size === 1 ? "" : "s"}?</DialogTitle>
+            <DialogDescription>This cannot be undone.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDeleteOpen(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={bulkDelete} data-testid="button-confirm-bulk-delete">Delete {selectedIds.size}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
