@@ -642,6 +642,27 @@ export default function KycClouseau() {
     });
   }, [propertyContext]);
 
+  // Auto-run when coming from a cross-link (Compliance Board → Investigate).
+  // Reads ?run=<CHnumber>&name=<name> once per mount.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const run = params.get("run");
+    const name = params.get("name");
+    if (run || name) {
+      investigateMutation.mutate({
+        companyNumber: run || undefined,
+        companyName: name || undefined,
+      } as any);
+      // Strip the run/name params so refresh doesn't fire again (keep tab)
+      params.delete("run");
+      params.delete("name");
+      const clean = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${clean ? "?" + clean : ""}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleIndividualSearch = useCallback(() => {
     if (!individualName.trim()) return;
     const companyNums = individualCompanyNumbers
