@@ -942,7 +942,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateCrmDeal(id: string, updates: Partial<InsertCrmDeal>): Promise<CrmDeal> {
-    const [d] = await db.update(crmDeals).set({ ...updates, updatedAt: new Date() }).where(eq(crmDeals.id, id)).returning();
+    // Coerce any date-string values to Date objects for Drizzle timestamp columns
+    const tsFields = ["kycApprovedAt", "hotsCompletedAt", "amlEddCompletedAt", "amlIdVerifiedAt", "amlSarFiledAt"];
+    const coerced: any = { ...updates };
+    for (const f of tsFields) {
+      if (coerced[f] && typeof coerced[f] === "string") {
+        coerced[f] = new Date(coerced[f]);
+      }
+    }
+    const [d] = await db.update(crmDeals).set({ ...coerced, updatedAt: new Date() }).where(eq(crmDeals.id, id)).returning();
     return d;
   }
 
