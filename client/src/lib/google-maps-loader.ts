@@ -15,8 +15,9 @@ async function fetchKey(): Promise<string> {
     const res = await fetch("/api/config/maps-key", { credentials: "include" });
     if (res.ok) {
       const data = await res.json();
-      cachedKey = data.key || "";
-      return cachedKey;
+      const key: string = data.key || "";
+      cachedKey = key;
+      return key;
     }
   } catch {}
   cachedKey = "";

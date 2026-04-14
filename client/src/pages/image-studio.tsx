@@ -47,6 +47,7 @@ import {
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
+import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { Checkbox } from "@/components/ui/checkbox";
 
 const CATEGORIES = [
@@ -194,10 +195,14 @@ export default function ImageStudio() {
   const [uploadBrandSector, setUploadBrandSector] = useState("");
 
   const [streetViewAddress, setStreetViewAddress] = useState("");
+  const [streetViewLat, setStreetViewLat] = useState<number | undefined>(undefined);
+  const [streetViewLng, setStreetViewLng] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     if (linkedAddress) {
       setStreetViewAddress(linkedAddress);
+      setStreetViewLat(undefined);
+      setStreetViewLng(undefined);
     }
     if (linkedProperty) {
       setSearchQuery(linkedProperty);
@@ -206,7 +211,6 @@ export default function ImageStudio() {
   const [streetViewHeading, setStreetViewHeading] = useState(0);
   const [streetViewPitch, setStreetViewPitch] = useState(0);
   const [streetViewFov, setStreetViewFov] = useState(90);
-  const [streetViewPreviewUrl, setStreetViewPreviewUrl] = useState("");
   const [streetViewEnhanceAi, setStreetViewEnhanceAi] = useState(true);
 
   const [stockQuery, setStockQuery] = useState("");
@@ -587,24 +591,17 @@ export default function ImageStudio() {
     [uploadCategory, uploadArea, uploadTags, uploadAddress, uploadBrandName, uploadBrandSector, uploadPropertyType, uploadMutation]
   );
 
-  const handleStreetViewPreview = useCallback(() => {
-    if (!streetViewAddress.trim()) return;
-    const params = new URLSearchParams({
-      location: streetViewAddress,
-      heading: String(streetViewHeading),
-      pitch: String(streetViewPitch),
-      fov: String(streetViewFov),
-    });
-    setStreetViewPreviewUrl(`/api/image-studio/streetview-proxy?${params}`);
-  }, [streetViewAddress, streetViewHeading, streetViewPitch, streetViewFov]);
-
   const captureStreetViewMutation = useMutation({
     mutationFn: async () => {
       const endpoint = streetViewEnhanceAi
         ? "/api/image-studio/capture-and-enhance"
         : "/api/image-studio/capture-streetview";
+      const location =
+        typeof streetViewLat === "number" && typeof streetViewLng === "number"
+          ? `${streetViewLat},${streetViewLng}`
+          : streetViewAddress;
       const res = await apiRequest("POST", endpoint, {
-        location: streetViewAddress,
+        location,
         heading: streetViewHeading,
         pitch: streetViewPitch,
         fov: streetViewFov,
@@ -1728,7 +1725,7 @@ export default function ImageStudio() {
       </Dialog>
 
       <Dialog open={streetViewDialogOpen} onOpenChange={setStreetViewDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <MapPin className="h-5 w-5" /> Google Street View Capture
@@ -1738,35 +1735,41 @@ export default function ImageStudio() {
             <div>
               <Label>Property Address</Label>
               <AddressAutocomplete
-                value={streetViewAddress ? { formatted: streetViewAddress, placeId: "" } : null}
+                value={
+                  streetViewAddress
+                    ? { formatted: streetViewAddress, placeId: "", lat: streetViewLat, lng: streetViewLng }
+                    : null
+                }
                 onChange={(addr) => {
                   setStreetViewAddress(addr?.formatted || "");
-                  setStreetViewPreviewUrl("");
+                  setStreetViewLat(addr?.lat);
+                  setStreetViewLng(addr?.lng);
+                  setStreetViewHeading(0);
+                  setStreetViewPitch(0);
+                  setStreetViewFov(90);
                 }}
                 placeholder="Start typing an address..."
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Powered by Google Places. Google picks the best camera angle for the selected location.
+                Drag the panorama to aim the camera, then save. We capture exactly the view you see.
               </p>
             </div>
-            <Button
-              onClick={handleStreetViewPreview}
-              className="w-full"
-              disabled={!streetViewAddress.trim()}
-              data-testid="button-streetview-preview"
-            >
-              <Camera className="h-4 w-4 mr-2" /> Preview Street View
-            </Button>
-            {streetViewPreviewUrl && (
-              <div className="space-y-3">
-                <div className="relative rounded-lg overflow-hidden border bg-muted">
-                  <img
-                    src={streetViewPreviewUrl}
-                    alt="Street View Preview"
-                    className="w-full h-auto"
-                    data-testid="img-streetview-preview"
-                  />
-                </div>
+            {streetViewAddress.trim() && (
+              <>
+                <StreetViewPanoramaCapture
+                  address={streetViewAddress}
+                  lat={streetViewLat}
+                  lng={streetViewLng}
+                  onPovChange={(pov) => {
+                    setStreetViewHeading(pov.heading);
+                    setStreetViewPitch(pov.pitch);
+                    setStreetViewFov(pov.fov);
+                  }}
+                  onPositionChange={(pos) => {
+                    setStreetViewLat(pos.lat);
+                    setStreetViewLng(pos.lng);
+                  }}
+                />
                 <label className="flex items-start gap-2 rounded-md border bg-muted/40 p-3 text-sm cursor-pointer">
                   <Checkbox
                     checked={streetViewEnhanceAi}
@@ -1796,7 +1799,7 @@ export default function ImageStudio() {
                   )}
                   {streetViewEnhanceAi ? "Save + AI Enhance" : "Save to Library"}
                 </Button>
-              </div>
+              </>
             )}
           </div>
         </DialogContent>

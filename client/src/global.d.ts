@@ -47,11 +47,34 @@ declare namespace google {
       constructor(sw?: LatLng, ne?: LatLng);
       extend(point: LatLng | { lat: number; lng: number }): LatLngBounds;
     }
+    interface LatLngLiteral {
+      lat: number;
+      lng: number;
+    }
     interface MapsEventListener {
       remove(): void;
     }
     interface MapMouseEvent {
       latLng: LatLng | null;
+    }
+    class StreetViewPanorama {
+      constructor(container: HTMLElement, opts?: any);
+      setPosition(position: LatLng | LatLngLiteral): void;
+      getPosition(): LatLng | null;
+      setPov(pov: { heading: number; pitch: number }): void;
+      getPov(): { heading?: number; pitch?: number };
+      setZoom(zoom: number): void;
+      getZoom(): number;
+      addListener(event: string, handler: (...args: any[]) => void): MapsEventListener;
+    }
+    class Geocoder {
+      geocode(
+        request: { address?: string; location?: LatLng | LatLngLiteral },
+        callback: (
+          results: { geometry: { location: LatLng } }[] | null,
+          status: string,
+        ) => void,
+      ): void;
     }
     namespace places {
       class AutocompleteService {

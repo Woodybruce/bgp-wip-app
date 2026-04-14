@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { MapPin, X, Loader2, ExternalLink } from "lucide-react";
+import { loadGoogleMaps } from "@/lib/google-maps-loader";
 
 interface AddressResult {
   formatted: string;
@@ -19,62 +20,6 @@ interface AddressAutocompleteProps {
   onChange: (address: AddressResult | null) => void;
   placeholder?: string;
   className?: string;
-}
-
-let googleScriptLoaded = false;
-let googleScriptLoading = false;
-let googleScriptFailed = false;
-let loadCallbacks: (() => void)[] = [];
-let cachedApiKey: string | null = null;
-
-async function fetchMapsKey(): Promise<string> {
-  if (cachedApiKey !== null) return cachedApiKey;
-  try {
-    const res = await fetch("/api/config/maps-key", { credentials: "include" });
-    if (res.ok) {
-      const data = await res.json();
-      cachedApiKey = data.key || "";
-      return cachedApiKey;
-    }
-  } catch {}
-  cachedApiKey = "";
-  return "";
-}
-
-function loadGoogleMapsScript(): Promise<boolean> {
-  return new Promise(async (resolve) => {
-    if (googleScriptLoaded) { resolve(true); return; }
-    if (googleScriptFailed) { resolve(false); return; }
-
-    loadCallbacks.push(() => resolve(googleScriptLoaded));
-    if (googleScriptLoading) return;
-    googleScriptLoading = true;
-
-    const apiKey = await fetchMapsKey();
-    if (!apiKey) {
-      googleScriptLoading = false;
-      googleScriptFailed = true;
-      loadCallbacks.forEach((cb) => cb());
-      loadCallbacks = [];
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
-    script.async = true;
-    script.onload = () => {
-      googleScriptLoaded = true;
-      loadCallbacks.forEach((cb) => cb());
-      loadCallbacks = [];
-    };
-    script.onerror = () => {
-      googleScriptLoading = false;
-      googleScriptFailed = true;
-      loadCallbacks.forEach((cb) => cb());
-      loadCallbacks = [];
-    };
-    document.head.appendChild(script);
-  });
 }
 
 function useServerAddressSearch() {
@@ -122,7 +67,7 @@ export function AddressAutocomplete({
   const serverSearch = useServerAddressSearch();
 
   useEffect(() => {
-    loadGoogleMapsScript().then((loaded) => {
+    loadGoogleMaps().then((loaded) => {
       setUseGoogle(loaded);
       setScriptChecked(true);
       if (loaded) {
