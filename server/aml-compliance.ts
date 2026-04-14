@@ -186,6 +186,153 @@ Stop the transaction. Notify the MLRO. Do NOT release any assets or payment alre
       { question: "If you discover sanctions apply to a deal in progress, frozen assets:", options: ["Can be released to the client's solicitor", "Must remain frozen until OFSI licence", "Can be returned to the purchaser", "Can be paid into a third-party escrow"], correct: 1 },
     ],
   },
+  {
+    title: "Source of Funds & Source of Wealth — Practical Verification",
+    description: "How to evidence and challenge the money story on a BGP deal.",
+    estimatedMinutes: 12,
+    contentMarkdown: `## Why SoF and SoW are not the same
+- **Source of Funds (SoF)** — the specific pot paying *this* transaction. e.g. "£1.4m from the sale of a flat in Fulham in Feb 2026, sitting in Barclays account ending 4417."
+- **Source of Wealth (SoW)** — the cumulative story of how the client became wealthy overall. Business sale, inheritance, senior role in a listed firm, trust distributions.
+
+Both are required on higher-risk deals (Reg 33). SoF alone without SoW is a red flag.
+
+## Evidence that stands up
+**Good:**
+- Bank statement ≤3 months old, full PDF (not screenshot), showing the balance that will fund the deal.
+- Solicitor's completion statement for a property sale feeding this one.
+- Share-sale SPA + broker note confirming proceeds received.
+- Trust deed + recent trustee distribution letter.
+- Grant of probate + executor statement for inheritance.
+
+**Not good enough:**
+- "I'll show you proof at exchange." (never)
+- Screenshot of a mobile banking app with no account number visible.
+- A statement from an account that doesn't match the named purchaser.
+- Cryptocurrency holdings without a fiat on-ramp trail.
+- Loan from a family member without the lender's own SoW.
+
+## Third-party funders
+If the money comes from anyone other than the named purchaser, that third party is a counterparty too. You CDD them. Same standard. No exceptions.
+
+## BGP rule of thumb
+If the size of the deal makes sense against the SoW story, and the SoF evidence traces cleanly into the purchaser's account in the last 12 months, you're usually safe. If either side is vague, escalate.`,
+    quiz: [
+      { question: "Source of Wealth is:", options: ["The specific account paying this transaction", "The overall story of how the client got wealthy", "Required only for PEPs", "Only needed if the deal exceeds £10m"], correct: 1 },
+      { question: "A purchaser says the £2m deposit will be wired from their brother's account. You:", options: ["Accept — family money is standard", "CDD the brother as a separate counterparty", "Ask for a signed gift letter and proceed", "Refuse unless it comes from the purchaser's own account"], correct: 1, explanation: "Third-party funders are their own KYC subject — same standard applies." },
+      { question: "A client offers a mobile-banking screenshot as SoF. You should:", options: ["Accept it — it's a bank statement", "Ask for a full PDF statement with account details", "Ask them to email their banker", "Proceed if the balance matches the deal"], correct: 1 },
+      { question: "Cryptocurrency as a source of funds requires:", options: ["Nothing extra — crypto is legitimate", "A fiat on-ramp trail (exchange statements, wire receipts)", "Only a wallet address screenshot", "Conversion to fiat before we'll consider it"], correct: 1 },
+    ],
+  },
+  {
+    title: "PEPs & Family / Close Associates — Enhanced Due Diligence",
+    description: "Identifying Politically Exposed Persons and the people connected to them.",
+    estimatedMinutes: 12,
+    contentMarkdown: `## What a PEP is (Reg 35)
+A Politically Exposed Person holds a prominent public function — current OR within the last 12 months. The UK definition includes:
+- Heads of state, ministers, senior civil servants
+- MPs, senior judges, central bank governors
+- Senior military officers, ambassadors
+- Senior executives of state-owned enterprises
+- Senior officials of major international organisations
+
+**UK domestic PEPs** (post-FSMA 2023) are treated as LOWER risk by default than foreign PEPs, but you still do EDD.
+
+## The people around the PEP matter too
+- **Family members** — spouse, civil partner, children, parents, siblings of a PEP.
+- **Close associates** — individuals known to maintain close business or personal relations (business partners, long-term confidants).
+
+If the *buyer* isn't a PEP but a family member is, you may still be dealing with PEP money. Dig.
+
+## What EDD on a PEP looks like
+1. Senior management approval before onboarding — at BGP, that's MLRO sign-off.
+2. Establish source of wealth *and* source of funds (both, documented).
+3. Ongoing enhanced monitoring — closer scrutiny of transactions through the relationship.
+4. Re-approval at least annually.
+
+## Common slip-ups
+- Missing a PEP because they retired 11 months ago (still in the 12-month window).
+- Treating a state-owned enterprise like a normal company — the CEO is a PEP by virtue of the role.
+- Forgetting the PEP's adult children are also in scope.
+- Accepting "I'm a private citizen now" without verifying the retirement date.
+
+## BGP process
+KYC Clouseau screens every named counterparty and officer against the sanctions + PEP feeds. Any hit → amber card on the Compliance Board → MLRO review before any invoice is raised.`,
+    quiz: [
+      { question: "A client retired as a cabinet minister 10 months ago. They are:", options: ["No longer a PEP", "Still a PEP — 12-month window applies", "Only a PEP if they held the role for 5+ years", "A domestic PEP but not a foreign PEP"], correct: 1 },
+      { question: "The daughter of a foreign ambassador wants to buy a £4m flat. She is:", options: ["Not relevant to PEP rules", "Treated as a PEP family member — EDD applies", "Only relevant if she uses her father's money", "A PEP only if she's also politically active"], correct: 1 },
+      { question: "EDD on a PEP at BGP requires:", options: ["No extra steps — standard CDD is enough", "MLRO senior-management sign-off before onboarding", "Just a Companies House check", "Only enhanced monitoring after the deal completes"], correct: 1 },
+      { question: "The CEO of a state-owned sovereign wealth fund is:", options: ["Not a PEP — they work for an investment fund", "A PEP by virtue of the state-owned role", "Only a PEP if the fund is sanctioned", "A PEP only if personally named on a list"], correct: 1 },
+    ],
+  },
+  {
+    title: "Beneficial Ownership & SPV Structures — Seeing Through the Layers",
+    description: "How to identify the natural persons behind corporate purchasers.",
+    estimatedMinutes: 13,
+    contentMarkdown: `## The 25% rule
+A Beneficial Owner (BO) is any natural person who ultimately owns or controls more than 25% of a legal entity — directly or indirectly through a chain of companies and trusts. Below 25%, they're still a counterparty of interest if they exercise control via other means (voting rights, board appointments).
+
+## The People with Significant Control (PSC) register
+UK companies file PSCs at Companies House. It's your first stop but:
+- It reflects what's been filed, not what's true.
+- Overseas entities buying UK property now register with the **Register of Overseas Entities** (ROE) at Companies House — mandatory since August 2022.
+- A company refusing to disclose its PSCs is itself a red flag.
+
+## Common structures at BGP
+- **Single UK SPV** — straightforward, PSC usually clean.
+- **Jersey / Guernsey holding + UK SPV** — check the Channel Islands entity's BO register too.
+- **Trust over an SPV** — you need the settlor, trustees, beneficiaries, and any protector.
+- **Multi-layer offshore** — BVI → Cayman → Jersey → UK SPV. Each layer must resolve to named natural persons.
+
+## Nominees and bearer shares
+A nominee director or shareholder acting for an undisclosed principal is a red flag. Bearer shares are banned in the UK but still exist in some offshore jurisdictions — if you see them, stop.
+
+## The layer test
+If the ownership chain is deeper than 3 layers and there's no clean commercial reason (tax, succession, liability ring-fencing), treat the structure as higher risk.
+
+## What we do at BGP
+KYC Clouseau traces PSC chains and flags layers ≥3 deep. Overseas Entity IDs (OE numbers) are logged on the deal page. No SPV proceeds to invoice without the BO chain resolved to natural persons.`,
+    quiz: [
+      { question: "A Beneficial Owner is a natural person who owns or controls:", options: ["Any percentage of the entity", "More than 10%", "More than 25%", "More than 50%"], correct: 2 },
+      { question: "The UK Register of Overseas Entities (ROE) applies to:", options: ["All UK companies", "Overseas entities buying or owning UK property", "Only Panama and BVI companies", "Trusts only"], correct: 1 },
+      { question: "A purchaser refuses to disclose the PSCs of their SPV. You should:", options: ["Proceed — Companies House has it already", "Treat as a red flag and escalate", "Accept a lawyer's letter confirming the structure", "Only escalate if they're from a high-risk country"], correct: 1 },
+      { question: "A BVI → Cayman → Jersey → UK SPV structure is:", options: ["Normal for HNW property deals", "Higher risk unless there's a clear commercial rationale", "Automatic sanctions territory", "Fine if the UK SPV is clean"], correct: 1 },
+    ],
+  },
+  {
+    title: "High-Risk Third Countries & FATF Lists",
+    description: "When geography drives your EDD obligation.",
+    estimatedMinutes: 8,
+    contentMarkdown: `## The lists you must know
+- **HM Treasury High-Risk Third Country list** — UK statutory instrument. Mirrors the FATF blacklist + greylist with UK tweaks. Legally binding EDD trigger.
+- **FATF blacklist (Call for Action)** — currently DPRK, Iran, Myanmar. Near-total freeze of business.
+- **FATF greylist (Increased Monitoring)** — larger, rotating. EDD required for any counterparty nexus.
+- **UK sanctions list (OFSI)** — separate from the FATF framework but overlaps in practice.
+
+## What "nexus" means
+EDD applies if ANY of the following is true:
+- The counterparty is incorporated or resident in a listed country.
+- A significant shareholder or controller is resident there.
+- The money originates from or transits through a listed jurisdiction.
+- A material counterparty (solicitor, banker) is based there.
+
+## EDD obligations when a list country is involved
+1. Senior management approval — MLRO sign-off.
+2. Enhanced source-of-wealth AND source-of-funds evidence.
+3. Enhanced ongoing monitoring — re-check cycle halves to 3 months.
+4. Consider whether the deal should proceed at all.
+
+## The "business rationale" question
+Ask yourself: why is the money coming via this country? If it's a legitimate commercial reason (e.g. the client genuinely lives in Dubai), fine — document it. If there's no clear reason the money had to route through Malta, treat as layering.
+
+## Practical at BGP
+KYC Clouseau flags counterparties with a listed-country nexus in red on the sanctions card. The MLRO decides go/no-go. If the deal proceeds, the 3-month re-check cadence is automated via the Compliance Board recheck queue.`,
+    quiz: [
+      { question: "EDD is required when a counterparty's money transits through a high-risk country, even if the counterparty themselves isn't based there.", options: ["True", "False — only if the counterparty is resident there", "Only if the amount exceeds £5m", "Only for sanctioned countries"], correct: 0 },
+      { question: "The FATF blacklist currently includes:", options: ["DPRK, Iran, Myanmar", "Russia, China, Turkey", "Only countries under UN sanctions", "All OFAC-sanctioned countries"], correct: 0 },
+      { question: "A client lives in Dubai and funds a London purchase from a UAE bank. This:", options: ["Is automatic EDD regardless of context", "Requires EDD but the business rationale may be clean", "Is banned under UK rules", "Only requires standard CDD"], correct: 1 },
+      { question: "When a high-risk-country nexus exists, the BGP re-check cadence:", options: ["Stays at 6 months", "Shortens to 3 months", "Extends to 12 months", "Is abolished — one-off check only"], correct: 1 },
+    ],
+  },
 ];
 
 // Seed the starter modules if the table is empty
