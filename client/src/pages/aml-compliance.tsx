@@ -362,7 +362,7 @@ function RecheckReminders() {
 function FirmRiskAssessment() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: settings } = useQuery({
+  const { data: settings } = useQuery<any>({
     queryKey: ["/api/aml/settings"],
     queryFn: () => fetch("/api/aml/settings").then(r => r.json()),
   });
@@ -382,7 +382,24 @@ function FirmRiskAssessment() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/settings"] }); setEditing(false); toast({ title: "Risk assessment saved" }); },
   });
 
+  const populateDefault = useMutation({
+    mutationFn: () => fetch("/api/aml/risk-assessment/populate-default", { method: "POST", credentials: "include" }).then(r => r.json()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/aml/settings"] });
+      toast({ title: "Template populated", description: "Review the draft, edit anything BGP-specific, then click Approve." });
+    },
+  });
+
+  const approveAssessment = useMutation({
+    mutationFn: () => fetch("/api/aml/risk-assessment/approve", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: "{}" }).then(r => r.json()),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/settings"] }); toast({ title: "Risk assessment approved", description: "Next review scheduled in 12 months." }); },
+  });
+
   const existing = settings?.firm_risk_assessment;
+  const status = settings?.firm_risk_assessment_status || (existing ? "draft" : null);
+  const approvedAt = settings?.firm_risk_assessment_approved_at;
+  const approvedBy = settings?.firm_risk_assessment_approved_by;
+  const nextReview = settings?.firm_risk_assessment_next_review_at;
 
   return (
     <Card>
@@ -393,12 +410,30 @@ function FirmRiskAssessment() {
             Firm-wide Risk Assessment
           </CardTitle>
           {!editing && (
-            <Button size="sm" variant="outline" onClick={() => {
-              if (existing) setAssessment(existing);
-              setEditing(true);
-            }}>
-              {existing ? "Edit" : "Create Assessment"}
-            </Button>
+            <div className="flex items-center gap-2">
+              {status === "approved" && (
+                <Badge className="bg-emerald-600">Approved</Badge>
+              )}
+              {status === "draft" && (
+                <Badge className="bg-amber-600">Draft — unapproved</Badge>
+              )}
+              {!existing && (
+                <Button size="sm" variant="outline" onClick={() => populateDefault.mutate()} disabled={populateDefault.isPending} data-testid="button-populate-template">
+                  Populate MLR 2017 template
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={() => {
+                if (existing) setAssessment(existing);
+                setEditing(true);
+              }} data-testid="button-edit-risk-assessment">
+                {existing ? "Edit" : "Create blank"}
+              </Button>
+              {existing && status !== "approved" && (
+                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => approveAssessment.mutate()} disabled={approveAssessment.isPending} data-testid="button-approve-risk-assessment">
+                  MLRO Approve
+                </Button>
+              )}
+            </div>
           )}
         </div>
         <p className="text-xs text-muted-foreground">MLR 2017 Regulation 18 requires estate agents to carry out a firm-wide risk assessment identifying and assessing the risks of money laundering and terrorist financing.</p>
@@ -463,6 +498,12 @@ function FirmRiskAssessment() {
               <p className="text-xs text-muted-foreground">
                 Last updated: {new Date(settings.firm_risk_assessment_updated_at).toLocaleDateString("en-GB")}
                 {settings.firm_risk_assessment_updated_by && ` by ${settings.firm_risk_assessment_updated_by}`}
+              </p>
+            )}
+            {status === "approved" && approvedAt && (
+              <p className="text-xs text-emerald-700 font-medium" data-testid="risk-assessment-approved-line">
+                Approved by {approvedBy || "MLRO"} on {new Date(approvedAt).toLocaleDateString("en-GB")}
+                {nextReview && ` · Next review due ${new Date(nextReview).toLocaleDateString("en-GB")}`}
               </p>
             )}
             {[

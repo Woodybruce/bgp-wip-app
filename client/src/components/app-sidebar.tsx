@@ -39,6 +39,7 @@ import {
   Ruler,
   Sun,
   ShieldCheck,
+  GraduationCap,
 } from "lucide-react";
 import {
   Sidebar,
@@ -111,6 +112,7 @@ const toolsNav = [
   { title: "KYC Clouseau", url: "/kyc-clouseau", icon: Scale, badge: "AI" },
   { title: "AML Compliance", url: "/aml-compliance", icon: ShieldCheck },
   { title: "Compliance Board", url: "/compliance-board", icon: ShieldCheck },
+  { title: "AML Training", url: "/aml-training", icon: GraduationCap },
   { title: "Land Registry", url: "/land-registry", icon: Landmark },
   { title: "Business Rates", url: "/business-rates", icon: Receipt },
   { title: "Turnover Data", url: "/turnover", icon: BarChart3 },
