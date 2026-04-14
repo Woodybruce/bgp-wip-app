@@ -4,8 +4,10 @@ import { Copy, Check, Download } from "lucide-react";
 function AuthDownloadLink({ href, children }: { href: string; children: React.ReactNode }) {
   // Build a direct download URL with auth token in query string
   // This lets mobile browsers handle the download natively via <a href>
-  // instead of JavaScript fetch() which mobile Safari/Chrome block
-  const token = localStorage.getItem("bgp_auth_token") || "";
+  // instead of JavaScript fetch() which mobile Safari/Chrome block.
+  // Token key depends on where we're running: main app uses bgp_auth_token,
+  // Office add-ins (Excel, Outlook, Teams) use bgp_addin_token.
+  const token = localStorage.getItem("bgp_addin_token") || localStorage.getItem("bgp_auth_token") || "";
   const separator = href.includes("?") ? "&" : "?";
   const directUrl = token ? `${href}${separator}token=${token}` : href;
   const filename = href.split("/").pop()?.split("?")[0] || "download";
