@@ -27,8 +27,9 @@ import {
   Menu, MessageSquare, FileText, Handshake,
   Newspaper, Mail, Phone, Download, Eye, Star, Upload,
   Mic, Square, Building, Link2,
-  Palette, ChevronRight,
+  Palette, ChevronRight, Sun, CalendarDays,
 } from "lucide-react";
+import TodayPage from "@/pages/today";
 import { useTheme, COLOR_SCHEMES } from "@/components/theme-provider";
 import {
   DropdownMenu,
@@ -92,11 +93,11 @@ type ThreadData = {
   }>;
 };
 
-const AI_SUGGESTIONS = [
-  "Show me live deals",
-  "What's in my calendar today?",
-  "Draft HOTs for a property",
-  "Search CRM contacts",
+const AI_SUGGESTIONS: Array<{ label: string; icon: typeof Sparkles }> = [
+  { label: "Show me live deals", icon: BarChart3 },
+  { label: "What's in my calendar today?", icon: CalendarDays },
+  { label: "Draft HOTs for a property", icon: FileText },
+  { label: "Search CRM contacts", icon: Users },
 ];
 
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "image/heic", "image/heif"];
@@ -765,7 +766,7 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
-        className="w-full flex items-center gap-4 px-5 py-4 active:bg-[#F5F5F4] border-b border-[#E7E5E4]/60 select-none bg-transparent relative z-10 transition-transform duration-200"
+        className="w-full flex items-center gap-4 px-5 py-4 active:bg-[#F5F5F4] border-b border-[#E7E5E4]/60 select-none bg-[#FAF9F7] relative z-10 transition-transform duration-200"
         style={{ WebkitTouchCallout: "none", WebkitUserSelect: "none", transform: `translateX(${swipeX}px)` }}
         data-testid={`mobile-thread-${thread.id}`}
       >
@@ -1128,6 +1129,10 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const canRecord = typeof window !== "undefined"
+    && typeof navigator !== "undefined"
+    && !!navigator.mediaDevices?.getUserMedia
+    && typeof window.MediaRecorder !== "undefined";
   const unmountedRef = useRef(false);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
   const [showLinkMenu, setShowLinkMenu] = useState(false);
@@ -2032,29 +2037,40 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
       }}>
         <div className={`min-h-full flex flex-col ${messages.length > 0 ? "justify-end" : "justify-center"} ${isActiveThreadAi ? "space-y-6" : "space-y-4"}`}>
         {messages.length === 0 && isActiveThreadAi && !threadId && (
-          <div className="flex flex-col items-center justify-center h-full gap-8 py-12 px-6">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ backgroundColor: "hsl(var(--primary))" }}>
-              <Sparkles className="w-7 h-7 text-white" />
+          <div className="flex flex-col items-center justify-center h-full gap-7 py-10 px-6">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ backgroundColor: "hsl(var(--primary))" }}>
+              <Sparkles className="w-6 h-6 text-white" />
             </div>
-            <div className="text-center space-y-2">
-              <h3 className="font-semibold text-[28px] text-[#1C1917] tracking-tight leading-none">ChatBGP</h3>
-              <p className="text-[15px] text-[#78716C] leading-relaxed max-w-[260px] mx-auto">Ask questions, run models, or generate documents.</p>
+            <div className="text-center space-y-1.5">
+              <h3 className="text-[30px] text-[#1C1917] tracking-tight leading-none" style={{ fontFamily: "var(--font-serif)" }}>
+                {(() => {
+                  const hour = new Date().getHours();
+                  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+                  const firstName = currentUser?.name?.split(" ")[0];
+                  return firstName ? `${greeting}, ${firstName}` : greeting;
+                })()}
+              </h3>
+              <p className="text-[15px] text-[#78716C] leading-relaxed max-w-[280px] mx-auto">How can I help today?</p>
             </div>
             <div className="grid grid-cols-1 gap-2 w-full max-w-sm">
-              {AI_SUGGESTIONS.map(s => (
-                <button
-                  key={s}
-                  onClick={() => {
-                    const userMsg: LocalChatMessage = { role: "user", content: s, userName: currentUser?.name };
-                    setMessages([userMsg]);
-                    aiSendMutation.mutate({ newMessages: [userMsg], files: [], tid: threadId });
-                  }}
-                  className="text-[15px] text-left px-5 py-4 rounded-2xl border border-[#E7E5E4] active:bg-[#F5F5F4] text-[#44403C] bg-white leading-snug font-medium transition-colors"
-                  data-testid={`mobile-suggestion-${s.slice(0, 10)}`}
-                >
-                  {s}
-                </button>
-              ))}
+              {AI_SUGGESTIONS.map(s => {
+                const Icon = s.icon;
+                return (
+                  <button
+                    key={s.label}
+                    onClick={() => {
+                      const userMsg: LocalChatMessage = { role: "user", content: s.label, userName: currentUser?.name };
+                      setMessages([userMsg]);
+                      aiSendMutation.mutate({ newMessages: [userMsg], files: [], tid: threadId });
+                    }}
+                    className="flex items-center gap-3 text-[15px] text-left px-4 py-3.5 rounded-2xl border border-[#E7E5E4] active:bg-[#F5F5F4] text-[#44403C] bg-white leading-snug font-medium transition-colors"
+                    data-testid={`mobile-suggestion-${s.label.slice(0, 10)}`}
+                  >
+                    <Icon className="w-[18px] h-[18px] text-[#78716C] shrink-0" />
+                    <span className="truncate">{s.label}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
@@ -2306,12 +2322,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
               />
             </div>
             {!input.trim() && attachedFiles.length === 0 ? (
-              <button onClick={startRecording} disabled={isSending} className="w-10 h-10 rounded-full bg-gray-50 border border-gray-200 flex items-center justify-center disabled:opacity-30 shrink-0 mb-0.5" data-testid="button-mobile-voice-record">
-                <Mic className="w-5 h-5 text-gray-400" />
-              </button>
+              canRecord && (
+                <button onClick={startRecording} disabled={isSending} className="w-11 h-11 rounded-full bg-[#F5F5F4] border border-[#E7E5E4] flex items-center justify-center disabled:opacity-30 active:bg-[#E7E5E4] shrink-0" data-testid="button-mobile-voice-record" aria-label="Record voice note">
+                  <Mic className="w-5 h-5 text-[#44403C]" />
+                </button>
+              )
             ) : (
-              <button onClick={handleSend} disabled={!!queuedMessage || uploading} className="w-10 h-10 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0 mb-0.5" style={{ backgroundColor: "hsl(var(--primary))" }} data-testid="button-mobile-send">
-                <Send className="w-4.5 h-4.5 text-white" />
+              <button onClick={handleSend} disabled={!!queuedMessage || uploading} className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} data-testid="button-mobile-send" aria-label="Send message">
+                <Send className="w-[18px] h-[18px] text-white" />
               </button>
             )}
           </div>
@@ -2396,12 +2414,14 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
               />
             </div>
             {!input.trim() && attachedFiles.length === 0 ? (
-              <button onClick={startRecording} disabled={isSending} className="w-10 h-10 rounded-full bg-gray-50 border border-gray-200 flex items-center justify-center disabled:opacity-30 shrink-0 mb-0.5" data-testid="button-mobile-voice-record">
-                <Mic className="w-5 h-5 text-gray-400" />
-              </button>
+              canRecord && (
+                <button onClick={startRecording} disabled={isSending} className="w-11 h-11 rounded-full bg-[#F5F5F4] border border-[#E7E5E4] flex items-center justify-center disabled:opacity-30 active:bg-[#E7E5E4] shrink-0" data-testid="button-mobile-voice-record" aria-label="Record voice note">
+                  <Mic className="w-5 h-5 text-[#44403C]" />
+                </button>
+              )
             ) : (
-              <button onClick={handleSend} disabled={!!queuedMessage || uploading} className="w-10 h-10 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0 mb-0.5 bg-[#292524]" data-testid="button-mobile-send">
-                <Send className="w-4 h-4 text-white" />
+              <button onClick={handleSend} disabled={!!queuedMessage || uploading} className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0 bg-[#1C1917]" data-testid="button-mobile-send" aria-label="Send message">
+                <Send className="w-[18px] h-[18px] text-white" />
               </button>
             )}
           </div>
@@ -2528,9 +2548,9 @@ function MobileDocumentStudio() {
   );
 }
 
-export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" | "ai" | "menu" }) {
+export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" | "ai" | "today" | "menu" }) {
   const { theme, toggleTheme, colorScheme, setColorScheme } = useTheme();
-  const [tab, setTab] = useState<"chats" | "ai" | "menu">(initialTab);
+  const [tab, setTab] = useState<"chats" | "ai" | "today" | "menu">(initialTab);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [activeThreadAi, setActiveThreadAi] = useState(initialTab === "ai");
   const [showNewGroup, setShowNewGroup] = useState(false);
@@ -3049,7 +3069,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
       <div className="bg-[#1C1917] text-white pt-[calc(0.75rem+env(safe-area-inset-top))] shrink-0">
         <div className="flex items-center justify-between px-5 pb-3">
           <h1 className="text-[22px] font-semibold tracking-tight">
-            {tab === "chats" ? "Chats" : tab === "ai" ? (showMobileMarketingFiles ? "Marketing" : "ChatBGP") : moreSubTab === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : moreSubTab === "reqs" ? "Requirements" : moreSubTab === "news" ? "News" : "Docs"}
+            {tab === "chats" ? "Chats" : tab === "ai" ? (showMobileMarketingFiles ? "Marketing" : "ChatBGP") : tab === "today" ? "Today" : moreSubTab === "tracker" ? (isInvestmentTeam ? "Investment" : "Letting") : moreSubTab === "reqs" ? "Requirements" : moreSubTab === "news" ? "News" : "Docs"}
           </h1>
           <div className="flex items-center gap-2">
             {tab === "chats" && (
@@ -3060,6 +3080,11 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             {tab === "ai" && !showMobileMarketingFiles && (
               <button onClick={openNewAiChat} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-mobile-new-ai">
                 <Plus className="w-5 h-5" />
+              </button>
+            )}
+            {tab === "menu" && moreSubTab === "tracker" && (
+              <button onClick={() => { setTab("ai"); setShowMobileMarketingFiles(true); setMarketingFileSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-mobile-marketing-materials" aria-label="Marketing materials">
+                <FileText className="w-5 h-5" />
               </button>
             )}
             <button
@@ -3091,6 +3116,8 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
       </div>
 
       <PullToRefresh onRefresh={async () => { await queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] }); }}>
+        {tab === "today" && <TodayPage />}
+
         {tab === "chats" && (
           <div className="px-4 pt-3 pb-2">
             <div className="relative">
@@ -3153,35 +3180,6 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 )}
               </div>
             </div>
-
-            <button
-              className="w-full flex items-center gap-3 px-4 py-3 active:bg-gray-50 transition-colors"
-              onClick={() => { window.location.href = "/chatbgp"; }}
-              data-testid="button-mobile-chatbgp-home"
-            >
-              <Sparkles className="w-5 h-5 shrink-0" />
-              <span className="text-[15px] font-medium">Chat BGP</span>
-            </button>
-
-            <button
-              className="w-full flex items-center gap-3 px-4 py-3 active:bg-gray-50 transition-colors"
-              onClick={() => { setShowMobileMarketingFiles(true); setMarketingFileSearch(""); }}
-              data-testid="button-mobile-marketing-details"
-            >
-              <FileText className="w-5 h-5 shrink-0" />
-              <span className="text-[15px] font-medium">Marketing Details</span>
-            </button>
-
-            <button
-              className="w-full flex items-center gap-3 px-4 py-3 active:bg-gray-50 transition-colors"
-              onClick={() => { setShowMobileNewProperty(true); setMobileNewPropSelectedId(""); setMobileNewPropSearch(""); setMobileNewPropLinkType("property"); }}
-              data-testid="button-mobile-new-property"
-            >
-              <Building2 className="w-5 h-5 shrink-0" />
-              <span className="text-[15px] font-medium">New Property</span>
-            </button>
-
-            <div className="h-px bg-gray-200 mx-4 my-1" />
 
             {filteredAiThreads.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 gap-3">
@@ -4303,9 +4301,9 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
         </div>
       )}
 
-      <div className="border-t border-gray-100 bg-white/95 backdrop-blur-lg pb-[env(safe-area-inset-bottom)] shrink-0">
+      <div className="border-t border-[#E7E5E4] bg-[#FAF9F7]/95 backdrop-blur-lg pb-[env(safe-area-inset-bottom)] shrink-0">
         <div className="flex items-center justify-around h-14">
-          <button onClick={() => { setTab("chats"); setChatSearch(""); }} className={`flex flex-col items-center gap-0.5 px-6 py-1.5 rounded-xl transition-colors ${tab === "chats" ? "text-black" : "text-gray-400"}`} data-testid="tab-mobile-chats">
+          <button onClick={() => { setTab("chats"); setChatSearch(""); }} className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors ${tab === "chats" ? "text-[#1C1917]" : "text-[#A8A29E]"}`} data-testid="tab-mobile-chats">
             <div className="relative">
               <MessageSquare className="w-[22px] h-[22px]" />
               {unseenCount > 0 && (
@@ -4316,11 +4314,15 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
             </div>
             <span className="text-[10px] font-semibold mt-0.5">Chats</span>
           </button>
-          <button onClick={() => { setTab("ai"); setChatSearch(""); }} className={`flex flex-col items-center gap-0.5 px-6 py-1.5 rounded-xl transition-colors ${tab === "ai" ? "text-black" : "text-gray-400"}`} data-testid="tab-mobile-ai">
+          <button onClick={() => { setTab("ai"); setChatSearch(""); }} className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors ${tab === "ai" ? "text-[#1C1917]" : "text-[#A8A29E]"}`} data-testid="tab-mobile-ai">
             <Sparkles className="w-[22px] h-[22px]" />
             <span className="text-[10px] font-semibold mt-0.5">ChatBGP</span>
           </button>
-          <button onClick={() => { setTab("menu"); setChatSearch(""); }} className={`flex flex-col items-center gap-0.5 px-6 py-1.5 rounded-xl transition-colors ${tab === "menu" ? "text-black" : "text-gray-400"}`} data-testid="tab-mobile-menu">
+          <button onClick={() => { setTab("today"); setChatSearch(""); }} className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors ${tab === "today" ? "text-[#1C1917]" : "text-[#A8A29E]"}`} data-testid="tab-mobile-today">
+            <Sun className="w-[22px] h-[22px]" />
+            <span className="text-[10px] font-semibold mt-0.5">Today</span>
+          </button>
+          <button onClick={() => { setTab("menu"); setChatSearch(""); }} className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors ${tab === "menu" ? "text-[#1C1917]" : "text-[#A8A29E]"}`} data-testid="tab-mobile-menu">
             <Menu className="w-[22px] h-[22px]" />
             <span className="text-[10px] font-semibold mt-0.5">More</span>
           </button>

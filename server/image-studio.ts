@@ -1059,10 +1059,22 @@ export function registerImageStudioRoutes(app: Express) {
     });
   });
 
-  app.post("/api/image-studio/trigger-sync", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  app.post("/api/image-studio/trigger-sync", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     if (imageSyncRunning) return res.json({ message: "Sync already in progress" });
-    res.json({ message: "Sync started" });
-    runImageSync().catch(e => console.error("[image-sync] Manual sync error:", e.message));
+    const forceReimport = req.body?.forceReimport === true || req.query?.forceReimport === "true";
+    res.json({ message: `Sync started${forceReimport ? " (forceReimport)" : ""}` });
+    runImageSync({ forceReimport }).catch(e => console.error("[image-sync] Manual sync error:", e.message));
+  });
+
+  app.post("/api/image-studio/clear-deleted-blacklist", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const before = await pool.query("SELECT COUNT(*)::int AS n FROM deleted_sharepoint_images");
+      await pool.query("TRUNCATE TABLE deleted_sharepoint_images");
+      console.log(`[image-sync] Cleared ${before.rows[0].n} rows from deleted_sharepoint_images blacklist`);
+      res.json({ success: true, cleared: before.rows[0].n });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // Bulk tag endpoint
@@ -1386,15 +1398,15 @@ async function browseForImages(
   return results;
 }
 
-async function runImageSync() {
+async function runImageSync(opts: { forceReimport?: boolean } = {}) {
   if (imageSyncRunning) return;
   imageSyncRunning = true;
   imageSyncProgress = "Starting...";
   imageScanFoldersChecked = 0;
   imageScanImagesFound = 0;
-  console.log("[image-sync] Starting SharePoint image sync...");
+  console.log(`[image-sync] Starting SharePoint image sync${opts.forceReimport ? " (forceReimport=true)" : ""}...`);
 
-  let totalImported = 0, totalSkipped = 0, totalErrors = 0;
+  let totalImported = 0, totalSkippedExists = 0, totalSkippedDeleted = 0, totalSkippedDupeName = 0, totalErrors = 0;
 
   try {
     const token = await getMsTokenForImageSync();
@@ -1430,25 +1442,31 @@ async function runImageSync() {
         const images = await browseForImages(driveId, folderId, token, folder.name, 10, 0);
         console.log(`[image-sync] Found ${images.length} images in ${folder.name}`);
 
-        for (const img of images) {
+        for (let i = 0; i < images.length; i++) {
+          const img = images[i];
           try {
+            if (i % 25 === 0) {
+              imageSyncProgress = `${folder.name}: ${i}/${images.length} (imported=${totalImported}, skipped=${totalSkippedExists + totalSkippedDeleted + totalSkippedDupeName})`;
+            }
             const existing = await pool.query(
               "SELECT id FROM image_studio_images WHERE sharepoint_drive_id = $1 AND sharepoint_item_id = $2",
               [img.driveId, img.itemId]
             );
-            if (existing.rows.length > 0) { totalSkipped++; continue; }
+            if (existing.rows.length > 0) { totalSkippedExists++; continue; }
 
-            const wasDeleted = await pool.query(
-              "SELECT id FROM deleted_sharepoint_images WHERE sharepoint_drive_id = $1 AND sharepoint_item_id = $2",
-              [img.driveId, img.itemId]
-            );
-            if (wasDeleted.rows.length > 0) { totalSkipped++; continue; }
+            if (!opts.forceReimport) {
+              const wasDeleted = await pool.query(
+                "SELECT id FROM deleted_sharepoint_images WHERE sharepoint_drive_id = $1 AND sharepoint_item_id = $2",
+                [img.driveId, img.itemId]
+              );
+              if (wasDeleted.rows.length > 0) { totalSkippedDeleted++; continue; }
+            }
 
             const dupeByName = await pool.query(
               "SELECT id FROM image_studio_images WHERE file_name = $1 AND file_size = $2",
               [img.name, img.size]
             );
-            if (dupeByName.rows.length > 0) { totalSkipped++; continue; }
+            if (dupeByName.rows.length > 0) { totalSkippedDupeName++; continue; }
 
             imageSyncProgress = `Importing: ${img.name} (${totalImported} saved)`;
             const contentRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${img.driveId}/items/${img.itemId}/content`, {
@@ -1481,14 +1499,14 @@ async function runImageSync() {
             });
             totalImported++;
             if (totalImported % 10 === 0) {
-              console.log(`[image-sync] Progress: ${totalImported} imported, ${totalSkipped} skipped, ${totalErrors} errors`);
+              console.log(`[image-sync] Progress: imported=${totalImported}, exists=${totalSkippedExists}, blacklisted=${totalSkippedDeleted}, dupeName=${totalSkippedDupeName}, errors=${totalErrors}`);
             }
           } catch (err: any) {
             console.error(`[image-sync] Error importing ${img.name}:`, err.message);
             totalErrors++;
           }
         }
-        console.log(`[image-sync] ${folder.name} done: imported=${totalImported}, skipped=${totalSkipped}`);
+        console.log(`[image-sync] ${folder.name} done: imported=${totalImported}, exists=${totalSkippedExists}, blacklisted=${totalSkippedDeleted}, dupeName=${totalSkippedDupeName}, errors=${totalErrors}`);
       } catch (err: any) {
         console.error(`[image-sync] Error processing folder ${folder.name}:`, err.message);
         totalErrors++;
@@ -1500,10 +1518,14 @@ async function runImageSync() {
     imageSyncLastRun = {
       timestamp: new Date().toISOString(),
       imported: totalImported,
-      skipped: totalSkipped,
+      skipped: totalSkippedExists + totalSkippedDeleted + totalSkippedDupeName,
+      skippedExists: totalSkippedExists,
+      skippedBlacklisted: totalSkippedDeleted,
+      skippedDupeName: totalSkippedDupeName,
       errors: totalErrors,
+      forceReimport: !!opts.forceReimport,
     };
-    console.log(`[image-sync] Complete: imported=${totalImported}, skipped=${totalSkipped}, errors=${totalErrors}`);
+    console.log(`[image-sync] Complete: imported=${totalImported}, exists=${totalSkippedExists}, blacklisted=${totalSkippedDeleted}, dupeName=${totalSkippedDupeName}, errors=${totalErrors}`);
     imageSyncRunning = false;
     imageSyncProgress = "";
   }
