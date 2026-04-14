@@ -70,6 +70,7 @@ import {
   DealRelatedEmails,
   DealRelatedMeetings,
 } from "@/pages/deals";
+import { DealAmlStatusCard } from "@/components/deal-aml-status";
 
 export function DealDetail({ id, isComps = false }: { id: string; isComps?: boolean }) {
   const { toast } = useToast();
@@ -360,6 +361,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         users={users.map(u => ({ id: String(u.id), name: u.name }))}
         colorMap={userColorMap}
       />
+
+      <DealAmlStatusCard dealId={deal.id} />
 
       <XeroInvoiceSection dealId={deal.id} deal={deal} companies={companies} />
 
