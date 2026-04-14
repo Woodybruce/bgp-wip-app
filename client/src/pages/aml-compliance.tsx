@@ -113,7 +113,6 @@ function TrainingRecords() {
   // to re-take and jump straight into the quiz.
   const { data: modules = [] } = useQuery<Array<{ id: string; title: string }>>({
     queryKey: ["/api/aml/training-modules"],
-    queryFn: () => fetch("/api/aml/training-modules", { credentials: "include" }).then(r => r.json()),
   });
   const moduleByTitle = new Map(modules.map(m => [m.title.toLowerCase(), m.id]));
   const moduleByType = (trainingType: string): string | null => {
@@ -459,16 +458,24 @@ function FirmRiskAssessment() {
   });
 
   const populateDefault = useMutation({
-    mutationFn: () => fetch("/api/aml/risk-assessment/populate-default", { method: "POST", credentials: "include" }).then(r => r.json()),
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/aml/risk-assessment/populate-default");
+      return r.json();
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/aml/settings"] });
       toast({ title: "Template populated", description: "Review the draft, edit anything BGP-specific, then click Approve." });
     },
+    onError: (err: any) => toast({ title: "Failed to populate template", description: err?.message, variant: "destructive" }),
   });
 
   const approveAssessment = useMutation({
-    mutationFn: () => fetch("/api/aml/risk-assessment/approve", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: "{}" }).then(r => r.json()),
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/aml/risk-assessment/approve", {});
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/settings"] }); toast({ title: "Risk assessment approved", description: "Next review scheduled in 12 months." }); },
+    onError: (err: any) => toast({ title: "Failed to approve", description: err?.message, variant: "destructive" }),
   });
 
   const existing = settings?.firm_risk_assessment;

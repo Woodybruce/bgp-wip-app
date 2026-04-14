@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
-import { queryClient } from "@/lib/queryClient";
+import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
   BookOpenCheck, Clock, CheckCircle2, XCircle, Loader2, ArrowLeft,
@@ -28,11 +28,6 @@ interface MyLiveDeal {
 function MyLiveDealsPanel() {
   const { data: deals = [], isLoading } = useQuery<MyLiveDeal[]>({
     queryKey: ["/api/kyc/my-deals"],
-    queryFn: async () => {
-      const res = await fetch("/api/kyc/my-deals", { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
   });
 
   if (isLoading) return null;
@@ -155,12 +150,10 @@ export default function AmlTraining() {
 function ModuleList() {
   const { data: modules = [], isLoading } = useQuery<TrainingModule[]>({
     queryKey: ["/api/aml/training-modules"],
-    queryFn: () => fetch("/api/aml/training-modules", { credentials: "include" }).then(r => r.json()),
   });
 
   const { data: myAttempts = [] } = useQuery<TrainingAttempt[]>({
     queryKey: ["/api/aml/training-attempts"],
-    queryFn: () => fetch("/api/aml/training-attempts", { credentials: "include" }).then(r => r.json()),
   });
 
   const attemptsByModule = useMemo(() => {
@@ -243,19 +236,12 @@ function TakeModule({ moduleId, onBack }: { moduleId: string; onBack: () => void
   const [result, setResult] = useState<any>(null);
 
   const { data: mod, isLoading } = useQuery<TrainingModule>({
-    queryKey: ["/api/aml/training-modules", moduleId],
-    queryFn: () => fetch(`/api/aml/training-modules/${moduleId}`, { credentials: "include" }).then(r => r.json()),
+    queryKey: [`/api/aml/training-modules/${moduleId}`],
   });
 
   const submit = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/aml/training-modules/${moduleId}/attempt`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers }),
-      });
-      if (!res.ok) throw new Error("Submit failed");
+      const res = await apiRequest("POST", `/api/aml/training-modules/${moduleId}/attempt`, { answers });
       return res.json();
     },
     onSuccess: (data) => {
