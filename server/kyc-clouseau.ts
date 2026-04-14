@@ -894,6 +894,382 @@ Format with clear headers and be specific. This is a professional compliance doc
   }
 });
 
+// --- Enhanced Property Intelligence Investigation ---
+// Traces full UBO chain, deep-dives decision makers, finds managing/leasing agents,
+// checks building availability, maps associate network
+router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { companyNumber, companyName, propertyAddress, propertyName } = req.body;
+    if (!companyNumber && !companyName) {
+      return res.status(400).json({ error: "Provide companyNumber or companyName" });
+    }
+
+    console.log(`[kyc-clouseau] Starting property intelligence: ${companyName || companyNumber}`);
+
+    // 1. Resolve company number
+    let targetNumber = companyNumber;
+    if (!targetNumber && companyName) {
+      const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(companyName)}&items_per_page=1`);
+      if (searchData.items?.length > 0) {
+        targetNumber = searchData.items[0].company_number;
+      } else {
+        return res.status(404).json({ error: `No company found matching "${companyName}"` });
+      }
+    }
+
+    // 2. Get full company data
+    const companyData = await getCompanyData(targetNumber);
+    const activeOfficers = (companyData.officers || []).filter((o: any) => !o.resigned_on);
+    const activePscs = (companyData.pscs || []).filter((p: any) => !p.ceased_on);
+
+    // 3. Full UBO chain trace — follow corporate PSCs up to 8 levels deep
+    let ownershipChain = null;
+    try {
+      ownershipChain = await discoverUltimateParent(targetNumber, 8);
+    } catch {}
+
+    // For each entity in the chain, get officers and PSCs
+    const chainDetails: any[] = [];
+    if (ownershipChain?.chain) {
+      const limit = pLimit(3);
+      const chainFetches = ownershipChain.chain.map((link: any) =>
+        limit(async () => {
+          try {
+            const padded = link.number.padStart(8, "0");
+            const [profileRes, officerRes, pscRes] = await Promise.allSettled([
+              chFetch(`/company/${padded}`),
+              chFetch(`/company/${padded}/officers?items_per_page=20`),
+              chFetch(`/company/${padded}/persons-with-significant-control`),
+            ]);
+            return {
+              ...link,
+              profile: profileRes.status === "fulfilled" ? profileRes.value : null,
+              officers: officerRes.status === "fulfilled" ? (officerRes.value.items || []).filter((o: any) => !o.resigned_on) : [],
+              pscs: pscRes.status === "fulfilled" ? (pscRes.value.items || []).filter((p: any) => !p.ceased_on) : [],
+            };
+          } catch { return { ...link, profile: null, officers: [], pscs: [] }; }
+        })
+      );
+      chainDetails.push(...(await Promise.all(chainFetches)));
+    }
+
+    // 4. Identify ALL natural persons (UBOs) across the entire chain
+    const ubos: any[] = [];
+    const uboNames = new Set<string>();
+
+    // From direct PSCs
+    for (const psc of activePscs) {
+      if (psc.kind === "individual-person-with-significant-control" || !psc.kind?.includes("corporate")) {
+        if (psc.name && !uboNames.has(psc.name)) {
+          uboNames.add(psc.name);
+          ubos.push({
+            name: psc.name,
+            nationality: psc.nationality,
+            level: "direct",
+            source: companyData.profile?.company_name || targetNumber,
+            controls: psc.natures_of_control,
+          });
+        }
+      }
+    }
+
+    // From chain entities
+    for (const entity of chainDetails) {
+      for (const psc of (entity.pscs || [])) {
+        if (psc.kind === "individual-person-with-significant-control" || !psc.kind?.includes("corporate")) {
+          if (psc.name && !uboNames.has(psc.name)) {
+            uboNames.add(psc.name);
+            ubos.push({
+              name: psc.name,
+              nationality: psc.nationality,
+              level: "chain",
+              source: entity.name,
+              controls: psc.natures_of_control,
+            });
+          }
+        }
+      }
+      // Also pick up directors at parent level as potential decision makers
+      for (const officer of (entity.officers || [])) {
+        if (officer.name && !uboNames.has(officer.name) && officer.officer_role === "director") {
+          uboNames.add(officer.name);
+          ubos.push({
+            name: officer.name,
+            nationality: officer.nationality,
+            level: "chain_director",
+            source: entity.name,
+            role: officer.officer_role,
+            appointedOn: officer.appointed_on,
+          });
+        }
+      }
+    }
+
+    // 5. Deep-dive each decision maker — fetch all their appointments
+    const decisionMakers: any[] = [];
+    const dmLimit = pLimit(3);
+    const dmFetches = ubos.slice(0, 10).map(ubo =>
+      dmLimit(async () => {
+        try {
+          // Search for officer record by name
+          const searchData = await chFetch(`/search/officers?q=${encodeURIComponent(ubo.name)}&items_per_page=5`);
+          const matchingOfficers = (searchData.items || []).filter((o: any) => {
+            const nameMatch = o.title?.toLowerCase() === ubo.name.toLowerCase();
+            return nameMatch;
+          });
+          const bestMatch = matchingOfficers[0] || (searchData.items || [])[0];
+          if (!bestMatch) return { ...ubo, appointments: [], companies: [] };
+
+          const officerLink = bestMatch.links?.self || "";
+          const officerId = officerLink.replace("/officers/", "");
+          if (!officerId) return { ...ubo, appointments: [], companies: [] };
+
+          const appointments = await chFetch(`/officers/${officerId}/appointments?items_per_page=50`);
+          const activeAppts = (appointments.items || []).filter((a: any) => !a.resigned_on);
+          const companies = activeAppts.map((a: any) => ({
+            name: a.appointed_to?.company_name,
+            number: a.appointed_to?.company_number,
+            role: a.officer_role,
+            appointedOn: a.appointed_on,
+          }));
+
+          return {
+            ...ubo,
+            officerId,
+            totalAppointments: appointments.total_results || 0,
+            activeAppointments: activeAppts.length,
+            companies,
+            dateOfBirth: bestMatch.date_of_birth,
+            address: bestMatch.address_snippet,
+          };
+        } catch (err: any) {
+          return { ...ubo, error: err.message, appointments: [], companies: [] };
+        }
+      })
+    );
+    decisionMakers.push(...(await Promise.all(dmFetches)));
+
+    // 6. Sanctions screening on all identified names
+    const allNamesToScreen = [
+      companyData.profile?.company_name,
+      ...ubos.map(u => u.name),
+      ...activeOfficers.map((o: any) => o.name),
+    ].filter(Boolean);
+    const sanctionsResult = await screenSanctions([...new Set(allNamesToScreen)]);
+
+    // 7. Risk assessment
+    const risk = assessRisk(companyData, sanctionsResult);
+
+    // 8. AI comprehensive property intelligence analysis
+    let aiAnalysis = "";
+    try {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const anthropic = new Anthropic({
+        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+        ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+          ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
+          : {}),
+      });
+
+      const profile = companyData.profile || {};
+
+      const chainSummary = chainDetails.length > 0
+        ? chainDetails.map((c: any, i: number) => {
+            const officers = (c.officers || []).map((o: any) => `${o.name} (${o.officer_role})`).join(", ");
+            const pscs = (c.pscs || []).map((p: any) => `${p.name} (${(p.natures_of_control || []).join(", ")})`).join(", ");
+            return `  Level ${i + 1}: ${c.name} (${c.number})${c.profile ? ` — ${c.profile.company_status}` : ""}\n    Officers: ${officers || "None"}\n    PSCs: ${pscs || "None"}`;
+          }).join("\n")
+        : "No corporate ownership chain discovered";
+
+      const uboSummary = decisionMakers.map(dm => {
+        const companiesList = (dm.companies || []).slice(0, 10).map((c: any) =>
+          `    - ${c.name} (${c.number}) as ${c.role}`
+        ).join("\n");
+        return `- ${dm.name} (${dm.nationality || "??"}, ${dm.level})${dm.totalAppointments ? ` — ${dm.totalAppointments} total appointments, ${dm.activeAppointments} active` : ""}\n${companiesList || "    No company data"}`;
+      }).join("\n");
+
+      const chargesSummary = (companyData.charges || []).map((c: any) =>
+        `- ${c.status || "?"}: ${c.classification?.description || "Charge"} — ${(c.persons_entitled || []).map((p: any) => p.name).join(", ") || "Unknown"}${c.created_on ? ` (${c.created_on})` : ""}`
+      ).join("\n");
+
+      const prompt = `You are KYC Clouseau — an expert KYC/AML compliance investigator AND commercial property intelligence analyst for a London commercial property agency (Bruce Gillingham Pollard).
+
+You are conducting a FULL PROPERTY INTELLIGENCE investigation. This means going beyond standard KYC — you need to understand who controls the building, who the decision makers are, what managing/leasing agents are involved, and whether there is any availability.
+
+SUBJECT COMPANY:
+- Name: ${profile.company_name || "Unknown"}
+- Number: ${profile.company_number || "Unknown"}
+- Status: ${profile.company_status || "Unknown"}
+- Type: ${profile.type || "Unknown"}
+- Incorporated: ${profile.date_of_creation || "Unknown"}
+- SIC codes: ${(profile.sic_codes || []).join(", ") || "None"}
+- Address: ${profile.registered_office_address ? `${profile.registered_office_address.address_line_1 || ""}, ${profile.registered_office_address.locality || ""}, ${profile.registered_office_address.postal_code || ""}` : "Unknown"}
+${propertyAddress ? `\nPROPERTY: ${propertyAddress}` : ""}
+${propertyName ? `PROPERTY NAME: ${propertyName}` : ""}
+
+FULL OWNERSHIP CHAIN (traced up to 8 levels):
+${chainSummary}
+
+ULTIMATE BENEFICIAL OWNERS & DECISION MAKERS:
+${uboSummary || "None identified"}
+
+DIRECT OFFICERS (${activeOfficers.length}):
+${activeOfficers.map((o: any) => `- ${o.name} (${o.officer_role}${o.nationality ? `, ${o.nationality}` : ""})`).join("\n") || "None"}
+
+DIRECT PSCs (${activePscs.length}):
+${activePscs.map((p: any) => `- ${p.name} (${(p.natures_of_control || []).join(", ")})`).join("\n") || "None"}
+
+CHARGES/DEBT (${(companyData.charges || []).length}):
+${chargesSummary || "None"}
+
+SANCTIONS SCREENING:
+${sanctionsResult ? sanctionsResult.filter((s: any) => s.status !== "clear").map((s: any) => `- ${s.name}: ${s.status} (${s.matches?.map((m: any) => m.sanctionedName).join(", ")})`).join("\n") || "All clear" : "Not available"}
+
+RISK FLAGS:
+${risk.flags.map(f => `- ${f}`).join("\n") || "None"}
+
+Please provide a COMPREHENSIVE PROPERTY INTELLIGENCE REPORT:
+
+1. **EXECUTIVE SUMMARY** — Who owns this building/company and what is the risk profile?
+
+2. **ULTIMATE BENEFICIAL OWNERS** — Trace the complete ownership chain to identify the NATURAL PERSONS who ultimately control this entity. For each UBO:
+   - Name, nationality, approximate age if DOB available
+   - Their role in the chain (direct PSC, parent company director, etc.)
+   - Other companies they control — are there property patterns?
+   - Any red flags or notable connections
+
+3. **DECISION MAKERS & KEY CONTACTS** — Who would you contact about this building?
+   - Identify who has authority over property decisions (disposals, lettings, asset management)
+   - Rank from most to least authority
+   - Note if they are at SPV level vs parent/fund level
+   - Suggest approach strategy (direct, via managing agent, etc.)
+
+4. **MANAGING AGENT INTELLIGENCE** — Based on the company structure, SIC codes, officers, and any available signals:
+   - Who is likely to be the managing agent? (Look for property management companies in officer networks or charges)
+   - Are there any known property management connections?
+
+5. **LEASING AGENT INTELLIGENCE** — Based on the company type and structure:
+   - Who is likely to be the leasing agent? (Look for estate agency connections in the network)
+   - What type of leasing activity might this building have?
+
+6. **AVAILABILITY SIGNALS** — Based on the filing patterns, charges, company status:
+   - Is the entity likely to have availability (new charges, recent filings, company type)?
+   - Is it a multi-let building vs single-tenant?
+   - Any signals of disposal interest or financial stress?
+
+7. **ASSOCIATE NETWORK** — Map all connected parties:
+   - Other companies controlled by the same individuals
+   - Shared directors across the chain
+   - Lenders and charge holders
+   - Any suspicious patterns or circular ownership
+
+8. **SOCIAL MEDIA & PUBLIC PROFILE** — For each key decision maker:
+   - What to search for on LinkedIn, Google
+   - Likely professional profile and network
+   - Suggested search terms for finding them
+
+9. **RED FLAGS & COMPLIANCE** — AML risk assessment including:
+   - PEP indicators
+   - Sanctions proximity
+   - Jurisdiction concerns
+   - Complex structure warnings
+
+10. **RECOMMENDED ACTIONS** — Specific next steps:
+    - Who to contact first and how
+    - What additional research to conduct
+    - Any compliance actions required
+
+Format with clear headers. Be specific — name actual people, companies, and connections. This is used by commercial property agents for business development AND compliance.`;
+
+      const aiRes = await anthropic.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 6000,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      aiAnalysis = aiRes.content[0].type === "text" ? aiRes.content[0].text : "Analysis unavailable";
+    } catch (aiErr: any) {
+      aiAnalysis = `AI analysis unavailable (${aiErr.message}).`;
+    }
+
+    // 9. PropertyData — owned properties
+    let propertiesOwned = null;
+    if (targetNumber && process.env.PROPERTYDATA_API_KEY) {
+      try {
+        const pdRes = await fetch(
+          `https://api.propertydata.co.uk/freeholds?company_number=${encodeURIComponent(targetNumber)}&key=${process.env.PROPERTYDATA_API_KEY}`
+        );
+        if (pdRes.ok) propertiesOwned = await pdRes.json();
+      } catch {}
+    }
+
+    const result = {
+      subject: {
+        name: companyData.profile?.company_name || companyName || targetNumber,
+        companyNumber: targetNumber,
+        type: "property_intelligence" as const,
+      },
+      companyProfile: companyData.profile,
+      officers: activeOfficers,
+      pscs: activePscs,
+      ownershipChain,
+      chainDetails,
+      ubos,
+      decisionMakers,
+      filingHistory: (companyData.filings || []).slice(0, 20),
+      insolvencyHistory: companyData.insolvency,
+      charges: companyData.charges || [],
+      sanctionsScreening: sanctionsResult,
+      propertiesOwned,
+      aiAnalysis,
+      riskScore: risk.score,
+      riskLevel: risk.level,
+      flags: risk.flags,
+      propertyAddress: propertyAddress || null,
+      propertyName: propertyName || null,
+      timestamp: new Date().toISOString(),
+    };
+
+    // Save investigation
+    const userId = (req as any).user?.id || null;
+    const hasSanctionsMatch = sanctionsResult
+      ? sanctionsResult.some((s: any) => s.status === "strong_match" || s.status === "potential_match")
+      : false;
+    try {
+      const insertResult = await pool.query(
+        `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, risk_level, risk_score, sanctions_match, result, conducted_by, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id`,
+        [
+          "property_intelligence",
+          result.subject.name,
+          targetNumber,
+          req.body.crmCompanyId || null,
+          risk.level,
+          risk.score,
+          hasSanctionsMatch,
+          JSON.stringify(result),
+          userId,
+          `Property intelligence: ${propertyAddress || propertyName || result.subject.name}`,
+        ]
+      );
+      const investigationId = insertResult.rows[0]?.id;
+      if (investigationId) {
+        await logKycAudit(investigationId, "created", userId, `Property intelligence investigation: ${result.subject.name}`);
+      }
+    } catch (dbErr: any) {
+      console.warn("[kyc-clouseau] Failed to save property intelligence:", dbErr.message);
+    }
+
+    console.log(`[kyc-clouseau] Property intelligence complete: ${result.subject.name} — ${ubos.length} UBOs, ${decisionMakers.length} decision makers, risk: ${risk.level}`);
+    res.json(result);
+  } catch (err: any) {
+    console.error("[kyc-clouseau] Property intelligence error:", err.message);
+    const userMessage = sanitizeErrorMessage(err.message, "Property intelligence investigation failed");
+    res.status(500).json({ error: userMessage });
+  }
+});
+
 // Audit log helper
 async function logKycAudit(investigationId: number, action: string, performedBy: string | null, notes?: string) {
   try {

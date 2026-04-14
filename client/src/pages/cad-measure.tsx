@@ -106,6 +106,27 @@ function parseDxfContent(text: string): ParsedDxf {
   return { entities, bounds: { minX, minY, maxX, maxY } };
 }
 
+function buildParsedDxf(rawEntities: DxfEntity[]): ParsedDxf {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  const updateBounds = (x: number, y: number) => {
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  };
+  for (const e of rawEntities) {
+    if (e.startPoint) { updateBounds(e.startPoint.x, e.startPoint.y); }
+    if (e.endPoint) { updateBounds(e.endPoint.x, e.endPoint.y); }
+    if (e.center && e.radius != null) {
+      updateBounds(e.center.x - e.radius, e.center.y - e.radius);
+      updateBounds(e.center.x + e.radius, e.center.y + e.radius);
+    }
+    if (e.vertices) { e.vertices.forEach(v => updateBounds(v.x, v.y)); }
+  }
+  if (minX === Infinity) { minX = 0; minY = 0; maxX = 100; maxY = 100; }
+  return { entities: rawEntities, bounds: { minX, minY, maxX, maxY } };
+}
+
 function getEntityColor(entity: DxfEntity, isDark: boolean): string {
   if (entity.color && DXF_COLORS[entity.color]) return DXF_COLORS[entity.color];
   return isDark ? "#94a3b8" : "#374151";
@@ -315,16 +336,34 @@ export default function CadMeasurePage() {
   const handleFileUpload = async (file: File) => {
     setLoading(true);
     try {
-      const text = await file.text();
-      const parsed = parseDxfContent(text);
-      setDxfData(parsed);
-      setFileName(file.name);
-      setEntityCount(parsed.entities.length);
+      const isDwg = file.name.toLowerCase().endsWith(".dwg");
+
+      if (isDwg) {
+        const formData = new FormData();
+        formData.append("file", file);
+        const resp = await fetch("/api/cad/convert-dwg", { method: "POST", body: formData });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({ message: "Server error" }));
+          throw new Error(err.message || "Failed to convert DWG");
+        }
+        const { entities: rawEntities } = await resp.json();
+        const parsed = buildParsedDxf(rawEntities);
+        setDxfData(parsed);
+        setFileName(file.name);
+        setEntityCount(parsed.entities.length);
+      } else {
+        const text = await file.text();
+        const parsed = parseDxfContent(text);
+        setDxfData(parsed);
+        setFileName(file.name);
+        setEntityCount(parsed.entities.length);
+      }
+
       setScale(1);
       setOffset({ x: 0, y: 0 });
       setMeasurements([]);
       setCurrentPoints([]);
-      toast({ title: "File loaded", description: `${parsed.entities.length} entities from ${file.name}` });
+      toast({ title: "File loaded", description: `${entityCount || "?"} entities from ${file.name}` });
     } catch (e: any) {
       toast({ title: "Failed to parse file", description: e.message, variant: "destructive" });
     }
@@ -334,10 +373,11 @@ export default function CadMeasurePage() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
-    if (file && (file.name.endsWith(".dxf") || file.name.endsWith(".DXF"))) {
+    const name = file?.name?.toLowerCase() ?? "";
+    if (file && (name.endsWith(".dxf") || name.endsWith(".dwg"))) {
       handleFileUpload(file);
     } else {
-      toast({ title: "Unsupported file", description: "Please drop a .dxf file", variant: "destructive" });
+      toast({ title: "Unsupported file", description: "Please drop a .dxf or .dwg file", variant: "destructive" });
     }
   };
 
@@ -439,7 +479,7 @@ export default function CadMeasurePage() {
             <div>
               <h1 className="text-lg font-semibold tracking-tight">Cann CAD</h1>
               <p className="text-xs text-muted-foreground">
-                {fileName ? `${fileName} — ${entityCount} entities` : "Upload a DXF floor plan to measure"}
+                {fileName ? `${fileName} — ${entityCount} entities` : "Upload a DXF or DWG floor plan to measure"}
               </p>
             </div>
           </div>
@@ -468,7 +508,7 @@ export default function CadMeasurePage() {
             <label className="cursor-pointer">
               <input
                 type="file"
-                accept=".dxf"
+                accept=".dxf,.dwg"
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
@@ -478,7 +518,7 @@ export default function CadMeasurePage() {
               />
               <Button variant="outline" size="sm" className="gap-1.5 pointer-events-none" data-testid="button-upload-dxf">
                 <Upload className="w-3.5 h-3.5" />
-                {fileName ? "Change File" : "Upload DXF"}
+                {fileName ? "Change File" : "Upload DXF/DWG"}
               </Button>
             </label>
           </div>
@@ -557,9 +597,9 @@ export default function CadMeasurePage() {
                   <div className="w-16 h-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
                     <FileText className="w-8 h-8 text-primary/60" />
                   </div>
-                  <h2 className="text-lg font-semibold mb-2">Drop a DXF file here</h2>
+                  <h2 className="text-lg font-semibold mb-2">Drop a DXF or DWG file here</h2>
                   <p className="text-sm text-muted-foreground mb-4">
-                    Or click "Upload DXF" above. Export from AutoCAD or CADReader as .dxf format.
+                    Or click "Upload DXF/DWG" above. Supports AutoCAD .dwg and .dxf formats.
                   </p>
                   <div className="flex items-start gap-2 text-left bg-muted/50 rounded-lg p-3 text-xs text-muted-foreground">
                     <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
