@@ -53,11 +53,17 @@ function CardItem({ row }: { row: BoardRow }) {
   const checklistTicked = row.aml_checklist
     ? Object.values(row.aml_checklist as Record<string, { ticked?: boolean }>).filter(v => v?.ticked).length
     : 0;
+  const investigateHref = row.companies_house_number
+    ? `/kyc-clouseau?tab=investigator&run=${encodeURIComponent(row.companies_house_number)}&name=${encodeURIComponent(row.name)}`
+    : `/kyc-clouseau?tab=investigator&name=${encodeURIComponent(row.name)}`;
   return (
-    <Link
-      href={`/companies/${row.id}`}
+    <div
       className="block bg-white border border-border/60 rounded-lg p-3 hover:shadow-sm hover:border-primary/40 transition-all"
       data-testid={`board-card-${row.id}`}
+    >
+    <Link
+      href={`/companies/${row.id}`}
+      className="block"
     >
       <div className="flex items-start justify-between gap-2 mb-1.5">
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -109,6 +115,15 @@ function CardItem({ row }: { row: BoardRow }) {
         </div>
       )}
     </Link>
+    <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-[11px]">
+      <Link href={investigateHref} className="text-primary hover:underline flex items-center gap-1" data-testid={`board-investigate-${row.id}`} onClick={(e) => e.stopPropagation()}>
+        <ShieldCheck className="w-3 h-3" /> Investigate
+      </Link>
+      <Link href={`/companies/${row.id}`} className="text-muted-foreground hover:text-foreground flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+        Manage files <ChevronRight className="w-3 h-3" />
+      </Link>
+    </div>
+    </div>
   );
 }
 
@@ -135,20 +150,10 @@ export default function ComplianceBoard() {
 
   const { data, isLoading, error } = useQuery<BoardData>({
     queryKey: ["/api/kyc/board"],
-    queryFn: async () => {
-      const res = await fetch("/api/kyc/board", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load");
-      return res.json();
-    },
   });
 
   const { data: dealsData, isLoading: dealsLoading } = useQuery<DealBoardData>({
     queryKey: ["/api/kyc/board/deals"],
-    queryFn: async () => {
-      const res = await fetch("/api/kyc/board/deals", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load deals");
-      return res.json();
-    },
   });
 
   const filtered = useMemo(() => {

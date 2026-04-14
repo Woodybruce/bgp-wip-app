@@ -181,6 +181,61 @@ export function setupAuth(app: Express) {
     next();
   });
 
+  // Domain-restricted registration — only @brucegillinghampollard.com emails
+  // can create themselves an account via password. Everyone else is locked
+  // out with a clear message. This is the route Woody asked for: 'tell
+  // people as and when so they can log in' — they sign up with their BGP
+  // email, pick a password, and they're in.
+  app.post("/api/auth/register", async (req: Request, res: Response) => {
+    try {
+      const email = String(req.body?.email || "").toLowerCase().trim();
+      const password = String(req.body?.password || "");
+      const name = String(req.body?.name || "").trim();
+      if (!email || !password || !name) {
+        return res.status(400).json({ message: "Name, email, and password are required" });
+      }
+      if (!email.endsWith("@brucegillinghampollard.com")) {
+        return res.status(403).json({ message: "Only @brucegillinghampollard.com email addresses can register" });
+      }
+      if (password.length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters" });
+      }
+      const allUsers = await storage.getAllUsers();
+      const existing = allUsers.find(u => u.email?.toLowerCase() === email || u.username?.toLowerCase() === email);
+      if (existing) {
+        return res.status(409).json({ message: "An account already exists for this email. Sign in instead." });
+      }
+
+      const hashed = await bcrypt.hash(password, 10);
+      const newUserId = `usr_${crypto.randomBytes(10).toString("hex")}`;
+      await storage.createUser({
+        id: newUserId,
+        username: email,
+        email,
+        name,
+        password: hashed,
+        isActive: true,
+      } as any);
+
+      // Log them straight in
+      const created = (await storage.getAllUsers()).find(u => u.id === newUserId);
+      if (!created) return res.status(500).json({ message: "Account created but could not load — try signing in" });
+
+      await new Promise<void>((resolve, reject) => {
+        req.session.regenerate((err) => err ? reject(err) : resolve());
+      });
+      req.session.userId = created.id;
+      const token = await createAuthToken(created.id);
+      req.session.save(() => {
+        const { password: _, ...safe } = created as any;
+        res.json({ ...safe, token });
+      });
+    } catch (err: any) {
+      console.error("[auth/register] error:", err?.message);
+      res.status(500).json({ message: "Registration failed. Please try again." });
+    }
+  });
+
   app.post("/api/auth/login", async (req: Request, res: Response) => {
     const result = loginSchema.safeParse(req.body);
     if (!result.success) {
@@ -484,11 +539,36 @@ export function setupAuth(app: Express) {
       console.log("SSO: Microsoft user email:", msEmail);
 
       const allUsers = await storage.getAllUsers();
-      const user = allUsers.find(u => u.email?.toLowerCase() === msEmail);
+      let user = allUsers.find(u => u.email?.toLowerCase() === msEmail);
+
+      // Auto-provision for Bruce Gillingham Pollard staff emails.
+      // Domain-restricted: only @brucegillinghampollard.com Microsoft accounts
+      // can create themselves. Anyone else with a matching record must
+      // already exist in the users table.
+      if (!user && msEmail.endsWith("@brucegillinghampollard.com")) {
+        try {
+          const displayName = (profile.displayName || msEmail.split("@")[0]).trim();
+          const randomPw = await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10);
+          const createdId = `usr_${crypto.randomBytes(10).toString("hex")}`;
+          await storage.createUser({
+            id: createdId,
+            username: msEmail,
+            email: msEmail,
+            name: displayName,
+            password: randomPw,
+            isActive: true,
+          } as any);
+          console.log("SSO: auto-provisioned BGP staff account", msEmail);
+          const fresh = await storage.getAllUsers();
+          user = fresh.find(u => u.email?.toLowerCase() === msEmail);
+        } catch (provErr: any) {
+          console.error("SSO: auto-provision failed:", provErr?.message);
+        }
+      }
 
       if (!user) {
         console.log("SSO: no matching BGP user for email", msEmail);
-        return res.redirect("/?sso_error=" + encodeURIComponent("No BGP account found for " + msEmail + ". Ask Woody to create your account first."));
+        return res.redirect("/?sso_error=" + encodeURIComponent("Only @brucegillinghampollard.com accounts can sign in here. Got " + msEmail));
       }
 
       req.session.regenerate((regenErr) => {

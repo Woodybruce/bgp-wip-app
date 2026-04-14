@@ -12,66 +12,111 @@ process.on("uncaughtException", (err) => {
 import { registerRoutes } from "./routes";
 import { pool } from "./db";
 
-// Auto-migrate: add columns/tables that may be missing after database restore
+// Auto-migrate: add columns/tables that may be missing after database restore.
+// CRITICAL: each statement runs in its own try/catch so one failure (e.g. an
+// IMMUTABLE-check on a GIN index expression under older Postgres) does NOT
+// abort the whole batch. A single multi-statement pool.query stops at the
+// first error, which is how compliance_board/training tables went missing.
 (async () => {
-  try {
-    await pool.query(`
-      ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false;
-      ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS po_number TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved BOOLEAN DEFAULT false;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_risk_level TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_funds TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_funds_notes TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_wealth TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_wealth_notes TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_pep_status TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_pep_notes TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_required BOOLEAN DEFAULT false;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_reason TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_completed_at TIMESTAMP;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_completed_by TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_notes TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_verified BOOLEAN DEFAULT false;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_verified_at TIMESTAMP;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_verified_by TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_doc_type TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_address_verified BOOLEAN DEFAULT false;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_address_doc_type TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_filed BOOLEAN DEFAULT false;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_reference TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_filed_at TIMESTAMP;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_compliance_notes TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_checklist JSONB;
-      CREATE TABLE IF NOT EXISTS aml_settings (id SERIAL PRIMARY KEY, nominated_officer_id VARCHAR, nominated_officer_name TEXT, nominated_officer_email TEXT, nominated_officer_appointed_at TIMESTAMP, firm_risk_assessment JSONB, firm_risk_assessment_updated_at TIMESTAMP, firm_risk_assessment_updated_by TEXT, aml_policy_notes TEXT, recheck_interval_days INTEGER DEFAULT 365, updated_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS aml_training_records (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, user_name TEXT NOT NULL, training_type TEXT NOT NULL, training_date TIMESTAMP NOT NULL, completed_at TIMESTAMP, score INTEGER, topics TEXT[], notes TEXT, certified_by TEXT, next_due_date TIMESTAMP, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS aml_recheck_reminders (id SERIAL PRIMARY KEY, deal_id VARCHAR, company_id VARCHAR, entity_name TEXT NOT NULL, recheck_type TEXT NOT NULL, due_date TIMESTAMP NOT NULL, completed_at TIMESTAMP, completed_by TEXT, notes TEXT, created_at TIMESTAMP DEFAULT now());
-      ALTER TABLE knowledge_base ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'sharepoint';
-      CREATE TABLE IF NOT EXISTS user_tasks (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), user_id VARCHAR NOT NULL, title TEXT NOT NULL, description TEXT, due_date TIMESTAMP, priority TEXT DEFAULT 'medium', status TEXT DEFAULT 'todo', category TEXT, linked_deal_id VARCHAR, linked_property_id VARCHAR, linked_contact_id VARCHAR, sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), completed_at TIMESTAMP);
-      CREATE TABLE IF NOT EXISTS system_activity_log (id SERIAL PRIMARY KEY, source TEXT NOT NULL, action TEXT NOT NULL, detail TEXT, count INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS image_studio_images (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), file_name TEXT NOT NULL, category TEXT DEFAULT 'Uncategorised', tags TEXT[] DEFAULT '{}', description TEXT, source TEXT DEFAULT 'upload', property_id VARCHAR, area TEXT, address TEXT, brand_name TEXT, brand_sector TEXT, property_type TEXT, mime_type TEXT DEFAULT 'image/jpeg', file_size INTEGER, width INTEGER, height INTEGER, thumbnail_data TEXT, sharepoint_item_id TEXT, sharepoint_drive_id TEXT, local_path TEXT, uploaded_by VARCHAR, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS image_studio_collections (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT NOT NULL, description TEXT, cover_image_id VARCHAR, created_by VARCHAR, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS image_studio_collection_images (id SERIAL PRIMARY KEY, collection_id VARCHAR NOT NULL, image_id VARCHAR NOT NULL, added_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS deleted_sharepoint_images (id SERIAL PRIMARY KEY, sharepoint_drive_id TEXT NOT NULL, sharepoint_item_id TEXT NOT NULL, deleted_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS comp_files (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), comp_id VARCHAR NOT NULL, file_name TEXT NOT NULL, file_path TEXT NOT NULL, file_size INTEGER, mime_type TEXT, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS land_registry_searches (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, address TEXT NOT NULL, postcode TEXT, freeholds_count INTEGER DEFAULT 0, leaseholds_count INTEGER DEFAULT 0, freeholds JSONB, leaseholds JSONB, intelligence JSONB, ai_summary JSONB, ownership JSONB, crm_property_id VARCHAR, notes TEXT, tags JSONB DEFAULT '[]', status VARCHAR DEFAULT 'New', created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS leasing_schedule_units (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), property_id VARCHAR NOT NULL, unit_name TEXT, zone TEXT, positioning TEXT, tenant_name TEXT, agent_initials TEXT, lease_expiry TIMESTAMP, lease_break TIMESTAMP, rent_review TIMESTAMP, landlord_break TIMESTAMP, rent_pa REAL, sqft REAL, mat_psqft REAL, lfl_percent REAL, occ_cost_percent REAL, financial_notes TEXT, target_brands TEXT, optimum_target TEXT, priority TEXT, status TEXT, updates TEXT, target_company_ids TEXT[], sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS leasing_schedule_audit (id SERIAL PRIMARY KEY, unit_id VARCHAR, property_id VARCHAR NOT NULL, user_id VARCHAR NOT NULL, user_name TEXT NOT NULL, action TEXT NOT NULL, field_name TEXT, old_value TEXT, new_value TEXT, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS kyc_investigations (id SERIAL PRIMARY KEY, subject_type TEXT NOT NULL, subject_name TEXT NOT NULL, company_number TEXT, crm_company_id VARCHAR, officer_name TEXT, risk_level TEXT, risk_score INTEGER, sanctions_match BOOLEAN DEFAULT false, result JSONB, conducted_by VARCHAR, conducted_at TIMESTAMP DEFAULT now(), notes TEXT);
-      CREATE INDEX IF NOT EXISTS kyc_investigations_company_number_idx ON kyc_investigations (company_number);
-      CREATE INDEX IF NOT EXISTS kyc_investigations_crm_company_id_idx ON kyc_investigations (crm_company_id);
-      CREATE INDEX IF NOT EXISTS kyc_investigations_conducted_at_idx ON kyc_investigations (conducted_at);
-      CREATE TABLE IF NOT EXISTS kyc_audit_log (id SERIAL PRIMARY KEY, investigation_id INTEGER NOT NULL, action TEXT NOT NULL, performed_by VARCHAR, notes TEXT, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS deal_audit_log (id SERIAL PRIMARY KEY, deal_id VARCHAR NOT NULL, field TEXT NOT NULL, old_value TEXT, new_value TEXT, reason TEXT, changed_by VARCHAR, changed_by_name VARCHAR, created_at TIMESTAMP DEFAULT now());
-    `);
-    // Fix type mismatch separately (may already be correct)
-    try { await pool.query("ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text"); } catch {}
-    console.log("[auto-migrate] Schema migration complete");
-  } catch (e: any) {
-    console.log("[auto-migrate] Migration note:", e.message);
+  const MIGRATIONS: string[] = [
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS po_number TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_risk_level TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_funds TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_funds_notes TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_wealth TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_wealth_notes TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_pep_status TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_pep_notes TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_required BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_reason TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_completed_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_completed_by TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_notes TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_verified BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_verified_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_verified_by TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_doc_type TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_address_verified BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_address_doc_type TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_filed BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_reference TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_filed_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_compliance_notes TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_checklist JSONB`,
+    `CREATE TABLE IF NOT EXISTS aml_settings (id SERIAL PRIMARY KEY, nominated_officer_id VARCHAR, nominated_officer_name TEXT, nominated_officer_email TEXT, nominated_officer_appointed_at TIMESTAMP, firm_risk_assessment JSONB, firm_risk_assessment_updated_at TIMESTAMP, firm_risk_assessment_updated_by TEXT, aml_policy_notes TEXT, recheck_interval_days INTEGER DEFAULT 365, updated_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS aml_training_records (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, user_name TEXT NOT NULL, training_type TEXT NOT NULL, training_date TIMESTAMP NOT NULL, completed_at TIMESTAMP, score INTEGER, topics TEXT[], notes TEXT, certified_by TEXT, next_due_date TIMESTAMP, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS aml_recheck_reminders (id SERIAL PRIMARY KEY, deal_id VARCHAR, company_id VARCHAR, entity_name TEXT NOT NULL, recheck_type TEXT NOT NULL, due_date TIMESTAMP NOT NULL, completed_at TIMESTAMP, completed_by TEXT, notes TEXT, created_at TIMESTAMP DEFAULT now())`,
+    `ALTER TABLE knowledge_base ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'sharepoint'`,
+    // Drop the legacy index that may have been created with a non-IMMUTABLE
+    // expression (array_to_string was STABLE in Postgres <14). We rebuild it
+    // below without the ai_tags piece so it's IMMUTABLE on every version.
+    `DROP INDEX IF EXISTS knowledge_base_search_idx`,
+    `CREATE INDEX IF NOT EXISTS knowledge_base_search_idx ON knowledge_base USING GIN (to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(category,'')))`,
+    `CREATE INDEX IF NOT EXISTS knowledge_base_source_idx ON knowledge_base (source)`,
+    `CREATE INDEX IF NOT EXISTS knowledge_base_category_idx ON knowledge_base (category)`,
+    `CREATE INDEX IF NOT EXISTS chat_messages_content_search_idx ON chat_messages USING GIN (to_tsvector('english', coalesce(content,'')))`,
+    `CREATE TABLE IF NOT EXISTS user_tasks (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), user_id VARCHAR NOT NULL, title TEXT NOT NULL, description TEXT, due_date TIMESTAMP, priority TEXT DEFAULT 'medium', status TEXT DEFAULT 'todo', category TEXT, linked_deal_id VARCHAR, linked_property_id VARCHAR, linked_contact_id VARCHAR, sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), completed_at TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS system_activity_log (id SERIAL PRIMARY KEY, source TEXT NOT NULL, action TEXT NOT NULL, detail TEXT, count INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS image_studio_images (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), file_name TEXT NOT NULL, category TEXT DEFAULT 'Uncategorised', tags TEXT[] DEFAULT '{}', description TEXT, source TEXT DEFAULT 'upload', property_id VARCHAR, area TEXT, address TEXT, brand_name TEXT, brand_sector TEXT, property_type TEXT, mime_type TEXT DEFAULT 'image/jpeg', file_size INTEGER, width INTEGER, height INTEGER, thumbnail_data TEXT, sharepoint_item_id TEXT, sharepoint_drive_id TEXT, local_path TEXT, uploaded_by VARCHAR, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS image_studio_collections (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT NOT NULL, description TEXT, cover_image_id VARCHAR, created_by VARCHAR, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS image_studio_collection_images (id SERIAL PRIMARY KEY, collection_id VARCHAR NOT NULL, image_id VARCHAR NOT NULL, added_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS deleted_sharepoint_images (id SERIAL PRIMARY KEY, sharepoint_drive_id TEXT NOT NULL, sharepoint_item_id TEXT NOT NULL, deleted_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS comp_files (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), comp_id VARCHAR NOT NULL, file_name TEXT NOT NULL, file_path TEXT NOT NULL, file_size INTEGER, mime_type TEXT, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS land_registry_searches (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, address TEXT NOT NULL, postcode TEXT, freeholds_count INTEGER DEFAULT 0, leaseholds_count INTEGER DEFAULT 0, freeholds JSONB, leaseholds JSONB, intelligence JSONB, ai_summary JSONB, ownership JSONB, crm_property_id VARCHAR, notes TEXT, tags JSONB DEFAULT '[]', status VARCHAR DEFAULT 'New', created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS leasing_schedule_units (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), property_id VARCHAR NOT NULL, unit_name TEXT, zone TEXT, positioning TEXT, tenant_name TEXT, agent_initials TEXT, lease_expiry TIMESTAMP, lease_break TIMESTAMP, rent_review TIMESTAMP, landlord_break TIMESTAMP, rent_pa REAL, sqft REAL, mat_psqft REAL, lfl_percent REAL, occ_cost_percent REAL, financial_notes TEXT, target_brands TEXT, optimum_target TEXT, priority TEXT, status TEXT, updates TEXT, target_company_ids TEXT[], sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS leasing_schedule_audit (id SERIAL PRIMARY KEY, unit_id VARCHAR, property_id VARCHAR NOT NULL, user_id VARCHAR NOT NULL, user_name TEXT NOT NULL, action TEXT NOT NULL, field_name TEXT, old_value TEXT, new_value TEXT, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS kyc_investigations (id SERIAL PRIMARY KEY, subject_type TEXT NOT NULL, subject_name TEXT NOT NULL, company_number TEXT, crm_company_id VARCHAR, officer_name TEXT, risk_level TEXT, risk_score INTEGER, sanctions_match BOOLEAN DEFAULT false, result JSONB, conducted_by VARCHAR, conducted_at TIMESTAMP DEFAULT now(), notes TEXT)`,
+    `CREATE INDEX IF NOT EXISTS kyc_investigations_company_number_idx ON kyc_investigations (company_number)`,
+    `CREATE INDEX IF NOT EXISTS kyc_investigations_crm_company_id_idx ON kyc_investigations (crm_company_id)`,
+    `CREATE INDEX IF NOT EXISTS kyc_investigations_conducted_at_idx ON kyc_investigations (conducted_at)`,
+    `CREATE TABLE IF NOT EXISTS kyc_audit_log (id SERIAL PRIMARY KEY, investigation_id INTEGER NOT NULL, action TEXT NOT NULL, performed_by VARCHAR, notes TEXT, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS deal_audit_log (id SERIAL PRIMARY KEY, deal_id VARCHAR NOT NULL, field TEXT NOT NULL, old_value TEXT, new_value TEXT, reason TEXT, changed_by VARCHAR, changed_by_name VARCHAR, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS kyc_documents (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), company_id VARCHAR, contact_id VARCHAR, deal_id VARCHAR, doc_type TEXT NOT NULL, file_url TEXT NOT NULL, file_name TEXT NOT NULL, file_size INTEGER, mime_type TEXT, certified_by TEXT, certified_at TIMESTAMP, expires_at TIMESTAMP, notes TEXT, uploaded_by VARCHAR, uploaded_at TIMESTAMP DEFAULT now(), deleted_at TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_documents_company_id ON kyc_documents(company_id) WHERE deleted_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_documents_contact_id ON kyc_documents(contact_id) WHERE deleted_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_documents_deal_id ON kyc_documents(deal_id) WHERE deleted_at IS NULL`,
+    `CREATE TABLE IF NOT EXISTS aml_training_modules (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), title TEXT NOT NULL, description TEXT, content_markdown TEXT NOT NULL, quiz JSONB NOT NULL DEFAULT '[]'::jsonb, pass_score INTEGER DEFAULT 80, estimated_minutes INTEGER, required_for_roles TEXT[], active BOOLEAN DEFAULT true, created_by VARCHAR, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS aml_training_attempts (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), module_id VARCHAR NOT NULL, user_id VARCHAR NOT NULL, user_name TEXT, answers JSONB NOT NULL, score INTEGER NOT NULL, passed BOOLEAN NOT NULL, started_at TIMESTAMP DEFAULT now(), completed_at TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS idx_aml_training_attempts_user ON aml_training_attempts(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_aml_training_attempts_module ON aml_training_attempts(module_id)`,
+    `CREATE TABLE IF NOT EXISTS veriff_sessions (session_id TEXT PRIMARY KEY, company_id VARCHAR, contact_id VARCHAR, deal_id VARCHAR, first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT, status TEXT, decision_code INTEGER, decision_reason TEXT, verdict_person JSONB, verdict_document JSONB, verification_url TEXT, requested_by VARCHAR, created_at TIMESTAMP DEFAULT now(), received_at TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS idx_veriff_sessions_company ON veriff_sessions(company_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_veriff_sessions_deal ON veriff_sessions(deal_id)`,
+    `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_status TEXT`,
+    `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_approved_at TIMESTAMP`,
+    `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_approved_by TEXT`,
+    `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_next_review_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_expires_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_checklist JSONB`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_risk_level TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_pep_status TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_source_of_wealth TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_source_of_wealth_notes TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_edd_required BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_edd_reason TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_notes TEXT`,
+    // Type-mismatch cleanup (may already be correct — that's fine)
+    `ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text`,
+  ];
+
+  let ok = 0, skipped = 0;
+  for (const sql of MIGRATIONS) {
+    try {
+      await pool.query(sql);
+      ok++;
+    } catch (e: any) {
+      skipped++;
+      const head = sql.slice(0, 80).replace(/\s+/g, " ");
+      console.warn(`[auto-migrate] skipped (${e.message}): ${head}...`);
+    }
   }
+  console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
 })();
 import { setupAuth } from "./auth";
 import { setupMicrosoftRoutes } from "./microsoft";

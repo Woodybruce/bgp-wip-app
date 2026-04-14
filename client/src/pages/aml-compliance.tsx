@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
-  ShieldCheck, UserCog, GraduationCap, Clock, AlertTriangle,
+  ShieldCheck, UserCog, GraduationCap, Clock, AlertTriangle, Play,
   Plus, Check, Trash2, Save, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,16 +15,18 @@ import { Badge } from "@/components/ui/badge";
 function MlroSettings() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: settings, isLoading } = useQuery({
+  const { data: settings, isLoading } = useQuery<any>({
     queryKey: ["/api/aml/settings"],
-    queryFn: () => fetch("/api/aml/settings").then(r => r.json()),
   });
 
   const [form, setForm] = useState<any>({});
   const [editing, setEditing] = useState(false);
 
   const saveMutation = useMutation({
-    mutationFn: (body: any) => fetch("/api/aml/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json()),
+    mutationFn: async (body: any) => {
+      const r = await apiRequest("PUT", "/api/aml/settings", body);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/settings"] }); setEditing(false); toast({ title: "Settings saved" }); },
   });
 
@@ -101,27 +104,65 @@ function MlroSettings() {
 function TrainingRecords() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: records = [], isLoading } = useQuery({
+  const { data: records = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/aml/training"],
-    queryFn: () => fetch("/api/aml/training").then(r => r.json()),
   });
+
+  // Cross-link: map each logged training row to the interactive module
+  // (if one exists with a matching title) so the MLRO can see who's due
+  // to re-take and jump straight into the quiz.
+  const { data: modules = [] } = useQuery<Array<{ id: string; title: string }>>({
+    queryKey: ["/api/aml/training-modules"],
+  });
+  const moduleByTitle = new Map(modules.map(m => [m.title.toLowerCase(), m.id]));
+  const moduleByType = (trainingType: string): string | null => {
+    const t = (trainingType || "").toLowerCase();
+    // Direct title match
+    if (moduleByTitle.has(t)) return moduleByTitle.get(t) || null;
+    // Match legacy training_type slugs against our module titles
+    const aliases: Record<string, string> = {
+      induction: "aml essentials",
+      annual_refresher: "aml essentials",
+      sar_reporting: "sar reporting",
+      sanctions_screening: "sanctions screening",
+    };
+    const alias = aliases[t];
+    if (alias) {
+      for (const [title, id] of Array.from(moduleByTitle.entries())) {
+        if (title.includes(alias)) return id;
+      }
+    }
+    return null;
+  };
 
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ userName: "", trainingType: "annual_refresher", trainingDate: new Date().toISOString().slice(0, 10), topics: "", notes: "" });
 
   const addMutation = useMutation({
-    mutationFn: (body: any) => fetch("/api/aml/training", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json()),
+    mutationFn: async (body: any) => {
+      const r = await apiRequest("POST", "/api/aml/training", body);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/training"] }); setShowAdd(false); setForm({ userName: "", trainingType: "annual_refresher", trainingDate: new Date().toISOString().slice(0, 10), topics: "", notes: "" }); toast({ title: "Training record added" }); },
+    onError: (err: any) => toast({ title: "Failed to add record", description: err?.message, variant: "destructive" }),
   });
 
   const completeMutation = useMutation({
-    mutationFn: (id: number) => fetch(`/api/aml/training/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ completedAt: new Date().toISOString() }) }).then(r => r.json()),
+    mutationFn: async (id: number) => {
+      const r = await apiRequest("PUT", `/api/aml/training/${id}`, { completedAt: new Date().toISOString() });
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/training"] }); toast({ title: "Marked as complete" }); },
+    onError: (err: any) => toast({ title: "Update failed", description: err?.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => fetch(`/api/aml/training/${id}`, { method: "DELETE" }).then(r => r.json()),
+    mutationFn: async (id: number) => {
+      const r = await apiRequest("DELETE", `/api/aml/training/${id}`);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/training"] }); toast({ title: "Record deleted" }); },
+    onError: (err: any) => toast({ title: "Delete failed", description: err?.message, variant: "destructive" }),
   });
 
   const trainingTypes: Record<string, string> = {
@@ -143,12 +184,20 @@ function TrainingRecords() {
             <GraduationCap className="w-4 h-4" />
             Staff AML Training Log
           </CardTitle>
-          <Button size="sm" variant="outline" onClick={() => setShowAdd(!showAdd)}>
-            {showAdd ? <ChevronUp className="w-3 h-3 mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
-            {showAdd ? "Cancel" : "Log Training"}
-          </Button>
+          <div className="flex gap-2">
+            <Button asChild size="sm" variant="outline" data-testid="button-open-training-tab">
+              <a href="/kyc-clouseau?tab=training">
+                <GraduationCap className="w-3 h-3 mr-1" />
+                Take a module
+              </a>
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setShowAdd(!showAdd)}>
+              {showAdd ? <ChevronUp className="w-3 h-3 mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
+              {showAdd ? "Cancel" : "Log Training"}
+            </Button>
+          </div>
         </div>
-        <p className="text-xs text-muted-foreground">MLR 2017 Regulation 24 requires firms to take appropriate measures to ensure employees are aware of AML obligations. All training must be recorded.</p>
+        <p className="text-xs text-muted-foreground">MLR 2017 Regulation 24 requires firms to take appropriate measures to ensure employees are aware of AML obligations. Staff training is auto-logged when they pass a module on the Training tab.</p>
       </CardHeader>
       <CardContent>
         {showAdd && (
@@ -208,6 +257,18 @@ function TrainingRecords() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
+                  {(() => {
+                    const moduleId = moduleByType(r.training_type);
+                    if (!moduleId) return null;
+                    const label = r.completed_at ? "Re-take" : "Take";
+                    return (
+                      <Button asChild size="sm" variant="outline" className="h-7 text-xs" data-testid={`take-module-${r.id}`}>
+                        <a href={`/aml-training/${moduleId}`}>
+                          <Play className="w-3 h-3 mr-1" /> {label}
+                        </a>
+                      </Button>
+                    );
+                  })()}
                   {r.completed_at ? (
                     <Badge variant="default" className="bg-green-600 text-[10px]">
                       <Check className="w-2.5 h-2.5 mr-0.5" /> Complete
@@ -234,27 +295,38 @@ function TrainingRecords() {
 function RecheckReminders() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: reminders = [], isLoading } = useQuery({
+  const { data: reminders = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/aml/reminders"],
-    queryFn: () => fetch("/api/aml/reminders").then(r => r.json()),
   });
 
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ entityName: "", recheckType: "annual_cdd", dueDate: "", notes: "" });
 
   const addMutation = useMutation({
-    mutationFn: (body: any) => fetch("/api/aml/reminders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json()),
+    mutationFn: async (body: any) => {
+      const r = await apiRequest("POST", "/api/aml/reminders", body);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/reminders"] }); setShowAdd(false); toast({ title: "Reminder created" }); },
+    onError: (err: any) => toast({ title: "Failed to create reminder", description: err?.message, variant: "destructive" }),
   });
 
   const completeMutation = useMutation({
-    mutationFn: (id: number) => fetch(`/api/aml/reminders/${id}/complete`, { method: "PUT" }).then(r => r.json()),
+    mutationFn: async (id: number) => {
+      const r = await apiRequest("PUT", `/api/aml/reminders/${id}/complete`);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/reminders"] }); toast({ title: "Reminder completed" }); },
+    onError: (err: any) => toast({ title: "Update failed", description: err?.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => fetch(`/api/aml/reminders/${id}`, { method: "DELETE" }).then(r => r.json()),
+    mutationFn: async (id: number) => {
+      const r = await apiRequest("DELETE", `/api/aml/reminders/${id}`);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/reminders"] }); toast({ title: "Reminder deleted" }); },
+    onError: (err: any) => toast({ title: "Delete failed", description: err?.message, variant: "destructive" }),
   });
 
   const recheckTypes: Record<string, string> = {
@@ -364,7 +436,6 @@ function FirmRiskAssessment() {
   const qc = useQueryClient();
   const { data: settings } = useQuery<any>({
     queryKey: ["/api/aml/settings"],
-    queryFn: () => fetch("/api/aml/settings").then(r => r.json()),
   });
 
   const [editing, setEditing] = useState(false);
@@ -378,21 +449,33 @@ function FirmRiskAssessment() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: (body: any) => fetch("/api/aml/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json()),
+    mutationFn: async (body: any) => {
+      const r = await apiRequest("PUT", "/api/aml/settings", body);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/settings"] }); setEditing(false); toast({ title: "Risk assessment saved" }); },
+    onError: (err: any) => toast({ title: "Save failed", description: err?.message, variant: "destructive" }),
   });
 
   const populateDefault = useMutation({
-    mutationFn: () => fetch("/api/aml/risk-assessment/populate-default", { method: "POST", credentials: "include" }).then(r => r.json()),
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/aml/risk-assessment/populate-default");
+      return r.json();
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/aml/settings"] });
       toast({ title: "Template populated", description: "Review the draft, edit anything BGP-specific, then click Approve." });
     },
+    onError: (err: any) => toast({ title: "Failed to populate template", description: err?.message, variant: "destructive" }),
   });
 
   const approveAssessment = useMutation({
-    mutationFn: () => fetch("/api/aml/risk-assessment/approve", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: "{}" }).then(r => r.json()),
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/aml/risk-assessment/approve", {});
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/settings"] }); toast({ title: "Risk assessment approved", description: "Next review scheduled in 12 months." }); },
+    onError: (err: any) => toast({ title: "Failed to approve", description: err?.message, variant: "destructive" }),
   });
 
   const existing = settings?.firm_risk_assessment;
@@ -533,9 +616,8 @@ function FirmRiskAssessment() {
 
 // --- Main Page ---
 export default function AmlCompliancePage() {
-  const { data: overdueCount } = useQuery({
+  const { data: overdueCount } = useQuery<{ count: number }>({
     queryKey: ["/api/aml/reminders/overdue-count"],
-    queryFn: () => fetch("/api/aml/reminders/overdue-count").then(r => r.json()),
   });
 
   return (
@@ -549,8 +631,8 @@ export default function AmlCompliancePage() {
             <h1 className="text-lg font-semibold tracking-tight">AML Compliance</h1>
             <p className="text-xs text-muted-foreground">
               Money Laundering Regulations 2017 — Estate Agent Compliance Dashboard
-              {overdueCount?.count > 0 && (
-                <Badge variant="destructive" className="ml-2 text-[10px]">{overdueCount.count} overdue</Badge>
+              {(overdueCount?.count ?? 0) > 0 && (
+                <Badge variant="destructive" className="ml-2 text-[10px]">{overdueCount!.count} overdue</Badge>
               )}
             </p>
           </div>

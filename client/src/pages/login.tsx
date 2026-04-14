@@ -12,8 +12,10 @@ interface LoginPageProps {
 }
 
 export default function LoginPage({ onLogin }: LoginPageProps) {
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [fullName, setFullName] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSsoLoading, setIsSsoLoading] = useState(false);
@@ -70,6 +72,36 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     setIsLoading(true);
 
     try {
+      if (mode === "signup") {
+        // Client-side domain check — server enforces it again, this is
+        // just for a nicer error message before we hit the network.
+        if (!username.toLowerCase().endsWith("@brucegillinghampollard.com")) {
+          toast({ title: "Domain not allowed", description: "Sign-up is restricted to @brucegillinghampollard.com email addresses.", variant: "destructive" });
+          setIsLoading(false);
+          return;
+        }
+        if (!fullName.trim()) {
+          toast({ title: "Name required", description: "Please enter your full name.", variant: "destructive" });
+          setIsLoading(false);
+          return;
+        }
+        if (password.length < 8) {
+          toast({ title: "Password too short", description: "At least 8 characters.", variant: "destructive" });
+          setIsLoading(false);
+          return;
+        }
+        const res = await apiRequest("POST", "/api/auth/register", {
+          email: username.toLowerCase(),
+          password,
+          name: fullName.trim(),
+        });
+        const data = await res.json();
+        if (data.token) localStorage.setItem("bgp_auth_token", data.token);
+        toast({ title: "Welcome to BGP", description: "Your account is ready." });
+        onLogin();
+        return;
+      }
+
       const res = await apiRequest("POST", "/api/auth/login", { username: username.toLowerCase(), password });
       const data = await res.json();
       if (data.token) {
@@ -79,11 +111,19 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
     } catch (err: any) {
       const msg = err?.message || "";
       const isNetwork = msg.includes("Failed to fetch") || msg.includes("Load failed") || msg.includes("NetworkError");
+      const signupSpecific = mode === "signup" ? {
+        title: "Sign-up failed",
+        description: msg.includes("409") || msg.toLowerCase().includes("already exists")
+          ? "An account already exists for this email. Sign in instead."
+          : msg.includes("403") || msg.toLowerCase().includes("only @brucegillinghampollard")
+          ? "Only @brucegillinghampollard.com email addresses can register."
+          : "Could not create account. Please try again.",
+      } : null;
       toast({
-        title: isNetwork ? "Connection error" : "Login failed",
-        description: isNetwork
+        title: signupSpecific?.title || (isNetwork ? "Connection error" : "Login failed"),
+        description: signupSpecific?.description || (isNetwork
           ? "Could not reach the server. Check your internet connection and try again."
-          : "Invalid email or password. Please try again.",
+          : "Invalid email or password. Please try again."),
         variant: "destructive",
       });
     } finally {
@@ -204,6 +244,21 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-5">
+            {mode === "signup" && (
+              <div className="space-y-2">
+                <Label htmlFor="fullname" className="text-xs uppercase tracking-wider text-neutral-500">Full name</Label>
+                <Input
+                  id="fullname"
+                  data-testid="input-fullname"
+                  type="text"
+                  placeholder="Your full name"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  autoComplete="name"
+                  className="h-11 border-neutral-200 dark:border-neutral-800"
+                />
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="username" className="text-xs uppercase tracking-wider text-neutral-500">Email</Label>
               <Input
@@ -213,9 +268,12 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                 placeholder="name@brucegillinghampollard.com"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                autoComplete="email"
+                autoComplete={mode === "signup" ? "email" : "email"}
                 className="h-11 border-neutral-200 dark:border-neutral-800"
               />
+              {mode === "signup" && (
+                <p className="text-[11px] text-neutral-500">Only @brucegillinghampollard.com addresses can register.</p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="password" className="text-xs uppercase tracking-wider text-neutral-500">Password</Label>
@@ -244,7 +302,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             <Button
               type="submit"
               className="w-full h-11 bg-black hover:bg-neutral-800 text-white dark:bg-white dark:hover:bg-neutral-200 dark:text-black font-normal tracking-wide"
-              disabled={isLoading || !username || !password}
+              disabled={isLoading || !username || !password || (mode === "signup" && !fullName)}
               data-testid="button-login"
             >
               {isLoading ? (
@@ -252,8 +310,33 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
               ) : (
                 <LogIn className="w-4 h-4 mr-2" />
               )}
-              Sign In
+              {mode === "signup" ? "Create account" : "Sign In"}
             </Button>
+            <div className="text-center text-xs text-neutral-500">
+              {mode === "signin" ? (
+                <>New to BGP?{" "}
+                  <button
+                    type="button"
+                    onClick={() => setMode("signup")}
+                    className="text-black dark:text-white underline underline-offset-2 hover:text-neutral-700"
+                    data-testid="button-switch-to-signup"
+                  >
+                    Create an account
+                  </button>
+                </>
+              ) : (
+                <>Already have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={() => setMode("signin")}
+                    className="text-black dark:text-white underline underline-offset-2 hover:text-neutral-700"
+                    data-testid="button-switch-to-signin"
+                  >
+                    Sign in
+                  </button>
+                </>
+              )}
+            </div>
           </form>
         </div>
       </div>
