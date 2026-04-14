@@ -3054,13 +3054,21 @@ export function DealAMLChecklist({ deal }: { deal: CrmDeal }) {
               )}
             </div>
             {d.amlSarFiled && (
-              <Input
-                placeholder="NCA reference number..."
-                className="h-7 text-[11px]"
-                defaultValue={d.amlSarReference || ""}
-                onBlur={(e) => { if (e.target.value !== (d.amlSarReference || "")) updateField("amlSarReference", e.target.value); }}
-              />
+              <>
+                <Input
+                  placeholder="NCA reference number..."
+                  className="h-7 text-[11px]"
+                  defaultValue={d.amlSarReference || ""}
+                  onBlur={(e) => { if (e.target.value !== (d.amlSarReference || "")) updateField("amlSarReference", e.target.value); }}
+                />
+                <div className="p-2 rounded bg-red-100 border border-red-300 text-[10px] text-red-800 dark:bg-red-950/40 dark:border-red-800 dark:text-red-200 space-y-1">
+                  <p className="font-semibold flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> TIPPING OFF WARNING — Criminal Offence</p>
+                  <p>Under sections 333A of the Proceeds of Crime Act 2002 and section 21D of the Terrorism Act 2000, it is a criminal offence to disclose to the customer (or any third party) that a SAR has been filed or that an investigation is underway. Penalty: up to 5 years imprisonment and/or unlimited fine.</p>
+                  <p className="font-medium">Do NOT inform the customer or any third party about this report.</p>
+                </div>
+              </>
             )}
+            <p className="text-[10px] text-muted-foreground">File SARs via the NCA SAR Portal: sarsreporting.nationalcrimeagency.gov.uk</p>
           </div>
         </div>
 
