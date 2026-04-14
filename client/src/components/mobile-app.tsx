@@ -642,7 +642,7 @@ function ProjectItemRow({ project, isExpanded, singleThread, onToggle, openThrea
   return (
     <div>
       <button
-        className="w-full flex items-center gap-3 px-4 py-3 active:bg-gray-50 transition-colors select-none"
+        className="w-full flex items-center gap-3 px-5 py-3 active:bg-[#F5F5F4] transition-colors select-none border-b border-[#E7E5E4]/60"
         onClick={() => {
           if (singleThread) {
             openThread(singleThread);
@@ -652,10 +652,15 @@ function ProjectItemRow({ project, isExpanded, singleThread, onToggle, openThrea
         }}
         data-testid={`mobile-project-${project.id}`}
       >
-        <Building2 className="w-5 h-5 text-gray-600 shrink-0" />
-        <span className="flex-1 text-[14px] font-semibold text-left truncate">{project.name}</span>
+        <Building2 className="w-4 h-4 text-[#78716C] shrink-0" />
+        <span className="flex-1 text-[15px] font-semibold text-[#1C1917] text-left truncate tracking-tight">{project.name}</span>
         {project.threads.length > 1 && (
-          <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${isExpanded ? "" : "-rotate-90"}`} />
+          <span className="text-[11px] font-medium text-[#A8A29E] shrink-0">
+            {project.threads.length} chats
+          </span>
+        )}
+        {project.threads.length > 1 && (
+          <ChevronDown className={`w-4 h-4 text-[#A8A29E] shrink-0 transition-transform ${isExpanded ? "" : "-rotate-90"}`} />
         )}
       </button>
       {isExpanded && project.threads.length > 1 && (
@@ -3084,9 +3089,40 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               </button>
             )}
             {tab === "ai" && !showMobileMarketingFiles && (
-              <button onClick={openNewAiChat} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-mobile-new-ai">
-                <Plus className="w-5 h-5" />
-              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20"
+                    data-testid="button-mobile-new-ai"
+                    aria-label="New ChatBGP conversation"
+                  >
+                    <Plus className="w-5 h-5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem
+                    onClick={openNewAiChat}
+                    data-testid="menu-new-plain-chat"
+                  >
+                    <Sparkles className="w-4 h-4 mr-2 text-primary" />
+                    New chat
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => { setShowMobileNewProperty(true); setMobileNewPropSelectedId(""); setMobileNewPropSearch(""); setMobileNewPropLinkType("property"); }}
+                    data-testid="menu-new-property-chat"
+                  >
+                    <Building2 className="w-4 h-4 mr-2 text-gray-600" />
+                    New chat about a property
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => { setShowMobileNewProperty(true); setMobileNewPropSelectedId(""); setMobileNewPropSearch(""); setMobileNewPropLinkType("deal"); }}
+                    data-testid="menu-new-deal-chat"
+                  >
+                    <Handshake className="w-4 h-4 mr-2 text-gray-600" />
+                    New chat about a deal
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             {tab === "menu" && moreSubTab === "tracker" && (
               <button onClick={() => { setTab("ai"); setShowMobileMarketingFiles(true); setMarketingFileSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-mobile-marketing-materials" aria-label="Marketing materials">
@@ -3196,6 +3232,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               <div>
                 {aiProjectItems.length > 0 && (
                   <div className="mb-1">
+                    <p className="text-[11px] font-semibold text-[#A8A29E] uppercase tracking-wider px-5 pt-3 pb-1">Properties & deals</p>
                     {aiProjectItems.map(project => {
                       const key = `${project.type}-${project.id}`;
                       const isExpanded = expandedAiProjects.has(key);
