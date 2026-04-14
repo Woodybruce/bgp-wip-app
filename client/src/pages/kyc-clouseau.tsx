@@ -499,6 +499,97 @@ function ExpiringSection() {
   );
 }
 
+// Cross-link: after an investigation completes, check the CRM for a matching
+// company by Companies House number. If there's a hit, offer a link to the
+// Company detail page (where the KycPanel lives). If not, offer a 'Add to
+// CRM' button so the MLRO can start the compliance workflow one click later.
+function CrmMatchStrip({
+  companyNumber,
+  companyName,
+  companyType,
+  address,
+}: {
+  companyNumber: string;
+  companyName: string;
+  companyType?: string;
+  address?: any;
+}) {
+  const { toast } = useToast();
+  const [creating, setCreating] = useState(false);
+  const { data: match, refetch } = useQuery<{ id: string; name: string; kyc_status: string | null } | null>({
+    queryKey: ["/api/kyc/match-company", companyNumber],
+    queryFn: async () => {
+      const res = await fetch(`/api/kyc/match-company?companyNumber=${encodeURIComponent(companyNumber)}`, { credentials: "include" });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return data || null;
+    },
+  });
+
+  async function addToCrm() {
+    setCreating(true);
+    try {
+      const res = await fetch("/api/kyc/create-company-from-investigation", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyNumber, companyName, companyType, address }),
+      });
+      if (!res.ok) throw new Error("Failed to create");
+      await refetch();
+      toast({ title: "Added to CRM", description: "KYC profile ready — open it to upload documents and run the checklist." });
+    } catch (e: any) {
+      toast({ title: "Couldn't add", description: e?.message, variant: "destructive" });
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  return (
+    <Card className="border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20" data-testid="crm-match-strip">
+      <CardContent className="p-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+          {match ? (
+            <div className="min-w-0">
+              <div className="text-sm font-medium truncate">
+                In CRM as <span className="font-semibold">{match.name}</span>
+                {match.kyc_status && (
+                  <Badge variant="outline" className={`ml-2 text-[10px] ${
+                    match.kyc_status === "approved" ? "border-emerald-300 text-emerald-700" :
+                    match.kyc_status === "rejected" ? "border-red-300 text-red-700" :
+                    match.kyc_status === "in_review" ? "border-blue-300 text-blue-700" :
+                    "border-amber-300 text-amber-700"
+                  }`}>{match.kyc_status}</Badge>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">Open the compliance profile to upload docs, run the checklist, and MLRO-approve.</div>
+            </div>
+          ) : (
+            <div className="min-w-0">
+              <div className="text-sm font-medium">Not in CRM yet</div>
+              <div className="text-xs text-muted-foreground">Add to the CRM to start the KYC document workflow and lock the deal invoice gate.</div>
+            </div>
+          )}
+        </div>
+        {match ? (
+          <Button asChild size="sm" variant="outline" className="shrink-0" data-testid="crm-match-open">
+            <a href={`/companies/${match.id}`}>
+              Manage compliance profile
+              <ChevronRight className="w-3.5 h-3.5 ml-1" />
+            </a>
+          </Button>
+        ) : (
+          <Button size="sm" onClick={addToCrm} disabled={creating} className="shrink-0" data-testid="crm-match-create">
+            {creating && <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />}
+            Add to CRM
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function KycClouseau() {
   const { toast } = useToast();
   const params = new URLSearchParams(window.location.search);
@@ -1096,6 +1187,15 @@ export default function KycClouseau() {
                   <RiskBadge level={investigation.riskLevel} score={investigation.riskScore} />
                 </div>
               </div>
+
+              {investigation.companyProfile?.company_number && (
+                <CrmMatchStrip
+                  companyNumber={investigation.companyProfile.company_number}
+                  companyName={investigation.subject.name}
+                  companyType={investigation.companyProfile.type}
+                  address={investigation.companyProfile.registered_office_address}
+                />
+              )}
 
               {/* UBO & Decision Makers section (from Property Intelligence) */}
               {(investigation as any).decisionMakers?.length > 0 && (

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import {
-  ShieldCheck, UserCog, GraduationCap, Clock, AlertTriangle,
+  ShieldCheck, UserCog, GraduationCap, Clock, AlertTriangle, Play,
   Plus, Check, Trash2, Save, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -101,10 +101,38 @@ function MlroSettings() {
 function TrainingRecords() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: records = [], isLoading } = useQuery({
+  const { data: records = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/aml/training"],
     queryFn: () => fetch("/api/aml/training").then(r => r.json()),
   });
+
+  // Cross-link: map each logged training row to the interactive module
+  // (if one exists with a matching title) so the MLRO can see who's due
+  // to re-take and jump straight into the quiz.
+  const { data: modules = [] } = useQuery<Array<{ id: string; title: string }>>({
+    queryKey: ["/api/aml/training-modules"],
+    queryFn: () => fetch("/api/aml/training-modules", { credentials: "include" }).then(r => r.json()),
+  });
+  const moduleByTitle = new Map(modules.map(m => [m.title.toLowerCase(), m.id]));
+  const moduleByType = (trainingType: string): string | null => {
+    const t = (trainingType || "").toLowerCase();
+    // Direct title match
+    if (moduleByTitle.has(t)) return moduleByTitle.get(t) || null;
+    // Match legacy training_type slugs against our module titles
+    const aliases: Record<string, string> = {
+      induction: "aml essentials",
+      annual_refresher: "aml essentials",
+      sar_reporting: "sar reporting",
+      sanctions_screening: "sanctions screening",
+    };
+    const alias = aliases[t];
+    if (alias) {
+      for (const [title, id] of Array.from(moduleByTitle.entries())) {
+        if (title.includes(alias)) return id;
+      }
+    }
+    return null;
+  };
 
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ userName: "", trainingType: "annual_refresher", trainingDate: new Date().toISOString().slice(0, 10), topics: "", notes: "" });
@@ -143,12 +171,20 @@ function TrainingRecords() {
             <GraduationCap className="w-4 h-4" />
             Staff AML Training Log
           </CardTitle>
-          <Button size="sm" variant="outline" onClick={() => setShowAdd(!showAdd)}>
-            {showAdd ? <ChevronUp className="w-3 h-3 mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
-            {showAdd ? "Cancel" : "Log Training"}
-          </Button>
+          <div className="flex gap-2">
+            <Button asChild size="sm" variant="outline" data-testid="button-open-training-tab">
+              <a href="/kyc-clouseau?tab=training">
+                <GraduationCap className="w-3 h-3 mr-1" />
+                Take a module
+              </a>
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setShowAdd(!showAdd)}>
+              {showAdd ? <ChevronUp className="w-3 h-3 mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
+              {showAdd ? "Cancel" : "Log Training"}
+            </Button>
+          </div>
         </div>
-        <p className="text-xs text-muted-foreground">MLR 2017 Regulation 24 requires firms to take appropriate measures to ensure employees are aware of AML obligations. All training must be recorded.</p>
+        <p className="text-xs text-muted-foreground">MLR 2017 Regulation 24 requires firms to take appropriate measures to ensure employees are aware of AML obligations. Staff training is auto-logged when they pass a module on the Training tab.</p>
       </CardHeader>
       <CardContent>
         {showAdd && (
@@ -208,6 +244,18 @@ function TrainingRecords() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
+                  {(() => {
+                    const moduleId = moduleByType(r.training_type);
+                    if (!moduleId) return null;
+                    const label = r.completed_at ? "Re-take" : "Take";
+                    return (
+                      <Button asChild size="sm" variant="outline" className="h-7 text-xs" data-testid={`take-module-${r.id}`}>
+                        <a href={`/aml-training/${moduleId}`}>
+                          <Play className="w-3 h-3 mr-1" /> {label}
+                        </a>
+                      </Button>
+                    );
+                  })()}
                   {r.completed_at ? (
                     <Badge variant="default" className="bg-green-600 text-[10px]">
                       <Check className="w-2.5 h-2.5 mr-0.5" /> Complete
