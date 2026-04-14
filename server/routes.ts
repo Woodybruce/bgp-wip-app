@@ -4115,7 +4115,7 @@ ${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuc
 
           const lines = plainText.split("\n").map((l: string) => l.trim()).filter((l: string) => l.length > 2 && l.length < 200);
           const taskLines = lines.filter((l: string) =>
-            /^[-\u2022*\u2610\u25A1\u25FB\u25CB]/.test(l) || /^(\d+[.)]\s)/.test(l) || /^\[[\s\x]\]/.test(l)
+            /^[-\u2022*\u2610\u25A1\u25FB\u25CB]/.test(l) || /^(\d+[.)]\s)/.test(l) || /^\[[\sxX]\]/.test(l)
           );
 
           const linesToImport = taskLines.length > 0 ? taskLines : lines.slice(0, 10);

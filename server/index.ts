@@ -170,7 +170,7 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
   message: { message: "Too many login attempts. Please try again in 15 minutes." },
 });
-app.use("/api/login", loginLimiter);
+app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth/microsoft", loginLimiter);
 
 const apiLimiter = rateLimit({

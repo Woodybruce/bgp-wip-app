@@ -5141,7 +5141,7 @@ async function executeCrmToolRaw(
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
         const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(req, fnArgs.folderPath, name, buffer);
+        const uploadResult = await uploadFileToSharePoint(buffer, name, contentType || "application/octet-stream", fnArgs.folderPath);
         return { data: { success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath, uploadResult } };
       }
 
@@ -8106,7 +8106,7 @@ export async function handleCrmToolCall(
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
         const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(req, fnArgs.folderPath, name, buffer);
+        const uploadResult = await uploadFileToSharePoint(buffer, name, contentType || "application/octet-stream", fnArgs.folderPath);
         const reply = await summaryHelper({ success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath });
         return { handled: true, response: { reply: reply || `Saved ${name} to SharePoint at ${fnArgs.folderPath}.` } };
       }

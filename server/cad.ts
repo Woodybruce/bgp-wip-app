@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
+import { requireAuth } from "./auth";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -128,7 +129,7 @@ function extractEntities(db: any): SimpleEntity[] {
   return entities;
 }
 
-router.post("/api/cad/convert-dwg", upload.single("file"), async (req: Request, res: Response) => {
+router.post("/api/cad/convert-dwg", requireAuth, upload.single("file"), async (req: Request, res: Response) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" });
