@@ -10,6 +10,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import OpenAI from "openai";
+import { saveFile, getFile } from "./file-storage";
 
 // --- Multi-provider image generation helpers ---
 
@@ -104,6 +105,25 @@ async function generateWithGemini(prompt: string, _size: string): Promise<Buffer
   }
 }
 
+// Deterministic local enhancement — crops the Google Street View watermark
+// band at the bottom, lifts brightness + saturation + contrast, gently
+// sharpens. Never produces a different building because it never looks at
+// the pixels, it just adjusts them. Safe fallback when Gemini is down.
+async function enhanceLocally(buffer: Buffer, opts: { cropBottomPx?: number } = {}): Promise<Buffer> {
+  const { cropBottomPx = 24 } = opts;
+  const meta = await sharp(buffer).metadata();
+  const width = meta.width || 1600;
+  const height = meta.height || 800;
+  const cropHeight = Math.max(100, height - cropBottomPx);
+  return sharp(buffer)
+    .extract({ left: 0, top: 0, width, height: cropHeight })
+    .modulate({ brightness: 1.05, saturation: 1.12 })
+    .linear(1.08, -4) // mild contrast
+    .sharpen({ sigma: 0.6 })
+    .jpeg({ quality: 92, mozjpeg: true })
+    .toBuffer();
+}
+
 async function editWithGemini(prompt: string, imageBase64: string, inputMime: string): Promise<Buffer | null> {
   const apiKey = process.env.GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
@@ -161,6 +181,50 @@ async function editWithGemini(prompt: string, imageBase64: string, inputMime: st
 
 const IMAGE_DIR = path.join(process.cwd(), "uploads", "image-studio");
 if (!fs.existsSync(IMAGE_DIR)) fs.mkdirSync(IMAGE_DIR, { recursive: true });
+
+// ─── Durable image storage ────────────────────────────────────────────────
+// Railway redeploys wipe the uploads/ directory, so any image only stored
+// on disk disappears and AI Touch Up / AI Tag break with 'Image file not
+// found'. These helpers dual-write every new image into the Postgres
+// file_storage table (via saveFile) and read from the DB if the disk copy
+// has gone missing. Existing images with localPath only are still readable
+// while they exist on disk; once they're gone they need to be re-generated.
+function storageKeyForImage(filePath: string): string {
+  const filename = path.basename(filePath);
+  return `image-studio/${filename}`;
+}
+
+async function persistImage(filePath: string, buffer: Buffer, mimeType: string, originalName?: string): Promise<void> {
+  try { fs.writeFileSync(filePath, buffer); } catch (e: any) {
+    console.warn(`[image-studio] fs write failed for ${filePath}: ${e?.message}`);
+  }
+  try {
+    await saveFile(storageKeyForImage(filePath), buffer, mimeType, originalName || path.basename(filePath));
+  } catch (e: any) {
+    console.warn(`[image-studio] DB persist failed for ${filePath}: ${e?.message}`);
+  }
+}
+
+async function readPersistedImage(localPath: string | null | undefined): Promise<Buffer | null> {
+  if (!localPath) return null;
+  try {
+    if (fs.existsSync(localPath)) return fs.readFileSync(localPath);
+  } catch {}
+  try {
+    const dbFile = await getFile(storageKeyForImage(localPath));
+    if (dbFile) {
+      // Rehydrate the disk copy so subsequent reads are fast
+      try {
+        if (!fs.existsSync(path.dirname(localPath))) fs.mkdirSync(path.dirname(localPath), { recursive: true });
+        fs.writeFileSync(localPath, dbFile.data);
+      } catch {}
+      return dbFile.data;
+    }
+  } catch (e: any) {
+    console.warn(`[image-studio] DB read failed for ${localPath}: ${e?.message}`);
+  }
+  return null;
+}
 
 const imageUpload = multer({
   storage: multer.memoryStorage(),
@@ -314,7 +378,7 @@ export function registerImageStudioRoutes(app: Express) {
         const ext = path.extname(file.originalname) || ".jpg";
         const filename = `${crypto.randomUUID()}${ext}`;
         const filePath = path.join(IMAGE_DIR, filename);
-        fs.writeFileSync(filePath, file.buffer);
+        await persistImage(filePath, file.buffer, file.mimetype || "image/jpeg", file.originalname);
 
         const { thumbnail, width, height } = await generateThumbnail(file.buffer);
 
@@ -507,7 +571,7 @@ export function registerImageStudioRoutes(app: Express) {
       const ext = ".png";
       const filename = `ai-${crypto.randomUUID()}${ext}`;
       const filePath = path.join(IMAGE_DIR, filename);
-      fs.writeFileSync(filePath, imageBuffer);
+      await persistImage(filePath, imageBuffer, `image/${ext.replace(".", "") === "jpg" ? "jpeg" : ext.replace(".", "")}`);
 
       const { thumbnail, width, height } = await generateThumbnail(imageBuffer);
 
@@ -546,31 +610,37 @@ export function registerImageStudioRoutes(app: Express) {
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
       if (!image) return res.status(404).json({ error: "Image not found" });
       if (image.uploadedBy && image.uploadedBy !== userId) return res.status(403).json({ error: "Not authorised to edit this image" });
-      if (!image.localPath || !fs.existsSync(image.localPath)) return res.status(400).json({ error: "Image file not found" });
-
-      const sourceBuffer = fs.readFileSync(image.localPath);
+      const sourceBuffer = await readPersistedImage(image.localPath);
+      if (!sourceBuffer) return res.status(400).json({ error: "Image file not found. The original image was lost on a deploy — re-capture / re-upload the source image and try again." });
       const base64 = sourceBuffer.toString("base64");
       const inputMime = image.mimeType || "image/jpeg";
 
-      const fullPrompt = `Edit this image: ${trimmedEdit}. Keep the overall composition and quality. Professional property photography standard.`;
+      const fullPrompt = `Edit this specific photograph: ${trimmedEdit}. PRESERVE the exact building, composition, and architectural details — only apply the requested edit. Professional property photography standard.`;
 
-      // Try providers in order: DALL-E 3 > Gemini (if configured)
-      // Note: Flux doesn't support image editing, only generation
-      // DALL-E 3 edit uses variations approach — generate a new image with the edit prompt and reference
+      // Gemini first — real image-to-image editing with the source pixels
+      // as inline input. DALL-E 3 is a text-to-image model so it regenerated
+      // an entirely new building from the prompt ('mad different buildings'
+      // bug). Local Sharp enhancement is a deterministic fallback when the
+      // user's edit is generic enough ('enhance', 'brighten', etc).
       let resultBuffer: Buffer | null = null;
       let provider = "unknown";
 
-      // Try DALL-E 3 (generate a new version based on edit description)
-      console.log("[image-studio] AI edit: trying DALL-E 3...");
-      const dalleEditPrompt = `${fullPrompt} Based on an existing property photograph.`;
-      resultBuffer = await generateWithDallE3(dalleEditPrompt, "landscape");
-      if (resultBuffer) provider = "dall-e-3";
+      console.log("[image-studio] AI edit: trying Gemini...");
+      resultBuffer = await editWithGemini(fullPrompt, base64, inputMime);
+      if (resultBuffer) provider = "gemini";
 
-      // Fall back to Gemini (supports actual image editing with inline data)
+      // If Gemini is unavailable AND the user's request is a generic visual
+      // polish (enhance/brighten/sharpen/cleanup), try the local Sharp path
+      // so they at least get a cropped + colour-graded result — never a
+      // different building. For other requests, report failure honestly.
       if (!resultBuffer) {
-        console.log("[image-studio] AI edit: trying Gemini...");
-        resultBuffer = await editWithGemini(fullPrompt, base64, inputMime);
-        if (resultBuffer) provider = "gemini";
+        const isPolishRequest = /\b(enhance|brighten|sharpen|clean\s*up|remove\s+watermark|marketing|professional)\b/i.test(trimmedEdit);
+        if (isPolishRequest) {
+          try {
+            resultBuffer = await enhanceLocally(sourceBuffer);
+            provider = "local";
+          } catch {}
+        }
       }
 
       if (!resultBuffer) return res.status(500).json({ error: "AI editing failed — no provider returned a result" });
@@ -580,7 +650,7 @@ export function registerImageStudioRoutes(app: Express) {
       const ext = ".png";
       const filename = `edited-${crypto.randomUUID()}${ext}`;
       const filePath = path.join(IMAGE_DIR, filename);
-      fs.writeFileSync(filePath, resultBuffer);
+      await persistImage(filePath, resultBuffer, "image/png");
 
       const { thumbnail, width, height } = await generateThumbnail(resultBuffer);
 
@@ -616,11 +686,10 @@ export function registerImageStudioRoutes(app: Express) {
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, imageId));
       if (!image) return res.status(404).json({ error: "Not found" });
 
-      if (!image.localPath || !fs.existsSync(image.localPath)) {
-        return res.status(400).json({ error: "Image file not found" });
+      const imageBuffer = await readPersistedImage(image.localPath);
+      if (!imageBuffer) {
+        return res.status(400).json({ error: "Image file not found. The image was lost on a redeploy — re-upload and try again." });
       }
-
-      const imageBuffer = fs.readFileSync(image.localPath);
       const base64 = imageBuffer.toString("base64");
       const mediaType = image.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 
@@ -811,7 +880,7 @@ export function registerImageStudioRoutes(app: Express) {
       const ext = ".jpg";
       const filename = `stock-${crypto.randomUUID()}${ext}`;
       const filePath = path.join(IMAGE_DIR, filename);
-      fs.writeFileSync(filePath, buffer);
+      await persistImage(filePath, buffer, "image/jpeg");
 
       const { thumbnail, width, height } = await generateThumbnail(buffer);
 
@@ -906,7 +975,7 @@ export function registerImageStudioRoutes(app: Express) {
       const safeName = (location as string).replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-");
       const filename = `streetview-${safeName}-${heading || 0}-${crypto.randomUUID().slice(0, 8)}.jpg`;
       const filePath = path.join(IMAGE_DIR, filename);
-      fs.writeFileSync(filePath, buffer);
+      await persistImage(filePath, buffer, "image/jpeg");
 
       const { thumbnail, width, height } = await generateThumbnail(buffer);
 
@@ -963,7 +1032,7 @@ export function registerImageStudioRoutes(app: Express) {
       // Step 2: Save the raw capture
       const rawFilename = `streetview-raw-${safeName}-${heading || 0}-${crypto.randomUUID().slice(0, 8)}.jpg`;
       const rawFilePath = path.join(IMAGE_DIR, rawFilename);
-      fs.writeFileSync(rawFilePath, rawBuffer);
+      await persistImage(rawFilePath, rawBuffer, "image/jpeg");
 
       const rawThumb = await generateThumbnail(rawBuffer);
 
@@ -989,30 +1058,41 @@ export function registerImageStudioRoutes(app: Express) {
 
       // Step 3: AI enhance the captured image for professional quality
       console.log(`[capture-enhance] Enhancing image with AI...`);
-      const enhancePrompt = "Enhance this Google Street View image to look like professional commercial property photography. Improve lighting, remove Google watermarks/UI elements, enhance colors for a warm professional look, sharpen building details, make the sky more appealing. Keep the actual building and street accurate.";
+      // IMPORTANT: enhancement must be IMAGE-TO-IMAGE so the actual building
+      // is preserved. DALL-E 3 was tried first in the old code — it's a
+      // text-to-image model with no access to the source pixels, so it
+      // regenerated a completely different building from the location name
+      // alone. That was the 'mad different buildings' bug Woody reported.
+      const enhancePrompt = "Subtly enhance this Google Street View photograph to look like professional commercial property marketing imagery. Preserve the EXACT building, street, windows, and architectural details — do not invent or alter the building. Remove Google watermarks and UI elements at the bottom. Improve the lighting and sky, lift contrast and saturation, and sharpen details. The result must be recognisable as the same building.";
       const rawBase64 = rawBuffer.toString("base64");
       const inputMime = "image/jpeg";
 
       let enhancedBuffer: Buffer | null = null;
       let enhanceProvider = "unknown";
 
-      // Try DALL-E 3 first (generate enhanced version based on description)
-      const dallePrompt = `${enhancePrompt} Professional commercial property exterior photography of ${location}.`;
-      enhancedBuffer = await generateWithDallE3(dallePrompt, "landscape");
-      if (enhancedBuffer) enhanceProvider = "dall-e-3";
+      // Try Gemini first — true image-to-image editing via inline image data.
+      enhancedBuffer = await editWithGemini(enhancePrompt, rawBase64, inputMime);
+      if (enhancedBuffer) enhanceProvider = "gemini";
 
-      // Fall back to Gemini (supports actual image editing with inline data)
+      // Fall back to deterministic local enhancement — crops the Google
+      // watermark band + tonal polish. Never produces a different building
+      // because it never leaves the source pixels. Always available.
       if (!enhancedBuffer) {
-        enhancedBuffer = await editWithGemini(enhancePrompt, rawBase64, inputMime);
-        if (enhancedBuffer) enhanceProvider = "gemini";
+        try {
+          enhancedBuffer = await enhanceLocally(rawBuffer);
+          enhanceProvider = "local";
+        } catch (localErr: any) {
+          console.warn(`[capture-enhance] local enhancement failed: ${localErr?.message}`);
+        }
       }
 
       let enhancedRecord = null;
       if (enhancedBuffer) {
         console.log(`[capture-enhance] Enhancement successful with ${enhanceProvider}`);
-        const enhFilename = `streetview-enhanced-${safeName}-${heading || 0}-${crypto.randomUUID().slice(0, 8)}.png`;
+        const enhExt = enhanceProvider === "local" ? ".jpg" : ".png";
+        const enhFilename = `streetview-enhanced-${safeName}-${heading || 0}-${crypto.randomUUID().slice(0, 8)}${enhExt}`;
         const enhFilePath = path.join(IMAGE_DIR, enhFilename);
-        fs.writeFileSync(enhFilePath, enhancedBuffer);
+        await persistImage(enhFilePath, enhancedBuffer, enhExt === ".png" ? "image/png" : "image/jpeg");
 
         const enhThumb = await generateThumbnail(enhancedBuffer);
 
@@ -1023,7 +1103,7 @@ export function registerImageStudioRoutes(app: Express) {
           description: `AI-enhanced Street View of ${location} (from raw capture, enhanced with ${enhanceProvider})`,
           source: "ai-edited",
           area: area || location,
-          mimeType: "image/png",
+          mimeType: enhExt === ".png" ? "image/png" : "image/jpeg",
           fileSize: enhancedBuffer.length,
           width: enhThumb.width,
           height: enhThumb.height,
@@ -1467,7 +1547,8 @@ async function runImageSync(opts: { forceReimport?: boolean } = {}) {
             const ext = path.extname(img.name).toLowerCase();
             const filename = `sp-${crypto.randomUUID().slice(0, 8)}${ext}`;
             const filePath = path.join(IMAGE_DIR, filename);
-            fs.writeFileSync(filePath, buffer);
+            const spMime = `image/${ext.replace(".", "") === "jpg" ? "jpeg" : ext.replace(".", "")}`;
+            await persistImage(filePath, buffer, spMime, img.name);
 
             const { thumbnail, width, height } = await generateThumbnail(buffer);
 
