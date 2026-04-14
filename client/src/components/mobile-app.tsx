@@ -3176,35 +3176,6 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               </div>
             </div>
 
-            <button
-              className="w-full flex items-center gap-3 px-4 py-3 active:bg-gray-50 transition-colors"
-              onClick={() => { window.location.href = "/chatbgp"; }}
-              data-testid="button-mobile-chatbgp-home"
-            >
-              <Sparkles className="w-5 h-5 shrink-0" />
-              <span className="text-[15px] font-medium">Chat BGP</span>
-            </button>
-
-            <button
-              className="w-full flex items-center gap-3 px-4 py-3 active:bg-gray-50 transition-colors"
-              onClick={() => { setShowMobileMarketingFiles(true); setMarketingFileSearch(""); }}
-              data-testid="button-mobile-marketing-details"
-            >
-              <FileText className="w-5 h-5 shrink-0" />
-              <span className="text-[15px] font-medium">Marketing Details</span>
-            </button>
-
-            <button
-              className="w-full flex items-center gap-3 px-4 py-3 active:bg-gray-50 transition-colors"
-              onClick={() => { setShowMobileNewProperty(true); setMobileNewPropSelectedId(""); setMobileNewPropSearch(""); setMobileNewPropLinkType("property"); }}
-              data-testid="button-mobile-new-property"
-            >
-              <Building2 className="w-5 h-5 shrink-0" />
-              <span className="text-[15px] font-medium">New Property</span>
-            </button>
-
-            <div className="h-px bg-gray-200 mx-4 my-1" />
-
             {filteredAiThreads.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 gap-3">
                 <MessageSquare className="w-8 h-8 text-gray-300" />
