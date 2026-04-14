@@ -3082,6 +3082,11 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                 <Plus className="w-5 h-5" />
               </button>
             )}
+            {tab === "menu" && moreSubTab === "tracker" && (
+              <button onClick={() => { setTab("ai"); setShowMobileMarketingFiles(true); setMarketingFileSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-mobile-marketing-materials" aria-label="Marketing materials">
+                <FileText className="w-5 h-5" />
+              </button>
+            )}
             <button
               onClick={() => setShowColorPicker(!showColorPicker)}
               className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20"
