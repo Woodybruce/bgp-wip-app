@@ -2918,18 +2918,42 @@ export default function EdozoMap() {
     const labelPane = map.createPane("labelPane");
     labelPane.style.zIndex = "500";
 
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png", {
+    // Base layers: map view (CARTO light) vs satellite (Esri World Imagery,
+    // free for reasonable usage). Switchable via the layer control bottom-
+    // right so users can toggle for a visual sense check of the building.
+    const mapView = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png", {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
       subdomains: "abcd",
       maxZoom: 20,
-    }).addTo(map);
-
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png", {
+    });
+    const mapLabels = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png", {
       subdomains: "abcd",
       maxZoom: 20,
       pane: "labelPane",
-    }).addTo(map);
+    });
+    const satelliteView = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+      attribution: "Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+      maxZoom: 20,
+    });
+    const satelliteLabels = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", {
+      maxZoom: 20,
+      pane: "labelPane",
+      opacity: 0.9,
+    });
 
+    mapView.addTo(map);
+    mapLabels.addTo(map);
+
+    const baseLayers = {
+      "Map": L.layerGroup([mapView, mapLabels]),
+      "Satellite": L.layerGroup([satelliteView, satelliteLabels]),
+    };
+    // Replace the already-added bare layers with the grouped entries so
+    // the layer-control toggle swaps base+labels atomically.
+    map.eachLayer(l => { if (l === mapView || l === mapLabels) map.removeLayer(l); });
+    baseLayers["Map"].addTo(map);
+
+    L.control.layers(baseLayers, undefined, { position: "bottomright", collapsed: false }).addTo(map);
     L.control.zoom({ position: "bottomright" }).addTo(map);
     L.control.scale({ position: "bottomleft", imperial: false, maxWidth: 100 }).addTo(map);
 
