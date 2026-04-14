@@ -4301,30 +4301,30 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
         </div>
       )}
 
-      <div className="border-t border-[#E7E5E4] bg-[#FAF9F7]/95 backdrop-blur-lg pb-[env(safe-area-inset-bottom)] shrink-0">
-        <div className="flex items-center justify-around h-14">
-          <button onClick={() => { setTab("chats"); setChatSearch(""); }} className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors ${tab === "chats" ? "text-[#1C1917]" : "text-[#A8A29E]"}`} data-testid="tab-mobile-chats">
+      <div className="bg-[#FAF9F7]/90 backdrop-blur-xl pb-[env(safe-area-inset-bottom)] shrink-0" style={{ boxShadow: "0 -1px 0 rgba(0,0,0,0.04)" }}>
+        <div className="flex items-stretch justify-around px-1 pt-2 pb-1">
+          <button onClick={() => { setTab("chats"); setChatSearch(""); }} className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 rounded-xl transition-colors ${tab === "chats" ? "text-[#1C1917]" : "text-[#A8A29E] active:text-[#44403C]"}`} data-testid="tab-mobile-chats">
             <div className="relative">
-              <MessageSquare className="w-[22px] h-[22px]" />
+              <MessageSquare className="w-[22px] h-[22px]" strokeWidth={tab === "chats" ? 2.2 : 1.8} />
               {unseenCount > 0 && (
                 <span className="absolute -top-1.5 -right-2.5 min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-bold flex items-center justify-center" style={{ backgroundColor: "hsl(var(--primary))" }}>
                   {unseenCount > 99 ? "99+" : unseenCount}
                 </span>
               )}
             </div>
-            <span className="text-[10px] font-semibold mt-0.5">Chats</span>
+            <span className={`text-[10px] tracking-tight ${tab === "chats" ? "font-semibold" : "font-medium"}`}>Chats</span>
           </button>
-          <button onClick={() => { setTab("ai"); setChatSearch(""); }} className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors ${tab === "ai" ? "text-[#1C1917]" : "text-[#A8A29E]"}`} data-testid="tab-mobile-ai">
-            <Sparkles className="w-[22px] h-[22px]" />
-            <span className="text-[10px] font-semibold mt-0.5">ChatBGP</span>
+          <button onClick={() => { setTab("ai"); setChatSearch(""); }} className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 rounded-xl transition-colors ${tab === "ai" ? "text-[#1C1917]" : "text-[#A8A29E] active:text-[#44403C]"}`} data-testid="tab-mobile-ai">
+            <Sparkles className="w-[22px] h-[22px]" strokeWidth={tab === "ai" ? 2.2 : 1.8} fill={tab === "ai" ? "currentColor" : "none"} />
+            <span className={`text-[10px] tracking-tight ${tab === "ai" ? "font-semibold" : "font-medium"}`}>ChatBGP</span>
           </button>
-          <button onClick={() => { setTab("today"); setChatSearch(""); }} className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors ${tab === "today" ? "text-[#1C1917]" : "text-[#A8A29E]"}`} data-testid="tab-mobile-today">
-            <Sun className="w-[22px] h-[22px]" />
-            <span className="text-[10px] font-semibold mt-0.5">Today</span>
+          <button onClick={() => { setTab("today"); setChatSearch(""); }} className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 rounded-xl transition-colors ${tab === "today" ? "text-[#1C1917]" : "text-[#A8A29E] active:text-[#44403C]"}`} data-testid="tab-mobile-today">
+            <Sun className="w-[22px] h-[22px]" strokeWidth={tab === "today" ? 2.2 : 1.8} />
+            <span className={`text-[10px] tracking-tight ${tab === "today" ? "font-semibold" : "font-medium"}`}>Today</span>
           </button>
-          <button onClick={() => { setTab("menu"); setChatSearch(""); }} className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors ${tab === "menu" ? "text-[#1C1917]" : "text-[#A8A29E]"}`} data-testid="tab-mobile-menu">
-            <Menu className="w-[22px] h-[22px]" />
-            <span className="text-[10px] font-semibold mt-0.5">More</span>
+          <button onClick={() => { setTab("menu"); setChatSearch(""); }} className={`flex flex-col items-center justify-center gap-1 flex-1 py-1 rounded-xl transition-colors ${tab === "menu" ? "text-[#1C1917]" : "text-[#A8A29E] active:text-[#44403C]"}`} data-testid="tab-mobile-menu">
+            <Menu className="w-[22px] h-[22px]" strokeWidth={tab === "menu" ? 2.2 : 1.8} />
+            <span className={`text-[10px] tracking-tight ${tab === "menu" ? "font-semibold" : "font-medium"}`}>More</span>
           </button>
         </div>
       </div>
