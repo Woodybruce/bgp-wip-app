@@ -79,29 +79,6 @@ function sanitiseForPdf(text: string): string {
   return result;
 }
 
-function renderRichText(doc: any, text: string, x: number, y: number, w: number, fontSize: number, color: string) {
-  // Split on bold markers \x02 (start bold) \x03 (end bold) and render inline
-  const parts = text.split(/(\x02[\s\S]*?\x03)/);
-  let first = true;
-  for (const part of parts) {
-    if (!part) continue;
-    const isBold = part.startsWith("\x02") && part.endsWith("\x03");
-    const clean = isBold ? part.slice(1, -1) : part;
-    if (!clean) continue;
-    doc.font(isBold ? "Body-Bold" : "Body").fontSize(fontSize).fillColor(color);
-    if (first) {
-      doc.text(clean, x, y, { width: w, continued: parts.indexOf(part) < parts.length - 1 && parts.slice(parts.indexOf(part) + 1).some((p: string) => p.length > 0) });
-      first = false;
-    } else {
-      doc.text(clean, { continued: parts.indexOf(part) < parts.length - 1 && parts.slice(parts.indexOf(part) + 1).some((p: string) => p.length > 0) });
-    }
-  }
-  if (first) {
-    // No parts rendered — just output the raw text
-    doc.font("Body").fontSize(fontSize).fillColor(color).text(text.replace(/[\x02\x03]/g, ""), x, y, { width: w });
-  }
-}
-
 async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data: any; action?: any }> {
   const PDFDocument = (await import("pdfkit")).default;
   const crypto = (await import("crypto")).default;
@@ -134,17 +111,32 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
   const usableW = pageW - 110;
   const leftM = 55;
 
-  const logoPath = require("path").join(process.cwd(), "server", "assets", "BGP_BlackHolder.png");
-  const hasLogo = require("fs").existsSync(logoPath);
+  // Resolve BGP wordmark logo once — server-side file read
+  const path = require("path") as typeof import("path");
+  const fs = require("fs") as typeof import("fs");
+  const logoCandidates = [
+    path.join(process.cwd(), "client", "src", "assets", "BGP_BlackHolder.png"),
+    path.join(process.cwd(), "client", "public", "BGP_BlackHolder.png"),
+    path.join(process.cwd(), "attached_assets", "BGP_BlackHolder.png"),
+  ];
+  let logoPath: string | null = null;
+  for (const p of logoCandidates) {
+    try { if (fs.existsSync(p)) { logoPath = p; break; } } catch {}
+  }
 
   function drawHeader() {
-    if (hasLogo) {
-      try { doc.image(logoPath, leftM, 18, { height: 18 }); } catch {}
+    if (logoPath) {
+      try {
+        doc.image(logoPath, leftM, 22, { height: 18 });
+      } catch {
+        doc.font("Body-Bold").fontSize(8).fillColor("#232323")
+          .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
+      }
     } else {
       doc.font("Body-Bold").fontSize(8).fillColor("#232323")
         .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
     }
-    doc.moveTo(leftM, 42).lineTo(leftM + usableW, 42).strokeColor("#232323").lineWidth(0.5).stroke();
+    doc.moveTo(leftM, 46).lineTo(leftM + usableW, 46).strokeColor("#232323").lineWidth(0.5).stroke();
   }
 
   function drawFooter(pageNum: number, totalPages: number) {
@@ -171,6 +163,10 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
     });
   }
 
+  // Preserve bold/italic markers through to a sentinel so we can render them
+  // as styled runs instead of stripping them (user reported flat formatting).
+  const BOLD_OPEN = "\u0001B\u0001";
+  const BOLD_CLOSE = "\u0001b\u0001";
   const processed = htmlContent
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
     .replace(/<br\s*\/?>/gi, "\n")
@@ -181,11 +177,34 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
     .replace(/<\/div>/gi, "\n")
     .replace(/<li[^>]*>/gi, "  \u2022 ")
     .replace(/<hr[^>]*>/gi, "\n---\n")
-    .replace(/<strong>([\s\S]*?)<\/strong>/gi, "\u0002$1\u0003")
-    .replace(/<b>([\s\S]*?)<\/b>/gi, "\u0002$1\u0003")
-    .replace(/<em>([\s\S]*?)<\/em>/gi, "\u0002$1\u0003")
-    .replace(/<i>([\s\S]*?)<\/i>/gi, "$1")
+    .replace(/<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, `${BOLD_OPEN}$1${BOLD_CLOSE}`)
+    .replace(/\*\*([^*\n]+)\*\*/g, `${BOLD_OPEN}$1${BOLD_CLOSE}`)
+    .replace(/<(?:em|i)\b[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, "$1")
     .replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, "$1");
+
+  // Split a line into run pairs — [{text, bold}, ...] — for pdfkit continued text
+  function splitBoldRuns(line: string): Array<{ text: string; bold: boolean }> {
+    const runs: Array<{ text: string; bold: boolean }> = [];
+    let bold = false;
+    let buf = "";
+    for (let i = 0; i < line.length; i++) {
+      if (line.slice(i, i + BOLD_OPEN.length) === BOLD_OPEN) {
+        if (buf) { runs.push({ text: buf, bold }); buf = ""; }
+        bold = true;
+        i += BOLD_OPEN.length - 1;
+        continue;
+      }
+      if (line.slice(i, i + BOLD_CLOSE.length) === BOLD_CLOSE) {
+        if (buf) { runs.push({ text: buf, bold }); buf = ""; }
+        bold = false;
+        i += BOLD_CLOSE.length - 1;
+        continue;
+      }
+      buf += line[i];
+    }
+    if (buf) runs.push({ text: buf, bold });
+    return runs.length > 0 ? runs : [{ text: line, bold: false }];
+  }
 
   let plainText = processed
     .replace(/<[^>]+>/g, "")
@@ -218,8 +237,7 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
 
     if (y > bottomLimit) y = newPage();
 
-    const cleanTrimmed = trimmed.replace(/[\x02\x03]/g, "");
-    const matchedHeading = headingMatches.find(h => cleanTrimmed === h.text);
+    const matchedHeading = headingMatches.find(h => trimmed === h.text);
 
     if (trimmed === "---") {
       y += 4;
@@ -243,23 +261,32 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
         y = doc.y + 6;
       }
     } else if (trimmed.startsWith("\u2022") || trimmed.startsWith("  \u2022")) {
-      const bulletText = trimmed.replace(/^\s*\u2022\s*/, "").replace(/[\x02\x03]/g, "");
-      doc.font("Body").fontSize(10).fillColor("#333333");
-      doc.text("\u2022  " + bulletText, leftM + 8, y, { width: usableW - 16, indent: 0 });
+      const bulletText = trimmed.replace(/^\s*\u2022\s*/, "");
+      const runs = splitBoldRuns("\u2022  " + bulletText);
+      doc.fontSize(10).fillColor("#333333");
+      doc.text("", leftM + 8, y, { width: usableW - 16, indent: 0 });
+      runs.forEach((r, i) => {
+        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
+      });
       y = doc.y + 3;
     } else if (numberedRegex.test(trimmed)) {
       const nMatch = trimmed.match(numberedRegex)!;
       const num = nMatch[1];
       const text = nMatch[2];
-      const cleanNum = num.replace(/[\x02\x03]/g, "");
-      const cleanText = text.replace(/[\x02\x03]/g, "");
-      y += 10;
-      if (y > bottomLimit) y = newPage();
-      doc.font("Body-Bold").fontSize(11).fillColor("#1a1a1a");
-      doc.text(`${cleanNum}.  ${cleanText}`, leftM + 4, y, { width: usableW - 8 });
-      y = doc.y + 4;
+      const runs = splitBoldRuns(`${num}.  ${text}`);
+      doc.fontSize(10).fillColor("#333333");
+      doc.text("", leftM + 4, y, { width: usableW - 8 });
+      runs.forEach((r, i) => {
+        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
+      });
+      y = doc.y + 3;
     } else {
-      renderRichText(doc, trimmed, leftM, y, usableW, 10, "#333333");
+      const runs = splitBoldRuns(trimmed);
+      doc.fontSize(10).fillColor("#333333");
+      doc.text("", leftM, y, { width: usableW });
+      runs.forEach((r, i) => {
+        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
+      });
       y = doc.y + 4;
     }
   }
@@ -807,6 +834,14 @@ ${memberList}
 ## How You Work
 You are an active operational agent with full CRM read/write access, internet search, SharePoint/OneDrive access, document generation (PDF/Word/PPTX/Excel), email/calendar, and app builder tools. All tool descriptions are in the tools parameter — use them proactively.
 
+## HONESTY — never fabricate outcomes
+- Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
+- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, or \`export_to_excel\`. A made-up URL will 404 for the user.
+- If the user asks you to modify something and no suitable tool exists, SAY SO plainly ("I can't edit the PDF renderer from here — that needs a code change"). Offer the closest alternative rather than inventing fake fixes.
+- For template edits, always call \`update_document_template\` with the existing templateId (from the docTemplates list). Don't just describe what you would change — actually change it. After the tool returns, report what the tool confirmed.
+- For template deletions, call \`delete_document_template\` — never just say "removed it".
+- If a tool returns an error, report the error honestly to the user. Don't pretend it succeeded and then say "give it 20 seconds to rebuild".
+
 ## Key Tool Workflows
 - **CRM**: search_crm (fuzzy matching) → create/update entities. Search broadly with multiple variations before saying something doesn't exist.
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
@@ -1330,6 +1365,54 @@ export async function getAvailableTools(): Promise<{
       },
     });
   }
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "update_document_template",
+      description: "Modify an existing document template in the BGP app — e.g. rename it, change its description, rewrite the template content, or replace the field definitions. Use when the user asks to edit, rename, reword, remove a heading, add a logo placeholder, or otherwise change a template that already exists (not to create a new one). Look up the templateId from the docTemplates list provided above. Only include the fields you want to change; the rest stay as-is.",
+      parameters: {
+        type: "object",
+        properties: {
+          templateId: { type: "string", description: "The id of the existing template to update" },
+          name: { type: "string", description: "New template name (optional)" },
+          description: { type: "string", description: "New template description (optional)" },
+          templateContent: { type: "string", description: "New full template content with {{fieldId}} placeholders (optional)" },
+          fields: {
+            type: "array",
+            description: "New array of fillable fields — REPLACES the existing fields entirely (optional)",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                label: { type: "string" },
+                type: { type: "string", enum: ["text", "textarea", "number", "date", "select"] },
+                placeholder: { type: "string" },
+                section: { type: "string" },
+              },
+              required: ["id", "label", "type", "placeholder", "section"],
+            },
+          },
+        },
+        required: ["templateId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "delete_document_template",
+      description: "Permanently delete a document template. Only call this when the user explicitly asks to remove, delete, or get rid of a template. Look up the templateId from the docTemplates list provided above.",
+      parameters: {
+        type: "object",
+        properties: {
+          templateId: { type: "string", description: "The id of the template to delete" },
+        },
+        required: ["templateId"],
+      },
+    },
+  });
 
   tools.push({
     type: "function",
@@ -3999,24 +4082,9 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker, crmProperties } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    let propertyId = fnArgs.propertyId;
-    if (!propertyId && fnArgs.assetName) {
-      const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
-      if (existingProp) {
-        propertyId = existingProp.id;
-      } else {
-        const [newProp] = await db.insert(crmProperties).values({
-          name: fnArgs.assetName,
-          address: fnArgs.address ? { street: fnArgs.address } : null,
-          tenure: fnArgs.tenure || null,
-        }).returning();
-        propertyId = newProp.id;
-      }
-    }
+    const { investmentTracker } = await import("@shared/schema");
     const [created] = await db.insert(investmentTracker).values({
-      propertyId, assetName: fnArgs.assetName, address: fnArgs.address, status: fnArgs.status || "Reporting",
+      assetName: fnArgs.assetName, address: fnArgs.address, status: fnArgs.status || "Reporting",
       boardType: fnArgs.boardType || "Purchases", client: fnArgs.client, clientContact: fnArgs.clientContact,
       vendor: fnArgs.vendor, vendorAgent: fnArgs.vendorAgent, guidePrice: fnArgs.guidePrice,
       niy: fnArgs.niy, eqy: fnArgs.eqy, sqft: fnArgs.sqft, currentRent: fnArgs.currentRent,
@@ -5190,7 +5258,7 @@ async function executeCrmToolRaw(
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
         const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(buffer, name, contentType || "application/octet-stream", fnArgs.folderPath);
+        const uploadResult = await uploadFileToSharePoint(req, fnArgs.folderPath, name, buffer);
         return { data: { success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath, uploadResult } };
       }
 
@@ -7231,24 +7299,8 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker, crmProperties } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    let propertyId = fnArgs.propertyId;
-    if (!propertyId && fnArgs.assetName) {
-      const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
-      if (existingProp) {
-        propertyId = existingProp.id;
-      } else {
-        const [newProp] = await db.insert(crmProperties).values({
-          name: fnArgs.assetName,
-          address: fnArgs.address ? { street: fnArgs.address } : null,
-          tenure: fnArgs.tenure || null,
-        }).returning();
-        propertyId = newProp.id;
-      }
-    }
+    const { investmentTracker } = await import("@shared/schema");
     const [created] = await db.insert(investmentTracker).values({
-      propertyId,
       assetName: fnArgs.assetName,
       address: fnArgs.address,
       status: fnArgs.status || "Reporting",
@@ -8171,7 +8223,7 @@ export async function handleCrmToolCall(
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
         const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(buffer, name, contentType || "application/octet-stream", fnArgs.folderPath);
+        const uploadResult = await uploadFileToSharePoint(req, fnArgs.folderPath, name, buffer);
         const reply = await summaryHelper({ success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath });
         return { handled: true, response: { reply: reply || `Saved ${name} to SharePoint at ${fnArgs.folderPath}.` } };
       }
@@ -8730,6 +8782,30 @@ export function setupChatBGPRoutes(app: Express) {
         status: "ready", design: "{}",
       });
       return { data: { success: true, templateId: created.id, templateName: created.name, fieldCount: (tcArgs.fields || []).length }, action: { type: "navigate", path: "/doc-generate?tab=templates" } };
+    }
+    // Template update (rename / rewrite / replace fields)
+    if (tcName === "update_document_template") {
+      const { storage } = await import("./storage");
+      if (!tcArgs.templateId) return { data: { error: "templateId is required" } };
+      const existing = await storage.getDocumentTemplate(tcArgs.templateId).catch(() => null);
+      if (!existing) return { data: { error: `Template ${tcArgs.templateId} not found` } };
+      const updates: Record<string, any> = {};
+      if (typeof tcArgs.name === "string") updates.name = tcArgs.name;
+      if (typeof tcArgs.description === "string") updates.description = tcArgs.description;
+      if (typeof tcArgs.templateContent === "string") updates.templateContent = tcArgs.templateContent;
+      if (Array.isArray(tcArgs.fields)) updates.fields = JSON.stringify(tcArgs.fields);
+      if (Object.keys(updates).length === 0) return { data: { error: "No fields provided to update" } };
+      const updated = await storage.updateDocumentTemplate(tcArgs.templateId, updates);
+      return { data: { success: true, templateId: updated.id, templateName: updated.name, changed: Object.keys(updates) }, action: { type: "navigate", path: "/doc-generate?tab=templates" } };
+    }
+    // Template delete
+    if (tcName === "delete_document_template") {
+      const { storage } = await import("./storage");
+      if (!tcArgs.templateId) return { data: { error: "templateId is required" } };
+      const existing = await storage.getDocumentTemplate(tcArgs.templateId).catch(() => null);
+      if (!existing) return { data: { error: `Template ${tcArgs.templateId} not found` } };
+      await storage.deleteDocumentTemplate(tcArgs.templateId);
+      return { data: { success: true, deletedId: tcArgs.templateId, deletedName: existing.name }, action: { type: "navigate", path: "/doc-generate?tab=templates" } };
     }
     // Everything else goes through executeCrmToolRaw (CRM, navigation, email, code tools, etc.)
     return executeCrmToolRaw(tcName, tcArgs, req);
