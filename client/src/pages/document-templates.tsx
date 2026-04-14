@@ -2454,9 +2454,9 @@ function ClaudeDocumentStudio({ onDocumentCreated }: { onDocumentCreated?: (run:
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm" onClick={() => setPreviewingPreset(null)}>
                   <div className="relative bg-white rounded-2xl shadow-2xl w-full mx-4 overflow-hidden" style={{ maxWidth: dialogMaxW }} onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-between px-6 py-3 border-b">
-                      <div>
-                        <h3 className="font-semibold text-base">{preset.label}</h3>
-                        <p className="text-xs text-muted-foreground mt-0.5">Template preview — {pageCount} page{pageCount !== 1 ? "s" : ""}</p>
+                      <div className="flex items-center gap-3">
+                        <img src={bgpLogoDark} alt="BGP" className="h-5 object-contain" />
+                        <p className="text-xs text-muted-foreground">{pageCount} page{pageCount !== 1 ? "s" : ""}</p>
                       </div>
                       <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" onClick={() => setPreviewingPreset(null)}>
                         <X className="w-4 h-4" />

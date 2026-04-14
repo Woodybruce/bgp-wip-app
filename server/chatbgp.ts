@@ -79,6 +79,29 @@ function sanitiseForPdf(text: string): string {
   return result;
 }
 
+function renderRichText(doc: any, text: string, x: number, y: number, w: number, fontSize: number, color: string) {
+  // Split on bold markers \x02 (start bold) \x03 (end bold) and render inline
+  const parts = text.split(/(\x02[\s\S]*?\x03)/);
+  let first = true;
+  for (const part of parts) {
+    if (!part) continue;
+    const isBold = part.startsWith("\x02") && part.endsWith("\x03");
+    const clean = isBold ? part.slice(1, -1) : part;
+    if (!clean) continue;
+    doc.font(isBold ? "Body-Bold" : "Body").fontSize(fontSize).fillColor(color);
+    if (first) {
+      doc.text(clean, x, y, { width: w, continued: parts.indexOf(part) < parts.length - 1 && parts.slice(parts.indexOf(part) + 1).some((p: string) => p.length > 0) });
+      first = false;
+    } else {
+      doc.text(clean, { continued: parts.indexOf(part) < parts.length - 1 && parts.slice(parts.indexOf(part) + 1).some((p: string) => p.length > 0) });
+    }
+  }
+  if (first) {
+    // No parts rendered — just output the raw text
+    doc.font("Body").fontSize(fontSize).fillColor(color).text(text.replace(/[\x02\x03]/g, ""), x, y, { width: w });
+  }
+}
+
 async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data: any; action?: any }> {
   const PDFDocument = (await import("pdfkit")).default;
   const crypto = (await import("crypto")).default;
@@ -111,10 +134,17 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
   const usableW = pageW - 110;
   const leftM = 55;
 
+  const logoPath = require("path").join(process.cwd(), "server", "assets", "BGP_BlackHolder.png");
+  const hasLogo = require("fs").existsSync(logoPath);
+
   function drawHeader() {
-    doc.font("Body-Bold").fontSize(8).fillColor("#232323")
-      .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
-    doc.moveTo(leftM, 40).lineTo(leftM + usableW, 40).strokeColor("#232323").lineWidth(0.5).stroke();
+    if (hasLogo) {
+      try { doc.image(logoPath, leftM, 18, { height: 18 }); } catch {}
+    } else {
+      doc.font("Body-Bold").fontSize(8).fillColor("#232323")
+        .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
+    }
+    doc.moveTo(leftM, 42).lineTo(leftM + usableW, 42).strokeColor("#232323").lineWidth(0.5).stroke();
   }
 
   function drawFooter(pageNum: number, totalPages: number) {
@@ -151,9 +181,9 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
     .replace(/<\/div>/gi, "\n")
     .replace(/<li[^>]*>/gi, "  \u2022 ")
     .replace(/<hr[^>]*>/gi, "\n---\n")
-    .replace(/<strong>([\s\S]*?)<\/strong>/gi, "$1")
-    .replace(/<em>([\s\S]*?)<\/em>/gi, "$1")
-    .replace(/<b>([\s\S]*?)<\/b>/gi, "$1")
+    .replace(/<strong>([\s\S]*?)<\/strong>/gi, "\u0002$1\u0003")
+    .replace(/<b>([\s\S]*?)<\/b>/gi, "\u0002$1\u0003")
+    .replace(/<em>([\s\S]*?)<\/em>/gi, "\u0002$1\u0003")
     .replace(/<i>([\s\S]*?)<\/i>/gi, "$1")
     .replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, "$1");
 
@@ -188,7 +218,8 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
 
     if (y > bottomLimit) y = newPage();
 
-    const matchedHeading = headingMatches.find(h => trimmed === h.text);
+    const cleanTrimmed = trimmed.replace(/[\x02\x03]/g, "");
+    const matchedHeading = headingMatches.find(h => cleanTrimmed === h.text);
 
     if (trimmed === "---") {
       y += 4;
@@ -212,7 +243,7 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
         y = doc.y + 6;
       }
     } else if (trimmed.startsWith("\u2022") || trimmed.startsWith("  \u2022")) {
-      const bulletText = trimmed.replace(/^\s*\u2022\s*/, "");
+      const bulletText = trimmed.replace(/^\s*\u2022\s*/, "").replace(/[\x02\x03]/g, "");
       doc.font("Body").fontSize(10).fillColor("#333333");
       doc.text("\u2022  " + bulletText, leftM + 8, y, { width: usableW - 16, indent: 0 });
       y = doc.y + 3;
@@ -220,12 +251,15 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
       const nMatch = trimmed.match(numberedRegex)!;
       const num = nMatch[1];
       const text = nMatch[2];
-      doc.font("Body").fontSize(10).fillColor("#333333");
-      doc.text(`${num}.  ${text}`, leftM + 4, y, { width: usableW - 8 });
-      y = doc.y + 3;
+      const cleanNum = num.replace(/[\x02\x03]/g, "");
+      const cleanText = text.replace(/[\x02\x03]/g, "");
+      y += 10;
+      if (y > bottomLimit) y = newPage();
+      doc.font("Body-Bold").fontSize(11).fillColor("#1a1a1a");
+      doc.text(`${cleanNum}.  ${cleanText}`, leftM + 4, y, { width: usableW - 8 });
+      y = doc.y + 4;
     } else {
-      doc.font("Body").fontSize(10).fillColor("#333333")
-        .text(trimmed, leftM, y, { width: usableW });
+      renderRichText(doc, trimmed, leftM, y, usableW, 10, "#333333");
       y = doc.y + 4;
     }
   }
