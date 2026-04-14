@@ -22,46 +22,113 @@ export async function chFetch(path: string) {
   return res.json();
 }
 
-export async function discoverUltimateParent(companyNumber: string, maxDepth = 5): Promise<{
-  chain: Array<{ name: string; number: string; }>;
-  ultimateParent: { name: string; number: string; } | null;
-}> {
-  const chain: Array<{ name: string; number: string; }> = [];
-  const visited = new Set<string>();
-  let currentNumber = companyNumber;
+type ChainPsc = {
+  name: string;
+  nationality?: string;
+  controls?: string[];
+  kind?: string;
+};
 
-  for (let depth = 0; depth < maxDepth; depth++) {
+export type ChainLink = {
+  name: string;
+  number: string;
+  individualPscs: ChainPsc[];
+  corporatePscs: ChainPsc[];
+};
+
+export type UboFinding = {
+  name: string;
+  nationality?: string;
+  controls?: string[];
+  foundAt: string;          // company name where this individual PSC sits
+  foundAtNumber: string;    // its CH number
+  depth: number;            // 0 = subject, 1 = direct parent, etc.
+};
+
+/**
+ * Walk the corporate ownership chain and surface ALL individual Persons with
+ * Significant Control encountered at every level — not just the chain of
+ * companies. This is the fix for the "couldn't work out UBO" bug:
+ * BGP Ltd → Thames Commercial Properties Ltd → (Thames's individual PSCs are
+ * the joint UBOs of BGP Ltd). The previous walker returned `chain: [Thames]`
+ * and stopped, hiding the actual humans.
+ *
+ * For each level we record both corporate AND individual PSCs, so the caller
+ * (and downstream AI prompt) gets the full picture without needing a separate
+ * fetch per chain entity.
+ */
+export async function discoverUltimateParent(companyNumber: string, maxDepth = 5): Promise<{
+  chain: ChainLink[];
+  ultimateParent: { name: string; number: string; } | null;
+  ubos: UboFinding[];
+}> {
+  const chain: ChainLink[] = [];
+  const ubos: UboFinding[] = [];
+  const visited = new Set<string>();
+  const seenUboNames = new Set<string>();
+  let currentNumber = companyNumber;
+  let currentName = "(subject)";
+
+  // Walk one extra step beyond the corporate chain so we always inspect the
+  // ultimate parent's PSCs even if no further corporate PSC exists above it.
+  for (let depth = 0; depth <= maxDepth; depth++) {
     try {
       const paddedNum = currentNumber.padStart(8, "0");
       if (visited.has(paddedNum)) break;
       visited.add(paddedNum);
+
       const pscData = await chFetch(`/company/${paddedNum}/persons-with-significant-control`);
-      const corporatePSCs = (pscData.items || []).filter(
-        (p: any) => !p.ceased_on && !p.ceased && p.kind === "corporate-entity-person-with-significant-control"
-      );
+      const items = (pscData.items || []).filter((p: any) => !p.ceased_on && !p.ceased);
+      const individualPscs: ChainPsc[] = items
+        .filter((p: any) => p.kind === "individual-person-with-significant-control" || (p.kind && !p.kind.includes("corporate") && !p.kind.includes("legal-person")))
+        .map((p: any) => ({ name: p.name, nationality: p.nationality, controls: p.natures_of_control, kind: p.kind }));
+      const corporatePscs: ChainPsc[] = items
+        .filter((p: any) => p.kind === "corporate-entity-person-with-significant-control")
+        .map((p: any) => ({ name: p.name, controls: p.natures_of_control, kind: p.kind }));
 
-      if (corporatePSCs.length === 0) break;
+      // Record individual PSCs found at this level as UBOs (skip the subject
+      // itself at depth 0 — those are reported separately by the caller).
+      if (depth > 0) {
+        chain.push({ name: currentName, number: currentNumber, individualPscs, corporatePscs });
+      }
+      for (const ip of individualPscs) {
+        if (!ip.name || seenUboNames.has(ip.name)) continue;
+        seenUboNames.add(ip.name);
+        ubos.push({
+          name: ip.name,
+          nationality: ip.nationality,
+          controls: ip.controls,
+          foundAt: depth === 0 ? "(subject)" : currentName,
+          foundAtNumber: currentNumber,
+          depth,
+        });
+      }
 
-      const majorityOwner = corporatePSCs.sort((a: any, b: any) => {
-        const getWeight = (controls: string[]) => {
-          if (!controls) return 0;
-          if (controls.some((c: string) => c.includes("75-to-100"))) return 3;
-          if (controls.some((c: string) => c.includes("50-to-75"))) return 2;
-          if (controls.some((c: string) => c.includes("25-to-50"))) return 1;
-          return 0;
-        };
-        return getWeight(b.natures_of_control) - getWeight(a.natures_of_control);
-      })[0];
+      if (corporatePscs.length === 0) break;
 
-      const parentNumber = majorityOwner.identification?.registration_number;
-      const parentName = majorityOwner.name;
+      // Continue up the chain via the largest-stake corporate PSC.
+      const majorityOwner = items
+        .filter((p: any) => p.kind === "corporate-entity-person-with-significant-control")
+        .sort((a: any, b: any) => {
+          const getWeight = (controls: string[]) => {
+            if (!controls) return 0;
+            if (controls.some((c: string) => c.includes("75-to-100"))) return 3;
+            if (controls.some((c: string) => c.includes("50-to-75"))) return 2;
+            if (controls.some((c: string) => c.includes("25-to-50"))) return 1;
+            return 0;
+          };
+          return getWeight(b.natures_of_control) - getWeight(a.natures_of_control);
+        })[0];
+
+      const parentNumber = majorityOwner?.identification?.registration_number;
+      const parentName = majorityOwner?.name;
       if (!parentNumber || !parentName) break;
 
       const paddedParent = parentNumber.padStart(8, "0");
       if (visited.has(paddedParent)) break;
 
-      chain.push({ name: parentName, number: parentNumber });
       currentNumber = parentNumber;
+      currentName = parentName;
     } catch {
       break;
     }
@@ -69,7 +136,8 @@ export async function discoverUltimateParent(companyNumber: string, maxDepth = 5
 
   return {
     chain,
-    ultimateParent: chain.length > 0 ? chain[chain.length - 1] : null,
+    ultimateParent: chain.length > 0 ? { name: chain[chain.length - 1].name, number: chain[chain.length - 1].number } : null,
+    ubos,
   };
 }
 
