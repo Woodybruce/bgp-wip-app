@@ -620,34 +620,32 @@ function SteppedRentCell({
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            onClick={() => { setDraft(steps.length > 1 ? steps.join("/") : (steps[0] ? String(steps[0]) : "")); setEditing(true); }}
-            className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
-            data-testid="stepped-rent-display"
-          >
-            {display || "—"}
-            {steps.length > 1 && <span className="ml-1 text-[9px] text-amber-600 font-semibold">STEP</span>}
-          </span>
-        </TooltipTrigger>
-        {steps.length > 1 && (
-          <TooltipContent side="top" className="text-xs">
-            <div className="font-semibold mb-1">Stepped headline rent</div>
-            {steps.map((s, i) => (
-              <div key={i}>Year {i + 1}{i === steps.length - 1 ? "+" : ""}: £{s.toLocaleString("en-GB")}</div>
-            ))}
-            <div className="text-[10px] text-muted-foreground mt-1">Edit with "/" between years</div>
-          </TooltipContent>
-        )}
-        {steps.length <= 1 && (
-          <TooltipContent side="top" className="text-xs">
-            Enter "/" between years for stepped rent (e.g. 100000/110000/120000)
-          </TooltipContent>
-        )}
-      </Tooltip>
-    </TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          onClick={() => { setDraft(steps.length > 1 ? steps.join("/") : (steps[0] ? String(steps[0]) : "")); setEditing(true); }}
+          className={`cursor-pointer hover:bg-muted/60 rounded px-1.5 py-0.5 text-xs inline-block min-w-[2rem] transition-colors ${!display ? "text-muted-foreground italic" : ""} ${className}`}
+          data-testid="stepped-rent-display"
+        >
+          {display || "—"}
+          {steps.length > 1 && <span className="ml-1 text-[9px] text-amber-600 font-semibold">STEP</span>}
+        </span>
+      </TooltipTrigger>
+      {steps.length > 1 && (
+        <TooltipContent side="top" className="text-xs">
+          <div className="font-semibold mb-1">Stepped headline rent</div>
+          {steps.map((s, i) => (
+            <div key={i}>Year {i + 1}{i === steps.length - 1 ? "+" : ""}: £{s.toLocaleString("en-GB")}</div>
+          ))}
+          <div className="text-[10px] text-muted-foreground mt-1">Edit with "/" between years</div>
+        </TooltipContent>
+      )}
+      {steps.length <= 1 && (
+        <TooltipContent side="top" className="text-xs">
+          Enter "/" between years for stepped rent (e.g. 100000/110000/120000)
+        </TooltipContent>
+      )}
+    </Tooltip>
   );
 }
 
@@ -1061,8 +1059,16 @@ export default function Comps() {
     mutationFn: async ({ id, field, value }: { id: string; field: string; value: any }) => {
       await apiRequest("PUT", `/api/crm/comps/${id}`, { [field]: value });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/comps"] });
+    onMutate: async ({ id, field, value }: { id: string; field: string; value: any }) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/crm/comps"] });
+      const prev = queryClient.getQueryData<CrmComp[]>(["/api/crm/comps"]);
+      if (prev) {
+        queryClient.setQueryData<CrmComp[]>(["/api/crm/comps"], prev.map(c => c.id === id ? { ...c, [field]: value } : c));
+      }
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(["/api/crm/comps"], ctx.prev);
     },
   });
 
@@ -1334,6 +1340,7 @@ export default function Comps() {
   });
 
   return (
+    <TooltipProvider delayDuration={200}>
     <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col" data-testid="leasing-comps-page">
       <div className="border-b px-4 py-3 shrink-0">
         <div className="flex items-center justify-between mb-3">
@@ -1550,7 +1557,7 @@ export default function Comps() {
         </div>
       )}
 
-      <TabsContent value="table" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden" forceMount>
+      <TabsContent value="table" className="flex-1 mt-0 overflow-hidden">
       <div className="h-full overflow-auto">
         {isLoading ? (
           <div className="flex items-center justify-center h-64">
@@ -1898,7 +1905,7 @@ export default function Comps() {
         <InvestmentCompsPage embedded />
       </TabsContent>
 
-      <TabsContent value="leads" className="flex-1 overflow-auto mt-0 p-4 data-[state=inactive]:hidden" forceMount>
+      <TabsContent value="leads" className="flex-1 overflow-auto mt-0 p-4">
         <div className="mb-3 flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold flex items-center gap-2">
@@ -2544,6 +2551,7 @@ export default function Comps() {
         </DialogContent>
       </Dialog>
     </Tabs>
+    </TooltipProvider>
   );
 }
 
@@ -2583,25 +2591,23 @@ function FormulaCell({
       ) : (
         <InlineText value={value} onSave={onSave} />
       )}
-      <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={handleCompute}
-              disabled={disabled}
-              className="opacity-40 hover:opacity-100 group-hover:opacity-80 transition-opacity disabled:cursor-not-allowed disabled:opacity-20 p-0.5"
-              data-testid="button-formula-compute"
-              aria-label={formulaLabel}
-            >
-              <Calculator className="w-3 h-3 text-blue-600" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="top" className="text-xs">
-            {disabled ? "Add the inputs (Headline rent, Term, Area, ITZA) to enable" : formulaLabel}
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={handleCompute}
+            disabled={disabled}
+            className="opacity-40 hover:opacity-100 group-hover:opacity-80 transition-opacity disabled:cursor-not-allowed disabled:opacity-20 p-0.5"
+            data-testid="button-formula-compute"
+            aria-label={formulaLabel}
+          >
+            <Calculator className="w-3 h-3 text-blue-600" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          {disabled ? "Add the inputs (Headline rent, Term, Area, ITZA) to enable" : formulaLabel}
+        </TooltipContent>
+      </Tooltip>
     </div>
   );
 }

@@ -2832,7 +2832,7 @@ export function DealAMLChecklist({ deal }: { deal: CrmDeal }) {
     { label: "Source of funds", done: !!d.amlSourceOfFunds },
     { label: "Source of wealth", done: !!d.amlSourceOfWealth },
     { label: "PEP screening", done: !!d.amlPepStatus },
-    { label: "Sanctions screening", done: d.amlCheckCompleted === "Yes" || d.amlCheckCompleted === "Completed" },
+    { label: "Sanctions screening", done: d.amlCheckCompleted === "YES" },
   ];
   if (d.amlEddRequired) {
     checks.push({ label: "Enhanced Due Diligence", done: !!d.amlEddCompletedAt });

@@ -114,7 +114,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
           }
         }
 
-        if (deal.status === "Under Offer" && deal.amlCheckCompleted !== "Yes" && deal.amlCheckCompleted !== "Completed") {
+        if (deal.status === "Under Offer" && deal.amlCheckCompleted !== "YES") {
           alerts.push({
             type: "missing_aml",
             severity: "medium",

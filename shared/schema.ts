@@ -1544,6 +1544,26 @@ export const leasingScheduleAudit = pgTable("leasing_schedule_audit", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const kycInvestigations = pgTable("kyc_investigations", {
+  id: serial("id").primaryKey(),
+  subjectType: text("subject_type").notNull(), // company | individual | property_intelligence
+  subjectName: text("subject_name").notNull(),
+  companyNumber: text("company_number"),
+  crmCompanyId: varchar("crm_company_id"),
+  officerName: text("officer_name"),
+  riskLevel: text("risk_level"), // low | medium | high | critical
+  riskScore: integer("risk_score"),
+  sanctionsMatch: boolean("sanctions_match").default(false),
+  result: jsonb("result"),
+  conductedBy: varchar("conducted_by"),
+  conductedAt: timestamp("conducted_at").defaultNow(),
+  notes: text("notes"),
+});
+
+export const insertKycInvestigationSchema = createInsertSchema(kycInvestigations).omit({ id: true, conductedAt: true });
+export type InsertKycInvestigation = z.infer<typeof insertKycInvestigationSchema>;
+export type KycInvestigation = typeof kycInvestigations.$inferSelect;
+
 export const kycAuditLog = pgTable("kyc_audit_log", {
   id: serial("id").primaryKey(),
   investigationId: integer("investigation_id").notNull(),

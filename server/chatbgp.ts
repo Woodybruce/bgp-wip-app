@@ -3965,9 +3965,24 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker } = await import("@shared/schema");
+    const { investmentTracker, crmProperties } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    let propertyId = fnArgs.propertyId;
+    if (!propertyId && fnArgs.assetName) {
+      const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
+      if (existingProp) {
+        propertyId = existingProp.id;
+      } else {
+        const [newProp] = await db.insert(crmProperties).values({
+          name: fnArgs.assetName,
+          address: fnArgs.address ? { street: fnArgs.address } : null,
+          tenure: fnArgs.tenure || null,
+        }).returning();
+        propertyId = newProp.id;
+      }
+    }
     const [created] = await db.insert(investmentTracker).values({
-      assetName: fnArgs.assetName, address: fnArgs.address, status: fnArgs.status || "Reporting",
+      propertyId, assetName: fnArgs.assetName, address: fnArgs.address, status: fnArgs.status || "Reporting",
       boardType: fnArgs.boardType || "Purchases", client: fnArgs.client, clientContact: fnArgs.clientContact,
       vendor: fnArgs.vendor, vendorAgent: fnArgs.vendorAgent, guidePrice: fnArgs.guidePrice,
       niy: fnArgs.niy, eqy: fnArgs.eqy, sqft: fnArgs.sqft, currentRent: fnArgs.currentRent,
@@ -7182,8 +7197,24 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker } = await import("@shared/schema");
+    const { investmentTracker, crmProperties } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    let propertyId = fnArgs.propertyId;
+    if (!propertyId && fnArgs.assetName) {
+      const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
+      if (existingProp) {
+        propertyId = existingProp.id;
+      } else {
+        const [newProp] = await db.insert(crmProperties).values({
+          name: fnArgs.assetName,
+          address: fnArgs.address ? { street: fnArgs.address } : null,
+          tenure: fnArgs.tenure || null,
+        }).returning();
+        propertyId = newProp.id;
+      }
+    }
     const [created] = await db.insert(investmentTracker).values({
+      propertyId,
       assetName: fnArgs.assetName,
       address: fnArgs.address,
       status: fnArgs.status || "Reporting",
