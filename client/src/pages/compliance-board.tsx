@@ -7,7 +7,9 @@ import { Input } from "@/components/ui/input";
 import {
   ShieldCheck, ShieldAlert, Clock, AlertCircle, CheckCircle2,
   Loader2, FileText, Search, Building2, Sun, Handshake, ChevronRight,
+  ChevronDown, ChevronUp, ExternalLink, Building,
 } from "lucide-react";
+import { KycPanel } from "@/components/kyc-panel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 interface BoardRow {
@@ -49,6 +51,7 @@ const COLUMNS: Array<{
 ];
 
 function CardItem({ row }: { row: BoardRow }) {
+  const [expanded, setExpanded] = useState(false);
   const dealCount = row.deals?.length || 0;
   const checklistTicked = row.aml_checklist
     ? Object.values(row.aml_checklist as Record<string, { ticked?: boolean }>).filter(v => v?.ticked).length
@@ -58,71 +61,91 @@ function CardItem({ row }: { row: BoardRow }) {
     : `/kyc-clouseau?tab=investigator&name=${encodeURIComponent(row.name)}`;
   return (
     <div
-      className="block bg-white border border-border/60 rounded-lg p-3 hover:shadow-sm hover:border-primary/40 transition-all"
+      className="bg-white border border-border/60 rounded-lg p-3 hover:shadow-sm hover:border-primary/40 transition-all"
       data-testid={`board-card-${row.id}`}
     >
-    <Link
-      href={`/companies/${row.id}`}
-      className="block"
-    >
-      <div className="flex items-start justify-between gap-2 mb-1.5">
-        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-          <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <span className="font-semibold text-sm truncate">{row.name}</span>
+      <div className="cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-start justify-between gap-2 mb-1.5">
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            <span className="font-semibold text-sm truncate">{row.name}</span>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            {row.column === "approved" && (
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" data-testid={`board-tick-${row.id}`} />
+            )}
+            {expanded ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+          </div>
         </div>
-        {row.column === "approved" && (
-          <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" data-testid={`board-tick-${row.id}`} />
+        <div className="flex flex-wrap items-center gap-1.5 mb-2">
+          {row.aml_risk_level && (
+            <Badge variant="outline" className={`text-[10px] ${
+              row.aml_risk_level === "critical" ? "border-red-300 text-red-700" :
+              row.aml_risk_level === "high" ? "border-orange-300 text-orange-700" :
+              row.aml_risk_level === "medium" ? "border-amber-300 text-amber-700" :
+              "border-emerald-300 text-emerald-700"
+            }`}>
+              {row.aml_risk_level} risk
+            </Badge>
+          )}
+          {row.aml_pep_status && row.aml_pep_status !== "clear" && (
+            <Badge variant="outline" className="text-[10px] border-purple-300 text-purple-700">PEP</Badge>
+          )}
+          {row.companies_house_number && (
+            <Badge variant="outline" className="text-[10px]">CH {row.companies_house_number}</Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1"><FileText className="w-3 h-3" />{row.doc_count} doc{row.doc_count === 1 ? "" : "s"}</span>
+          <span>{checklistTicked}/12 checked</span>
+          {dealCount > 0 && (
+            <span>· {dealCount} deal{dealCount === 1 ? "" : "s"}</span>
+          )}
+        </div>
+        {row.kyc_expires_at && (
+          <div className={`text-[11px] mt-1 ${row.isExpired ? "text-red-600 font-semibold" : "text-muted-foreground"}`}>
+            {row.isExpired ? "Re-check overdue" : "Re-check"} {new Date(row.kyc_expires_at).toLocaleDateString("en-GB")}
+          </div>
+        )}
+        {row.deals && row.deals.length > 0 && (
+          <div className="mt-2 pt-2 border-t border-border/40 space-y-0.5">
+            {row.deals.map((d, i) => (
+              <div key={`${d.id}-${i}`} className="flex items-center gap-1.5 text-[11px]">
+                <Handshake className="w-3 h-3 text-muted-foreground shrink-0" />
+                <span className="text-[9px] uppercase text-muted-foreground font-semibold shrink-0">{d.role}</span>
+                <Link href={`/deals/${d.id}`} className="truncate text-primary hover:underline" onClick={(e) => e.stopPropagation()}>
+                  {d.name}
+                </Link>
+              </div>
+            ))}
+          </div>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-1.5 mb-2">
-        {row.aml_risk_level && (
-          <Badge variant="outline" className={`text-[10px] ${
-            row.aml_risk_level === "critical" ? "border-red-300 text-red-700" :
-            row.aml_risk_level === "high" ? "border-orange-300 text-orange-700" :
-            row.aml_risk_level === "medium" ? "border-amber-300 text-amber-700" :
-            "border-emerald-300 text-emerald-700"
-          }`}>
-            {row.aml_risk_level} risk
-          </Badge>
-        )}
-        {row.aml_pep_status && row.aml_pep_status !== "clear" && (
-          <Badge variant="outline" className="text-[10px] border-purple-300 text-purple-700">PEP</Badge>
-        )}
-        {row.companies_house_number && (
-          <Badge variant="outline" className="text-[10px]">CH {row.companies_house_number}</Badge>
-        )}
-      </div>
-      <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-        <span className="flex items-center gap-1"><FileText className="w-3 h-3" />{row.doc_count} doc{row.doc_count === 1 ? "" : "s"}</span>
-        <span>{checklistTicked}/12 checked</span>
-        {dealCount > 0 && (
-          <span>· {dealCount} deal{dealCount === 1 ? "" : "s"}</span>
-        )}
-      </div>
-      {row.kyc_expires_at && (
-        <div className={`text-[11px] mt-1 ${row.isExpired ? "text-red-600 font-semibold" : "text-muted-foreground"}`}>
-          {row.isExpired ? "Re-check overdue" : "Re-check"} {new Date(row.kyc_expires_at).toLocaleDateString("en-GB")}
+
+      {expanded && (
+        <div className="mt-3 pt-3 border-t border-border/60 space-y-2">
+          <div className="flex items-center gap-3 text-[11px]">
+            <Link href={`/companies/${row.id}`} className="text-primary hover:underline flex items-center gap-1">
+              <ExternalLink className="w-3 h-3" /> Open company
+            </Link>
+            <Link href={investigateHref} className="text-primary hover:underline flex items-center gap-1" data-testid={`board-investigate-${row.id}`}>
+              <ShieldCheck className="w-3 h-3" /> Investigate
+            </Link>
+          </div>
+          <KycPanel companyId={row.id} />
         </div>
       )}
-      {row.deals && row.deals.length > 0 && (
-        <div className="mt-2 pt-2 border-t border-border/40 flex flex-wrap gap-1">
-          {row.deals.slice(0, 3).map((d, i) => (
-            <span key={`${d.id}-${i}`} className="text-[10px] bg-muted/50 px-1.5 py-0.5 rounded uppercase">
-              {d.role}
-            </span>
-          ))}
-          {row.deals.length > 3 && <span className="text-[10px] text-muted-foreground">+{row.deals.length - 3}</span>}
+
+      {!expanded && (
+        <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-[11px]">
+          <Link href={investigateHref} className="text-primary hover:underline flex items-center gap-1" data-testid={`board-investigate-${row.id}`}>
+            <ShieldCheck className="w-3 h-3" /> Investigate
+          </Link>
+          <button onClick={() => setExpanded(true)} className="text-primary hover:underline flex items-center gap-1">
+            Manage KYC <ChevronDown className="w-3 h-3" />
+          </button>
         </div>
       )}
-    </Link>
-    <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between text-[11px]">
-      <Link href={investigateHref} className="text-primary hover:underline flex items-center gap-1" data-testid={`board-investigate-${row.id}`} onClick={(e) => e.stopPropagation()}>
-        <ShieldCheck className="w-3 h-3" /> Investigate
-      </Link>
-      <Link href={`/companies/${row.id}`} className="text-muted-foreground hover:text-foreground flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-        Manage files <ChevronRight className="w-3 h-3" />
-      </Link>
-    </div>
     </div>
   );
 }
@@ -337,46 +360,113 @@ function DealsKanban({ data, loading }: { data: DealBoardData | undefined; loadi
 }
 
 function DealCard({ row }: { row: DealRow }) {
+  const [expanded, setExpanded] = useState(false);
+  const [expandedCp, setExpandedCp] = useState<string | null>(null);
+
   return (
-    <Link
-      href={`/deals/${row.id}`}
-      className="block bg-white border border-border/60 rounded-lg p-3 hover:shadow-sm hover:border-primary/40 transition-all"
+    <div
+      className="bg-white border border-border/60 rounded-lg p-3 hover:shadow-sm hover:border-primary/40 transition-all"
       data-testid={`deal-card-${row.id}`}
     >
-      <div className="flex items-start justify-between gap-2 mb-1.5">
-        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-          <Handshake className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <span className="font-semibold text-sm truncate">{row.name}</span>
-        </div>
-        {row.canInvoice && (
-          <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
-        )}
-      </div>
-      {row.propertyName && (
-        <div className="text-[11px] text-muted-foreground truncate mb-1.5">{row.propertyName}</div>
-      )}
-      <div className="flex flex-wrap items-center gap-1.5 mb-2">
-        {row.status && <Badge variant="outline" className="text-[10px]">{row.status}</Badge>}
-        {row.dealType && <Badge variant="outline" className="text-[10px]">{row.dealType}</Badge>}
-        {row.fee && <Badge variant="outline" className="text-[10px]">£{Number(row.fee).toLocaleString()}</Badge>}
-      </div>
-      <div className="space-y-1 pt-2 border-t border-border/40">
-        {row.counterparties.length === 0 ? (
-          <div className="text-[11px] text-red-600 italic">No counterparties set on deal</div>
-        ) : row.counterparties.map(cp => (
-          <div key={cp.id} className="flex items-center gap-1.5 text-[11px]">
-            {cp.isApproved ? (
-              <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
-            ) : cp.isExpired ? (
-              <Clock className="w-3 h-3 text-red-500 shrink-0" />
-            ) : (
-              <AlertCircle className="w-3 h-3 text-amber-500 shrink-0" />
-            )}
-            <span className="uppercase text-[9px] text-muted-foreground font-semibold shrink-0">{cp.role}</span>
-            <span className="truncate">{cp.name}</span>
+      <div className="cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <div className="flex items-start justify-between gap-2 mb-1.5">
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            <Handshake className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            <span className="font-semibold text-sm truncate">{row.name}</span>
           </div>
-        ))}
+          <div className="flex items-center gap-1 shrink-0">
+            {row.canInvoice && (
+              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+            )}
+            {expanded ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+          </div>
+        </div>
+        {row.propertyName && (
+          <div className="text-[11px] text-muted-foreground truncate mb-1.5">
+            <Building className="w-3 h-3 inline mr-1" />{row.propertyName}
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-1.5 mb-2">
+          {row.status && <Badge variant="outline" className="text-[10px]">{row.status}</Badge>}
+          {row.dealType && <Badge variant="outline" className="text-[10px]">{row.dealType}</Badge>}
+          {row.fee && <Badge variant="outline" className="text-[10px]">£{Number(row.fee).toLocaleString()}</Badge>}
+        </div>
+        <div className="space-y-1 pt-2 border-t border-border/40">
+          {row.counterparties.length === 0 ? (
+            <div className="text-[11px] text-red-600 italic">No counterparties set on deal</div>
+          ) : row.counterparties.map(cp => (
+            <div key={cp.id} className="flex items-center gap-1.5 text-[11px]">
+              {cp.isApproved ? (
+                <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
+              ) : cp.isExpired ? (
+                <Clock className="w-3 h-3 text-red-500 shrink-0" />
+              ) : (
+                <AlertCircle className="w-3 h-3 text-amber-500 shrink-0" />
+              )}
+              <span className="uppercase text-[9px] text-muted-foreground font-semibold shrink-0">{cp.role}</span>
+              <span className="truncate">{cp.name}</span>
+            </div>
+          ))}
+        </div>
       </div>
-    </Link>
+
+      {expanded && (
+        <div className="mt-3 pt-3 border-t border-border/60 space-y-3">
+          {/* Links to deal and property */}
+          <div className="flex items-center gap-3 text-[11px]">
+            <Link href={`/deals/${row.id}`} className="text-primary hover:underline flex items-center gap-1">
+              <ExternalLink className="w-3 h-3" /> Open deal
+            </Link>
+          </div>
+
+          {/* Each counterparty with full KYC panel */}
+          {row.counterparties.map(cp => {
+            const isOpen = expandedCp === cp.id;
+            const statusColour = cp.isApproved ? "border-emerald-300 bg-emerald-50/50"
+              : cp.isExpired ? "border-red-300 bg-red-50/50"
+              : cp.status === "rejected" ? "border-red-300 bg-red-50/50"
+              : "border-amber-300 bg-amber-50/30";
+            return (
+              <div key={cp.id} className={`border-2 rounded-lg p-2.5 ${statusColour}`} data-testid={`deal-kyc-cp-${cp.id}`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {cp.isApproved ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" /> :
+                     cp.isExpired ? <Clock className="w-3.5 h-3.5 text-red-600 shrink-0" /> :
+                     <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />}
+                    <div className="min-w-0">
+                      <Badge variant="outline" className="text-[9px] uppercase mb-0.5">{cp.role}</Badge>
+                      <Link href={`/companies/${cp.id}`} className="text-xs font-medium hover:underline block truncate">
+                        {cp.name}
+                      </Link>
+                      <div className="text-[10px] text-muted-foreground">
+                        {cp.isApproved ? "AML Approved" : cp.isExpired ? "Expired — re-check needed" : cp.status === "rejected" ? "Rejected" : cp.status ? `Status: ${cp.status}` : "No KYC yet"}
+                      </div>
+                      {cp.expiresAt && (
+                        <div className="text-[10px] text-muted-foreground">
+                          {cp.isExpired ? "Was valid until" : "Valid until"} {new Date(cp.expiresAt).toLocaleDateString("en-GB")}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setExpandedCp(isOpen ? null : cp.id)}
+                    className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
+                    data-testid={`btn-expand-cp-kyc-${cp.id}`}
+                  >
+                    {isOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    {isOpen ? "Close" : "Manage KYC"}
+                  </button>
+                </div>
+                {isOpen && (
+                  <div className="mt-2 pt-2 border-t border-current/10">
+                    <KycPanel companyId={cp.id} dealId={row.id} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
