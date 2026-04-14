@@ -103,6 +103,50 @@ async function runPreMigrations() {
     `);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_veriff_sessions_company ON veriff_sessions(company_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_veriff_sessions_deal ON veriff_sessions(deal_id)`);
+
+    // Firm-wide risk assessment — approval + review-cycle columns
+    const amlSettingsCols: Array<[string, string]> = [
+      ["firm_risk_assessment_status", "text"],
+      ["firm_risk_assessment_approved_at", "timestamp"],
+      ["firm_risk_assessment_approved_by", "text"],
+      ["firm_risk_assessment_next_review_at", "timestamp"],
+    ];
+    for (const [col, type] of amlSettingsCols) {
+      await pool.query(`ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS ${col} ${type}`);
+    }
+
+    // Training modules — content + quiz + per-user attempts
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS aml_training_modules (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        title text NOT NULL,
+        description text,
+        content_markdown text NOT NULL,
+        quiz jsonb NOT NULL DEFAULT '[]'::jsonb,
+        pass_score integer DEFAULT 80,
+        estimated_minutes integer,
+        required_for_roles text[],
+        active boolean DEFAULT true,
+        created_by varchar,
+        created_at timestamp DEFAULT now(),
+        updated_at timestamp DEFAULT now()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS aml_training_attempts (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        module_id varchar NOT NULL,
+        user_id varchar NOT NULL,
+        user_name text,
+        answers jsonb NOT NULL,
+        score integer NOT NULL,
+        passed boolean NOT NULL,
+        started_at timestamp DEFAULT now(),
+        completed_at timestamp
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_aml_training_attempts_user ON aml_training_attempts(user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_aml_training_attempts_module ON aml_training_attempts(module_id)`);
   } catch (err: any) {
     console.error("Pre-migration error:", err?.message);
   } finally {
