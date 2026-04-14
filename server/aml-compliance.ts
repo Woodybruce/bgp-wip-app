@@ -431,6 +431,76 @@ router.post("/api/kyc/company/:id/reject", requireAuth, async (req: Request, res
   }
 });
 
+// ─── Compliance board — all counterparties grouped by KYC status ──────────
+
+router.get("/api/kyc/board", requireAuth, async (_req: Request, res: Response) => {
+  try {
+    // Pull every company that's referenced by at least one live deal
+    // (landlord/tenant/vendor/purchaser) so the board shows the people
+    // we actually need to AML, not the entire CRM.
+    const result = await pool.query(
+      `WITH live_counterparties AS (
+        SELECT DISTINCT id, role FROM (
+          SELECT landlord_id AS id, 'landlord' AS role FROM crm_deals WHERE landlord_id IS NOT NULL AND status NOT IN ('Dead','Withdrawn','Lost')
+          UNION ALL
+          SELECT tenant_id, 'tenant' FROM crm_deals WHERE tenant_id IS NOT NULL AND status NOT IN ('Dead','Withdrawn','Lost')
+          UNION ALL
+          SELECT vendor_id, 'vendor' FROM crm_deals WHERE vendor_id IS NOT NULL AND status NOT IN ('Dead','Withdrawn','Lost')
+          UNION ALL
+          SELECT purchaser_id, 'purchaser' FROM crm_deals WHERE purchaser_id IS NOT NULL AND status NOT IN ('Dead','Withdrawn','Lost')
+        ) AS r WHERE id != ''
+      )
+      SELECT
+        c.id, c.name, c.kyc_status, c.kyc_checked_at, c.kyc_approved_by,
+        c.kyc_expires_at, c.aml_risk_level, c.aml_pep_status,
+        c.aml_checklist, c.companies_house_number,
+        (
+          SELECT COUNT(*) FROM kyc_documents kd WHERE kd.company_id = c.id AND kd.deleted_at IS NULL
+        )::int AS doc_count,
+        (
+          SELECT json_agg(json_build_object('id', d.id, 'name', d.name, 'role', lc.role))
+          FROM crm_deals d
+          JOIN live_counterparties lc ON (
+            (lc.role = 'landlord' AND d.landlord_id = c.id) OR
+            (lc.role = 'tenant' AND d.tenant_id = c.id) OR
+            (lc.role = 'vendor' AND d.vendor_id = c.id) OR
+            (lc.role = 'purchaser' AND d.purchaser_id = c.id)
+          )
+          WHERE d.status NOT IN ('Dead','Withdrawn','Lost')
+        ) AS deals
+      FROM crm_companies c
+      WHERE c.id IN (SELECT id FROM live_counterparties)
+      ORDER BY c.name ASC`
+    );
+
+    const now = new Date();
+    const rows = result.rows.map((r: any) => {
+      const isExpired = r.kyc_expires_at ? new Date(r.kyc_expires_at) < now : false;
+      let column: "missing" | "in_review" | "approved" | "rejected" | "expired";
+      if (r.kyc_status === "approved" && isExpired) column = "expired";
+      else if (r.kyc_status === "approved") column = "approved";
+      else if (r.kyc_status === "rejected") column = "rejected";
+      else if (r.kyc_status === "in_review" || r.doc_count > 0) column = "in_review";
+      else column = "missing";
+      return { ...r, column, isExpired };
+    });
+
+    res.json({
+      counts: {
+        missing: rows.filter((r: any) => r.column === "missing").length,
+        in_review: rows.filter((r: any) => r.column === "in_review").length,
+        approved: rows.filter((r: any) => r.column === "approved").length,
+        expired: rows.filter((r: any) => r.column === "expired").length,
+        rejected: rows.filter((r: any) => r.column === "rejected").length,
+        total: rows.length,
+      },
+      rows,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Deal-level rollup: AML status of both counterparties ─────────────────
 
 router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Response) => {

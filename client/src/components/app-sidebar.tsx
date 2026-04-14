@@ -110,6 +110,7 @@ const adminNavBase = [
 const toolsNav = [
   { title: "KYC Clouseau", url: "/kyc-clouseau", icon: Scale, badge: "AI" },
   { title: "AML Compliance", url: "/aml-compliance", icon: ShieldCheck },
+  { title: "Compliance Board", url: "/compliance-board", icon: ShieldCheck },
   { title: "Land Registry", url: "/land-registry", icon: Landmark },
   { title: "Business Rates", url: "/business-rates", icon: Receipt },
   { title: "Turnover Data", url: "/turnover", icon: BarChart3 },
