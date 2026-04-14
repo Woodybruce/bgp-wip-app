@@ -2,7 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import {
   Upload, Ruler, SquareDashedBottom, MousePointer, ZoomIn, ZoomOut,
-  RotateCcw, Loader2, Move, Trash2, FileText, Info, Maximize2,
+  RotateCcw, Loader2, Move, Trash2, FileText, Info, Maximize2, Undo2, Redo2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -150,6 +150,7 @@ export default function CadMeasurePage() {
   const [unitLabel, setUnitLabel] = useState("mm");
   const [mouseWorldPos, setMouseWorldPos] = useState<{ x: number; y: number } | null>(null);
   const [entityCount, setEntityCount] = useState(0);
+  const [undoStack, setUndoStack] = useState<Measurement[]>([]);
 
   const screenToWorld = useCallback((sx: number, sy: number) => {
     if (!dxfData) return { x: 0, y: 0 };
@@ -398,6 +399,7 @@ export default function CadMeasurePage() {
           value: dist,
           unit: unitLabel,
         }]);
+        setUndoStack([]);
         setCurrentPoints([]);
       }
     } else if (activeTool === "area") {
@@ -422,6 +424,7 @@ export default function CadMeasurePage() {
         value: area,
         unit: unitLabel,
       }]);
+      setUndoStack([]);
       setCurrentPoints([]);
     }
   };
@@ -458,7 +461,38 @@ export default function CadMeasurePage() {
   const clearMeasurements = () => {
     setMeasurements([]);
     setCurrentPoints([]);
+    setUndoStack([]);
   };
+
+  const handleUndo = useCallback(() => {
+    if (currentPoints.length > 0) {
+      setCurrentPoints(prev => prev.slice(0, -1));
+      return;
+    }
+    if (measurements.length === 0) return;
+    const last = measurements[measurements.length - 1];
+    setMeasurements(prev => prev.slice(0, -1));
+    setUndoStack(prev => [...prev, last]);
+  }, [currentPoints, measurements]);
+
+  const handleRedo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const last = undoStack[undoStack.length - 1];
+    setUndoStack(prev => prev.slice(0, -1));
+    setMeasurements(prev => [...prev, last]);
+  }, [undoStack]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [handleUndo, handleRedo]);
 
   const totalArea = measurements
     .filter(m => m.type === "area")
@@ -572,9 +606,30 @@ export default function CadMeasurePage() {
             <div className="h-px bg-border w-8 my-1" />
 
             <button
+              className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${measurements.length > 0 || currentPoints.length > 0 ? "hover:bg-muted text-muted-foreground" : "text-muted-foreground/30 cursor-not-allowed"}`}
+              onClick={handleUndo}
+              disabled={measurements.length === 0 && currentPoints.length === 0}
+              title="Undo (Ctrl+Z)"
+              data-testid="tool-undo"
+            >
+              <Undo2 className="w-4 h-4" />
+            </button>
+            <button
+              className={`w-10 h-10 rounded-lg flex items-center justify-center transition-colors ${undoStack.length > 0 ? "hover:bg-muted text-muted-foreground" : "text-muted-foreground/30 cursor-not-allowed"}`}
+              onClick={handleRedo}
+              disabled={undoStack.length === 0}
+              title="Redo (Ctrl+Shift+Z)"
+              data-testid="tool-redo"
+            >
+              <Redo2 className="w-4 h-4" />
+            </button>
+
+            <div className="h-px bg-border w-8 my-1" />
+
+            <button
               className="w-10 h-10 rounded-lg flex items-center justify-center hover:bg-muted text-red-500"
               onClick={clearMeasurements}
-              title="Clear Measurements"
+              title="Clear All Measurements"
               data-testid="tool-clear"
             >
               <Trash2 className="w-4 h-4" />
