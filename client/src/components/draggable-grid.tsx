@@ -208,7 +208,7 @@ export function DraggableGrid({
           }}
           onLayoutChange={handleLayoutChange}
           compactor={verticalCompactor}
-          margin={[2, 2]}
+          margin={[8, 8]}
           containerPadding={[0, 0]}
         >
           {items.map((item) => (

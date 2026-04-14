@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
   ShieldCheck, UserCog, GraduationCap, Clock, AlertTriangle, Play,
@@ -14,16 +15,18 @@ import { Badge } from "@/components/ui/badge";
 function MlroSettings() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: settings, isLoading } = useQuery({
+  const { data: settings, isLoading } = useQuery<any>({
     queryKey: ["/api/aml/settings"],
-    queryFn: () => fetch("/api/aml/settings").then(r => r.json()),
   });
 
   const [form, setForm] = useState<any>({});
   const [editing, setEditing] = useState(false);
 
   const saveMutation = useMutation({
-    mutationFn: (body: any) => fetch("/api/aml/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json()),
+    mutationFn: async (body: any) => {
+      const r = await apiRequest("PUT", "/api/aml/settings", body);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/settings"] }); setEditing(false); toast({ title: "Settings saved" }); },
   });
 
@@ -103,7 +106,6 @@ function TrainingRecords() {
   const qc = useQueryClient();
   const { data: records = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/aml/training"],
-    queryFn: () => fetch("/api/aml/training").then(r => r.json()),
   });
 
   // Cross-link: map each logged training row to the interactive module
@@ -111,7 +113,10 @@ function TrainingRecords() {
   // to re-take and jump straight into the quiz.
   const { data: modules = [] } = useQuery<Array<{ id: string; title: string }>>({
     queryKey: ["/api/aml/training-modules"],
+<<<<<<< HEAD
     queryFn: () => fetch("/api/aml/training-modules", { credentials: "include" }).then(r => r.json()),
+=======
+>>>>>>> claude/terminal-coding-interface-JOGQK
   });
   const moduleByTitle = new Map(modules.map(m => [m.title.toLowerCase(), m.id]));
   const moduleByType = (trainingType: string): string | null => {
@@ -138,18 +143,30 @@ function TrainingRecords() {
   const [form, setForm] = useState({ userName: "", trainingType: "annual_refresher", trainingDate: new Date().toISOString().slice(0, 10), topics: "", notes: "" });
 
   const addMutation = useMutation({
-    mutationFn: (body: any) => fetch("/api/aml/training", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json()),
+    mutationFn: async (body: any) => {
+      const r = await apiRequest("POST", "/api/aml/training", body);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/training"] }); setShowAdd(false); setForm({ userName: "", trainingType: "annual_refresher", trainingDate: new Date().toISOString().slice(0, 10), topics: "", notes: "" }); toast({ title: "Training record added" }); },
+    onError: (err: any) => toast({ title: "Failed to add record", description: err?.message, variant: "destructive" }),
   });
 
   const completeMutation = useMutation({
-    mutationFn: (id: number) => fetch(`/api/aml/training/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ completedAt: new Date().toISOString() }) }).then(r => r.json()),
+    mutationFn: async (id: number) => {
+      const r = await apiRequest("PUT", `/api/aml/training/${id}`, { completedAt: new Date().toISOString() });
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/training"] }); toast({ title: "Marked as complete" }); },
+    onError: (err: any) => toast({ title: "Update failed", description: err?.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => fetch(`/api/aml/training/${id}`, { method: "DELETE" }).then(r => r.json()),
+    mutationFn: async (id: number) => {
+      const r = await apiRequest("DELETE", `/api/aml/training/${id}`);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/training"] }); toast({ title: "Record deleted" }); },
+    onError: (err: any) => toast({ title: "Delete failed", description: err?.message, variant: "destructive" }),
   });
 
   const trainingTypes: Record<string, string> = {
@@ -282,27 +299,38 @@ function TrainingRecords() {
 function RecheckReminders() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { data: reminders = [], isLoading } = useQuery({
+  const { data: reminders = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/aml/reminders"],
-    queryFn: () => fetch("/api/aml/reminders").then(r => r.json()),
   });
 
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ entityName: "", recheckType: "annual_cdd", dueDate: "", notes: "" });
 
   const addMutation = useMutation({
-    mutationFn: (body: any) => fetch("/api/aml/reminders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json()),
+    mutationFn: async (body: any) => {
+      const r = await apiRequest("POST", "/api/aml/reminders", body);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/reminders"] }); setShowAdd(false); toast({ title: "Reminder created" }); },
+    onError: (err: any) => toast({ title: "Failed to create reminder", description: err?.message, variant: "destructive" }),
   });
 
   const completeMutation = useMutation({
-    mutationFn: (id: number) => fetch(`/api/aml/reminders/${id}/complete`, { method: "PUT" }).then(r => r.json()),
+    mutationFn: async (id: number) => {
+      const r = await apiRequest("PUT", `/api/aml/reminders/${id}/complete`);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/reminders"] }); toast({ title: "Reminder completed" }); },
+    onError: (err: any) => toast({ title: "Update failed", description: err?.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => fetch(`/api/aml/reminders/${id}`, { method: "DELETE" }).then(r => r.json()),
+    mutationFn: async (id: number) => {
+      const r = await apiRequest("DELETE", `/api/aml/reminders/${id}`);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/reminders"] }); toast({ title: "Reminder deleted" }); },
+    onError: (err: any) => toast({ title: "Delete failed", description: err?.message, variant: "destructive" }),
   });
 
   const recheckTypes: Record<string, string> = {
@@ -412,7 +440,6 @@ function FirmRiskAssessment() {
   const qc = useQueryClient();
   const { data: settings } = useQuery<any>({
     queryKey: ["/api/aml/settings"],
-    queryFn: () => fetch("/api/aml/settings").then(r => r.json()),
   });
 
   const [editing, setEditing] = useState(false);
@@ -426,21 +453,33 @@ function FirmRiskAssessment() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: (body: any) => fetch("/api/aml/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json()),
+    mutationFn: async (body: any) => {
+      const r = await apiRequest("PUT", "/api/aml/settings", body);
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/settings"] }); setEditing(false); toast({ title: "Risk assessment saved" }); },
+    onError: (err: any) => toast({ title: "Save failed", description: err?.message, variant: "destructive" }),
   });
 
   const populateDefault = useMutation({
-    mutationFn: () => fetch("/api/aml/risk-assessment/populate-default", { method: "POST", credentials: "include" }).then(r => r.json()),
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/aml/risk-assessment/populate-default");
+      return r.json();
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/aml/settings"] });
       toast({ title: "Template populated", description: "Review the draft, edit anything BGP-specific, then click Approve." });
     },
+    onError: (err: any) => toast({ title: "Failed to populate template", description: err?.message, variant: "destructive" }),
   });
 
   const approveAssessment = useMutation({
-    mutationFn: () => fetch("/api/aml/risk-assessment/approve", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: "{}" }).then(r => r.json()),
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/aml/risk-assessment/approve", {});
+      return r.json();
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/settings"] }); toast({ title: "Risk assessment approved", description: "Next review scheduled in 12 months." }); },
+    onError: (err: any) => toast({ title: "Failed to approve", description: err?.message, variant: "destructive" }),
   });
 
   const existing = settings?.firm_risk_assessment;
@@ -581,9 +620,8 @@ function FirmRiskAssessment() {
 
 // --- Main Page ---
 export default function AmlCompliancePage() {
-  const { data: overdueCount } = useQuery({
+  const { data: overdueCount } = useQuery<{ count: number }>({
     queryKey: ["/api/aml/reminders/overdue-count"],
-    queryFn: () => fetch("/api/aml/reminders/overdue-count").then(r => r.json()),
   });
 
   return (
@@ -597,8 +635,8 @@ export default function AmlCompliancePage() {
             <h1 className="text-lg font-semibold tracking-tight">AML Compliance</h1>
             <p className="text-xs text-muted-foreground">
               Money Laundering Regulations 2017 — Estate Agent Compliance Dashboard
-              {overdueCount?.count > 0 && (
-                <Badge variant="destructive" className="ml-2 text-[10px]">{overdueCount.count} overdue</Badge>
+              {(overdueCount?.count ?? 0) > 0 && (
+                <Badge variant="destructive" className="ml-2 text-[10px]">{overdueCount!.count} overdue</Badge>
               )}
             </p>
           </div>

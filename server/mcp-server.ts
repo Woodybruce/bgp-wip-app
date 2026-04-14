@@ -1029,6 +1029,110 @@ function createBgpMcpServer(): McpServer {
     }
   );
 
+  server.tool(
+    "search_knowledge_base",
+    "Full-text search the BGP memory bank — archived SharePoint files, team emails, Dropbox documents, and AI-indexed notes with summaries, tags, and extracted content. The primary long-term memory for the dashboard. Use whenever a user asks about a document, email, memo, report, or historical information.",
+    {
+      query: z.string().describe("Natural-language search query. Supports phrases, quotes, AND/OR (websearch-style)."),
+      source: z
+        .enum(["sharepoint", "email", "dropbox", "note"])
+        .optional()
+        .describe("Optional: filter to a single source type."),
+      category: z.string().optional().describe("Optional: filter by AI-assigned category."),
+      limit: z.number().optional().default(10).describe("Max results (default 10, max 50)."),
+    },
+    async ({ query, source, category, limit }) => {
+      const rawQuery = (query || "").trim();
+      if (!rawQuery) {
+        return { content: [{ type: "text" as const, text: "Query is required." }] };
+      }
+      const cappedLimit = Math.min(50, Math.max(1, limit || 10));
+      const params: any[] = [rawQuery];
+      const whereClauses: string[] = [];
+      const tsExpr = "to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(array_to_string(ai_tags, ' '),'') || ' ' || coalesce(category,''))";
+      whereClauses.push(`${tsExpr} @@ websearch_to_tsquery('english', $1)`);
+      if (source) { params.push(source); whereClauses.push(`source = $${params.length}`); }
+      if (category) { params.push(category); whereClauses.push(`category = $${params.length}`); }
+      params.push(cappedLimit);
+      try {
+        const sqlText = `
+          SELECT id, file_name, summary, content, source, category, file_url, ai_tags, last_modified,
+                 ts_rank(${tsExpr}, websearch_to_tsquery('english', $1)) AS rank
+            FROM knowledge_base
+           WHERE ${whereClauses.join(" AND ")}
+           ORDER BY rank DESC, last_modified DESC NULLS LAST
+           LIMIT $${params.length}
+        `;
+        const result = await pool.query(sqlText, params);
+        const rows = result.rows.map((r: any) => ({
+          id: r.id,
+          fileName: r.file_name,
+          summary: r.summary,
+          snippet: r.content ? String(r.content).slice(0, 400) : null,
+          source: r.source || "sharepoint",
+          category: r.category,
+          fileUrl: r.file_url,
+          aiTags: r.ai_tags || [],
+          lastModified: r.last_modified,
+        }));
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ query: rawQuery, totalResults: rows.length, results: rows }, null, 2),
+            },
+          ],
+        };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `Knowledge base search error: ${err.message}` }] };
+      }
+    }
+  );
+
+  server.tool(
+    "search_chat_history",
+    "Full-text search across past ChatBGP conversations. Use to recall something discussed in prior chat threads.",
+    {
+      query: z.string().describe("Search query over chat message content."),
+      limit: z.number().optional().default(10).describe("Max results (default 10, max 50)."),
+    },
+    async ({ query, limit }) => {
+      const rawQuery = (query || "").trim();
+      if (!rawQuery) {
+        return { content: [{ type: "text" as const, text: "Query is required." }] };
+      }
+      const cappedLimit = Math.min(50, Math.max(1, limit || 10));
+      try {
+        const sqlText = `
+          SELECT id, thread_id, role, content, created_at,
+                 ts_rank(to_tsvector('english', coalesce(content,'')), websearch_to_tsquery('english', $1)) AS rank
+            FROM chat_messages
+           WHERE to_tsvector('english', coalesce(content,'')) @@ websearch_to_tsquery('english', $1)
+           ORDER BY rank DESC, created_at DESC
+           LIMIT $2
+        `;
+        const result = await pool.query(sqlText, [rawQuery, cappedLimit]);
+        const rows = result.rows.map((r: any) => ({
+          id: r.id,
+          threadId: r.thread_id,
+          role: r.role,
+          snippet: r.content ? String(r.content).slice(0, 500) : null,
+          createdAt: r.created_at,
+        }));
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({ query: rawQuery, totalResults: rows.length, results: rows }, null, 2),
+            },
+          ],
+        };
+      } catch (err: any) {
+        return { content: [{ type: "text" as const, text: `Chat history search error: ${err.message}` }] };
+      }
+    }
+  );
+
   return server;
 }
 
@@ -1091,7 +1195,7 @@ export function registerMcpRoutes(app: Express) {
     res.json({
       name: "BGP Dashboard MCP Server",
       description: "Access BGP CRM data, SharePoint filing system, and financial models from Claude — search deals, contacts, companies, properties, investment tracker, comps, browse/search SharePoint files, and run property financial models.",
-      version: "1.2.0",
+      version: "1.3.0",
       tools: [
         "search_crm",
         "get_deal_details",
@@ -1108,6 +1212,8 @@ export function registerMcpRoutes(app: Express) {
         "list_model_templates",
         "run_financial_model",
         "get_model_runs",
+        "search_knowledge_base",
+        "search_chat_history",
       ],
       auth: "Bearer token required (Authorization header)",
     });

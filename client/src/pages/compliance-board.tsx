@@ -150,20 +150,10 @@ export default function ComplianceBoard() {
 
   const { data, isLoading, error } = useQuery<BoardData>({
     queryKey: ["/api/kyc/board"],
-    queryFn: async () => {
-      const res = await fetch("/api/kyc/board", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load");
-      return res.json();
-    },
   });
 
   const { data: dealsData, isLoading: dealsLoading } = useQuery<DealBoardData>({
     queryKey: ["/api/kyc/board/deals"],
-    queryFn: async () => {
-      const res = await fetch("/api/kyc/board/deals", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load deals");
-      return res.json();
-    },
   });
 
   const filtered = useMemo(() => {

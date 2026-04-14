@@ -766,40 +766,46 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
-        className="w-full flex items-center gap-4 px-5 py-4 active:bg-[#F5F5F4] border-b border-[#E7E5E4]/60 select-none bg-[#FAF9F7] relative z-10 transition-transform duration-200"
+        className={`w-full flex items-center ${isAi ? "gap-0 px-5 py-3.5" : "gap-3 px-5 py-3.5"} active:bg-[#F5F5F4] border-b border-[#E7E5E4]/60 select-none bg-[#FAF9F7] relative z-10 transition-transform duration-200`}
         style={{ WebkitTouchCallout: "none", WebkitUserSelect: "none", transform: `translateX(${swipeX}px)` }}
         data-testid={`mobile-thread-${thread.id}`}
       >
-        <div className="relative shrink-0">
-          {renderAvatar()}
-          {renderAiMemberBadge()}
-        </div>
+        {/* For AI (ChatBGP) threads — no avatar, Claude-style minimal text row.
+            For DMs and group chats keep a small avatar so you can tell who's talking. */}
+        {!isAi && (
+          <div className="relative shrink-0">
+            {renderAvatar()}
+            {renderAiMemberBadge()}
+          </div>
+        )}
         <div className="flex-1 min-w-0 text-left">
           <div className="flex items-center justify-between gap-2">
-            <span className={`text-[16px] tracking-tight truncate ${hasUnseen ? "font-bold text-gray-900" : "font-semibold text-gray-800"}`}>{displayTitle}</span>
-            <span className="text-[12px] shrink-0 font-medium" style={hasUnseen ? { color: "hsl(var(--primary))" } : { color: "hsl(var(--muted-foreground))" }}>
+            <span className={`text-[15px] tracking-tight truncate ${hasUnseen ? "font-semibold text-[#1C1917]" : "font-medium text-[#1C1917]"}`}>{displayTitle}</span>
+            <span className="text-[11px] shrink-0" style={hasUnseen ? { color: "hsl(var(--primary))", fontWeight: 500 } : { color: "#A8A29E" }}>
               {timeStr}
             </span>
           </div>
           <div className="flex items-center justify-between mt-0.5 gap-2">
-            <p className={`text-[14px] truncate leading-snug ${hasUnseen ? "text-gray-900 font-medium" : "text-gray-500"}`}>
+            <p className={`text-[13px] truncate leading-snug ${hasUnseen ? "text-[#44403C]" : "text-[#78716C]"}`}>
               {thread.lastMessage ? (
-                <><span className="font-semibold">{thread.lastMessage.senderName.split(" ")[0]}: </span>{thread.lastMessage.content}</>
+                isAi
+                  ? thread.lastMessage.content
+                  : <><span className="font-medium">{thread.lastMessage.senderName.split(" ")[0]}: </span>{thread.lastMessage.content}</>
               ) : (
-                <span className="italic text-gray-400">No messages yet</span>
+                <span className="italic text-[#A8A29E]">No messages yet</span>
               )}
             </p>
             {hasUnseen && (
-              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} />
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} />
             )}
           </div>
-          {(thread.propertyName || thread.linkedName) && (
+          {!isAi && (thread.propertyName || thread.linkedName) && (
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
               {thread.propertyName && (
-                <span className="text-[11px] text-gray-500 flex items-center gap-1 bg-gray-100 rounded-full px-2 py-0.5"><Building2 className="w-3 h-3" />{thread.propertyName}</span>
+                <span className="text-[11px] text-[#78716C] flex items-center gap-1 bg-[#F5F5F4] rounded-full px-2 py-0.5"><Building2 className="w-3 h-3" />{thread.propertyName}</span>
               )}
               {thread.linkedName && (
-                <span className="text-[11px] text-gray-500 flex items-center gap-1 bg-gray-100 rounded-full px-2 py-0.5">
+                <span className="text-[11px] text-[#78716C] flex items-center gap-1 bg-[#F5F5F4] rounded-full px-2 py-0.5">
                   <Building2 className="w-3 h-3" />
                   {thread.linkedName}
                 </span>
