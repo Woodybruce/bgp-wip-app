@@ -6,11 +6,12 @@ import { Input } from "@/components/ui/input";
 import {
   Send, Loader2, Copy, Check, Trash2,
   FileSpreadsheet, Building2, Users, BarChart3,
-  Sparkles, ChevronDown, LogOut, FolderOpen, File,
+  Sparkles, ChevronDown, LogOut, FolderOpen, File as FileIcon,
   Folder, ArrowLeft, Download, Upload, ExternalLink,
   MessageSquare, RefreshCw, ChevronRight, Search,
   FileText, Image as ImageIcon, FileArchive,
-  Hammer, Play, CheckCircle2, AlertCircle, Zap
+  Hammer, Play, CheckCircle2, AlertCircle, Zap,
+  Paperclip, X,
 } from "lucide-react";
 import bgpLogoBlack from "@assets/BGP_BlackHolder_1771853582461.png";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
@@ -111,7 +112,7 @@ function getFileIcon(item: SPItem) {
   if (name.endsWith(".docx") || name.endsWith(".doc") || name.endsWith(".pdf")) return <FileText className="w-4 h-4 text-blue-600 shrink-0" />;
   if (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg")) return <ImageIcon className="w-4 h-4 text-purple-500 shrink-0" />;
   if (name.endsWith(".zip") || name.endsWith(".rar")) return <FileArchive className="w-4 h-4 text-orange-500 shrink-0" />;
-  return <File className="w-4 h-4 text-muted-foreground shrink-0" />;
+  return <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" />;
 }
 
 function AddinLogin({ onLogin }: { onLogin: (token: string, name: string) => void }) {
@@ -1596,8 +1597,10 @@ function AddinExcel() {
   const [excelContext, setExcelContext] = useState("");
   const [workbookInfo, setWorkbookInfo] = useState<WorkbookInfo | null>(null);
   const [readingSheet, setReadingSheet] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     // Office.js is injected from index.html when the path starts with /addin/.
@@ -1729,13 +1732,15 @@ function AddinExcel() {
 
   const sendMessage = async (text?: string) => {
     const msg = (text || input).trim();
-    if (!msg || loading) return;
+    if ((!msg && attachedFiles.length === 0) || loading) return;
     if (!text) setInput("");
+    const filesForThisSend = attachedFiles;
+    setAttachedFiles([]);
 
     const userMsg: Message = {
       id: crypto.randomUUID(),
       role: "user",
-      content: msg,
+      content: msg || (filesForThisSend.length > 0 ? `(Uploaded ${filesForThisSend.length} file${filesForThisSend.length === 1 ? "" : "s"})` : ""),
       timestamp: new Date(),
     };
 
@@ -1762,14 +1767,30 @@ function AddinExcel() {
         content: m.content,
       }));
 
-      const res = await fetch("/api/chatbgp/excel-chat", {
-        method: "POST",
-        headers: getHeaders(),
-        body: JSON.stringify({
-          messages: apiMessages,
-          excelContext: ctx || undefined,
-        }),
-      });
+      let res: Response;
+      if (filesForThisSend.length > 0) {
+        const form = new FormData();
+        form.append("messages", JSON.stringify(apiMessages));
+        if (ctx) form.append("excelContext", ctx);
+        for (const f of filesForThisSend) form.append("files", f);
+        const authHeaders = getHeaders() as Record<string, string>;
+        // Drop Content-Type so browser sets multipart boundary
+        delete authHeaders["Content-Type"];
+        res = await fetch("/api/chatbgp/excel-chat", {
+          method: "POST",
+          headers: authHeaders,
+          body: form,
+        });
+      } else {
+        res = await fetch("/api/chatbgp/excel-chat", {
+          method: "POST",
+          headers: getHeaders(),
+          body: JSON.stringify({
+            messages: apiMessages,
+            excelContext: ctx || undefined,
+          }),
+        });
+      }
 
       if (res.status === 401) {
         handleLogout();
@@ -2038,7 +2059,45 @@ function AddinExcel() {
                 </button>
               </div>
             )}
+            {attachedFiles.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-1.5">
+                {attachedFiles.map((f, i) => (
+                  <div key={i} className="flex items-center gap-1.5 bg-muted/60 border border-border/40 rounded-lg pl-2 pr-1 py-1 text-[11px] max-w-full">
+                    <FileText className="w-3 h-3 text-muted-foreground shrink-0" />
+                    <span className="truncate max-w-[140px]" title={f.name}>{f.name}</span>
+                    <button
+                      onClick={() => setAttachedFiles(prev => prev.filter((_, idx) => idx !== i))}
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                      data-testid={`button-remove-file-${i}`}
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="flex gap-2 items-end bg-muted/40 border border-border/50 rounded-2xl px-3 py-1.5 focus-within:border-border focus-within:bg-muted/60 transition-all">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  if (files.length > 0) setAttachedFiles(prev => [...prev, ...files].slice(0, 20));
+                  if (e.target) e.target.value = "";
+                }}
+                data-testid="input-attach-files"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={loading}
+                className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all disabled:opacity-40"
+                title="Attach files"
+                data-testid="button-attach-files"
+              >
+                <Paperclip className="w-3.5 h-3.5" />
+              </button>
               <Textarea
                 ref={inputRef}
                 className="flex-1 text-[13px] min-h-[24px] max-h-[80px] resize-none border-0 bg-transparent p-0 focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/60"
@@ -2051,9 +2110,9 @@ function AddinExcel() {
               />
               <button
                 onClick={() => sendMessage()}
-                disabled={loading || !input.trim()}
+                disabled={loading || (!input.trim() && attachedFiles.length === 0)}
                 className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all ${
-                  input.trim() && !loading
+                  (input.trim() || attachedFiles.length > 0) && !loading
                     ? "bg-primary text-primary-foreground hover:opacity-90"
                     : "bg-muted text-muted-foreground"
                 }`}
