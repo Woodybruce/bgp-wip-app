@@ -99,6 +99,7 @@ import companiesHouseRouter from "./companies-house";
 import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
+import veriffRouter from "./veriff";
 import cadRouter from "./cad";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
@@ -335,6 +336,7 @@ app.use("/api/branding/assets", express.static(
   app.use(sanctionsRouter);
   app.use(kycClouseauRouter);
   app.use(amlComplianceRouter);
+  app.use(veriffRouter);
   app.use(cadRouter);
 
   await registerRoutes(httpServer, app);

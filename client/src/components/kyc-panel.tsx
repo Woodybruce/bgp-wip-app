@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Upload, FileText, Trash2, CheckCircle2, AlertCircle, Loader2,
-  ShieldCheck, ShieldAlert, Clock, Download,
+  ShieldCheck, ShieldAlert, Clock, Download, Scan, ExternalLink,
 } from "lucide-react";
 
 interface KycDocument {
@@ -95,6 +95,55 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   const [certifiedBy, setCertifiedBy] = useState("");
   const [docNotes, setDocNotes] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [veriffOpen, setVeriffOpen] = useState(false);
+  const [veriffFirstName, setVeriffFirstName] = useState("");
+  const [veriffLastName, setVeriffLastName] = useState("");
+  const [veriffEmail, setVeriffEmail] = useState("");
+
+  const { data: veriffStatus } = useQuery<{ configured: boolean }>({
+    queryKey: ["/api/veriff/status"],
+    queryFn: async () => {
+      const res = await fetch("/api/veriff/status", { credentials: "include" });
+      if (!res.ok) return { configured: false };
+      return res.json();
+    },
+  });
+
+  const { data: veriffSessions = [] } = useQuery<any[]>({
+    queryKey: ["/api/veriff/sessions", { companyId }],
+    queryFn: async () => {
+      const res = await fetch(`/api/veriff/sessions?companyId=${companyId}`, { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!veriffStatus?.configured,
+  });
+
+  const createVeriff = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/veriff/sessions", {
+        firstName: veriffFirstName,
+        lastName: veriffLastName,
+        email: veriffEmail || undefined,
+        companyId,
+        dealId,
+      });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      setVeriffOpen(false);
+      setVeriffFirstName(""); setVeriffLastName(""); setVeriffEmail("");
+      queryClient.invalidateQueries({ queryKey: ["/api/veriff/sessions", { companyId }] });
+      toast({
+        title: "Veriff session created",
+        description: data?.verificationUrl ? "Copy the link to send to the subject, or open it now." : "",
+      });
+      if (data?.verificationUrl) {
+        window.open(data.verificationUrl, "_blank", "noopener,noreferrer");
+      }
+    },
+    onError: (e: any) => toast({ title: "Veriff error", description: e?.message, variant: "destructive" }),
+  });
 
   const { data, isLoading } = useQuery<{ company: CompanyAmlState; documents: KycDocument[] }>({
     queryKey: ["/api/kyc/company", companyId],
@@ -401,6 +450,88 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
               </Button>
             </div>
           </div>
+
+          {/* Biometric verification via Veriff */}
+          {veriffStatus?.configured && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                  <Scan className="w-3.5 h-3.5 text-primary" />
+                  Biometric verification (Veriff)
+                </h4>
+                <Button size="sm" variant="outline" onClick={() => setVeriffOpen(true)} data-testid="button-request-veriff">
+                  Request check
+                </Button>
+              </div>
+              {veriffSessions.length === 0 ? (
+                <div className="text-xs text-muted-foreground italic">No biometric checks requested yet.</div>
+              ) : (
+                <div className="space-y-1.5">
+                  {veriffSessions.map((s: any) => (
+                    <div key={s.session_id} className="flex items-center gap-2 px-3 py-2 bg-muted/30 rounded-md text-sm" data-testid={`veriff-${s.session_id}`}>
+                      <Scan className="w-4 h-4 text-muted-foreground shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="truncate font-medium">{s.first_name} {s.last_name}</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          Session {(s.session_id as string).slice(0, 8)}… · {new Date(s.created_at).toLocaleDateString("en-GB")}
+                          {s.decision_reason ? ` · ${s.decision_reason}` : ""}
+                        </div>
+                      </div>
+                      <Badge variant="outline" className={`text-[10px] shrink-0 ${
+                        s.status === "approved" ? "border-emerald-300 text-emerald-700" :
+                        s.status === "declined" ? "border-red-300 text-red-700" :
+                        s.status === "resubmission_requested" ? "border-amber-300 text-amber-700" :
+                        ""
+                      }`}>
+                        {s.status || "created"}
+                      </Badge>
+                      {s.verification_url && s.status !== "approved" && s.status !== "declined" && (
+                        <a
+                          href={s.verification_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="shrink-0 text-primary hover:text-primary/70"
+                          title="Open Veriff session"
+                          data-testid={`veriff-open-${s.session_id}`}
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Veriff request dialog */}
+          <AlertDialog open={veriffOpen} onOpenChange={setVeriffOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Request biometric verification</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Creates a Veriff session for this counterparty. You'll get a unique verification URL
+                  to send to the subject — they'll upload their ID and a selfie on their own device.
+                  The result posts back to this company record automatically.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <div className="space-y-2">
+                <Input value={veriffFirstName} onChange={(e) => setVeriffFirstName(e.target.value)} placeholder="First name" data-testid="input-veriff-firstname" />
+                <Input value={veriffLastName} onChange={(e) => setVeriffLastName(e.target.value)} placeholder="Last name" data-testid="input-veriff-lastname" />
+                <Input value={veriffEmail} onChange={(e) => setVeriffEmail(e.target.value)} placeholder="Email (optional)" type="email" data-testid="input-veriff-email" />
+              </div>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={(e) => { e.preventDefault(); createVeriff.mutate(); }}
+                  disabled={!veriffFirstName || !veriffLastName || createVeriff.isPending}
+                >
+                  {createVeriff.isPending && <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />}
+                  Create session
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
 
           {/* Approve / Reject actions */}
           {company.kyc_status !== "approved" && (

@@ -1499,6 +1499,27 @@ export const insertKycDocumentSchema = createInsertSchema(kycDocuments).omit({ i
 export type InsertKycDocument = z.infer<typeof insertKycDocumentSchema>;
 export type KycDocument = typeof kycDocuments.$inferSelect;
 
+// ─── Veriff biometric verification sessions ───────────────────────────────
+export const veriffSessions = pgTable("veriff_sessions", {
+  sessionId: text("session_id").primaryKey(),
+  companyId: varchar("company_id"),
+  contactId: varchar("contact_id"),
+  dealId: varchar("deal_id"),
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name").notNull(),
+  email: text("email"),
+  status: text("status"), // created | started | submitted | approved | declined | resubmission_requested | expired | abandoned
+  decisionCode: integer("decision_code"),
+  decisionReason: text("decision_reason"),
+  verdictPerson: jsonb("verdict_person"),
+  verdictDocument: jsonb("verdict_document"),
+  verificationUrl: text("verification_url"),
+  requestedBy: varchar("requested_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  receivedAt: timestamp("received_at"),
+});
+export type VeriffSession = typeof veriffSessions.$inferSelect;
+
 export const userTasks = pgTable("user_tasks", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull(),

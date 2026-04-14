@@ -1,0 +1,252 @@
+import crypto from "crypto";
+import { Router, Request, Response } from "express";
+import { requireAuth } from "./auth";
+import { pool } from "./db";
+
+// Veriff Station API — https://developers.veriff.com/
+// We never echo the API key; it's read from Railway env on each request.
+const VERIFF_BASE = process.env.VERIFF_BASE_URL || "https://stationapi.veriff.com";
+
+function getCreds() {
+  const apiKey = (process.env.VERIFF_API_KEY || "").trim();
+  const secret = (process.env.VERIFF_SECRET || "").trim();
+  return { apiKey, secret };
+}
+
+function signPayload(secret: string, payload: string): string {
+  return crypto.createHmac("sha256", secret).update(payload).digest("hex");
+}
+
+function signToken(secret: string, sessionId: string): string {
+  return crypto.createHmac("sha256", secret).update(sessionId).digest("hex");
+}
+
+/**
+ * Create a Veriff session and return the hosted verification URL.
+ * Veriff calls our /api/veriff/webhook when the check completes.
+ */
+export async function createVeriffSession(params: {
+  firstName: string;
+  lastName: string;
+  email?: string;
+  companyId?: string;
+  contactId?: string;
+  dealId?: string;
+  userId?: string;
+}): Promise<{ sessionId: string; verificationUrl: string; status: string }> {
+  const { apiKey, secret } = getCreds();
+  if (!apiKey || !secret) {
+    throw new Error("Veriff API key or secret not configured on server");
+  }
+
+  // Our opaque vendorData links back to the company/contact/deal on webhook
+  const vendorData = JSON.stringify({
+    companyId: params.companyId || null,
+    contactId: params.contactId || null,
+    dealId: params.dealId || null,
+    userId: params.userId || null,
+  });
+
+  const body = {
+    verification: {
+      callback: "", // we use webhook, not redirect callback
+      person: {
+        firstName: params.firstName,
+        lastName: params.lastName,
+      },
+      vendorData,
+      timestamp: new Date().toISOString(),
+    },
+  };
+  const payloadStr = JSON.stringify(body);
+  const signature = signPayload(secret, payloadStr);
+
+  const res = await fetch(`${VERIFF_BASE}/v1/sessions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-AUTH-CLIENT": apiKey,
+      "X-HMAC-SIGNATURE": signature,
+    },
+    body: payloadStr,
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Veriff session create failed: ${res.status} ${errText.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const sessionId = data?.verification?.id;
+  const verificationUrl = data?.verification?.url;
+  const status = data?.verification?.status || "created";
+  if (!sessionId || !verificationUrl) {
+    throw new Error("Veriff response missing session id or url");
+  }
+  return { sessionId, verificationUrl, status };
+}
+
+/**
+ * Fetch the verdict for a completed session (defensive — webhook is primary).
+ */
+export async function getVeriffDecision(sessionId: string): Promise<any> {
+  const { apiKey, secret } = getCreds();
+  if (!apiKey || !secret) throw new Error("Veriff not configured");
+  const signature = signToken(secret, sessionId);
+  const res = await fetch(`${VERIFF_BASE}/v1/sessions/${sessionId}/decision`, {
+    method: "GET",
+    headers: {
+      "X-AUTH-CLIENT": apiKey,
+      "X-HMAC-SIGNATURE": signature,
+    },
+  });
+  if (!res.ok) throw new Error(`Veriff decision fetch failed: ${res.status}`);
+  return res.json();
+}
+
+export const veriffRouter = Router();
+
+// Admin: is Veriff configured?
+veriffRouter.get("/api/veriff/status", requireAuth, (_req: Request, res: Response) => {
+  const { apiKey, secret } = getCreds();
+  res.json({ configured: !!(apiKey && secret) });
+});
+
+// Create a verification session for a counterparty (company contact)
+veriffRouter.post("/api/veriff/sessions", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { firstName, lastName, email, companyId, contactId, dealId } = req.body || {};
+    if (!firstName || !lastName) return res.status(400).json({ error: "firstName and lastName required" });
+    if (!companyId && !contactId) return res.status(400).json({ error: "companyId or contactId required" });
+    const userId = (req as any).user?.id || (req.session as any)?.userId || null;
+
+    const session = await createVeriffSession({ firstName, lastName, email, companyId, contactId, dealId, userId });
+
+    // Record it so we can render status before the webhook arrives
+    await pool.query(
+      `INSERT INTO veriff_sessions (session_id, company_id, contact_id, deal_id, first_name, last_name, email, status, verification_url, requested_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (session_id) DO NOTHING`,
+      [session.sessionId, companyId || null, contactId || null, dealId || null, firstName, lastName, email || null, session.status, session.verificationUrl, userId]
+    ).catch((e) => console.warn("[veriff] insert session failed:", e?.message));
+
+    res.json(session);
+  } catch (err: any) {
+    console.error("[veriff] create session error:", err?.message);
+    res.status(500).json({ error: err?.message || "Failed to create Veriff session" });
+  }
+});
+
+// List sessions for a company / contact / deal
+veriffRouter.get("/api/veriff/sessions", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { companyId, contactId, dealId } = req.query;
+    const conds: string[] = [];
+    const params: any[] = [];
+    if (companyId) { params.push(companyId); conds.push(`company_id = $${params.length}`); }
+    if (contactId) { params.push(contactId); conds.push(`contact_id = $${params.length}`); }
+    if (dealId) { params.push(dealId); conds.push(`deal_id = $${params.length}`); }
+    if (conds.length === 0) return res.status(400).json({ error: "companyId, contactId, or dealId required" });
+    const result = await pool.query(
+      `SELECT * FROM veriff_sessions WHERE ${conds.join(" AND ")} ORDER BY created_at DESC LIMIT 50`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Webhook — Veriff pushes decisions here. We verify the HMAC signature.
+veriffRouter.post("/api/veriff/webhook", async (req: Request, res: Response) => {
+  try {
+    const { secret } = getCreds();
+    if (!secret) return res.status(500).json({ error: "Veriff not configured" });
+
+    const signature = (req.headers["x-hmac-signature"] || req.headers["x-signature"] || "") as string;
+    const rawBody: string | Buffer | undefined = (req as any).rawBody;
+    // rawBody is populated by our express raw-body middleware on /api/veriff/* (added in server/index.ts)
+    let bodyStr: string;
+    if (typeof rawBody === "string") bodyStr = rawBody;
+    else if (Buffer.isBuffer(rawBody)) bodyStr = rawBody.toString("utf8");
+    else bodyStr = JSON.stringify(req.body);
+
+    const expected = signPayload(secret, bodyStr);
+    // Constant-time compare
+    const ok = signature.length === expected.length && crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+    if (!ok) {
+      console.warn("[veriff] webhook signature mismatch");
+      return res.status(401).json({ error: "invalid signature" });
+    }
+
+    const payload = req.body || {};
+    const sessionId: string | undefined = payload?.verification?.id || payload?.id;
+    const status: string | undefined = payload?.verification?.status || payload?.status;
+    const code: number | undefined = payload?.verification?.code;
+    const reason: string | undefined = payload?.verification?.reason;
+    const verdictPerson = payload?.verification?.person || null;
+    const verdictDocument = payload?.verification?.document || null;
+
+    if (!sessionId) {
+      console.warn("[veriff] webhook missing session id");
+      return res.status(200).json({ ok: true }); // ack to stop retries
+    }
+
+    await pool.query(
+      `UPDATE veriff_sessions
+       SET status = $1, decision_code = $2, decision_reason = $3,
+           verdict_person = $4, verdict_document = $5, received_at = NOW()
+       WHERE session_id = $6`,
+      [status || null, code || null, reason || null, verdictPerson, verdictDocument, sessionId]
+    );
+
+    // If approved, auto-attach a kyc_documents row pointing at the Veriff result
+    if (status === "approved") {
+      const row = await pool.query(`SELECT * FROM veriff_sessions WHERE session_id = $1`, [sessionId]);
+      const s = row.rows[0];
+      if (s && (s.company_id || s.contact_id)) {
+        const docName = `Veriff verification — ${s.first_name} ${s.last_name}.json`;
+        const fileUrl = `/api/veriff/sessions/${sessionId}/report`;
+        await pool.query(
+          `INSERT INTO kyc_documents (company_id, contact_id, deal_id, doc_type, file_url, file_name, mime_type, certified_by, certified_at, notes, uploaded_by)
+           VALUES ($1, $2, $3, 'onfido_report', $4, $5, 'application/json', $6, NOW(), $7, $8)`,
+          [
+            s.company_id, s.contact_id, s.deal_id,
+            fileUrl, docName,
+            "Veriff (biometric)",
+            `Veriff sessionId ${sessionId} — approved`,
+            s.requested_by,
+          ]
+        ).catch((e) => console.warn("[veriff] kyc_documents insert failed:", e?.message));
+      }
+    }
+
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error("[veriff] webhook error:", err?.message);
+    res.status(500).json({ error: "webhook processing failed" });
+  }
+});
+
+// Serve a sanitised JSON report of a session (for audit)
+veriffRouter.get("/api/veriff/sessions/:id/report", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const r = await pool.query(`SELECT * FROM veriff_sessions WHERE session_id = $1`, [req.params.id]);
+    const s = r.rows[0];
+    if (!s) return res.status(404).json({ error: "Not found" });
+    res.json({
+      sessionId: s.session_id,
+      firstName: s.first_name,
+      lastName: s.last_name,
+      status: s.status,
+      decisionCode: s.decision_code,
+      decisionReason: s.decision_reason,
+      verdictPerson: s.verdict_person,
+      verdictDocument: s.verdict_document,
+      createdAt: s.created_at,
+      receivedAt: s.received_at,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+export default veriffRouter;

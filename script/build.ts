@@ -79,6 +79,30 @@ async function runPreMigrations() {
     for (const [col, type] of companyAmlCols) {
       await pool.query(`ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS ${col} ${type}`);
     }
+
+    // Veriff biometric verification sessions
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS veriff_sessions (
+        session_id text PRIMARY KEY,
+        company_id varchar,
+        contact_id varchar,
+        deal_id varchar,
+        first_name text NOT NULL,
+        last_name text NOT NULL,
+        email text,
+        status text,
+        decision_code integer,
+        decision_reason text,
+        verdict_person jsonb,
+        verdict_document jsonb,
+        verification_url text,
+        requested_by varchar,
+        created_at timestamp DEFAULT now(),
+        received_at timestamp
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_veriff_sessions_company ON veriff_sessions(company_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_veriff_sessions_deal ON veriff_sessions(deal_id)`);
   } catch (err: any) {
     console.error("Pre-migration error:", err?.message);
   } finally {
