@@ -8,8 +8,22 @@ import { pool } from "./db";
 const VERIFF_BASE = process.env.VERIFF_BASE_URL || "https://stationapi.veriff.com";
 
 function getCreds() {
-  const apiKey = (process.env.VERIFF_API_KEY || "").trim();
-  const secret = (process.env.VERIFF_SECRET || "").trim();
+  // Veriff's dashboard confusingly labels the public key differently in
+  // different places ("Public key" / "API Key" / "Integration ID"). Accept
+  // any of the common names so Railway config isn't brittle.
+  const apiKey = (
+    process.env.VERIFF_API_KEY ||
+    process.env.VERIFF_PUBLIC_KEY ||
+    process.env.VERIFF_KEY ||
+    process.env.VERIFF_INTEGRATION_ID ||
+    ""
+  ).trim();
+  const secret = (
+    process.env.VERIFF_SECRET ||
+    process.env.VERIFF_PRIVATE_KEY ||
+    process.env.VERIFF_SHARED_SECRET ||
+    ""
+  ).trim();
   return { apiKey, secret };
 }
 
