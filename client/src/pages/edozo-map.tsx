@@ -2902,6 +2902,24 @@ export default function EdozoMap() {
   const osLastBboxRef = useRef<{ buildings: string; uprns: string; sites: string }>({ buildings: "", uprns: "", sites: "" });
   const osDebounceRef = useRef<ReturnType<typeof setTimeout>>();
   const [mapZoom, setMapZoom] = useState(17);
+  const baseLayerRef = useRef<{ map: L.LayerGroup; sat: L.LayerGroup } | null>(null);
+  const [baseLayer, setBaseLayer] = useState<"map" | "sat">("map");
+
+  // Swap base layers atomically when the toggle changes.
+  // Runs after the map init effect has populated baseLayerRef.
+  useEffect(() => {
+    const map = mapRef.current;
+    const layers = baseLayerRef.current;
+    if (!map || !layers) return;
+    const { map: mapLG, sat: satLG } = layers;
+    if (baseLayer === "map") {
+      if (map.hasLayer(satLG)) map.removeLayer(satLG);
+      if (!map.hasLayer(mapLG)) mapLG.addTo(map);
+    } else {
+      if (map.hasLayer(mapLG)) map.removeLayer(mapLG);
+      if (!map.hasLayer(satLG)) satLG.addTo(map);
+    }
+  }, [baseLayer]);
 
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
@@ -2918,11 +2936,12 @@ export default function EdozoMap() {
     const labelPane = map.createPane("labelPane");
     labelPane.style.zIndex = "500";
 
-    // Base layers: map view (CARTO light) vs satellite (Esri World Imagery,
-    // free for reasonable usage). Switchable via the layer control bottom-
-    // right so users can toggle for a visual sense check of the building.
-    const mapView = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    // Base layers: a clean light map (CARTO) and a satellite view (Esri
+    // World Imagery — free for reasonable use). Each is bundled with its
+    // own labels overlay on labelPane so the labels stay above buildings,
+    // UPRN dots, and site outlines in the other panes.
+    const mapTiles = L.tileLayer("https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png", {
+      attribution: '&copy; OSM &copy; CARTO',
       subdomains: "abcd",
       maxZoom: 20,
     });
@@ -2931,29 +2950,27 @@ export default function EdozoMap() {
       maxZoom: 20,
       pane: "labelPane",
     });
-    const satelliteView = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
-      attribution: "Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+    const satTiles = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+      attribution: "Tiles &copy; Esri",
       maxZoom: 20,
     });
-    const satelliteLabels = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", {
+    // For satellite we overlay roads (World_Transportation) AND place names
+    // (World_Boundaries_and_Places) — together they give street names AND
+    // area / neighbourhood labels so you're not staring at unlabelled aerial.
+    const satRoads = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}", {
       maxZoom: 20,
       pane: "labelPane",
-      opacity: 0.9,
+    });
+    const satPlaces = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", {
+      maxZoom: 20,
+      pane: "labelPane",
     });
 
-    mapView.addTo(map);
-    mapLabels.addTo(map);
+    const mapBase = L.layerGroup([mapTiles, mapLabels]);
+    const satBase = L.layerGroup([satTiles, satRoads, satPlaces]);
+    mapBase.addTo(map);
+    baseLayerRef.current = { map: mapBase, sat: satBase };
 
-    const baseLayers = {
-      "Map": L.layerGroup([mapView, mapLabels]),
-      "Satellite": L.layerGroup([satelliteView, satelliteLabels]),
-    };
-    // Replace the already-added bare layers with the grouped entries so
-    // the layer-control toggle swaps base+labels atomically.
-    map.eachLayer(l => { if (l === mapView || l === mapLabels) map.removeLayer(l); });
-    baseLayers["Map"].addTo(map);
-
-    L.control.layers(baseLayers, undefined, { position: "bottomright", collapsed: false }).addTo(map);
     L.control.zoom({ position: "bottomright" }).addTo(map);
     L.control.scale({ position: "bottomleft", imperial: false, maxWidth: 100 }).addTo(map);
 
@@ -3738,6 +3755,24 @@ export default function EdozoMap() {
 
       <div className="flex-1 relative">
         <div ref={mapContainerRef} className="w-full h-full" data-testid="edozo-map" />
+
+        {/* Map / Satellite base-layer pill toggle — top-right of the map */}
+        <div className="absolute top-3 right-3 z-[1000] bg-white rounded-full shadow-lg border border-border/60 flex p-0.5" data-testid="base-layer-toggle">
+          <button
+            onClick={() => setBaseLayer("map")}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${baseLayer === "map" ? "bg-black text-white" : "text-gray-700 hover:bg-gray-50"}`}
+            data-testid="base-layer-map"
+          >
+            Map
+          </button>
+          <button
+            onClick={() => setBaseLayer("sat")}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${baseLayer === "sat" ? "bg-black text-white" : "text-gray-700 hover:bg-gray-50"}`}
+            data-testid="base-layer-sat"
+          >
+            Satellite
+          </button>
+        </div>
 
         {/* OS Data Layers floating control panel */}
         <div className="absolute top-20 right-3 z-[1000] bg-white rounded-lg shadow-lg border p-3 space-y-2" data-testid="os-layer-panel">
