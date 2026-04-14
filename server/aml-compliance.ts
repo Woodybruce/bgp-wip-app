@@ -51,8 +51,9 @@ router.put("/api/aml/settings", requireAuth, async (req: Request, res: Response)
       sets.push("updated_at = NOW()");
 
       if (sets.length > 1) {
+        vals.push(existing.rows[0].id);
         const result = await pool.query(
-          `UPDATE aml_settings SET ${sets.join(", ")} WHERE id = ${existing.rows[0].id} RETURNING *`,
+          `UPDATE aml_settings SET ${sets.join(", ")} WHERE id = $${vals.length} RETURNING *`,
           vals
         );
         return res.json(result.rows[0]);

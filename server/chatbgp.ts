@@ -362,6 +362,8 @@ function getToolProgressLabel(toolName: string): string {
     send_whatsapp: "Sending WhatsApp...",
     trigger_archivist_crawl: "Triggering document crawl...",
     manage_tasks: "Managing tasks...",
+    search_knowledge_base: "Searching the memory bank...",
+    search_chat_history: "Searching past chats...",
     create_document_template: "Creating template...",
     create_sharepoint_folder: "Creating folder...",
     move_sharepoint_item: "Moving file...",
@@ -523,6 +525,12 @@ export async function callClaude(params: any): Promise<any> {
     max_tokens: params.max_completion_tokens || params.max_tokens || 16384,
     messages,
   };
+  // Extended thinking — let the model reason before responding.
+  // Requires temperature=1 (SDK default when unset). budget_tokens must be < max_tokens.
+  // Opt-in: only enabled when params.thinking === true, to avoid the token cost on helper calls.
+  if (params.thinking === true) {
+    claudeParams.thinking = { type: "enabled", budget_tokens: params.thinkingBudget || 6000 };
+  }
   // Support structured system prompt (array with cache_control) for prompt caching
   if (params.systemArray) {
     claudeParams.system = params.systemArray;
@@ -620,6 +628,10 @@ export async function callClaudeStreaming(
     max_tokens: params.max_completion_tokens || params.max_tokens || 16384,
     messages,
   };
+  // Extended thinking — opt-in per callsite (see callClaude comment).
+  if (params.thinking === true) {
+    claudeParams.thinking = { type: "enabled", budget_tokens: params.thinkingBudget || 6000 };
+  }
 
   // Support structured system prompt (array with cache_control)
   if (params.systemArray) {
@@ -787,6 +799,8 @@ You are an active operational agent with full CRM read/write access, internet se
 ## Memory Systems
 1. **Auto-memories** (per-user): Extracted automatically after conversations. Loaded in future chats.
 2. **Business learnings** (save_learning): Shared across all users. Save client intel, market knowledge, BGP processes, property insights, team preferences. Save when users teach you facts, correct you, or you discover important info via tools. Don't save greetings or CRM data that's already in the database.
+3. **Knowledge bank** (search_knowledge_base): Full-text search over archived SharePoint files, team emails, Dropbox docs, and AI-indexed notes — tens of thousands of items with summaries, tags, and extracted content. This is your PRIMARY long-term memory. Use it whenever the user asks about a document, email, memo, report, attachment, or "what we said last week/month". Search FIRST, answer SECOND.
+4. **Chat history** (search_chat_history): Full-text search of past ChatBGP conversations. Use when the user refers to earlier threads or says things like "what did we discuss about X".
 
 ## CRITICAL Rules
 1. **ACT FIRST, REPORT AFTER.** Never ask "shall I proceed?" — just do it and confirm.
@@ -801,13 +815,34 @@ You are an active operational agent with full CRM read/write access, internet se
 10. **log_app_feedback** is SECONDARY only. If user asks you to DO something, do it first.
 
 ## Response Format
-- **Tone**: Confident, warm, professional. British English. Like a senior property partner.
+- **Tone**: Confident, warm, professional, with a dry British wit when the moment suits it. British English. Like a senior property partner who actually enjoys their day.
 - **CRM actions**: Brief confirmation. No preamble.
 - **Research**: Match the question's depth. Headings/bullets/tables when genuinely useful; flowing prose when it reads better. Don't over-structure.
 - **Checkbox suggestions**: Only when the user faces a genuine multi-option decision (e.g. picking between records, choosing an action). Never append them as ritual follow-up questions. If the answer is complete, just stop.
 - **Silent execution**: Don't narrate tool calls. Execute all, then give one clean answer.
 - **Proactive cross-referencing**: Connect dots from CRM context. Surface opportunities.
 - **Commercial awareness**: Contextualise rents/yields with market comparisons.
+
+## Personality & Voice
+You're the in-house AI at BGP, not a chatbot behind a corporate disclaimer. Have a bit of character.
+- Open greetings with warmth — "Morning Woody" / "Afternoon Charlotte" (use the team member's first name from context), a short observation, then get on with it. Avoid robotic "How can I help you today?" openings.
+- Where natural, slip in a BGP-flavoured aside or a playful one-liner. Don't force it; once a chat, not every message.
+- Safe asides you can reach for:
+  - Belgravia / West End geography ("the Square's looking smart this time of year", "if it's on Mount Street, it's already on a list somewhere").
+  - Property humour ("Zone A rents don't negotiate themselves", "every comp has a good side if you photograph it right").
+  - British office life ("a decent cup of tea won't make the Land Registry PDF any clearer, but it helps").
+- When a user thanks you or closes out, a short warm sign-off is fine ("on it", "nice one", "we'll get it sorted"). No emojis unless the user uses them first.
+
+## The BGP Team (personal touches)
+When the message comes from one of the partners, be a bit familiar. Use your judgement — don't force it.
+- **Woody** (Woody Bruce) — principal / builder of this dashboard. If he's asking about the app itself, be helpful and frank; he's debugging as much as briefing.
+- **Jack** — if Jack is in a conversation, treat him as the deal engine; lean into investment, yields, vendor dynamics.
+- **Rupert** — leasing and West End occupier flow; he'll want speed and precision on requirements / units.
+- **Charlotte** — detail, diligence, client comms; prefer tidy structure and clear next steps in replies to her.
+These are starting cues only — if save_learning memories or past chats contradict them, trust the memories.
+
+## Fun facts / shared knowledge
+You have search_knowledge_base and search_chat_history. The memory bank holds ~10k+ indexed SharePoint files, archived emails, and Dropbox docs. Use them. If a user asks about a document, email, deal memo, or "what did we say about X last month" — SEARCH FIRST before admitting you don't know. The memory is genuinely large; your default assumption should be that the answer is in there somewhere.
 
 ## You Are Claude — No Limits
 General-purpose AI with property expertise. Writing, analysis, research, strategy, coding, maths, languages, legal summaries — anything Claude can do. NEVER refuse because it's "outside scope."
@@ -2821,6 +2856,40 @@ export async function getAvailableTools(): Promise<{
           linkedPropertyId: { type: "string", description: "Link task to a property by property ID (for create)" },
         },
         required: ["action"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "search_knowledge_base",
+      description: "Full-text search the BGP knowledge base — archived SharePoint files, emails, Dropbox documents, and AI-indexed notes with AI-generated summaries, tags, and extracted content. Use this WHENEVER the user asks about a document, email, memo, report, note, deck, spreadsheet, letter, or historical information that might have been ingested. This is your primary memory bank — check it before saying you don't know something. Returns matches ranked by relevance with fileName, summary, source, fileUrl, and tags.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Natural-language search query. Supports multi-word phrases, quotes, AND/OR operators (websearch-style)." },
+          source: { type: "string", enum: ["sharepoint", "email", "dropbox", "note"], description: "Optional: filter to a single source type." },
+          category: { type: "string", description: "Optional: filter by AI-assigned category (e.g., 'lease', 'valuation', 'correspondence')." },
+          limit: { type: "number", description: "Max results to return (default 10, max 50)." },
+        },
+        required: ["query"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "search_chat_history",
+      description: "Search past ChatBGP conversations by content. Use when the user refers to 'what we discussed before', 'the chat about X', 'that conversation last week', or wants to recall something from prior chat threads. Returns matching messages with thread context.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Natural-language search query over chat message content." },
+          limit: { type: "number", description: "Max results to return (default 10, max 50)." },
+        },
+        required: ["query"],
       },
     },
   });
@@ -6291,6 +6360,106 @@ async function executeCrmToolRaw(
     }
   }
 
+  // ─── Memory bank: full-text search across knowledge_base (SharePoint files, emails, Dropbox, notes) ───
+  if (fnName === "search_knowledge_base") {
+    try {
+      const rawQuery = (fnArgs.query as string || "").trim();
+      if (!rawQuery) return { data: { error: "Search query is required" } };
+      const source = (fnArgs.source as string || "").trim();
+      const category = (fnArgs.category as string || "").trim();
+      const limitRaw = Number(fnArgs.limit);
+      const limit = Math.min(50, Math.max(1, Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 10));
+
+      const params: any[] = [rawQuery];
+      const whereClauses: string[] = [];
+      // Rank against the same tsvector expression as the GIN index
+      const tsExpr = "to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(array_to_string(ai_tags, ' '),'') || ' ' || coalesce(category,''))";
+      whereClauses.push(`${tsExpr} @@ websearch_to_tsquery('english', $1)`);
+      if (source) { params.push(source); whereClauses.push(`source = $${params.length}`); }
+      if (category) { params.push(category); whereClauses.push(`category = $${params.length}`); }
+      params.push(limit);
+
+      const sqlText = `
+        SELECT id, file_name, summary, content, source, category, file_url, ai_tags, last_modified,
+               ts_rank(${tsExpr}, websearch_to_tsquery('english', $1)) AS rank
+          FROM knowledge_base
+         WHERE ${whereClauses.join(" AND ")}
+         ORDER BY rank DESC, last_modified DESC NULLS LAST
+         LIMIT $${params.length}
+      `;
+      const result = await pool.query(sqlText, params);
+      const rows = result.rows.map((r: any) => ({
+        id: r.id,
+        fileName: r.file_name,
+        summary: r.summary,
+        snippet: r.content ? String(r.content).slice(0, 400) : null,
+        source: r.source || "sharepoint",
+        category: r.category,
+        fileUrl: r.file_url,
+        aiTags: r.ai_tags || [],
+        lastModified: r.last_modified,
+      }));
+      return {
+        data: {
+          query: rawQuery,
+          totalResults: rows.length,
+          results: rows,
+          message: rows.length === 0 ? "No matches in the knowledge base. Try a different query or check if the archivist has been run recently." : `Found ${rows.length} match${rows.length === 1 ? "" : "es"}.`,
+        },
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] search_knowledge_base error:", err?.message);
+      return { data: { error: `Knowledge base search failed: ${err?.message || "unknown error"}` } };
+    }
+  }
+
+  // ─── Memory bank: full-text search across past ChatBGP conversations ───
+  if (fnName === "search_chat_history") {
+    try {
+      const rawQuery = (fnArgs.query as string || "").trim();
+      if (!rawQuery) return { data: { error: "Search query is required" } };
+      const limitRaw = Number(fnArgs.limit);
+      const limit = Math.min(50, Math.max(1, Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 10));
+      const userId = (req as any).session?.userId || null;
+
+      const params: any[] = [rawQuery];
+      const whereClauses: string[] = [
+        `to_tsvector('english', coalesce(content,'')) @@ websearch_to_tsquery('english', $1)`,
+      ];
+      if (userId) { params.push(userId); whereClauses.push(`user_id = $${params.length}`); }
+      params.push(limit);
+
+      // chat_messages table: id, thread_id, role, content, user_id, created_at
+      const sqlText = `
+        SELECT id, thread_id, role, content, created_at,
+               ts_rank(to_tsvector('english', coalesce(content,'')), websearch_to_tsquery('english', $1)) AS rank
+          FROM chat_messages
+         WHERE ${whereClauses.join(" AND ")}
+         ORDER BY rank DESC, created_at DESC
+         LIMIT $${params.length}
+      `;
+      const result = await pool.query(sqlText, params);
+      const rows = result.rows.map((r: any) => ({
+        id: r.id,
+        threadId: r.thread_id,
+        role: r.role,
+        snippet: r.content ? String(r.content).slice(0, 500) : null,
+        createdAt: r.created_at,
+      }));
+      return {
+        data: {
+          query: rawQuery,
+          totalResults: rows.length,
+          results: rows,
+          message: rows.length === 0 ? "No matches in your chat history." : `Found ${rows.length} match${rows.length === 1 ? "" : "es"} across past conversations.`,
+        },
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] search_chat_history error:", err?.message);
+      return { data: { error: `Chat history search failed: ${err?.message || "unknown error"}` } };
+    }
+  }
+
   if (fnName === "deep_investigate") {
     try {
       const { chFetch, discoverUltimateParent, identifyBrandParent } = await import("./companies-house");
@@ -8459,6 +8628,7 @@ export function setupChatBGPRoutes(app: Express) {
           model: CHATBGP_MODEL,
           messages: convMessages,
           max_completion_tokens: 8192,
+          thinking: true, // extended thinking for quality
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;
@@ -8776,7 +8946,7 @@ export function setupChatBGPRoutes(app: Express) {
     };
 
     const requestStart = Date.now();
-    const REQUEST_DEADLINE_MS = 120000; // 120 seconds — stricter deadline with faster context loading
+    const REQUEST_DEADLINE_MS = 240000; // 240 seconds — give extended thinking + multi-tool flows room to breathe
     let clientDisconnected = false;
     const isOverDeadline = () => clientDisconnected || Date.now() - requestStart > REQUEST_DEADLINE_MS;
 
@@ -8992,6 +9162,7 @@ export function setupChatBGPRoutes(app: Express) {
           messages: conversationMessages,
           max_completion_tokens: 16384,
           systemArray, // prompt caching on every call
+          thinking: true, // extended thinking for quality
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;
@@ -9083,18 +9254,24 @@ export function setupChatBGPRoutes(app: Express) {
       const fallbackReply = lastAssistantMsg?.content || "I've processed your request. Please ask a follow-up for more details.";
       await sendResult({ reply: fallbackReply, ...(lastAction ? { action: lastAction } : {}) });
     } catch (err: any) {
-      console.error("ChatBGP error:", err?.message || err);
-      let errorMsg = "Sorry, I ran into an issue processing your request. Please try again.";
-      if (err?.status === 529) errorMsg = "I'm a bit overloaded right now. Please try again in a moment.";
-      else if (err?.status === 401) errorMsg = "AI authentication issue — please contact support.";
-      else if (err?.status === 429) errorMsg = "I've hit my rate limit. Please wait a minute and try again.";
+      const errBodyRaw = JSON.stringify(err?.error || err?.body || "").slice(0, 2000);
+      console.error("ChatBGP error:", err?.status, err?.message || err, errBodyRaw);
+      let errorMsg = "I ran into a technical glitch — the server logs have the details. Please try again, or rephrase if it keeps happening.";
+      if (err?.status === 529) errorMsg = "Anthropic's API is overloaded right now. Please try again in a moment.";
+      else if (err?.status === 401) errorMsg = "AI authentication issue — the API key may be missing or invalid. Please contact support.";
+      else if (err?.status === 429) errorMsg = "Hit the API rate limit. Please wait a minute and try again.";
       else if (err?.status === 400) {
-        const errBody = JSON.stringify(err?.error || err?.body || "").toLowerCase();
+        const errBody = errBodyRaw.toLowerCase();
         if (errBody.includes("too long") || errBody.includes("token") || errBody.includes("max_tokens") || errBody.includes("context")) {
           errorMsg = "That conversation got too long for me to process. Try starting a new thread or asking a simpler question.";
+        } else if (errBody.includes("image") || errBody.includes("media")) {
+          errorMsg = "Problem with an attached image or file. Try removing it or sending a different format.";
         } else {
-          errorMsg = "I had trouble understanding that request. Could you rephrase it?";
+          // Don't pretend the assistant is confused — surface that it was a technical error and include a hint if we can
+          errorMsg = `Technical error from the AI API (400). Server logs have the full details. ${errBodyRaw.slice(0, 180)}`;
         }
+      } else if (err?.status === 500 || err?.status === 502 || err?.status === 503 || err?.status === 504) {
+        errorMsg = "Anthropic's API returned a server error. Please try again in a moment.";
       }
 
       const lastAssistantContent = conversationMessages?.filter((m: any) => m.role === "assistant" && m.content).pop()?.content;
