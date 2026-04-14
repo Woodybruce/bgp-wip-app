@@ -2758,7 +2758,7 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
         </div>
 
         <div className="mt-2 pt-2 border-t flex items-center justify-between">
-          <Link href="/kyc-aml">
+          <Link href="/compliance-board">
             <span className="text-[11px] text-primary hover:underline cursor-pointer flex items-center gap-1" data-testid="link-compliance-board">
               <ShieldCheck className="w-3 h-3" /> View full KYC packs on Compliance Board
             </span>
