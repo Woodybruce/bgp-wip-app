@@ -753,6 +753,103 @@ router.post("/api/aml/risk-assessment/approve", requireAuth, async (req: Request
   }
 });
 
+// ─── Cross-link helpers so the KYC hub tabs route workflow between each other ───
+
+// Find the CRM company (if any) that matches a given Companies House number
+// or name. Used by the Investigator after a verdict — if there's a hit, we
+// show a 'Manage compliance profile' link to /companies/:id.
+router.get("/api/kyc/match-company", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { companyNumber, companyName } = req.query as { companyNumber?: string; companyName?: string };
+    if (!companyNumber && !companyName) return res.status(400).json({ error: "companyNumber or companyName required" });
+    if (companyNumber) {
+      const r = await pool.query(
+        `SELECT id, name, kyc_status, kyc_checked_at, kyc_approved_by, kyc_expires_at, companies_house_number
+         FROM crm_companies WHERE companies_house_number = $1 OR companies_house_number = LPAD($1, 8, '0') LIMIT 1`,
+        [companyNumber]
+      );
+      if (r.rows[0]) return res.json(r.rows[0]);
+    }
+    if (companyName) {
+      const r = await pool.query(
+        `SELECT id, name, kyc_status, kyc_checked_at, kyc_approved_by, kyc_expires_at, companies_house_number
+         FROM crm_companies WHERE LOWER(name) = LOWER($1) LIMIT 1`,
+        [companyName]
+      );
+      if (r.rows[0]) return res.json(r.rows[0]);
+    }
+    res.json(null);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create a new CRM company from an investigation so the MLRO can start the
+// compliance workflow without retyping anything.
+router.post("/api/kyc/create-company-from-investigation", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { companyNumber, companyName, companyType, address } = req.body;
+    if (!companyName) return res.status(400).json({ error: "companyName required" });
+    const existing = companyNumber
+      ? await pool.query(
+          `SELECT id FROM crm_companies WHERE companies_house_number = $1 OR companies_house_number = LPAD($1, 8, '0') LIMIT 1`,
+          [companyNumber]
+        )
+      : { rows: [] as any[] };
+    if (existing.rows[0]) return res.json({ id: existing.rows[0].id, existed: true });
+    const r = await pool.query(
+      `INSERT INTO crm_companies (name, companies_house_number, head_office_address, company_type, kyc_status)
+       VALUES ($1, $2, $3::jsonb, $4, 'pending')
+       RETURNING id, name`,
+      [companyName, companyNumber || null, address ? JSON.stringify(address) : null, companyType || null]
+    );
+    res.json({ id: r.rows[0].id, name: r.rows[0].name, created: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Live deals the current user owns — feeds the 'My live deals' panel on
+// the Training tab so a user who's just finished a module immediately sees
+// where their attention is needed.
+router.get("/api/kyc/my-deals", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.id || (req.session as any)?.userId;
+    if (!userId) return res.json([]);
+    const u = await pool.query("SELECT name FROM users WHERE id = $1", [userId]);
+    const userName: string | null = u.rows[0]?.name || null;
+    const names: string[] = userName ? [userName] : [];
+    // crmDeals.internal_agent is a text[] of user names; also match agent id columns
+    const result = await pool.query(
+      `SELECT d.id, d.name, d.status, d.deal_type, d.fee, d.updated_at,
+              d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id,
+              p.name AS property_name,
+              (SELECT c.name FROM crm_companies c WHERE c.id = d.landlord_id) AS landlord_name,
+              (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.landlord_id) AS landlord_kyc,
+              (SELECT c.name FROM crm_companies c WHERE c.id = d.tenant_id) AS tenant_name,
+              (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.tenant_id) AS tenant_kyc,
+              (SELECT c.name FROM crm_companies c WHERE c.id = d.vendor_id) AS vendor_name,
+              (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.vendor_id) AS vendor_kyc,
+              (SELECT c.name FROM crm_companies c WHERE c.id = d.purchaser_id) AS purchaser_name,
+              (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.purchaser_id) AS purchaser_kyc
+       FROM crm_deals d
+       LEFT JOIN crm_properties p ON d.property_id = p.id
+       WHERE d.status NOT IN ('Invoiced', 'Completed', 'Dead', 'Withdrawn', 'Lost')
+         AND (
+           d.vendor_agent_id = $1 OR d.acquisition_agent_id = $1 OR
+           d.purchaser_agent_id = $1 OR d.leasing_agent_id = $1 OR
+           ($2::text[] && d.internal_agent)
+         )
+       ORDER BY d.updated_at DESC NULLS LAST
+       LIMIT 15`,
+      [userId, names]
+    );
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Compliance board — all counterparties grouped by KYC status ──────────
 
 router.get("/api/kyc/board", requireAuth, async (_req: Request, res: Response) => {
