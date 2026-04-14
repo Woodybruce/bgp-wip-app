@@ -73,6 +73,7 @@ const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
+const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
 const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
 
@@ -145,6 +146,7 @@ function Router() {
       <Route path="/tasks" component={TasksPage} />
       <Route path="/cad-measure" component={CadMeasure} />
       <Route path="/kyc-clouseau" component={KycClouseau} />
+      <Route path="/aml-compliance" component={AmlCompliance} />
       <Route path="/turnover" component={TurnoverBoard} />
       <Route path="/wip-report" component={DealsHub} />
       <Route path="/upload" component={UploadPage} />

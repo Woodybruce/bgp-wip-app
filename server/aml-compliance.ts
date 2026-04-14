@@ -175,7 +175,8 @@ router.post("/api/aml/reminders", requireAuth, async (req: Request, res: Respons
 
 router.put("/api/aml/reminders/:id/complete", requireAuth, async (req: Request, res: Response) => {
   try {
-    const userId = getUserIdFromToken(req);
+    const token = (req.headers.authorization?.replace("Bearer ", "") || req.query.token || "") as string;
+    const userId = await getUserIdFromToken(token);
     let userName = "Unknown";
     if (userId) {
       const u = await pool.query("SELECT name FROM users WHERE id = $1", [userId]);
