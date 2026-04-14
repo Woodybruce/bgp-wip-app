@@ -1330,9 +1330,10 @@ let imageScanFoldersChecked = 0;
 let imageScanImagesFound = 0;
 
 async function browseForImages(
-  driveId: string, itemId: string, token: string, basePath: string, maxDepth: number, depth: number
-): Promise<ImageResult[]> {
-  if (depth >= maxDepth) return [];
+  driveId: string, itemId: string, token: string, basePath: string, maxDepth: number, depth: number,
+  onImage: (img: ImageResult) => Promise<void>
+): Promise<void> {
+  if (depth >= maxDepth) return;
   const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=200&$select=name,size,webUrl,id,file,folder`;
 
   let data: any;
@@ -1342,18 +1343,15 @@ async function browseForImages(
       if (res.status === 401 || res.status === 403) {
         console.warn(`[image-sync] Access denied browsing ${basePath} (${res.status})`);
       }
-      return [];
+      return;
     }
     data = await res.json();
   } catch (fetchErr: any) {
     console.warn(`[image-sync] Network error browsing ${basePath}: ${fetchErr.message}`);
-    return [];
+    return;
   }
 
-  const results: ImageResult[] = [];
-  const children = data.value || [];
-
-  for (const child of children) {
+  const processChild = async (child: any) => {
     const childPath = basePath ? `${basePath}/${child.name}` : child.name;
     if (child.folder) {
       imageScanFoldersChecked++;
@@ -1361,41 +1359,38 @@ async function browseForImages(
         console.log(`[image-sync] Scanning... ${imageScanFoldersChecked} folders checked, ${imageScanImagesFound} images found so far`);
         imageSyncProgress = `Scanning: ${imageScanFoldersChecked} folders, ${imageScanImagesFound} images`;
       }
-      const sub = await browseForImages(driveId, child.id, token, childPath, maxDepth, depth + 1);
-      results.push(...sub);
+      await browseForImages(driveId, child.id, token, childPath, maxDepth, depth + 1, onImage);
     } else {
       const ext = path.extname(child.name).toLowerCase();
       if (IMAGE_EXTENSIONS.includes(ext) && (child.size || 0) > 10000 && (child.size || 0) < 50 * 1024 * 1024) {
-        results.push({ name: child.name, path: childPath, size: child.size, driveId, itemId: child.id, webUrl: child.webUrl });
         imageScanImagesFound++;
-      }
-    }
-  }
-
-  if (data["@odata.nextLink"]) {
-    try {
-      const nextRes = await fetch(data["@odata.nextLink"], { headers: { Authorization: `Bearer ${token}` } });
-      if (nextRes.ok) {
-        const nextData = await nextRes.json();
-        for (const child of nextData.value || []) {
-          const childPath = basePath ? `${basePath}/${child.name}` : child.name;
-          if (child.folder) {
-            imageScanFoldersChecked++;
-            const sub = await browseForImages(driveId, child.id, token, childPath, maxDepth, depth + 1);
-            results.push(...sub);
-          } else {
-            const ext = path.extname(child.name).toLowerCase();
-            if (IMAGE_EXTENSIONS.includes(ext) && (child.size || 0) > 10000 && (child.size || 0) < 50 * 1024 * 1024) {
-              results.push({ name: child.name, path: childPath, size: child.size, driveId, itemId: child.id, webUrl: child.webUrl });
-              imageScanImagesFound++;
-            }
-          }
+        try {
+          await onImage({ name: child.name, path: childPath, size: child.size, driveId, itemId: child.id, webUrl: child.webUrl });
+        } catch (err: any) {
+          console.error(`[image-sync] onImage callback error for ${child.name}:`, err.message);
         }
       }
-    } catch {}
+    }
+  };
+
+  for (const child of data.value || []) {
+    await processChild(child);
   }
 
-  return results;
+  let nextLink = data["@odata.nextLink"];
+  while (nextLink) {
+    try {
+      const nextRes = await fetch(nextLink, { headers: { Authorization: `Bearer ${token}` } });
+      if (!nextRes.ok) break;
+      const nextData = await nextRes.json();
+      for (const child of nextData.value || []) {
+        await processChild(child);
+      }
+      nextLink = nextData["@odata.nextLink"];
+    } catch {
+      break;
+    }
+  }
 }
 
 async function runImageSync(opts: { forceReimport?: boolean } = {}) {
@@ -1438,41 +1433,35 @@ async function runImageSync(opts: { forceReimport?: boolean } = {}) {
         const folderId = driveItem.id;
 
         imageSyncProgress = `Scanning: ${folder.name}`;
-        console.log(`[image-sync] Scanning ${folder.name} for images...`);
-        const images = await browseForImages(driveId, folderId, token, folder.name, 10, 0);
-        console.log(`[image-sync] Found ${images.length} images in ${folder.name}`);
+        console.log(`[image-sync] Scanning ${folder.name} for images (streaming import)...`);
 
-        for (let i = 0; i < images.length; i++) {
-          const img = images[i];
+        const importOne = async (img: ImageResult) => {
           try {
-            if (i % 25 === 0) {
-              imageSyncProgress = `${folder.name}: ${i}/${images.length} (imported=${totalImported}, skipped=${totalSkippedExists + totalSkippedDeleted + totalSkippedDupeName})`;
-            }
             const existing = await pool.query(
               "SELECT id FROM image_studio_images WHERE sharepoint_drive_id = $1 AND sharepoint_item_id = $2",
               [img.driveId, img.itemId]
             );
-            if (existing.rows.length > 0) { totalSkippedExists++; continue; }
+            if (existing.rows.length > 0) { totalSkippedExists++; return; }
 
             if (!opts.forceReimport) {
               const wasDeleted = await pool.query(
                 "SELECT id FROM deleted_sharepoint_images WHERE sharepoint_drive_id = $1 AND sharepoint_item_id = $2",
                 [img.driveId, img.itemId]
               );
-              if (wasDeleted.rows.length > 0) { totalSkippedDeleted++; continue; }
+              if (wasDeleted.rows.length > 0) { totalSkippedDeleted++; return; }
             }
 
             const dupeByName = await pool.query(
               "SELECT id FROM image_studio_images WHERE file_name = $1 AND file_size = $2",
               [img.name, img.size]
             );
-            if (dupeByName.rows.length > 0) { totalSkippedDupeName++; continue; }
+            if (dupeByName.rows.length > 0) { totalSkippedDupeName++; return; }
 
-            imageSyncProgress = `Importing: ${img.name} (${totalImported} saved)`;
+            imageSyncProgress = `Importing: ${img.name} (${totalImported} saved, ${imageScanFoldersChecked} folders)`;
             const contentRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${img.driveId}/items/${img.itemId}/content`, {
               headers: { Authorization: `Bearer ${token}` }, redirect: "follow"
             });
-            if (!contentRes.ok) { totalErrors++; continue; }
+            if (!contentRes.ok) { totalErrors++; return; }
 
             const buffer = Buffer.from(await contentRes.arrayBuffer());
             const ext = path.extname(img.name).toLowerCase();
@@ -1505,7 +1494,9 @@ async function runImageSync(opts: { forceReimport?: boolean } = {}) {
             console.error(`[image-sync] Error importing ${img.name}:`, err.message);
             totalErrors++;
           }
-        }
+        };
+
+        await browseForImages(driveId, folderId, token, folder.name, 10, 0, importOne);
         console.log(`[image-sync] ${folder.name} done: imported=${totalImported}, exists=${totalSkippedExists}, blacklisted=${totalSkippedDeleted}, dupeName=${totalSkippedDupeName}, errors=${totalErrors}`);
       } catch (err: any) {
         console.error(`[image-sync] Error processing folder ${folder.name}:`, err.message);
