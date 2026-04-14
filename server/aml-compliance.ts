@@ -385,8 +385,11 @@ router.post("/api/kyc/company/:id/approve", requireAuth, async (req: Request, re
       const u = await pool.query("SELECT name FROM users WHERE id = $1", [userId]);
       approverName = u.rows[0]?.name || null;
     }
+    // MLR 2017 Reg 28: ongoing monitoring must be "proportionate" — for a
+    // commercial property agency with recurring counterparties, BGP policy
+    // is a 6-month re-check cadence on every approved counterparty.
     const expiresAt = new Date();
-    expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+    expiresAt.setMonth(expiresAt.getMonth() + 6);
     const result = await pool.query(
       `UPDATE crm_companies
        SET kyc_status = 'approved', kyc_checked_at = NOW(), kyc_approved_by = $1, kyc_expires_at = $2, updated_at = NOW()
@@ -399,7 +402,7 @@ router.post("/api/kyc/company/:id/approve", requireAuth, async (req: Request, re
     try {
       await pool.query(
         `INSERT INTO aml_recheck_reminders (company_id, entity_name, recheck_type, due_date, notes)
-         VALUES ($1, $2, 'annual_cdd', $3, 'Auto-generated on KYC approval')`,
+         VALUES ($1, $2, 'periodic_cdd', $3, 'Auto-generated on KYC approval — 6-month re-check')`,
         [req.params.id, result.rows[0].name, expiresAt]
       );
     } catch (rmErr: any) {
@@ -492,6 +495,84 @@ router.get("/api/kyc/board", requireAuth, async (_req: Request, res: Response) =
         approved: rows.filter((r: any) => r.column === "approved").length,
         expired: rows.filter((r: any) => r.column === "expired").length,
         rejected: rows.filter((r: any) => r.column === "rejected").length,
+        total: rows.length,
+      },
+      rows,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Deals-needing-KYC board: every live un-invoiced deal ─────────────────
+
+router.get("/api/kyc/board/deals", requireAuth, async (_req: Request, res: Response) => {
+  try {
+    // Every live deal that hasn't been invoiced yet — these are the deals
+    // that MUST have AML cleared on both sides before they can be invoiced.
+    const result = await pool.query(
+      `SELECT
+         d.id, d.name, d.status, d.deal_type, d.fee, d.updated_at, d.property_id,
+         d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id,
+         d.kyc_approved, d.hots_completed_at,
+         p.name AS property_name,
+         (SELECT c.name FROM crm_companies c WHERE c.id = d.landlord_id) AS landlord_name,
+         (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.landlord_id) AS landlord_kyc,
+         (SELECT c.kyc_expires_at FROM crm_companies c WHERE c.id = d.landlord_id) AS landlord_kyc_expires,
+         (SELECT c.name FROM crm_companies c WHERE c.id = d.tenant_id) AS tenant_name,
+         (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.tenant_id) AS tenant_kyc,
+         (SELECT c.kyc_expires_at FROM crm_companies c WHERE c.id = d.tenant_id) AS tenant_kyc_expires,
+         (SELECT c.name FROM crm_companies c WHERE c.id = d.vendor_id) AS vendor_name,
+         (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.vendor_id) AS vendor_kyc,
+         (SELECT c.kyc_expires_at FROM crm_companies c WHERE c.id = d.vendor_id) AS vendor_kyc_expires,
+         (SELECT c.name FROM crm_companies c WHERE c.id = d.purchaser_id) AS purchaser_name,
+         (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.purchaser_id) AS purchaser_kyc,
+         (SELECT c.kyc_expires_at FROM crm_companies c WHERE c.id = d.purchaser_id) AS purchaser_kyc_expires
+       FROM crm_deals d
+       LEFT JOIN crm_properties p ON d.property_id = p.id
+       WHERE d.status NOT IN ('Invoiced', 'Completed', 'Dead', 'Withdrawn', 'Lost')
+       ORDER BY d.updated_at DESC NULLS LAST`
+    );
+
+    const now = new Date();
+    const rows = result.rows.map((d: any) => {
+      const cps: Array<{ id: string; name: string; role: string; status: string | null; expiresAt: string | null; isApproved: boolean; isExpired: boolean }> = [];
+      const push = (id: string | null, name: string | null, role: string, status: string | null, expiresAt: string | null) => {
+        if (!id || !name) return;
+        const isExpired = expiresAt ? new Date(expiresAt) < now : false;
+        cps.push({ id, name, role, status, expiresAt, isApproved: status === "approved" && !isExpired, isExpired });
+      };
+      push(d.landlord_id, d.landlord_name, "landlord", d.landlord_kyc, d.landlord_kyc_expires);
+      push(d.tenant_id, d.tenant_name, "tenant", d.tenant_kyc, d.tenant_kyc_expires);
+      push(d.vendor_id, d.vendor_name, "vendor", d.vendor_kyc, d.vendor_kyc_expires);
+      push(d.purchaser_id, d.purchaser_name, "purchaser", d.purchaser_kyc, d.purchaser_kyc_expires);
+
+      const anyStarted = cps.some(c => c.status && c.status !== "pending");
+      const allApproved = cps.length >= 2 && cps.every(c => c.isApproved);
+      let column: "not_started" | "in_progress" | "ready_to_invoice";
+      if (allApproved) column = "ready_to_invoice";
+      else if (anyStarted) column = "in_progress";
+      else column = "not_started";
+
+      return {
+        id: d.id,
+        name: d.name,
+        status: d.status,
+        dealType: d.deal_type,
+        fee: d.fee,
+        updatedAt: d.updated_at,
+        propertyName: d.property_name,
+        counterparties: cps,
+        column,
+        canInvoice: allApproved,
+      };
+    });
+
+    res.json({
+      counts: {
+        not_started: rows.filter((r: any) => r.column === "not_started").length,
+        in_progress: rows.filter((r: any) => r.column === "in_progress").length,
+        ready_to_invoice: rows.filter((r: any) => r.column === "ready_to_invoice").length,
         total: rows.length,
       },
       rows,

@@ -6,8 +6,9 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   ShieldCheck, ShieldAlert, Clock, AlertCircle, CheckCircle2,
-  Loader2, FileText, Search, Building2, Sun,
+  Loader2, FileText, Search, Building2, Sun, Handshake, ChevronRight,
 } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 interface BoardRow {
   id: string;
@@ -111,6 +112,23 @@ function CardItem({ row }: { row: BoardRow }) {
   );
 }
 
+interface DealRow {
+  id: string;
+  name: string;
+  status: string | null;
+  dealType: string | null;
+  fee: number | null;
+  propertyName: string | null;
+  counterparties: Array<{ id: string; name: string; role: string; status: string | null; expiresAt: string | null; isApproved: boolean; isExpired: boolean }>;
+  column: "not_started" | "in_progress" | "ready_to_invoice";
+  canInvoice: boolean;
+}
+
+interface DealBoardData {
+  counts: { not_started: number; in_progress: number; ready_to_invoice: number; total: number };
+  rows: DealRow[];
+}
+
 export default function ComplianceBoard() {
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState<string | null>(null);
@@ -120,6 +138,15 @@ export default function ComplianceBoard() {
     queryFn: async () => {
       const res = await fetch("/api/kyc/board", { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load");
+      return res.json();
+    },
+  });
+
+  const { data: dealsData, isLoading: dealsLoading } = useQuery<DealBoardData>({
+    queryKey: ["/api/kyc/board/deals"],
+    queryFn: async () => {
+      const res = await fetch("/api/kyc/board/deals", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load deals");
       return res.json();
     },
   });
@@ -179,10 +206,88 @@ export default function ComplianceBoard() {
         </div>
       </div>
 
-      {/* Summary row */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
-        {COLUMNS.map(col => {
-          const count = data?.counts[col.key] || 0;
+      <Tabs defaultValue="counterparties">
+        <TabsList>
+          <TabsTrigger value="counterparties" data-testid="tab-counterparties">
+            <Building2 className="w-3.5 h-3.5 mr-1.5" />
+            Counterparties ({data?.counts.total || 0})
+          </TabsTrigger>
+          <TabsTrigger value="deals" data-testid="tab-deals">
+            <Handshake className="w-3.5 h-3.5 mr-1.5" />
+            Live deals ({dealsData?.counts.total || 0})
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="counterparties" className="mt-4">
+          {/* Summary row */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+            {COLUMNS.map(col => {
+              const count = data?.counts[col.key] || 0;
+              const Icon = col.icon;
+              return (
+                <Card key={col.key} className={`border-l-4 ${col.tone}`}>
+                  <CardContent className="p-3">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Icon className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-[11px] uppercase font-semibold text-muted-foreground tracking-wide">{col.label}</span>
+                    </div>
+                    <div className="text-2xl font-bold">{count}</div>
+                    <div className="text-[10px] text-muted-foreground">{col.description}</div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          {/* Kanban */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+            {COLUMNS.map(col => {
+              const items = filtered.filter(r => r.column === col.key);
+              return (
+                <div key={col.key} className={`rounded-lg border-2 ${col.tone} p-2 min-h-[400px]`} data-testid={`board-column-${col.key}`}>
+                  <div className="flex items-center justify-between px-1 py-1.5 mb-2">
+                    <h3 className="font-semibold text-sm flex items-center gap-1.5">
+                      <col.icon className="w-3.5 h-3.5" />
+                      {col.label}
+                    </h3>
+                    <Badge variant="secondary">{items.length}</Badge>
+                  </div>
+                  <div className="space-y-2">
+                    {items.length === 0 ? (
+                      <div className="text-center text-xs text-muted-foreground italic py-8">None</div>
+                    ) : (
+                      items.map(row => <CardItem key={row.id} row={row} />)
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="deals" className="mt-4">
+          <DealsKanban data={dealsData} loading={dealsLoading} />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+const DEAL_COLUMNS: Array<{ key: DealRow["column"]; label: string; tone: string; icon: any; description: string }> = [
+  { key: "not_started", label: "KYC not started", tone: "border-red-300 bg-red-50/30", icon: AlertCircle, description: "No counterparty has KYC" },
+  { key: "in_progress", label: "KYC in progress", tone: "border-amber-300 bg-amber-50/30", icon: Clock, description: "At least one side started" },
+  { key: "ready_to_invoice", label: "Ready to invoice", tone: "border-emerald-400 bg-emerald-50/40", icon: CheckCircle2, description: "Both counterparties AML clear" },
+];
+
+function DealsKanban({ data, loading }: { data: DealBoardData | undefined; loading: boolean }) {
+  if (loading) return <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  if (!data) return <div className="text-sm text-muted-foreground">No live deals.</div>;
+
+  return (
+    <div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+        {DEAL_COLUMNS.map(col => {
+          const count = (data.counts as any)[col.key] || 0;
           const Icon = col.icon;
           return (
             <Card key={col.key} className={`border-l-4 ${col.tone}`}>
@@ -199,12 +304,11 @@ export default function ComplianceBoard() {
         })}
       </div>
 
-      {/* Kanban */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
-        {COLUMNS.map(col => {
-          const items = filtered.filter(r => r.column === col.key);
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {DEAL_COLUMNS.map(col => {
+          const items = data.rows.filter(r => r.column === col.key);
           return (
-            <div key={col.key} className={`rounded-lg border-2 ${col.tone} p-2 min-h-[400px]`} data-testid={`board-column-${col.key}`}>
+            <div key={col.key} className={`rounded-lg border-2 ${col.tone} p-2 min-h-[400px]`} data-testid={`deal-column-${col.key}`}>
               <div className="flex items-center justify-between px-1 py-1.5 mb-2">
                 <h3 className="font-semibold text-sm flex items-center gap-1.5">
                   <col.icon className="w-3.5 h-3.5" />
@@ -216,7 +320,7 @@ export default function ComplianceBoard() {
                 {items.length === 0 ? (
                   <div className="text-center text-xs text-muted-foreground italic py-8">None</div>
                 ) : (
-                  items.map(row => <CardItem key={row.id} row={row} />)
+                  items.map(row => <DealCard key={row.id} row={row} />)
                 )}
               </div>
             </div>
@@ -224,5 +328,50 @@ export default function ComplianceBoard() {
         })}
       </div>
     </div>
+  );
+}
+
+function DealCard({ row }: { row: DealRow }) {
+  return (
+    <Link
+      href={`/deals/${row.id}`}
+      className="block bg-white border border-border/60 rounded-lg p-3 hover:shadow-sm hover:border-primary/40 transition-all"
+      data-testid={`deal-card-${row.id}`}
+    >
+      <div className="flex items-start justify-between gap-2 mb-1.5">
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          <Handshake className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="font-semibold text-sm truncate">{row.name}</span>
+        </div>
+        {row.canInvoice && (
+          <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+        )}
+      </div>
+      {row.propertyName && (
+        <div className="text-[11px] text-muted-foreground truncate mb-1.5">{row.propertyName}</div>
+      )}
+      <div className="flex flex-wrap items-center gap-1.5 mb-2">
+        {row.status && <Badge variant="outline" className="text-[10px]">{row.status}</Badge>}
+        {row.dealType && <Badge variant="outline" className="text-[10px]">{row.dealType}</Badge>}
+        {row.fee && <Badge variant="outline" className="text-[10px]">£{Number(row.fee).toLocaleString()}</Badge>}
+      </div>
+      <div className="space-y-1 pt-2 border-t border-border/40">
+        {row.counterparties.length === 0 ? (
+          <div className="text-[11px] text-red-600 italic">No counterparties set on deal</div>
+        ) : row.counterparties.map(cp => (
+          <div key={cp.id} className="flex items-center gap-1.5 text-[11px]">
+            {cp.isApproved ? (
+              <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
+            ) : cp.isExpired ? (
+              <Clock className="w-3 h-3 text-red-500 shrink-0" />
+            ) : (
+              <AlertCircle className="w-3 h-3 text-amber-500 shrink-0" />
+            )}
+            <span className="uppercase text-[9px] text-muted-foreground font-semibold shrink-0">{cp.role}</span>
+            <span className="truncate">{cp.name}</span>
+          </div>
+        ))}
+      </div>
+    </Link>
   );
 }
