@@ -1974,33 +1974,45 @@ function AddinExcel() {
                         {(() => {
                           const actions = parseExcelActions(msg.content);
                           if (actions.length === 0) return null;
+                          const applyOne = async (a: ExcelAction) => {
+                            let sheet = a.sheet;
+                            let cell = a.cell;
+                            if (!sheet || !cell) {
+                              const cellRef = prompt("Enter cell reference (e.g. Sheet1!A1):");
+                              if (!cellRef) return;
+                              const parts = cellRef.split("!");
+                              sheet = parts.length > 1 ? parts[0] : (workbookInfo?.activeSheetName || "Sheet1");
+                              cell = parts.length > 1 ? parts[1] : parts[0];
+                            }
+                            if (a.formula) {
+                              await setFormulaInCell(sheet, cell, a.formula);
+                            } else if (a.value !== undefined) {
+                              await writeToCell(sheet, cell, a.value);
+                            }
+                          };
                           return (
                             <div className="flex flex-wrap gap-1.5 mt-2 pt-2 border-t border-border/30">
+                              {actions.length > 1 && (
+                                <button
+                                  onClick={async () => {
+                                    let ok = 0, fail = 0;
+                                    for (const a of actions) {
+                                      try { await applyOne(a); ok++; } catch { fail++; }
+                                    }
+                                    console.log(`[excel-apply-all] applied=${ok} failed=${fail} total=${actions.length}`);
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-semibold bg-primary text-primary-foreground hover:opacity-90"
+                                  data-testid="button-apply-all"
+                                  title={`Apply all ${actions.length} changes to the workbook`}
+                                >
+                                  <Zap className="w-3 h-3" /> Apply all ({actions.length})
+                                </button>
+                              )}
                               {actions.map((act, idx) => (
                                 <ExcelActionButton
                                   key={`${msg.id}-action-${idx}`}
                                   action={act}
-                                  onApply={async (a) => {
-                                    if (!a.sheet || !a.cell) {
-                                      // Prompt for cell reference for bare formulas
-                                      const cellRef = prompt("Enter cell reference (e.g. Sheet1!A1):");
-                                      if (!cellRef) return;
-                                      const parts = cellRef.split("!");
-                                      const sheet = parts.length > 1 ? parts[0] : (workbookInfo?.activeSheetName || "Sheet1");
-                                      const cell = parts.length > 1 ? parts[1] : parts[0];
-                                      if (a.formula) {
-                                        await setFormulaInCell(sheet, cell, a.formula);
-                                      } else if (a.value !== undefined) {
-                                        await writeToCell(sheet, cell, a.value);
-                                      }
-                                    } else {
-                                      if (a.formula) {
-                                        await setFormulaInCell(a.sheet, a.cell, a.formula);
-                                      } else if (a.value !== undefined) {
-                                        await writeToCell(a.sheet, a.cell, a.value);
-                                      }
-                                    }
-                                  }}
+                                  onApply={applyOne}
                                 />
                               ))}
                             </div>
