@@ -5,7 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
 import {
-  Upload, File, Image, FileText, X, Check,
+  Upload, File as FileIcon, Image, FileText, X, Check,
   FolderOpen, ChevronRight, ArrowLeft, Loader2,
   Camera, Share2, Cloud, CheckCircle2, AlertCircle,
 } from "lucide-react";
@@ -29,7 +29,7 @@ function getFileIcon(name: string) {
   const ext = name.split(".").pop()?.toLowerCase() || "";
   if (["jpg", "jpeg", "png", "gif", "webp", "heic", "heif"].includes(ext)) return Image;
   if (["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt"].includes(ext)) return FileText;
-  return File;
+  return FileIcon;
 }
 
 function formatFileSize(bytes: number) {
@@ -298,7 +298,7 @@ export default function UploadPage() {
                 className={`flex-1 flex flex-col items-center gap-2 py-4 ${destination === "chat" ? "bg-black text-white" : "text-gray-500"}`}
                 data-testid="upload-dest-chat"
               >
-                <File className="w-5 h-5" />
+                <FileIcon className="w-5 h-5" />
                 <span className="text-xs font-medium">Chat Media</span>
               </button>
             </div>

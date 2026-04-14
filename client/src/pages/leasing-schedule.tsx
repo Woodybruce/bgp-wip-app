@@ -692,6 +692,8 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   }, [search]);
   const [editUnit, setEditUnit] = useState<LeasingUnit | null>(null);
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set());
+  const [expandedRowZones, setExpandedRowZones] = useState<Set<string>>(new Set());
+  const ZONE_ROW_LIMIT = 40;
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [statFilter, setStatFilter] = useState<string | null>(null);
   const [showAddUnit, setShowAddUnit] = useState(false);
@@ -1047,60 +1049,79 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
                     </tr>
                   </thead>
                   <tbody className="text-xs">
-                    {zoneUnits.map(u => {
-                      const expired = isExpired(u.lease_expiry);
-                      const expSoon = isExpiringSoon(u.lease_expiry);
-                      return (
-                        <tr key={u.id} className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800/30 ${u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : ""}`} data-testid={`unit-row-${u.id}`}>
-                          <td className="px-3 py-2">
-                            <InlineEditCell unitId={u.id} field="unit_name" value={u.unit_name || ""} onSave={inlineUpdate} className="font-medium" />
-                          </td>
-                          <td className="px-3 py-2">
-                            <InlineEditCell unitId={u.id} field="agent_initials" value={u.agent_initials || ""} onSave={inlineUpdate} className="text-gray-500" />
-                          </td>
-                          <td className="px-3 py-2">
-                            <InlineStatusCell unitId={u.id} value={u.status} onSave={inlineUpdate} />
-                          </td>
-                          <td className={`px-3 py-2 ${expired ? "text-red-600 font-medium" : expSoon ? "text-amber-600 font-medium" : "text-gray-600"}`}>
-                            <InlineDateCell unitId={u.id} field="lease_expiry" value={u.lease_expiry} onSave={inlineUpdate} />
-                          </td>
-                          <td className="px-3 py-2">
-                            <InlineDateCell unitId={u.id} field="lease_break" value={u.lease_break} onSave={inlineUpdate} className="text-gray-500" />
-                          </td>
-                          <td className="px-3 py-2">
-                            <InlineDateCell unitId={u.id} field="rent_review" value={u.rent_review} onSave={inlineUpdate} className="text-gray-500" />
-                          </td>
-                          <td className="px-3 py-2">
-                            <div className="space-y-0.5">
-                              <InlineEditCell unitId={u.id} field="mat_psqft" value={u.mat_psqft || ""} onSave={inlineUpdate} className="text-[10px]" placeholder="MAT" />
-                              <InlineEditCell unitId={u.id} field="lfl_percent" value={u.lfl_percent || ""} onSave={inlineUpdate} className={`text-[10px] ${u.lfl_percent?.startsWith("-") ? "text-red-500" : "text-emerald-600"}`} placeholder="LFL%" />
-                              <InlineEditCell unitId={u.id} field="occ_cost_percent" value={u.occ_cost_percent || ""} onSave={inlineUpdate} className="text-[10px] text-gray-400" placeholder="Occ%" />
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 min-w-[220px]">
-                            <TargetTenantPanel unitId={u.id} propertyId={propertyId} targets={allTargets} onRefresh={() => refetchTargets()} />
-                          </td>
-                          <td className="px-3 py-2">
-                            <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} className="text-[10px] text-gray-600" placeholder="Updates" multiline />
-                          </td>
-                          <td className="px-3 py-2">
-                            <div className="flex items-center gap-0.5">
+                    {(() => {
+                      const showAll = expandedRowZones.has(zone);
+                      const visible = showAll ? zoneUnits : zoneUnits.slice(0, ZONE_ROW_LIMIT);
+                      const hasMore = zoneUnits.length > ZONE_ROW_LIMIT && !showAll;
+                      return (<>
+                        {visible.map(u => {
+                          const expired = isExpired(u.lease_expiry);
+                          const expSoon = isExpiringSoon(u.lease_expiry);
+                          return (
+                            <tr key={u.id} className={`border-b hover:bg-gray-50 dark:hover:bg-gray-800/30 ${u.status === "Vacant" ? "bg-gray-50/50 dark:bg-gray-800/20" : ""}`} data-testid={`unit-row-${u.id}`}>
+                              <td className="px-3 py-2">
+                                <InlineEditCell unitId={u.id} field="unit_name" value={u.unit_name || ""} onSave={inlineUpdate} className="font-medium" />
+                              </td>
+                              <td className="px-3 py-2">
+                                <InlineEditCell unitId={u.id} field="agent_initials" value={u.agent_initials || ""} onSave={inlineUpdate} className="text-gray-500" />
+                              </td>
+                              <td className="px-3 py-2">
+                                <InlineStatusCell unitId={u.id} value={u.status} onSave={inlineUpdate} />
+                              </td>
+                              <td className={`px-3 py-2 ${expired ? "text-red-600 font-medium" : expSoon ? "text-amber-600 font-medium" : "text-gray-600"}`}>
+                                <InlineDateCell unitId={u.id} field="lease_expiry" value={u.lease_expiry} onSave={inlineUpdate} />
+                              </td>
+                              <td className="px-3 py-2">
+                                <InlineDateCell unitId={u.id} field="lease_break" value={u.lease_break} onSave={inlineUpdate} className="text-gray-500" />
+                              </td>
+                              <td className="px-3 py-2">
+                                <InlineDateCell unitId={u.id} field="rent_review" value={u.rent_review} onSave={inlineUpdate} className="text-gray-500" />
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="space-y-0.5">
+                                  <InlineEditCell unitId={u.id} field="mat_psqft" value={u.mat_psqft || ""} onSave={inlineUpdate} className="text-[10px]" placeholder="MAT" />
+                                  <InlineEditCell unitId={u.id} field="lfl_percent" value={u.lfl_percent || ""} onSave={inlineUpdate} className={`text-[10px] ${u.lfl_percent?.startsWith("-") ? "text-red-500" : "text-emerald-600"}`} placeholder="LFL%" />
+                                  <InlineEditCell unitId={u.id} field="occ_cost_percent" value={u.occ_cost_percent || ""} onSave={inlineUpdate} className="text-[10px] text-gray-400" placeholder="Occ%" />
+                                </div>
+                              </td>
+                              <td className="px-3 py-2 min-w-[220px]">
+                                <TargetTenantPanel unitId={u.id} propertyId={propertyId} targets={allTargets} onRefresh={() => refetchTargets()} />
+                              </td>
+                              <td className="px-3 py-2">
+                                <InlineEditCell unitId={u.id} field="updates" value={u.updates || ""} onSave={inlineUpdate} className="text-[10px] text-gray-600" placeholder="Updates" multiline />
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="flex items-center gap-0.5">
+                                  <button
+                                    onClick={() => { if (confirm(u.status === "Archived" ? "Restore this unit from archive?" : "Archive this unit?")) archiveMutation.mutate(u.id); }}
+                                    className={`p-1 rounded ${u.status === "Archived" ? "hover:bg-emerald-100 text-emerald-500" : "hover:bg-amber-100 text-gray-400"}`}
+                                    title={u.status === "Archived" ? "Restore" : "Archive"}
+                                    data-testid={`archive-${u.id}`}
+                                  >
+                                    {u.status === "Archived" ? <History className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
+                                  </button>
+                                  <button onClick={() => { if (confirm("Remove this unit permanently?")) deleteMutation.mutate(u.id); }} className="p-1 hover:bg-red-100 rounded" data-testid={`delete-${u.id}`}>
+                                    <Trash2 className="w-3 h-3 text-gray-400" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {hasMore && (
+                          <tr>
+                            <td colSpan={10} className="text-center py-2">
                               <button
-                                onClick={() => { if (confirm(u.status === "Archived" ? "Restore this unit from archive?" : "Archive this unit?")) archiveMutation.mutate(u.id); }}
-                                className={`p-1 rounded ${u.status === "Archived" ? "hover:bg-emerald-100 text-emerald-500" : "hover:bg-amber-100 text-gray-400"}`}
-                                title={u.status === "Archived" ? "Restore" : "Archive"}
-                                data-testid={`archive-${u.id}`}
+                                onClick={() => setExpandedRowZones(prev => { const n = new Set(prev); n.add(zone); return n; })}
+                                className="text-xs text-primary hover:underline font-medium"
                               >
-                                {u.status === "Archived" ? <History className="w-3 h-3" /> : <ShieldOff className="w-3 h-3" />}
+                                Show all {zoneUnits.length} units ({zoneUnits.length - ZONE_ROW_LIMIT} more)
                               </button>
-                              <button onClick={() => { if (confirm("Remove this unit permanently?")) deleteMutation.mutate(u.id); }} className="p-1 hover:bg-red-100 rounded" data-testid={`delete-${u.id}`}>
-                                <Trash2 className="w-3 h-3 text-gray-400" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                            </td>
+                          </tr>
+                        )}
+                      </>);
+                    })()}
                   </tbody>
                 </table>
               </div>

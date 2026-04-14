@@ -250,8 +250,16 @@ async function runAiAnalysis(data: any, riskFlags: string[], ownershipChain: any
     }).join("\n");
 
     const chainSummary = ownershipChain?.chain?.length > 0
-      ? ownershipChain.chain.map((c: any, i: number) => `  ${i + 1}. ${c.name} (${c.number})`).join("\n")
+      ? ownershipChain.chain.map((c: any, i: number) => {
+          const ind = (c.individualPscs || []).map((p: any) => `      • ${p.name}${p.nationality ? ` (${p.nationality})` : ""}${p.controls?.length ? ` — ${p.controls.join(", ")}` : ""}`).join("\n");
+          const corp = (c.corporatePscs || []).map((p: any) => `      ▸ ${p.name}${p.controls?.length ? ` — ${p.controls.join(", ")}` : ""}`).join("\n");
+          return `  ${i + 1}. ${c.name} (${c.number})${ind ? `\n    Individual PSCs:\n${ind}` : ""}${corp ? `\n    Corporate PSCs:\n${corp}` : ""}`;
+        }).join("\n")
       : "No corporate ownership chain discovered";
+
+    const uboSummary = ownershipChain?.ubos?.length > 0
+      ? ownershipChain.ubos.map((u: any) => `  • ${u.name}${u.nationality ? ` (${u.nationality})` : ""} — found at ${u.foundAt} (depth ${u.depth})${u.controls?.length ? ` — ${u.controls.join(", ")}` : ""}`).join("\n")
+      : "No individual UBOs identified beyond the subject's direct PSCs";
 
     const prompt = `You are KYC Clouseau — an expert KYC/AML compliance investigator for a London commercial property agency. Produce a comprehensive intelligence report on this entity.
 
@@ -273,8 +281,11 @@ ${officerSummary || "None"}
 PERSONS WITH SIGNIFICANT CONTROL (${activePscs.length}):
 ${pscSummary || "None"}
 
-OWNERSHIP CHAIN (PSC corporate trace):
+OWNERSHIP CHAIN (PSC corporate trace, with individual UBOs at each level):
 ${chainSummary}
+
+ULTIMATE BENEFICIAL OWNERS (individual people identified across the entire chain):
+${uboSummary}
 
 CHARGES/MORTGAGES (${(data.charges || []).length}):
 ${(data.charges || []).map((c: any) => `- ${c.status || "unknown"}: ${c.classification?.description || c.particulars?.description || "Charge"} — ${(c.persons_entitled || []).map((p: any) => p.name).join(", ") || "Unknown lender"}${c.created_on ? ` (created ${c.created_on})` : ""}${c.satisfied_on ? ` (satisfied ${c.satisfied_on})` : ""}`).join("\n") || "None"}
@@ -298,7 +309,7 @@ This investigation originates from a Land Registry search. The user is exploring
 Please provide:
 
 1. **EXECUTIVE SUMMARY** — 2-3 sentence overview of this entity and its risk profile
-2. **CONTROLLING INDIVIDUALS** — Who really controls this entity? Follow the ownership chain. Identify the natural persons behind any corporate layers.
+2. **CONTROLLING INDIVIDUALS / UBOs** — Who really controls this entity? The "ULTIMATE BENEFICIAL OWNERS" section above lists every individual PSC found across the corporate chain — these ARE the answer. List each by name, where in the chain they sit, and their nationality. If the chain ended without surfacing individuals, say "no individual UBO disclosed up to depth N — recommend manual Companies House check on [last entity in chain]" rather than saying you can't determine the UBO.
 ${propertyContext ? `3. **ACQUISITION CONTACT STRATEGY** — Based on the ownership structure, officers, and corporate hierarchy, who is the BEST person to approach about purchasing the property? Consider:
    - Who is the actual decision-maker (not just the registered owner — follow the chain to the person with authority)?
    - If this is an SPV or holding company, who at the parent entity handles disposals?

@@ -37,6 +37,72 @@ async function runPreMigrations() {
         UNIQUE(property_id, contact_id)
       )
     `);
+
+    // KYC documents — proof of funds, certified passport, etc.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS kyc_documents (
+        id varchar PRIMARY KEY DEFAULT gen_random_uuid(),
+        company_id varchar,
+        contact_id varchar,
+        deal_id varchar,
+        doc_type text NOT NULL,
+        file_url text NOT NULL,
+        file_name text NOT NULL,
+        file_size integer,
+        mime_type text,
+        certified_by text,
+        certified_at timestamp,
+        expires_at timestamp,
+        notes text,
+        uploaded_by varchar,
+        uploaded_at timestamp DEFAULT now(),
+        deleted_at timestamp
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_kyc_documents_company_id ON kyc_documents(company_id) WHERE deleted_at IS NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_kyc_documents_contact_id ON kyc_documents(contact_id) WHERE deleted_at IS NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_kyc_documents_deal_id ON kyc_documents(deal_id) WHERE deleted_at IS NULL`);
+
+    // Company-level AML approval columns
+    const companyAmlCols: Array<[string, string]> = [
+      ["kyc_approved_by", "text"],
+      ["kyc_expires_at", "timestamp"],
+      ["aml_checklist", "jsonb"],
+      ["aml_risk_level", "text"],
+      ["aml_pep_status", "text"],
+      ["aml_source_of_wealth", "text"],
+      ["aml_source_of_wealth_notes", "text"],
+      ["aml_edd_required", "boolean DEFAULT false"],
+      ["aml_edd_reason", "text"],
+      ["aml_notes", "text"],
+    ];
+    for (const [col, type] of companyAmlCols) {
+      await pool.query(`ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS ${col} ${type}`);
+    }
+
+    // Veriff biometric verification sessions
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS veriff_sessions (
+        session_id text PRIMARY KEY,
+        company_id varchar,
+        contact_id varchar,
+        deal_id varchar,
+        first_name text NOT NULL,
+        last_name text NOT NULL,
+        email text,
+        status text,
+        decision_code integer,
+        decision_reason text,
+        verdict_person jsonb,
+        verdict_document jsonb,
+        verification_url text,
+        requested_by varchar,
+        created_at timestamp DEFAULT now(),
+        received_at timestamp
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_veriff_sessions_company ON veriff_sessions(company_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_veriff_sessions_deal ON veriff_sessions(deal_id)`);
   } catch (err: any) {
     console.error("Pre-migration error:", err?.message);
   } finally {

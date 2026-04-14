@@ -25,7 +25,7 @@ import {
   Sparkles, Send, AlertCircle, Trash2, Bot, User, Loader2,
   Plus, MessageSquare, MoreHorizontal, Pencil, Link2, Building2,
   Briefcase, ClipboardList, Users, FileText, Search, X,
-  Menu, Home, UserPlus, Download, File, ChevronRight,
+  Menu, Home, UserPlus, Download, File as FileIcon, ChevronRight,
   ArrowLeft, Paperclip, FolderOpen, ChevronDown,
   Eye, Share2, Image, FileSpreadsheet, ExternalLink, Copy, Check,
   Mic, Square, MapPin, Folder, Globe, Hash, Tag,
@@ -715,7 +715,7 @@ function FolderTreeItem({ item, team, propertyName, depth = 0 }: {
       onClick={() => item.webUrl && window.open(item.webUrl, "_blank")}
       data-testid={`file-item-${item.id}`}
     >
-      <File className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+      <FileIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
       <span className="text-xs truncate flex-1">{item.name}</span>
       {item.size > 0 && <span className="text-[10px] text-muted-foreground shrink-0">{formatFileSize(item.size)}</span>}
       <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -1262,7 +1262,7 @@ function ProjectRightPanel({
                       <FileSpreadsheet className="w-5 h-5 text-muted-foreground/60" />
                     </div>
                     <div className="w-10 h-12 rounded-lg bg-muted/60 flex items-center justify-center -ml-2">
-                      <File className="w-5 h-5 text-muted-foreground/60" />
+                      <FileIcon className="w-5 h-5 text-muted-foreground/60" />
                     </div>
                   </div>
                 )}
@@ -1694,7 +1694,7 @@ function ThreadInfoPanel({
                     onClick={() => window.open(f.filePath, "_blank")}
                     data-testid={`marketing-file-${f.id}`}
                   >
-                    <File className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <FileIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                     <span className="text-xs truncate flex-1">{f.fileName}</span>
                     <Download className="w-3 h-3 text-muted-foreground shrink-0" />
                   </button>
@@ -3042,7 +3042,7 @@ export default function ChatBGP() {
     if (mimeType?.includes("pdf")) return <FileText className="w-8 h-8 text-red-500" />;
     if (mimeType?.includes("word") || mimeType?.includes("document")) return <FileText className="w-8 h-8 text-blue-500" />;
     if (mimeType?.includes("excel") || mimeType?.includes("spreadsheet")) return <FileSpreadsheet className="w-8 h-8 text-green-500" />;
-    return <File className="w-8 h-8 text-gray-400" />;
+    return <FileIcon className="w-8 h-8 text-gray-400" />;
   };
 
 
@@ -3618,7 +3618,7 @@ export default function ChatBGP() {
                                 <img src={filePreviews.get(i)} alt={f.name} className="w-10 h-10 rounded object-cover" />
                               ) : (
                                 <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
-                                  <File className="w-5 h-5 text-muted-foreground" />
+                                  <FileIcon className="w-5 h-5 text-muted-foreground" />
                                 </div>
                               )}
                               <div className="flex-1 min-w-0">
@@ -3834,7 +3834,7 @@ export default function ChatBGP() {
                         <img src={filePreviews.get(i)} alt={f.name} className="w-10 h-10 rounded object-cover" />
                       ) : (
                         <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
-                          <File className="w-5 h-5 text-muted-foreground" />
+                          <FileIcon className="w-5 h-5 text-muted-foreground" />
                         </div>
                       )}
                       <div className="flex-1 min-w-0">

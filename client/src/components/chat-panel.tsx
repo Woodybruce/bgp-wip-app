@@ -22,7 +22,7 @@ import {
   ChevronDown,
   ChevronUp,
   Paperclip,
-  File,
+  File as FileIcon,
   UserPlus,
   ArrowLeft,
   Users,
@@ -471,14 +471,14 @@ function MessageBubble({ message, currentUserId, threadId, isGroupChat, onEdit, 
                 }
                 return (
                   <a key={i} href={parsed.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 bg-muted rounded-lg px-3 py-2">
-                    <File className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" />
                     <span className="text-xs truncate">{parsed.name}</span>
                   </a>
                 );
               }
               return (
                 <span key={i} className="inline-flex items-center gap-1 text-[11px] bg-muted rounded-md px-2 py-1">
-                  <File className="w-3 h-3" /> {att}
+                  <FileIcon className="w-3 h-3" /> {att}
                 </span>
               );
             })}
@@ -2728,7 +2728,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
                       ) : isImage ? (
                         <ImageIcon className="w-2.5 h-2.5 shrink-0" />
                       ) : (
-                        <File className="w-2.5 h-2.5 shrink-0" />
+                        <FileIcon className="w-2.5 h-2.5 shrink-0" />
                       )}
                       <span className="truncate max-w-[100px]">{file.name}</span>
                       <button

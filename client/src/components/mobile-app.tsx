@@ -23,7 +23,7 @@ import {
   Link as LinkIcon, Search, Pencil, MoreVertical,
   MessageCircle, CheckCheck, Plus, BarChart3,
   Copy, ChevronDown, ChevronUp,
-  Paperclip, File, UserPlus, AlertCircle, Camera, Image,
+  Paperclip, File as FileIcon, UserPlus, AlertCircle, Camera, Image,
   Menu, MessageSquare, FileText, Handshake,
   Newspaper, Mail, Phone, Download, Eye, Star, Upload,
   Mic, Square, Building, Link2,
@@ -443,7 +443,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
             return (
               <a key={i} href={parsed.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 rounded-2xl px-4 py-3 bg-white border border-gray-100 shadow-sm">
                 <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-gray-50">
-                  <File className="w-5 h-5 text-gray-400" />
+                  <FileIcon className="w-5 h-5 text-gray-400" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-[14px] font-medium truncate text-gray-900">{parsed.name}</div>
@@ -461,7 +461,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
           }
           return (
             <span key={i} className="inline-flex items-center gap-2 text-[13px] rounded-xl px-3 py-1.5 bg-gray-100">
-              <File className="w-4 h-4 text-gray-400" /> {att}
+              <FileIcon className="w-4 h-4 text-gray-400" /> {att}
             </span>
           );
         })}
@@ -2210,7 +2210,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 </div>
               ) : (
                 <div key={i} className="relative shrink-0 flex items-center gap-1.5 rounded-xl px-3 py-2 h-16 bg-gray-100">
-                  <File className="w-4 h-4 text-gray-500" />
+                  <FileIcon className="w-4 h-4 text-gray-500" />
                   <div className="max-w-[100px]">
                     <div className="text-xs font-medium truncate">{f.name}</div>
                     <div className="text-[10px] text-gray-400">{formatFileSize(f.size)}</div>
@@ -2383,7 +2383,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                     </button>
                     <div className="border-t border-gray-100 my-1" />
                     <label className="flex items-center gap-3 w-full px-4 py-3 text-left text-[15px] hover:bg-gray-50 active:bg-gray-100 cursor-pointer">
-                      <File className="w-5 h-5 text-gray-600" />
+                      <FileIcon className="w-5 h-5 text-gray-600" />
                       <span>Attach File</span>
                       <input
                         ref={fileInputRef}
@@ -3311,7 +3311,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
                                 </div>
                               ) : (
                                 <div className="w-full h-full flex flex-col items-center justify-center">
-                                  <File className="w-8 h-8 text-gray-400" />
+                                  <FileIcon className="w-8 h-8 text-gray-400" />
                                   <span className="text-[10px] font-medium text-gray-400 mt-1 uppercase">{f.fileName.split('.').pop()}</span>
                                 </div>
                               )}
