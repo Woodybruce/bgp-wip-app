@@ -74,6 +74,9 @@ const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
 const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
+const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
+const AmlTraining = lazy(() => import("@/pages/aml-training"));
+const KycHub = lazy(() => import("@/pages/kyc-hub"));
 const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
 
@@ -145,8 +148,14 @@ function Router() {
       <Route path="/leasing-schedule/:propertyId" component={LeasingSchedule} />
       <Route path="/tasks" component={TasksPage} />
       <Route path="/cad-measure" component={CadMeasure} />
-      <Route path="/kyc-clouseau" component={KycClouseau} />
-      <Route path="/aml-compliance" component={AmlCompliance} />
+      {/* Unified KYC & AML hub — one page with four tabs. Old routes still
+          resolve here so existing links / external references don't break. */}
+      <Route path="/kyc-clouseau" component={KycHub} />
+      <Route path="/aml-compliance" component={KycHub} />
+      <Route path="/compliance-board" component={KycHub} />
+      <Route path="/aml-training" component={KycHub} />
+      {/* Deep-link for a specific training module needs the legacy component */}
+      <Route path="/aml-training/:id" component={AmlTraining} />
       <Route path="/turnover" component={TurnoverBoard} />
       <Route path="/wip-report" component={DealsHub} />
       <Route path="/upload" component={UploadPage} />

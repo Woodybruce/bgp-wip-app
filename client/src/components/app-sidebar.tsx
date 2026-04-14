@@ -39,6 +39,7 @@ import {
   Ruler,
   Sun,
   ShieldCheck,
+  GraduationCap,
 } from "lucide-react";
 import {
   Sidebar,
@@ -108,8 +109,7 @@ const adminNavBase = [
 ];
 
 const toolsNav = [
-  { title: "KYC Clouseau", url: "/kyc-clouseau", icon: Scale, badge: "AI" },
-  { title: "AML Compliance", url: "/aml-compliance", icon: ShieldCheck },
+  { title: "KYC & AML", url: "/kyc-clouseau", icon: ShieldCheck, badge: "AI" },
   { title: "Land Registry", url: "/land-registry", icon: Landmark },
   { title: "Business Rates", url: "/business-rates", icon: Receipt },
   { title: "Turnover Data", url: "/turnover", icon: BarChart3 },
@@ -389,8 +389,7 @@ const mobileOverlayItems = [
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
   { title: "News", url: "/news", icon: Newspaper },
   { title: "Leads", url: "/leads", icon: UserPlus },
-  { title: "KYC Clouseau", url: "/kyc-clouseau", icon: Scale },
-  { title: "AML Compliance", url: "/aml-compliance", icon: ShieldCheck },
+  { title: "KYC & AML", url: "/kyc-clouseau", icon: ShieldCheck },
   { title: "Land Registry", url: "/land-registry", icon: Landmark },
   { title: "Business Rates", url: "/business-rates", icon: Receipt },
   { title: "Turnover Data", url: "/turnover", icon: BarChart3 },

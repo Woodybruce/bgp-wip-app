@@ -1675,6 +1675,11 @@ export default function Comps() {
                         <DropdownMenuItem className="text-destructive" onClick={() => setDeleteComp({ id: comp.id, name: comp.name })}>
                           <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete
                         </DropdownMenuItem>
+                        {selectedIds.size > 1 && (
+                          <DropdownMenuItem className="text-destructive font-medium" onClick={() => setBulkDeleteOpen(true)}>
+                            <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete All Selected ({selectedIds.size})
+                          </DropdownMenuItem>
+                        )}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </td>
@@ -2005,35 +2010,33 @@ export default function Comps() {
                           />
                         </td>
                         <td className="px-2 py-1.5">
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => setConfirmLead(lead)}
-                              className="p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                              data-testid={`button-review-lead-${lead.id}`}
-                              title="Review — open lead summary"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => {
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button className="p-1 rounded hover:bg-muted transition-colors" data-testid={`lead-menu-${lead.id}`}>
+                                <MoreHorizontal className="w-3.5 h-3.5 text-muted-foreground" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start">
+                              <DropdownMenuItem onClick={() => setConfirmLead(lead)}>
+                                <Eye className="w-3.5 h-3.5 mr-2" /> Review
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => {
                                 updateMutation.mutate({ id: lead.id, field: "verified", value: true });
                                 toast({ title: "Lead verified", description: `${lead.name || "Lead"} moved to comps` });
-                              }}
-                              className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-600 hover:bg-green-700 text-white transition-colors"
-                              data-testid={`button-verify-lead-${lead.id}`}
-                              title="Verify — move to comp schedule"
-                            >
-                              <CheckCircle2 className="w-3 h-3 inline -mt-0.5" /> Verify
-                            </button>
-                            <button
-                              onClick={() => deleteMutation.mutate(lead.id)}
-                              className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-600 hover:bg-red-700 text-white transition-colors"
-                              data-testid={`button-discard-lead-${lead.id}`}
-                              title="Reject — delete this lead"
-                            >
-                              <X className="w-3 h-3 inline -mt-0.5" />
-                            </button>
-                          </div>
+                              }}>
+                                <CheckCircle2 className="w-3.5 h-3.5 mr-2 text-green-600" /> Verify
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem className="text-destructive" onClick={() => deleteMutation.mutate(lead.id)}>
+                                <Trash2 className="w-3.5 h-3.5 mr-2" /> Discard
+                              </DropdownMenuItem>
+                              {selectedIds.size > 1 && (
+                                <DropdownMenuItem className="text-destructive font-medium" onClick={() => setBulkDeleteOpen(true)}>
+                                  <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete All Selected ({selectedIds.size})
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </td>
                         <td className="px-2 py-1.5 truncate">
                           <Link

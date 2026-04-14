@@ -250,8 +250,16 @@ async function runAiAnalysis(data: any, riskFlags: string[], ownershipChain: any
     }).join("\n");
 
     const chainSummary = ownershipChain?.chain?.length > 0
-      ? ownershipChain.chain.map((c: any, i: number) => `  ${i + 1}. ${c.name} (${c.number})`).join("\n")
+      ? ownershipChain.chain.map((c: any, i: number) => {
+          const ind = (c.individualPscs || []).map((p: any) => `      • ${p.name}${p.nationality ? ` (${p.nationality})` : ""}${p.controls?.length ? ` — ${p.controls.join(", ")}` : ""}`).join("\n");
+          const corp = (c.corporatePscs || []).map((p: any) => `      ▸ ${p.name}${p.controls?.length ? ` — ${p.controls.join(", ")}` : ""}`).join("\n");
+          return `  ${i + 1}. ${c.name} (${c.number})${ind ? `\n    Individual PSCs:\n${ind}` : ""}${corp ? `\n    Corporate PSCs:\n${corp}` : ""}`;
+        }).join("\n")
       : "No corporate ownership chain discovered";
+
+    const uboSummary = ownershipChain?.ubos?.length > 0
+      ? ownershipChain.ubos.map((u: any) => `  • ${u.name}${u.nationality ? ` (${u.nationality})` : ""} — found at ${u.foundAt} (depth ${u.depth})${u.controls?.length ? ` — ${u.controls.join(", ")}` : ""}`).join("\n")
+      : "No individual UBOs identified beyond the subject's direct PSCs";
 
     const prompt = `You are KYC Clouseau — an expert KYC/AML compliance investigator for a London commercial property agency. Produce a comprehensive intelligence report on this entity.
 
@@ -273,8 +281,11 @@ ${officerSummary || "None"}
 PERSONS WITH SIGNIFICANT CONTROL (${activePscs.length}):
 ${pscSummary || "None"}
 
-OWNERSHIP CHAIN (PSC corporate trace):
+OWNERSHIP CHAIN (PSC corporate trace, with individual UBOs at each level):
 ${chainSummary}
+
+ULTIMATE BENEFICIAL OWNERS (individual people identified across the entire chain):
+${uboSummary}
 
 CHARGES/MORTGAGES (${(data.charges || []).length}):
 ${(data.charges || []).map((c: any) => `- ${c.status || "unknown"}: ${c.classification?.description || c.particulars?.description || "Charge"} — ${(c.persons_entitled || []).map((p: any) => p.name).join(", ") || "Unknown lender"}${c.created_on ? ` (created ${c.created_on})` : ""}${c.satisfied_on ? ` (satisfied ${c.satisfied_on})` : ""}`).join("\n") || "None"}
@@ -298,7 +309,7 @@ This investigation originates from a Land Registry search. The user is exploring
 Please provide:
 
 1. **EXECUTIVE SUMMARY** — 2-3 sentence overview of this entity and its risk profile
-2. **CONTROLLING INDIVIDUALS** — Who really controls this entity? Follow the ownership chain. Identify the natural persons behind any corporate layers.
+2. **CONTROLLING INDIVIDUALS / UBOs** — Who really controls this entity? The "ULTIMATE BENEFICIAL OWNERS" section above lists every individual PSC found across the corporate chain — these ARE the answer. List each by name, where in the chain they sit, and their nationality. If the chain ended without surfacing individuals, say "no individual UBO disclosed up to depth N — recommend manual Companies House check on [last entity in chain]" rather than saying you can't determine the UBO.
 ${propertyContext ? `3. **ACQUISITION CONTACT STRATEGY** — Based on the ownership structure, officers, and corporate hierarchy, who is the BEST person to approach about purchasing the property? Consider:
    - Who is the actual decision-maker (not just the registered owner — follow the chain to the person with authority)?
    - If this is an SPV or holding company, who at the parent entity handles disposals?
@@ -898,6 +909,11 @@ Format with clear headers and be specific. This is a professional compliance doc
 // Traces full UBO chain, deep-dives decision makers, finds managing/leasing agents,
 // checks building availability, maps associate network
 router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: Request, res: Response) => {
+  // Hard request ceiling — the old route could hang indefinitely when CH was
+  // slow or the AI API stalled. Node defaults to no socket timeout on POST,
+  // so set one explicitly.
+  req.setTimeout(180000);
+  res.setTimeout(180000);
   try {
     const { companyNumber, companyName, propertyAddress, propertyName } = req.body;
     if (!companyNumber && !companyName) {
@@ -922,10 +938,12 @@ router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: 
     const activeOfficers = (companyData.officers || []).filter((o: any) => !o.resigned_on);
     const activePscs = (companyData.pscs || []).filter((p: any) => !p.ceased_on);
 
-    // 3. Full UBO chain trace — follow corporate PSCs up to 8 levels deep
+    // 3. UBO chain trace — depth reduced from 8 → 5 levels. Each extra level
+    // costs 3-5 CH calls per entity it finds; 5 is enough for >99% of real
+    // ownership chains and keeps the total walk under ~30 API calls.
     let ownershipChain = null;
     try {
-      ownershipChain = await discoverUltimateParent(targetNumber, 8);
+      ownershipChain = await discoverUltimateParent(targetNumber, 5);
     } catch {}
 
     // For each entity in the chain, get officers and PSCs
@@ -1005,10 +1023,13 @@ router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: 
       }
     }
 
-    // 5. Deep-dive each decision maker — fetch all their appointments
+    // 5. Deep-dive each decision maker — fetch their appointments.
+    // Cap at top 6 UBOs (was 10) and 20 appointments each (was 50) — keeps
+    // the total CH call count bounded so the endpoint can't exceed its
+    // 3-minute ceiling even on large ownership webs.
     const decisionMakers: any[] = [];
     const dmLimit = pLimit(3);
-    const dmFetches = ubos.slice(0, 10).map(ubo =>
+    const dmFetches = ubos.slice(0, 6).map(ubo =>
       dmLimit(async () => {
         try {
           // Search for officer record by name
@@ -1024,7 +1045,7 @@ router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: 
           const officerId = officerLink.replace("/officers/", "");
           if (!officerId) return { ...ubo, appointments: [], companies: [] };
 
-          const appointments = await chFetch(`/officers/${officerId}/appointments?items_per_page=50`);
+          const appointments = await chFetch(`/officers/${officerId}/appointments?items_per_page=20`);
           const activeAppts = (appointments.items || []).filter((a: any) => !a.resigned_on);
           const companies = activeAppts.map((a: any) => ({
             name: a.appointed_to?.company_name,
@@ -1181,15 +1202,19 @@ Please provide a COMPREHENSIVE PROPERTY INTELLIGENCE REPORT:
 
 Format with clear headers. Be specific — name actual people, companies, and connections. This is used by commercial property agents for business development AND compliance.`;
 
-      const aiRes = await anthropic.messages.create({
+      const aiPromise = anthropic.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 6000,
         messages: [{ role: "user", content: prompt }],
       });
-
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("AI analysis timed out after 75s")), 75000)
+      );
+      const aiRes: any = await Promise.race([aiPromise, timeoutPromise]);
       aiAnalysis = aiRes.content[0].type === "text" ? aiRes.content[0].text : "Analysis unavailable";
     } catch (aiErr: any) {
-      aiAnalysis = `AI analysis unavailable (${aiErr.message}).`;
+      console.warn(`[kyc-clouseau] Property intel AI failed: ${aiErr?.message}`);
+      aiAnalysis = `AI analysis unavailable (${aiErr?.message || "unknown error"}). All raw ownership and decision-maker data below is still valid.`;
     }
 
     // 9. PropertyData — owned properties

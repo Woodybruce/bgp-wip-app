@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
-  ShieldCheck, UserCog, GraduationCap, Clock, AlertTriangle,
+  ShieldCheck, UserCog, GraduationCap, Clock, AlertTriangle, Play,
   Plus, Check, Trash2, Save, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -108,6 +108,34 @@ function TrainingRecords() {
     queryKey: ["/api/aml/training"],
   });
 
+  // Cross-link: map each logged training row to the interactive module
+  // (if one exists with a matching title) so the MLRO can see who's due
+  // to re-take and jump straight into the quiz.
+  const { data: modules = [] } = useQuery<Array<{ id: string; title: string }>>({
+    queryKey: ["/api/aml/training-modules"],
+    queryFn: () => fetch("/api/aml/training-modules", { credentials: "include" }).then(r => r.json()),
+  });
+  const moduleByTitle = new Map(modules.map(m => [m.title.toLowerCase(), m.id]));
+  const moduleByType = (trainingType: string): string | null => {
+    const t = (trainingType || "").toLowerCase();
+    // Direct title match
+    if (moduleByTitle.has(t)) return moduleByTitle.get(t) || null;
+    // Match legacy training_type slugs against our module titles
+    const aliases: Record<string, string> = {
+      induction: "aml essentials",
+      annual_refresher: "aml essentials",
+      sar_reporting: "sar reporting",
+      sanctions_screening: "sanctions screening",
+    };
+    const alias = aliases[t];
+    if (alias) {
+      for (const [title, id] of Array.from(moduleByTitle.entries())) {
+        if (title.includes(alias)) return id;
+      }
+    }
+    return null;
+  };
+
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ userName: "", trainingType: "annual_refresher", trainingDate: new Date().toISOString().slice(0, 10), topics: "", notes: "" });
 
@@ -157,12 +185,20 @@ function TrainingRecords() {
             <GraduationCap className="w-4 h-4" />
             Staff AML Training Log
           </CardTitle>
-          <Button size="sm" variant="outline" onClick={() => setShowAdd(!showAdd)}>
-            {showAdd ? <ChevronUp className="w-3 h-3 mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
-            {showAdd ? "Cancel" : "Log Training"}
-          </Button>
+          <div className="flex gap-2">
+            <Button asChild size="sm" variant="outline" data-testid="button-open-training-tab">
+              <a href="/kyc-clouseau?tab=training">
+                <GraduationCap className="w-3 h-3 mr-1" />
+                Take a module
+              </a>
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setShowAdd(!showAdd)}>
+              {showAdd ? <ChevronUp className="w-3 h-3 mr-1" /> : <Plus className="w-3 h-3 mr-1" />}
+              {showAdd ? "Cancel" : "Log Training"}
+            </Button>
+          </div>
         </div>
-        <p className="text-xs text-muted-foreground">MLR 2017 Regulation 24 requires firms to take appropriate measures to ensure employees are aware of AML obligations. All training must be recorded.</p>
+        <p className="text-xs text-muted-foreground">MLR 2017 Regulation 24 requires firms to take appropriate measures to ensure employees are aware of AML obligations. Staff training is auto-logged when they pass a module on the Training tab.</p>
       </CardHeader>
       <CardContent>
         {showAdd && (
@@ -222,6 +258,18 @@ function TrainingRecords() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
+                  {(() => {
+                    const moduleId = moduleByType(r.training_type);
+                    if (!moduleId) return null;
+                    const label = r.completed_at ? "Re-take" : "Take";
+                    return (
+                      <Button asChild size="sm" variant="outline" className="h-7 text-xs" data-testid={`take-module-${r.id}`}>
+                        <a href={`/aml-training/${moduleId}`}>
+                          <Play className="w-3 h-3 mr-1" /> {label}
+                        </a>
+                      </Button>
+                    );
+                  })()}
                   {r.completed_at ? (
                     <Badge variant="default" className="bg-green-600 text-[10px]">
                       <Check className="w-2.5 h-2.5 mr-0.5" /> Complete
@@ -410,7 +458,24 @@ function FirmRiskAssessment() {
     onError: (err: any) => toast({ title: "Save failed", description: err?.message, variant: "destructive" }),
   });
 
+  const populateDefault = useMutation({
+    mutationFn: () => fetch("/api/aml/risk-assessment/populate-default", { method: "POST", credentials: "include" }).then(r => r.json()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/aml/settings"] });
+      toast({ title: "Template populated", description: "Review the draft, edit anything BGP-specific, then click Approve." });
+    },
+  });
+
+  const approveAssessment = useMutation({
+    mutationFn: () => fetch("/api/aml/risk-assessment/approve", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: "{}" }).then(r => r.json()),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/aml/settings"] }); toast({ title: "Risk assessment approved", description: "Next review scheduled in 12 months." }); },
+  });
+
   const existing = settings?.firm_risk_assessment;
+  const status = settings?.firm_risk_assessment_status || (existing ? "draft" : null);
+  const approvedAt = settings?.firm_risk_assessment_approved_at;
+  const approvedBy = settings?.firm_risk_assessment_approved_by;
+  const nextReview = settings?.firm_risk_assessment_next_review_at;
 
   return (
     <Card>
@@ -421,12 +486,30 @@ function FirmRiskAssessment() {
             Firm-wide Risk Assessment
           </CardTitle>
           {!editing && (
-            <Button size="sm" variant="outline" onClick={() => {
-              if (existing) setAssessment(existing);
-              setEditing(true);
-            }}>
-              {existing ? "Edit" : "Create Assessment"}
-            </Button>
+            <div className="flex items-center gap-2">
+              {status === "approved" && (
+                <Badge className="bg-emerald-600">Approved</Badge>
+              )}
+              {status === "draft" && (
+                <Badge className="bg-amber-600">Draft — unapproved</Badge>
+              )}
+              {!existing && (
+                <Button size="sm" variant="outline" onClick={() => populateDefault.mutate()} disabled={populateDefault.isPending} data-testid="button-populate-template">
+                  Populate MLR 2017 template
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={() => {
+                if (existing) setAssessment(existing);
+                setEditing(true);
+              }} data-testid="button-edit-risk-assessment">
+                {existing ? "Edit" : "Create blank"}
+              </Button>
+              {existing && status !== "approved" && (
+                <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => approveAssessment.mutate()} disabled={approveAssessment.isPending} data-testid="button-approve-risk-assessment">
+                  MLRO Approve
+                </Button>
+              )}
+            </div>
           )}
         </div>
         <p className="text-xs text-muted-foreground">MLR 2017 Regulation 18 requires estate agents to carry out a firm-wide risk assessment identifying and assessing the risks of money laundering and terrorist financing.</p>
@@ -491,6 +574,12 @@ function FirmRiskAssessment() {
               <p className="text-xs text-muted-foreground">
                 Last updated: {new Date(settings.firm_risk_assessment_updated_at).toLocaleDateString("en-GB")}
                 {settings.firm_risk_assessment_updated_by && ` by ${settings.firm_risk_assessment_updated_by}`}
+              </p>
+            )}
+            {status === "approved" && approvedAt && (
+              <p className="text-xs text-emerald-700 font-medium" data-testid="risk-assessment-approved-line">
+                Approved by {approvedBy || "MLRO"} on {new Date(approvedAt).toLocaleDateString("en-GB")}
+                {nextReview && ` · Next review due ${new Date(nextReview).toLocaleDateString("en-GB")}`}
               </p>
             )}
             {[

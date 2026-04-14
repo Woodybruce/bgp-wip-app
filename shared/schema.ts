@@ -420,8 +420,18 @@ export const crmCompanies = pgTable("crm_companies", {
   companiesHouseNumber: text("companies_house_number"),
   companiesHouseData: jsonb("companies_house_data"),
   companiesHouseOfficers: jsonb("companies_house_officers"),
-  kycStatus: text("kyc_status"),
+  kycStatus: text("kyc_status"), // pending | in_review | approved | rejected | expired
   kycCheckedAt: timestamp("kyc_checked_at"),
+  kycApprovedBy: text("kyc_approved_by"),
+  kycExpiresAt: timestamp("kyc_expires_at"),
+  amlChecklist: jsonb("aml_checklist"),
+  amlRiskLevel: text("aml_risk_level"),
+  amlPepStatus: text("aml_pep_status"),
+  amlSourceOfWealth: text("aml_source_of_wealth"),
+  amlSourceOfWealthNotes: text("aml_source_of_wealth_notes"),
+  amlEddRequired: boolean("aml_edd_required").default(false),
+  amlEddReason: text("aml_edd_reason"),
+  amlNotes: text("aml_notes"),
   contacted: boolean("contacted").default(false),
   detailsSent: boolean("details_sent").default(false),
   viewing: boolean("viewing").default(false),
@@ -1459,6 +1469,56 @@ export const deletedSharepointImages = pgTable("deleted_sharepoint_images", {
   sharepointItemId: text("sharepoint_item_id").notNull(),
   deletedAt: timestamp("deleted_at").defaultNow(),
 });
+
+// ─── KYC documents — proof of funds, certified passport, etc. ─────────────
+// Owned by a counterparty (company OR contact). Optionally tied to a deal
+// when it's a deal-specific item like "proof of funds for THIS purchase".
+export const kycDocuments = pgTable("kyc_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: varchar("company_id"),
+  contactId: varchar("contact_id"),
+  dealId: varchar("deal_id"),
+  // passport, certified_passport, drivers_licence, proof_of_address,
+  // source_of_funds, source_of_wealth, ubo_declaration, company_cert,
+  // bank_statement, onfido_report, other
+  docType: text("doc_type").notNull(),
+  fileUrl: text("file_url").notNull(),
+  fileName: text("file_name").notNull(),
+  fileSize: integer("file_size"),
+  mimeType: text("mime_type"),
+  certifiedBy: text("certified_by"),
+  certifiedAt: timestamp("certified_at"),
+  expiresAt: timestamp("expires_at"),
+  notes: text("notes"),
+  uploadedBy: varchar("uploaded_by"),
+  uploadedAt: timestamp("uploaded_at").defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const insertKycDocumentSchema = createInsertSchema(kycDocuments).omit({ id: true, uploadedAt: true, deletedAt: true });
+export type InsertKycDocument = z.infer<typeof insertKycDocumentSchema>;
+export type KycDocument = typeof kycDocuments.$inferSelect;
+
+// ─── Veriff biometric verification sessions ───────────────────────────────
+export const veriffSessions = pgTable("veriff_sessions", {
+  sessionId: text("session_id").primaryKey(),
+  companyId: varchar("company_id"),
+  contactId: varchar("contact_id"),
+  dealId: varchar("deal_id"),
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name").notNull(),
+  email: text("email"),
+  status: text("status"), // created | started | submitted | approved | declined | resubmission_requested | expired | abandoned
+  decisionCode: integer("decision_code"),
+  decisionReason: text("decision_reason"),
+  verdictPerson: jsonb("verdict_person"),
+  verdictDocument: jsonb("verdict_document"),
+  verificationUrl: text("verification_url"),
+  requestedBy: varchar("requested_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  receivedAt: timestamp("received_at"),
+});
+export type VeriffSession = typeof veriffSessions.$inferSelect;
 
 export const userTasks = pgTable("user_tasks", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

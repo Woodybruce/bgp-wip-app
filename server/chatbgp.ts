@@ -111,10 +111,32 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
   const usableW = pageW - 110;
   const leftM = 55;
 
+  // Resolve BGP wordmark logo once — server-side file read
+  const path = require("path") as typeof import("path");
+  const fs = require("fs") as typeof import("fs");
+  const logoCandidates = [
+    path.join(process.cwd(), "client", "src", "assets", "BGP_BlackHolder.png"),
+    path.join(process.cwd(), "client", "public", "BGP_BlackHolder.png"),
+    path.join(process.cwd(), "attached_assets", "BGP_BlackHolder.png"),
+  ];
+  let logoPath: string | null = null;
+  for (const p of logoCandidates) {
+    try { if (fs.existsSync(p)) { logoPath = p; break; } } catch {}
+  }
+
   function drawHeader() {
-    doc.font("Body-Bold").fontSize(8).fillColor("#232323")
-      .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
-    doc.moveTo(leftM, 40).lineTo(leftM + usableW, 40).strokeColor("#232323").lineWidth(0.5).stroke();
+    if (logoPath) {
+      try {
+        doc.image(logoPath, leftM, 22, { height: 18 });
+      } catch {
+        doc.font("Body-Bold").fontSize(8).fillColor("#232323")
+          .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
+      }
+    } else {
+      doc.font("Body-Bold").fontSize(8).fillColor("#232323")
+        .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
+    }
+    doc.moveTo(leftM, 46).lineTo(leftM + usableW, 46).strokeColor("#232323").lineWidth(0.5).stroke();
   }
 
   function drawFooter(pageNum: number, totalPages: number) {
@@ -141,6 +163,10 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
     });
   }
 
+  // Preserve bold/italic markers through to a sentinel so we can render them
+  // as styled runs instead of stripping them (user reported flat formatting).
+  const BOLD_OPEN = "\u0001B\u0001";
+  const BOLD_CLOSE = "\u0001b\u0001";
   const processed = htmlContent
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
     .replace(/<br\s*\/?>/gi, "\n")
@@ -151,11 +177,34 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
     .replace(/<\/div>/gi, "\n")
     .replace(/<li[^>]*>/gi, "  \u2022 ")
     .replace(/<hr[^>]*>/gi, "\n---\n")
-    .replace(/<strong>([\s\S]*?)<\/strong>/gi, "$1")
-    .replace(/<em>([\s\S]*?)<\/em>/gi, "$1")
-    .replace(/<b>([\s\S]*?)<\/b>/gi, "$1")
-    .replace(/<i>([\s\S]*?)<\/i>/gi, "$1")
+    .replace(/<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, `${BOLD_OPEN}$1${BOLD_CLOSE}`)
+    .replace(/\*\*([^*\n]+)\*\*/g, `${BOLD_OPEN}$1${BOLD_CLOSE}`)
+    .replace(/<(?:em|i)\b[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, "$1")
     .replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, "$1");
+
+  // Split a line into run pairs — [{text, bold}, ...] — for pdfkit continued text
+  function splitBoldRuns(line: string): Array<{ text: string; bold: boolean }> {
+    const runs: Array<{ text: string; bold: boolean }> = [];
+    let bold = false;
+    let buf = "";
+    for (let i = 0; i < line.length; i++) {
+      if (line.slice(i, i + BOLD_OPEN.length) === BOLD_OPEN) {
+        if (buf) { runs.push({ text: buf, bold }); buf = ""; }
+        bold = true;
+        i += BOLD_OPEN.length - 1;
+        continue;
+      }
+      if (line.slice(i, i + BOLD_CLOSE.length) === BOLD_CLOSE) {
+        if (buf) { runs.push({ text: buf, bold }); buf = ""; }
+        bold = false;
+        i += BOLD_CLOSE.length - 1;
+        continue;
+      }
+      buf += line[i];
+    }
+    if (buf) runs.push({ text: buf, bold });
+    return runs.length > 0 ? runs : [{ text: line, bold: false }];
+  }
 
   let plainText = processed
     .replace(/<[^>]+>/g, "")
@@ -213,19 +262,31 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
       }
     } else if (trimmed.startsWith("\u2022") || trimmed.startsWith("  \u2022")) {
       const bulletText = trimmed.replace(/^\s*\u2022\s*/, "");
-      doc.font("Body").fontSize(10).fillColor("#333333");
-      doc.text("\u2022  " + bulletText, leftM + 8, y, { width: usableW - 16, indent: 0 });
+      const runs = splitBoldRuns("\u2022  " + bulletText);
+      doc.fontSize(10).fillColor("#333333");
+      doc.text("", leftM + 8, y, { width: usableW - 16, indent: 0 });
+      runs.forEach((r, i) => {
+        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
+      });
       y = doc.y + 3;
     } else if (numberedRegex.test(trimmed)) {
       const nMatch = trimmed.match(numberedRegex)!;
       const num = nMatch[1];
       const text = nMatch[2];
-      doc.font("Body").fontSize(10).fillColor("#333333");
-      doc.text(`${num}.  ${text}`, leftM + 4, y, { width: usableW - 8 });
+      const runs = splitBoldRuns(`${num}.  ${text}`);
+      doc.fontSize(10).fillColor("#333333");
+      doc.text("", leftM + 4, y, { width: usableW - 8 });
+      runs.forEach((r, i) => {
+        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
+      });
       y = doc.y + 3;
     } else {
-      doc.font("Body").fontSize(10).fillColor("#333333")
-        .text(trimmed, leftM, y, { width: usableW });
+      const runs = splitBoldRuns(trimmed);
+      doc.fontSize(10).fillColor("#333333");
+      doc.text("", leftM, y, { width: usableW });
+      runs.forEach((r, i) => {
+        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
+      });
       y = doc.y + 4;
     }
   }
@@ -785,6 +846,14 @@ ${memberList}
 ## How You Work
 You are an active operational agent with full CRM read/write access, internet search, SharePoint/OneDrive access, document generation (PDF/Word/PPTX/Excel), email/calendar, and app builder tools. All tool descriptions are in the tools parameter — use them proactively.
 
+## HONESTY — never fabricate outcomes
+- Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
+- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, or \`export_to_excel\`. A made-up URL will 404 for the user.
+- If the user asks you to modify something and no suitable tool exists, SAY SO plainly ("I can't edit the PDF renderer from here — that needs a code change"). Offer the closest alternative rather than inventing fake fixes.
+- For template edits, always call \`update_document_template\` with the existing templateId (from the docTemplates list). Don't just describe what you would change — actually change it. After the tool returns, report what the tool confirmed.
+- For template deletions, call \`delete_document_template\` — never just say "removed it".
+- If a tool returns an error, report the error honestly to the user. Don't pretend it succeeded and then say "give it 20 seconds to rebuild".
+
 ## Key Tool Workflows
 - **CRM**: search_crm (fuzzy matching) → create/update entities. Search broadly with multiple variations before saying something doesn't exist.
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
@@ -1331,6 +1400,54 @@ export async function getAvailableTools(): Promise<{
       },
     });
   }
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "update_document_template",
+      description: "Modify an existing document template in the BGP app — e.g. rename it, change its description, rewrite the template content, or replace the field definitions. Use when the user asks to edit, rename, reword, remove a heading, add a logo placeholder, or otherwise change a template that already exists (not to create a new one). Look up the templateId from the docTemplates list provided above. Only include the fields you want to change; the rest stay as-is.",
+      parameters: {
+        type: "object",
+        properties: {
+          templateId: { type: "string", description: "The id of the existing template to update" },
+          name: { type: "string", description: "New template name (optional)" },
+          description: { type: "string", description: "New template description (optional)" },
+          templateContent: { type: "string", description: "New full template content with {{fieldId}} placeholders (optional)" },
+          fields: {
+            type: "array",
+            description: "New array of fillable fields — REPLACES the existing fields entirely (optional)",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                label: { type: "string" },
+                type: { type: "string", enum: ["text", "textarea", "number", "date", "select"] },
+                placeholder: { type: "string" },
+                section: { type: "string" },
+              },
+              required: ["id", "label", "type", "placeholder", "section"],
+            },
+          },
+        },
+        required: ["templateId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "delete_document_template",
+      description: "Permanently delete a document template. Only call this when the user explicitly asks to remove, delete, or get rid of a template. Look up the templateId from the docTemplates list provided above.",
+      parameters: {
+        type: "object",
+        properties: {
+          templateId: { type: "string", description: "The id of the template to delete" },
+        },
+        required: ["templateId"],
+      },
+    },
+  });
 
   tools.push({
     type: "function",
@@ -4034,24 +4151,9 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker, crmProperties } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    let propertyId = fnArgs.propertyId;
-    if (!propertyId && fnArgs.assetName) {
-      const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
-      if (existingProp) {
-        propertyId = existingProp.id;
-      } else {
-        const [newProp] = await db.insert(crmProperties).values({
-          name: fnArgs.assetName,
-          address: fnArgs.address ? { street: fnArgs.address } : null,
-          tenure: fnArgs.tenure || null,
-        }).returning();
-        propertyId = newProp.id;
-      }
-    }
+    const { investmentTracker } = await import("@shared/schema");
     const [created] = await db.insert(investmentTracker).values({
-      propertyId, assetName: fnArgs.assetName, address: fnArgs.address, status: fnArgs.status || "Reporting",
+      assetName: fnArgs.assetName, address: fnArgs.address, status: fnArgs.status || "Reporting",
       boardType: fnArgs.boardType || "Purchases", client: fnArgs.client, clientContact: fnArgs.clientContact,
       vendor: fnArgs.vendor, vendorAgent: fnArgs.vendorAgent, guidePrice: fnArgs.guidePrice,
       niy: fnArgs.niy, eqy: fnArgs.eqy, sqft: fnArgs.sqft, currentRent: fnArgs.currentRent,
@@ -5225,7 +5327,7 @@ async function executeCrmToolRaw(
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
         const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(buffer, name, contentType || "application/octet-stream", fnArgs.folderPath);
+        const uploadResult = await uploadFileToSharePoint(req, fnArgs.folderPath, name, buffer);
         return { data: { success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath, uploadResult } };
       }
 
@@ -7366,24 +7468,8 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker, crmProperties } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    let propertyId = fnArgs.propertyId;
-    if (!propertyId && fnArgs.assetName) {
-      const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
-      if (existingProp) {
-        propertyId = existingProp.id;
-      } else {
-        const [newProp] = await db.insert(crmProperties).values({
-          name: fnArgs.assetName,
-          address: fnArgs.address ? { street: fnArgs.address } : null,
-          tenure: fnArgs.tenure || null,
-        }).returning();
-        propertyId = newProp.id;
-      }
-    }
+    const { investmentTracker } = await import("@shared/schema");
     const [created] = await db.insert(investmentTracker).values({
-      propertyId,
       assetName: fnArgs.assetName,
       address: fnArgs.address,
       status: fnArgs.status || "Reporting",
@@ -8306,7 +8392,7 @@ export async function handleCrmToolCall(
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
         const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(buffer, name, contentType || "application/octet-stream", fnArgs.folderPath);
+        const uploadResult = await uploadFileToSharePoint(req, fnArgs.folderPath, name, buffer);
         const reply = await summaryHelper({ success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath });
         return { handled: true, response: { reply: reply || `Saved ${name} to SharePoint at ${fnArgs.folderPath}.` } };
       }
@@ -8867,6 +8953,30 @@ export function setupChatBGPRoutes(app: Express) {
       });
       return { data: { success: true, templateId: created.id, templateName: created.name, fieldCount: (tcArgs.fields || []).length }, action: { type: "navigate", path: "/doc-generate?tab=templates" } };
     }
+    // Template update (rename / rewrite / replace fields)
+    if (tcName === "update_document_template") {
+      const { storage } = await import("./storage");
+      if (!tcArgs.templateId) return { data: { error: "templateId is required" } };
+      const existing = await storage.getDocumentTemplate(tcArgs.templateId).catch(() => null);
+      if (!existing) return { data: { error: `Template ${tcArgs.templateId} not found` } };
+      const updates: Record<string, any> = {};
+      if (typeof tcArgs.name === "string") updates.name = tcArgs.name;
+      if (typeof tcArgs.description === "string") updates.description = tcArgs.description;
+      if (typeof tcArgs.templateContent === "string") updates.templateContent = tcArgs.templateContent;
+      if (Array.isArray(tcArgs.fields)) updates.fields = JSON.stringify(tcArgs.fields);
+      if (Object.keys(updates).length === 0) return { data: { error: "No fields provided to update" } };
+      const updated = await storage.updateDocumentTemplate(tcArgs.templateId, updates);
+      return { data: { success: true, templateId: updated.id, templateName: updated.name, changed: Object.keys(updates) }, action: { type: "navigate", path: "/doc-generate?tab=templates" } };
+    }
+    // Template delete
+    if (tcName === "delete_document_template") {
+      const { storage } = await import("./storage");
+      if (!tcArgs.templateId) return { data: { error: "templateId is required" } };
+      const existing = await storage.getDocumentTemplate(tcArgs.templateId).catch(() => null);
+      if (!existing) return { data: { error: `Template ${tcArgs.templateId} not found` } };
+      await storage.deleteDocumentTemplate(tcArgs.templateId);
+      return { data: { success: true, deletedId: tcArgs.templateId, deletedName: existing.name }, action: { type: "navigate", path: "/doc-generate?tab=templates" } };
+    }
     // Everything else goes through executeCrmToolRaw (CRM, navigation, email, code tools, etc.)
     return executeCrmToolRaw(tcName, tcArgs, req);
   }
@@ -9285,12 +9395,28 @@ export function setupChatBGPRoutes(app: Express) {
     }
   });
 
-  app.post("/api/chatbgp/excel-chat", requireAuth, async (req: Request, res: Response) => {
+  app.post("/api/chatbgp/excel-chat", requireAuth, chatUpload.array("files", 20), async (req: Request, res: Response) => {
     if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
       return res.status(503).json({ message: "AI API key not configured" });
     }
 
-    const { messages, excelContext } = req.body;
+    const isMultipart = (req.headers["content-type"] || "").startsWith("multipart/form-data");
+    const uploadedFiles = (req.files as Express.Multer.File[]) || [];
+
+    let messages: any[] = [];
+    let excelContext: string | undefined;
+    try {
+      if (isMultipart) {
+        messages = JSON.parse(req.body.messages || "[]");
+        excelContext = req.body.excelContext || undefined;
+      } else {
+        messages = req.body.messages;
+        excelContext = req.body.excelContext;
+      }
+    } catch {
+      return res.status(400).json({ message: "Invalid messages format" });
+    }
+
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ message: "messages array required" });
     }
@@ -9298,10 +9424,11 @@ export function setupChatBGPRoutes(app: Express) {
       return res.status(400).json({ message: "Too many messages (max 40)" });
     }
     for (const m of messages) {
-      if (!m || typeof m.content !== "string" || !["user", "assistant"].includes(m.role)) {
-        return res.status(400).json({ message: "Each message must have role (user/assistant) and content (string)" });
+      if (!m || !["user", "assistant"].includes(m.role)) {
+        return res.status(400).json({ message: "Each message must have role (user/assistant)" });
       }
-      if (m.content.length > 50000) {
+      const contentLen = typeof m.content === "string" ? m.content.length : 0;
+      if (contentLen > 50000) {
         return res.status(400).json({ message: "Message content too long (max 50000 chars)" });
       }
     }
@@ -9320,76 +9447,227 @@ export function setupChatBGPRoutes(app: Express) {
       try { res.write(": heartbeat\n\n"); } catch {}
     }, 5000);
 
-    req.on("close", () => { clearInterval(heartbeat); });
+    let clientClosed = false;
+    req.on("close", () => { clientClosed = true; clearInterval(heartbeat); });
+
+    const sendProgress = (status: string) => {
+      try { if (!clientClosed) res.write(`data: ${JSON.stringify({ progress: status })}\n\n`); } catch {}
+    };
 
     try {
-      let crmCtx = "";
-      try { crmCtx = await withTimeout(getCrmContext(), 5000, ""); } catch {}
+      // Handle attached files (same pattern as chat-with-files)
+      const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".heic"];
+      const AUDIO_VIDEO_EXTENSIONS = [".mp3", ".mp4", ".m4a", ".wav", ".webm", ".ogg", ".aac", ".flac", ".wma", ".mov", ".avi", ".mkv", ".wmv", ".flv"];
+      const documentTexts: string[] = [];
+      const imageContentParts: Array<{ type: "image_url"; image_url: { url: string; detail: "auto" } }> = [];
 
-      let safeExcelContext = excelContext || "";
-      const totalBudget = 80000;
-      const crmLen = crmCtx.length;
-      const maxExcelLen = totalBudget - crmLen;
-      if (safeExcelContext.length > maxExcelLen) {
-        safeExcelContext = safeExcelContext.substring(0, maxExcelLen) + "\n... (spreadsheet data truncated for size — full workbook metadata above is complete)\n";
+      if (uploadedFiles.length > 0) {
+        sendProgress(`Reading ${uploadedFiles.length} file${uploadedFiles.length === 1 ? "" : "s"}...`);
+        for (const file of uploadedFiles) {
+          const ext = "." + (file.originalname.split(".").pop()?.toLowerCase() || "");
+          const isImage = IMAGE_EXTENSIONS.includes(ext) || file.mimetype?.startsWith("image/");
+          const isAudioVideo = AUDIO_VIDEO_EXTENSIONS.includes(ext) || file.mimetype?.startsWith("audio/") || file.mimetype?.startsWith("video/");
+          const fileData = fs.readFileSync(file.path);
+          const chatMediaName = `${Date.now()}-${path.basename(file.path)}${ext}`;
+          const storageKey = `chat-media/${chatMediaName}`;
+          try {
+            await saveFile(storageKey, fileData, file.mimetype || "application/octet-stream", file.originalname);
+          } catch (err: any) {
+            console.error(`[ChatBGP Excel] File DB save error (${file.originalname}):`, err?.message);
+          }
+          if (isImage) {
+            try {
+              const base64 = fileData.toString("base64");
+              const mimeType = file.mimetype || "image/png";
+              imageContentParts.push({
+                type: "image_url",
+                image_url: { url: `data:${mimeType};base64,${base64}`, detail: "auto" },
+              });
+            } catch (err: any) {
+              console.error(`[ChatBGP Excel] Image read error (${file.originalname}):`, err?.message);
+            }
+          } else if (isAudioVideo) {
+            documentTexts.push(`=== AUDIO/VIDEO FILE: ${file.originalname} ===\nFile URL: /api/chat-media/${chatMediaName}\nUse transcribe_audio with fileUrl="/api/chat-media/${chatMediaName}".`);
+          } else {
+            try {
+              const text = await extractTextFromFile(file.path, file.originalname);
+              documentTexts.push(`=== FILE: ${file.originalname} ===\n${text.slice(0, 15000)}`);
+            } catch (err: any) {
+              console.error(`[ChatBGP Excel] File extract error (${file.originalname}):`, err?.message);
+            }
+          }
+        }
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg && lastMsg.role === "user") {
+          if (documentTexts.length > 0) {
+            const textContent = typeof lastMsg.content === "string" ? lastMsg.content : "";
+            lastMsg.content = `${textContent}\n\n--- ATTACHED DOCUMENTS ---\n${documentTexts.join("\n\n")}`;
+          }
+          if (imageContentParts.length > 0) {
+            const textContent = typeof lastMsg.content === "string" ? lastMsg.content : "";
+            lastMsg.content = [
+              { type: "text" as const, text: textContent || "What do you see in this image?" },
+              ...imageContentParts,
+            ];
+          }
+        }
       }
 
-      const excelSystemPrompt = `You are ChatBGP Excel Assistant — an AI built into Microsoft Excel for Bruce Gillingham Pollard (BGP), a London commercial property consultancy.
+      // Truncate excel context to leave room for other contexts + tools
+      let safeExcelContext = excelContext || "";
+      if (safeExcelContext.length > 60000) {
+        safeExcelContext = safeExcelContext.substring(0, 60000) + "\n... (spreadsheet data truncated for size — full workbook metadata above is complete)\n";
+      }
 
-You help BGP team members work with Excel spreadsheets. You have deep knowledge of:
-- Commercial property finance (IRR, yields, MOIC, rent reviews, DCF models)
-- BGP's CRM data (deals, properties, contacts, companies — provided below)
-- Excel formulas, VBA macros, data analysis, and financial modelling
+      // Load full contexts (same as main ChatBGP) so Excel add-in has the same reach
+      sendProgress("Gathering intelligence...");
+      const userId = req.session.userId!;
+      const [memoryContext, businessLearnings, crmCtx, knowledgeContext, emailCalContext] = await Promise.all([
+        withTimeout(getMemoryContext(userId), 5000, ""),
+        withTimeout(getBusinessLearningsContext(), 5000, ""),
+        withTimeout(getCrmContext(), 5000, ""),
+        withTimeout(getKnowledgeContext(), 5000, ""),
+        withTimeout(getEmailAndCalendarContext(req), 5000, ""),
+      ]);
 
-**What makes you better than a generic AI:**
-- You can see the FULL workbook — all sheets, their column headers, dimensions, and the active sheet's data.
+      let baseSystemPrompt: string;
+      try { baseSystemPrompt = await buildSystemPrompt(); } catch { baseSystemPrompt = SYSTEM_PROMPT_FALLBACK; }
+
+      const excelSupplement = `
+
+## EXCEL ADD-IN CONTEXT
+You are running inside the Microsoft Excel task pane as "ChatBGP for Excel". In addition to all your usual BGP capabilities (CRM lookups, SharePoint search, property/deal data, document generation, etc.), you have these Excel-specific abilities:
+
+- You can see the FULL workbook the user has open — all sheets with their column headers, dimensions, and the active sheet's data (provided below as "Current Workbook Data" when available).
 - You can cross-reference spreadsheet data against BGP's CRM (companies, properties, deals, contacts).
-- You understand BGP's Investment WIP format, leasing schedules, and property finance conventions.
-- You can now WRITE directly to cells in the user's workbook via Office.js — formulas, values, and formatting.
-- You have access to the full BGP investment model template (6 sheets: Summary, Assumptions, Cash Flow, Debt Schedule, Sensitivity, Returns Analysis) and the Model Builder can create it in one click.
 
-**Your capabilities:**
-1. **Workbook overview** — When the user first asks about their spreadsheet, give a structured overview: file name, each sheet with its dimensions, and the column structure you can see. Identify the type of data (investment tracker, rent roll, sales comps, etc.).
-2. **Cross-reference CRM** — Match company names, property addresses, and agents in the spreadsheet against BGP's CRM data. Flag any matches or gaps.
-3. **Write formulas** — Give Excel formulas the user can paste into cells. Reference actual cell addresses from their sheet.
-4. **Apply to Excel** — You can now WRITE values and formulas directly into the user's workbook. When suggesting a formula or value, emit an action block so the user can click "Apply" to write it directly:
-   \`\`\`json
-   {"action": "writeFormula", "sheet": "Sheet1", "cell": "C10", "formula": "=B10*(1+0.025)"}
-   \`\`\`
-   or for values:
-   \`\`\`json
-   {"action": "writeValue", "sheet": "Sheet1", "cell": "A1", "value": "Hello"}
-   \`\`\`
-5. **Explain cells** — When the user shares cell data or formulas, explain what they do clearly.
-6. **Build models** — Help construct financial models, sensitivity tables, and scenario analyses. The Model Builder tab can generate a full 6-sheet investment appraisal model directly into the open workbook.
-7. **Data analysis** — Help with VLOOKUP, INDEX/MATCH, pivot logic, conditional formatting formulas.
-8. **VBA & macros** — Write VBA code for automation tasks.
+### ⚠️ IMPORTANT — Writing to the open workbook (DO THIS by default)
+**You CAN write formulas and values directly into the user's open workbook in real time via Office.js.** Never tell the user you can't — you can. The add-in renders an "Apply" button next to every JSON action block you emit, and clicking it writes the formula/value to the exact cell specified.
 
-**Response format:**
-- When giving formulas, wrap them in \`\`\`excel code blocks so they're easy to copy.
-- When you want the user to be able to apply a formula or value directly, ALSO emit a JSON action block (as shown above). The add-in will render an "Apply" button next to it.
-- Be concise and practical — the user is working in Excel and wants quick answers.
-- When referencing CRM data, be specific with values so the user can enter them directly.
+Whenever the user asks you to "build", "amend", "fill in", "add", "update", "put", "populate", "write", or otherwise modify their open workbook, you MUST respond with one or more JSON action blocks — NOT a downloadable file. Emit one block per cell, in the order the user should apply them:
+
+\`\`\`json
+{"action": "writeFormula", "sheet": "Summary", "cell": "C10", "formula": "=B10*(1+0.025)"}
+\`\`\`
+
+\`\`\`json
+{"action": "writeValue", "sheet": "Summary", "cell": "A1", "value": "Investment Summary"}
+\`\`\`
+
+For a full model, emit dozens of action blocks in order (headers → assumptions → formulas → totals). The user can click "Apply" on each, or "Apply All" to write the entire model at once.
+
+### When to emit a downloadable file instead (export_to_excel)
+Only use the \`export_to_excel\` tool when the user explicitly asks for a **separate file** they can download — phrases like "send me an Excel file", "export this as xlsx", "give me a downloadable spreadsheet". Never use \`export_to_excel\` when the user wants changes in the workbook that's already open.
+
+### Multi-sheet models
+If the user asks to build a full investment appraisal (multi-sheet), you may either:
+1. Emit many JSON action blocks across multiple sheets (user applies them cell-by-cell or "Apply All"), OR
+2. Recommend the **Model Builder tab** which can generate a full 6-sheet investment appraisal (Summary, Assumptions, Cash Flow, Debt Schedule, Sensitivity, Returns Analysis) in one click.
+
+### Excel response style
+- Wrap formulas in \`\`\`excel code blocks so they're easy to copy.
+- ALSO emit a JSON action block for every formula/value you want the user to apply directly — don't just show formulas as text, make them actionable.
+- Reference specific cell addresses from the user's actual sheet.
+- Be concise — the user is working in Excel and wants quick answers.
 - Use UK English and UK number formatting.
-- Reference specific rows, columns, and cell addresses from their actual spreadsheet data.
-- When giving a workbook overview, format it cleanly with the file name, then a numbered list of sheets with their dimensions and whether they are active, with frozen rows/columns noted.
-- When the user asks to build a financial model, remind them about the Models tab which can build a full investment appraisal in one click.
 
-${safeExcelContext ? `\n**Current Workbook Data (automatically read from the user's open Excel workbook):**\nYou CAN see all sheets in this workbook. The full data for the active sheet is provided below, plus metadata (dimensions, column headers, frozen panes) for every sheet. Use this to give specific, actionable answers referencing actual cell addresses.\n\n${safeExcelContext}\n` : "\n**Note:** No spreadsheet data was provided. If the user asks you to analyse their sheet, suggest they click the refresh button next to the input or paste their data directly into the chat.\n"}
-${crmCtx}`;
+${safeExcelContext ? `**Current Workbook Data (automatically read from the user's open Excel workbook):**\n${safeExcelContext}\n` : "**Note:** No spreadsheet data was provided. If the user asks you to analyse their sheet, suggest they click the refresh button next to the input."}
+`;
 
-      const completion = await callClaude({
-        model: CHATBGP_HELPER_MODEL,
-        messages: [
-          { role: "system", content: excelSystemPrompt },
-          ...messages.slice(-20),
-        ],
-        max_completion_tokens: 4096,
-      });
+      const dynamicContext = knowledgeContext + businessLearnings + memoryContext + emailCalContext + crmCtx + excelSupplement;
+      const systemContent = baseSystemPrompt + dynamicContext;
 
-      const reply = completion.choices[0]?.message?.content || "Sorry, I couldn't generate a response.";
-      res.write(`data: ${JSON.stringify({ reply })}\n\n`);
-      res.end();
+      // Load all the tools the main ChatBGP has
+      const { tools } = await getAvailableTools();
+      let msToken: string | null = null;
+      try { msToken = await getValidMsToken(req); } catch {}
+
+      // Run the agentic loop — same pattern as /api/chatbgp/chat-with-files
+      let convMessages: any[] = [
+        { role: "system", content: systemContent },
+        ...messages.slice(-20),
+      ];
+      let lastAction: any = null;
+      let loopCount = 0;
+      const maxLoops = 15;
+      const deadline = Date.now() + 180000; // 3 min
+
+      while (loopCount < maxLoops) {
+        if (clientClosed || Date.now() > deadline) {
+          console.log(`[ChatBGP Excel] Deadline/close after ${loopCount} loops`);
+          break;
+        }
+        loopCount++;
+        const isLastLoop = loopCount >= maxLoops;
+        const loopOpts: any = {
+          model: CHATBGP_HELPER_MODEL,
+          messages: convMessages,
+          max_completion_tokens: 4096,
+        };
+        if (!isLastLoop && tools.length > 0) {
+          loopOpts.tools = tools;
+          loopOpts.tool_choice = "auto";
+        }
+
+        const completion = await callClaude(loopOpts);
+        const message = completion.choices[0]?.message;
+        if (!message) break;
+
+        console.log(`[ChatBGP Excel] Loop ${loopCount}: tool_calls=${message.tool_calls?.length || 0}, has_content=${!!message.content}`);
+
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          convMessages.push(message);
+          const toolNames = (message.tool_calls as unknown as ToolCall[]).map(tc => tc.function.name);
+          sendProgress(toolNames.length === 1 ? getToolProgressLabel(toolNames[0]) : `Running ${toolNames.length} operations...`);
+
+          for (const tc of message.tool_calls as unknown as ToolCall[]) {
+            if (clientClosed || Date.now() > deadline) {
+              convMessages.push({ role: "tool" as const, tool_call_id: tc.id, content: JSON.stringify({ error: "Ran out of time" }) });
+              continue;
+            }
+            const tcName = tc.function.name;
+            let tcArgs: any;
+            try { tcArgs = JSON.parse(tc.function.arguments); } catch { tcArgs = {}; }
+            try {
+              const toolTimeoutMs = tcName.includes("sharepoint") || tcName.includes("file") ? 20000 : 15000;
+              const toolResult = await withTimeout(
+                executeAnyTool(tcName, tcArgs, req, msToken),
+                toolTimeoutMs,
+                { data: { error: `Tool timed out after ${toolTimeoutMs / 1000}s` } }
+              );
+              if (toolResult.action) lastAction = toolResult.action;
+              const resultStr = typeof toolResult.data === "string" ? toolResult.data : JSON.stringify(toolResult.data);
+              convMessages.push({
+                role: "tool" as const,
+                tool_call_id: tc.id,
+                content: resultStr.length > 12000 ? resultStr.slice(0, 12000) + "\n...[truncated]" : resultStr,
+              });
+            } catch (toolErr: any) {
+              console.error(`[ChatBGP Excel] Tool ${tcName} error:`, toolErr?.message);
+              convMessages.push({
+                role: "tool" as const,
+                tool_call_id: tc.id,
+                content: JSON.stringify({ error: toolErr?.message || "Tool execution failed" }),
+              });
+            }
+          }
+        } else {
+          const reply = message.content || "Sorry, I couldn't generate a response.";
+          clearInterval(heartbeat);
+          try {
+            res.write(`data: ${JSON.stringify({ reply, ...(lastAction ? { action: lastAction } : {}) })}\n\n`);
+            res.end();
+          } catch {}
+          return;
+        }
+      }
+
+      // Fell through the loop — write whatever's last
+      clearInterval(heartbeat);
+      try {
+        res.write(`data: ${JSON.stringify({ reply: "Request took too long. I've completed what I could — please ask a follow-up if you need more.", partial: true, ...(lastAction ? { action: lastAction } : {}) })}\n\n`);
+        res.end();
+      } catch {}
     } catch (err: any) {
       console.error("[ChatBGP Excel] Error:", err?.message);
       clearInterval(heartbeat);
@@ -9397,6 +9675,11 @@ ${crmCtx}`;
         res.write(`data: ${JSON.stringify({ reply: "Failed to get AI response. Please try again.", error: true })}\n\n`);
         res.end();
       } catch {}
+    } finally {
+      // Clean up uploaded temp files
+      for (const f of uploadedFiles) {
+        try { fs.unlinkSync(f.path); } catch {}
+      }
     }
   });
 

@@ -1,6 +1,7 @@
 import { guessDomain } from "@/lib/company-logos";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
+import { KycPanel } from "@/components/kyc-panel";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -1319,6 +1320,10 @@ function CompanyDetail({ id }: { id: string }) {
           <CompaniesHouseCard company={company} />
 
           <CompanyFoldersCard companyName={company.name} linkedProperties={linkedProperties} />
+        </div>
+
+        <div className="lg:col-span-3">
+          <KycPanel companyId={company.id} />
         </div>
 
         {(propertiesWithDeals.grouped.length > 0 || propertiesWithDeals.unlinkedDeals.length > 0) && (

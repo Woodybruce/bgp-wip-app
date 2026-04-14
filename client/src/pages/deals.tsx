@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { useDealAmlStatus } from "@/components/deal-aml-status";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -2095,6 +2096,7 @@ function HotsChecklistDialog({
 export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: string; deal: CrmDeal; companies?: CrmCompany[] }) {
   const { toast } = useToast();
   const [creating, setCreating] = useState(false);
+  const { data: amlStatus } = useDealAmlStatus(dealId);
   const [contactName, setContactName] = useState("");
   const [reference, setReference] = useState("");
   const [amount, setAmount] = useState<number>(0);
@@ -2258,9 +2260,17 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
                 Connect Xero
               </Button>
             ) : (
-              <Button variant="outline" size="sm" onClick={() => { setCreating(true); setAmount(deal.fee || 0); setReference(deal.name || ""); }} data-testid="button-create-xero-invoice">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setCreating(true); setAmount(deal.fee || 0); setReference(deal.name || ""); }}
+                disabled={amlStatus && !amlStatus.canInvoice}
+                title={amlStatus && !amlStatus.canInvoice ? `AML approval needed for ${amlStatus.missing.join(", ")}` : undefined}
+                data-testid="button-create-xero-invoice"
+              >
                 <Send className="w-3.5 h-3.5 mr-1" />
                 Send to Xero
+                {amlStatus && !amlStatus.canInvoice && <span className="ml-1.5 text-[10px] uppercase opacity-70">AML pending</span>}
               </Button>
             )}
           </div>
@@ -2362,7 +2372,13 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button size="sm" onClick={() => createInvoiceMutation.mutate()} disabled={createInvoiceMutation.isPending} data-testid="button-confirm-xero-invoice">
+              <Button
+                size="sm"
+                onClick={() => createInvoiceMutation.mutate()}
+                disabled={createInvoiceMutation.isPending || (amlStatus && !amlStatus.canInvoice)}
+                title={amlStatus && !amlStatus.canInvoice ? `AML approval needed for ${amlStatus.missing.join(", ")}` : undefined}
+                data-testid="button-confirm-xero-invoice"
+              >
                 {createInvoiceMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
                 Create Draft Invoice
               </Button>
