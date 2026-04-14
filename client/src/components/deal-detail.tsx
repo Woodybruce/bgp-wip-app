@@ -64,13 +64,12 @@ import {
   FeeAllocationCard,
   XeroInvoiceSection,
   DealKYCPanel,
-  DealAMLChecklist,
   DealTimeline,
   DealAuditLog,
   DealRelatedEmails,
   DealRelatedMeetings,
 } from "@/pages/deals";
-import { DealAmlStatusCard } from "@/components/deal-aml-status";
+// DealAmlStatusCard removed — KYC pack now consolidated on Compliance Board
 
 export function DealDetail({ id, isComps = false }: { id: string; isComps?: boolean }) {
   const { toast } = useToast();
@@ -366,8 +365,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         colorMap={userColorMap}
       />
 
-      <DealAmlStatusCard dealId={deal.id} />
-
       <XeroInvoiceSection dealId={deal.id} deal={deal} companies={companies} />
 
       {deal.comments && (
@@ -485,8 +482,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </Dialog>
 
       <DealKYCPanel deal={deal} companies={companies} />
-
-      <DealAMLChecklist deal={deal} />
 
       <DealTimeline dealId={id} />
 

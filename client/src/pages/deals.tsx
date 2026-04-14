@@ -2706,44 +2706,63 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
           </div>
           <div className="flex items-center gap-1">
             {!deal.kycApproved && allComplete && (
-              <Button size="sm" onClick={approveKyc} disabled={approvingKyc} className="bg-green-600 hover:bg-green-700 text-white" data-testid="button-approve-kyc">
-                {approvingKyc ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1" />}
+              <Button size="sm" onClick={approveKyc} disabled={approvingKyc} className="bg-green-600 hover:bg-green-700 text-white h-7 text-[11px]" data-testid="button-approve-kyc">
+                {approvingKyc ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
                 Approve KYC
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={runAllKyc} disabled={runningAll} data-testid="button-run-all-kyc">
-              {runningAll ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <ShieldCheck className="w-3.5 h-3.5 mr-1" />}
-              {runningAll ? "Checking..." : totalUnchecked > 0 ? "Run All KYC" : "Refresh All"}
+            <Button variant="outline" size="sm" onClick={runAllKyc} disabled={runningAll} className="h-7 text-[11px]" data-testid="button-run-all-kyc">
+              {runningAll ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+              {runningAll ? "Checking..." : totalUnchecked > 0 ? "Run All KYC" : "Refresh"}
             </Button>
           </div>
         </div>
 
-        <div className="mb-3 p-2 rounded-md bg-muted/30 border">
-          <div className="flex items-center gap-3 text-xs">
-            <span className="text-muted-foreground">MLR 2017 / RICS CDD:</span>
-            <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-green-500" />{totalPassed} passed</span>
-            {totalWarning > 0 && <span className="flex items-center gap-1"><AlertCircle className="w-3 h-3 text-amber-500" />{totalWarning} review</span>}
-            {totalFailed > 0 && <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-red-500" />{totalFailed} failed</span>}
-            {totalUnchecked > 0 && <span className="text-muted-foreground">{totalUnchecked} pending</span>}
+        {deal.kycApproved && deal.kycApprovedBy && (
+          <div className="text-[11px] text-muted-foreground mb-2">
+            Approved by <span className="font-medium text-foreground">{deal.kycApprovedBy}</span>
+            {deal.kycApprovedAt && <> on {new Date(deal.kycApprovedAt).toLocaleDateString("en-GB")}</>}
           </div>
-          {deal.kycApproved && deal.kycApprovedBy && (
-            <div className="mt-1 text-xs text-muted-foreground">
-              Approved by <span className="font-medium text-foreground">{deal.kycApprovedBy}</span>
-              {deal.kycApprovedAt && <> on {new Date(deal.kycApprovedAt).toLocaleDateString("en-GB")}</>}
-            </div>
-          )}
+        )}
+
+        <div className="space-y-1">
+          {parties.map(({ company, role }) => {
+            const kycStatus = company.kycStatus;
+            return (
+              <div key={company.id} className="flex items-center justify-between py-1.5 px-2 rounded border bg-muted/20" data-testid={`kyc-party-${company.id}`}>
+                <div className="flex items-center gap-2 min-w-0">
+                  {kycStatus === "pass" ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" /> :
+                   kycStatus === "warning" ? <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" /> :
+                   kycStatus === "fail" ? <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" /> :
+                   <div className="w-3.5 h-3.5 rounded-full border-2 border-dashed border-muted-foreground/40 shrink-0" />}
+                  <div className="min-w-0">
+                    <Link href={`/companies/${company.id}`}>
+                      <span className="text-xs font-medium hover:underline cursor-pointer truncate block">{company.name}</span>
+                    </Link>
+                    <span className="text-[10px] text-muted-foreground capitalize">{role}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {kycStatus && (
+                    <Badge className={`text-[8px] h-4 ${kycStatus === "pass" ? "bg-green-600" : kycStatus === "warning" ? "bg-amber-500" : "bg-red-500"} text-white`}>
+                      {kycStatus === "pass" ? "Verified" : kycStatus === "warning" ? "Review" : "Failed"}
+                    </Badge>
+                  )}
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => runKyc(company.id)} disabled={loadingIds.has(company.id)} data-testid={`button-run-kyc-${company.id}`}>
+                    {loadingIds.has(company.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
-        <div className="space-y-2">
-          {parties.map(({ company, role }) => (
-            <KYCPartyRow
-              key={company.id}
-              company={company}
-              role={role}
-              onRunKyc={runKyc}
-              loading={loadingIds.has(company.id)}
-            />
-          ))}
+        <div className="mt-2 pt-2 border-t flex items-center justify-between">
+          <Link href="/kyc-aml">
+            <span className="text-[11px] text-primary hover:underline cursor-pointer flex items-center gap-1" data-testid="link-compliance-board">
+              <ShieldCheck className="w-3 h-3" /> View full KYC packs on Compliance Board
+            </span>
+          </Link>
         </div>
       </CardContent>
     </Card>
