@@ -2689,11 +2689,11 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
 
   return (
     <Card data-testid="deal-kyc-panel">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">AML / KYC Compliance</h3>
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <h3 className="text-xs font-semibold">AML / KYC Compliance</h3>
             {deal.kycApproved ? (
               <Badge className="text-[9px] bg-green-600 text-white">KYC Approved</Badge>
             ) : allComplete ? (
@@ -2862,11 +2862,11 @@ export function DealAMLChecklist({ deal }: { deal: CrmDeal }) {
 
   return (
     <Card data-testid="deal-aml-checklist">
-      <CardContent className="p-4 space-y-4">
+      <CardContent className="p-3 space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">MLR 2017 Compliance Checklist</h3>
+            <Shield className="w-3.5 h-3.5" />
+            <h3 className="text-xs font-semibold">MLR 2017 Compliance Checklist</h3>
             {riskLevel && (
               <Badge className={`text-[9px] ${riskColor} text-white capitalize`}>{riskLevel} risk</Badge>
             )}

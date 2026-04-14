@@ -234,7 +234,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   ];
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid={`deal-detail-${id}`}>
+    <div className="p-4 sm:p-6 space-y-4" data-testid={`deal-detail-${id}`}>
       <Breadcrumbs
         items={[
           { label: isComps ? "Comps" : "Deals", href: isComps ? "/comps" : "/deals" },
@@ -269,34 +269,36 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {textFields.filter((f) => f.value).map((field) => (
-          <Card key={field.label}>
-            <CardContent className="p-4 space-y-1">
-              <p className="text-xs text-muted-foreground">{field.label}</p>
-              {field.colorMap && field.value && field.colorMap[field.value] ? (
-                <Badge className={`text-[10px] text-white ${field.colorMap[field.value]}`} data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
-                  {field.value}
-                </Badge>
-              ) : field.href ? (
-                <Link href={field.href}>
-                  <p className="text-sm font-medium text-primary hover:underline cursor-pointer" data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
+      <Card>
+        <CardContent className="p-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-x-4 gap-y-1.5">
+            {textFields.filter((f) => f.value).map((field) => (
+              <div key={field.label} className="flex flex-col py-1">
+                <p className="text-[10px] text-muted-foreground leading-tight">{field.label}</p>
+                {field.colorMap && field.value && field.colorMap[field.value] ? (
+                  <Badge className={`text-[9px] text-white w-fit mt-0.5 ${field.colorMap[field.value]}`} data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
+                    {field.value}
+                  </Badge>
+                ) : field.href ? (
+                  <Link href={field.href}>
+                    <p className="text-xs font-medium text-primary hover:underline cursor-pointer truncate" data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
+                      {field.value}
+                    </p>
+                  </Link>
+                ) : (
+                  <p className="text-xs font-medium truncate" data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
                     {field.value}
                   </p>
-                </Link>
-              ) : (
-                <p className="text-sm font-medium" data-testid={`text-deal-${field.label.toLowerCase().replace(/\s+/g, "-")}`}>
-                  {field.value}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
-        <CardContent className="p-4 space-y-2">
-          <p className="text-xs text-muted-foreground">BGP Contacts</p>
+        <CardContent className="p-3 space-y-1.5">
+          <p className="text-[10px] text-muted-foreground font-medium">BGP Contacts</p>
           <div className="flex items-center gap-1 flex-wrap">
             {(deal.internalAgent || []).map((name: string) => {
               const bg = userColorMap[name] || "bg-zinc-500";
@@ -338,22 +340,24 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-        {numericFields.filter((f) => f.value != null).map((field) => (
-          <Card key={field.label}>
-            <CardContent className="p-4 space-y-1">
-              <p className="text-xs text-muted-foreground">{field.label}</p>
-              <p className="text-sm font-mono font-medium" data-testid={`text-deal-${field.label.toLowerCase().replace(/[\s()\/]+/g, "-")}`}>
-                {field.format === "currency"
-                  ? formatCurrency(field.value)
-                  : field.format === "percent"
-                  ? `${field.value}%`
-                  : formatNumber(field.value)}
-              </p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <Card>
+        <CardContent className="p-3">
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-x-4 gap-y-1.5">
+            {numericFields.filter((f) => f.value != null).map((field) => (
+              <div key={field.label} className="flex flex-col py-1">
+                <p className="text-[10px] text-muted-foreground leading-tight">{field.label}</p>
+                <p className="text-xs font-mono font-medium" data-testid={`text-deal-${field.label.toLowerCase().replace(/[\s()\/]+/g, "-")}`}>
+                  {field.format === "currency"
+                    ? formatCurrency(field.value)
+                    : field.format === "percent"
+                    ? `${field.value}%`
+                    : formatNumber(field.value)}
+                </p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       <FeeAllocationCard
         dealId={deal.id}
@@ -368,17 +372,17 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
       {deal.comments && (
         <Card>
-          <CardContent className="p-4 space-y-1">
-            <p className="text-xs text-muted-foreground">Comments</p>
-            <p className="text-sm whitespace-pre-wrap" data-testid="text-deal-comments">{deal.comments}</p>
+          <CardContent className="p-3 space-y-1">
+            <p className="text-[10px] text-muted-foreground font-medium">Comments</p>
+            <p className="text-xs whitespace-pre-wrap" data-testid="text-deal-comments">{deal.comments}</p>
           </CardContent>
         </Card>
       )}
 
       <Card data-testid="deal-files-section">
-        <CardContent className="p-4 space-y-3">
+        <CardContent className="p-3 space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-muted-foreground font-medium">Files</p>
+            <p className="text-[10px] text-muted-foreground font-medium">Files</p>
           </div>
           {deal.sharepointLink ? (
             <div className="flex items-center gap-2">
@@ -494,16 +498,16 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {linkedProperty && (
           <Card data-testid="linked-property-panel">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Building2 className="w-4 h-4" />
-                <h3 className="text-sm font-semibold">Linked Property</h3>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Building2 className="w-3.5 h-3.5" />
+                <h3 className="text-xs font-semibold">Linked Property</h3>
               </div>
               <Link href={`/properties/${linkedProperty.id}`}>
-                <div className="p-3 rounded-md border hover-elevate cursor-pointer">
-                  <p className="text-sm font-medium">{linkedProperty.name}</p>
+                <div className="p-2 rounded-md border hover-elevate cursor-pointer">
+                  <p className="text-xs font-medium">{linkedProperty.name}</p>
                   {linkedProperty.status && (
-                    <Badge variant="outline" className="mt-1 text-[10px]">{linkedProperty.status}</Badge>
+                    <Badge variant="outline" className="mt-0.5 text-[9px]">{linkedProperty.status}</Badge>
                   )}
                 </div>
               </Link>
@@ -513,23 +517,23 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
         {linkedContacts.length > 0 && (
           <Card data-testid="linked-contacts-panel">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Users className="w-4 h-4" />
-                <h3 className="text-sm font-semibold">Linked Contacts</h3>
-                <Badge variant="secondary" className="text-[10px]">{linkedContacts.length}</Badge>
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="w-3.5 h-3.5" />
+                <h3 className="text-xs font-semibold">Linked Contacts</h3>
+                <Badge variant="secondary" className="text-[9px]">{linkedContacts.length}</Badge>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 {linkedContacts.map((contact) => (
                   <Link key={contact.id} href={`/contacts/${contact.id}`}>
-                    <div className="p-3 rounded-md border hover-elevate cursor-pointer">
-                      <p className="text-sm font-medium">{contact.name}</p>
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    <div className="p-2 rounded-md border hover-elevate cursor-pointer">
+                      <p className="text-xs font-medium">{contact.name}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {contact.role && (
-                          <span className="text-[10px] text-muted-foreground">{contact.role}</span>
+                          <span className="text-[9px] text-muted-foreground">{contact.role}</span>
                         )}
                         {contact.companyName && (
-                          <Badge variant="outline" className="text-[10px]">{contact.companyName}</Badge>
+                          <Badge variant="outline" className="text-[9px]">{contact.companyName}</Badge>
                         )}
                       </div>
                     </div>
