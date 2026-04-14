@@ -1595,6 +1595,52 @@ export const insertDealAuditLogSchema = createInsertSchema(dealAuditLog).omit({ 
 export type InsertDealAuditLog = z.infer<typeof insertDealAuditLogSchema>;
 export type DealAuditLog = typeof dealAuditLog.$inferSelect;
 
+// AML Compliance tables
+export const amlSettings = pgTable("aml_settings", {
+  id: serial("id").primaryKey(),
+  nominatedOfficerId: varchar("nominated_officer_id"),
+  nominatedOfficerName: text("nominated_officer_name"),
+  nominatedOfficerEmail: text("nominated_officer_email"),
+  nominatedOfficerAppointedAt: timestamp("nominated_officer_appointed_at"),
+  firmRiskAssessment: jsonb("firm_risk_assessment"),
+  firmRiskAssessmentUpdatedAt: timestamp("firm_risk_assessment_updated_at"),
+  firmRiskAssessmentUpdatedBy: text("firm_risk_assessment_updated_by"),
+  amlPolicyNotes: text("aml_policy_notes"),
+  recheckIntervalDays: integer("recheck_interval_days").default(365),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export type AmlSettings = typeof amlSettings.$inferSelect;
+
+export const amlTrainingRecords = pgTable("aml_training_records", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  userName: text("user_name").notNull(),
+  trainingType: text("training_type").notNull(), // induction, annual_refresh, enhanced, bespoke
+  trainingDate: timestamp("training_date").notNull(),
+  completedAt: timestamp("completed_at"),
+  score: integer("score"),
+  topics: text("topics").array(),
+  notes: text("notes"),
+  certifiedBy: text("certified_by"),
+  nextDueDate: timestamp("next_due_date"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export type AmlTrainingRecord = typeof amlTrainingRecords.$inferSelect;
+
+export const amlRecheckReminders = pgTable("aml_recheck_reminders", {
+  id: serial("id").primaryKey(),
+  dealId: varchar("deal_id"),
+  companyId: varchar("company_id"),
+  entityName: text("entity_name").notNull(),
+  recheckType: text("recheck_type").notNull(), // scheduled, triggered, annual
+  dueDate: timestamp("due_date").notNull(),
+  completedAt: timestamp("completed_at"),
+  completedBy: text("completed_by"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export type AmlRecheckReminder = typeof amlRecheckReminders.$inferSelect;
+
 export const loginSchema = z.object({
   username: z.string().min(1, "Username is required"),
   password: z.string().min(1, "Password is required"),

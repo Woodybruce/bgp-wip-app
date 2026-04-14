@@ -613,6 +613,23 @@ export default function KycClouseau() {
     },
   });
 
+  const propertyIntelMutation = useMutation({
+    mutationFn: async (params: { companyNumber?: string; companyName?: string; propertyAddress?: string; propertyName?: string }) => {
+      const res = await apiRequest("POST", "/api/kyc-clouseau/property-intelligence", params);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setInvestigation(data);
+      setIndividualResult(null);
+      setSelectedOfficer(null);
+      setOfficerDeepDive(null);
+    },
+    onError: (err) => {
+      const message = extractErrorMessage(err, "Property intelligence investigation failed.");
+      toast({ title: "Property Intelligence Error", description: message, variant: "destructive" });
+    },
+  });
+
   const handleSearch = useCallback(() => {
     if (searchQuery.length >= 2) searchMutation.mutate(searchQuery);
   }, [searchQuery]);
@@ -646,7 +663,7 @@ export default function KycClouseau() {
     }
   }, []);
 
-  const isInvestigating = investigateMutation.isPending || individualMutation.isPending;
+  const isInvestigating = investigateMutation.isPending || individualMutation.isPending || propertyIntelMutation.isPending;
 
   return (
     <PageLayout
@@ -838,7 +855,9 @@ export default function KycClouseau() {
               <div className="text-center">
                 <p className="font-medium">Investigating...</p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {individualMutation.isPending
+                  {propertyIntelMutation.isPending
+                    ? "Full property intelligence: tracing UBO chain, deep-diving decision makers, mapping associates, analysing agents & availability..."
+                    : individualMutation.isPending
                     ? "Searching officer records, appointments, sanctions screening, and generating AI analysis"
                     : "Running Companies House lookup, sanctions screening, ownership trace, and AI analysis"}
                 </p>
@@ -1010,7 +1029,7 @@ export default function KycClouseau() {
           )}
 
           {/* Company investigation result */}
-          {investigation && !isInvestigating && !investigateMutation.isError && (
+          {investigation && !isInvestigating && !investigateMutation.isError && !propertyIntelMutation.isPending && (
             <div className="p-6 space-y-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -1030,10 +1049,119 @@ export default function KycClouseau() {
                     {investigation.timestamp && (
                       <DaysSinceBadge dateStr={investigation.timestamp} />
                     )}
+                    {(investigation as any).subject?.type === "property_intelligence" && (
+                      <Badge className="bg-purple-600 text-white text-[9px]">Property Intelligence</Badge>
+                    )}
                   </div>
                 </div>
-                <RiskBadge level={investigation.riskLevel} score={investigation.riskScore} />
+                <div className="flex items-center gap-2 shrink-0">
+                  {(investigation as any).subject?.type !== "property_intelligence" && investigation.companyProfile?.company_number && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs border-purple-300 text-purple-700 hover:bg-purple-50 dark:text-purple-300 dark:hover:bg-purple-950"
+                      onClick={() => propertyIntelMutation.mutate({
+                        companyNumber: investigation.companyProfile?.company_number,
+                        companyName: investigation.subject.name,
+                        propertyAddress: investigation.propertyContext?.propertyAddress,
+                        propertyName: investigation.propertyContext?.propertyAddress,
+                      })}
+                      disabled={propertyIntelMutation.isPending}
+                    >
+                      {propertyIntelMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <Home className="h-3 w-3 mr-1" />}
+                      Full Property Intelligence
+                    </Button>
+                  )}
+                  <RiskBadge level={investigation.riskLevel} score={investigation.riskScore} />
+                </div>
               </div>
+
+              {/* UBO & Decision Makers section (from Property Intelligence) */}
+              {(investigation as any).decisionMakers?.length > 0 && (
+                <Card className="border-purple-200 dark:border-purple-800">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <UserSearch className="h-4 w-4 text-purple-600" />
+                      Ultimate Beneficial Owners & Decision Makers ({(investigation as any).decisionMakers.length})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {(investigation as any).decisionMakers.map((dm: any, i: number) => (
+                        <div key={i} className="rounded-lg border p-3 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-sm">{dm.name}</span>
+                            <Badge variant="outline" className="text-[9px]">{dm.level === "direct" ? "Direct UBO" : dm.level === "chain" ? "Chain UBO" : "Director"}</Badge>
+                          </div>
+                          {dm.nationality && <p className="text-xs text-muted-foreground">Nationality: {dm.nationality}</p>}
+                          {dm.source && <p className="text-xs text-muted-foreground">Via: {dm.source}</p>}
+                          {dm.totalAppointments > 0 && (
+                            <p className="text-xs text-muted-foreground">{dm.totalAppointments} appointments ({dm.activeAppointments} active)</p>
+                          )}
+                          {dm.companies?.length > 0 && (
+                            <div className="mt-1 space-y-0.5">
+                              <p className="text-[10px] font-medium text-muted-foreground uppercase">Other Companies:</p>
+                              {dm.companies.slice(0, 5).map((c: any, j: number) => (
+                                <button key={j} className="block text-left text-[11px] text-primary hover:underline"
+                                  onClick={() => investigateMutation.mutate({ companyNumber: c.number, companyName: c.name })}>
+                                  {c.name} ({c.role})
+                                </button>
+                              ))}
+                              {dm.companies.length > 5 && <p className="text-[10px] text-muted-foreground">+{dm.companies.length - 5} more</p>}
+                            </div>
+                          )}
+                          <Button variant="ghost" size="sm" className="text-[10px] h-6 px-2 mt-1"
+                            onClick={() => individualMutation.mutate({ name: dm.name })}>
+                            <UserSearch className="h-3 w-3 mr-1" /> Investigate Individual
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Ownership Chain Details (from Property Intelligence) */}
+              {(investigation as any).chainDetails?.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <LinkIcon className="h-4 w-4" />
+                      Full Ownership Chain ({(investigation as any).chainDetails.length} levels)
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {(investigation as any).chainDetails.map((link: any, i: number) => (
+                        <div key={i} className="rounded-lg border p-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs bg-muted rounded-full w-5 h-5 flex items-center justify-center font-mono">{i + 1}</span>
+                              <button className="font-medium text-sm text-primary hover:underline"
+                                onClick={() => investigateMutation.mutate({ companyNumber: link.number, companyName: link.name })}>
+                                {link.name}
+                              </button>
+                            </div>
+                            <span className="text-xs text-muted-foreground">{link.number}</span>
+                          </div>
+                          {link.profile && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {link.profile.company_status} — {link.profile.type} — inc. {link.profile.date_of_creation}
+                            </p>
+                          )}
+                          {link.officers?.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {link.officers.slice(0, 4).map((o: any, j: number) => (
+                                <Badge key={j} variant="outline" className="text-[9px]">{o.name} ({o.officer_role})</Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
 
               {(investigation.flags?.length || 0) > 0 && (
                 <Card>
