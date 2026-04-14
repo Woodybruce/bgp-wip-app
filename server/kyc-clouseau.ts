@@ -898,6 +898,11 @@ Format with clear headers and be specific. This is a professional compliance doc
 // Traces full UBO chain, deep-dives decision makers, finds managing/leasing agents,
 // checks building availability, maps associate network
 router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: Request, res: Response) => {
+  // Hard request ceiling — the old route could hang indefinitely when CH was
+  // slow or the AI API stalled. Node defaults to no socket timeout on POST,
+  // so set one explicitly.
+  req.setTimeout(180000);
+  res.setTimeout(180000);
   try {
     const { companyNumber, companyName, propertyAddress, propertyName } = req.body;
     if (!companyNumber && !companyName) {
@@ -922,10 +927,12 @@ router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: 
     const activeOfficers = (companyData.officers || []).filter((o: any) => !o.resigned_on);
     const activePscs = (companyData.pscs || []).filter((p: any) => !p.ceased_on);
 
-    // 3. Full UBO chain trace — follow corporate PSCs up to 8 levels deep
+    // 3. UBO chain trace — depth reduced from 8 → 5 levels. Each extra level
+    // costs 3-5 CH calls per entity it finds; 5 is enough for >99% of real
+    // ownership chains and keeps the total walk under ~30 API calls.
     let ownershipChain = null;
     try {
-      ownershipChain = await discoverUltimateParent(targetNumber, 8);
+      ownershipChain = await discoverUltimateParent(targetNumber, 5);
     } catch {}
 
     // For each entity in the chain, get officers and PSCs
@@ -1005,10 +1012,13 @@ router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: 
       }
     }
 
-    // 5. Deep-dive each decision maker — fetch all their appointments
+    // 5. Deep-dive each decision maker — fetch their appointments.
+    // Cap at top 6 UBOs (was 10) and 20 appointments each (was 50) — keeps
+    // the total CH call count bounded so the endpoint can't exceed its
+    // 3-minute ceiling even on large ownership webs.
     const decisionMakers: any[] = [];
     const dmLimit = pLimit(3);
-    const dmFetches = ubos.slice(0, 10).map(ubo =>
+    const dmFetches = ubos.slice(0, 6).map(ubo =>
       dmLimit(async () => {
         try {
           // Search for officer record by name
@@ -1024,7 +1034,7 @@ router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: 
           const officerId = officerLink.replace("/officers/", "");
           if (!officerId) return { ...ubo, appointments: [], companies: [] };
 
-          const appointments = await chFetch(`/officers/${officerId}/appointments?items_per_page=50`);
+          const appointments = await chFetch(`/officers/${officerId}/appointments?items_per_page=20`);
           const activeAppts = (appointments.items || []).filter((a: any) => !a.resigned_on);
           const companies = activeAppts.map((a: any) => ({
             name: a.appointed_to?.company_name,
@@ -1181,15 +1191,19 @@ Please provide a COMPREHENSIVE PROPERTY INTELLIGENCE REPORT:
 
 Format with clear headers. Be specific — name actual people, companies, and connections. This is used by commercial property agents for business development AND compliance.`;
 
-      const aiRes = await anthropic.messages.create({
+      const aiPromise = anthropic.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 6000,
         messages: [{ role: "user", content: prompt }],
       });
-
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("AI analysis timed out after 75s")), 75000)
+      );
+      const aiRes: any = await Promise.race([aiPromise, timeoutPromise]);
       aiAnalysis = aiRes.content[0].type === "text" ? aiRes.content[0].text : "Analysis unavailable";
     } catch (aiErr: any) {
-      aiAnalysis = `AI analysis unavailable (${aiErr.message}).`;
+      console.warn(`[kyc-clouseau] Property intel AI failed: ${aiErr?.message}`);
+      aiAnalysis = `AI analysis unavailable (${aiErr?.message || "unknown error"}). All raw ownership and decision-maker data below is still valid.`;
     }
 
     // 9. PropertyData — owned properties
