@@ -14,6 +14,7 @@
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { createVeriffSession } from "./veriff";
 
 const router = Router();
 
@@ -25,6 +26,127 @@ type Stage = (typeof PIPELINE)[number];
 
 function isValidStage(s: any): s is Stage {
   return typeof s === "string" && (PIPELINE as readonly string[]).includes(s);
+}
+
+/**
+ * Kick off Veriff AML for every principal contact on the tenant and
+ * landlord side of a deal. Dedupes against any existing non-declined
+ * session in veriff_sessions so repeat stage changes don't re-spam.
+ * Always writes a deal_event so the audit log captures what was (or
+ * wasn't) launched.
+ */
+async function autoLaunchVeriffForDeal(
+  dealId: string,
+  actorId: string | null,
+  actorName: string | null,
+): Promise<void> {
+  // Quick bail: if Veriff isn't configured at all, don't even try.
+  const veriffConfigured = !!(process.env.VERIFF_API_KEY || process.env.VERIFF_PUBLIC_KEY || process.env.VERIFF_KEY);
+  if (!veriffConfigured) {
+    await pool.query(
+      `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
+       VALUES ($1, 'veriff_auto_skipped', $2, $3, $4)`,
+      [dealId, JSON.stringify({ reason: "Veriff not configured" }), actorId, actorName],
+    ).catch(() => {});
+    return;
+  }
+
+  const dealQuery = await pool.query(
+    `SELECT id, tenant_id, landlord_id FROM crm_deals WHERE id = $1`,
+    [dealId],
+  );
+  const deal = dealQuery.rows[0];
+  if (!deal) return;
+
+  const companyIds = [deal.tenant_id, deal.landlord_id].filter(Boolean);
+  if (companyIds.length === 0) {
+    await pool.query(
+      `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
+       VALUES ($1, 'veriff_auto_skipped', $2, $3, $4)`,
+      [dealId, JSON.stringify({ reason: "No tenant or landlord linked to deal" }), actorId, actorName],
+    ).catch(() => {});
+    return;
+  }
+
+  // Pull every contact attached to those companies. We ignore contacts
+  // without an email AND without a usable name — can't meaningfully KYC them.
+  const contactsQuery = await pool.query(
+    `SELECT id, name, email, company_id
+       FROM crm_contacts
+      WHERE company_id = ANY($1::varchar[])`,
+    [companyIds],
+  );
+  const contacts = contactsQuery.rows;
+  if (contacts.length === 0) {
+    await pool.query(
+      `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
+       VALUES ($1, 'veriff_auto_skipped', $2, $3, $4)`,
+      [dealId, JSON.stringify({ reason: "No contacts on tenant/landlord companies", companyIds }), actorId, actorName],
+    ).catch(() => {});
+    return;
+  }
+
+  // Existing sessions for this deal — dedupe by contact id so we don't
+  // re-send an active check. We treat "declined" / "resubmission_requested"
+  // as retriable; everything else blocks a new session.
+  const existingQuery = await pool.query(
+    `SELECT contact_id, status
+       FROM veriff_sessions
+      WHERE deal_id = $1 AND contact_id IS NOT NULL`,
+    [dealId],
+  );
+  const retriableStatuses = new Set(["declined", "resubmission_requested", "expired", "abandoned"]);
+  const blockedContacts = new Set(
+    existingQuery.rows
+      .filter((r) => !retriableStatuses.has(String(r.status || "").toLowerCase()))
+      .map((r) => r.contact_id),
+  );
+
+  const launched: Array<{ contactId: string; sessionId: string; url: string }> = [];
+  const skipped: Array<{ contactId: string; reason: string }> = [];
+
+  for (const c of contacts) {
+    if (blockedContacts.has(c.id)) {
+      skipped.push({ contactId: c.id, reason: "Existing Veriff session in flight" });
+      continue;
+    }
+    const parts = String(c.name || "").trim().split(/\s+/);
+    const firstName = parts[0] || "";
+    const lastName = parts.slice(1).join(" ") || firstName || "(unknown)";
+    if (!firstName) {
+      skipped.push({ contactId: c.id, reason: "Contact has no name" });
+      continue;
+    }
+
+    try {
+      const session = await createVeriffSession({
+        firstName,
+        lastName,
+        email: c.email || undefined,
+        companyId: c.company_id || undefined,
+        contactId: c.id,
+        dealId,
+        userId: actorId || undefined,
+      });
+      await pool.query(
+        `INSERT INTO veriff_sessions (session_id, company_id, contact_id, deal_id, first_name, last_name, email, status, verification_url, requested_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (session_id) DO NOTHING`,
+        [session.sessionId, c.company_id || null, c.id, dealId, firstName, lastName, c.email || null, session.status, session.verificationUrl, actorId],
+      ).catch((e) => console.warn("[deal-stages] veriff insert failed:", e?.message));
+      launched.push({ contactId: c.id, sessionId: session.sessionId, url: session.verificationUrl });
+    } catch (e: any) {
+      skipped.push({ contactId: c.id, reason: `Veriff error: ${e?.message || "unknown"}` });
+    }
+  }
+
+  await pool.query(
+    `INSERT INTO deal_events (deal_id, event_type, payload, actor_id, actor_name)
+     VALUES ($1, 'veriff_auto_launched', $2, $3, $4)`,
+    [dealId, JSON.stringify({ launched, skipped, companyIds }), actorId, actorName],
+  ).catch(() => {});
+
+  console.log(`[deal-stages] HoTs → Veriff for deal ${dealId}: launched=${launched.length} skipped=${skipped.length}`);
 }
 
 // ─── Events audit log ────────────────────────────────────────────────────
@@ -68,6 +190,13 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     if (toStage === "hots" && !current.rows[0].hots_completed_at) {
       updates.push(`hots_completed_at = now()`);
     }
+
+    // When we hit HoTs we need AML on the tenant (and best-effort the
+    // landlord) — this kicks Veriff off automatically so the team doesn't
+    // have to remember. All of it is best-effort; if Veriff isn't configured
+    // or the deal has no contacts, we just skip and leave the stage change
+    // to succeed on its own.
+    const triggerVeriffAml = toStage === "hots";
     if (toStage === "sols" && !current.rows[0].solicitor_instructed_at) {
       updates.push(`solicitor_instructed_at = now()`);
     }
@@ -86,6 +215,14 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
        VALUES ($1, 'stage_change', $2, $3, $4, $5, $6)`,
       [dealId, fromStage, toStage, JSON.stringify({ reason }), req.user?.id || null, req.user?.name || null]
     );
+
+    // Auto-launch Veriff AML on entering HoTs. Runs async so we don't block
+    // the UI on a slow Veriff call; failures are logged as deal_events for
+    // visibility but never surface as 5xx to the caller.
+    if (triggerVeriffAml) {
+      autoLaunchVeriffForDeal(dealId, req.user?.id || null, req.user?.name || null)
+        .catch((e) => console.warn(`[deal-stages] Veriff auto-launch failed for ${dealId}:`, e?.message));
+    }
 
     // When a deal completes, seed a crm_comp row if we have enough to go on
     if (toStage === "completed") {

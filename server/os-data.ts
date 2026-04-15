@@ -1,7 +1,11 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 
-function getOsKey(): string { return process.env.OS_API_KEY || ""; }
+function getOsKey(): string {
+  // OS_PLACES_API_KEY is what Woody set on Railway for the Places product;
+  // keep OS_API_KEY as a fallback for the original WFS key if it ever differs.
+  return (process.env.OS_PLACES_API_KEY || process.env.OS_API_KEY || "").trim();
+}
 const WFS_BASE = "https://api.os.uk/features/v1/wfs";
 
 // Simple in-memory cache: key -> { data, expires }

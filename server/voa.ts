@@ -9,6 +9,11 @@ import * as path from "path";
 import * as fs from "fs";
 import { execSync } from "child_process";
 
+// Display-only lookup: BA code → human name. Only Inner London boroughs +
+// City + Westminster have verified codes here — outer London codes get
+// discovered + auto-named from `scan-authorities` below, then merged at
+// lookup time via BA_NAMES_RUNTIME. If a BA code has no name we fall back
+// to "BA {code}" in the UI.
 const BA_NAMES: Record<string, string> = {
   "5990": "City of Westminster",
   "5600": "Royal Borough of Kensington and Chelsea",
@@ -21,6 +26,38 @@ const BA_NAMES: Record<string, string> = {
   "5720": "Tower Hamlets",
   "5750": "Wandsworth",
 };
+
+// Populated by scan-authorities at runtime — maps BA code → most-common town
+// observed in the CSV, as a readable stand-in until we confirm the official
+// name. Merged into BA_NAMES for responses.
+const BA_NAMES_RUNTIME: Record<string, string> = {};
+
+function nameForBa(code: string): string {
+  return BA_NAMES[code] || BA_NAMES_RUNTIME[code] || `BA ${code}`;
+}
+
+// Greater London postcode areas. Rows whose postcode begins with any of these
+// (followed by a digit) are considered "in London" for the wholesale import.
+// EC / WC / NW / SE / SW / W / N / E cover inner London; the two-letter outer
+// areas are included because entire London boroughs sit inside them.
+const LONDON_POSTCODE_AREAS = [
+  "EC", "WC", "NW", "SE", "SW", "W", "N", "E",
+  "BR", "CR", "DA", "EN", "HA", "IG", "KT", "RM", "SM", "TW", "UB",
+];
+
+function postcodeMatchesAreas(postcode: string, areas: string[]): boolean {
+  if (!postcode) return false;
+  const pc = postcode.toUpperCase().replace(/\s+/g, "");
+  // Sort by length desc so "WC" / "EC" match before "W" / "E"
+  const sorted = [...areas].sort((a, b) => b.length - a.length);
+  for (const a of sorted) {
+    if (pc.startsWith(a)) {
+      const next = pc[a.length];
+      if (next && next >= "0" && next <= "9") return true;
+    }
+  }
+  return false;
+}
 
 const DOWNLOAD_URLS: Record<string, string> = {
   "2023": "https://voaratinglists.blob.core.windows.net/downloads/uk-englandwales-ndr-2023-listentries-compiled-epoch-0019-baseline-csv.zip",
@@ -119,7 +156,7 @@ export function registerVoaRoutes(app: Express) {
         total: Number(countResult[0]?.count || 0),
         page: pageNum,
         limit,
-        baNames: BA_NAMES,
+        baNames: { ...BA_NAMES, ...BA_NAMES_RUNTIME },
       });
     } catch (err: any) {
       console.error("VOA ratings query error:", err);
@@ -149,9 +186,9 @@ export function registerVoaRoutes(app: Express) {
         .limit(20);
 
       res.json({
-        byAuthority: stats.map(s => ({ ...s, name: BA_NAMES[s.baCode] || s.baCode })),
+        byAuthority: stats.map(s => ({ ...s, name: nameForBa(s.baCode) })),
         byType: descStats,
-        baNames: BA_NAMES,
+        baNames: { ...BA_NAMES, ...BA_NAMES_RUNTIME },
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -175,9 +212,14 @@ export function registerVoaRoutes(app: Express) {
 
   app.post("/api/voa/import", requireAuth, async (req, res) => {
     try {
-      const { baCodes, listYear } = req.body;
+      const { baCodes, listYear, postcodeAreas } = req.body;
       const year = listYear || "2023";
-      const targetBaCodes: string[] = baCodes || ["5990", "5600"];
+      const targetBaCodes: string[] = baCodes || [];
+      const targetPostcodeAreas: string[] = (postcodeAreas || []).map((a: string) => String(a).toUpperCase());
+      // Back-compat: if neither filter was given, preserve original default
+      if (targetBaCodes.length === 0 && targetPostcodeAreas.length === 0) {
+        targetBaCodes.push("5990", "5600");
+      }
 
       const zipUrl = DOWNLOAD_URLS[year];
       if (!zipUrl) return res.status(400).json({ error: `No download URL for list year ${year}` });
@@ -204,17 +246,26 @@ export function registerVoaRoutes(app: Express) {
 
       const csvPath = path.join(extractDir, csvFiles[0]);
 
-      await db.delete(voaRatings).where(
-        and(
-          sql`${voaRatings.baCode} IN (${sql.join(targetBaCodes.map(c => sql`${c}`), sql`, `)})`,
-          eq(voaRatings.listYear, year)
-        )
-      );
+      // Clear any existing rows for the target scope so we don't double-insert
+      if (targetBaCodes.length > 0) {
+        await db.delete(voaRatings).where(
+          and(
+            sql`${voaRatings.baCode} IN (${sql.join(targetBaCodes.map(c => sql`${c}`), sql`, `)})`,
+            eq(voaRatings.listYear, year)
+          )
+        );
+      } else if (targetPostcodeAreas.length > 0) {
+        // No reliable way to delete-by-postcode-area in SQL without a scan —
+        // just clear all rows for the year before importing.
+        await db.delete(voaRatings).where(eq(voaRatings.listYear, year));
+      }
 
       let imported = 0;
       let skipped = 0;
       let batch: any[] = [];
       const BATCH_SIZE = 500;
+      const importedBaCodes = new Set<string>();
+      const baTownSample: Record<string, Record<string, number>> = {};
 
       const rl = createInterface({
         input: createReadStream(csvPath, { encoding: "utf-8" }),
@@ -224,7 +275,17 @@ export function registerVoaRoutes(app: Express) {
       for await (const line of rl) {
         const parsed = parseVoaLine(line);
         if (!parsed) { skipped++; continue; }
-        if (!targetBaCodes.includes(parsed.baCode)) continue;
+
+        const matchesBa = targetBaCodes.length > 0 && targetBaCodes.includes(parsed.baCode);
+        const matchesPc = targetPostcodeAreas.length > 0 && postcodeMatchesAreas(parsed.postcode, targetPostcodeAreas);
+        if (!matchesBa && !matchesPc) continue;
+
+        importedBaCodes.add(parsed.baCode);
+        const town = parsed.town || parsed.locality || "";
+        if (town) {
+          baTownSample[parsed.baCode] ??= {};
+          baTownSample[parsed.baCode][town] = (baTownSample[parsed.baCode][town] || 0) + 1;
+        }
 
         batch.push({
           ...parsed,
@@ -244,8 +305,25 @@ export function registerVoaRoutes(app: Express) {
         imported += batch.length;
       }
 
-      console.log(`[VOA] Import complete: ${imported} records for BA codes ${targetBaCodes.join(", ")}`);
-      res.json({ imported, skipped, baCodes: targetBaCodes, listYear: year });
+      // Populate runtime BA name map using the most-common town we saw for
+      // each BA code, so newly-discovered outer London boroughs show something
+      // readable in the UI even before we've hand-verified their names.
+      for (const code of importedBaCodes) {
+        if (BA_NAMES[code]) continue;
+        const towns = baTownSample[code] || {};
+        const top = Object.entries(towns).sort((a, b) => b[1] - a[1])[0];
+        if (top) BA_NAMES_RUNTIME[code] = top[0];
+      }
+
+      console.log(`[VOA] Import complete: ${imported} records; BA codes ${[...importedBaCodes].join(", ")}`);
+      res.json({
+        imported,
+        skipped,
+        baCodes: [...importedBaCodes],
+        listYear: year,
+        postcodeAreas: targetPostcodeAreas,
+        baNames: { ...BA_NAMES, ...BA_NAMES_RUNTIME },
+      });
     } catch (err: any) {
       console.error("[VOA] Import error:", err);
       res.status(500).json({ error: err.message });
@@ -253,6 +331,77 @@ export function registerVoaRoutes(app: Express) {
   });
 
   app.get("/api/voa/available-authorities", requireAuth, async (_req, res) => {
-    res.json(BA_NAMES);
+    res.json({ ...BA_NAMES, ...BA_NAMES_RUNTIME });
+  });
+
+  // ─── Scan BA codes present in the published rating list ────────────────
+  // Reads the already-downloaded CSV for a list year and returns every
+  // unique billing-authority code it sees, alongside sample towns and
+  // postcode prefixes so you can identify London boroughs without having
+  // to know the numeric codes up front. Does not touch the database.
+  app.get("/api/voa/scan-authorities", requireAuth, async (req, res) => {
+    try {
+      const year = String(req.query.listYear || "2023");
+      const onlyLondon = String(req.query.onlyLondon || "false") === "true";
+
+      const tmpDir = "/tmp/voa-import";
+      const extractDir = path.join(tmpDir, `voa-${year}-extract`);
+      if (!fs.existsSync(extractDir)) {
+        return res.status(404).json({
+          error: `CSV for list year ${year} not present. Run /api/voa/import first (it caches the zip + CSV in /tmp).`,
+        });
+      }
+      const csvFiles = fs.readdirSync(extractDir).filter(f => f.includes("baseline-csv.csv") && !f.includes("historic"));
+      if (csvFiles.length === 0) return res.status(500).json({ error: "No CSV file found in extracted data" });
+      const csvPath = path.join(extractDir, csvFiles[0]);
+
+      type BaStat = {
+        baCode: string;
+        count: number;
+        towns: Record<string, number>;
+        postcodeAreas: Record<string, number>;
+      };
+      const byBa: Record<string, BaStat> = {};
+
+      const rl = createInterface({
+        input: createReadStream(csvPath, { encoding: "utf-8" }),
+        crlfDelay: Infinity,
+      });
+
+      for await (const line of rl) {
+        const parsed = parseVoaLine(line);
+        if (!parsed) continue;
+        if (onlyLondon && !postcodeMatchesAreas(parsed.postcode, LONDON_POSTCODE_AREAS)) continue;
+        const s = byBa[parsed.baCode] ??= {
+          baCode: parsed.baCode, count: 0, towns: {}, postcodeAreas: {},
+        };
+        s.count++;
+        if (parsed.town) s.towns[parsed.town] = (s.towns[parsed.town] || 0) + 1;
+        const pcArea = (parsed.postcode.match(/^[A-Z]+/i) || [""])[0].toUpperCase();
+        if (pcArea) s.postcodeAreas[pcArea] = (s.postcodeAreas[pcArea] || 0) + 1;
+      }
+
+      const result = Object.values(byBa)
+        .sort((a, b) => b.count - a.count)
+        .map(s => ({
+          baCode: s.baCode,
+          knownName: BA_NAMES[s.baCode] || null,
+          count: s.count,
+          topTowns: Object.entries(s.towns).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([name, n]) => ({ name, n })),
+          postcodeAreas: Object.entries(s.postcodeAreas).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([area, n]) => ({ area, n })),
+        }));
+
+      res.json({ listYear: year, onlyLondon, total: result.length, authorities: result });
+    } catch (err: any) {
+      console.error("[VOA] Scan error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Raw postcode-area list so callers know what "all London" expands to —
+  // POST the returned array to /api/voa/import as `postcodeAreas` to import
+  // the whole of Greater London in one shot.
+  app.get("/api/voa/london-postcode-areas", requireAuth, (_req, res) => {
+    res.json({ postcodeAreas: LONDON_POSTCODE_AREAS });
   });
 }
