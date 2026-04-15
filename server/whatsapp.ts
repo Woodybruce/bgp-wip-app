@@ -225,7 +225,7 @@ export function setupWhatsAppRoutes(app: Express) {
                       contactLabel
                     );
                     if (result.leads.length > 0) {
-                      console.log(`Auto-extracted ${result.leads.length} lead(s) from WhatsApp message, ${result.pushed} pushed to Monday.com`);
+                      console.log(`Auto-extracted ${result.leads.length} lead(s) from WhatsApp message`);
                     }
                   }
                 } catch (aiErr) {

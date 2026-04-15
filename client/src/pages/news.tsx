@@ -859,11 +859,6 @@ function LeadsTab() {
                         Source: {lead.source}
                       </p>
                     )}
-                    {lead.mondayItemId && (
-                      <p className="text-xs text-green-600 dark:text-green-400 mt-1">
-                        Lead #{lead.mondayItemId}
-                      </p>
-                    )}
                   </div>
                   <div className="flex flex-col gap-1 shrink-0">
                     {lead.status === "draft" && (

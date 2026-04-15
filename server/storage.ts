@@ -91,7 +91,7 @@ export interface IStorage {
   getLeads(): Promise<NewsLead[]>;
   getLeadsByEmailId(emailId: string): Promise<NewsLead[]>;
   createLead(lead: InsertNewsLead): Promise<NewsLead>;
-  updateLeadStatus(id: string, status: string, mondayItemId?: string): Promise<void>;
+  updateLeadStatus(id: string, status: string): Promise<void>;
 
   getExcelTemplates(): Promise<ExcelTemplate[]>;
   getExcelTemplate(id: string): Promise<ExcelTemplate | undefined>;
@@ -389,12 +389,8 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateLeadStatus(id: string, status: string, mondayItemId?: string): Promise<void> {
-    const updates: any = { status };
-    if (mondayItemId) {
-      updates.mondayItemId = mondayItemId;
-    }
-    await db.update(newsLeads).set(updates).where(eq(newsLeads.id, id));
+  async updateLeadStatus(id: string, status: string): Promise<void> {
+    await db.update(newsLeads).set({ status }).where(eq(newsLeads.id, id));
   }
 
   async getExcelTemplates(): Promise<ExcelTemplate[]> {

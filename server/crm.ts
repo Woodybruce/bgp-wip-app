@@ -2156,7 +2156,6 @@ Return a JSON object with these fields (use null for any field you cannot find):
           await db.insert(crmRequirementsInvestment).values({
             id: item.id,
             name: item.name || "Unknown",
-            mondayItemId: item.mondayItemId,
             groupName: item.groupName,
             status: item.status,
             companyId: item.companyId,

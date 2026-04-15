@@ -56,7 +56,6 @@ const KEYS: KeyDef[] = [
   { name: "AZURE_TENANT_ID", label: "Azure Tenant ID", group: "Microsoft" },
 
   // Comms / collab
-  { name: "MONDAY_API_TOKEN", label: "Monday.com", group: "Comms" },
   { name: "AGENTMAIL_API_KEY", label: "AgentMail", group: "Comms" },
 
   // Payments

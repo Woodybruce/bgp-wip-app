@@ -290,7 +290,6 @@ import { pool } from "./db";
 })();
 import { setupAuth } from "./auth";
 import { setupMicrosoftRoutes } from "./microsoft";
-import { setupMondayRoutes } from "./monday";
 import { setupWhatsAppRoutes } from "./whatsapp";
 import { setupChatBGPRoutes } from "./chatbgp";
 import { setupNewsIntelligenceRoutes } from "./news-intelligence";
@@ -309,7 +308,6 @@ import { registerLegalDDRoutes } from "./legal-dd";
 import { setupSharedMailboxRoutes } from "./shared-mailbox";
 import { registerInteractionRoutes } from "./interactions";
 import { setupCrmRoutes, startAutoEnrichment } from "./crm";
-import { setupMondayImportRoutes } from "./monday-import";
 import companiesHouseRouter from "./companies-house";
 import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
@@ -530,7 +528,6 @@ app.use("/api/branding/assets", express.static(
 (async () => {
   setupAuth(app);
   setupMicrosoftRoutes(app);
-  setupMondayRoutes(app);
   setupWhatsAppRoutes(app);
   setupChatBGPRoutes(app);
   setupArchivistRoutes(app);
@@ -552,7 +549,6 @@ app.use("/api/branding/assets", express.static(
   setupLeadsRoutes(app);
   registerMcpRoutes(app);
   setupCrmRoutes(app);
-  setupMondayImportRoutes(app);
   app.use(companiesHouseRouter);
   app.use(leasingScheduleRouter);
   app.use(tenancyScheduleRouter);
@@ -823,13 +819,6 @@ app.use("/api/branding/assets", express.static(
           }
         } catch (err: any) {
           console.error("User creation error:", err?.message);
-        }
-
-        try {
-          const { seedInvestmentRequirements } = await import("./seed-invest-reqs");
-          await seedInvestmentRequirements();
-        } catch (err: any) {
-          console.error("Investment requirements seed error:", err?.message);
         }
 
         // Seed properties if production has fewer than dev
