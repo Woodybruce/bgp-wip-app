@@ -111,6 +111,25 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
   });
 
+  const enrichMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/brand/enrich/${companyId}`, {});
+      return res.json();
+    },
+    onSuccess: (out: { updated?: string[]; skipped?: string[]; reason?: string }) => {
+      if (out.reason) {
+        toast({ title: "AI enrichment skipped", description: out.reason, variant: "destructive" });
+      } else if (!out.updated || out.updated.length === 0) {
+        toast({ title: "No new info found", description: "AI had nothing to add." });
+      } else {
+        toast({ title: "Enriched", description: `Updated: ${out.updated.join(", ")}` });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
+    },
+    onError: (e: any) => toast({ title: "Enrichment failed", description: e.message, variant: "destructive" }),
+  });
+
   if (isLoading || !data) return null;
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
@@ -175,9 +194,21 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           {c.is_tracked_brand && <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px]">Tracked brand</Badge>}
           {c.agent_type && <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
         </CardTitle>
-        <Button variant="ghost" size="sm" onClick={editing ? () => setEditing(false) : startEdit} data-testid="button-brand-edit">
-          {editing ? <X className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => enrichMutation.mutate()}
+            disabled={enrichMutation.isPending || editing}
+            title="Ask AI to fill in gaps"
+            data-testid="button-brand-enrich"
+          >
+            <Sparkles className={`w-3.5 h-3.5 text-purple-500 ${enrichMutation.isPending ? "animate-pulse" : ""}`} />
+          </Button>
+          <Button variant="ghost" size="sm" onClick={editing ? () => setEditing(false) : startEdit} data-testid="button-brand-edit">
+            {editing ? <X className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+          </Button>
+        </div>
       </CardHeader>
 
       <CardContent className="space-y-3">

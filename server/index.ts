@@ -312,6 +312,7 @@ import amlComplianceRouter from "./aml-compliance";
 import veriffRouter from "./veriff";
 import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
+import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
 import cadRouter from "./cad";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
@@ -551,6 +552,7 @@ app.use("/api/branding/assets", express.static(
   app.use(veriffRouter);
   app.use(brandDedupeRouter);
   app.use(brandProfileRouter);
+  app.use(brandEnrichmentRouter);
   app.use(cadRouter);
 
   await registerRoutes(httpServer, app);
@@ -622,6 +624,19 @@ app.use("/api/branding/assets", express.static(
           );
         }
       }, 60 * 60 * 1000); // Check every hour
+
+      // Nightly brand-enrichment — tops up stale / never-enriched brand rows.
+      // Runs at 4am (once per day, production only to avoid accidental API spend in dev).
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 4 && now.getMinutes() < 60) {
+            runNightlyBrandEnrichment().catch(err =>
+              console.error("[brand-enrich] nightly run failed:", err?.message)
+            );
+          }
+        }, 60 * 60 * 1000);
+      }
       setTimeout(async () => {
         try {
           const { db } = await import("./db");
