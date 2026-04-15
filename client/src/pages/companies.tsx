@@ -58,6 +58,7 @@ import { EntityPicker } from "@/components/entity-picker";
 import { InlineAddress } from "@/components/address-autocomplete";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schema";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
+import { ApolloContactsDialog } from "@/components/apollo-contacts-dialog";
 
 interface CHSearchResult {
   companyNumber: string;
@@ -1008,6 +1009,7 @@ function CompanyKycSummaryCard({ company, relatedDeals, propertyMap }: { company
 function CompanyDetail({ id }: { id: string }) {
   const { toast } = useToast();
   const [editOpen, setEditOpen] = useState(false);
+  const [apolloOpen, setApolloOpen] = useState(false);
 
   const { data: company, isLoading } = useQuery<CrmCompany>({
     queryKey: ["/api/crm/companies", id],
@@ -1371,10 +1373,27 @@ function CompanyDetail({ id }: { id: string }) {
         <div className="space-y-3 flex flex-col">
           <Card className="flex-1">
             <CardContent className="p-3 space-y-2">
-              <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5 text-teal-500" />
-                Contacts ({relatedContacts?.length || 0})
-              </h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="font-semibold text-xs flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-teal-500" />
+                  Contacts ({relatedContacts?.length || 0})
+                </h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-[10px]"
+                  onClick={() => setApolloOpen(true)}
+                  data-testid="button-apollo-find-contacts"
+                >
+                  <Sparkles className="w-3 h-3 mr-1 text-purple-500" /> Find via Apollo
+                </Button>
+              </div>
+              <ApolloContactsDialog
+                companyId={id}
+                companyName={company.name}
+                open={apolloOpen}
+                onOpenChange={setApolloOpen}
+              />
               {relatedContacts && relatedContacts.length > 0 ? (
                 <ScrollArea className="max-h-[400px] overflow-y-auto">
                   <div className="space-y-0.5 pr-2">

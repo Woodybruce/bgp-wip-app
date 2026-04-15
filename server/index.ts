@@ -313,6 +313,7 @@ import veriffRouter from "./veriff";
 import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
+import apolloContactsRouter from "./apollo-contacts";
 import cadRouter from "./cad";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
@@ -553,6 +554,7 @@ app.use("/api/branding/assets", express.static(
   app.use(brandDedupeRouter);
   app.use(brandProfileRouter);
   app.use(brandEnrichmentRouter);
+  app.use(apolloContactsRouter);
   app.use(cadRouter);
 
   await registerRoutes(httpServer, app);
