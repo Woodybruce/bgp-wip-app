@@ -6,7 +6,13 @@ function getOsKey(): string {
   // keep OS_API_KEY as a fallback for the original WFS key if it ever differs.
   return (process.env.OS_PLACES_API_KEY || process.env.OS_API_KEY || "").trim();
 }
+
+export function isOsConfigured(): boolean {
+  return getOsKey().length > 0;
+}
+
 const WFS_BASE = "https://api.os.uk/features/v1/wfs";
+const PLACES_BASE = "https://api.os.uk/search/places/v1";
 
 // Simple in-memory cache: key -> { data, expires }
 const cache = new Map<string, { data: any; expires: number }>();
@@ -67,6 +73,95 @@ async function fetchWFS(
   }
 
   return resp.json();
+}
+
+// ─── Exported helpers for other server modules ─────────────────────────────
+// Property forms, KYC orchestrator and CRM enrichment all benefit from being
+// able to resolve an address → UPRN server-side without going through HTTP.
+
+export type OsPlacesResult = {
+  uprn?: string;
+  address: string;
+  postcode?: string;
+  latitude?: number;
+  longitude?: number;
+  classification?: string;
+  raw?: any;
+};
+
+function normaliseDpa(r: any): OsPlacesResult {
+  const d = r?.DPA || r?.LPI || r || {};
+  return {
+    uprn: d.UPRN ? String(d.UPRN) : undefined,
+    address: d.ADDRESS || d.FORMATTED_ADDRESS || "",
+    postcode: d.POSTCODE || d.POSTCODE_LOCATOR || undefined,
+    latitude: typeof d.LAT === "number" ? d.LAT : undefined,
+    longitude: typeof d.LNG === "number" ? d.LNG : undefined,
+    classification: d.CLASSIFICATION_CODE_DESCRIPTION || d.CLASSIFICATION_CODE || undefined,
+    raw: d,
+  };
+}
+
+/**
+ * Free-text search — postal address, business name, whatever the user typed.
+ * Returns up to `maxresults` normalised rows. Empty if OS isn't configured.
+ */
+export async function osPlacesFind(query: string, maxresults = 10): Promise<OsPlacesResult[]> {
+  if (!isOsConfigured() || !query) return [];
+  const url = `${PLACES_BASE}/find?query=${encodeURIComponent(query)}&key=${getOsKey()}&maxresults=${maxresults}&dataset=DPA`;
+  const resp = await fetch(url, { headers: { Accept: "application/json" } });
+  if (resp.status === 401) return [];
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`OS Places find error ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await resp.json();
+  return (data?.results || []).map(normaliseDpa);
+}
+
+/**
+ * Postcode → all addresses in that postcode. Useful for dropdown pickers on
+ * property forms (user types the postcode, picks the exact address).
+ */
+export async function osPlacesByPostcode(postcode: string, maxresults = 100): Promise<OsPlacesResult[]> {
+  if (!isOsConfigured() || !postcode) return [];
+  const clean = postcode.trim().toUpperCase();
+  const url = `${PLACES_BASE}/postcode?postcode=${encodeURIComponent(clean)}&key=${getOsKey()}&maxresults=${maxresults}&dataset=DPA`;
+  const resp = await fetch(url, { headers: { Accept: "application/json" } });
+  if (resp.status === 401) return [];
+  if (resp.status === 404) return []; // OS returns 404 for no-match postcode
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`OS Places postcode error ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await resp.json();
+  return (data?.results || []).map(normaliseDpa);
+}
+
+/**
+ * UPRN → canonical DPA address. Returns null if not found / not configured.
+ */
+export async function osPlacesByUprn(uprn: string): Promise<OsPlacesResult | null> {
+  if (!isOsConfigured() || !uprn) return null;
+  const url = `${PLACES_BASE}/uprn?uprn=${encodeURIComponent(uprn)}&key=${getOsKey()}&dataset=DPA`;
+  const resp = await fetch(url, { headers: { Accept: "application/json" } });
+  if (resp.status === 401 || resp.status === 404) return null;
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`OS Places UPRN error ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await resp.json();
+  const first = (data?.results || [])[0];
+  return first ? normaliseDpa(first) : null;
+}
+
+/**
+ * Convenience: take any free-text address (e.g. from an unstructured lead row)
+ * and try to resolve it to a single best-guess UPRN+canonical address.
+ */
+export async function resolveToUprn(freeText: string): Promise<OsPlacesResult | null> {
+  const results = await osPlacesFind(freeText, 1);
+  return results[0] || null;
 }
 
 export function registerOSDataRoutes(app: Express): void {
@@ -142,68 +237,78 @@ export function registerOSDataRoutes(app: Express): void {
     }
   });
 
-  // ─── OS Places search ─────────────────────────────────────────
+  // ─── OS Places free-text search (address autocomplete) ────────
   app.get("/api/os/places/search", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { query } = req.query;
+      const { query, maxresults } = req.query;
       if (!query || typeof query !== "string") {
         return res.status(400).json({ error: "query parameter required" });
       }
       if (!getOsKey()) {
-        return res.status(503).json({ error: "OS_API_KEY not configured" });
+        return res.status(503).json({ error: "OS_PLACES_API_KEY not configured" });
       }
-
-      const url = `https://api.os.uk/search/places/v1/find?query=${encodeURIComponent(query)}&key=${getOsKey()}&maxresults=20&dataset=DPA`;
-      const resp = await fetch(url, { headers: { Accept: "application/json" } });
-
-      if (resp.status === 401) {
-        // OS Places not yet enabled on this key — return empty gracefully
-        return res.json({ results: [], message: "OS Places API not enabled for this key" });
-      }
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => "");
-        throw new Error(`OS Places search error ${resp.status}: ${text.slice(0, 200)}`);
-      }
-
-      const data = await resp.json();
-      res.json(data);
+      const max = maxresults ? Math.min(parseInt(String(maxresults), 10) || 20, 100) : 20;
+      const results = await osPlacesFind(query, max);
+      res.json({ results });
     } catch (err: any) {
       console.error("[os-data] places search error:", err?.message);
       res.status(500).json({ error: err?.message || "Failed to search places" });
     }
   });
 
+  // ─── OS Places postcode lookup (all addresses in a postcode) ─
+  app.get("/api/os/places/postcode/:postcode", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const postcode = String(req.params.postcode || "").trim();
+      if (!postcode) return res.status(400).json({ error: "postcode parameter required" });
+      if (!getOsKey()) {
+        return res.status(503).json({ error: "OS_PLACES_API_KEY not configured" });
+      }
+      const results = await osPlacesByPostcode(postcode);
+      res.json({ results });
+    } catch (err: any) {
+      console.error("[os-data] places postcode error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to lookup postcode" });
+    }
+  });
+
   // ─── OS Places UPRN lookup ────────────────────────────────────
   app.get("/api/os/places/uprn/:uprn", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { uprn } = req.params;
-      if (!uprn) {
-        return res.status(400).json({ error: "UPRN parameter required" });
-      }
+      const uprn = String(req.params.uprn || "");
+      if (!uprn) return res.status(400).json({ error: "UPRN parameter required" });
       if (!getOsKey()) {
-        return res.status(503).json({ error: "OS_API_KEY not configured" });
+        return res.status(503).json({ error: "OS_PLACES_API_KEY not configured" });
       }
-
-      const url = `https://api.os.uk/search/places/v1/uprn?uprn=${encodeURIComponent(uprn)}&key=${getOsKey()}&dataset=DPA`;
-      const resp = await fetch(url, { headers: { Accept: "application/json" } });
-
-      if (resp.status === 401) {
-        return res.json({ results: [], message: "OS Places API not enabled for this key" });
-      }
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => "");
-        throw new Error(`OS Places UPRN error ${resp.status}: ${text.slice(0, 200)}`);
-      }
-
-      const data = await resp.json();
-      res.json(data);
+      const result = await osPlacesByUprn(uprn);
+      if (!result) return res.status(404).json({ error: "UPRN not found" });
+      res.json(result);
     } catch (err: any) {
       console.error("[os-data] places uprn error:", err?.message);
       res.status(500).json({ error: err?.message || "Failed to lookup UPRN" });
     }
   });
 
-  // ─── OS API Key for client ────────────────────────────────────
+  // ─── Resolve free-text → best-guess UPRN (convenience for forms) ─
+  app.get("/api/os/places/resolve", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { query } = req.query;
+      if (!query || typeof query !== "string") {
+        return res.status(400).json({ error: "query parameter required" });
+      }
+      if (!getOsKey()) {
+        return res.status(503).json({ error: "OS_PLACES_API_KEY not configured" });
+      }
+      const result = await resolveToUprn(query);
+      if (!result) return res.status(404).json({ error: "No match" });
+      res.json(result);
+    } catch (err: any) {
+      console.error("[os-data] places resolve error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to resolve address" });
+    }
+  });
+
+  // ─── OS API Key for client (map tiles — server can't render maps) ─
   app.get("/api/config/os-key", requireAuth, (_req: Request, res: Response) => {
     res.json({ key: getOsKey() });
   });

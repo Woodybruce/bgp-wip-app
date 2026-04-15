@@ -26,10 +26,19 @@ import {
 } from "./kyc-clouseau";
 import { discoverUltimateParent } from "./companies-house";
 import { createVeriffSession } from "./veriff";
+import { adverseMediaSearch, isPerplexityConfigured } from "./perplexity";
 
 const router = Router();
 
-type TickSource = "clouseau" | "veriff" | "sanctions" | "companies_house" | "manual" | "system";
+type TickSource =
+  | "clouseau"
+  | "veriff"
+  | "sanctions"
+  | "companies_house"
+  | "perplexity"
+  | "comply_advantage"
+  | "manual"
+  | "system";
 
 type ChecklistItem = {
   ticked: boolean;
@@ -161,9 +170,10 @@ export async function autoTickFromClouseau(
     const hasMatch = sanctions.some(
       (s: any) => s.status === "strong_match" || s.status === "potential_match",
     );
-    // UK sanctions list includes the consolidated list of asset freezes AND
-    // UK-designated PEPs under the Sanctions and Anti-Money Laundering Act —
-    // so a clean run covers pep_checked at the same time.
+    // We screen against both the UK OFSI (FCDO) consolidated list AND the
+    // US OFAC SDN list. The UK list covers UK-designated PEPs under the
+    // Sanctions and Anti-Money Laundering Act — so a clean run covers
+    // pep_checked at the same time.
     if (!hasMatch) {
       updates.sanctions_clear = {
         source: "sanctions",
@@ -171,15 +181,15 @@ export async function autoTickFromClouseau(
         evidence: {
           ...baseEvidence,
           namesScreened: sanctions.length,
-          list: "UK Sanctions List (FCDO)",
+          lists: ["UK OFSI (FCDO)", "US OFAC SDN"],
         },
-        notes: "No hits on UK consolidated sanctions list",
+        notes: "No hits on UK OFSI or US OFAC consolidated sanctions lists",
       };
       updates.pep_checked = {
         source: "sanctions",
         tickedBy: userId,
-        evidence: { ...baseEvidence, list: "UK Sanctions List (FCDO) — includes PEPs" },
-        notes: "PEP screening included in sanctions run — no match",
+        evidence: { ...baseEvidence, lists: ["UK OFSI (FCDO) — includes PEPs", "US OFAC SDN"] },
+        notes: "PEP screening included in UK OFSI + OFAC sanctions run — no match",
       };
     }
   }
@@ -254,6 +264,12 @@ export async function runAllAmlChecks(
   sanctionsMatch: boolean;
   veriffLaunched: Array<{ contactId: string; sessionId: string; url: string }>;
   veriffSkipped: Array<{ contactId: string; reason: string }>;
+  adverseMedia: {
+    ran: boolean;
+    verdict?: "clear" | "review" | "adverse";
+    summary?: string;
+    findingCount?: number;
+  };
   checklistTicked: string[];
   warnings: string[];
 }> {
@@ -407,13 +423,57 @@ export async function runAllAmlChecks(
     warnings.push("Veriff not configured — skipped identity checks");
   }
 
-  // 3. Auto-tick the checklist from everything we just learned
+  // 3. Adverse media via Perplexity — web-grounded, cited. ComplyAdvantage will
+  // eventually replace this for proper sanctioned-PEP-list + curated feeds,
+  // but Perplexity gives us immediate coverage of press/reputational hits.
+  const adverseMedia: {
+    ran: boolean;
+    verdict?: "clear" | "review" | "adverse";
+    summary?: string;
+    findingCount?: number;
+  } = { ran: false };
+  const subjectName = investigationResult?.subject?.name || company.name;
+  if (subjectName && isPerplexityConfigured()) {
+    try {
+      const ams = await adverseMediaSearch(subjectName, {
+        country: "United Kingdom",
+        companyNumber: company.companies_house_number || undefined,
+      });
+      adverseMedia.ran = true;
+      adverseMedia.verdict = ams.verdict;
+      adverseMedia.summary = ams.summary;
+      adverseMedia.findingCount = ams.findings.length;
+    } catch (e: any) {
+      warnings.push(`Adverse media search failed: ${e?.message || "unknown"}`);
+    }
+  } else if (!isPerplexityConfigured()) {
+    warnings.push("Perplexity not configured — skipped adverse media");
+  }
+
+  // 4. Auto-tick the checklist from everything we just learned
   let checklistTicked: string[] = [];
   if (investigationResult) {
     checklistTicked = await autoTickFromClouseau(companyId, investigationResult, investigationId, userId);
   }
+  // Adverse media ticks separately — only "clear" counts as an auto-pass.
+  // "review" and "adverse" are left for the MLRO to eyeball manually.
+  if (adverseMedia.ran && adverseMedia.verdict === "clear") {
+    const adverseTicked = await tickChecklistItems(companyId, {
+      adverse_media: {
+        source: "perplexity",
+        tickedBy: userId,
+        evidence: {
+          verdict: adverseMedia.verdict,
+          findingCount: adverseMedia.findingCount,
+          subject: subjectName,
+        },
+        notes: adverseMedia.summary || "No adverse media found via Perplexity web search",
+      },
+    });
+    checklistTicked = [...checklistTicked, ...adverseTicked];
+  }
 
-  // 4. Deal event trail — so the audit log carries the whole sweep
+  // 5. Deal event trail — so the audit log carries the whole sweep
   if (dealId) {
     await pool.query(
       `INSERT INTO deal_events (deal_id, event_type, payload, actor_id)
@@ -427,6 +487,7 @@ export async function runAllAmlChecks(
           sanctionsMatch,
           veriffLaunched,
           veriffSkipped,
+          adverseMedia,
           checklistTicked,
           warnings,
         }),
@@ -443,9 +504,98 @@ export async function runAllAmlChecks(
     sanctionsMatch,
     veriffLaunched,
     veriffSkipped,
+    adverseMedia,
     checklistTicked,
     warnings,
   };
+}
+
+/**
+ * Daily cron: pick up companies whose KYC has gone stale (past the firm's
+ * `recheck_interval_days`, default 365) or that have a pending
+ * aml_recheck_reminders row due today. For each, re-run the full sweep.
+ *
+ * Kept deliberately cautious — capped at 25 companies per run so a single
+ * run can't blow through our Companies House / Perplexity quota, and
+ * spaced with a small delay between each to avoid rate-limiting.
+ */
+export async function runPeriodicAmlReScreening(options: { maxCompanies?: number } = {}): Promise<{
+  scanned: number;
+  processed: number;
+  errors: number;
+  reminderIds: number[];
+}> {
+  const MAX = options.maxCompanies ?? 25;
+  console.log("[kyc-orch] Starting periodic AML re-screening...");
+
+  // Firm-level recheck interval (default 365 days if no amlSettings row)
+  const settings = await pool.query(
+    `SELECT recheck_interval_days FROM aml_settings ORDER BY updated_at DESC LIMIT 1`,
+  ).catch(() => ({ rows: [] as any[] }));
+  const intervalDays = Number(settings.rows[0]?.recheck_interval_days) || 365;
+
+  // Pull candidates: stale KYC OR has an overdue recheck reminder
+  const staleQuery = await pool.query(
+    `SELECT DISTINCT c.id, c.name, c.kyc_checked_at
+       FROM crm_companies c
+       LEFT JOIN aml_recheck_reminders r ON r.company_id = c.id AND r.completed_at IS NULL
+      WHERE c.companies_house_number IS NOT NULL
+        AND c.kyc_status <> 'rejected'
+        AND (
+          c.kyc_checked_at IS NULL
+          OR c.kyc_checked_at < NOW() - ($1 || ' days')::interval
+          OR (r.due_date IS NOT NULL AND r.due_date <= NOW())
+        )
+      ORDER BY c.kyc_checked_at NULLS FIRST
+      LIMIT $2`,
+    [String(intervalDays), MAX],
+  );
+
+  const scanned = staleQuery.rows.length;
+  let processed = 0;
+  let errors = 0;
+  const reminderIds: number[] = [];
+
+  for (const row of staleQuery.rows) {
+    try {
+      const summary = await runAllAmlChecks(row.id, null, null);
+      processed++;
+
+      // Bump kyc_checked_at so we don't re-pick next cycle
+      await pool.query(
+        `UPDATE crm_companies SET kyc_checked_at = NOW() WHERE id = $1`,
+        [row.id],
+      ).catch(() => {});
+
+      // Close any due reminders for this company
+      const closed = await pool.query(
+        `UPDATE aml_recheck_reminders
+            SET completed_at = NOW(),
+                completed_by = 'system-cron',
+                notes = COALESCE(notes, '') || $2
+          WHERE company_id = $1 AND completed_at IS NULL AND due_date <= NOW()
+          RETURNING id`,
+        [row.id, `\n[Auto-closed by periodic re-screen ${new Date().toISOString()}]`],
+      ).catch(() => ({ rows: [] as any[] }));
+      for (const r of closed.rows) reminderIds.push(r.id);
+
+      console.log(
+        `[kyc-orch] Periodic re-screen ${row.name}: risk=${summary.risk?.level || "n/a"} ` +
+        `ticked=[${summary.checklistTicked.join(",")}] warnings=${summary.warnings.length}`,
+      );
+
+      // Short pause so we don't hammer Companies House / Perplexity back-to-back
+      await new Promise((r) => setTimeout(r, 1500));
+    } catch (e: any) {
+      errors++;
+      console.warn(`[kyc-orch] Periodic re-screen failed for ${row.name}:`, e?.message);
+    }
+  }
+
+  console.log(
+    `[kyc-orch] Periodic re-screening complete: scanned=${scanned} processed=${processed} errors=${errors}`,
+  );
+  return { scanned, processed, errors, reminderIds };
 }
 
 // ─── HTTP surface ────────────────────────────────────────────────────────
@@ -490,6 +640,24 @@ router.post("/api/kyc/run-all-checks", requireAuth, async (req: Request, res: Re
   } catch (err: any) {
     console.error("[kyc-orch] run-all-checks error:", err?.message);
     res.status(500).json({ error: err?.message || "Orchestrator failed" });
+  }
+});
+
+/**
+ * POST /api/kyc/run-periodic-rescreen
+ * Admin-triggered run of the same sweep the nightly cron does.
+ * Body: { maxCompanies?: number }
+ */
+router.post("/api/kyc/run-periodic-rescreen", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { maxCompanies } = req.body || {};
+    const result = await runPeriodicAmlReScreening({
+      maxCompanies: typeof maxCompanies === "number" && maxCompanies > 0 ? Math.min(maxCompanies, 200) : undefined,
+    });
+    res.json(result);
+  } catch (err: any) {
+    console.error("[kyc-orch] manual periodic re-screen error:", err?.message);
+    res.status(500).json({ error: err?.message || "Re-screening failed" });
   }
 });
 

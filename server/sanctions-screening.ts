@@ -3,8 +3,17 @@ import { requireAuth } from "./auth";
 
 const router = Router();
 
+// Two consolidated lists, both free/public:
+//   UK OFSI  — FCDO, https://sanctionslist.fcdo.gov.uk/
+//   US OFAC  — Treasury OFAC SDN list, https://ofac.treasury.gov/sdn-list
+// Between them these cover the vast majority of designated persons/entities
+// BGP will ever see. Adverse media / FATF grey-list is layered in separately
+// via Perplexity + ComplyAdvantage (see server/kyc-orchestrator.ts).
 const SANCTIONS_CSV_URL = "https://sanctionslist.fcdo.gov.uk/docs/UK-Sanctions-List.csv";
+const OFAC_SDN_CSV_URL = "https://www.treasury.gov/ofac/downloads/sdn.csv";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+type SanctionSource = "UK-OFSI" | "US-OFAC";
 
 interface SanctionEntry {
   uniqueId: string;
@@ -17,6 +26,7 @@ interface SanctionEntry {
   dob: string;
   entityType: string;
   dateDesignated: string;
+  source: SanctionSource;
 }
 
 let sanctionsCache: SanctionEntry[] = [];
@@ -135,75 +145,183 @@ function parseFullCSV(text: string): string[][] {
   return rows;
 }
 
-async function doLoadSanctionsList(): Promise<void> {
-  try {
-    console.log("[sanctions] Downloading UK Sanctions List...");
-    const res = await fetch(SANCTIONS_CSV_URL);
-    if (!res.ok) throw new Error(`Failed to download sanctions list: ${res.status}`);
-    const text = await res.text();
-    const rows = parseFullCSV(text);
+async function loadUkOfsiEntries(): Promise<SanctionEntry[]> {
+  console.log("[sanctions] Downloading UK OFSI (FCDO) Sanctions List...");
+  const res = await fetch(SANCTIONS_CSV_URL);
+  if (!res.ok) throw new Error(`UK OFSI download failed: ${res.status}`);
+  const text = await res.text();
+  const rows = parseFullCSV(text);
 
-    let headerIdx = -1;
-    for (let i = 0; i < Math.min(5, rows.length); i++) {
-      if (rows[i].some(h => h === "Unique ID") && rows[i].some(h => h === "Name 1")) {
-        headerIdx = i;
-        break;
-      }
+  let headerIdx = -1;
+  for (let i = 0; i < Math.min(5, rows.length); i++) {
+    if (rows[i].some(h => h === "Unique ID") && rows[i].some(h => h === "Name 1")) {
+      headerIdx = i;
+      break;
     }
-    if (headerIdx < 0) throw new Error("Could not find header row in sanctions CSV");
+  }
+  if (headerIdx < 0) throw new Error("Could not find header row in UK OFSI CSV");
 
-    const headers = rows[headerIdx];
-    const colIdx = (name: string) => headers.findIndex(h => h === name);
+  const headers = rows[headerIdx];
+  const colIdx = (name: string) => headers.findIndex(h => h === name);
 
-    const iUniqueId = colIdx("Unique ID");
-    const iName6 = colIdx("Name 6");
-    const iName1 = colIdx("Name 1");
-    const iName2 = colIdx("Name 2");
-    const iNameType = colIdx("Name type");
-    const iRegime = colIdx("Regime Name");
-    const iDesType = colIdx("Designation Type");
-    const iSanctions = colIdx("Sanctions Imposed");
-    const iNationality = colIdx("Nationality(/ies)");
-    const iDob = colIdx("D.O.B");
-    const iEntityType = colIdx("Type of entity");
-    const iDateDesignated = colIdx("Date Designated");
+  const iUniqueId = colIdx("Unique ID");
+  const iName6 = colIdx("Name 6");
+  const iName1 = colIdx("Name 1");
+  const iName2 = colIdx("Name 2");
+  const iNameType = colIdx("Name type");
+  const iRegime = colIdx("Regime Name");
+  const iDesType = colIdx("Designation Type");
+  const iSanctions = colIdx("Sanctions Imposed");
+  const iNationality = colIdx("Nationality(/ies)");
+  const iDob = colIdx("D.O.B");
+  const iEntityType = colIdx("Type of entity");
+  const iDateDesignated = colIdx("Date Designated");
 
-    const seen = new Set<string>();
-    const entries: SanctionEntry[] = [];
+  const seen = new Set<string>();
+  const entries: SanctionEntry[] = [];
 
-    for (let i = headerIdx + 1; i < rows.length; i++) {
-      const fields = rows[i];
-      const name6 = fields[iName6] || "";
-      const name1 = fields[iName1] || "";
-      const name2 = fields[iName2] || "";
-      const fullName = [name6, name1, name2].filter(Boolean).join(" ").trim();
-      if (!fullName) continue;
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const fields = rows[i];
+    const name6 = fields[iName6] || "";
+    const name1 = fields[iName1] || "";
+    const name2 = fields[iName2] || "";
+    const fullName = [name6, name1, name2].filter(Boolean).join(" ").trim();
+    if (!fullName) continue;
 
-      const uid = fields[iUniqueId] || "";
-      const dedup = `${uid}:${normalise(fullName)}`;
-      if (seen.has(dedup)) continue;
-      seen.add(dedup);
+    const uid = fields[iUniqueId] || "";
+    const dedup = `ofsi:${uid}:${normalise(fullName)}`;
+    if (seen.has(dedup)) continue;
+    seen.add(dedup);
 
+    entries.push({
+      uniqueId: uid,
+      name: fullName,
+      nameType: fields[iNameType] || "",
+      regime: fields[iRegime] || "",
+      designationType: fields[iDesType] || "",
+      sanctionsImposed: fields[iSanctions] || "",
+      nationality: fields[iNationality] || "",
+      dob: fields[iDob] || "",
+      entityType: fields[iEntityType] || "",
+      dateDesignated: fields[iDateDesignated] || "",
+      source: "UK-OFSI",
+    });
+  }
+
+  return entries;
+}
+
+/**
+ * OFAC SDN CSV has no header row — it's positional. Columns per the
+ * published schema at https://ofac.treasury.gov/specially-designated-nationals-list-data-formats-data-schemas :
+ *   0: ent_num   1: SDN_Name   2: SDN_Type   3: Program   4: Title
+ *   5: Call_Sign 6: Vess_type  7: Tonnage    8: GRT       9: Vess_flag
+ *  10: Vess_owner 11: Remarks
+ *
+ * Individual names are stored "LAST, FIRST" — we flip them so fuzzy match
+ * works the same way as the UK list ("FIRST LAST").
+ */
+async function loadUsOfacEntries(): Promise<SanctionEntry[]> {
+  console.log("[sanctions] Downloading US OFAC SDN List...");
+  const res = await fetch(OFAC_SDN_CSV_URL);
+  if (!res.ok) throw new Error(`OFAC SDN download failed: ${res.status}`);
+  const text = await res.text();
+  const rows = parseFullCSV(text);
+
+  const entries: SanctionEntry[] = [];
+  const seen = new Set<string>();
+
+  for (const fields of rows) {
+    const entNum = (fields[0] || "").trim();
+    let rawName = (fields[1] || "").trim();
+    const sdnType = (fields[2] || "").trim();
+    const program = (fields[3] || "").trim();
+    const title = (fields[4] || "").trim();
+    const remarks = (fields[11] || "").trim();
+    if (!rawName || !entNum) continue;
+
+    // Flip "LAST, FIRST" → "FIRST LAST" for individuals
+    let name = rawName;
+    if (/^individual$/i.test(sdnType) && rawName.includes(",")) {
+      const [last, first] = rawName.split(",", 2).map(s => s.trim());
+      if (first) name = `${first} ${last}`;
+    }
+
+    const dedup = `ofac:${entNum}:${normalise(name)}`;
+    if (seen.has(dedup)) continue;
+    seen.add(dedup);
+
+    entries.push({
+      uniqueId: entNum,
+      name,
+      nameType: title || "",
+      regime: program,
+      designationType: sdnType,
+      sanctionsImposed: "OFAC SDN — blocked",
+      nationality: "",
+      dob: "",
+      entityType: sdnType,
+      dateDesignated: "",
+      source: "US-OFAC",
+    });
+
+    // Surface common "a.k.a." aliases buried in Remarks so a match against
+    // an alias still fires. Aliases follow "a.k.a. '…'" or ";a.k.a. '…'".
+    const aliasMatches = remarks.match(/a\.k\.a\.\s*'([^']+)'/gi) || [];
+    for (const m of aliasMatches) {
+      const alias = m.replace(/a\.k\.a\.\s*'([^']+)'/i, "$1").trim();
+      if (!alias) continue;
+      const aliasDedup = `ofac:${entNum}:${normalise(alias)}`;
+      if (seen.has(aliasDedup)) continue;
+      seen.add(aliasDedup);
       entries.push({
-        uniqueId: uid,
-        name: fullName,
-        nameType: fields[iNameType] || "",
-        regime: fields[iRegime] || "",
-        designationType: fields[iDesType] || "",
-        sanctionsImposed: fields[iSanctions] || "",
-        nationality: fields[iNationality] || "",
-        dob: fields[iDob] || "",
-        entityType: fields[iEntityType] || "",
-        dateDesignated: fields[iDateDesignated] || "",
+        uniqueId: entNum,
+        name: alias,
+        nameType: "alias",
+        regime: program,
+        designationType: sdnType,
+        sanctionsImposed: "OFAC SDN — blocked (a.k.a.)",
+        nationality: "",
+        dob: "",
+        entityType: sdnType,
+        dateDesignated: "",
+        source: "US-OFAC",
       });
     }
-
-    sanctionsCache = entries;
-    cacheLoadedAt = Date.now();
-    console.log(`[sanctions] Loaded ${entries.length} unique sanctions entries`);
-  } catch (err) {
-    console.error("[sanctions] Failed to load sanctions list:", (err as Error).message);
   }
+  return entries;
+}
+
+async function doLoadSanctionsList(): Promise<void> {
+  // Pull both lists in parallel — if one fails, keep the other so we always
+  // have *some* screening coverage rather than zero.
+  const [ofsiRes, ofacRes] = await Promise.allSettled([
+    loadUkOfsiEntries(),
+    loadUsOfacEntries(),
+  ]);
+
+  const merged: SanctionEntry[] = [];
+  if (ofsiRes.status === "fulfilled") {
+    merged.push(...ofsiRes.value);
+    console.log(`[sanctions] UK OFSI loaded: ${ofsiRes.value.length} entries`);
+  } else {
+    console.error("[sanctions] UK OFSI load failed:", ofsiRes.reason?.message || ofsiRes.reason);
+  }
+  if (ofacRes.status === "fulfilled") {
+    merged.push(...ofacRes.value);
+    console.log(`[sanctions] US OFAC loaded: ${ofacRes.value.length} entries`);
+  } else {
+    console.error("[sanctions] US OFAC load failed:", ofacRes.reason?.message || ofacRes.reason);
+  }
+
+  if (merged.length === 0) {
+    console.error("[sanctions] BOTH sanctions sources failed — screening will return no results");
+    return;
+  }
+
+  sanctionsCache = merged;
+  cacheLoadedAt = Date.now();
+  console.log(`[sanctions] Total sanctions entries loaded: ${merged.length} (OFSI + OFAC)`);
 }
 
 export async function loadSanctionsList(): Promise<void> {
@@ -239,6 +357,7 @@ interface ScreeningResult {
     nationality: string;
     entityType: string;
     dateDesignated: string;
+    source: SanctionSource;
   }>;
   status: "clear" | "potential_match" | "strong_match";
 }
@@ -276,6 +395,7 @@ router.post("/api/sanctions/screen", requireAuth, async (req, res) => {
           nationality: m.entry.nationality,
           entityType: m.entry.entityType,
           dateDesignated: m.entry.dateDesignated,
+          source: m.entry.source,
         })),
         status,
       });
@@ -287,10 +407,13 @@ router.post("/api/sanctions/screen", requireAuth, async (req, res) => {
         ? "review"
         : "clear";
 
+    const ofsiCount = sanctionsCache.filter(e => e.source === "UK-OFSI").length;
+    const ofacCount = sanctionsCache.filter(e => e.source === "US-OFAC").length;
     res.json({
       screenedAt: new Date().toISOString(),
-      listDate: sanctionsCache.length > 0 ? "UK Sanctions List (FCDO)" : null,
+      listDate: "UK OFSI (FCDO) + US OFAC SDN",
       totalEntries: sanctionsCache.length,
+      sources: { ukOfsi: ofsiCount, usOfac: ofacCount },
       results,
       overallStatus,
     });
@@ -301,11 +424,16 @@ router.post("/api/sanctions/screen", requireAuth, async (req, res) => {
 });
 
 router.get("/api/sanctions/status", requireAuth, async (_req, res) => {
+  const ofsiCount = sanctionsCache.filter(e => e.source === "UK-OFSI").length;
+  const ofacCount = sanctionsCache.filter(e => e.source === "US-OFAC").length;
   res.json({
     loaded: sanctionsCache.length > 0,
     entries: sanctionsCache.length,
     loadedAt: cacheLoadedAt > 0 ? new Date(cacheLoadedAt).toISOString() : null,
-    source: "UK Sanctions List (FCDO)",
+    sources: [
+      { name: "UK OFSI (FCDO)", entries: ofsiCount, loaded: ofsiCount > 0 },
+      { name: "US OFAC SDN", entries: ofacCount, loaded: ofacCount > 0 },
+    ],
   });
 });
 

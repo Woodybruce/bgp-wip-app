@@ -313,7 +313,8 @@ import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
 import veriffRouter from "./veriff";
-import kycOrchestratorRouter from "./kyc-orchestrator";
+import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
+import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
@@ -559,6 +560,7 @@ app.use("/api/branding/assets", express.static(
   app.use(amlComplianceRouter);
   app.use(veriffRouter);
   app.use(kycOrchestratorRouter);
+  app.use(perplexityRouter);
   app.use(brandDedupeRouter);
   app.use(brandProfileRouter);
   app.use(brandEnrichmentRouter);
@@ -639,6 +641,23 @@ app.use("/api/branding/assets", express.static(
           );
         }
       }, 60 * 60 * 1000); // Check every hour
+
+      // Daily AML orchestrator re-sweep — 02:00 every night we pick up any
+      // company whose KYC has gone stale (past the firm's recheck_interval_days,
+      // default 365) or has an overdue aml_recheck_reminders row, and re-run
+      // the full sweep (Companies House + UBO + sanctions + adverse media).
+      // Capped at 25 companies per night so a single run can't blow through
+      // quotas. Production only — dev shouldn't be making live API calls overnight.
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 2) {
+            runPeriodicAmlReScreening().catch(err =>
+              console.error("[kyc-orch-cron] Periodic re-screening failed:", err?.message)
+            );
+          }
+        }, 60 * 60 * 1000);
+      }
 
       // Nightly brand-enrichment — tops up stale / never-enriched brand rows.
       // Runs at 4am (once per day, production only to avoid accidental API spend in dev).

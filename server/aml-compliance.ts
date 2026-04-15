@@ -1047,16 +1047,56 @@ router.get("/api/kyc/board", requireAuth, async (_req: Request, res: Response) =
        ORDER BY c.name ASC`
     );
 
+    // Checklist keys must match server/kyc-orchestrator.ts CHECKLIST_KEYS
+    // and client/src/components/kyc-panel.tsx CHECKLIST_ITEMS.
+    const CHECKLIST_KEYS = [
+      "id_verified", "address_verified", "ubo_identified", "company_cert",
+      "sof_evidenced", "sow_evidenced", "sanctions_clear", "pep_checked",
+      "adverse_media", "edd_complete", "risk_assessed", "mlro_review",
+    ];
+    const TOTAL_CHECKS = CHECKLIST_KEYS.length;
+
     const now = new Date();
     const rows = result.rows.map((r: any) => {
       const isExpired = r.kyc_expires_at ? new Date(r.kyc_expires_at) < now : false;
+      const checklist = (r.aml_checklist || {}) as Record<string, { ticked?: boolean; source?: string }>;
+      const tickedCount = CHECKLIST_KEYS.reduce(
+        (sum, k) => (checklist[k]?.ticked ? sum + 1 : sum),
+        0,
+      );
+      const autoTickedCount = CHECKLIST_KEYS.reduce(
+        (sum, k) => (checklist[k]?.ticked && checklist[k]?.source && checklist[k]?.source !== "manual" ? sum + 1 : sum),
+        0,
+      );
+      const mlroSignedOff = !!checklist["mlro_review"]?.ticked;
+      const hasAnyProgress = tickedCount > 0 || r.doc_count > 0;
+
+      // Board movement logic — cards slide rightwards as automation +
+      // manual review progress. "approved" still requires the MLRO to
+      // explicitly sign off (either via the kyc_status enum or by
+      // ticking mlro_review), so we never auto-approve.
       let column: "missing" | "in_review" | "approved" | "rejected" | "expired";
-      if (r.kyc_status === "approved" && isExpired) column = "expired";
-      else if (r.kyc_status === "approved") column = "approved";
-      else if (r.kyc_status === "rejected") column = "rejected";
-      else if (r.kyc_status === "in_review" || r.doc_count > 0) column = "in_review";
-      else column = "missing";
-      return { ...r, column, isExpired };
+      if (r.kyc_status === "rejected") {
+        column = "rejected";
+      } else if ((r.kyc_status === "approved" || mlroSignedOff) && isExpired) {
+        column = "expired";
+      } else if (r.kyc_status === "approved" || (mlroSignedOff && tickedCount === TOTAL_CHECKS)) {
+        column = "approved";
+      } else if (r.kyc_status === "in_review" || hasAnyProgress) {
+        column = "in_review";
+      } else {
+        column = "missing";
+      }
+
+      return {
+        ...r,
+        column,
+        isExpired,
+        checklist_ticked_count: tickedCount,
+        checklist_auto_ticked_count: autoTickedCount,
+        checklist_total: TOTAL_CHECKS,
+        mlro_signed_off: mlroSignedOff,
+      };
     });
 
     res.json({
