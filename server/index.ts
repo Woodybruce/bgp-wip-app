@@ -268,6 +268,11 @@ import { pool } from "./db";
      )`,
     `CREATE INDEX IF NOT EXISTS idx_dedupe_merges_primary ON dedupe_merges(primary_id)`,
     `CREATE INDEX IF NOT EXISTS idx_dedupe_merges_secondary ON dedupe_merges(secondary_id)`,
+
+    // Weekly client report preferences (per contact)
+    `ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS weekly_report_enabled BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS weekly_report_last_sent_at TIMESTAMP`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_contacts_weekly_report ON crm_contacts(weekly_report_enabled) WHERE weekly_report_enabled = true`,
   ];
 
   let ok = 0, skipped = 0;
@@ -316,6 +321,7 @@ import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrich
 import apolloContactsRouter from "./apollo-contacts";
 import brandPackRouter from "./brand-pack";
 import dealDocsRouter from "./deal-docs";
+import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
 import cadRouter from "./cad";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
@@ -559,6 +565,7 @@ app.use("/api/branding/assets", express.static(
   app.use(apolloContactsRouter);
   app.use(brandPackRouter);
   app.use(dealDocsRouter);
+  app.use(weeklyReportRouter);
   app.use(cadRouter);
 
   await registerRoutes(httpServer, app);
@@ -639,6 +646,19 @@ app.use("/api/branding/assets", express.static(
           if (now.getHours() === 4 && now.getMinutes() < 60) {
             runNightlyBrandEnrichment().catch(err =>
               console.error("[brand-enrich] nightly run failed:", err?.message)
+            );
+          }
+        }, 60 * 60 * 1000);
+      }
+
+      // Weekly client report cron — Monday 09:00 (production only, sends email)
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          // getDay(): 0=Sun, 1=Mon
+          if (now.getDay() === 1 && now.getHours() === 9 && now.getMinutes() < 60) {
+            runWeeklyClientReports().catch(err =>
+              console.error("[weekly-report] cron run failed:", err?.message)
             );
           }
         }, 60 * 60 * 1000);
