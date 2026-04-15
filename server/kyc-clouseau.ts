@@ -675,9 +675,33 @@ router.get("/api/kyc-clouseau/recent", requireAuth, async (req: Request, res: Re
 
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     values.push(limit);
+    // sources[] is derived from the stored result JSON so the Clouseau UI can
+    // show which external data providers actually ran for each investigation
+    // (Companies House, OFSI/OFAC sanctions, Perplexity adverse media, Land
+    // Registry, AI analysis). Cheap enough for LIMIT N rows.
     const sql = `
       SELECT id, subject_type, subject_name, company_number, risk_level, risk_score,
-             sanctions_match, conducted_by, conducted_at, notes
+             sanctions_match, conducted_by, conducted_at, notes,
+             ARRAY_REMOVE(ARRAY[
+               CASE WHEN (result -> 'companyProfile') ->> 'company_number' IS NOT NULL
+                      OR jsonb_typeof(result -> 'officers') = 'array'
+                      OR jsonb_typeof(result -> 'pscs') = 'array'
+                    THEN 'companies_house' END,
+               CASE WHEN jsonb_typeof(result -> 'sanctionsScreening') = 'array'
+                    THEN 'sanctions' END,
+               CASE WHEN result ? 'adverseMedia'
+                      OR jsonb_typeof(result -> 'perplexityResults') = 'array'
+                      OR jsonb_typeof(result -> 'adverseMediaFindings') = 'array'
+                    THEN 'perplexity' END,
+               CASE WHEN result ? 'propertiesOwned'
+                      OR result ? 'propertyContext'
+                      OR result ? 'landRegistry'
+                      OR result ? 'matched'
+                    THEN 'land_registry' END,
+               CASE WHEN length(coalesce(result ->> 'aiAnalysis', '')) > 10
+                      OR (result ->> 'aiStatus') = 'complete'
+                    THEN 'ai' END
+             ], NULL) AS sources
       FROM kyc_investigations
       ${where}
       ORDER BY conducted_at DESC

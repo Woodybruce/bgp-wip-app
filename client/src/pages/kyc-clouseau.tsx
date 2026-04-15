@@ -93,6 +93,29 @@ interface HistoryItem {
   conducted_by: string;
   conducted_at: string;
   notes: string;
+  sources?: string[];
+}
+
+// Friendly labels + tones for the investigation sources returned by
+// /api/kyc-clouseau/recent (derived from the result JSON).
+const CLOUSEAU_SOURCE_META: Record<string, { label: string; tone: string; title: string }> = {
+  companies_house: { label: "CH", tone: "border-blue-300 text-blue-700 bg-blue-50", title: "Companies House filings, officers, PSCs" },
+  sanctions: { label: "OFSI/OFAC", tone: "border-red-300 text-red-700 bg-red-50", title: "UK OFSI + US OFAC sanctions screening" },
+  perplexity: { label: "Adverse media", tone: "border-purple-300 text-purple-700 bg-purple-50", title: "Perplexity adverse media web scan" },
+  land_registry: { label: "Land Registry", tone: "border-emerald-300 text-emerald-700 bg-emerald-50", title: "HM Land Registry / PropertyData titles" },
+  ai: { label: "AI", tone: "border-amber-300 text-amber-700 bg-amber-50", title: "Claude AI analysis" },
+};
+
+function cloustauSourcesFromResult(result: any): string[] {
+  if (!result || typeof result !== "object") return [];
+  const seen = new Set<string>();
+  if (result.companyProfile?.company_number || Array.isArray(result.officers) || Array.isArray(result.pscs)) seen.add("companies_house");
+  if (Array.isArray(result.sanctionsScreening)) seen.add("sanctions");
+  if (result.adverseMedia || Array.isArray(result.perplexityResults) || Array.isArray(result.adverseMediaFindings)) seen.add("perplexity");
+  if (result.propertiesOwned || result.propertyContext || result.landRegistry || result.matched) seen.add("land_registry");
+  if (typeof result.aiAnalysis === "string" && result.aiAnalysis.length > 10) seen.add("ai");
+  const order = ["companies_house", "sanctions", "perplexity", "land_registry", "ai"];
+  return order.filter(s => seen.has(s));
 }
 
 interface PropertyResolveResult {
@@ -126,6 +149,34 @@ function SanctionsBadge({ status }: { status: string }) {
   if (status === "clear") return <Badge variant="outline" className="text-emerald-600 border-emerald-300"><CheckCircle className="h-3 w-3 mr-1" />Clear</Badge>;
   if (status === "strong_match") return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Match</Badge>;
   return <Badge variant="outline" className="text-amber-600 border-amber-300"><AlertTriangle className="h-3 w-3 mr-1" />Potential</Badge>;
+}
+
+// Renders the list of data providers that ran for a given investigation —
+// Companies House, OFSI/OFAC sanctions, Perplexity adverse media, Land
+// Registry, AI. Used on both Clouseau investigation detail views so the
+// analyst can see at a glance which sources were actually consulted.
+function SourcesStrip({ result }: { result: any }) {
+  const sources = cloustauSourcesFromResult(result);
+  if (sources.length === 0) return null;
+  return (
+    <div className="flex items-center gap-2 flex-wrap" data-testid="investigation-sources">
+      <span className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">Sources checked</span>
+      <div className="flex flex-wrap gap-1">
+        {sources.map((s) => {
+          const meta = CLOUSEAU_SOURCE_META[s] || { label: s, tone: "border-slate-300 text-slate-700 bg-slate-50", title: s };
+          return (
+            <span
+              key={s}
+              title={meta.title}
+              className={`text-[10px] px-1.5 py-0.5 rounded border ${meta.tone} font-medium`}
+            >
+              {meta.label}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function MarkdownContent({ content }: { content: string }) {
@@ -445,6 +496,22 @@ function RecentInvestigations({
                           </span>
                         )}
                       </div>
+                      {inv.sources && inv.sources.length > 0 && (
+                        <div className="flex flex-wrap gap-0.5 mt-1" data-testid={`recent-sources-${inv.id}`}>
+                          {inv.sources.map((s) => {
+                            const meta = CLOUSEAU_SOURCE_META[s] || { label: s, tone: "border-slate-300 text-slate-700 bg-slate-50", title: s };
+                            return (
+                              <span
+                                key={s}
+                                title={meta.title}
+                                className={`text-[8px] px-1 py-0 rounded border ${meta.tone} font-medium leading-tight`}
+                              >
+                                {meta.label}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </button>
@@ -1400,6 +1467,8 @@ export default function KycClouseau() {
                 <RiskBadge level={individualResult.riskLevel} score={individualResult.riskScore} />
               </div>
 
+              <SourcesStrip result={individualResult} />
+
               {/* Risk flags */}
               {(individualResult.flags?.length || 0) > 0 && (
                 <Card>
@@ -1561,6 +1630,8 @@ export default function KycClouseau() {
                   <RiskBadge level={investigation.riskLevel} score={investigation.riskScore} />
                 </div>
               </div>
+
+              <SourcesStrip result={investigation} />
 
               {investigation.companyProfile?.company_number && (
                 <CrmMatchStrip
