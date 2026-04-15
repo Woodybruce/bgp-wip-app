@@ -1156,6 +1156,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const [, navigate] = useLocation();
 
   const { typingUsers, sendTyping, stopTyping } = useTypingIndicator(threadId);
 
@@ -1987,39 +1988,53 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
         <div className="bg-[#1C1917] text-white pt-[calc(0.5rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
           <div className="flex items-center gap-3">
             <button onClick={onBack} className="p-1" data-testid="button-mobile-chat-back"><ArrowLeft className="w-6 h-6" /></button>
-            {isGroup ? (
-              <button onClick={() => setShowGroupEdit(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" data-testid="button-mobile-group-settings">
-                {renderHeaderAvatar()}
-                <div className="flex-1 min-w-0">
-                  <div className="text-[17px] font-semibold truncate">{threadTitle}</div>
-                  {isGroup && threadMembers.length > 0 && (
-                    <div className="text-xs text-white/60 truncate">
-                      {activeThread?.hasAiMember ? "ChatBGP, " : ""}{activeThread?.creatorName?.split(" ")[0]}, {threadMembers.slice(0, 3).map(m => m.name.split(" ")[0]).join(", ")}
-                      {threadMembers.length > 3 && ` +${threadMembers.length - 3}`}
-                      {" · Tap to edit"}
-                    </div>
-                  )}
-                  {activeThread?.linkedName && (
-                    <div className="flex items-center gap-1 mt-0.5">
-                      <Link2 className="w-3 h-3 text-gray-400" />
-                      <span className="text-[11px] text-gray-400 truncate">{activeThread.linkedName}</span>
-                    </div>
-                  )}
+            <div className="flex-1 min-w-0">
+              {isGroup ? (
+                <button onClick={() => setShowGroupEdit(true)} className="flex items-center gap-3 w-full min-w-0 text-left" data-testid="button-mobile-group-settings">
+                  {renderHeaderAvatar()}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[17px] font-semibold truncate">{threadTitle}</div>
+                    {isGroup && threadMembers.length > 0 && (
+                      <div className="text-xs text-white/60 truncate">
+                        {activeThread?.hasAiMember ? "ChatBGP, " : ""}{activeThread?.creatorName?.split(" ")[0]}, {threadMembers.slice(0, 3).map(m => m.name.split(" ")[0]).join(", ")}
+                        {threadMembers.length > 3 && ` +${threadMembers.length - 3}`}
+                        {" · Tap to edit"}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              ) : (
+                <div className="flex items-center gap-3 w-full min-w-0">
+                  {renderHeaderAvatar()}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[17px] font-semibold truncate">{threadTitle}</div>
+                    {isDm && (
+                      <div className="text-xs text-white/60 truncate">
+                        {allUsers?.find(u => u.id === otherMembers[0].id)?.team || "BGP"}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </button>
-            ) : (
-              <>
-                {renderHeaderAvatar()}
-                <div className="flex-1 min-w-0">
-                  <div className="text-[17px] font-semibold truncate">{threadTitle}</div>
-                  {isDm && (
-                    <div className="text-xs text-white/60 truncate">
-                      {allUsers?.find(u => u.id === otherMembers[0].id)?.team || "BGP"}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
+              )}
+              {activeThread?.linkedName && activeThread?.linkedType && activeThread?.linkedId && (
+                <button
+                  onClick={() => {
+                    const t = activeThread.linkedType;
+                    const id = activeThread.linkedId;
+                    if (t === "property") navigate(`/properties/${id}`);
+                    else if (t === "deal") navigate(`/deals/${id}`);
+                    else if (t === "company") navigate(`/companies/${id}`);
+                  }}
+                  className="flex items-center gap-1 mt-1 px-2 py-0.5 -ml-0.5 rounded-full bg-white/5 hover:bg-white/10 active:bg-white/15 transition-colors max-w-full"
+                  data-testid="button-mobile-chat-linked"
+                >
+                  <Link2 className="w-3 h-3 text-gray-300 shrink-0" />
+                  <span className="text-[11px] text-gray-200 truncate">
+                    Open {activeThread.linkedType === "property" ? "property" : activeThread.linkedType === "deal" ? "deal" : activeThread.linkedType}: {activeThread.linkedName}
+                  </span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
