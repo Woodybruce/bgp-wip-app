@@ -7,8 +7,31 @@ import { Input } from "@/components/ui/input";
 import {
   ShieldCheck, ShieldAlert, Clock, AlertCircle, CheckCircle2,
   Loader2, FileText, Search, Building2, Sun, Handshake, ChevronRight,
-  ChevronDown, ChevronUp, ExternalLink, Building,
+  ChevronDown, ChevronUp, ExternalLink, Building, Database,
 } from "lucide-react";
+
+// Friendly labels + tones for automated check sources that populate aml_checklist.
+// Keep in sync with TickSource in server/kyc-orchestrator.ts.
+const SOURCE_META: Record<string, { label: string; tone: string; title: string }> = {
+  companies_house: { label: "Companies House", tone: "border-blue-300 text-blue-700 bg-blue-50", title: "UK company filings + UBO walk" },
+  veriff: { label: "Veriff", tone: "border-indigo-300 text-indigo-700 bg-indigo-50", title: "ID + address verification" },
+  sanctions: { label: "OFSI/OFAC", tone: "border-red-300 text-red-700 bg-red-50", title: "UK OFSI + US OFAC sanctions screening" },
+  perplexity: { label: "Adverse media", tone: "border-purple-300 text-purple-700 bg-purple-50", title: "Perplexity adverse media scan" },
+  clouseau: { label: "Clouseau", tone: "border-teal-300 text-teal-700 bg-teal-50", title: "Clouseau investigation" },
+  comply_advantage: { label: "ComplyAdvantage", tone: "border-amber-300 text-amber-700 bg-amber-50", title: "ComplyAdvantage PEP/sanctions" },
+  system: { label: "System", tone: "border-slate-300 text-slate-700 bg-slate-50", title: "Automated rule" },
+};
+
+function extractSources(checklist: any): string[] {
+  if (!checklist || typeof checklist !== "object") return [];
+  const seen = new Set<string>();
+  for (const v of Object.values(checklist as Record<string, { ticked?: boolean; source?: string }>)) {
+    if (v?.ticked && v.source && v.source !== "manual") seen.add(v.source);
+  }
+  // Stable ordering: automated evidence first, system last
+  const order = ["companies_house", "veriff", "sanctions", "perplexity", "clouseau", "comply_advantage", "system"];
+  return order.filter(s => seen.has(s));
+}
 import { KycPanel } from "@/components/kyc-panel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -56,6 +79,7 @@ function CardItem({ row }: { row: BoardRow }) {
   const checklistTicked = row.aml_checklist
     ? Object.values(row.aml_checklist as Record<string, { ticked?: boolean }>).filter(v => v?.ticked).length
     : 0;
+  const sources = extractSources(row.aml_checklist);
   const investigateHref = row.companies_house_number
     ? `/kyc-clouseau?tab=investigator&run=${encodeURIComponent(row.companies_house_number)}&name=${encodeURIComponent(row.name)}`
     : `/kyc-clouseau?tab=investigator&name=${encodeURIComponent(row.name)}`;
@@ -102,6 +126,25 @@ function CardItem({ row }: { row: BoardRow }) {
             <span>· {dealCount} deal{dealCount === 1 ? "" : "s"}</span>
           )}
         </div>
+        {sources.length > 0 && (
+          <div className="flex items-start gap-1.5 mt-1.5" data-testid={`board-sources-${row.id}`}>
+            <Database className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
+            <div className="flex flex-wrap gap-1">
+              {sources.map(s => {
+                const meta = SOURCE_META[s] || { label: s, tone: "border-slate-300 text-slate-700 bg-slate-50", title: s };
+                return (
+                  <span
+                    key={s}
+                    title={meta.title}
+                    className={`text-[9px] px-1.5 py-0.5 rounded border ${meta.tone} font-medium`}
+                  >
+                    {meta.label}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {row.kyc_expires_at && (
           <div className={`text-[11px] mt-1 ${row.isExpired ? "text-red-600 font-semibold" : "text-muted-foreground"}`}>
             {row.isExpired ? "Re-check overdue" : "Re-check"} {new Date(row.kyc_expires_at).toLocaleDateString("en-GB")}
