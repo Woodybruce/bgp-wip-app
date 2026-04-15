@@ -57,6 +57,7 @@ import { buildUserColorMap } from "@/lib/agent-colors";
 import { EntityPicker } from "@/components/entity-picker";
 import { InlineAddress } from "@/components/address-autocomplete";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schema";
+import { BrandProfilePanel } from "@/components/brand-profile-panel";
 
 interface CHSearchResult {
   companyNumber: string;
@@ -1313,6 +1314,8 @@ function CompanyDetail({ id }: { id: string }) {
               )}
             </CardContent>
           </Card>
+
+          <BrandProfilePanel companyId={id} />
 
           {linkedProperties.length > 0 && (() => {
             const userIdToName = new Map<string, string>();

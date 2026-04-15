@@ -311,6 +311,7 @@ import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
 import veriffRouter from "./veriff";
 import brandDedupeRouter from "./brand-dedupe";
+import brandProfileRouter from "./brand-profile";
 import cadRouter from "./cad";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
@@ -549,6 +550,7 @@ app.use("/api/branding/assets", express.static(
   app.use(amlComplianceRouter);
   app.use(veriffRouter);
   app.use(brandDedupeRouter);
+  app.use(brandProfileRouter);
   app.use(cadRouter);
 
   await registerRoutes(httpServer, app);
