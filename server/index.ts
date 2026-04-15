@@ -110,6 +110,131 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS idx_crm_deals_vendor_id    ON crm_deals(vendor_id)    WHERE vendor_id IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_crm_deals_purchaser_id ON crm_deals(purchaser_id) WHERE purchaser_id IS NOT NULL`,
     `CREATE INDEX IF NOT EXISTS idx_crm_deals_status       ON crm_deals(status)`,
+
+    // ── Brand Bible / deal flow — additive schema ─────────────────────────
+    // crm_companies: brand fields
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS is_tracked_brand BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS tracking_reason TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_group_id VARCHAR`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS concept_pitch TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS store_count INTEGER`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS rollout_status TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS backers TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS instagram_handle TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS agent_type TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS ai_generated_fields JSONB`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_is_tracked_brand ON crm_companies(is_tracked_brand) WHERE is_tracked_brand = true`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_brand_group_id   ON crm_companies(brand_group_id) WHERE brand_group_id IS NOT NULL`,
+
+    // crm_deals: stage + solicitor leg
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS stage TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS stage_entered_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS solicitor_firm TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS solicitor_contact TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS solicitor_instructed_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS draft_lease_received_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS comments_returned_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS engrossment_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS completion_target_date TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS solicitor_notes TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_stage ON crm_deals(stage) WHERE stage IS NOT NULL`,
+
+    // available_units: link to leasing schedule unit
+    `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS leasing_schedule_unit_id VARCHAR`,
+    `CREATE INDEX IF NOT EXISTS idx_available_units_leasing_schedule_unit_id ON available_units(leasing_schedule_unit_id) WHERE leasing_schedule_unit_id IS NOT NULL`,
+
+    // brand_agent_representations
+    `CREATE TABLE IF NOT EXISTS brand_agent_representations (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       brand_company_id VARCHAR NOT NULL,
+       agent_company_id VARCHAR NOT NULL,
+       agent_type TEXT NOT NULL,
+       region TEXT,
+       primary_contact_id VARCHAR,
+       start_date TIMESTAMP,
+       end_date TIMESTAMP,
+       notes TEXT,
+       created_at TIMESTAMP DEFAULT now(),
+       updated_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_brand ON brand_agent_representations(brand_company_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_agent ON brand_agent_representations(agent_company_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_active ON brand_agent_representations(brand_company_id) WHERE end_date IS NULL`,
+
+    // brand_signals (time-series of openings / closures / funding / news)
+    `CREATE TABLE IF NOT EXISTS brand_signals (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       brand_company_id VARCHAR NOT NULL,
+       signal_type TEXT NOT NULL,
+       headline TEXT NOT NULL,
+       detail TEXT,
+       source TEXT,
+       signal_date TIMESTAMP,
+       magnitude TEXT,
+       sentiment TEXT,
+       ai_generated BOOLEAN DEFAULT false,
+       created_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_brand_signals_brand_date ON brand_signals(brand_company_id, signal_date DESC)`,
+
+    // leasing_pitch (per-property ERV / incentives / target tenants)
+    `CREATE TABLE IF NOT EXISTS leasing_pitch (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       property_id VARCHAR NOT NULL UNIQUE,
+       erv REAL,
+       erv_per_sqft REAL,
+       incentive_plan TEXT,
+       rent_free_months INTEGER,
+       capex_contribution REAL,
+       fit_out_contribution REAL,
+       target_brand_ids TEXT[],
+       marketing_strategy TEXT,
+       positioning TEXT,
+       ai_generated_fields JSONB,
+       created_at TIMESTAMP DEFAULT now(),
+       updated_at TIMESTAMP DEFAULT now()
+     )`,
+
+    // deal_hots (structured, versioned Heads of Terms)
+    `CREATE TABLE IF NOT EXISTS deal_hots (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       deal_id VARCHAR NOT NULL,
+       version INTEGER NOT NULL DEFAULT 1,
+       rent_pa REAL,
+       term_years REAL,
+       break_option TEXT,
+       rent_free_months REAL,
+       fit_out_contribution REAL,
+       deposit REAL,
+       rent_review_mechanism TEXT,
+       use_class TEXT,
+       alienation TEXT,
+       repair_obligations TEXT,
+       aga_required BOOLEAN DEFAULT false,
+       schedule_of_condition BOOLEAN DEFAULT false,
+       notes TEXT,
+       status TEXT DEFAULT 'draft',
+       signed_at TIMESTAMP,
+       signed_by TEXT,
+       created_by VARCHAR,
+       created_at TIMESTAMP DEFAULT now(),
+       updated_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_hots_deal_version ON deal_hots(deal_id, version DESC)`,
+
+    // deal_events (append-only audit log)
+    `CREATE TABLE IF NOT EXISTS deal_events (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       deal_id VARCHAR NOT NULL,
+       event_type TEXT NOT NULL,
+       from_stage TEXT,
+       to_stage TEXT,
+       payload JSONB,
+       actor_id VARCHAR,
+       actor_name TEXT,
+       occurred_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_events_deal_occurred ON deal_events(deal_id, occurred_at DESC)`,
   ];
 
   let ok = 0, skipped = 0;
