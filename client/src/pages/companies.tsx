@@ -1,7 +1,6 @@
 import { guessDomain } from "@/lib/company-logos";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
-import { KycPanel } from "@/components/kyc-panel";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -921,6 +920,90 @@ function getCompanyBgpContacts(company: CrmCompany): string[] {
     : company.bgpContactCrm ? [company.bgpContactCrm] : [];
 }
 
+function CompanyKycSummaryCard({ company, relatedDeals, propertyMap }: { company: CrmCompany; relatedDeals: CrmDeal[]; propertyMap: Map<string, CrmProperty> }) {
+  const kycStatus = (company as any).kycStatus;
+  const chData = company.companiesHouseData as any;
+  const checkedAt = chData?.checkedAt || (company as any).kycCheckedAt;
+  const amlChecklist = (company as any).amlChecklist as Record<string, boolean> | null;
+  const checklistTotal = 12;
+  const checklistDone = amlChecklist ? Object.values(amlChecklist).filter(Boolean).length : 0;
+
+  const dealRoles = relatedDeals.map(deal => {
+    const roles: string[] = [];
+    if (deal.tenantId === company.id) roles.push("Tenant");
+    if (deal.landlordId === company.id) roles.push("Landlord");
+    if (deal.vendorId === company.id) roles.push("Vendor");
+    if (deal.purchaserId === company.id) roles.push("Purchaser");
+    if (deal.invoicingEntityId === company.id && roles.length === 0) roles.push("Invoicing Entity");
+    if (roles.length === 0) roles.push("Linked");
+    const prop = deal.propertyId ? propertyMap.get(deal.propertyId) : null;
+    return { deal, roles, property: prop };
+  });
+
+  return (
+    <Card data-testid="company-kyc-summary">
+      <CardContent className="p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <h3 className="text-xs font-semibold">AML / KYC Compliance</h3>
+            {kycStatus === "pass" ? (
+              <Badge className="text-[9px] bg-green-600 text-white">Verified</Badge>
+            ) : kycStatus === "warning" ? (
+              <Badge className="text-[9px] bg-amber-500 text-white">Review</Badge>
+            ) : kycStatus === "fail" ? (
+              <Badge className="text-[9px] bg-red-500 text-white">Failed</Badge>
+            ) : (
+              <Badge variant="outline" className="text-[9px] text-muted-foreground">Not Checked</Badge>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+            {checkedAt && <span>Checked {new Date(checkedAt).toLocaleDateString("en-GB")}</span>}
+            {amlChecklist && <span>Checklist {checklistDone}/{checklistTotal}</span>}
+          </div>
+        </div>
+
+        {dealRoles.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-[10px] text-muted-foreground font-medium">Linked Deals</p>
+            {dealRoles.map(({ deal, roles, property }) => (
+              <div key={deal.id} className="flex items-center justify-between py-1.5 px-2 rounded border bg-muted/20">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Handshake className="w-3 h-3 text-muted-foreground shrink-0" />
+                  <div className="min-w-0">
+                    <Link href={`/deals/${deal.id}`}>
+                      <span className="text-xs font-medium hover:underline cursor-pointer truncate block">{deal.name}</span>
+                    </Link>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="text-[10px] text-muted-foreground">{roles.join(", ")}</span>
+                      {property && (
+                        <span className="text-[10px] text-muted-foreground">
+                          — <Link href={`/properties/${property.id}`}><span className="hover:underline cursor-pointer">{property.name}</span></Link>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {deal.dealType && (
+                  <Badge variant="secondary" className="text-[8px] shrink-0">{deal.dealType}</Badge>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="pt-2 border-t flex items-center justify-between">
+          <Link href="/compliance-board">
+            <span className="text-[11px] text-primary hover:underline cursor-pointer flex items-center gap-1" data-testid="link-company-compliance-board">
+              <ShieldCheck className="w-3 h-3" /> View full KYC pack on Compliance Board
+            </span>
+          </Link>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function CompanyDetail({ id }: { id: string }) {
   const { toast } = useToast();
   const [editOpen, setEditOpen] = useState(false);
@@ -1323,7 +1406,7 @@ function CompanyDetail({ id }: { id: string }) {
         </div>
 
         <div className="lg:col-span-3">
-          <KycPanel companyId={company.id} />
+          <CompanyKycSummaryCard company={company} relatedDeals={relatedDeals} propertyMap={propertyMap} />
         </div>
 
         {(propertiesWithDeals.grouped.length > 0 || propertiesWithDeals.unlinkedDeals.length > 0) && (
