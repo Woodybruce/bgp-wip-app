@@ -458,6 +458,10 @@ export const crmCompanies = pgTable("crm_companies", {
   agentType: text("agent_type"), // tenant_rep | landlord_rep | investment | null (for non-agents)
   // AI-enrichment provenance — which fields were auto-written vs human
   aiGeneratedFields: jsonb("ai_generated_fields"),
+  // Dedupe — when set, this row is a merged-away duplicate. Hidden from lists.
+  mergedIntoId: varchar("merged_into_id"),
+  mergedAt: timestamp("merged_at"),
+  mergedBy: text("merged_by"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

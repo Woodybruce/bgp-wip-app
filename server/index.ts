@@ -235,6 +235,39 @@ import { pool } from "./db";
        occurred_at TIMESTAMP DEFAULT now()
      )`,
     `CREATE INDEX IF NOT EXISTS idx_deal_events_deal_occurred ON deal_events(deal_id, occurred_at DESC)`,
+
+    // Dedupe machinery — track merges so we can undo and hide merged rows
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS merged_into_id VARCHAR`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS merged_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS merged_by TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_merged_into ON crm_companies(merged_into_id) WHERE merged_into_id IS NOT NULL`,
+
+    `CREATE TABLE IF NOT EXISTS dedupe_candidates (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       cluster_key TEXT NOT NULL,
+       company_ids TEXT[] NOT NULL,
+       reason TEXT,
+       ai_verdict TEXT,
+       ai_confidence REAL,
+       status TEXT DEFAULT 'pending',
+       reviewed_by TEXT,
+       reviewed_at TIMESTAMP,
+       created_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_dedupe_candidates_status ON dedupe_candidates(status)`,
+
+    `CREATE TABLE IF NOT EXISTS dedupe_merges (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       primary_id VARCHAR NOT NULL,
+       secondary_id VARCHAR NOT NULL,
+       merged_by TEXT,
+       merged_at TIMESTAMP DEFAULT now(),
+       secondary_snapshot JSONB,
+       reference_updates JSONB,
+       notes TEXT
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_dedupe_merges_primary ON dedupe_merges(primary_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_dedupe_merges_secondary ON dedupe_merges(secondary_id)`,
   ];
 
   let ok = 0, skipped = 0;
@@ -277,6 +310,7 @@ import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
 import veriffRouter from "./veriff";
+import brandDedupeRouter from "./brand-dedupe";
 import cadRouter from "./cad";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
@@ -514,6 +548,7 @@ app.use("/api/branding/assets", express.static(
   app.use(kycClouseauRouter);
   app.use(amlComplianceRouter);
   app.use(veriffRouter);
+  app.use(brandDedupeRouter);
   app.use(cadRouter);
 
   await registerRoutes(httpServer, app);

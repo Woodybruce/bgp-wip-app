@@ -79,6 +79,7 @@ const AmlTraining = lazy(() => import("@/pages/aml-training"));
 const KycHub = lazy(() => import("@/pages/kyc-hub"));
 const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
+const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
 
 
 function PageLoader() {
@@ -140,6 +141,7 @@ function Router() {
       <Route path="/subscriptions" component={Subscriptions} />
       <Route path="/chatbgp" component={ChatBGP} />
       <Route path="/enrichment" component={Enrichment} />
+      <Route path="/admin/dedupe" component={AdminDedupe} />
       <Route path="/land-registry" component={LandRegistry} />
       <Route path="/business-rates" component={VoaRatings} />
       <Route path="/board-report" component={BoardReport} />
