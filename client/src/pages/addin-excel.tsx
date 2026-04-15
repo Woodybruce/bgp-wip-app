@@ -2072,7 +2072,7 @@ function AddinExcel() {
     <div className="flex flex-col h-screen bg-background text-foreground" style={{ maxWidth: 450 }}>
       <AddinHeader
         title="ChatBGP"
-        subtitle="Claude Sonnet"
+        subtitle="Opus 4.6 · Hardcore Builder"
         onNewChat={clearChat}
       >
         <Button
@@ -2368,7 +2368,7 @@ function AddinExcel() {
               </button>
             </div>
             <div className="flex items-center justify-center mt-1.5">
-              <span className="text-[9px] text-muted-foreground/50">Claude Sonnet 4 · BGP CRM</span>
+              <span className="text-[9px] text-muted-foreground/50">Opus 4.6 · Hardcore Builder · BGP CRM</span>
             </div>
           </div>
         </>

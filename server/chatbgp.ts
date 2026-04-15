@@ -9600,7 +9600,7 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
         loopCount++;
         const isLastLoop = loopCount >= maxLoops;
         const loopOpts: any = {
-          model: CHATBGP_HELPER_MODEL,
+          model: CHATBGP_MODEL,
           messages: convMessages,
           max_completion_tokens: 4096,
         };
