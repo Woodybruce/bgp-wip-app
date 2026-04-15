@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, Handshake, ShieldCheck,
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
-  Instagram, Coins, FileText, AlertCircle, Clock,
+  Instagram, Coins, FileText, AlertCircle, Clock, Download,
 } from "lucide-react";
 
 interface BrandProfile {
@@ -239,6 +239,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           {c.agent_type && <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
         </CardTitle>
         <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => window.open(`/api/brand/${companyId}/pack.pdf`, "_blank")}
+            title="Download brand pack PDF"
+            data-testid="button-brand-pack"
+          >
+            <Download className="w-3.5 h-3.5" />
+          </Button>
           <Button
             variant="ghost"
             size="sm"

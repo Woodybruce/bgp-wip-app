@@ -314,6 +314,8 @@ import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
 import apolloContactsRouter from "./apollo-contacts";
+import brandPackRouter from "./brand-pack";
+import dealDocsRouter from "./deal-docs";
 import cadRouter from "./cad";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
@@ -555,6 +557,8 @@ app.use("/api/branding/assets", express.static(
   app.use(brandProfileRouter);
   app.use(brandEnrichmentRouter);
   app.use(apolloContactsRouter);
+  app.use(brandPackRouter);
+  app.use(dealDocsRouter);
   app.use(cadRouter);
 
   await registerRoutes(httpServer, app);
