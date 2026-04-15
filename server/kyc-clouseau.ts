@@ -76,7 +76,7 @@ interface InvestigationResult {
   timestamp: string;
 }
 
-async function getCompanyData(companyNumber: string) {
+export async function getCompanyData(companyNumber: string) {
   const padded = companyNumber.padStart(8, "0");
   const [profile, officersData, pscsData, filingData, chargesData] = await Promise.allSettled([
     chFetch(`/company/${padded}`),
@@ -104,7 +104,7 @@ async function getCompanyData(companyNumber: string) {
   };
 }
 
-async function screenSanctions(names: string[]) {
+export async function screenSanctions(names: string[]) {
   try {
     const { screenName, loadSanctionsList } = await import("./sanctions-screening");
     await loadSanctionsList();
@@ -133,7 +133,7 @@ async function screenSanctions(names: string[]) {
   }
 }
 
-function assessRisk(data: any, sanctionsResult: any): { score: number; level: string; flags: string[] } {
+export function assessRisk(data: any, sanctionsResult: any): { score: number; level: string; flags: string[] } {
   const flags: string[] = [];
   let score = 0;
 
@@ -1296,7 +1296,7 @@ Format with clear headers. Be specific — name actual people, companies, and co
 });
 
 // Audit log helper
-async function logKycAudit(investigationId: number, action: string, performedBy: string | null, notes?: string) {
+export async function logKycAudit(investigationId: number, action: string, performedBy: string | null, notes?: string) {
   try {
     await pool.query(
       `INSERT INTO kyc_audit_log (investigation_id, action, performed_by, notes) VALUES ($1, $2, $3, $4)`,

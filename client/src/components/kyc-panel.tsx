@@ -235,9 +235,42 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   }
 
   function toggleChecklistItem(itemId: string) {
-    const next = { ...checklist, [itemId]: { ticked: !checklist[itemId]?.ticked } };
+    const wasTicked = !!checklist[itemId]?.ticked;
+    // Mark as a manual tick so the server-side orchestrator won't overwrite
+    // it on the next auto-run — manual sign-off from the MLRO wins.
+    const next = {
+      ...checklist,
+      [itemId]: wasTicked
+        ? { ticked: false, source: "manual" }
+        : { ticked: true, source: "manual", tickedAt: new Date().toISOString() },
+    };
     checklistMutation.mutate({ checklist: next });
   }
+
+  const runAllChecks = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/kyc/run-all-checks", { companyId, dealId });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      const run = data?.runs?.[0];
+      if (!run) {
+        toast({ title: "AML sweep complete", description: "No runs returned" });
+      } else if (run.error) {
+        toast({ title: "AML sweep failed", description: run.error, variant: "destructive" });
+      } else {
+        const ticked = (run.checklistTicked || []).length;
+        const veriff = (run.veriffLaunched || []).length;
+        toast({
+          title: "AML sweep complete",
+          description: `Risk: ${run.risk?.level || "n/a"} · auto-ticked ${ticked} item${ticked === 1 ? "" : "s"} · launched ${veriff} Veriff session${veriff === 1 ? "" : "s"}`,
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/kyc/company", companyId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/veriff/sessions", { companyId }] });
+    },
+    onError: (e: any) => toast({ title: "AML sweep failed", description: e?.message, variant: "destructive" }),
+  });
 
   if (isLoading) return <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin" /></div>;
   if (!company) return null;
@@ -345,28 +378,52 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
 
           {/* Checklist */}
           <div>
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 gap-2">
               <h4 className="text-sm font-semibold">MLR 2017 CDD Checklist</h4>
-              <span className="text-xs text-muted-foreground">{tickedCount} / {CHECKLIST_ITEMS.length}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">{tickedCount} / {CHECKLIST_ITEMS.length}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => runAllChecks.mutate()}
+                  disabled={runAllChecks.isPending}
+                  data-testid="btn-run-all-checks"
+                  className="h-7 text-xs"
+                >
+                  {runAllChecks.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Scan className="w-3 h-3 mr-1" />}
+                  Run all AML checks
+                </Button>
+              </div>
             </div>
             <div className="space-y-1.5">
-              {CHECKLIST_ITEMS.map(item => (
-                <label
-                  key={item.id}
-                  className="flex items-start gap-2 text-sm cursor-pointer hover:bg-muted/40 rounded-md px-2 py-1.5"
-                  data-testid={`checklist-item-${item.id}`}
-                >
-                  <Checkbox
-                    checked={!!checklist[item.id]?.ticked}
-                    onCheckedChange={() => toggleChecklistItem(item.id)}
-                    className="mt-0.5"
-                  />
-                  <span className={`flex-1 ${checklist[item.id]?.ticked ? "text-muted-foreground line-through" : ""}`}>
-                    {item.label}
-                  </span>
-                  <Badge variant="outline" className="text-[10px] shrink-0">{item.group}</Badge>
-                </label>
-              ))}
+              {CHECKLIST_ITEMS.map(item => {
+                const entry = checklist[item.id] as { ticked?: boolean; source?: string; notes?: string } | undefined;
+                const source = entry?.source;
+                const autoTicked = entry?.ticked && source && source !== "manual";
+                return (
+                  <label
+                    key={item.id}
+                    className="flex items-start gap-2 text-sm cursor-pointer hover:bg-muted/40 rounded-md px-2 py-1.5"
+                    data-testid={`checklist-item-${item.id}`}
+                    title={entry?.notes || ""}
+                  >
+                    <Checkbox
+                      checked={!!entry?.ticked}
+                      onCheckedChange={() => toggleChecklistItem(item.id)}
+                      className="mt-0.5"
+                    />
+                    <span className={`flex-1 ${entry?.ticked ? "text-muted-foreground line-through" : ""}`}>
+                      {item.label}
+                    </span>
+                    {autoTicked && (
+                      <Badge variant="secondary" className="text-[10px] shrink-0" data-testid={`source-${item.id}`}>
+                        auto · {source}
+                      </Badge>
+                    )}
+                    <Badge variant="outline" className="text-[10px] shrink-0">{item.group}</Badge>
+                  </label>
+                );
+              })}
             </div>
           </div>
 

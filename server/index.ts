@@ -313,6 +313,7 @@ import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
 import veriffRouter from "./veriff";
+import kycOrchestratorRouter from "./kyc-orchestrator";
 import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
@@ -557,6 +558,7 @@ app.use("/api/branding/assets", express.static(
   app.use(kycClouseauRouter);
   app.use(amlComplianceRouter);
   app.use(veriffRouter);
+  app.use(kycOrchestratorRouter);
   app.use(brandDedupeRouter);
   app.use(brandProfileRouter);
   app.use(brandEnrichmentRouter);

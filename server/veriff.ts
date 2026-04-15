@@ -332,6 +332,21 @@ veriffRouter.post("/api/veriff/webhook", async (req: Request, res: Response) => 
             s.requested_by,
           ]
         ).catch((e) => console.warn("[veriff] kyc_documents insert failed:", e?.message));
+
+        // Auto-tick identity_verified + address_verified on the company's
+        // AML checklist — lazy-import the orchestrator to avoid a circular
+        // dep between veriff.ts and kyc-orchestrator.ts.
+        if (s.company_id) {
+          try {
+            const { autoTickFromVeriff } = await import("./kyc-orchestrator");
+            const ticked = await autoTickFromVeriff(s.company_id, sessionId, status);
+            if (ticked.length > 0) {
+              console.log(`[veriff] Auto-ticked ${ticked.join(", ")} for company ${s.company_id} from session ${sessionId}`);
+            }
+          } catch (e: any) {
+            console.warn("[veriff] Auto-tick failed:", e?.message);
+          }
+        }
       }
     }
 
