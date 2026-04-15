@@ -25,6 +25,7 @@ import {
 import { useState, useMemo, useEffect } from "react";
 import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
 import { PropertyTenancySchedule } from "@/components/PropertyTenancySchedule";
+import { LeasingPitchPanel } from "@/components/leasing-pitch-panel";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -390,6 +391,8 @@ export function PropertyDetail({ id }: { id: string }) {
             <PropertyKycPanel property={property} />
 
             <PropertyIntelligencePanel property={property} />
+
+            <LeasingPitchPanel propertyId={property.id} />
 
             <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
 

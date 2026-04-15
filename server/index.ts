@@ -323,6 +323,7 @@ import brandPackRouter from "./brand-pack";
 import dealDocsRouter from "./deal-docs";
 import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
 import dealStagesRouter from "./deal-stages";
+import leasingPitchRouter from "./leasing-pitch";
 import cadRouter from "./cad";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
@@ -568,6 +569,7 @@ app.use("/api/branding/assets", express.static(
   app.use(dealDocsRouter);
   app.use(weeklyReportRouter);
   app.use(dealStagesRouter);
+  app.use(leasingPitchRouter);
   app.use(cadRouter);
 
   await registerRoutes(httpServer, app);
