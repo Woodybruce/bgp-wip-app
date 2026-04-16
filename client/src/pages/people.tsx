@@ -22,6 +22,7 @@ import {
   Coffee, Wine, UtensilsCrossed, Soup, CakeSlice,
   Tv, Gamepad2, Baby, Palette, PartyPopper,
   HeartPulse, Bath,
+  Diamond, Car, Wifi, Landmark, Gift, Home, Activity, Zap,
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -776,53 +777,68 @@ function AgentsTab({
 }
 
 // ── Two-tier tenant brand taxonomy ──────────────────────────────────
-// Top-level: Retail, Restaurants, Leisure, Health & Fitness
-// Each has subcategories with match arrays for CRM company types.
-// A company matches a subcategory if its companyType (case-insensitive)
-// equals any string in the match array.
 type SubCategory = { key: string; label: string; icon: any; match: string[] };
-type TopCategory = { key: string; label: string; icon: any; color: string; subs: SubCategory[] };
+type TopCategory = { key: string; label: string; icon: any; color: string; gradient: string; subs: SubCategory[] };
 
 const TENANT_CATEGORIES: TopCategory[] = [
   {
-    key: "retail", label: "Retail", icon: Store, color: "bg-pink-600",
+    key: "luxury", label: "Luxury", icon: Diamond, color: "bg-yellow-600", gradient: "from-yellow-500 to-amber-600",
     subs: [
-      { key: "flagship-fashion", label: "Flagship Fashion", icon: Crown, match: ["Tenant - Flagship Fashion"] },
-      { key: "fashion", label: "Fashion", icon: Shirt, match: ["Tenant - Fashion", "Tenant - Clothing", "Tenant - Apparel", "Tenant - Womenswear", "Tenant - Menswear", "Tenant - Kidswear", "Tenant - Lingerie", "Tenant - Sportswear"] },
-      { key: "accessories", label: "Accessories & Footwear", icon: Footprints, match: ["Tenant - Accessories", "Tenant - Footwear", "Tenant - Shoes", "Tenant - Accessories & Footwear"] },
-      { key: "jewellery", label: "Jewellery & Watches", icon: Gem, match: ["Tenant - Jewellery", "Tenant - Watches", "Tenant - Jewellery & Watches"] },
-      { key: "beauty", label: "Beauty / Skincare / Fragrance", icon: Sparkles, match: ["Tenant - Beauty", "Tenant - Skincare", "Tenant - Fragrance", "Tenant - Beauty & Wellness", "Tenant - Cosmetics"] },
-      { key: "lifestyle", label: "Lifestyle & Home", icon: Flower2, match: ["Tenant - Lifestyle", "Tenant - Lifestyle & Home", "Tenant - Homewares", "Tenant - Home", "Tenant - Gifts", "Tenant - Gifts & Speciality", "Tenant - Art", "Tenant - Interiors"] },
-      { key: "technology", label: "Technology & Electronics", icon: Smartphone, match: ["Tenant - Technology", "Tenant - Electronics", "Tenant - Tech"] },
-      { key: "grocery", label: "Grocery & Convenience", icon: ShoppingCart, match: ["Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket"] },
-      { key: "books", label: "Books & Stationery", icon: BookOpen, match: ["Tenant - Books", "Tenant - Stationery", "Tenant - Books & Stationery"] },
-      { key: "services", label: "Services", icon: Briefcase, match: ["Tenant - Services", "Tenant - Bank", "Tenant - Optician", "Tenant - Travel", "Tenant - Other Services"] },
-      { key: "other-retail", label: "Other Retail", icon: ShoppingBag, match: ["Tenant - Retail", "Tenant", "Tenant - General Retail"] },
+      { key: "luxury-fashion", label: "Luxury Fashion", icon: Crown, match: ["Tenant - Luxury", "Tenant - Luxury Fashion"] },
+      { key: "luxury-accessories", label: "Luxury Accessories", icon: Gem, match: ["Tenant - Luxury Accessories"] },
+      { key: "luxury-beauty", label: "Luxury Beauty", icon: Sparkles, match: ["Tenant - Luxury Beauty"] },
+      { key: "watches-jewellery", label: "Watches & Jewellery", icon: Watch, match: ["Tenant - Jewellery & Watches", "Tenant - Jewellery", "Tenant - Watches"] },
     ],
   },
   {
-    key: "restaurants", label: "Restaurants", icon: Utensils, color: "bg-rose-600",
+    key: "retail", label: "Fashion & Retail", icon: Store, color: "bg-pink-600", gradient: "from-pink-500 to-rose-600",
+    subs: [
+      { key: "flagship-fashion", label: "Flagship Fashion", icon: Crown, match: ["Tenant - Flagship Fashion"] },
+      { key: "fashion", label: "Fashion", icon: Shirt, match: ["Tenant - Fashion", "Tenant - Clothing", "Tenant - Apparel", "Tenant - Womenswear", "Tenant - Menswear", "Tenant - Kidswear", "Tenant - Lingerie"] },
+      { key: "athleisure", label: "Athleisure", icon: Activity, match: ["Tenant - Athleisure", "Tenant - Sportswear"] },
+      { key: "footwear", label: "Footwear", icon: Footprints, match: ["Tenant - Footwear", "Tenant - Shoes"] },
+      { key: "accessories", label: "Accessories", icon: ShoppingBag, match: ["Tenant - Accessories & Footwear", "Tenant - Accessories"] },
+      { key: "beauty", label: "Beauty / Skincare / Fragrance", icon: Sparkles, match: ["Tenant - Beauty", "Tenant - Skincare", "Tenant - Fragrance", "Tenant - Beauty & Wellness", "Tenant - Cosmetics"] },
+      { key: "homewares", label: "Homewares", icon: Home, match: ["Tenant - Homewares", "Tenant - Home", "Tenant - Interiors"] },
+      { key: "lifestyle", label: "Lifestyle & Home", icon: Flower2, match: ["Tenant - Lifestyle & Home", "Tenant - Lifestyle", "Tenant - Art"] },
+      { key: "gifts", label: "Gifts & Perfumes", icon: Gift, match: ["Tenant - Gifts & Perfumes", "Tenant - Gifts", "Tenant - Gifts & Speciality"] },
+      { key: "department", label: "Department Stores", icon: Building2, match: ["Tenant - Department Store"] },
+      { key: "technology", label: "Technology & Electronics", icon: Smartphone, match: ["Tenant - Technology", "Tenant - Electronics", "Tenant - Tech"] },
+      { key: "automotive", label: "Automotive", icon: Car, match: ["Tenant - Automotive", "Tenant - Cars"] },
+      { key: "telecoms", label: "Telecoms", icon: Wifi, match: ["Tenant - Telecoms", "Tenant - Telecommunications"] },
+      { key: "grocery", label: "Grocery & Convenience", icon: ShoppingCart, match: ["Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket"] },
+      { key: "books", label: "Books & Stationery", icon: BookOpen, match: ["Tenant - Books", "Tenant - Stationery", "Tenant - Books & Stationery"] },
+      { key: "financial", label: "Financial Services", icon: Landmark, match: ["Tenant - Financial Services", "Tenant - Bank", "Tenant - Finance"] },
+      { key: "services", label: "Services", icon: Briefcase, match: ["Tenant - Services", "Tenant - Optician", "Tenant - Travel", "Tenant - Other Services"] },
+      { key: "other-retail", label: "Other Retail", icon: Store, match: ["Tenant - Retail", "Tenant - General Retail"] },
+    ],
+  },
+  {
+    key: "restaurants", label: "Food & Drink", icon: Utensils, color: "bg-rose-600", gradient: "from-rose-500 to-red-600",
     subs: [
       { key: "fine-dining", label: "Fine Dining", icon: UtensilsCrossed, match: ["Tenant - Fine Dining"] },
       { key: "casual-dining", label: "Casual Dining", icon: Utensils, match: ["Tenant - Casual Dining", "Tenant - Restaurant", "Tenant - Food & Drink"] },
-      { key: "quick-service", label: "Quick Service / Fast Casual", icon: Soup, match: ["Tenant - Quick Service", "Tenant - Fast Casual", "Tenant - Fast Food", "Tenant - QSR"] },
+      { key: "quick-service", label: "Quick Service", icon: Soup, match: ["Tenant - Quick Service", "Tenant - Fast Casual", "Tenant - Fast Food", "Tenant - QSR"] },
       { key: "cafes", label: "Cafés & Coffee", icon: Coffee, match: ["Tenant - Café", "Tenant - Coffee", "Tenant - Café & Coffee", "Tenant - F&B"] },
       { key: "bars", label: "Bars & Pubs", icon: Wine, match: ["Tenant - Bar", "Tenant - Pub", "Tenant - Wine Bar"] },
       { key: "bakery", label: "Bakery & Patisserie", icon: CakeSlice, match: ["Tenant - Bakery", "Tenant - Patisserie"] },
+      { key: "foodstores", label: "Food Stores", icon: ShoppingCart, match: ["Tenant - Grocery"] },
     ],
   },
   {
-    key: "leisure", label: "Leisure", icon: Clapperboard, color: "bg-purple-600",
+    key: "leisure", label: "Leisure & Experience", icon: Clapperboard, color: "bg-purple-600", gradient: "from-purple-500 to-violet-600",
     subs: [
       { key: "cinema", label: "Cinema", icon: Tv, match: ["Tenant - Cinema", "Tenant - Cinema & Film"] },
-      { key: "experiential", label: "Experiential / Activation", icon: PartyPopper, match: ["Tenant - Experiential", "Tenant - Activation", "Tenant - Leisure", "Tenant - Entertainment"] },
+      { key: "experiential", label: "Experiential", icon: PartyPopper, match: ["Tenant - Experiential", "Tenant - Activation", "Tenant - Entertainment"] },
+      { key: "immersive", label: "Immersive Experience", icon: Zap, match: ["Tenant - Immersive Experience", "Tenant - Immersive"] },
       { key: "gaming", label: "Gaming & Escape Rooms", icon: Gamepad2, match: ["Tenant - Gaming", "Tenant - Escape Room", "Tenant - Bowling", "Tenant - Arcade"] },
-      { key: "family", label: "Family Entertainment", icon: Baby, match: ["Tenant - Family", "Tenant - Soft Play", "Tenant - Kids Entertainment"] },
+      { key: "family", label: "Family Entertainment", icon: Baby, match: ["Tenant - Family Entertainment", "Tenant - Family", "Tenant - Soft Play", "Tenant - Kids Entertainment"] },
+      { key: "leisure-other", label: "Other Leisure", icon: Clapperboard, match: ["Tenant - Leisure"] },
       { key: "arts", label: "Arts & Culture", icon: Palette, match: ["Tenant - Arts", "Tenant - Culture", "Tenant - Gallery"] },
     ],
   },
   {
-    key: "health", label: "Health & Fitness", icon: Dumbbell, color: "bg-orange-600",
+    key: "health", label: "Health & Wellness", icon: Dumbbell, color: "bg-orange-600", gradient: "from-orange-500 to-amber-600",
     subs: [
       { key: "gym", label: "Gym & Fitness", icon: Dumbbell, match: ["Tenant - Gym", "Tenant - Fitness", "Tenant - Gym & Fitness", "Tenant - Health & Fitness"] },
       { key: "wellness", label: "Wellness & Spa", icon: Bath, match: ["Tenant - Wellness", "Tenant - Spa", "Tenant - Hair", "Tenant - Nails", "Tenant - Aesthetics"] },
@@ -937,16 +953,35 @@ function TenantsTab({
   return (
     <div className="space-y-4">
       {/* Top-level category cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-        <div className="cursor-pointer" onClick={() => { setActiveCategory(null); setActiveSub(null); }} data-testid="stat-all">
-          <StatCard label="All Brands" value={tenantCompanies.length} icon={Store} color={activeCategory === null ? "bg-teal-800 ring-2 ring-offset-0" : "bg-teal-600"} />
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div
+          className={`cursor-pointer rounded-xl p-4 text-white transition-all hover:scale-[1.02] active:scale-[0.98] ${
+            activeCategory === null
+              ? "bg-gradient-to-br from-teal-500 to-teal-700 shadow-lg ring-2 ring-teal-400 ring-offset-2"
+              : "bg-gradient-to-br from-teal-500 to-teal-700 opacity-80 hover:opacity-100"
+          }`}
+          onClick={() => { setActiveCategory(null); setActiveSub(null); }}
+          data-testid="stat-all"
+        >
+          <Store className="w-6 h-6 mb-2 opacity-90" />
+          <div className="text-2xl font-bold">{tenantCompanies.length}</div>
+          <div className="text-xs font-medium opacity-90 mt-0.5">All Brands</div>
         </div>
         {TENANT_CATEGORIES.map((cat) => {
           const isActive = activeCategory === cat.key;
-          const color = isActive ? `${cat.color.replace("600", "800")} ring-2 ring-offset-0` : cat.color;
+          const Icon = cat.icon;
           return (
-            <div key={cat.key} className="cursor-pointer" onClick={() => { setActiveCategory(isActive ? null : cat.key); setActiveSub(null); }} data-testid={`stat-${cat.key}`}>
-              <StatCard label={cat.label} value={categoryCounts[cat.key] || 0} icon={cat.icon} color={color} />
+            <div
+              key={cat.key}
+              className={`cursor-pointer rounded-xl p-4 text-white transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-br ${cat.gradient} ${
+                isActive ? "shadow-lg ring-2 ring-white/40 ring-offset-2" : "opacity-80 hover:opacity-100"
+              }`}
+              onClick={() => { setActiveCategory(isActive ? null : cat.key); setActiveSub(null); }}
+              data-testid={`stat-${cat.key}`}
+            >
+              <Icon className="w-6 h-6 mb-2 opacity-90" />
+              <div className="text-2xl font-bold">{categoryCounts[cat.key] || 0}</div>
+              <div className="text-xs font-medium opacity-90 mt-0.5">{cat.label}</div>
             </div>
           );
         })}
@@ -954,14 +989,16 @@ function TenantsTab({
 
       {/* Subcategory pills — only show when a top-level category is selected */}
       {activeCatObj && (
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setActiveSub(null)}
-            className={`text-xs px-3 py-1 rounded-full border transition-colors ${
-              activeSub === null ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
+            className={`text-sm px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all border ${
+              activeSub === null
+                ? `${activeCatObj.color} text-white border-transparent shadow-sm`
+                : "bg-muted/50 hover:bg-muted border-border text-foreground"
             }`}
           >
-            All {activeCatObj.label} ({categoryCounts[activeCatObj.key] || 0})
+            All {activeCatObj.label} <span className="text-xs opacity-75">({categoryCounts[activeCatObj.key] || 0})</span>
           </button>
           {activeCatObj.subs.map(sub => {
             const count = categoryCounts[sub.key] || 0;
@@ -971,13 +1008,15 @@ function TenantsTab({
               <button
                 key={sub.key}
                 onClick={() => setActiveSub(isActive ? null : sub.key)}
-                className={`text-xs px-3 py-1 rounded-full border transition-colors flex items-center gap-1 ${
-                  isActive ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
+                className={`text-sm px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all border ${
+                  isActive
+                    ? `${activeCatObj.color} text-white border-transparent shadow-sm`
+                    : "bg-muted/50 hover:bg-muted border-border text-foreground"
                 }`}
                 data-testid={`sub-${sub.key}`}
               >
-                <Icon className="w-3 h-3" />
-                {sub.label} ({count})
+                <Icon className="w-3.5 h-3.5" />
+                {sub.label} <span className="text-xs opacity-75">({count})</span>
               </button>
             );
           })}

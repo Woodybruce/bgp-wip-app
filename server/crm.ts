@@ -4608,6 +4608,89 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     res.json({ classified, processed: untyped.length, remaining });
   });
 
+  // ── Brand bible seed endpoint ─────────────────────────────────────────
+  app.post("/api/admin/seed-brands", requireAuth, async (_req, res) => {
+    const SEED_BRANDS: { name: string; companyType: string }[] = [
+      // Luxury
+      ...["Acne Studios","Akris","Alaïa","Alberta Ferretti","Alexander McQueen","Aquazzura","Aspinal of London","Asprey","Azzaro","Balenciaga","Bamford","Bell & Ross","Belstaff","Blancpain","Boggi","Boodles","Bottega Veneta","Boucheron","Breitling","Bremont","Browns","Bulgari","Burberry","Canada Goose","Caramel","Carolina Herrera","Cartier","Celine","Coach","Chanel","Chatila","Chaumet","Chloé","Chopard","Christian Louboutin","Christopher Kane","Claudie Pierlot","Clergerie","Crockett & Jones","Damiani","David Morris","De Beers","Delvaux","Dior","Dolce & Gabbana","Douglas Hayward","Emilio Pucci","Emporio Armani","Ermenegildo Zegna","Etro","Fendi","Fenwick","Ferragamo","Fortnum & Mason","Furla","Garrard","Gianvito Rossi","Gieves & Hawkes","Givenchy","Goyard","Graff","Gucci","Harry Winston","Hermès","IWC","Jaeger-LeCoultre","J & M Davidson","Johnston's of Elgin","Joseph","Karl Lagerfeld","Laduree","Lanvin","Loewe","Longchamp","Longines","Loro Piana","Louis Vuitton","Mackintosh","Marc Jacobs","Marni","MaxMara","Me + Em","Melissa Odabash","Michael Kors","Mikimoto","Miu Miu","Moncler","Montblanc","Moussaieff","Moynat","Mulberry","Omega","Panerai","Patek Philippe","Penhaligon's","Piaget","Polo Ralph Lauren","Pomellato","Prada","Pringle of Scotland","Richard Mille","Rimowa","Roberto Cavalli","Roger Dubuis","Rolex","Sandro","Sergio Rossi","Simone Rocha","Smythson","Stella McCartney","Stephen Webster","TAG Heuer","Tasaki","Tateossian","Tiffany & Co","Tod's","Tommy Hilfiger","Tory Burch","Tumi","Vacheron Constantin","Valentino","Valextra","Vashi","Versace","Victoria Beckham","Victorinox","Vivienne Westwood","Wempe","Wolford","Zilli","Zimmermann"].map(n=>({name:n,companyType:"Tenant - Luxury"})),
+      // Fashion
+      ...["7 For All Mankind","Abercrombie & Fitch","Agent Provocateur","Agnès B","Aldo","All Saints","American Eagle","American Vintage","Anine Bing","Ann Summers","Anthropologie","APC","Apricot","Arket","Armani Exchange","Barbour","Bershka","Beyond Retro","Bimba Y Lola","Boden","Bonpoint","Boss","Boux Avenue","Brandy Melville","Bravissimo","Brora","Calvin Klein","Calzedonia","Cambridge Satchel","Carhartt WIP","Castore","Charles Tyrwhitt","COS","Comptoir des Cotonniers","Dehanche","Deichmann","Derek Rose","Diesel","Dr Martens","Drumohr","END","Eric Bompard","Filippa K","Flannels","Fred Perry","Free People","French Connection","Fusalp","Ganni","GANT","Gap","Golden Goose","H&M","Hackett","Hawes & Curtis","Helmut Lang","Hobbs","Hollister","Honey Birdette","Hugo Boss","Intimissimi","Jack Wills","Jigsaw","JW Anderson","KITH","Kooples","Lacoste","Levi's","LK Bennett","Mango","Massimo Dutti","M&S","Miniso","Mini Rodini","Monki","Monsoon","Moose Knuckles","Moss Bros","New Look","NEXT","Nobody's Child","North Face","Norse Projects","Olivia Rubin","Orlebar Brown","Other Stories","Paul Smith","Petit Bateau","Phase Eight","Primark","Pull & Bear","Puma","Rag & Bone","Ralph Lauren","Reformation","Reiss","River Island","RIXO","Samsoe Samsoe","Scotch & Soda","Seraphine","Sezane","SMCP","Suit Supply","Sunspel","Superdry","Supreme","Ted Baker","Theory","The Little White Company","Timberland","Uniqlo","United Colours of Benetton","Urban Outfitters","Vans","Whistles","Wolf & Badger","YMC","Zadig & Voltaire","Zara","Les Benjamins","Vuori"].map(n=>({name:n,companyType:"Tenant - Fashion"})),
+      // Athleisure
+      ...["Adidas","ALO","Asics","Gymshark","Jack Wolfskin","JD Sports","Lululemon","New Balance","Nike","ON","Rapha","Sports Direct","Sweaty Betty","Varley","Outdoor Voices","Rei"].map(n=>({name:n,companyType:"Tenant - Athleisure"})),
+      // Footwear
+      ...["Allbirds","Axel Arigato","Barker","Baudoin et Lange","Birkenstock","Camper","Carvela","Cheaney Shoes","Clarks","Crocs","Dune","FitFlop","Footasylum","Footlocker","Geox","Gina Shoes","Jimmy Choo","Jones Bootmaker","Joseph Cheaney & Sons","Kick Game","Kurt Geiger","Manolo Blahnik","Office","Onitsuka Tiger","Russell & Bromley","Schuh","Skechers","Sole Trader","Sophia Webster","Steve Madden","Superga","UGG","Veja","Sarah Flint"].map(n=>({name:n,companyType:"Tenant - Footwear"})),
+      // Accessories
+      ...["Accessorize","Ace & Tate","APM Monaco","Apriati Jewels","Astrid & Miyu","Bailey Nelson","Bloobloom","Bottletop","Claire's","Clulows","Cubitts","Dinny Hall","Earnest Jones","Ecco","Finlay & Co","Folli Follie","Furla","Georg Jensen","Goldsmiths","Heidi Klein","H. Samuel","Izipizi","Kate Spade","Links of London","Lovisa","Luxottica","Mappin & Webb","Maya Magal","Mejuri","Monica Vinader","Moscot","Mykita","Oliver Bonas","Optical Express","Pandora","Samsonite","Strathberry","Sunglass Hut","Swarovski","Swatch","Thomas Sabo","Tom Davies","TUMI","Unode50","Vertex","Vision Express","Watchfinder","Watches of Switzerland","William & Son","Gorjana","Karaca"].map(n=>({name:n,companyType:"Tenant - Accessories & Footwear"})),
+      // Beauty
+      ...["Adam Grooming Atelier","Acqua di Parma","Aesop","Body Shop","Byredo","Caudalie","Charlotte Tilbury","Code 8","Creed","Deciem","Estee Lauder","FaceGym","Forrest Essentials","Fragrance Shop","FRESH","Get A Drip","Glossier","Goop","Holland and Barrett","John Bell & Croyden","Kiehl's","Kiko","Laser Clinics","L'Oreal","Lush","MAC","Malin+Goetz","Margaret Dabbs","Molton Brown","NARS","Neom","Oh My Cream","Onda Beauty","Paul Edmonds","Penhaligons","Revital","Rituals","Rush","Sarah Chapman","Seanhanna","Sephora","sk:n","Smilepod","SpaceNK","Superdrug","Ted's Grooming Room","The Organic Pharmacy","Therapie","Toni & Guy","White & Co.","Winky Lux"].map(n=>({name:n,companyType:"Tenant - Beauty"})),
+      // Homewares
+      ...["Anthropologie","BON TON","Brissi","Caravane","Cologne & Cotton","David Mellor","Designers Guild","Earl of East","Evoke London","Farrow & Ball","Flying Tiger","Gaggenau","Habitat","Heals","Honest Jon's","India Jane","Jonathan Adler","Kings of Chelsea","Le Creuset","Mamas & Papas","Martin Moore","Muji","Natuzzi","Nespresso","Osborne & Little","Poliform","Royal Selangor","Robert Dyas","Sevenoaks Sound & Vision","Sheridan","Sigmar","Silvera","Smiggle","Sofa Workshop","Stokke","Tempur","The Conran Shop","The White Company","Tiger","TOAST","Tom Dixon","Thomas Goode","West Elm","Waterstones","Loaf","Wayfair"].map(n=>({name:n,companyType:"Tenant - Homewares"})),
+      // Gifts & Perfumes
+      ...["Adopt Parfum","Alexeeva & Jones","Baobab Collection","Candles & Oud","Cards Galore","Caroline Gardner","Charbonnel et Walker","Clintons","Diptyque","Disney","Endura Roses","Flowers & Plants Co.","Godiva","Hamleys","Hotel Chocolat","Jo Malone","Le Chocolat Alain Ducasse","LEGO","Le Labo","L'Occitane","Menkind","Moyses Stevens","Ortigia","Rococo","Scribbler","Soap & Co","Sook","The Entertainer","The Fragrance Shop","The Perfume Shop","T2 Tea"].map(n=>({name:n,companyType:"Tenant - Gifts & Perfumes"})),
+      // Department Stores
+      ...["Debenhams","House of Fraser","John Lewis","Marks and Spencer","Matalan","Peter Jones","Selfridges","TK Maxx","Waitrose & Partners"].map(n=>({name:n,companyType:"Tenant - Department Store"})),
+      // Technology
+      ...["Apple","Carphone Warehouse","Currys","Dyson","EE","Game","iSmash","Jessops","Microsoft","Netflix","Peloton","Razor","Samsung","Situ Live","Snapchat","Snappy Snaps"].map(n=>({name:n,companyType:"Tenant - Technology"})),
+      // Automotive
+      ...["Genesis","MV Agusta","Polestar","Tesla","Vanmoof","KJ West One"].map(n=>({name:n,companyType:"Tenant - Automotive"})),
+      // Telecoms
+      ...["O2","Sky","Three","Vodafone","Iqos","Vuse","Wanyoo","Xiaomi"].map(n=>({name:n,companyType:"Tenant - Telecoms"})),
+      // Grocery
+      ...["Aldi","Bayley & Sage","Daylesford Organic","Lidl","Planet Organic","Sainsbury's","Tesco","Waitrose"].map(n=>({name:n,companyType:"Tenant - Grocery"})),
+      // Financial Services
+      ...["Barclays","Halifax","HSBC","Lloyd's Bank","Natwest","Santander"].map(n=>({name:n,companyType:"Tenant - Financial Services"})),
+      // Fine Dining
+      ...["Gaucho","Hawksmoor","Hakkasan","Da Henrietta","Cora Pearl","Barrafina","Darjeeling Express","Dishoom","Ave Mario","Bao","Coal Office","Flesh & Buns","Hoppers","Ibérica","JinJuu","La Goccia","Lina Stores","Roka","Sushi Samba","Yauatcha","Veeraswamy","Scalini","Bar Douro","Balthazar","Brasserie Max","Bluebird","Cheesecake Factory","Chotto Matte"].map(n=>({name:n,companyType:"Tenant - Fine Dining"})),
+      // Casual Dining
+      ...["Wagamama","Nando's","Wahaca","Cinnamon Kitchen","Cinnamon Bazaar","Masala Zone","Benihana","Big Easy","Brindisa Kitchen","Casa Pastor","Dehesa","Din Tai Fung","Drake & Morgan","Emilia's Crafted Pasta","FarmerJ","Fatto","Flat Iron","Franco Manca","Granger & Co","Imad's","Island Poké","Itsu","Kanada-Ya","Kimchee","Kolamba","Leon","MamaLan","Marugame","Megan's","Monmouth Kitchen","Mon Plaisir","Morty & Bob's","My Old Dutch","Obica","Ole & Steen","Pastaio","Patty & Bun","Paul","Piccolo","Pizza Express","Pizza Pilgrims","Pilpel","Polpo","Pret a Manger","Poke House","Royal China","Roti King","Shake Shack","Shoryu Ramen","Señor Ceviche","Seoul Bird","Slim Chickens","Sticks n Sushi","Tapas Brindisa","The Barbary","The Breakfast Club","The Good Egg","The Indians Next Door","The Ivy","The Real Greek","The Rum Kitchen","The Vurger Co.","Tonkotsu","Truffle Burger","Ugly Dumpling","Urban Greens","Wildwood Kitchen","Wright Brothers","Maxwell's","Eataly","Caravan"].map(n=>({name:n,companyType:"Tenant - Casual Dining"})),
+      // Quick Service
+      ...["Five Guys","Greggs","GDK","Krispy Kreme","McDonald's","Neat Burger","Wasabi","Chopstix","Gordon Ramsay Street Pizza","Happy Face","Homeslice","Stax","Wafflemeister","Yum Bun","Yolk"].map(n=>({name:n,companyType:"Tenant - Quick Service"})),
+      // Café
+      ...["Caffe Nero","Costa","Starbucks","Joe & the Juice","Beany Green","Café Brera","Café Volonté","Caffe Concerto","Change Please","Chai Guys","Chez Antoinette","Cojean","Crussh","El & N","Grind","Hagen Coffee","Knoops","Le Pain Quotidien","Notes","Redemption Roasters"].map(n=>({name:n,companyType:"Tenant - Café"})),
+      // Bar
+      ...["All Bar One","Brewdog","Humble Grape","Vagabond Wines","Revolution","Revolve","Spiritland","Flare","The Alchemist","The Botanist","The Drop","Vinoteca"].map(n=>({name:n,companyType:"Tenant - Bar"})),
+      // Bakery
+      ...["Ben's Cookies","Buns from Home","Crosstown","Donovan's Bakehouse","Gail's","Lola's Cupcakes","Longboys","Maitre Choux","Ole & Steen"].map(n=>({name:n,companyType:"Tenant - Bakery"})),
+      // Cinema
+      ...["Everyman Cinema","Vue","Odeon","Cineworld"].map(n=>({name:n,companyType:"Tenant - Cinema"})),
+      // Experiential
+      ...["Bounce","Capital Karts","Electric Shuffle","Puttshack","Birdies","City Bouldering","DNA VR","Upside Down House","Dreamscape","All Star Lanes","Tank & Paddle"].map(n=>({name:n,companyType:"Tenant - Experiential"})),
+      // Immersive
+      ...["Kidzania"].map(n=>({name:n,companyType:"Tenant - Immersive Experience"})),
+      // Family Entertainment
+      ...["Blue Almonds"].map(n=>({name:n,companyType:"Tenant - Family Entertainment"})),
+      // Gym
+      ...["BoomCycle","BXR","F45","GymBox","Nuffield Health","Pure Sports Medicine","Sweat by BXR","Third Space","Triyoga","Ultimate Performance","Virgin Active","Athlete Lab"].map(n=>({name:n,companyType:"Tenant - Gym"})),
+      // Wellness
+      ...["111 Cryo","Andrew K Hair","Atherton Cox","Blink Brow Bar","Cubex","Dr Haus Dermatology","Freedom Clinics","Get A Drip","Hari's","London Cryo","London Grace","Mark Glenn","Massage Angels","Melanie Grant","Neil Moodie","Pimps & Pinups","Radio Salon","Regenerative Wellbeing","ReMind","Rys Hair","Stil Salon","Young LDN","Bupa","Lyca Health"].map(n=>({name:n,companyType:"Tenant - Wellness"})),
+      // Yoga
+      ...["Gym & Coffee"].map(n=>({name:n,companyType:"Tenant - Yoga"})),
+    ];
+
+    try {
+      const { rows: existing } = await pool.query(`SELECT LOWER(TRIM(name)) AS n FROM crm_companies`);
+      const existingNames = new Set(existing.map((r: any) => r.n as string));
+      let created = 0, skipped = 0;
+      for (const brand of SEED_BRANDS) {
+        const key = brand.name.toLowerCase().trim();
+        if (existingNames.has(key)) { skipped++; continue; }
+        const { nanoid } = await import("nanoid");
+        const id = nanoid();
+        await pool.query(
+          `INSERT INTO crm_companies (id, name, company_type, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())`,
+          [id, brand.name, brand.companyType]
+        );
+        existingNames.add(key);
+        created++;
+      }
+      console.log(`[seed-brands] Created: ${created}, Skipped: ${skipped}`);
+      res.json({ success: true, created, skipped });
+    } catch (err: any) {
+      console.error("[seed-brands] Error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── My Portfolio dashboard endpoint ──────────────────────────────────
   app.get("/api/dashboard/my-portfolio", requireAuth, async (req: any, res) => {
     try {
