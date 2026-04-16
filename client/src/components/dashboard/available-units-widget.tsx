@@ -41,8 +41,8 @@ export function AvailableUnitsWidget() {
   };
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-3">
+    <Card className="h-full flex flex-col">
+      <CardHeader className="flex flex-row items-center justify-between pb-3 shrink-0">
         <div className="flex items-center gap-2">
           <Store className="w-4 h-4 text-muted-foreground" />
           <CardTitle className="text-sm font-semibold">Letting Tracker</CardTitle>
@@ -54,7 +54,7 @@ export function AvailableUnitsWidget() {
           </Button>
         </Link>
       </CardHeader>
-      <CardContent className="pt-0 space-y-4">
+      <CardContent className="pt-0 space-y-4 flex-1 overflow-auto">
         <div className="flex gap-4">
           {Object.entries(statusCounts).filter(([k]) => k !== "Let").map(([status, count]) => (
             <div key={status} className="flex items-center gap-1.5">
