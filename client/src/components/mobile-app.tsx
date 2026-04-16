@@ -642,7 +642,7 @@ function ProjectItemRow({ project, isExpanded, singleThread, onToggle, openThrea
   return (
     <div>
       <button
-        className="w-full flex items-center gap-3 px-4 py-3 active:bg-gray-50 transition-colors select-none"
+        className="w-full flex items-center gap-3 px-5 py-3 active:bg-[#F5F5F4] transition-colors select-none border-b border-[#E7E5E4]/60"
         onClick={() => {
           if (singleThread) {
             openThread(singleThread);
@@ -652,10 +652,15 @@ function ProjectItemRow({ project, isExpanded, singleThread, onToggle, openThrea
         }}
         data-testid={`mobile-project-${project.id}`}
       >
-        <Building2 className="w-5 h-5 text-gray-600 shrink-0" />
-        <span className="flex-1 text-[14px] font-semibold text-left truncate">{project.name}</span>
+        <Building2 className="w-4 h-4 text-[#78716C] shrink-0" />
+        <span className="flex-1 text-[15px] font-semibold text-[#1C1917] text-left truncate tracking-tight">{project.name}</span>
         {project.threads.length > 1 && (
-          <ChevronDown className={`w-4 h-4 text-gray-400 shrink-0 transition-transform ${isExpanded ? "" : "-rotate-90"}`} />
+          <span className="text-[11px] font-medium text-[#A8A29E] shrink-0">
+            {project.threads.length} chats
+          </span>
+        )}
+        {project.threads.length > 1 && (
+          <ChevronDown className={`w-4 h-4 text-[#A8A29E] shrink-0 transition-transform ${isExpanded ? "" : "-rotate-90"}`} />
         )}
       </button>
       {isExpanded && project.threads.length > 1 && (
@@ -766,40 +771,46 @@ function MobileThreadCard({ thread, onClick, currentUserId, onDelete, userPics }
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchEnd}
-        className="w-full flex items-center gap-4 px-5 py-4 active:bg-[#F5F5F4] border-b border-[#E7E5E4]/60 select-none bg-[#FAF9F7] relative z-10 transition-transform duration-200"
+        className={`w-full flex items-center ${isAi ? "gap-0 px-5 py-3.5" : "gap-3 px-5 py-3.5"} active:bg-[#F5F5F4] border-b border-[#E7E5E4]/60 select-none bg-[#FAF9F7] relative z-10 transition-transform duration-200`}
         style={{ WebkitTouchCallout: "none", WebkitUserSelect: "none", transform: `translateX(${swipeX}px)` }}
         data-testid={`mobile-thread-${thread.id}`}
       >
-        <div className="relative shrink-0">
-          {renderAvatar()}
-          {renderAiMemberBadge()}
-        </div>
+        {/* For AI (ChatBGP) threads — no avatar, Claude-style minimal text row.
+            For DMs and group chats keep a small avatar so you can tell who's talking. */}
+        {!isAi && (
+          <div className="relative shrink-0">
+            {renderAvatar()}
+            {renderAiMemberBadge()}
+          </div>
+        )}
         <div className="flex-1 min-w-0 text-left">
           <div className="flex items-center justify-between gap-2">
-            <span className={`text-[16px] tracking-tight truncate ${hasUnseen ? "font-bold text-gray-900" : "font-semibold text-gray-800"}`}>{displayTitle}</span>
-            <span className="text-[12px] shrink-0 font-medium" style={hasUnseen ? { color: "hsl(var(--primary))" } : { color: "hsl(var(--muted-foreground))" }}>
+            <span className={`text-[15px] tracking-tight truncate ${hasUnseen ? "font-semibold text-[#1C1917]" : "font-medium text-[#1C1917]"}`}>{displayTitle}</span>
+            <span className="text-[11px] shrink-0" style={hasUnseen ? { color: "hsl(var(--primary))", fontWeight: 500 } : { color: "#A8A29E" }}>
               {timeStr}
             </span>
           </div>
           <div className="flex items-center justify-between mt-0.5 gap-2">
-            <p className={`text-[14px] truncate leading-snug ${hasUnseen ? "text-gray-900 font-medium" : "text-gray-500"}`}>
+            <p className={`text-[13px] truncate leading-snug ${hasUnseen ? "text-[#44403C]" : "text-[#78716C]"}`}>
               {thread.lastMessage ? (
-                <><span className="font-semibold">{thread.lastMessage.senderName.split(" ")[0]}: </span>{thread.lastMessage.content}</>
+                isAi
+                  ? thread.lastMessage.content
+                  : <><span className="font-medium">{thread.lastMessage.senderName.split(" ")[0]}: </span>{thread.lastMessage.content}</>
               ) : (
-                <span className="italic text-gray-400">No messages yet</span>
+                <span className="italic text-[#A8A29E]">No messages yet</span>
               )}
             </p>
             {hasUnseen && (
-              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} />
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} />
             )}
           </div>
-          {(thread.propertyName || thread.linkedName) && (
+          {!isAi && (thread.propertyName || thread.linkedName) && (
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
               {thread.propertyName && (
-                <span className="text-[11px] text-gray-500 flex items-center gap-1 bg-gray-100 rounded-full px-2 py-0.5"><Building2 className="w-3 h-3" />{thread.propertyName}</span>
+                <span className="text-[11px] text-[#78716C] flex items-center gap-1 bg-[#F5F5F4] rounded-full px-2 py-0.5"><Building2 className="w-3 h-3" />{thread.propertyName}</span>
               )}
               {thread.linkedName && (
-                <span className="text-[11px] text-gray-500 flex items-center gap-1 bg-gray-100 rounded-full px-2 py-0.5">
+                <span className="text-[11px] text-[#78716C] flex items-center gap-1 bg-[#F5F5F4] rounded-full px-2 py-0.5">
                   <Building2 className="w-3 h-3" />
                   {thread.linkedName}
                 </span>
@@ -1145,6 +1156,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const [, navigate] = useLocation();
 
   const { typingUsers, sendTyping, stopTyping } = useTypingIndicator(threadId);
 
@@ -1976,39 +1988,53 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
         <div className="bg-[#1C1917] text-white pt-[calc(0.5rem+env(safe-area-inset-top))] pb-3 px-4 shrink-0">
           <div className="flex items-center gap-3">
             <button onClick={onBack} className="p-1" data-testid="button-mobile-chat-back"><ArrowLeft className="w-6 h-6" /></button>
-            {isGroup ? (
-              <button onClick={() => setShowGroupEdit(true)} className="flex items-center gap-3 flex-1 min-w-0 text-left" data-testid="button-mobile-group-settings">
-                {renderHeaderAvatar()}
-                <div className="flex-1 min-w-0">
-                  <div className="text-[17px] font-semibold truncate">{threadTitle}</div>
-                  {isGroup && threadMembers.length > 0 && (
-                    <div className="text-xs text-white/60 truncate">
-                      {activeThread?.hasAiMember ? "ChatBGP, " : ""}{activeThread?.creatorName?.split(" ")[0]}, {threadMembers.slice(0, 3).map(m => m.name.split(" ")[0]).join(", ")}
-                      {threadMembers.length > 3 && ` +${threadMembers.length - 3}`}
-                      {" · Tap to edit"}
-                    </div>
-                  )}
-                  {activeThread?.linkedName && (
-                    <div className="flex items-center gap-1 mt-0.5">
-                      <Link2 className="w-3 h-3 text-gray-400" />
-                      <span className="text-[11px] text-gray-400 truncate">{activeThread.linkedName}</span>
-                    </div>
-                  )}
+            <div className="flex-1 min-w-0">
+              {isGroup ? (
+                <button onClick={() => setShowGroupEdit(true)} className="flex items-center gap-3 w-full min-w-0 text-left" data-testid="button-mobile-group-settings">
+                  {renderHeaderAvatar()}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[17px] font-semibold truncate">{threadTitle}</div>
+                    {isGroup && threadMembers.length > 0 && (
+                      <div className="text-xs text-white/60 truncate">
+                        {activeThread?.hasAiMember ? "ChatBGP, " : ""}{activeThread?.creatorName?.split(" ")[0]}, {threadMembers.slice(0, 3).map(m => m.name.split(" ")[0]).join(", ")}
+                        {threadMembers.length > 3 && ` +${threadMembers.length - 3}`}
+                        {" · Tap to edit"}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              ) : (
+                <div className="flex items-center gap-3 w-full min-w-0">
+                  {renderHeaderAvatar()}
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[17px] font-semibold truncate">{threadTitle}</div>
+                    {isDm && (
+                      <div className="text-xs text-white/60 truncate">
+                        {allUsers?.find(u => u.id === otherMembers[0].id)?.team || "BGP"}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </button>
-            ) : (
-              <>
-                {renderHeaderAvatar()}
-                <div className="flex-1 min-w-0">
-                  <div className="text-[17px] font-semibold truncate">{threadTitle}</div>
-                  {isDm && (
-                    <div className="text-xs text-white/60 truncate">
-                      {allUsers?.find(u => u.id === otherMembers[0].id)?.team || "BGP"}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
+              )}
+              {activeThread?.linkedName && activeThread?.linkedType && activeThread?.linkedId && (
+                <button
+                  onClick={() => {
+                    const t = activeThread.linkedType;
+                    const id = activeThread.linkedId;
+                    if (t === "property") navigate(`/properties/${id}`);
+                    else if (t === "deal") navigate(`/deals/${id}`);
+                    else if (t === "company") navigate(`/companies/${id}`);
+                  }}
+                  className="flex items-center gap-1 mt-1 px-2 py-0.5 -ml-0.5 rounded-full bg-white/5 hover:bg-white/10 active:bg-white/15 transition-colors max-w-full"
+                  data-testid="button-mobile-chat-linked"
+                >
+                  <Link2 className="w-3 h-3 text-gray-300 shrink-0" />
+                  <span className="text-[11px] text-gray-200 truncate">
+                    Open {activeThread.linkedType === "property" ? "property" : activeThread.linkedType === "deal" ? "deal" : activeThread.linkedType}: {activeThread.linkedName}
+                  </span>
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -3078,9 +3104,40 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               </button>
             )}
             {tab === "ai" && !showMobileMarketingFiles && (
-              <button onClick={openNewAiChat} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-mobile-new-ai">
-                <Plus className="w-5 h-5" />
-              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20"
+                    data-testid="button-mobile-new-ai"
+                    aria-label="New ChatBGP conversation"
+                  >
+                    <Plus className="w-5 h-5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem
+                    onClick={openNewAiChat}
+                    data-testid="menu-new-plain-chat"
+                  >
+                    <Sparkles className="w-4 h-4 mr-2 text-primary" />
+                    New chat
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => { setShowMobileNewProperty(true); setMobileNewPropSelectedId(""); setMobileNewPropSearch(""); setMobileNewPropLinkType("property"); }}
+                    data-testid="menu-new-property-chat"
+                  >
+                    <Building2 className="w-4 h-4 mr-2 text-gray-600" />
+                    New chat about a property
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => { setShowMobileNewProperty(true); setMobileNewPropSelectedId(""); setMobileNewPropSearch(""); setMobileNewPropLinkType("deal"); }}
+                    data-testid="menu-new-deal-chat"
+                  >
+                    <Handshake className="w-4 h-4 mr-2 text-gray-600" />
+                    New chat about a deal
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             {tab === "menu" && moreSubTab === "tracker" && (
               <button onClick={() => { setTab("ai"); setShowMobileMarketingFiles(true); setMarketingFileSearch(""); }} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:bg-white/20" data-testid="button-mobile-marketing-materials" aria-label="Marketing materials">
@@ -3190,6 +3247,7 @@ export default function MobileApp({ initialTab = "ai" }: { initialTab?: "chats" 
               <div>
                 {aiProjectItems.length > 0 && (
                   <div className="mb-1">
+                    <p className="text-[11px] font-semibold text-[#A8A29E] uppercase tracking-wider px-5 pt-3 pb-1">Properties & deals</p>
                     {aiProjectItems.map(project => {
                       const key = `${project.type}-${project.id}`;
                       const isExpanded = expandedAiProjects.has(key);

@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { useDealAmlStatus } from "@/components/deal-aml-status";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -2095,6 +2096,7 @@ function HotsChecklistDialog({
 export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: string; deal: CrmDeal; companies?: CrmCompany[] }) {
   const { toast } = useToast();
   const [creating, setCreating] = useState(false);
+  const { data: amlStatus } = useDealAmlStatus(dealId);
   const [contactName, setContactName] = useState("");
   const [reference, setReference] = useState("");
   const [amount, setAmount] = useState<number>(0);
@@ -2258,9 +2260,17 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
                 Connect Xero
               </Button>
             ) : (
-              <Button variant="outline" size="sm" onClick={() => { setCreating(true); setAmount(deal.fee || 0); setReference(deal.name || ""); }} data-testid="button-create-xero-invoice">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setCreating(true); setAmount(deal.fee || 0); setReference(deal.name || ""); }}
+                disabled={amlStatus && !amlStatus.canInvoice}
+                title={amlStatus && !amlStatus.canInvoice ? `AML approval needed for ${amlStatus.missing.join(", ")}` : undefined}
+                data-testid="button-create-xero-invoice"
+              >
                 <Send className="w-3.5 h-3.5 mr-1" />
                 Send to Xero
+                {amlStatus && !amlStatus.canInvoice && <span className="ml-1.5 text-[10px] uppercase opacity-70">AML pending</span>}
               </Button>
             )}
           </div>
@@ -2362,7 +2372,13 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Button size="sm" onClick={() => createInvoiceMutation.mutate()} disabled={createInvoiceMutation.isPending} data-testid="button-confirm-xero-invoice">
+              <Button
+                size="sm"
+                onClick={() => createInvoiceMutation.mutate()}
+                disabled={createInvoiceMutation.isPending || (amlStatus && !amlStatus.canInvoice)}
+                title={amlStatus && !amlStatus.canInvoice ? `AML approval needed for ${amlStatus.missing.join(", ")}` : undefined}
+                data-testid="button-confirm-xero-invoice"
+              >
                 {createInvoiceMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
                 Create Draft Invoice
               </Button>
@@ -2673,11 +2689,11 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
 
   return (
     <Card data-testid="deal-kyc-panel">
-      <CardContent className="p-4">
-        <div className="flex items-center justify-between mb-3">
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">AML / KYC Compliance</h3>
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <h3 className="text-xs font-semibold">AML / KYC Compliance</h3>
             {deal.kycApproved ? (
               <Badge className="text-[9px] bg-green-600 text-white">KYC Approved</Badge>
             ) : allComplete ? (
@@ -2690,44 +2706,63 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
           </div>
           <div className="flex items-center gap-1">
             {!deal.kycApproved && allComplete && (
-              <Button size="sm" onClick={approveKyc} disabled={approvingKyc} className="bg-green-600 hover:bg-green-700 text-white" data-testid="button-approve-kyc">
-                {approvingKyc ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <CheckCircle2 className="w-3.5 h-3.5 mr-1" />}
+              <Button size="sm" onClick={approveKyc} disabled={approvingKyc} className="bg-green-600 hover:bg-green-700 text-white h-7 text-[11px]" data-testid="button-approve-kyc">
+                {approvingKyc ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
                 Approve KYC
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={runAllKyc} disabled={runningAll} data-testid="button-run-all-kyc">
-              {runningAll ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <ShieldCheck className="w-3.5 h-3.5 mr-1" />}
-              {runningAll ? "Checking..." : totalUnchecked > 0 ? "Run All KYC" : "Refresh All"}
+            <Button variant="outline" size="sm" onClick={runAllKyc} disabled={runningAll} className="h-7 text-[11px]" data-testid="button-run-all-kyc">
+              {runningAll ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+              {runningAll ? "Checking..." : totalUnchecked > 0 ? "Run All KYC" : "Refresh"}
             </Button>
           </div>
         </div>
 
-        <div className="mb-3 p-2 rounded-md bg-muted/30 border">
-          <div className="flex items-center gap-3 text-xs">
-            <span className="text-muted-foreground">MLR 2017 / RICS CDD:</span>
-            <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-green-500" />{totalPassed} passed</span>
-            {totalWarning > 0 && <span className="flex items-center gap-1"><AlertCircle className="w-3 h-3 text-amber-500" />{totalWarning} review</span>}
-            {totalFailed > 0 && <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-red-500" />{totalFailed} failed</span>}
-            {totalUnchecked > 0 && <span className="text-muted-foreground">{totalUnchecked} pending</span>}
+        {deal.kycApproved && deal.kycApprovedBy && (
+          <div className="text-[11px] text-muted-foreground mb-2">
+            Approved by <span className="font-medium text-foreground">{deal.kycApprovedBy}</span>
+            {deal.kycApprovedAt && <> on {new Date(deal.kycApprovedAt).toLocaleDateString("en-GB")}</>}
           </div>
-          {deal.kycApproved && deal.kycApprovedBy && (
-            <div className="mt-1 text-xs text-muted-foreground">
-              Approved by <span className="font-medium text-foreground">{deal.kycApprovedBy}</span>
-              {deal.kycApprovedAt && <> on {new Date(deal.kycApprovedAt).toLocaleDateString("en-GB")}</>}
-            </div>
-          )}
+        )}
+
+        <div className="space-y-1">
+          {parties.map(({ company, role }) => {
+            const kycStatus = company.kycStatus;
+            return (
+              <div key={company.id} className="flex items-center justify-between py-1.5 px-2 rounded border bg-muted/20" data-testid={`kyc-party-${company.id}`}>
+                <div className="flex items-center gap-2 min-w-0">
+                  {kycStatus === "pass" ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" /> :
+                   kycStatus === "warning" ? <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" /> :
+                   kycStatus === "fail" ? <XCircle className="w-3.5 h-3.5 text-red-500 shrink-0" /> :
+                   <div className="w-3.5 h-3.5 rounded-full border-2 border-dashed border-muted-foreground/40 shrink-0" />}
+                  <div className="min-w-0">
+                    <Link href={`/companies/${company.id}`}>
+                      <span className="text-xs font-medium hover:underline cursor-pointer truncate block">{company.name}</span>
+                    </Link>
+                    <span className="text-[10px] text-muted-foreground capitalize">{role}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {kycStatus && (
+                    <Badge className={`text-[8px] h-4 ${kycStatus === "pass" ? "bg-green-600" : kycStatus === "warning" ? "bg-amber-500" : "bg-red-500"} text-white`}>
+                      {kycStatus === "pass" ? "Verified" : kycStatus === "warning" ? "Review" : "Failed"}
+                    </Badge>
+                  )}
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => runKyc(company.id)} disabled={loadingIds.has(company.id)} data-testid={`button-run-kyc-${company.id}`}>
+                    {loadingIds.has(company.id) ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
-        <div className="space-y-2">
-          {parties.map(({ company, role }) => (
-            <KYCPartyRow
-              key={company.id}
-              company={company}
-              role={role}
-              onRunKyc={runKyc}
-              loading={loadingIds.has(company.id)}
-            />
-          ))}
+        <div className="mt-2 pt-2 border-t flex items-center justify-between">
+          <Link href="/compliance-board">
+            <span className="text-[11px] text-primary hover:underline cursor-pointer flex items-center gap-1" data-testid="link-compliance-board">
+              <ShieldCheck className="w-3 h-3" /> View full KYC packs on Compliance Board
+            </span>
+          </Link>
         </div>
       </CardContent>
     </Card>
@@ -2846,11 +2881,11 @@ export function DealAMLChecklist({ deal }: { deal: CrmDeal }) {
 
   return (
     <Card data-testid="deal-aml-checklist">
-      <CardContent className="p-4 space-y-4">
+      <CardContent className="p-3 space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4" />
-            <h3 className="text-sm font-semibold">MLR 2017 Compliance Checklist</h3>
+            <Shield className="w-3.5 h-3.5" />
+            <h3 className="text-xs font-semibold">MLR 2017 Compliance Checklist</h3>
             {riskLevel && (
               <Badge className={`text-[9px] ${riskColor} text-white capitalize`}>{riskLevel} risk</Badge>
             )}

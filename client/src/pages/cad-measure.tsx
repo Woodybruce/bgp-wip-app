@@ -3,6 +3,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Upload, Ruler, SquareDashedBottom, MousePointer, ZoomIn, ZoomOut,
   RotateCcw, Loader2, Move, Trash2, FileText, Info, Maximize2,
+  Undo2, Redo2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -141,6 +142,7 @@ export default function CadMeasurePage() {
   const [loading, setLoading] = useState(false);
   const [activeTool, setActiveTool] = useState<Tool>("pan");
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
+  const [redoStack, setRedoStack] = useState<Measurement[]>([]);
   const [currentPoints, setCurrentPoints] = useState<{ x: number; y: number }[]>([]);
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
@@ -398,6 +400,7 @@ export default function CadMeasurePage() {
           value: dist,
           unit: unitLabel,
         }]);
+        setRedoStack([]);
         setCurrentPoints([]);
       }
     } else if (activeTool === "area") {
@@ -422,6 +425,7 @@ export default function CadMeasurePage() {
         value: area,
         unit: unitLabel,
       }]);
+      setRedoStack([]);
       setCurrentPoints([]);
     }
   };
@@ -457,8 +461,49 @@ export default function CadMeasurePage() {
 
   const clearMeasurements = () => {
     setMeasurements([]);
+    setRedoStack([]);
     setCurrentPoints([]);
   };
+
+  const handleUndo = () => {
+    // If the user is mid-polygon (area tool), undo the last clicked point first
+    if (currentPoints.length > 0) {
+      setCurrentPoints(prev => prev.slice(0, -1));
+      return;
+    }
+    if (measurements.length === 0) return;
+    const last = measurements[measurements.length - 1];
+    setMeasurements(prev => prev.slice(0, -1));
+    setRedoStack(prev => [...prev, last]);
+  };
+
+  const handleRedo = () => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setRedoStack(prev => prev.slice(0, -1));
+    setMeasurements(prev => [...prev, next]);
+  };
+
+  const canUndo = measurements.length > 0 || currentPoints.length > 0;
+  const canRedo = redoStack.length > 0;
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      if (e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      } else if ((e.key === "z" && e.shiftKey) || e.key === "y") {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [measurements, redoStack, currentPoints]);
 
   const totalArea = measurements
     .filter(m => m.type === "area")
@@ -567,6 +612,27 @@ export default function CadMeasurePage() {
               data-testid="tool-reset"
             >
               <Maximize2 className="w-4 h-4" />
+            </button>
+
+            <div className="h-px bg-border w-8 my-1" />
+
+            <button
+              className="w-10 h-10 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+              onClick={handleUndo}
+              disabled={!canUndo}
+              title="Undo (⌘Z)"
+              data-testid="tool-undo"
+            >
+              <Undo2 className="w-4 h-4" />
+            </button>
+            <button
+              className="w-10 h-10 rounded-lg flex items-center justify-center hover:bg-muted text-muted-foreground disabled:opacity-30 disabled:hover:bg-transparent"
+              onClick={handleRedo}
+              disabled={!canRedo}
+              title="Redo (⇧⌘Z)"
+              data-testid="tool-redo"
+            >
+              <Redo2 className="w-4 h-4" />
             </button>
 
             <div className="h-px bg-border w-8 my-1" />

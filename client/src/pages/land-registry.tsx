@@ -460,9 +460,22 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
       const extract = (r: PromiseSettledResult<any>) => r.status === "fulfilled" && r.value?.status === "success" ? (r.value.data || r.value) : null;
 
       try {
-        const [fhResult, lhResult, planningData, demoData, yieldsData, demandData, rentsData, growthData, conservationData, listedData, soldData, floodData, energyData, floorData] = await Promise.allSettled([
-          fetchPD("freeholds", { postcode: cleanPc }),
-          fetchPD("leaseholds", { postcode: cleanPc }),
+        // UPRN-accurate title resolution: Google address → PropertyData
+        // address-match-uprn → uprn-title. Wider postcode data follows.
+        const resolvePromise = fetch("/api/land-registry/resolve", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({
+            address: addr.label?.split(" — ")[0].trim() || "",
+            postcode: cleanPc,
+            lat: addr.lat,
+            lng: addr.lng,
+          }),
+        }).then(r => r.ok ? r.json() : null).catch(() => null);
+
+        const [resolved, planningData, demoData, yieldsData, demandData, rentsData, growthData, conservationData, listedData, soldData, floodData, energyData, floorData] = await Promise.allSettled([
+          resolvePromise,
           fetchPD("planning-applications", { postcode: cleanPc }),
           fetchPD("demographics", { postcode: cleanPc }),
           fetchPD("yields", { postcode: cleanPc }),
@@ -479,19 +492,34 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
 
         if (thisReqId !== requestIdRef.current) return;
 
-        if (fhResult.status === "fulfilled" && fhResult.value?.status === "success" && fhResult.value.data) {
-          fetchedFreeholds = fhResult.value.data;
-          setFreeholds(fetchedFreeholds);
+        // Resolver tells us which titles are THIS property vs neighbours.
+        // Prefer UPRN matches, fall back to street-number match, final
+        // fallback is the whole postcode (same as before — labelled clearly).
+        const resolvedPayload = resolved.status === "fulfilled" ? resolved.value : null;
+        const matchedFh = resolvedPayload?.matched?.freeholds || [];
+        const matchedLh = resolvedPayload?.matched?.leaseholds || [];
+        const fallbackFh = resolvedPayload?.fallback?.freeholds || [];
+        const fallbackLh = resolvedPayload?.fallback?.leaseholds || [];
+        const contextFh = resolvedPayload?.context?.freeholds || [];
+        const contextLh = resolvedPayload?.context?.leaseholds || [];
+
+        // Tag rows so the UI can style matched vs context differently.
+        const tag = (rows: any[], matchSource: "uprn" | "street" | "postcode") =>
+          rows.map(r => ({ ...r, _match: matchSource }));
+
+        if (matchedFh.length > 0 || matchedLh.length > 0) {
+          fetchedFreeholds = [...tag(matchedFh, "uprn"), ...tag(contextFh, "postcode")];
+          fetchedLeaseholds = [...tag(matchedLh, "uprn"), ...tag(contextLh, "postcode")];
+        } else if (fallbackFh.length > 0 || fallbackLh.length > 0) {
+          fetchedFreeholds = [...tag(fallbackFh, "street"), ...tag(contextFh, "postcode")];
+          fetchedLeaseholds = [...tag(fallbackLh, "street"), ...tag(contextLh, "postcode")];
         } else {
-          setFreeholds([]);
+          fetchedFreeholds = tag(contextFh, "postcode");
+          fetchedLeaseholds = tag(contextLh, "postcode");
         }
 
-        if (lhResult.status === "fulfilled" && lhResult.value?.status === "success" && lhResult.value.data) {
-          fetchedLeaseholds = lhResult.value.data;
-          setLeaseholds(fetchedLeaseholds);
-        } else {
-          setLeaseholds([]);
-        }
+        setFreeholds(fetchedFreeholds);
+        setLeaseholds(fetchedLeaseholds);
 
         const intel: Record<string, any> = {};
         if (extract(planningData)) intel.planning = planningData.status === "fulfilled" ? planningData.value : null;
@@ -571,8 +599,21 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
     const recommendation = aiSummary?.recommendedTitles?.find(r => r.titleNumber === tn);
     const priorityColor = recommendation?.priority === "high" ? "border-amber-400 bg-amber-50/50 dark:bg-amber-950/20" : recommendation?.priority === "medium" ? "border-blue-300 bg-blue-50/30 dark:bg-blue-950/20" : "";
 
+    // _match comes from /api/land-registry/resolve — 'uprn' means exact
+    // match on the Ordnance Survey UPRN, 'street' is a street-number
+    // fallback, 'postcode' is a wider-area neighbour not specifically
+    // tied to the searched property.
+    const matchSource: "uprn" | "street" | "postcode" | undefined = (f as any)._match;
+    const matchClass = matchSource === "uprn"
+      ? "border-emerald-400 bg-emerald-50/40 dark:bg-emerald-950/20 ring-1 ring-emerald-300/60"
+      : matchSource === "street"
+      ? "border-blue-300 bg-blue-50/30 dark:bg-blue-950/20"
+      : matchSource === "postcode"
+      ? "border-border/60 bg-muted/10 opacity-80"
+      : "";
+
     return (
-      <div key={tn || i} className={`border rounded-lg p-3 space-y-2 ${recommendation ? priorityColor : ""}`} data-testid={`title-${tn}`}>
+      <div key={tn || i} className={`border rounded-lg p-3 space-y-2 ${recommendation ? priorityColor : matchClass}`} data-testid={`title-${tn}`}>
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -580,6 +621,21 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
               <Badge variant={isLeasehold ? "secondary" : "outline"} className="text-[10px]">
                 {isLeasehold ? "Leasehold" : "Freehold"}
               </Badge>
+              {matchSource === "uprn" && (
+                <Badge className="text-[10px] bg-emerald-600 text-white" title="Matched via Ordnance Survey UPRN — this IS the property you searched for">
+                  This property
+                </Badge>
+              )}
+              {matchSource === "street" && (
+                <Badge className="text-[10px] bg-blue-500 text-white" title="Matched by street number — likely this property">
+                  Likely this property
+                </Badge>
+              )}
+              {matchSource === "postcode" && (
+                <Badge variant="outline" className="text-[10px] text-muted-foreground" title="Not specifically tied to the searched property — another title at the same postcode">
+                  Postcode neighbour
+                </Badge>
+              )}
               {recommendation && (
                 <Badge className={`text-[10px] ${recommendation.priority === "high" ? "bg-amber-500 text-white" : recommendation.priority === "medium" ? "bg-blue-500 text-white" : "bg-gray-400 text-white"}`}>
                   {recommendation.priority === "high" ? "Recommended" : recommendation.priority === "medium" ? "Worth investigating" : "Low priority"}

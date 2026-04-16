@@ -47,7 +47,7 @@ import {
 } from "@shared/schema";
 import { escapeLike } from "./utils/escape-like";
 import { db, pool } from "./db";
-import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray } from "drizzle-orm";
+import { eq, ne, desc, and, or, inArray, ilike, sql, notInArray, isNull } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -91,7 +91,7 @@ export interface IStorage {
   getLeads(): Promise<NewsLead[]>;
   getLeadsByEmailId(emailId: string): Promise<NewsLead[]>;
   createLead(lead: InsertNewsLead): Promise<NewsLead>;
-  updateLeadStatus(id: string, status: string, mondayItemId?: string): Promise<void>;
+  updateLeadStatus(id: string, status: string): Promise<void>;
 
   getExcelTemplates(): Promise<ExcelTemplate[]>;
   getExcelTemplate(id: string): Promise<ExcelTemplate | undefined>;
@@ -389,12 +389,8 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateLeadStatus(id: string, status: string, mondayItemId?: string): Promise<void> {
-    const updates: any = { status };
-    if (mondayItemId) {
-      updates.mondayItemId = mondayItemId;
-    }
-    await db.update(newsLeads).set(updates).where(eq(newsLeads.id, id));
+  async updateLeadStatus(id: string, status: string): Promise<void> {
+    await db.update(newsLeads).set({ status }).where(eq(newsLeads.id, id));
   }
 
   async getExcelTemplates(): Promise<ExcelTemplate[]> {
@@ -714,11 +710,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]> {
-    const conditions: any[] = [];
+    // Hide companies that have been merged into another — they shouldn't
+    // appear in any list view. Their FK references have been rewritten so
+    // nothing depends on them any more.
+    const conditions: any[] = [isNull(crmCompanies.mergedIntoId)];
     if (filters?.search) conditions.push(ilike(crmCompanies.name, `%${escapeLike(filters.search)}%`));
     if (filters?.groupName) conditions.push(eq(crmCompanies.groupName, filters.groupName));
     if (filters?.companyType) conditions.push(eq(crmCompanies.companyType, filters.companyType));
-    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    const where = and(...conditions);
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;
       const [countResult] = await db.select({ count: sql<number>`count(*)::int` }).from(crmCompanies).where(where);
@@ -942,7 +941,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateCrmDeal(id: string, updates: Partial<InsertCrmDeal>): Promise<CrmDeal> {
-    const [d] = await db.update(crmDeals).set({ ...updates, updatedAt: new Date() }).where(eq(crmDeals.id, id)).returning();
+    // Coerce any date-string values to Date objects for Drizzle timestamp columns
+    const tsFields = ["kycApprovedAt", "hotsCompletedAt", "amlEddCompletedAt", "amlIdVerifiedAt", "amlSarFiledAt"];
+    const coerced: any = { ...updates };
+    for (const f of tsFields) {
+      if (coerced[f] && typeof coerced[f] === "string") {
+        coerced[f] = new Date(coerced[f]);
+      }
+    }
+    const [d] = await db.update(crmDeals).set({ ...coerced, updatedAt: new Date() }).where(eq(crmDeals.id, id)).returning();
     return d;
   }
 

@@ -420,8 +420,18 @@ export const crmCompanies = pgTable("crm_companies", {
   companiesHouseNumber: text("companies_house_number"),
   companiesHouseData: jsonb("companies_house_data"),
   companiesHouseOfficers: jsonb("companies_house_officers"),
-  kycStatus: text("kyc_status"),
+  kycStatus: text("kyc_status"), // pending | in_review | approved | rejected | expired
   kycCheckedAt: timestamp("kyc_checked_at"),
+  kycApprovedBy: text("kyc_approved_by"),
+  kycExpiresAt: timestamp("kyc_expires_at"),
+  amlChecklist: jsonb("aml_checklist"),
+  amlRiskLevel: text("aml_risk_level"),
+  amlPepStatus: text("aml_pep_status"),
+  amlSourceOfWealth: text("aml_source_of_wealth"),
+  amlSourceOfWealthNotes: text("aml_source_of_wealth_notes"),
+  amlEddRequired: boolean("aml_edd_required").default(false),
+  amlEddReason: text("aml_edd_reason"),
+  amlNotes: text("aml_notes"),
   contacted: boolean("contacted").default(false),
   detailsSent: boolean("details_sent").default(false),
   viewing: boolean("viewing").default(false),
@@ -436,6 +446,22 @@ export const crmCompanies = pgTable("crm_companies", {
   foundedYear: text("founded_year"),
   lastEnrichedAt: timestamp("last_enriched_at"),
   enrichmentSource: text("enrichment_source"),
+  // ── Brand Bible fields ─────────────────────────────────────────────
+  isTrackedBrand: boolean("is_tracked_brand").default(false),
+  trackingReason: text("tracking_reason"),
+  brandGroupId: varchar("brand_group_id"), // parent brand group (e.g. Inditex for Zara)
+  conceptPitch: text("concept_pitch"),
+  storeCount: integer("store_count"),
+  rolloutStatus: text("rollout_status"), // scaling | stable | contracting | entering_uk | rumoured
+  backers: text("backers"), // free-text: "Sequoia, Index Ventures" etc.
+  instagramHandle: text("instagram_handle"),
+  agentType: text("agent_type"), // tenant_rep | landlord_rep | investment | null (for non-agents)
+  // AI-enrichment provenance — which fields were auto-written vs human
+  aiGeneratedFields: jsonb("ai_generated_fields"),
+  // Dedupe — when set, this row is a merged-away duplicate. Hidden from lists.
+  mergedIntoId: varchar("merged_into_id"),
+  mergedAt: timestamp("merged_at"),
+  mergedBy: text("merged_by"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -443,6 +469,115 @@ export const crmCompanies = pgTable("crm_companies", {
 export const insertCrmCompanySchema = createInsertSchema(crmCompanies).omit({ id: true, createdAt: true, updatedAt: true, lastEnrichedAt: true, enrichmentSource: true });
 export type InsertCrmCompany = z.infer<typeof insertCrmCompanySchema>;
 export type CrmCompany = typeof crmCompanies.$inferSelect;
+
+// ─── Brand ↔ Agent representations ────────────────────────────────────────
+// A brand is often represented by one or more agents in a given region.
+// This table records those relationships so we know who to call when we
+// want to progress a deal with a brand.
+export const brandAgentRepresentations = pgTable("brand_agent_representations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brandCompanyId: varchar("brand_company_id").notNull(),
+  agentCompanyId: varchar("agent_company_id").notNull(),
+  agentType: text("agent_type").notNull(), // tenant_rep | landlord_rep | investment
+  region: text("region"), // central_london | uk_regions | europe | global | null
+  primaryContactId: varchar("primary_contact_id"), // → crm_contacts
+  startDate: timestamp("start_date"),
+  endDate: timestamp("end_date"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertBrandAgentRepSchema = createInsertSchema(brandAgentRepresentations).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertBrandAgentRep = z.infer<typeof insertBrandAgentRepSchema>;
+export type BrandAgentRep = typeof brandAgentRepresentations.$inferSelect;
+
+// ─── Brand signals — time-series of openings, closures, funding, etc. ─────
+export const brandSignals = pgTable("brand_signals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brandCompanyId: varchar("brand_company_id").notNull(),
+  signalType: text("signal_type").notNull(), // opening | closure | funding | exec_change | sector_move | news | rumour
+  headline: text("headline").notNull(),
+  detail: text("detail"),
+  source: text("source"), // url or "rss:feedName" or "manual"
+  signalDate: timestamp("signal_date"), // when the thing happened (not when we learned)
+  magnitude: text("magnitude"), // small | medium | large
+  sentiment: text("sentiment"), // positive | neutral | negative
+  aiGenerated: boolean("ai_generated").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export const insertBrandSignalSchema = createInsertSchema(brandSignals).omit({ id: true, createdAt: true });
+export type InsertBrandSignal = z.infer<typeof insertBrandSignalSchema>;
+export type BrandSignal = typeof brandSignals.$inferSelect;
+
+// ─── Leasing pitch — per-property ERV, incentives, target tenants ─────────
+// Captured at instruction time. Drives the initial leasing schedule + the
+// tenant-mix recommender.
+export const leasingPitch = pgTable("leasing_pitch", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id").notNull().unique(),
+  erv: real("erv"), // £/year estimated rental value
+  ervPerSqft: real("erv_per_sqft"),
+  incentivePlan: text("incentive_plan"), // free text: "6-9 months rent-free, £100/sqft capex"
+  rentFreeMonths: integer("rent_free_months"),
+  capexContribution: real("capex_contribution"),
+  fitOutContribution: real("fit_out_contribution"),
+  targetBrandIds: text("target_brand_ids").array(), // → crm_companies
+  marketingStrategy: text("marketing_strategy"),
+  positioning: text("positioning"),
+  aiGeneratedFields: jsonb("ai_generated_fields"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertLeasingPitchSchema = createInsertSchema(leasingPitch).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertLeasingPitch = z.infer<typeof insertLeasingPitchSchema>;
+export type LeasingPitch = typeof leasingPitch.$inferSelect;
+
+// ─── Heads of Terms — structured, versioned ───────────────────────────────
+// HoTs is the spine of the deal. Every negotiating round is a new version;
+// the signed version drives the deal page and KYC checklist.
+export const dealHots = pgTable("deal_hots", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  version: integer("version").notNull().default(1),
+  rentPa: real("rent_pa"),
+  termYears: real("term_years"),
+  breakOption: text("break_option"),
+  rentFreeMonths: real("rent_free_months"),
+  fitOutContribution: real("fit_out_contribution"),
+  deposit: real("deposit"),
+  rentReviewMechanism: text("rent_review_mechanism"), // RPI | CPI | OMV | fixed | null
+  useClass: text("use_class"),
+  alienation: text("alienation"),
+  repairObligations: text("repair_obligations"),
+  agaRequired: boolean("aga_required").default(false),
+  scheduleOfCondition: boolean("schedule_of_condition").default(false),
+  notes: text("notes"),
+  status: text("status").default("draft"), // draft | agreed | signed | superseded
+  signedAt: timestamp("signed_at"),
+  signedBy: text("signed_by"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertDealHotsSchema = createInsertSchema(dealHots).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertDealHots = z.infer<typeof insertDealHotsSchema>;
+export type DealHots = typeof dealHots.$inferSelect;
+
+// ─── Deal events — append-only audit of every stage transition / action ──
+export const dealEvents = pgTable("deal_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  eventType: text("event_type").notNull(), // stage_change | hots_version | kyc_updated | doc_generated | ...
+  fromStage: text("from_stage"),
+  toStage: text("to_stage"),
+  payload: jsonb("payload"),
+  actorId: varchar("actor_id"),
+  actorName: text("actor_name"),
+  occurredAt: timestamp("occurred_at").defaultNow(),
+});
+export const insertDealEventSchema = createInsertSchema(dealEvents).omit({ id: true, occurredAt: true });
+export type InsertDealEvent = z.infer<typeof insertDealEventSchema>;
+export type DealEvent = typeof dealEvents.$inferSelect;
 
 export const crmContacts = pgTable("crm_contacts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -599,6 +734,18 @@ export const crmDeals = pgTable("crm_deals", {
   amlSarFiledAt: timestamp("aml_sar_filed_at"),
   amlComplianceNotes: text("aml_compliance_notes"),
   amlChecklist: jsonb("aml_checklist"), // structured JSON checklist of all compliance steps
+  // ── Structured deal stage (drives transitions, reports, events) ──────
+  stage: text("stage"), // instruction | marketing | viewings | offers | hots | sols | agreed | completed | invoiced
+  stageEnteredAt: timestamp("stage_entered_at"),
+  // ── Solicitor leg — tracks the deal from HoTs to completion ──────────
+  solicitorFirm: text("solicitor_firm"),
+  solicitorContact: text("solicitor_contact"),
+  solicitorInstructedAt: timestamp("solicitor_instructed_at"),
+  draftLeaseReceivedAt: timestamp("draft_lease_received_at"),
+  commentsReturnedAt: timestamp("comments_returned_at"),
+  engrossmentAt: timestamp("engrossment_at"),
+  completionTargetDate: timestamp("completion_target_date"),
+  solicitorNotes: text("solicitor_notes"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -712,6 +859,9 @@ export const crmComps = pgTable("crm_comps", {
   passingRent: text("passing_rent"),
   fitoutContribution: text("fitout_contribution"),
   sourceEvidence: text("source_evidence"),
+  sourceUrl: text("source_url"),
+  sourceTitle: text("source_title"),
+  sourceContactId: varchar("source_contact_id"),
   niaSqft: text("nia_sqft"),
   giaSqft: text("gia_sqft"),
   ipmsSqft: text("ipms_sqft"),
@@ -743,6 +893,12 @@ export const crmComps = pgTable("crm_comps", {
   passingRentPa: text("passing_rent_pa"),
   rentFreeMonths: text("rent_free_months"),
   evidenceSource: text("evidence_source"),
+  sourceUrl: text("source_url"),
+  contactId: varchar("contact_id"),
+  contactName: text("contact_name"),
+  contactCompany: text("contact_company"),
+  contactPhone: text("contact_phone"),
+  contactEmail: text("contact_email"),
   floorAreaSqft: text("floor_area_sqft"),
   effectiveRentPa: text("effective_rent_pa"),
   effectiveRatePsf: text("effective_rate_psf"),
@@ -1147,6 +1303,7 @@ export const availableUnits = pgTable("available_units", {
   viewingsCount: integer("viewings_count").default(0),
   lastViewingDate: text("last_viewing_date"),
   marketingStartDate: text("marketing_start_date"),
+  leasingScheduleUnitId: varchar("leasing_schedule_unit_id"), // → leasing_schedule_units.id (single source of truth link)
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1459,6 +1616,56 @@ export const deletedSharepointImages = pgTable("deleted_sharepoint_images", {
   sharepointItemId: text("sharepoint_item_id").notNull(),
   deletedAt: timestamp("deleted_at").defaultNow(),
 });
+
+// ─── KYC documents — proof of funds, certified passport, etc. ─────────────
+// Owned by a counterparty (company OR contact). Optionally tied to a deal
+// when it's a deal-specific item like "proof of funds for THIS purchase".
+export const kycDocuments = pgTable("kyc_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  companyId: varchar("company_id"),
+  contactId: varchar("contact_id"),
+  dealId: varchar("deal_id"),
+  // passport, certified_passport, drivers_licence, proof_of_address,
+  // source_of_funds, source_of_wealth, ubo_declaration, company_cert,
+  // bank_statement, onfido_report, other
+  docType: text("doc_type").notNull(),
+  fileUrl: text("file_url").notNull(),
+  fileName: text("file_name").notNull(),
+  fileSize: integer("file_size"),
+  mimeType: text("mime_type"),
+  certifiedBy: text("certified_by"),
+  certifiedAt: timestamp("certified_at"),
+  expiresAt: timestamp("expires_at"),
+  notes: text("notes"),
+  uploadedBy: varchar("uploaded_by"),
+  uploadedAt: timestamp("uploaded_at").defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const insertKycDocumentSchema = createInsertSchema(kycDocuments).omit({ id: true, uploadedAt: true, deletedAt: true });
+export type InsertKycDocument = z.infer<typeof insertKycDocumentSchema>;
+export type KycDocument = typeof kycDocuments.$inferSelect;
+
+// ─── Veriff biometric verification sessions ───────────────────────────────
+export const veriffSessions = pgTable("veriff_sessions", {
+  sessionId: text("session_id").primaryKey(),
+  companyId: varchar("company_id"),
+  contactId: varchar("contact_id"),
+  dealId: varchar("deal_id"),
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name").notNull(),
+  email: text("email"),
+  status: text("status"), // created | started | submitted | approved | declined | resubmission_requested | expired | abandoned
+  decisionCode: integer("decision_code"),
+  decisionReason: text("decision_reason"),
+  verdictPerson: jsonb("verdict_person"),
+  verdictDocument: jsonb("verdict_document"),
+  verificationUrl: text("verification_url"),
+  requestedBy: varchar("requested_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  receivedAt: timestamp("received_at"),
+});
+export type VeriffSession = typeof veriffSessions.$inferSelect;
 
 export const userTasks = pgTable("user_tasks", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

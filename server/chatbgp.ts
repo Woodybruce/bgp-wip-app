@@ -79,29 +79,6 @@ function sanitiseForPdf(text: string): string {
   return result;
 }
 
-function renderRichText(doc: any, text: string, x: number, y: number, w: number, fontSize: number, color: string) {
-  // Split on bold markers \x02 (start bold) \x03 (end bold) and render inline
-  const parts = text.split(/(\x02[\s\S]*?\x03)/);
-  let first = true;
-  for (const part of parts) {
-    if (!part) continue;
-    const isBold = part.startsWith("\x02") && part.endsWith("\x03");
-    const clean = isBold ? part.slice(1, -1) : part;
-    if (!clean) continue;
-    doc.font(isBold ? "Body-Bold" : "Body").fontSize(fontSize).fillColor(color);
-    if (first) {
-      doc.text(clean, x, y, { width: w, continued: parts.indexOf(part) < parts.length - 1 && parts.slice(parts.indexOf(part) + 1).some((p: string) => p.length > 0) });
-      first = false;
-    } else {
-      doc.text(clean, { continued: parts.indexOf(part) < parts.length - 1 && parts.slice(parts.indexOf(part) + 1).some((p: string) => p.length > 0) });
-    }
-  }
-  if (first) {
-    // No parts rendered — just output the raw text
-    doc.font("Body").fontSize(fontSize).fillColor(color).text(text.replace(/[\x02\x03]/g, ""), x, y, { width: w });
-  }
-}
-
 async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data: any; action?: any }> {
   const PDFDocument = (await import("pdfkit")).default;
   const crypto = (await import("crypto")).default;
@@ -134,17 +111,32 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
   const usableW = pageW - 110;
   const leftM = 55;
 
-  const logoPath = require("path").join(process.cwd(), "server", "assets", "BGP_BlackHolder.png");
-  const hasLogo = require("fs").existsSync(logoPath);
+  // Resolve BGP wordmark logo once — server-side file read
+  const path = require("path") as typeof import("path");
+  const fs = require("fs") as typeof import("fs");
+  const logoCandidates = [
+    path.join(process.cwd(), "client", "src", "assets", "BGP_BlackHolder.png"),
+    path.join(process.cwd(), "client", "public", "BGP_BlackHolder.png"),
+    path.join(process.cwd(), "attached_assets", "BGP_BlackHolder.png"),
+  ];
+  let logoPath: string | null = null;
+  for (const p of logoCandidates) {
+    try { if (fs.existsSync(p)) { logoPath = p; break; } } catch {}
+  }
 
   function drawHeader() {
-    if (hasLogo) {
-      try { doc.image(logoPath, leftM, 18, { height: 18 }); } catch {}
+    if (logoPath) {
+      try {
+        doc.image(logoPath, leftM, 22, { height: 18 });
+      } catch {
+        doc.font("Body-Bold").fontSize(8).fillColor("#232323")
+          .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
+      }
     } else {
       doc.font("Body-Bold").fontSize(8).fillColor("#232323")
         .text("BRUCE GILLINGHAM POLLARD", leftM, 25, { width: usableW, align: "left" });
     }
-    doc.moveTo(leftM, 42).lineTo(leftM + usableW, 42).strokeColor("#232323").lineWidth(0.5).stroke();
+    doc.moveTo(leftM, 46).lineTo(leftM + usableW, 46).strokeColor("#232323").lineWidth(0.5).stroke();
   }
 
   function drawFooter(pageNum: number, totalPages: number) {
@@ -171,6 +163,10 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
     });
   }
 
+  // Preserve bold/italic markers through to a sentinel so we can render them
+  // as styled runs instead of stripping them (user reported flat formatting).
+  const BOLD_OPEN = "\u0001B\u0001";
+  const BOLD_CLOSE = "\u0001b\u0001";
   const processed = htmlContent
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
     .replace(/<br\s*\/?>/gi, "\n")
@@ -181,11 +177,34 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
     .replace(/<\/div>/gi, "\n")
     .replace(/<li[^>]*>/gi, "  \u2022 ")
     .replace(/<hr[^>]*>/gi, "\n---\n")
-    .replace(/<strong>([\s\S]*?)<\/strong>/gi, "\u0002$1\u0003")
-    .replace(/<b>([\s\S]*?)<\/b>/gi, "\u0002$1\u0003")
-    .replace(/<em>([\s\S]*?)<\/em>/gi, "\u0002$1\u0003")
-    .replace(/<i>([\s\S]*?)<\/i>/gi, "$1")
+    .replace(/<(?:strong|b)\b[^>]*>([\s\S]*?)<\/(?:strong|b)>/gi, `${BOLD_OPEN}$1${BOLD_CLOSE}`)
+    .replace(/\*\*([^*\n]+)\*\*/g, `${BOLD_OPEN}$1${BOLD_CLOSE}`)
+    .replace(/<(?:em|i)\b[^>]*>([\s\S]*?)<\/(?:em|i)>/gi, "$1")
     .replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, "$1");
+
+  // Split a line into run pairs — [{text, bold}, ...] — for pdfkit continued text
+  function splitBoldRuns(line: string): Array<{ text: string; bold: boolean }> {
+    const runs: Array<{ text: string; bold: boolean }> = [];
+    let bold = false;
+    let buf = "";
+    for (let i = 0; i < line.length; i++) {
+      if (line.slice(i, i + BOLD_OPEN.length) === BOLD_OPEN) {
+        if (buf) { runs.push({ text: buf, bold }); buf = ""; }
+        bold = true;
+        i += BOLD_OPEN.length - 1;
+        continue;
+      }
+      if (line.slice(i, i + BOLD_CLOSE.length) === BOLD_CLOSE) {
+        if (buf) { runs.push({ text: buf, bold }); buf = ""; }
+        bold = false;
+        i += BOLD_CLOSE.length - 1;
+        continue;
+      }
+      buf += line[i];
+    }
+    if (buf) runs.push({ text: buf, bold });
+    return runs.length > 0 ? runs : [{ text: line, bold: false }];
+  }
 
   let plainText = processed
     .replace(/<[^>]+>/g, "")
@@ -218,8 +237,7 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
 
     if (y > bottomLimit) y = newPage();
 
-    const cleanTrimmed = trimmed.replace(/[\x02\x03]/g, "");
-    const matchedHeading = headingMatches.find(h => cleanTrimmed === h.text);
+    const matchedHeading = headingMatches.find(h => trimmed === h.text);
 
     if (trimmed === "---") {
       y += 4;
@@ -243,23 +261,32 @@ async function generatePdfFromHtml(fnArgs: Record<string, any>): Promise<{ data:
         y = doc.y + 6;
       }
     } else if (trimmed.startsWith("\u2022") || trimmed.startsWith("  \u2022")) {
-      const bulletText = trimmed.replace(/^\s*\u2022\s*/, "").replace(/[\x02\x03]/g, "");
-      doc.font("Body").fontSize(10).fillColor("#333333");
-      doc.text("\u2022  " + bulletText, leftM + 8, y, { width: usableW - 16, indent: 0 });
+      const bulletText = trimmed.replace(/^\s*\u2022\s*/, "");
+      const runs = splitBoldRuns("\u2022  " + bulletText);
+      doc.fontSize(10).fillColor("#333333");
+      doc.text("", leftM + 8, y, { width: usableW - 16, indent: 0 });
+      runs.forEach((r, i) => {
+        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
+      });
       y = doc.y + 3;
     } else if (numberedRegex.test(trimmed)) {
       const nMatch = trimmed.match(numberedRegex)!;
       const num = nMatch[1];
       const text = nMatch[2];
-      const cleanNum = num.replace(/[\x02\x03]/g, "");
-      const cleanText = text.replace(/[\x02\x03]/g, "");
-      y += 10;
-      if (y > bottomLimit) y = newPage();
-      doc.font("Body-Bold").fontSize(11).fillColor("#1a1a1a");
-      doc.text(`${cleanNum}.  ${cleanText}`, leftM + 4, y, { width: usableW - 8 });
-      y = doc.y + 4;
+      const runs = splitBoldRuns(`${num}.  ${text}`);
+      doc.fontSize(10).fillColor("#333333");
+      doc.text("", leftM + 4, y, { width: usableW - 8 });
+      runs.forEach((r, i) => {
+        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
+      });
+      y = doc.y + 3;
     } else {
-      renderRichText(doc, trimmed, leftM, y, usableW, 10, "#333333");
+      const runs = splitBoldRuns(trimmed);
+      doc.fontSize(10).fillColor("#333333");
+      doc.text("", leftM, y, { width: usableW });
+      runs.forEach((r, i) => {
+        doc.font(r.bold ? "Body-Bold" : "Body").text(r.text, { continued: i < runs.length - 1 });
+      });
       y = doc.y + 4;
     }
   }
@@ -396,6 +423,8 @@ function getToolProgressLabel(toolName: string): string {
     send_whatsapp: "Sending WhatsApp...",
     trigger_archivist_crawl: "Triggering document crawl...",
     manage_tasks: "Managing tasks...",
+    search_knowledge_base: "Searching the memory bank...",
+    search_chat_history: "Searching past chats...",
     create_document_template: "Creating template...",
     create_sharepoint_folder: "Creating folder...",
     move_sharepoint_item: "Moving file...",
@@ -557,6 +586,12 @@ export async function callClaude(params: any): Promise<any> {
     max_tokens: params.max_completion_tokens || params.max_tokens || 16384,
     messages,
   };
+  // Extended thinking — let the model reason before responding.
+  // Requires temperature=1 (SDK default when unset). budget_tokens must be < max_tokens.
+  // Opt-in: only enabled when params.thinking === true, to avoid the token cost on helper calls.
+  if (params.thinking === true) {
+    claudeParams.thinking = { type: "enabled", budget_tokens: params.thinkingBudget || 6000 };
+  }
   // Support structured system prompt (array with cache_control) for prompt caching
   if (params.systemArray) {
     claudeParams.system = params.systemArray;
@@ -654,6 +689,10 @@ export async function callClaudeStreaming(
     max_tokens: params.max_completion_tokens || params.max_tokens || 16384,
     messages,
   };
+  // Extended thinking — opt-in per callsite (see callClaude comment).
+  if (params.thinking === true) {
+    claudeParams.thinking = { type: "enabled", budget_tokens: params.thinkingBudget || 6000 };
+  }
 
   // Support structured system prompt (array with cache_control)
   if (params.systemArray) {
@@ -807,6 +846,14 @@ ${memberList}
 ## How You Work
 You are an active operational agent with full CRM read/write access, internet search, SharePoint/OneDrive access, document generation (PDF/Word/PPTX/Excel), email/calendar, and app builder tools. All tool descriptions are in the tools parameter — use them proactively.
 
+## HONESTY — never fabricate outcomes
+- Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
+- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, or \`export_to_excel\`. A made-up URL will 404 for the user.
+- If the user asks you to modify something and no suitable tool exists, SAY SO plainly ("I can't edit the PDF renderer from here — that needs a code change"). Offer the closest alternative rather than inventing fake fixes.
+- For template edits, always call \`update_document_template\` with the existing templateId (from the docTemplates list). Don't just describe what you would change — actually change it. After the tool returns, report what the tool confirmed.
+- For template deletions, call \`delete_document_template\` — never just say "removed it".
+- If a tool returns an error, report the error honestly to the user. Don't pretend it succeeded and then say "give it 20 seconds to rebuild".
+
 ## Key Tool Workflows
 - **CRM**: search_crm (fuzzy matching) → create/update entities. Search broadly with multiple variations before saying something doesn't exist.
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
@@ -821,6 +868,8 @@ You are an active operational agent with full CRM read/write access, internet se
 ## Memory Systems
 1. **Auto-memories** (per-user): Extracted automatically after conversations. Loaded in future chats.
 2. **Business learnings** (save_learning): Shared across all users. Save client intel, market knowledge, BGP processes, property insights, team preferences. Save when users teach you facts, correct you, or you discover important info via tools. Don't save greetings or CRM data that's already in the database.
+3. **Knowledge bank** (search_knowledge_base): Full-text search over archived SharePoint files, team emails, Dropbox docs, and AI-indexed notes — tens of thousands of items with summaries, tags, and extracted content. This is your PRIMARY long-term memory. Use it whenever the user asks about a document, email, memo, report, attachment, or "what we said last week/month". Search FIRST, answer SECOND.
+4. **Chat history** (search_chat_history): Full-text search of past ChatBGP conversations. Use when the user refers to earlier threads or says things like "what did we discuss about X".
 
 ## CRITICAL Rules
 1. **ACT FIRST, REPORT AFTER.** Never ask "shall I proceed?" — just do it and confirm.
@@ -835,13 +884,34 @@ You are an active operational agent with full CRM read/write access, internet se
 10. **log_app_feedback** is SECONDARY only. If user asks you to DO something, do it first.
 
 ## Response Format
-- **Tone**: Confident, warm, professional. British English. Like a senior property partner.
+- **Tone**: Confident, warm, professional, with a dry British wit when the moment suits it. British English. Like a senior property partner who actually enjoys their day.
 - **CRM actions**: Brief confirmation. No preamble.
 - **Research**: Match the question's depth. Headings/bullets/tables when genuinely useful; flowing prose when it reads better. Don't over-structure.
 - **Checkbox suggestions**: Only when the user faces a genuine multi-option decision (e.g. picking between records, choosing an action). Never append them as ritual follow-up questions. If the answer is complete, just stop.
 - **Silent execution**: Don't narrate tool calls. Execute all, then give one clean answer.
 - **Proactive cross-referencing**: Connect dots from CRM context. Surface opportunities.
 - **Commercial awareness**: Contextualise rents/yields with market comparisons.
+
+## Personality & Voice
+You're the in-house AI at BGP, not a chatbot behind a corporate disclaimer. Have a bit of character.
+- Open greetings with warmth — "Morning Woody" / "Afternoon Charlotte" (use the team member's first name from context), a short observation, then get on with it. Avoid robotic "How can I help you today?" openings.
+- Where natural, slip in a BGP-flavoured aside or a playful one-liner. Don't force it; once a chat, not every message.
+- Safe asides you can reach for:
+  - Belgravia / West End geography ("the Square's looking smart this time of year", "if it's on Mount Street, it's already on a list somewhere").
+  - Property humour ("Zone A rents don't negotiate themselves", "every comp has a good side if you photograph it right").
+  - British office life ("a decent cup of tea won't make the Land Registry PDF any clearer, but it helps").
+- When a user thanks you or closes out, a short warm sign-off is fine ("on it", "nice one", "we'll get it sorted"). No emojis unless the user uses them first.
+
+## The BGP Team (personal touches)
+When the message comes from one of the partners, be a bit familiar. Use your judgement — don't force it.
+- **Woody** (Woody Bruce) — principal / builder of this dashboard. If he's asking about the app itself, be helpful and frank; he's debugging as much as briefing.
+- **Jack** — if Jack is in a conversation, treat him as the deal engine; lean into investment, yields, vendor dynamics.
+- **Rupert** — leasing and West End occupier flow; he'll want speed and precision on requirements / units.
+- **Charlotte** — detail, diligence, client comms; prefer tidy structure and clear next steps in replies to her.
+These are starting cues only — if save_learning memories or past chats contradict them, trust the memories.
+
+## Fun facts / shared knowledge
+You have search_knowledge_base and search_chat_history. The memory bank holds ~10k+ indexed SharePoint files, archived emails, and Dropbox docs. Use them. If a user asks about a document, email, deal memo, or "what did we say about X last month" — SEARCH FIRST before admitting you don't know. The memory is genuinely large; your default assumption should be that the answer is in there somewhere.
 
 ## You Are Claude — No Limits
 General-purpose AI with property expertise. Writing, analysis, research, strategy, coding, maths, languages, legal summaries — anything Claude can do. NEVER refuse because it's "outside scope."
@@ -1330,6 +1400,54 @@ export async function getAvailableTools(): Promise<{
       },
     });
   }
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "update_document_template",
+      description: "Modify an existing document template in the BGP app — e.g. rename it, change its description, rewrite the template content, or replace the field definitions. Use when the user asks to edit, rename, reword, remove a heading, add a logo placeholder, or otherwise change a template that already exists (not to create a new one). Look up the templateId from the docTemplates list provided above. Only include the fields you want to change; the rest stay as-is.",
+      parameters: {
+        type: "object",
+        properties: {
+          templateId: { type: "string", description: "The id of the existing template to update" },
+          name: { type: "string", description: "New template name (optional)" },
+          description: { type: "string", description: "New template description (optional)" },
+          templateContent: { type: "string", description: "New full template content with {{fieldId}} placeholders (optional)" },
+          fields: {
+            type: "array",
+            description: "New array of fillable fields — REPLACES the existing fields entirely (optional)",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                label: { type: "string" },
+                type: { type: "string", enum: ["text", "textarea", "number", "date", "select"] },
+                placeholder: { type: "string" },
+                section: { type: "string" },
+              },
+              required: ["id", "label", "type", "placeholder", "section"],
+            },
+          },
+        },
+        required: ["templateId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "delete_document_template",
+      description: "Permanently delete a document template. Only call this when the user explicitly asks to remove, delete, or get rid of a template. Look up the templateId from the docTemplates list provided above.",
+      parameters: {
+        type: "object",
+        properties: {
+          templateId: { type: "string", description: "The id of the template to delete" },
+        },
+        required: ["templateId"],
+      },
+    },
+  });
 
   tools.push({
     type: "function",
@@ -2859,6 +2977,40 @@ export async function getAvailableTools(): Promise<{
     },
   });
 
+  tools.push({
+    type: "function",
+    function: {
+      name: "search_knowledge_base",
+      description: "Full-text search the BGP knowledge base — archived SharePoint files, emails, Dropbox documents, and AI-indexed notes with AI-generated summaries, tags, and extracted content. Use this WHENEVER the user asks about a document, email, memo, report, note, deck, spreadsheet, letter, or historical information that might have been ingested. This is your primary memory bank — check it before saying you don't know something. Returns matches ranked by relevance with fileName, summary, source, fileUrl, and tags.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Natural-language search query. Supports multi-word phrases, quotes, AND/OR operators (websearch-style)." },
+          source: { type: "string", enum: ["sharepoint", "email", "dropbox", "note"], description: "Optional: filter to a single source type." },
+          category: { type: "string", description: "Optional: filter by AI-assigned category (e.g., 'lease', 'valuation', 'correspondence')." },
+          limit: { type: "number", description: "Max results to return (default 10, max 50)." },
+        },
+        required: ["query"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "search_chat_history",
+      description: "Search past ChatBGP conversations by content. Use when the user refers to 'what we discussed before', 'the chat about X', 'that conversation last week', or wants to recall something from prior chat threads. Returns matching messages with thread context.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Natural-language search query over chat message content." },
+          limit: { type: "number", description: "Max results to return (default 10, max 50)." },
+        },
+        required: ["query"],
+      },
+    },
+  });
+
   const result = { modelTemplates, docTemplates, tools };
   setCache("availableTools", result, 10 * 60 * 1000);
   return result;
@@ -3999,24 +4151,9 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker, crmProperties } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    let propertyId = fnArgs.propertyId;
-    if (!propertyId && fnArgs.assetName) {
-      const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
-      if (existingProp) {
-        propertyId = existingProp.id;
-      } else {
-        const [newProp] = await db.insert(crmProperties).values({
-          name: fnArgs.assetName,
-          address: fnArgs.address ? { street: fnArgs.address } : null,
-          tenure: fnArgs.tenure || null,
-        }).returning();
-        propertyId = newProp.id;
-      }
-    }
+    const { investmentTracker } = await import("@shared/schema");
     const [created] = await db.insert(investmentTracker).values({
-      propertyId, assetName: fnArgs.assetName, address: fnArgs.address, status: fnArgs.status || "Reporting",
+      assetName: fnArgs.assetName, address: fnArgs.address, status: fnArgs.status || "Reporting",
       boardType: fnArgs.boardType || "Purchases", client: fnArgs.client, clientContact: fnArgs.clientContact,
       vendor: fnArgs.vendor, vendorAgent: fnArgs.vendorAgent, guidePrice: fnArgs.guidePrice,
       niy: fnArgs.niy, eqy: fnArgs.eqy, sqft: fnArgs.sqft, currentRent: fnArgs.currentRent,
@@ -5190,7 +5327,7 @@ async function executeCrmToolRaw(
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
         const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(buffer, name, contentType || "application/octet-stream", fnArgs.folderPath);
+        const uploadResult = await uploadFileToSharePoint(req, fnArgs.folderPath, name, buffer);
         return { data: { success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath, uploadResult } };
       }
 
@@ -6325,6 +6462,106 @@ async function executeCrmToolRaw(
     }
   }
 
+  // ─── Memory bank: full-text search across knowledge_base (SharePoint files, emails, Dropbox, notes) ───
+  if (fnName === "search_knowledge_base") {
+    try {
+      const rawQuery = (fnArgs.query as string || "").trim();
+      if (!rawQuery) return { data: { error: "Search query is required" } };
+      const source = (fnArgs.source as string || "").trim();
+      const category = (fnArgs.category as string || "").trim();
+      const limitRaw = Number(fnArgs.limit);
+      const limit = Math.min(50, Math.max(1, Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 10));
+
+      const params: any[] = [rawQuery];
+      const whereClauses: string[] = [];
+      // Rank against the same tsvector expression as the GIN index
+      const tsExpr = "to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(array_to_string(ai_tags, ' '),'') || ' ' || coalesce(category,''))";
+      whereClauses.push(`${tsExpr} @@ websearch_to_tsquery('english', $1)`);
+      if (source) { params.push(source); whereClauses.push(`source = $${params.length}`); }
+      if (category) { params.push(category); whereClauses.push(`category = $${params.length}`); }
+      params.push(limit);
+
+      const sqlText = `
+        SELECT id, file_name, summary, content, source, category, file_url, ai_tags, last_modified,
+               ts_rank(${tsExpr}, websearch_to_tsquery('english', $1)) AS rank
+          FROM knowledge_base
+         WHERE ${whereClauses.join(" AND ")}
+         ORDER BY rank DESC, last_modified DESC NULLS LAST
+         LIMIT $${params.length}
+      `;
+      const result = await pool.query(sqlText, params);
+      const rows = result.rows.map((r: any) => ({
+        id: r.id,
+        fileName: r.file_name,
+        summary: r.summary,
+        snippet: r.content ? String(r.content).slice(0, 400) : null,
+        source: r.source || "sharepoint",
+        category: r.category,
+        fileUrl: r.file_url,
+        aiTags: r.ai_tags || [],
+        lastModified: r.last_modified,
+      }));
+      return {
+        data: {
+          query: rawQuery,
+          totalResults: rows.length,
+          results: rows,
+          message: rows.length === 0 ? "No matches in the knowledge base. Try a different query or check if the archivist has been run recently." : `Found ${rows.length} match${rows.length === 1 ? "" : "es"}.`,
+        },
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] search_knowledge_base error:", err?.message);
+      return { data: { error: `Knowledge base search failed: ${err?.message || "unknown error"}` } };
+    }
+  }
+
+  // ─── Memory bank: full-text search across past ChatBGP conversations ───
+  if (fnName === "search_chat_history") {
+    try {
+      const rawQuery = (fnArgs.query as string || "").trim();
+      if (!rawQuery) return { data: { error: "Search query is required" } };
+      const limitRaw = Number(fnArgs.limit);
+      const limit = Math.min(50, Math.max(1, Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 10));
+      const userId = (req as any).session?.userId || null;
+
+      const params: any[] = [rawQuery];
+      const whereClauses: string[] = [
+        `to_tsvector('english', coalesce(content,'')) @@ websearch_to_tsquery('english', $1)`,
+      ];
+      if (userId) { params.push(userId); whereClauses.push(`user_id = $${params.length}`); }
+      params.push(limit);
+
+      // chat_messages table: id, thread_id, role, content, user_id, created_at
+      const sqlText = `
+        SELECT id, thread_id, role, content, created_at,
+               ts_rank(to_tsvector('english', coalesce(content,'')), websearch_to_tsquery('english', $1)) AS rank
+          FROM chat_messages
+         WHERE ${whereClauses.join(" AND ")}
+         ORDER BY rank DESC, created_at DESC
+         LIMIT $${params.length}
+      `;
+      const result = await pool.query(sqlText, params);
+      const rows = result.rows.map((r: any) => ({
+        id: r.id,
+        threadId: r.thread_id,
+        role: r.role,
+        snippet: r.content ? String(r.content).slice(0, 500) : null,
+        createdAt: r.created_at,
+      }));
+      return {
+        data: {
+          query: rawQuery,
+          totalResults: rows.length,
+          results: rows,
+          message: rows.length === 0 ? "No matches in your chat history." : `Found ${rows.length} match${rows.length === 1 ? "" : "es"} across past conversations.`,
+        },
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] search_chat_history error:", err?.message);
+      return { data: { error: `Chat history search failed: ${err?.message || "unknown error"}` } };
+    }
+  }
+
   if (fnName === "deep_investigate") {
     try {
       const { chFetch, discoverUltimateParent, identifyBrandParent } = await import("./companies-house");
@@ -6691,12 +6928,13 @@ async function executeCrmToolRaw(
                 const lastName = nameParts[0]?.trim();
                 const firstName = nameParts[1]?.trim()?.split(/\s+/)[0];
 
-                const body: Record<string, any> = { reveal_personal_emails: false, reveal_phone_number: false };
-                if (firstName) body.first_name = firstName;
-                if (lastName) body.last_name = lastName;
-                body.organization_name = report.company.profile?.companyName || targetCompanyName;
+                // mixed_people/search (replaces deprecated people/match)
+                const body: Record<string, any> = { page: 1, per_page: 1 };
+                if (firstName || lastName) body.q_keywords = `${firstName || ""} ${lastName || ""}`.trim();
+                const orgName = report.company.profile?.companyName || targetCompanyName;
+                body.organization_names = [orgName];
 
-                const apolloRes = await timedFetch("https://api.apollo.io/api/v1/people/match", {
+                const apolloRes = await timedFetch("https://api.apollo.io/api/v1/mixed_people/search", {
                   method: "POST",
                   headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloApiKey },
                   body: JSON.stringify(body),
@@ -6704,20 +6942,21 @@ async function executeCrmToolRaw(
 
                 if (apolloRes.ok) {
                   const data = await apolloRes.json() as any;
-                  if (data.person) {
+                  const person = (data.people || data.contacts || [])[0];
+                  if (person) {
                     apolloResults.push({
                       name: officer.name,
                       role: officer.role,
-                      email: data.person.email,
-                      phone: data.person.phone_numbers?.[0]?.sanitized_number,
-                      title: data.person.title,
-                      linkedin: data.person.linkedin_url,
-                      city: data.person.city,
-                      company: data.person.organization?.name,
-                      companyWebsite: data.person.organization?.website_url,
-                      companyLinkedin: data.person.organization?.linkedin_url,
-                      companyIndustry: data.person.organization?.industry,
-                      companySize: data.person.organization?.estimated_num_employees,
+                      email: person.email,
+                      phone: person.phone_numbers?.[0]?.sanitized_number,
+                      title: person.title,
+                      linkedin: person.linkedin_url,
+                      city: person.city,
+                      company: person.organization?.name,
+                      companyWebsite: person.organization?.website_url,
+                      companyLinkedin: person.organization?.linkedin_url,
+                      companyIndustry: person.organization?.industry,
+                      companySize: person.organization?.estimated_num_employees,
                     });
                   }
                 }
@@ -6813,12 +7052,13 @@ async function executeCrmToolRaw(
             const nameParts = personName.split(/\s+/);
             const firstName = nameParts[0];
             const lastName = nameParts.slice(1).join(" ");
-            const body: Record<string, any> = { reveal_personal_emails: false, reveal_phone_number: false };
-            if (firstName) body.first_name = firstName;
-            if (lastName) body.last_name = lastName;
-            body.organization_name = targetCompanyName || companyName || "";
+            // mixed_people/search (replaces deprecated people/match)
+            const body: Record<string, any> = { page: 1, per_page: 1 };
+            if (firstName || lastName) body.q_keywords = `${firstName || ""} ${lastName || ""}`.trim();
+            const orgName = targetCompanyName || companyName || "";
+            if (orgName) body.organization_names = [orgName];
 
-            const apolloRes = await timedFetch("https://api.apollo.io/api/v1/people/match", {
+            const apolloRes = await timedFetch("https://api.apollo.io/api/v1/mixed_people/search", {
               method: "POST",
               headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloApiKey },
               body: JSON.stringify(body),
@@ -6826,16 +7066,17 @@ async function executeCrmToolRaw(
 
             if (apolloRes.ok) {
               const data = await apolloRes.json() as any;
-              if (data.person) {
+              const person = (data.people || data.contacts || [])[0];
+              if (person) {
                 report.person.apolloProfile = {
-                  email: data.person.email,
-                  phone: data.person.phone_numbers?.[0]?.sanitized_number,
-                  title: data.person.title,
-                  linkedin: data.person.linkedin_url,
-                  city: data.person.city,
-                  company: data.person.organization?.name,
-                  companyWebsite: data.person.organization?.website_url,
-                  industry: data.person.organization?.industry,
+                  email: person.email,
+                  phone: person.phone_numbers?.[0]?.sanitized_number,
+                  title: person.title,
+                  linkedin: person.linkedin_url,
+                  city: person.city,
+                  company: person.organization?.name,
+                  companyWebsite: person.organization?.website_url,
+                  industry: person.organization?.industry,
                 };
               }
             }
@@ -7231,24 +7472,8 @@ export async function handleCrmToolCall(
   }
 
   if (fnName === "create_investment_tracker") {
-    const { investmentTracker, crmProperties } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
-    let propertyId = fnArgs.propertyId;
-    if (!propertyId && fnArgs.assetName) {
-      const [existingProp] = await db.select().from(crmProperties).where(eq(crmProperties.name, fnArgs.assetName)).limit(1);
-      if (existingProp) {
-        propertyId = existingProp.id;
-      } else {
-        const [newProp] = await db.insert(crmProperties).values({
-          name: fnArgs.assetName,
-          address: fnArgs.address ? { street: fnArgs.address } : null,
-          tenure: fnArgs.tenure || null,
-        }).returning();
-        propertyId = newProp.id;
-      }
-    }
+    const { investmentTracker } = await import("@shared/schema");
     const [created] = await db.insert(investmentTracker).values({
-      propertyId,
       assetName: fnArgs.assetName,
       address: fnArgs.address,
       status: fnArgs.status || "Reporting",
@@ -8171,7 +8396,7 @@ export async function handleCrmToolCall(
 
       if (action === "save_to_sharepoint" && fnArgs.folderPath) {
         const { uploadFileToSharePoint } = await import("./microsoft");
-        const uploadResult = await uploadFileToSharePoint(buffer, name, contentType || "application/octet-stream", fnArgs.folderPath);
+        const uploadResult = await uploadFileToSharePoint(req, fnArgs.folderPath, name, buffer);
         const reply = await summaryHelper({ success: true, action: "saved_to_sharepoint", fileName: name, path: fnArgs.folderPath });
         return { handled: true, response: { reply: reply || `Saved ${name} to SharePoint at ${fnArgs.folderPath}.` } };
       }
@@ -8493,6 +8718,7 @@ export function setupChatBGPRoutes(app: Express) {
           model: CHATBGP_MODEL,
           messages: convMessages,
           max_completion_tokens: 8192,
+          thinking: true, // extended thinking for quality
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;
@@ -8731,6 +8957,30 @@ export function setupChatBGPRoutes(app: Express) {
       });
       return { data: { success: true, templateId: created.id, templateName: created.name, fieldCount: (tcArgs.fields || []).length }, action: { type: "navigate", path: "/doc-generate?tab=templates" } };
     }
+    // Template update (rename / rewrite / replace fields)
+    if (tcName === "update_document_template") {
+      const { storage } = await import("./storage");
+      if (!tcArgs.templateId) return { data: { error: "templateId is required" } };
+      const existing = await storage.getDocumentTemplate(tcArgs.templateId).catch(() => null);
+      if (!existing) return { data: { error: `Template ${tcArgs.templateId} not found` } };
+      const updates: Record<string, any> = {};
+      if (typeof tcArgs.name === "string") updates.name = tcArgs.name;
+      if (typeof tcArgs.description === "string") updates.description = tcArgs.description;
+      if (typeof tcArgs.templateContent === "string") updates.templateContent = tcArgs.templateContent;
+      if (Array.isArray(tcArgs.fields)) updates.fields = JSON.stringify(tcArgs.fields);
+      if (Object.keys(updates).length === 0) return { data: { error: "No fields provided to update" } };
+      const updated = await storage.updateDocumentTemplate(tcArgs.templateId, updates);
+      return { data: { success: true, templateId: updated.id, templateName: updated.name, changed: Object.keys(updates) }, action: { type: "navigate", path: "/doc-generate?tab=templates" } };
+    }
+    // Template delete
+    if (tcName === "delete_document_template") {
+      const { storage } = await import("./storage");
+      if (!tcArgs.templateId) return { data: { error: "templateId is required" } };
+      const existing = await storage.getDocumentTemplate(tcArgs.templateId).catch(() => null);
+      if (!existing) return { data: { error: `Template ${tcArgs.templateId} not found` } };
+      await storage.deleteDocumentTemplate(tcArgs.templateId);
+      return { data: { success: true, deletedId: tcArgs.templateId, deletedName: existing.name }, action: { type: "navigate", path: "/doc-generate?tab=templates" } };
+    }
     // Everything else goes through executeCrmToolRaw (CRM, navigation, email, code tools, etc.)
     return executeCrmToolRaw(tcName, tcArgs, req);
   }
@@ -8810,7 +9060,7 @@ export function setupChatBGPRoutes(app: Express) {
     };
 
     const requestStart = Date.now();
-    const REQUEST_DEADLINE_MS = 120000; // 120 seconds — stricter deadline with faster context loading
+    const REQUEST_DEADLINE_MS = 240000; // 240 seconds — give extended thinking + multi-tool flows room to breathe
     let clientDisconnected = false;
     const isOverDeadline = () => clientDisconnected || Date.now() - requestStart > REQUEST_DEADLINE_MS;
 
@@ -9026,6 +9276,7 @@ export function setupChatBGPRoutes(app: Express) {
           messages: conversationMessages,
           max_completion_tokens: 16384,
           systemArray, // prompt caching on every call
+          thinking: true, // extended thinking for quality
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;
@@ -9117,18 +9368,24 @@ export function setupChatBGPRoutes(app: Express) {
       const fallbackReply = lastAssistantMsg?.content || "I've processed your request. Please ask a follow-up for more details.";
       await sendResult({ reply: fallbackReply, ...(lastAction ? { action: lastAction } : {}) });
     } catch (err: any) {
-      console.error("ChatBGP error:", err?.message || err);
-      let errorMsg = "Sorry, I ran into an issue processing your request. Please try again.";
-      if (err?.status === 529) errorMsg = "I'm a bit overloaded right now. Please try again in a moment.";
-      else if (err?.status === 401) errorMsg = "AI authentication issue — please contact support.";
-      else if (err?.status === 429) errorMsg = "I've hit my rate limit. Please wait a minute and try again.";
+      const errBodyRaw = JSON.stringify(err?.error || err?.body || "").slice(0, 2000);
+      console.error("ChatBGP error:", err?.status, err?.message || err, errBodyRaw);
+      let errorMsg = "I ran into a technical glitch — the server logs have the details. Please try again, or rephrase if it keeps happening.";
+      if (err?.status === 529) errorMsg = "Anthropic's API is overloaded right now. Please try again in a moment.";
+      else if (err?.status === 401) errorMsg = "AI authentication issue — the API key may be missing or invalid. Please contact support.";
+      else if (err?.status === 429) errorMsg = "Hit the API rate limit. Please wait a minute and try again.";
       else if (err?.status === 400) {
-        const errBody = JSON.stringify(err?.error || err?.body || "").toLowerCase();
+        const errBody = errBodyRaw.toLowerCase();
         if (errBody.includes("too long") || errBody.includes("token") || errBody.includes("max_tokens") || errBody.includes("context")) {
           errorMsg = "That conversation got too long for me to process. Try starting a new thread or asking a simpler question.";
+        } else if (errBody.includes("image") || errBody.includes("media")) {
+          errorMsg = "Problem with an attached image or file. Try removing it or sending a different format.";
         } else {
-          errorMsg = "I had trouble understanding that request. Could you rephrase it?";
+          // Don't pretend the assistant is confused — surface that it was a technical error and include a hint if we can
+          errorMsg = `Technical error from the AI API (400). Server logs have the full details. ${errBodyRaw.slice(0, 180)}`;
         }
+      } else if (err?.status === 500 || err?.status === 502 || err?.status === 503 || err?.status === 504) {
+        errorMsg = "Anthropic's API returned a server error. Please try again in a moment.";
       }
 
       const lastAssistantContent = conversationMessages?.filter((m: any) => m.role === "assistant" && m.content).pop()?.content;
@@ -9347,7 +9604,7 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
         loopCount++;
         const isLastLoop = loopCount >= maxLoops;
         const loopOpts: any = {
-          model: CHATBGP_HELPER_MODEL,
+          model: CHATBGP_MODEL,
           messages: convMessages,
           max_completion_tokens: 4096,
         };

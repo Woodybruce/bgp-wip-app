@@ -12,70 +12,284 @@ process.on("uncaughtException", (err) => {
 import { registerRoutes } from "./routes";
 import { pool } from "./db";
 
-// Auto-migrate: add columns/tables that may be missing after database restore
+// Auto-migrate: add columns/tables that may be missing after database restore.
+// CRITICAL: each statement runs in its own try/catch so one failure (e.g. an
+// IMMUTABLE-check on a GIN index expression under older Postgres) does NOT
+// abort the whole batch. A single multi-statement pool.query stops at the
+// first error, which is how compliance_board/training tables went missing.
 (async () => {
-  try {
-    await pool.query(`
-      ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false;
-      ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS po_number TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved BOOLEAN DEFAULT false;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_risk_level TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_funds TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_funds_notes TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_wealth TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_wealth_notes TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_pep_status TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_pep_notes TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_required BOOLEAN DEFAULT false;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_reason TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_completed_at TIMESTAMP;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_completed_by TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_notes TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_verified BOOLEAN DEFAULT false;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_verified_at TIMESTAMP;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_verified_by TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_doc_type TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_address_verified BOOLEAN DEFAULT false;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_address_doc_type TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_filed BOOLEAN DEFAULT false;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_reference TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_filed_at TIMESTAMP;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_compliance_notes TEXT;
-      ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_checklist JSONB;
-      CREATE TABLE IF NOT EXISTS aml_settings (id SERIAL PRIMARY KEY, nominated_officer_id VARCHAR, nominated_officer_name TEXT, nominated_officer_email TEXT, nominated_officer_appointed_at TIMESTAMP, firm_risk_assessment JSONB, firm_risk_assessment_updated_at TIMESTAMP, firm_risk_assessment_updated_by TEXT, aml_policy_notes TEXT, recheck_interval_days INTEGER DEFAULT 365, updated_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS aml_training_records (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, user_name TEXT NOT NULL, training_type TEXT NOT NULL, training_date TIMESTAMP NOT NULL, completed_at TIMESTAMP, score INTEGER, topics TEXT[], notes TEXT, certified_by TEXT, next_due_date TIMESTAMP, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS aml_recheck_reminders (id SERIAL PRIMARY KEY, deal_id VARCHAR, company_id VARCHAR, entity_name TEXT NOT NULL, recheck_type TEXT NOT NULL, due_date TIMESTAMP NOT NULL, completed_at TIMESTAMP, completed_by TEXT, notes TEXT, created_at TIMESTAMP DEFAULT now());
-      ALTER TABLE knowledge_base ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'sharepoint';
-      CREATE TABLE IF NOT EXISTS user_tasks (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), user_id VARCHAR NOT NULL, title TEXT NOT NULL, description TEXT, due_date TIMESTAMP, priority TEXT DEFAULT 'medium', status TEXT DEFAULT 'todo', category TEXT, linked_deal_id VARCHAR, linked_property_id VARCHAR, linked_contact_id VARCHAR, sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), completed_at TIMESTAMP);
-      CREATE TABLE IF NOT EXISTS system_activity_log (id SERIAL PRIMARY KEY, source TEXT NOT NULL, action TEXT NOT NULL, detail TEXT, count INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS image_studio_images (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), file_name TEXT NOT NULL, category TEXT DEFAULT 'Uncategorised', tags TEXT[] DEFAULT '{}', description TEXT, source TEXT DEFAULT 'upload', property_id VARCHAR, area TEXT, address TEXT, brand_name TEXT, brand_sector TEXT, property_type TEXT, mime_type TEXT DEFAULT 'image/jpeg', file_size INTEGER, width INTEGER, height INTEGER, thumbnail_data TEXT, sharepoint_item_id TEXT, sharepoint_drive_id TEXT, local_path TEXT, uploaded_by VARCHAR, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS image_studio_collections (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT NOT NULL, description TEXT, cover_image_id VARCHAR, created_by VARCHAR, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS image_studio_collection_images (id SERIAL PRIMARY KEY, collection_id VARCHAR NOT NULL, image_id VARCHAR NOT NULL, added_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS deleted_sharepoint_images (id SERIAL PRIMARY KEY, sharepoint_drive_id TEXT NOT NULL, sharepoint_item_id TEXT NOT NULL, deleted_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS comp_files (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), comp_id VARCHAR NOT NULL, file_name TEXT NOT NULL, file_path TEXT NOT NULL, file_size INTEGER, mime_type TEXT, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS land_registry_searches (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, address TEXT NOT NULL, postcode TEXT, freeholds_count INTEGER DEFAULT 0, leaseholds_count INTEGER DEFAULT 0, freeholds JSONB, leaseholds JSONB, intelligence JSONB, ai_summary JSONB, ownership JSONB, crm_property_id VARCHAR, notes TEXT, tags JSONB DEFAULT '[]', status VARCHAR DEFAULT 'New', created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS leasing_schedule_units (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), property_id VARCHAR NOT NULL, unit_name TEXT, zone TEXT, positioning TEXT, tenant_name TEXT, agent_initials TEXT, lease_expiry TIMESTAMP, lease_break TIMESTAMP, rent_review TIMESTAMP, landlord_break TIMESTAMP, rent_pa REAL, sqft REAL, mat_psqft REAL, lfl_percent REAL, occ_cost_percent REAL, financial_notes TEXT, target_brands TEXT, optimum_target TEXT, priority TEXT, status TEXT, updates TEXT, target_company_ids TEXT[], sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS leasing_schedule_audit (id SERIAL PRIMARY KEY, unit_id VARCHAR, property_id VARCHAR NOT NULL, user_id VARCHAR NOT NULL, user_name TEXT NOT NULL, action TEXT NOT NULL, field_name TEXT, old_value TEXT, new_value TEXT, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS kyc_investigations (id SERIAL PRIMARY KEY, subject_type TEXT NOT NULL, subject_name TEXT NOT NULL, company_number TEXT, crm_company_id VARCHAR, officer_name TEXT, risk_level TEXT, risk_score INTEGER, sanctions_match BOOLEAN DEFAULT false, result JSONB, conducted_by VARCHAR, conducted_at TIMESTAMP DEFAULT now(), notes TEXT);
-      CREATE INDEX IF NOT EXISTS kyc_investigations_company_number_idx ON kyc_investigations (company_number);
-      CREATE INDEX IF NOT EXISTS kyc_investigations_crm_company_id_idx ON kyc_investigations (crm_company_id);
-      CREATE INDEX IF NOT EXISTS kyc_investigations_conducted_at_idx ON kyc_investigations (conducted_at);
-      CREATE TABLE IF NOT EXISTS kyc_audit_log (id SERIAL PRIMARY KEY, investigation_id INTEGER NOT NULL, action TEXT NOT NULL, performed_by VARCHAR, notes TEXT, created_at TIMESTAMP DEFAULT now());
-      CREATE TABLE IF NOT EXISTS deal_audit_log (id SERIAL PRIMARY KEY, deal_id VARCHAR NOT NULL, field TEXT NOT NULL, old_value TEXT, new_value TEXT, reason TEXT, changed_by VARCHAR, changed_by_name VARCHAR, created_at TIMESTAMP DEFAULT now());
-    `);
-    // Fix type mismatch separately (may already be correct)
-    try { await pool.query("ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text"); } catch {}
-    console.log("[auto-migrate] Schema migration complete");
-  } catch (e: any) {
-    console.log("[auto-migrate] Migration note:", e.message);
+  const MIGRATIONS: string[] = [
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS po_number TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_risk_level TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_funds TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_funds_notes TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_wealth TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_source_of_wealth_notes TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_pep_status TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_pep_notes TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_required BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_reason TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_completed_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_completed_by TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_edd_notes TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_verified BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_verified_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_verified_by TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_id_doc_type TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_address_verified BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_address_doc_type TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_filed BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_reference TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sar_filed_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_compliance_notes TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_checklist JSONB`,
+    `CREATE TABLE IF NOT EXISTS aml_settings (id SERIAL PRIMARY KEY, nominated_officer_id VARCHAR, nominated_officer_name TEXT, nominated_officer_email TEXT, nominated_officer_appointed_at TIMESTAMP, firm_risk_assessment JSONB, firm_risk_assessment_updated_at TIMESTAMP, firm_risk_assessment_updated_by TEXT, aml_policy_notes TEXT, recheck_interval_days INTEGER DEFAULT 365, updated_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS aml_training_records (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, user_name TEXT NOT NULL, training_type TEXT NOT NULL, training_date TIMESTAMP NOT NULL, completed_at TIMESTAMP, score INTEGER, topics TEXT[], notes TEXT, certified_by TEXT, next_due_date TIMESTAMP, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS aml_recheck_reminders (id SERIAL PRIMARY KEY, deal_id VARCHAR, company_id VARCHAR, entity_name TEXT NOT NULL, recheck_type TEXT NOT NULL, due_date TIMESTAMP NOT NULL, completed_at TIMESTAMP, completed_by TEXT, notes TEXT, created_at TIMESTAMP DEFAULT now())`,
+    `ALTER TABLE knowledge_base ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'sharepoint'`,
+    // Drop the legacy index that may have been created with a non-IMMUTABLE
+    // expression (array_to_string was STABLE in Postgres <14). We rebuild it
+    // below without the ai_tags piece so it's IMMUTABLE on every version.
+    `DROP INDEX IF EXISTS knowledge_base_search_idx`,
+    `CREATE INDEX IF NOT EXISTS knowledge_base_search_idx ON knowledge_base USING GIN (to_tsvector('english', coalesce(file_name,'') || ' ' || coalesce(summary,'') || ' ' || coalesce(content,'') || ' ' || coalesce(category,'')))`,
+    `CREATE INDEX IF NOT EXISTS knowledge_base_source_idx ON knowledge_base (source)`,
+    `CREATE INDEX IF NOT EXISTS knowledge_base_category_idx ON knowledge_base (category)`,
+    `CREATE INDEX IF NOT EXISTS chat_messages_content_search_idx ON chat_messages USING GIN (to_tsvector('english', coalesce(content,'')))`,
+    `CREATE TABLE IF NOT EXISTS user_tasks (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), user_id VARCHAR NOT NULL, title TEXT NOT NULL, description TEXT, due_date TIMESTAMP, priority TEXT DEFAULT 'medium', status TEXT DEFAULT 'todo', category TEXT, linked_deal_id VARCHAR, linked_property_id VARCHAR, linked_contact_id VARCHAR, sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), completed_at TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS system_activity_log (id SERIAL PRIMARY KEY, source TEXT NOT NULL, action TEXT NOT NULL, detail TEXT, count INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS image_studio_images (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), file_name TEXT NOT NULL, category TEXT DEFAULT 'Uncategorised', tags TEXT[] DEFAULT '{}', description TEXT, source TEXT DEFAULT 'upload', property_id VARCHAR, area TEXT, address TEXT, brand_name TEXT, brand_sector TEXT, property_type TEXT, mime_type TEXT DEFAULT 'image/jpeg', file_size INTEGER, width INTEGER, height INTEGER, thumbnail_data TEXT, sharepoint_item_id TEXT, sharepoint_drive_id TEXT, local_path TEXT, uploaded_by VARCHAR, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS image_studio_collections (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT NOT NULL, description TEXT, cover_image_id VARCHAR, created_by VARCHAR, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS image_studio_collection_images (id SERIAL PRIMARY KEY, collection_id VARCHAR NOT NULL, image_id VARCHAR NOT NULL, added_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS deleted_sharepoint_images (id SERIAL PRIMARY KEY, sharepoint_drive_id TEXT NOT NULL, sharepoint_item_id TEXT NOT NULL, deleted_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS comp_files (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), comp_id VARCHAR NOT NULL, file_name TEXT NOT NULL, file_path TEXT NOT NULL, file_size INTEGER, mime_type TEXT, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS land_registry_searches (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, address TEXT NOT NULL, postcode TEXT, freeholds_count INTEGER DEFAULT 0, leaseholds_count INTEGER DEFAULT 0, freeholds JSONB, leaseholds JSONB, intelligence JSONB, ai_summary JSONB, ownership JSONB, crm_property_id VARCHAR, notes TEXT, tags JSONB DEFAULT '[]', status VARCHAR DEFAULT 'New', created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS leasing_schedule_units (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), property_id VARCHAR NOT NULL, unit_name TEXT, zone TEXT, positioning TEXT, tenant_name TEXT, agent_initials TEXT, lease_expiry TIMESTAMP, lease_break TIMESTAMP, rent_review TIMESTAMP, landlord_break TIMESTAMP, rent_pa REAL, sqft REAL, mat_psqft REAL, lfl_percent REAL, occ_cost_percent REAL, financial_notes TEXT, target_brands TEXT, optimum_target TEXT, priority TEXT, status TEXT, updates TEXT, target_company_ids TEXT[], sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS leasing_schedule_audit (id SERIAL PRIMARY KEY, unit_id VARCHAR, property_id VARCHAR NOT NULL, user_id VARCHAR NOT NULL, user_name TEXT NOT NULL, action TEXT NOT NULL, field_name TEXT, old_value TEXT, new_value TEXT, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS kyc_investigations (id SERIAL PRIMARY KEY, subject_type TEXT NOT NULL, subject_name TEXT NOT NULL, company_number TEXT, crm_company_id VARCHAR, officer_name TEXT, risk_level TEXT, risk_score INTEGER, sanctions_match BOOLEAN DEFAULT false, result JSONB, conducted_by VARCHAR, conducted_at TIMESTAMP DEFAULT now(), notes TEXT)`,
+    `CREATE INDEX IF NOT EXISTS kyc_investigations_company_number_idx ON kyc_investigations (company_number)`,
+    `CREATE INDEX IF NOT EXISTS kyc_investigations_crm_company_id_idx ON kyc_investigations (crm_company_id)`,
+    `CREATE INDEX IF NOT EXISTS kyc_investigations_conducted_at_idx ON kyc_investigations (conducted_at)`,
+    `CREATE TABLE IF NOT EXISTS kyc_audit_log (id SERIAL PRIMARY KEY, investigation_id INTEGER NOT NULL, action TEXT NOT NULL, performed_by VARCHAR, notes TEXT, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS deal_audit_log (id SERIAL PRIMARY KEY, deal_id VARCHAR NOT NULL, field TEXT NOT NULL, old_value TEXT, new_value TEXT, reason TEXT, changed_by VARCHAR, changed_by_name VARCHAR, created_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS kyc_documents (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), company_id VARCHAR, contact_id VARCHAR, deal_id VARCHAR, doc_type TEXT NOT NULL, file_url TEXT NOT NULL, file_name TEXT NOT NULL, file_size INTEGER, mime_type TEXT, certified_by TEXT, certified_at TIMESTAMP, expires_at TIMESTAMP, notes TEXT, uploaded_by VARCHAR, uploaded_at TIMESTAMP DEFAULT now(), deleted_at TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_documents_company_id ON kyc_documents(company_id) WHERE deleted_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_documents_contact_id ON kyc_documents(contact_id) WHERE deleted_at IS NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_documents_deal_id ON kyc_documents(deal_id) WHERE deleted_at IS NULL`,
+    `CREATE TABLE IF NOT EXISTS aml_training_modules (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), title TEXT NOT NULL, description TEXT, content_markdown TEXT NOT NULL, quiz JSONB NOT NULL DEFAULT '[]'::jsonb, pass_score INTEGER DEFAULT 80, estimated_minutes INTEGER, required_for_roles TEXT[], active BOOLEAN DEFAULT true, created_by VARCHAR, created_at TIMESTAMP DEFAULT now(), updated_at TIMESTAMP DEFAULT now())`,
+    `CREATE TABLE IF NOT EXISTS aml_training_attempts (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), module_id VARCHAR NOT NULL, user_id VARCHAR NOT NULL, user_name TEXT, answers JSONB NOT NULL, score INTEGER NOT NULL, passed BOOLEAN NOT NULL, started_at TIMESTAMP DEFAULT now(), completed_at TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS idx_aml_training_attempts_user ON aml_training_attempts(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_aml_training_attempts_module ON aml_training_attempts(module_id)`,
+    `CREATE TABLE IF NOT EXISTS veriff_sessions (session_id TEXT PRIMARY KEY, company_id VARCHAR, contact_id VARCHAR, deal_id VARCHAR, first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT, status TEXT, decision_code INTEGER, decision_reason TEXT, verdict_person JSONB, verdict_document JSONB, verification_url TEXT, requested_by VARCHAR, created_at TIMESTAMP DEFAULT now(), received_at TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS idx_veriff_sessions_company ON veriff_sessions(company_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_veriff_sessions_deal ON veriff_sessions(deal_id)`,
+    `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_status TEXT`,
+    `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_approved_at TIMESTAMP`,
+    `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_approved_by TEXT`,
+    `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_next_review_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_expires_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_checklist JSONB`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_risk_level TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_pep_status TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_source_of_wealth TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_source_of_wealth_notes TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_edd_required BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_edd_reason TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_notes TEXT`,
+    // Type-mismatch cleanup (may already be correct — that's fine)
+    `ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text`,
+    // Indexes for compliance-board counterparty joins (otherwise /api/kyc/board
+    // and /api/kyc/board/deals do four full scans of crm_deals per request).
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_landlord_id  ON crm_deals(landlord_id)  WHERE landlord_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_tenant_id    ON crm_deals(tenant_id)    WHERE tenant_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_vendor_id    ON crm_deals(vendor_id)    WHERE vendor_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_purchaser_id ON crm_deals(purchaser_id) WHERE purchaser_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_status       ON crm_deals(status)`,
+
+    // ── Brand Bible / deal flow — additive schema ─────────────────────────
+    // crm_companies: brand fields
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS is_tracked_brand BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS tracking_reason TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_group_id VARCHAR`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS concept_pitch TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS store_count INTEGER`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS rollout_status TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS backers TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS instagram_handle TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS agent_type TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS ai_generated_fields JSONB`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_is_tracked_brand ON crm_companies(is_tracked_brand) WHERE is_tracked_brand = true`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_brand_group_id   ON crm_companies(brand_group_id) WHERE brand_group_id IS NOT NULL`,
+
+    // crm_deals: stage + solicitor leg
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS stage TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS stage_entered_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS solicitor_firm TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS solicitor_contact TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS solicitor_instructed_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS draft_lease_received_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS comments_returned_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS engrossment_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS completion_target_date TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS solicitor_notes TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_stage ON crm_deals(stage) WHERE stage IS NOT NULL`,
+
+    // available_units: link to leasing schedule unit
+    `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS leasing_schedule_unit_id VARCHAR`,
+    `CREATE INDEX IF NOT EXISTS idx_available_units_leasing_schedule_unit_id ON available_units(leasing_schedule_unit_id) WHERE leasing_schedule_unit_id IS NOT NULL`,
+
+    // brand_agent_representations
+    `CREATE TABLE IF NOT EXISTS brand_agent_representations (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       brand_company_id VARCHAR NOT NULL,
+       agent_company_id VARCHAR NOT NULL,
+       agent_type TEXT NOT NULL,
+       region TEXT,
+       primary_contact_id VARCHAR,
+       start_date TIMESTAMP,
+       end_date TIMESTAMP,
+       notes TEXT,
+       created_at TIMESTAMP DEFAULT now(),
+       updated_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_brand ON brand_agent_representations(brand_company_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_agent ON brand_agent_representations(agent_company_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_active ON brand_agent_representations(brand_company_id) WHERE end_date IS NULL`,
+
+    // brand_signals (time-series of openings / closures / funding / news)
+    `CREATE TABLE IF NOT EXISTS brand_signals (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       brand_company_id VARCHAR NOT NULL,
+       signal_type TEXT NOT NULL,
+       headline TEXT NOT NULL,
+       detail TEXT,
+       source TEXT,
+       signal_date TIMESTAMP,
+       magnitude TEXT,
+       sentiment TEXT,
+       ai_generated BOOLEAN DEFAULT false,
+       created_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_brand_signals_brand_date ON brand_signals(brand_company_id, signal_date DESC)`,
+
+    // leasing_pitch (per-property ERV / incentives / target tenants)
+    `CREATE TABLE IF NOT EXISTS leasing_pitch (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       property_id VARCHAR NOT NULL UNIQUE,
+       erv REAL,
+       erv_per_sqft REAL,
+       incentive_plan TEXT,
+       rent_free_months INTEGER,
+       capex_contribution REAL,
+       fit_out_contribution REAL,
+       target_brand_ids TEXT[],
+       marketing_strategy TEXT,
+       positioning TEXT,
+       ai_generated_fields JSONB,
+       created_at TIMESTAMP DEFAULT now(),
+       updated_at TIMESTAMP DEFAULT now()
+     )`,
+
+    // deal_hots (structured, versioned Heads of Terms)
+    `CREATE TABLE IF NOT EXISTS deal_hots (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       deal_id VARCHAR NOT NULL,
+       version INTEGER NOT NULL DEFAULT 1,
+       rent_pa REAL,
+       term_years REAL,
+       break_option TEXT,
+       rent_free_months REAL,
+       fit_out_contribution REAL,
+       deposit REAL,
+       rent_review_mechanism TEXT,
+       use_class TEXT,
+       alienation TEXT,
+       repair_obligations TEXT,
+       aga_required BOOLEAN DEFAULT false,
+       schedule_of_condition BOOLEAN DEFAULT false,
+       notes TEXT,
+       status TEXT DEFAULT 'draft',
+       signed_at TIMESTAMP,
+       signed_by TEXT,
+       created_by VARCHAR,
+       created_at TIMESTAMP DEFAULT now(),
+       updated_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_hots_deal_version ON deal_hots(deal_id, version DESC)`,
+
+    // deal_events (append-only audit log)
+    `CREATE TABLE IF NOT EXISTS deal_events (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       deal_id VARCHAR NOT NULL,
+       event_type TEXT NOT NULL,
+       from_stage TEXT,
+       to_stage TEXT,
+       payload JSONB,
+       actor_id VARCHAR,
+       actor_name TEXT,
+       occurred_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_events_deal_occurred ON deal_events(deal_id, occurred_at DESC)`,
+
+    // Dedupe machinery — track merges so we can undo and hide merged rows
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS merged_into_id VARCHAR`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS merged_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS merged_by TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_merged_into ON crm_companies(merged_into_id) WHERE merged_into_id IS NOT NULL`,
+
+    `CREATE TABLE IF NOT EXISTS dedupe_candidates (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       cluster_key TEXT NOT NULL,
+       company_ids TEXT[] NOT NULL,
+       reason TEXT,
+       ai_verdict TEXT,
+       ai_confidence REAL,
+       status TEXT DEFAULT 'pending',
+       reviewed_by TEXT,
+       reviewed_at TIMESTAMP,
+       created_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_dedupe_candidates_status ON dedupe_candidates(status)`,
+
+    `CREATE TABLE IF NOT EXISTS dedupe_merges (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       primary_id VARCHAR NOT NULL,
+       secondary_id VARCHAR NOT NULL,
+       merged_by TEXT,
+       merged_at TIMESTAMP DEFAULT now(),
+       secondary_snapshot JSONB,
+       reference_updates JSONB,
+       notes TEXT
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_dedupe_merges_primary ON dedupe_merges(primary_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_dedupe_merges_secondary ON dedupe_merges(secondary_id)`,
+
+    // Weekly client report preferences (per contact)
+    `ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS weekly_report_enabled BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS weekly_report_last_sent_at TIMESTAMP`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_contacts_weekly_report ON crm_contacts(weekly_report_enabled) WHERE weekly_report_enabled = true`,
+  ];
+
+  let ok = 0, skipped = 0;
+  for (const sql of MIGRATIONS) {
+    try {
+      await pool.query(sql);
+      ok++;
+    } catch (e: any) {
+      skipped++;
+      const head = sql.slice(0, 80).replace(/\s+/g, " ");
+      console.warn(`[auto-migrate] skipped (${e.message}): ${head}...`);
+    }
   }
+  console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
 })();
 import { setupAuth } from "./auth";
 import { setupMicrosoftRoutes } from "./microsoft";
-import { setupMondayRoutes } from "./monday";
 import { setupWhatsAppRoutes } from "./whatsapp";
 import { setupChatBGPRoutes } from "./chatbgp";
 import { setupNewsIntelligenceRoutes } from "./news-intelligence";
@@ -94,11 +308,22 @@ import { registerLegalDDRoutes } from "./legal-dd";
 import { setupSharedMailboxRoutes } from "./shared-mailbox";
 import { registerInteractionRoutes } from "./interactions";
 import { setupCrmRoutes, startAutoEnrichment } from "./crm";
-import { setupMondayImportRoutes } from "./monday-import";
 import companiesHouseRouter from "./companies-house";
 import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
+import veriffRouter from "./veriff";
+import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
+import perplexityRouter from "./perplexity";
+import brandDedupeRouter from "./brand-dedupe";
+import brandProfileRouter from "./brand-profile";
+import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
+import apolloContactsRouter from "./apollo-contacts";
+import brandPackRouter from "./brand-pack";
+import dealDocsRouter from "./deal-docs";
+import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
+import dealStagesRouter from "./deal-stages";
+import leasingPitchRouter from "./leasing-pitch";
 import cadRouter from "./cad";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
@@ -305,7 +530,6 @@ app.use("/api/branding/assets", express.static(
 (async () => {
   setupAuth(app);
   setupMicrosoftRoutes(app);
-  setupMondayRoutes(app);
   setupWhatsAppRoutes(app);
   setupChatBGPRoutes(app);
   setupArchivistRoutes(app);
@@ -327,7 +551,6 @@ app.use("/api/branding/assets", express.static(
   setupLeadsRoutes(app);
   registerMcpRoutes(app);
   setupCrmRoutes(app);
-  setupMondayImportRoutes(app);
   app.use(companiesHouseRouter);
   app.use(leasingScheduleRouter);
   app.use(tenancyScheduleRouter);
@@ -335,6 +558,18 @@ app.use("/api/branding/assets", express.static(
   app.use(sanctionsRouter);
   app.use(kycClouseauRouter);
   app.use(amlComplianceRouter);
+  app.use(veriffRouter);
+  app.use(kycOrchestratorRouter);
+  app.use(perplexityRouter);
+  app.use(brandDedupeRouter);
+  app.use(brandProfileRouter);
+  app.use(brandEnrichmentRouter);
+  app.use(apolloContactsRouter);
+  app.use(brandPackRouter);
+  app.use(dealDocsRouter);
+  app.use(weeklyReportRouter);
+  app.use(dealStagesRouter);
+  app.use(leasingPitchRouter);
   app.use(cadRouter);
 
   await registerRoutes(httpServer, app);
@@ -406,6 +641,49 @@ app.use("/api/branding/assets", express.static(
           );
         }
       }, 60 * 60 * 1000); // Check every hour
+
+      // Daily AML orchestrator re-sweep — 02:00 every night we pick up any
+      // company whose KYC has gone stale (past the firm's recheck_interval_days,
+      // default 365) or has an overdue aml_recheck_reminders row, and re-run
+      // the full sweep (Companies House + UBO + sanctions + adverse media).
+      // Capped at 25 companies per night so a single run can't blow through
+      // quotas. Production only — dev shouldn't be making live API calls overnight.
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 2) {
+            runPeriodicAmlReScreening().catch(err =>
+              console.error("[kyc-orch-cron] Periodic re-screening failed:", err?.message)
+            );
+          }
+        }, 60 * 60 * 1000);
+      }
+
+      // Nightly brand-enrichment — tops up stale / never-enriched brand rows.
+      // Runs at 4am (once per day, production only to avoid accidental API spend in dev).
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 4 && now.getMinutes() < 60) {
+            runNightlyBrandEnrichment().catch(err =>
+              console.error("[brand-enrich] nightly run failed:", err?.message)
+            );
+          }
+        }, 60 * 60 * 1000);
+      }
+
+      // Weekly client report cron — Monday 09:00 (production only, sends email)
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          // getDay(): 0=Sun, 1=Mon
+          if (now.getDay() === 1 && now.getHours() === 9 && now.getMinutes() < 60) {
+            runWeeklyClientReports().catch(err =>
+              console.error("[weekly-report] cron run failed:", err?.message)
+            );
+          }
+        }, 60 * 60 * 1000);
+      }
       setTimeout(async () => {
         try {
           const { db } = await import("./db");
@@ -562,13 +840,6 @@ app.use("/api/branding/assets", express.static(
           }
         } catch (err: any) {
           console.error("User creation error:", err?.message);
-        }
-
-        try {
-          const { seedInvestmentRequirements } = await import("./seed-invest-reqs");
-          await seedInvestmentRequirements();
-        } catch (err: any) {
-          console.error("Investment requirements seed error:", err?.message);
         }
 
         // Seed properties if production has fewer than dev

@@ -1583,6 +1583,191 @@ function ExcelActionButton({ action, onApply }: { action: ExcelAction; onApply: 
   );
 }
 
+function SharePointAttachPicker({
+  getHeaders,
+  onAttach,
+  onClose,
+}: {
+  getHeaders: () => Record<string, string>;
+  onAttach: (files: File[]) => void;
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<SPItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [folderPath, setFolderPath] = useState<{ id: string; name: string }[]>([]);
+  const [driveId, setDriveId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [attaching, setAttaching] = useState(false);
+
+  const loadFiles = useCallback(async (folderId?: string) => {
+    setLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams();
+      if (folderId) params.set("folderId", folderId);
+      if (driveId) params.set("driveId", driveId);
+      const url = params.toString() ? `/api/microsoft/files?${params}` : "/api/microsoft/files";
+      const res = await fetch(url, { headers: getHeaders() });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.message || "Failed to load files");
+      }
+      const data = await res.json();
+      if (data.driveId) setDriveId(data.driveId);
+      const fileList = data.items || data.value || [];
+      setItems(Array.isArray(fileList) ? fileList : []);
+    } catch (err: any) {
+      setError(err.message);
+      setItems([]);
+    }
+    setLoading(false);
+  }, [getHeaders, driveId]);
+
+  useEffect(() => { loadFiles(); }, []);
+
+  const openFolder = (item: SPItem) => {
+    setFolderPath(prev => [...prev, { id: item.id, name: item.name }]);
+    setQuery("");
+    loadFiles(item.id);
+  };
+  const goBack = () => {
+    const np = [...folderPath];
+    np.pop();
+    setFolderPath(np);
+    setQuery("");
+    loadFiles(np.length > 0 ? np[np.length - 1].id : undefined);
+  };
+  const toggleSelect = (item: SPItem) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(item.id)) next.delete(item.id);
+      else next.add(item.id);
+      return next;
+    });
+  };
+
+  const attachSelected = async () => {
+    setAttaching(true);
+    setError("");
+    const selectedItems = items.filter(it => selected.has(it.id) && it.file);
+    const files: File[] = [];
+    try {
+      for (const it of selectedItems) {
+        const itemDriveId = it.parentReference?.driveId || driveId;
+        if (!itemDriveId) continue;
+        const params = new URLSearchParams({ driveId: itemDriveId, itemId: it.id, fileName: it.name });
+        const res = await fetch(`/api/microsoft/files/content?${params}`, { headers: getHeaders() });
+        if (!res.ok) throw new Error(`Failed to fetch ${it.name}`);
+        const blob = await res.blob();
+        const file = new (window as any).File([blob], it.name, { type: it.file?.mimeType || blob.type || "application/octet-stream" });
+        files.push(file);
+      }
+      if (files.length > 0) onAttach(files);
+      onClose();
+    } catch (err: any) {
+      setError(err.message || "Failed to attach files");
+    }
+    setAttaching(false);
+  };
+
+  const filtered = query.trim()
+    ? items.filter(it => it.name.toLowerCase().includes(query.toLowerCase()))
+    : items;
+  const folders = filtered.filter(it => it.folder);
+  const files = filtered.filter(it => it.file);
+  const selectedCount = selected.size;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div className="bg-background rounded-xl w-[90vw] max-w-[420px] h-[70vh] max-h-[600px] flex flex-col overflow-hidden shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+          <div className="flex items-center gap-1.5 text-[13px] font-semibold">
+            <FolderOpen className="w-3.5 h-3.5 text-primary" />
+            Attach from SharePoint
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground" data-testid="button-sp-picker-close">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="px-3 py-2 border-b border-border flex items-center gap-2">
+          {folderPath.length > 0 && (
+            <button onClick={goBack} className="shrink-0 text-muted-foreground hover:text-foreground" data-testid="button-sp-picker-back">
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+          )}
+          <Search className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={folderPath.length > 0 ? folderPath[folderPath.length - 1].name : "Search files..."}
+            className="h-7 text-[12px] border-0 bg-transparent p-0 focus-visible:ring-0"
+            data-testid="input-sp-picker-search"
+          />
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div className="flex items-center justify-center py-10 text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+            </div>
+          ) : error ? (
+            <div className="px-3 py-4 text-[12px] text-red-500">{error}</div>
+          ) : (
+            <div>
+              {folders.map((it) => (
+                <button
+                  key={it.id}
+                  onClick={() => openFolder(it)}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/50 text-[13px]"
+                  data-testid={`sp-picker-folder-${it.id}`}
+                >
+                  <Folder className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span className="truncate">{it.name}</span>
+                </button>
+              ))}
+              {files.map((it) => (
+                <label
+                  key={it.id}
+                  className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted/50 text-[13px] cursor-pointer ${selected.has(it.id) ? "bg-primary/5" : ""}`}
+                  data-testid={`sp-picker-file-${it.id}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(it.id)}
+                    onChange={() => toggleSelect(it)}
+                    className="shrink-0"
+                  />
+                  <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <span className="truncate flex-1">{it.name}</span>
+                  {it.size !== undefined && (
+                    <span className="text-[10px] text-muted-foreground shrink-0">{formatFileSize(it.size)}</span>
+                  )}
+                </label>
+              ))}
+              {folders.length === 0 && files.length === 0 && (
+                <div className="px-3 py-10 text-center text-[12px] text-muted-foreground">No items</div>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="px-3 py-2 border-t border-border flex items-center justify-between">
+          <span className="text-[11px] text-muted-foreground">
+            {selectedCount} selected
+          </span>
+          <div className="flex gap-1.5">
+            <Button size="sm" variant="ghost" onClick={onClose} className="h-7 text-[12px]">Cancel</Button>
+            <Button size="sm" onClick={attachSelected} disabled={selectedCount === 0 || attaching} className="h-7 text-[12px]" data-testid="button-sp-picker-attach">
+              {attaching ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+              Attach {selectedCount > 0 ? `(${selectedCount})` : ""}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AddinExcel() {
   const [token, setToken] = useState<string | null>(() => {
     try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
@@ -1598,6 +1783,9 @@ function AddinExcel() {
   const [workbookInfo, setWorkbookInfo] = useState<WorkbookInfo | null>(null);
   const [readingSheet, setReadingSheet] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [showSpPicker, setShowSpPicker] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounter = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1884,7 +2072,7 @@ function AddinExcel() {
     <div className="flex flex-col h-screen bg-background text-foreground" style={{ maxWidth: 450 }}>
       <AddinHeader
         title="ChatBGP"
-        subtitle="Claude Sonnet"
+        subtitle="Opus 4.6 · Hardcore Builder"
         onNewChat={clearChat}
       >
         <Button
@@ -1931,7 +2119,44 @@ function AddinExcel() {
 
       {activeTab === "chat" ? (
         <>
-          <div ref={scrollRef} className="flex-1 overflow-y-auto">
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto relative"
+            onDragEnter={(e) => {
+              if (Array.from(e.dataTransfer.types).includes("Files")) {
+                dragCounter.current += 1;
+                setIsDragging(true);
+              }
+            }}
+            onDragLeave={() => {
+              dragCounter.current -= 1;
+              if (dragCounter.current <= 0) {
+                dragCounter.current = 0;
+                setIsDragging(false);
+              }
+            }}
+            onDragOver={(e) => {
+              if (Array.from(e.dataTransfer.types).includes("Files")) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "copy";
+              }
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              dragCounter.current = 0;
+              setIsDragging(false);
+              const dropped = Array.from(e.dataTransfer.files || []);
+              if (dropped.length > 0) setAttachedFiles(prev => [...prev, ...dropped].slice(0, 20));
+            }}
+          >
+            {isDragging && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-primary/10 border-2 border-dashed border-primary rounded-lg m-2 pointer-events-none">
+                <div className="flex flex-col items-center gap-2 text-primary">
+                  <Upload className="w-8 h-8" />
+                  <span className="text-[13px] font-semibold">Drop files to attach</span>
+                </div>
+              </div>
+            )}
             {messages.length === 0 ? (
               <div className="flex flex-col items-center text-center px-5 pt-12 pb-6">
                 <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
@@ -2105,10 +2330,19 @@ function AddinExcel() {
                 onClick={() => fileInputRef.current?.click()}
                 disabled={loading}
                 className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all disabled:opacity-40"
-                title="Attach files"
+                title="Attach files from this device"
                 data-testid="button-attach-files"
               >
                 <Paperclip className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => setShowSpPicker(true)}
+                disabled={loading}
+                className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-all disabled:opacity-40"
+                title="Attach from SharePoint"
+                data-testid="button-attach-sharepoint"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
               </button>
               <Textarea
                 ref={inputRef}
@@ -2134,7 +2368,7 @@ function AddinExcel() {
               </button>
             </div>
             <div className="flex items-center justify-center mt-1.5">
-              <span className="text-[9px] text-muted-foreground/50">Claude Sonnet 4 · BGP CRM</span>
+              <span className="text-[9px] text-muted-foreground/50">Opus 4.6 · Hardcore Builder · BGP CRM</span>
             </div>
           </div>
         </>
@@ -2146,6 +2380,14 @@ function AddinExcel() {
         <div className="flex-1 flex flex-col min-h-0">
           <SharePointBrowser getHeaders={getHeaders} />
         </div>
+      )}
+
+      {showSpPicker && (
+        <SharePointAttachPicker
+          getHeaders={getHeaders}
+          onClose={() => setShowSpPicker(false)}
+          onAttach={(files) => setAttachedFiles(prev => [...prev, ...files].slice(0, 20))}
+        />
       )}
     </div>
   );

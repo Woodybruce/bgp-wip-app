@@ -3,11 +3,8 @@ import { requireAuth } from "./auth";
 import { storage } from "./storage";
 import { getSharedMailboxMessages, getAppToken } from "./shared-mailbox";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
-import { z } from "zod";
 
 const SHARED_MAILBOX_EMAIL = "chatbgp@brucegillinghampollard.com";
-
-const MONDAY_LEADS_BOARD_ID = "5090914625";
 
 const AI_EXTRACT_PROMPT = `You are a property news analyst for Bruce Gillingham Pollard (BGP), a leading property consultancy in London focusing on Belgravia, Mayfair, and Chelsea.
 
@@ -53,69 +50,15 @@ export async function processMessageWithAI(subject: string, bodyText: string): P
   }
 }
 
-const MONDAY_API_URL = "https://api.monday.com/v2";
-
-async function createMondayLead(
-  itemName: string,
-  columnValues: Record<string, any>,
-  groupId?: string
-): Promise<string | null> {
-  const token = process.env.MONDAY_API_TOKEN;
-  if (!token) {
-    console.warn("MONDAY_API_TOKEN not configured - skipping Monday push");
-    return null;
-  }
-
-  const query = groupId
-    ? `mutation ($boardId: ID!, $groupId: String!, $itemName: String!, $columnValues: JSON!) {
-        create_item(board_id: $boardId, group_id: $groupId, item_name: $itemName, column_values: $columnValues) { id }
-      }`
-    : `mutation ($boardId: ID!, $itemName: String!, $columnValues: JSON!) {
-        create_item(board_id: $boardId, item_name: $itemName, column_values: $columnValues) { id }
-      }`;
-
-  const variables: Record<string, any> = {
-    boardId: MONDAY_LEADS_BOARD_ID,
-    itemName,
-    columnValues: JSON.stringify(columnValues),
-  };
-  if (groupId) variables.groupId = groupId;
-
-  const response = await fetch(MONDAY_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: token,
-      "API-Version": "2024-10",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    console.error("Monday create lead error:", text);
-    return null;
-  }
-
-  const data = await response.json();
-  if (data.errors) {
-    console.error("Monday GraphQL errors:", data.errors);
-    return null;
-  }
-
-  return data.data?.create_item?.id || null;
-}
-
 export async function autoProcessAndPush(
   sourceId: string,
   sourceType: "email" | "whatsapp",
   subject: string,
   bodyText: string,
   sourceLabel: string
-): Promise<{ leads: any[]; pushed: number }> {
+): Promise<{ leads: any[] }> {
   const leads = await processMessageWithAI(subject, bodyText);
   const created = [];
-  let pushed = 0;
 
   for (const lead of leads) {
     const saved = await storage.createLead({
@@ -130,38 +73,10 @@ export async function autoProcessAndPush(
       suggestedAction: lead.suggestedAction || null,
       status: "draft",
     });
-
-    const columnValues: Record<string, any> = {};
-    if (lead.summary) {
-      columnValues.long_text = { text: lead.summary };
-    }
-    if (lead.contactEmail) {
-      columnValues.lead_email = { email: lead.contactEmail, text: lead.contactEmail };
-    }
-    if (lead.contactPhone) {
-      columnValues.lead_phone = { phone: lead.contactPhone, countryShortName: "GB" };
-    }
-    columnValues.lead_status = { label: "New" };
-    const sourceDropdown = sourceType === "whatsapp" ? "WhatsApp" : "Email";
-    columnValues.dropdown_mm08p7kx = { labels: [sourceDropdown] };
-    const today = new Date().toISOString().split("T")[0];
-    columnValues.date_mm08qehp = { date: today };
-
-    const mondayItemId = await createMondayLead(
-      lead.title || saved.title,
-      columnValues,
-      "topics"
-    );
-
-    if (mondayItemId) {
-      await storage.updateLeadStatus(saved.id, "pushed", mondayItemId);
-      pushed++;
-    }
-
-    created.push({ ...saved, mondayItemId });
+    created.push(saved);
   }
 
-  return { leads: created, pushed };
+  return { leads: created };
 }
 
 export function setupNewsIntelligenceRoutes(app: Express) {
@@ -237,9 +152,8 @@ export function setupNewsIntelligenceRoutes(app: Express) {
       await storage.updateEmailStatus(email.id, "processed");
 
       res.json({
-        message: `Processed ${result.leads.length} lead(s), ${result.pushed} pushed to Monday.com`,
+        message: `Processed ${result.leads.length} lead(s)`,
         leads: result.leads,
-        pushed: result.pushed,
       });
     } catch (err: any) {
       console.error("Process email error:", err?.message);
@@ -254,59 +168,6 @@ export function setupNewsIntelligenceRoutes(app: Express) {
     } catch (err: any) {
       console.error("Leads fetch error:", err?.message);
       res.status(500).json({ message: "Failed to fetch leads" });
-    }
-  });
-
-  const pushLeadSchema = z.object({
-    boardId: z.string().regex(/^\d+$/, "Invalid board ID").optional(),
-    groupId: z.string().regex(/^[a-zA-Z0-9_-]+$/, "Invalid group ID").optional(),
-  });
-
-  app.post("/api/news-intel/leads/:leadId/push", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const leadId = req.params.leadId as string;
-      if (!leadId || !/^[a-zA-Z0-9-]+$/.test(leadId)) {
-        return res.status(400).json({ message: "Invalid lead ID" });
-      }
-
-      const result = pushLeadSchema.safeParse(req.body);
-      if (!result.success) {
-        return res.status(400).json({ message: "Invalid request" });
-      }
-
-      const leads = await storage.getLeads();
-      const lead = leads.find((l) => l.id === leadId);
-      if (!lead) {
-        return res.status(404).json({ message: "Lead not found" });
-      }
-
-      const columnValues: Record<string, any> = {};
-      if (lead.summary) {
-        columnValues.long_text = { text: lead.summary };
-      }
-      columnValues.lead_status = { label: "New" };
-      const today = new Date().toISOString().split("T")[0];
-      columnValues.date_mm08qehp = { date: today };
-      const isWhatsApp = lead.source?.startsWith("WhatsApp:");
-      columnValues.dropdown_mm08p7kx = { labels: [isWhatsApp ? "WhatsApp" : "Email"] };
-
-      const mondayItemId = await createMondayLead(
-        lead.title,
-        columnValues,
-        "topics"
-      );
-
-      if (mondayItemId) {
-        await storage.updateLeadStatus(lead.id, "pushed", mondayItemId);
-      }
-
-      res.json({
-        message: mondayItemId ? "Lead pushed to Monday.com Leads board" : "Failed to push lead",
-        mondayItemId,
-      });
-    } catch (err: any) {
-      console.error("Push lead error:", err?.message);
-      res.status(500).json({ message: err?.message || "Failed to push lead" });
     }
   });
 
@@ -325,7 +186,7 @@ export function setupNewsIntelligenceRoutes(app: Express) {
       const messages = await storage.getWaMessages(conversationId);
       const inboundMessages = messages.filter((m) => m.direction === "inbound");
       if (inboundMessages.length === 0) {
-        return res.json({ message: "No inbound messages to process", leads: [], pushed: 0 });
+        return res.json({ message: "No inbound messages to process", leads: [] });
       }
 
       const combinedBody = inboundMessages
@@ -343,9 +204,8 @@ export function setupNewsIntelligenceRoutes(app: Express) {
       );
 
       res.json({
-        message: `Processed ${result.leads.length} lead(s) from WhatsApp, ${result.pushed} pushed to Monday.com`,
+        message: `Processed ${result.leads.length} lead(s) from WhatsApp`,
         leads: result.leads,
-        pushed: result.pushed,
       });
     } catch (err: any) {
       console.error("Process WhatsApp error:", err?.message);

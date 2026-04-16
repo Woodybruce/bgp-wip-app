@@ -76,7 +76,7 @@ interface InvestigationResult {
   timestamp: string;
 }
 
-async function getCompanyData(companyNumber: string) {
+export async function getCompanyData(companyNumber: string) {
   const padded = companyNumber.padStart(8, "0");
   const [profile, officersData, pscsData, filingData, chargesData] = await Promise.allSettled([
     chFetch(`/company/${padded}`),
@@ -104,7 +104,7 @@ async function getCompanyData(companyNumber: string) {
   };
 }
 
-async function screenSanctions(names: string[]) {
+export async function screenSanctions(names: string[]) {
   try {
     const { screenName, loadSanctionsList } = await import("./sanctions-screening");
     await loadSanctionsList();
@@ -133,7 +133,7 @@ async function screenSanctions(names: string[]) {
   }
 }
 
-function assessRisk(data: any, sanctionsResult: any): { score: number; level: string; flags: string[] } {
+export function assessRisk(data: any, sanctionsResult: any): { score: number; level: string; flags: string[] } {
   const flags: string[] = [];
   let score = 0;
 
@@ -250,8 +250,16 @@ async function runAiAnalysis(data: any, riskFlags: string[], ownershipChain: any
     }).join("\n");
 
     const chainSummary = ownershipChain?.chain?.length > 0
-      ? ownershipChain.chain.map((c: any, i: number) => `  ${i + 1}. ${c.name} (${c.number})`).join("\n")
+      ? ownershipChain.chain.map((c: any, i: number) => {
+          const ind = (c.individualPscs || []).map((p: any) => `      • ${p.name}${p.nationality ? ` (${p.nationality})` : ""}${p.controls?.length ? ` — ${p.controls.join(", ")}` : ""}`).join("\n");
+          const corp = (c.corporatePscs || []).map((p: any) => `      ▸ ${p.name}${p.controls?.length ? ` — ${p.controls.join(", ")}` : ""}`).join("\n");
+          return `  ${i + 1}. ${c.name} (${c.number})${ind ? `\n    Individual PSCs:\n${ind}` : ""}${corp ? `\n    Corporate PSCs:\n${corp}` : ""}`;
+        }).join("\n")
       : "No corporate ownership chain discovered";
+
+    const uboSummary = ownershipChain?.ubos?.length > 0
+      ? ownershipChain.ubos.map((u: any) => `  • ${u.name}${u.nationality ? ` (${u.nationality})` : ""} — found at ${u.foundAt} (depth ${u.depth})${u.controls?.length ? ` — ${u.controls.join(", ")}` : ""}`).join("\n")
+      : "No individual UBOs identified beyond the subject's direct PSCs";
 
     const prompt = `You are KYC Clouseau — an expert KYC/AML compliance investigator for a London commercial property agency. Produce a comprehensive intelligence report on this entity.
 
@@ -273,8 +281,11 @@ ${officerSummary || "None"}
 PERSONS WITH SIGNIFICANT CONTROL (${activePscs.length}):
 ${pscSummary || "None"}
 
-OWNERSHIP CHAIN (PSC corporate trace):
+OWNERSHIP CHAIN (PSC corporate trace, with individual UBOs at each level):
 ${chainSummary}
+
+ULTIMATE BENEFICIAL OWNERS (individual people identified across the entire chain):
+${uboSummary}
 
 CHARGES/MORTGAGES (${(data.charges || []).length}):
 ${(data.charges || []).map((c: any) => `- ${c.status || "unknown"}: ${c.classification?.description || c.particulars?.description || "Charge"} — ${(c.persons_entitled || []).map((p: any) => p.name).join(", ") || "Unknown lender"}${c.created_on ? ` (created ${c.created_on})` : ""}${c.satisfied_on ? ` (satisfied ${c.satisfied_on})` : ""}`).join("\n") || "None"}
@@ -298,7 +309,7 @@ This investigation originates from a Land Registry search. The user is exploring
 Please provide:
 
 1. **EXECUTIVE SUMMARY** — 2-3 sentence overview of this entity and its risk profile
-2. **CONTROLLING INDIVIDUALS** — Who really controls this entity? Follow the ownership chain. Identify the natural persons behind any corporate layers.
+2. **CONTROLLING INDIVIDUALS / UBOs** — Who really controls this entity? The "ULTIMATE BENEFICIAL OWNERS" section above lists every individual PSC found across the corporate chain — these ARE the answer. List each by name, where in the chain they sit, and their nationality. If the chain ended without surfacing individuals, say "no individual UBO disclosed up to depth N — recommend manual Companies House check on [last entity in chain]" rather than saying you can't determine the UBO.
 ${propertyContext ? `3. **ACQUISITION CONTACT STRATEGY** — Based on the ownership structure, officers, and corporate hierarchy, who is the BEST person to approach about purchasing the property? Consider:
    - Who is the actual decision-maker (not just the registered owner — follow the chain to the person with authority)?
    - If this is an SPV or holding company, who at the parent entity handles disposals?
@@ -633,6 +644,77 @@ router.get("/api/kyc-clouseau/investigation/:id", requireAuth, async (req: Reque
   }
 });
 
+// Global recent searches — powers the "Recent searches" panel at the top of
+// the Clouseau page so the team can see (and reopen) everything that's been
+// run across company / individual / property intelligence modes.
+router.get("/api/kyc-clouseau/recent", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(parseInt(String(req.query.limit || "50"), 10) || 50, 200);
+    const typeFilter = String(req.query.type || "").trim();
+    const mineOnly = String(req.query.mine || "").toLowerCase() === "true";
+    const search = String(req.query.q || "").trim();
+
+    const conditions: string[] = [];
+    const values: any[] = [];
+
+    if (typeFilter && ["company", "individual", "property_intelligence"].includes(typeFilter)) {
+      values.push(typeFilter);
+      conditions.push(`subject_type = $${values.length}`);
+    }
+    if (mineOnly) {
+      const userId = (req as any).user?.id || null;
+      if (userId) {
+        values.push(userId);
+        conditions.push(`conducted_by = $${values.length}`);
+      }
+    }
+    if (search) {
+      values.push(`%${search}%`);
+      conditions.push(`(subject_name ILIKE $${values.length} OR company_number ILIKE $${values.length})`);
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+    values.push(limit);
+    // sources[] is derived from the stored result JSON so the Clouseau UI can
+    // show which external data providers actually ran for each investigation
+    // (Companies House, OFSI/OFAC sanctions, Perplexity adverse media, Land
+    // Registry, AI analysis). Cheap enough for LIMIT N rows.
+    const sql = `
+      SELECT id, subject_type, subject_name, company_number, risk_level, risk_score,
+             sanctions_match, conducted_by, conducted_at, notes,
+             ARRAY_REMOVE(ARRAY[
+               CASE WHEN (result -> 'companyProfile') ->> 'company_number' IS NOT NULL
+                      OR jsonb_typeof(result -> 'officers') = 'array'
+                      OR jsonb_typeof(result -> 'pscs') = 'array'
+                    THEN 'companies_house' END,
+               CASE WHEN jsonb_typeof(result -> 'sanctionsScreening') = 'array'
+                    THEN 'sanctions' END,
+               CASE WHEN result ? 'adverseMedia'
+                      OR jsonb_typeof(result -> 'perplexityResults') = 'array'
+                      OR jsonb_typeof(result -> 'adverseMediaFindings') = 'array'
+                    THEN 'perplexity' END,
+               CASE WHEN result ? 'propertiesOwned'
+                      OR result ? 'propertyContext'
+                      OR result ? 'landRegistry'
+                      OR result ? 'matched'
+                    THEN 'land_registry' END,
+               CASE WHEN length(coalesce(result ->> 'aiAnalysis', '')) > 10
+                      OR (result ->> 'aiStatus') = 'complete'
+                    THEN 'ai' END
+             ], NULL) AS sources
+      FROM kyc_investigations
+      ${where}
+      ORDER BY conducted_at DESC
+      LIMIT $${values.length}
+    `;
+    const result = await pool.query(sql, values);
+    res.json({ investigations: result.rows });
+  } catch (err: any) {
+    console.error("[kyc-clouseau] Recent error:", err.message);
+    res.status(500).json({ error: "Failed to fetch recent investigations" });
+  }
+});
+
 // Individual person investigation
 router.post("/api/kyc-clouseau/investigate-individual", requireAuth, async (req: Request, res: Response) => {
   try {
@@ -898,6 +980,11 @@ Format with clear headers and be specific. This is a professional compliance doc
 // Traces full UBO chain, deep-dives decision makers, finds managing/leasing agents,
 // checks building availability, maps associate network
 router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: Request, res: Response) => {
+  // Hard request ceiling — the old route could hang indefinitely when CH was
+  // slow or the AI API stalled. Node defaults to no socket timeout on POST,
+  // so set one explicitly.
+  req.setTimeout(180000);
+  res.setTimeout(180000);
   try {
     const { companyNumber, companyName, propertyAddress, propertyName } = req.body;
     if (!companyNumber && !companyName) {
@@ -922,10 +1009,12 @@ router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: 
     const activeOfficers = (companyData.officers || []).filter((o: any) => !o.resigned_on);
     const activePscs = (companyData.pscs || []).filter((p: any) => !p.ceased_on);
 
-    // 3. Full UBO chain trace — follow corporate PSCs up to 8 levels deep
+    // 3. UBO chain trace — depth reduced from 8 → 5 levels. Each extra level
+    // costs 3-5 CH calls per entity it finds; 5 is enough for >99% of real
+    // ownership chains and keeps the total walk under ~30 API calls.
     let ownershipChain = null;
     try {
-      ownershipChain = await discoverUltimateParent(targetNumber, 8);
+      ownershipChain = await discoverUltimateParent(targetNumber, 5);
     } catch {}
 
     // For each entity in the chain, get officers and PSCs
@@ -1005,10 +1094,13 @@ router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: 
       }
     }
 
-    // 5. Deep-dive each decision maker — fetch all their appointments
+    // 5. Deep-dive each decision maker — fetch their appointments.
+    // Cap at top 6 UBOs (was 10) and 20 appointments each (was 50) — keeps
+    // the total CH call count bounded so the endpoint can't exceed its
+    // 3-minute ceiling even on large ownership webs.
     const decisionMakers: any[] = [];
     const dmLimit = pLimit(3);
-    const dmFetches = ubos.slice(0, 10).map(ubo =>
+    const dmFetches = ubos.slice(0, 6).map(ubo =>
       dmLimit(async () => {
         try {
           // Search for officer record by name
@@ -1024,7 +1116,7 @@ router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: 
           const officerId = officerLink.replace("/officers/", "");
           if (!officerId) return { ...ubo, appointments: [], companies: [] };
 
-          const appointments = await chFetch(`/officers/${officerId}/appointments?items_per_page=50`);
+          const appointments = await chFetch(`/officers/${officerId}/appointments?items_per_page=20`);
           const activeAppts = (appointments.items || []).filter((a: any) => !a.resigned_on);
           const companies = activeAppts.map((a: any) => ({
             name: a.appointed_to?.company_name,
@@ -1060,39 +1152,33 @@ router.post("/api/kyc-clouseau/property-intelligence", requireAuth, async (req: 
     // 7. Risk assessment
     const risk = assessRisk(companyData, sanctionsResult);
 
-    // 8. AI comprehensive property intelligence analysis
-    let aiAnalysis = "";
-    try {
-      const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const anthropic = new Anthropic({
-        apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
-        ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
-          ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
-          : {}),
-      });
+    // 8. Build the AI prompt up front so we can either run it in-line (short
+    // answers) or defer it to a background worker after the response has been
+    // sent. The raw intelligence in steps 1-7 is what most users actually need
+    // to see immediately; the AI analysis is a nice-to-have that previously
+    // caused the whole request to time out.
+    const profile = companyData.profile || {};
 
-      const profile = companyData.profile || {};
+    const chainSummary = chainDetails.length > 0
+      ? chainDetails.map((c: any, i: number) => {
+          const officers = (c.officers || []).map((o: any) => `${o.name} (${o.officer_role})`).join(", ");
+          const pscs = (c.pscs || []).map((p: any) => `${p.name} (${(p.natures_of_control || []).join(", ")})`).join(", ");
+          return `  Level ${i + 1}: ${c.name} (${c.number})${c.profile ? ` — ${c.profile.company_status}` : ""}\n    Officers: ${officers || "None"}\n    PSCs: ${pscs || "None"}`;
+        }).join("\n")
+      : "No corporate ownership chain discovered";
 
-      const chainSummary = chainDetails.length > 0
-        ? chainDetails.map((c: any, i: number) => {
-            const officers = (c.officers || []).map((o: any) => `${o.name} (${o.officer_role})`).join(", ");
-            const pscs = (c.pscs || []).map((p: any) => `${p.name} (${(p.natures_of_control || []).join(", ")})`).join(", ");
-            return `  Level ${i + 1}: ${c.name} (${c.number})${c.profile ? ` — ${c.profile.company_status}` : ""}\n    Officers: ${officers || "None"}\n    PSCs: ${pscs || "None"}`;
-          }).join("\n")
-        : "No corporate ownership chain discovered";
-
-      const uboSummary = decisionMakers.map(dm => {
-        const companiesList = (dm.companies || []).slice(0, 10).map((c: any) =>
-          `    - ${c.name} (${c.number}) as ${c.role}`
-        ).join("\n");
-        return `- ${dm.name} (${dm.nationality || "??"}, ${dm.level})${dm.totalAppointments ? ` — ${dm.totalAppointments} total appointments, ${dm.activeAppointments} active` : ""}\n${companiesList || "    No company data"}`;
-      }).join("\n");
-
-      const chargesSummary = (companyData.charges || []).map((c: any) =>
-        `- ${c.status || "?"}: ${c.classification?.description || "Charge"} — ${(c.persons_entitled || []).map((p: any) => p.name).join(", ") || "Unknown"}${c.created_on ? ` (${c.created_on})` : ""}`
+    const uboSummary = decisionMakers.map(dm => {
+      const companiesList = (dm.companies || []).slice(0, 10).map((c: any) =>
+        `    - ${c.name} (${c.number}) as ${c.role}`
       ).join("\n");
+      return `- ${dm.name} (${dm.nationality || "??"}, ${dm.level})${dm.totalAppointments ? ` — ${dm.totalAppointments} total appointments, ${dm.activeAppointments} active` : ""}\n${companiesList || "    No company data"}`;
+    }).join("\n");
 
-      const prompt = `You are KYC Clouseau — an expert KYC/AML compliance investigator AND commercial property intelligence analyst for a London commercial property agency (Bruce Gillingham Pollard).
+    const chargesSummary = (companyData.charges || []).map((c: any) =>
+      `- ${c.status || "?"}: ${c.classification?.description || "Charge"} — ${(c.persons_entitled || []).map((p: any) => p.name).join(", ") || "Unknown"}${c.created_on ? ` (${c.created_on})` : ""}`
+    ).join("\n");
+
+    const aiPrompt = `You are KYC Clouseau — an expert KYC/AML compliance investigator AND commercial property intelligence analyst for a London commercial property agency (Bruce Gillingham Pollard).
 
 You are conducting a FULL PROPERTY INTELLIGENCE investigation. This means going beyond standard KYC — you need to understand who controls the building, who the decision makers are, what managing/leasing agents are involved, and whether there is any availability.
 
@@ -1181,18 +1267,7 @@ Please provide a COMPREHENSIVE PROPERTY INTELLIGENCE REPORT:
 
 Format with clear headers. Be specific — name actual people, companies, and connections. This is used by commercial property agents for business development AND compliance.`;
 
-      const aiRes = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 6000,
-        messages: [{ role: "user", content: prompt }],
-      });
-
-      aiAnalysis = aiRes.content[0].type === "text" ? aiRes.content[0].text : "Analysis unavailable";
-    } catch (aiErr: any) {
-      aiAnalysis = `AI analysis unavailable (${aiErr.message}).`;
-    }
-
-    // 9. PropertyData — owned properties
+    // 9. PropertyData — owned properties (fast API call, no AI)
     let propertiesOwned = null;
     if (targetNumber && process.env.PROPERTYDATA_API_KEY) {
       try {
@@ -1203,7 +1278,10 @@ Format with clear headers. Be specific — name actual people, companies, and co
       } catch {}
     }
 
-    const result = {
+    // Assemble the fast portion of the result — all raw intelligence data the
+    // user can see immediately. aiAnalysis is deliberately empty here and
+    // filled in asynchronously below.
+    const result: any = {
       subject: {
         name: companyData.profile?.company_name || companyName || targetNumber,
         companyNumber: targetNumber,
@@ -1221,7 +1299,8 @@ Format with clear headers. Be specific — name actual people, companies, and co
       charges: companyData.charges || [],
       sanctionsScreening: sanctionsResult,
       propertiesOwned,
-      aiAnalysis,
+      aiAnalysis: "",
+      aiStatus: "pending" as "pending" | "complete" | "failed",
       riskScore: risk.score,
       riskLevel: risk.level,
       flags: risk.flags,
@@ -1230,11 +1309,13 @@ Format with clear headers. Be specific — name actual people, companies, and co
       timestamp: new Date().toISOString(),
     };
 
-    // Save investigation
+    // Save investigation first (no AI yet) so we can return an ID the client
+    // can poll while the AI step runs in the background.
     const userId = (req as any).user?.id || null;
     const hasSanctionsMatch = sanctionsResult
       ? sanctionsResult.some((s: any) => s.status === "strong_match" || s.status === "potential_match")
       : false;
+    let investigationId: number | null = null;
     try {
       const insertResult = await pool.query(
         `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, risk_level, risk_score, sanctions_match, result, conducted_by, notes)
@@ -1253,7 +1334,7 @@ Format with clear headers. Be specific — name actual people, companies, and co
           `Property intelligence: ${propertyAddress || propertyName || result.subject.name}`,
         ]
       );
-      const investigationId = insertResult.rows[0]?.id;
+      investigationId = insertResult.rows[0]?.id || null;
       if (investigationId) {
         await logKycAudit(investigationId, "created", userId, `Property intelligence investigation: ${result.subject.name}`);
       }
@@ -1261,8 +1342,20 @@ Format with clear headers. Be specific — name actual people, companies, and co
       console.warn("[kyc-clouseau] Failed to save property intelligence:", dbErr.message);
     }
 
-    console.log(`[kyc-clouseau] Property intelligence complete: ${result.subject.name} — ${ubos.length} UBOs, ${decisionMakers.length} decision makers, risk: ${risk.level}`);
+    (result as any).investigationId = investigationId;
+
+    console.log(`[kyc-clouseau] Property intelligence data ready: ${result.subject.name} — ${ubos.length} UBOs, ${decisionMakers.length} decision makers, risk: ${risk.level} — returning to client, AI deferred`);
     res.json(result);
+
+    // Fire-and-forget AI analysis. The client polls /api/kyc-clouseau/
+    // investigation/:id until aiStatus === "complete" (or "failed") and then
+    // renders the narrative. If the DB save above failed we still log the AI
+    // output to the server console but there's nowhere to persist it.
+    if (investigationId) {
+      runPropertyIntelligenceAi(investigationId, result, aiPrompt).catch((err: any) => {
+        console.warn(`[kyc-clouseau] Background AI task crashed:`, err?.message);
+      });
+    }
   } catch (err: any) {
     console.error("[kyc-clouseau] Property intelligence error:", err.message);
     const userMessage = sanitizeErrorMessage(err.message, "Property intelligence investigation failed");
@@ -1270,8 +1363,51 @@ Format with clear headers. Be specific — name actual people, companies, and co
   }
 });
 
+// Runs the Claude analysis for a property-intelligence investigation that has
+// already had its raw data persisted. When it finishes (or fails) it updates
+// the `result` JSONB in kyc_investigations so the client poll picks it up.
+async function runPropertyIntelligenceAi(investigationId: number, baseResult: any, prompt: string): Promise<void> {
+  let aiAnalysis = "";
+  let aiStatus: "complete" | "failed" = "complete";
+  try {
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const anthropic = new Anthropic({
+      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+      ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+        ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
+        : {}),
+    });
+    const aiPromise = anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 6000,
+      messages: [{ role: "user", content: prompt }],
+    });
+    // The background job can run longer than the request — give it 180s.
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("AI analysis timed out after 180s")), 180000)
+    );
+    const aiRes: any = await Promise.race([aiPromise, timeoutPromise]);
+    aiAnalysis = aiRes.content[0].type === "text" ? aiRes.content[0].text : "Analysis unavailable";
+  } catch (aiErr: any) {
+    console.warn(`[kyc-clouseau] Property intel background AI failed: ${aiErr?.message}`);
+    aiAnalysis = `AI analysis unavailable (${aiErr?.message || "unknown error"}). All raw ownership and decision-maker data is still valid.`;
+    aiStatus = "failed";
+  }
+
+  try {
+    const updated = { ...baseResult, aiAnalysis, aiStatus, investigationId };
+    await pool.query(
+      `UPDATE kyc_investigations SET result = $1 WHERE id = $2`,
+      [JSON.stringify(updated), investigationId]
+    );
+    console.log(`[kyc-clouseau] Property intel AI ${aiStatus} for investigation ${investigationId}`);
+  } catch (dbErr: any) {
+    console.warn(`[kyc-clouseau] Failed to persist AI analysis for ${investigationId}:`, dbErr.message);
+  }
+}
+
 // Audit log helper
-async function logKycAudit(investigationId: number, action: string, performedBy: string | null, notes?: string) {
+export async function logKycAudit(investigationId: number, action: string, performedBy: string | null, notes?: string) {
   try {
     await pool.query(
       `INSERT INTO kyc_audit_log (investigation_id, action, performed_by, notes) VALUES ($1, $2, $3, $4)`,

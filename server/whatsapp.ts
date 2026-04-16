@@ -9,7 +9,7 @@ import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthrop
 const GRAPH_API_VERSION = "v21.0";
 const GRAPH_API_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
 
-function getWhatsAppConfig() {
+export function getWhatsAppConfig() {
   const token = (process.env.WHATSAPP_TOKEN_V2 || process.env.WHATSAPP_ACCESS_TOKEN)?.trim();
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
@@ -78,7 +78,7 @@ async function detectAndGenerateDocument(messageBody: string, fromNumber: string
   }
 }
 
-async function sendWhatsAppText(config: ReturnType<typeof getWhatsAppConfig>, to: string, text: string): Promise<boolean> {
+export async function sendWhatsAppText(config: ReturnType<typeof getWhatsAppConfig>, to: string, text: string): Promise<boolean> {
   try {
     const res = await fetch(`${GRAPH_API_URL}/${config.phoneNumberId}/messages`, {
       method: "POST",
@@ -225,7 +225,7 @@ export function setupWhatsAppRoutes(app: Express) {
                       contactLabel
                     );
                     if (result.leads.length > 0) {
-                      console.log(`Auto-extracted ${result.leads.length} lead(s) from WhatsApp message, ${result.pushed} pushed to Monday.com`);
+                      console.log(`Auto-extracted ${result.leads.length} lead(s) from WhatsApp message`);
                     }
                   }
                 } catch (aiErr) {
