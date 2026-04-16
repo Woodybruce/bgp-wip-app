@@ -300,30 +300,32 @@ function AuthenticatedApp() {
 
   if (isChatBGP) {
     return (
-      <div className="h-screen w-screen max-w-[100vw] overflow-hidden flex flex-col">
-        <header className="flex items-center justify-between gap-2 px-3 py-2 border-b h-12 shrink-0">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => navigate("/")}
-              className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
-              title="Back to Dashboard"
-              data-testid="button-chatbgp-back"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-            <img src={bgpLogoDark} alt="BGP" className="h-5 dark:hidden" />
-            <img src={bgpLogoLight} alt="BGP" className="h-5 hidden dark:block" />
+      <ChatBGPProvider>
+        <div className="h-screen w-screen max-w-[100vw] overflow-hidden flex flex-col">
+          <header className="flex items-center justify-between gap-2 px-3 py-2 border-b h-12 shrink-0">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => navigate("/")}
+                className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+                title="Back to Dashboard"
+                data-testid="button-chatbgp-back"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+              <img src={bgpLogoDark} alt="BGP" className="h-5 dark:hidden" />
+              <img src={bgpLogoLight} alt="BGP" className="h-5 hidden dark:block" />
+            </div>
+            <div className="flex items-center gap-2">
+              <ColorSchemeSelector />
+            </div>
+          </header>
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <Suspense fallback={<PageLoader />}>
+              <ChatBGP />
+            </Suspense>
           </div>
-          <div className="flex items-center gap-2">
-            <ColorSchemeSelector />
-          </div>
-        </header>
-        <div className="flex-1 min-h-0 overflow-hidden">
-          <Suspense fallback={<PageLoader />}>
-            <ChatBGP />
-          </Suspense>
         </div>
-      </div>
+      </ChatBGPProvider>
     );
   }
 
