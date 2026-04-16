@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Link } from "wouter";
 import { useMemo } from "react";
 import { TrendingUp, ChevronRight } from "lucide-react";
@@ -28,7 +29,7 @@ export function InvestmentTrackerWidget() {
   };
 
   return (
-    <Card>
+    <Card className="h-full flex flex-col">
       <CardHeader className="flex flex-row items-center justify-between pb-3">
         <div className="flex items-center gap-2">
           <TrendingUp className="w-4 h-4 text-muted-foreground" />
@@ -41,7 +42,7 @@ export function InvestmentTrackerWidget() {
           </Button>
         </Link>
       </CardHeader>
-      <CardContent className="pt-0 space-y-4">
+      <CardContent className="pt-0 flex-1 overflow-hidden flex flex-col gap-3">
         <div className="flex gap-4 flex-wrap">
           {Object.entries(statusCounts).filter(([, count]) => count > 0).map(([status, count]) => (
             <div key={status} className="flex items-center gap-1.5">
@@ -57,23 +58,25 @@ export function InvestmentTrackerWidget() {
             <p className="text-xs">No active investment items</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {activeItems.map(u => (
-              <Link key={u.id} href="/investment-tracker">
-                <div className="flex items-center gap-2 py-1.5 px-2 rounded-md border hover:bg-muted/50 transition-colors cursor-pointer" data-testid={`widget-inv-${u.id}`}>
-                  <div className={`w-2 h-2 rounded-full shrink-0 ${statusColors[u.status || "Reporting"] || "bg-neutral-400"}`} />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-xs font-medium truncate">{u.assetName}</p>
-                    <p className="text-[10px] text-muted-foreground truncate">{u.address || u.assetType || ""}</p>
+          <ScrollArea className="flex-1">
+            <div className="space-y-1 pr-2">
+              {activeItems.map(u => (
+                <Link key={u.id} href="/investment-tracker">
+                  <div className="flex items-center gap-2 py-1.5 px-2 rounded-md border hover:bg-muted/50 transition-colors cursor-pointer" data-testid={`widget-inv-${u.id}`}>
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${statusColors[u.status || "Reporting"] || "bg-neutral-400"}`} />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium truncate">{u.assetName}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">{u.address || u.assetType || ""}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {u.sqft && <span className="text-[10px] text-muted-foreground">{u.sqft.toLocaleString()} sf</span>}
+                      {u.guidePrice && <span className="text-[10px] font-medium">£{u.guidePrice.toLocaleString()}</span>}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {u.sqft && <span className="text-[10px] text-muted-foreground">{u.sqft.toLocaleString()} sf</span>}
-                    {u.guidePrice && <span className="text-[10px] font-medium">£{u.guidePrice.toLocaleString()}</span>}
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
+                </Link>
+              ))}
+            </div>
+          </ScrollArea>
         )}
       </CardContent>
     </Card>
