@@ -376,16 +376,23 @@ function RecentInvestigations({
   onSelect: (investigation: any) => void;
 }) {
   const [typeFilter, setTypeFilter] = useState<"all" | "company" | "individual" | "property_intelligence">("all");
-  const [mineOnly, setMineOnly] = useState(false);
+  const [searchQ, setSearchQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [expanded, setExpanded] = useState(true);
 
+  // Debounce the search input so we don't hit the server on every keystroke
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(searchQ), 300);
+    return () => clearTimeout(t);
+  }, [searchQ]);
+
   const { data, isLoading } = useQuery({
-    queryKey: ["kyc-recent", typeFilter, mineOnly],
+    queryKey: ["kyc-recent", typeFilter, debouncedQ],
     queryFn: async () => {
       const params = new URLSearchParams();
-      params.set("limit", "30");
+      params.set("limit", "200");
       if (typeFilter !== "all") params.set("type", typeFilter);
-      if (mineOnly) params.set("mine", "true");
+      if (debouncedQ) params.set("q", debouncedQ);
       const res = await apiRequest("GET", `/api/kyc-clouseau/recent?${params.toString()}`);
       return res.json();
     },
@@ -423,40 +430,47 @@ function RecentInvestigations({
       >
         <span className="flex items-center gap-1.5">
           <Clock className="h-3 w-3" />
-          Recent Searches {!isLoading && investigations.length > 0 && `(${investigations.length})`}
+          Investigation History {!isLoading && investigations.length > 0 && `(${investigations.length})`}
         </span>
         <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
       </button>
       {expanded && (
         <>
-          <div className="px-3 pb-2 flex flex-wrap gap-1">
-            {(["all", "company", "individual", "property_intelligence"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTypeFilter(t)}
-                className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
-                  typeFilter === t ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
-                }`}
-              >
-                {t === "all" ? "All" : t === "property_intelligence" ? "Property" : t === "individual" ? "Individual" : "Company"}
-              </button>
-            ))}
-            <button
-              onClick={() => setMineOnly(!mineOnly)}
-              className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ml-auto ${
-                mineOnly ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
-              }`}
-            >
-              Mine only
-            </button>
+          <div className="px-3 pb-2 space-y-1.5">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+              <input
+                type="text"
+                value={searchQ}
+                onChange={(e) => setSearchQ(e.target.value)}
+                placeholder="Search investigations..."
+                className="w-full pl-7 pr-2 py-1 text-[11px] rounded border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                data-testid="investigation-search"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {(["all", "company", "individual", "property_intelligence"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTypeFilter(t)}
+                  className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                    typeFilter === t ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
+                  }`}
+                >
+                  {t === "all" ? "All" : t === "property_intelligence" ? "Property" : t === "individual" ? "Individual" : "Company"}
+                </button>
+              ))}
+            </div>
           </div>
-          <ScrollArea className="max-h-64">
+          <ScrollArea className="max-h-[50vh]">
             <div className="px-2 pb-2 space-y-0.5">
               {isLoading && (
                 <div className="text-[11px] text-muted-foreground text-center py-4">Loading...</div>
               )}
               {!isLoading && investigations.length === 0 && (
-                <div className="text-[11px] text-muted-foreground text-center py-4">No recent searches</div>
+                <div className="text-[11px] text-muted-foreground text-center py-4">
+                  {debouncedQ ? "No matching investigations" : "No investigations yet"}
+                </div>
               )}
               {investigations.map((inv) => (
                 <button
@@ -483,7 +497,7 @@ function RecentInvestigations({
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className="text-[9px] text-muted-foreground">
-                          {new Date(inv.conducted_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                          {new Date(inv.conducted_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
                         </span>
                         {inv.risk_level && (
                           <span className={`text-[9px] px-1 rounded ${

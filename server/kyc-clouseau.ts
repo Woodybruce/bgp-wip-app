@@ -649,7 +649,7 @@ router.get("/api/kyc-clouseau/investigation/:id", requireAuth, async (req: Reque
 // run across company / individual / property intelligence modes.
 router.get("/api/kyc-clouseau/recent", requireAuth, async (req: Request, res: Response) => {
   try {
-    const limit = Math.min(parseInt(String(req.query.limit || "50"), 10) || 50, 200);
+    const limit = Math.min(parseInt(String(req.query.limit || "200"), 10) || 200, 1000);
     const typeFilter = String(req.query.type || "").trim();
     const mineOnly = String(req.query.mine || "").toLowerCase() === "true";
     const search = String(req.query.q || "").trim();
