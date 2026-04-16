@@ -1989,7 +1989,7 @@ export default function Dashboard() {
                 </div>
 
                 <div className="flex flex-1 overflow-hidden">
-                  <div className="w-[160px] flex-shrink-0 border-r overflow-y-auto p-2 space-y-3">
+                  <div className="flex-1 min-w-0 border-r overflow-y-auto p-2 space-y-3">
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-[10px] font-semibold text-muted-foreground">{calMonthW.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</span>
@@ -2045,7 +2045,7 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-hidden flex flex-col">
+                  <div className="flex-[5] min-w-0 overflow-hidden flex flex-col">
                     <div className="flex border-b">
                       <div className="w-[44px] flex-shrink-0" />
                       {calDaysW.map((day, i) => {
