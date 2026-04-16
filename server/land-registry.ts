@@ -1053,7 +1053,7 @@ Respond with ONLY a JSON object (no markdown, no backticks):
       const searchId = parseInt(req.params.id);
       if (isNaN(searchId)) return res.status(400).json({ error: "Invalid search id" });
 
-      const { notes, tags, status } = req.body;
+      const { notes, tags, status, freeholds, leaseholds } = req.body;
       const validStatuses = ["New", "Investigating", "Contacted Owner", "No Interest", "Acquired"];
       if (status && !validStatuses.includes(status)) {
         return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` });
@@ -1063,20 +1063,31 @@ Respond with ONLY a JSON object (no markdown, no backticks):
       if (notes !== undefined) updates.notes = notes;
       if (tags !== undefined) updates.tags = Array.isArray(tags) ? tags : [];
       if (status !== undefined) updates.status = status;
+      if (freeholds !== undefined) {
+        updates.freeholds = Array.isArray(freeholds) ? freeholds : [];
+        updates.freeholdsCount = Array.isArray(freeholds) ? freeholds.length : 0;
+      }
+      if (leaseholds !== undefined) {
+        updates.leaseholds = Array.isArray(leaseholds) ? leaseholds : [];
+        updates.leaseholdsCount = Array.isArray(leaseholds) ? leaseholds.length : 0;
+      }
 
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: "No fields to update" });
       }
 
+      const setParts: any[] = [];
+      if (updates.notes !== undefined) setParts.push(sql`notes = ${updates.notes}`);
+      if (updates.tags !== undefined) setParts.push(sql`tags = ${JSON.stringify(updates.tags)}::jsonb`);
+      if (updates.status !== undefined) setParts.push(sql`status = ${updates.status}`);
+      if (updates.freeholds !== undefined) setParts.push(sql`freeholds = ${JSON.stringify(updates.freeholds)}::jsonb`);
+      if (updates.freeholdsCount !== undefined) setParts.push(sql`freeholds_count = ${updates.freeholdsCount}`);
+      if (updates.leaseholds !== undefined) setParts.push(sql`leaseholds = ${JSON.stringify(updates.leaseholds)}::jsonb`);
+      if (updates.leaseholdsCount !== undefined) setParts.push(sql`leaseholds_count = ${updates.leaseholdsCount}`);
+
       const result = await db.execute(sql`
         UPDATE land_registry_searches
-        SET ${sql.join(
-          Object.entries(updates).map(([key, value]) => {
-            const col = key === "notes" ? sql`notes` : key === "tags" ? sql`tags` : sql`status`;
-            return sql`${col} = ${key === "tags" ? sql`${JSON.stringify(value)}::jsonb` : sql`${value}`}`;
-          }),
-          sql`, `
-        )}
+        SET ${sql.join(setParts, sql`, `)}
         WHERE id = ${searchId} AND user_id = ${userId}
         RETURNING *
       `);
