@@ -13,6 +13,7 @@ import {
   Phone, Mail, X, TrendingUp,
   Handshake, ShoppingBag,
   Utensils, Clapperboard, ClipboardList, Dumbbell,
+  Sparkles, Coffee, Shirt, Glasses, Heart, Wine, Music, Flower2,
 } from "lucide-react";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { guessDomain, extractDomain } from "@/lib/company-logos";
@@ -681,11 +682,14 @@ function AgentsTab({
 }
 
 const TENANT_SECTORS = [
-  { key: "all", label: "All Tenants", icon: Store },
-  { key: "retail", label: "Retail", icon: ShoppingBag, match: ["Tenant - Retail", "Tenant"] },
-  { key: "restaurant", label: "Restaurants", icon: Utensils, match: ["Tenant - Restaurant"] },
-  { key: "leisure", label: "Leisure", icon: Clapperboard, match: ["Tenant - Leisure"] },
-  { key: "gym", label: "Gym / Fitness", icon: Dumbbell, match: ["Tenant - Gym", "Tenant - Fitness", "Tenant - Health & Fitness"] },
+  { key: "all", label: "All Brands", icon: Store },
+  { key: "fashion", label: "Fashion", icon: Shirt, match: ["Tenant - Fashion", "Tenant - Clothing", "Tenant - Apparel", "Tenant - Accessories", "Tenant - Retail - Fashion"] },
+  { key: "food_drink", label: "Food & Drink", icon: Utensils, match: ["Tenant - Restaurant", "Tenant - Food & Drink", "Tenant - F&B", "Tenant - Café", "Tenant - Bar", "Tenant - Quick Service", "Tenant - Fast Casual", "Tenant - Fine Dining"] },
+  { key: "beauty", label: "Beauty & Wellness", icon: Sparkles, match: ["Tenant - Beauty", "Tenant - Wellness", "Tenant - Spa", "Tenant - Hair", "Tenant - Nails", "Tenant - Aesthetics"] },
+  { key: "leisure", label: "Leisure & Entertainment", icon: Clapperboard, match: ["Tenant - Leisure", "Tenant - Entertainment", "Tenant - Experiential", "Tenant - Cinema", "Tenant - Gaming", "Tenant - Escape Room"] },
+  { key: "gym", label: "Gym & Fitness", icon: Dumbbell, match: ["Tenant - Gym", "Tenant - Fitness", "Tenant - Health & Fitness", "Tenant - Yoga", "Tenant - Pilates"] },
+  { key: "lifestyle", label: "Lifestyle & Home", icon: Flower2, match: ["Tenant - Lifestyle", "Tenant - Homewares", "Tenant - Gifts", "Tenant - Books", "Tenant - Art", "Tenant - Interiors"] },
+  { key: "retail", label: "Other Retail", icon: ShoppingBag, match: ["Tenant - Retail", "Tenant", "Tenant - General Retail"] },
 ];
 
 function TenantsTab({
@@ -772,24 +776,30 @@ function TenantsTab({
     return list.sort((a, b) => a.name.localeCompare(b.name));
   }, [tenantCompanies, activeSector, search]);
 
+  const SECTOR_COLORS: Record<string, string> = {
+    all: "bg-teal-600",
+    fashion: "bg-pink-600",
+    food_drink: "bg-rose-600",
+    beauty: "bg-violet-600",
+    leisure: "bg-purple-600",
+    gym: "bg-orange-600",
+    lifestyle: "bg-emerald-600",
+    retail: "bg-sky-600",
+  };
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-        <div className="cursor-pointer" onClick={() => setActiveSector("all")} data-testid="stat-all-tenants">
-          <StatCard label="All Tenants" value={sectorCounts.all} icon={Store} color={activeSector === "all" ? "bg-teal-800 ring-2 ring-teal-400" : "bg-teal-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setActiveSector(activeSector === "retail" ? "all" : "retail")} data-testid="stat-retail">
-          <StatCard label="Retail" value={sectorCounts.retail} icon={ShoppingBag} color={activeSector === "retail" ? "bg-sky-800 ring-2 ring-sky-400" : "bg-sky-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setActiveSector(activeSector === "restaurant" ? "all" : "restaurant")} data-testid="stat-restaurants">
-          <StatCard label="Restaurants" value={sectorCounts.restaurant} icon={Utensils} color={activeSector === "restaurant" ? "bg-rose-800 ring-2 ring-rose-400" : "bg-rose-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setActiveSector(activeSector === "leisure" ? "all" : "leisure")} data-testid="stat-leisure">
-          <StatCard label="Leisure" value={sectorCounts.leisure} icon={Clapperboard} color={activeSector === "leisure" ? "bg-purple-800 ring-2 ring-purple-400" : "bg-purple-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setActiveSector(activeSector === "gym" ? "all" : "gym")} data-testid="stat-gym">
-          <StatCard label="Gym / Fitness" value={sectorCounts.gym || 0} icon={Dumbbell} color={activeSector === "gym" ? "bg-orange-800 ring-2 ring-orange-400" : "bg-orange-600"} />
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
+        {TENANT_SECTORS.map((s) => {
+          const isActive = activeSector === s.key;
+          const base = SECTOR_COLORS[s.key] || "bg-slate-600";
+          const color = isActive ? `${base.replace("600", "800")} ring-2 ring-offset-0` : base;
+          return (
+            <div key={s.key} className="cursor-pointer" onClick={() => setActiveSector(isActive && s.key !== "all" ? "all" : s.key)} data-testid={`stat-${s.key}`}>
+              <StatCard label={s.label} value={sectorCounts[s.key] || 0} icon={s.icon} color={color} />
+            </div>
+          );
+        })}
       </div>
 
       <div className="flex items-center gap-3 flex-wrap">
@@ -815,13 +825,19 @@ function TenantsTab({
         {filtered.map((company) => {
           const compContacts = contactsByCompany[company.id] || [];
           const ct = (company.companyType || "").toLowerCase();
-          const sectorColor = ct.includes("restaurant")
-            ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
-            : ct.includes("leisure")
-              ? "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300"
-              : ct.includes("gym") || ct.includes("fitness") || ct.includes("health")
-                ? "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
-                : "bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300";
+          const sectorColor = ct.includes("fashion") || ct.includes("clothing") || ct.includes("apparel")
+            ? "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300"
+            : ct.includes("restaurant") || ct.includes("food") || ct.includes("f&b") || ct.includes("café") || ct.includes("bar") || ct.includes("dining")
+              ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+              : ct.includes("beauty") || ct.includes("wellness") || ct.includes("spa") || ct.includes("hair")
+                ? "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300"
+                : ct.includes("leisure") || ct.includes("entertainment") || ct.includes("experiential")
+                  ? "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300"
+                  : ct.includes("gym") || ct.includes("fitness") || ct.includes("yoga") || ct.includes("pilates")
+                    ? "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
+                    : ct.includes("lifestyle") || ct.includes("homewares") || ct.includes("gifts")
+                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                      : "bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300";
 
           return (
             <Link key={company.id} href={`/companies/${company.id}`}>
@@ -875,7 +891,7 @@ type PeopleTab = "landlords" | "agents" | "tenants" | "contacts" | "all-companie
 const ALL_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "landlords", label: "Landlords", icon: Building2 },
   { key: "agents", label: "Agents", icon: Briefcase },
-  { key: "tenants", label: "Tenants", icon: Store },
+  { key: "tenants", label: "Tenant Brands", icon: Store },
   { key: "contacts", label: "All Contacts", icon: Users },
   { key: "all-companies", label: "All Companies", icon: Building },
 ];

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback, memo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
@@ -50,7 +50,7 @@ const COLUMNS: Array<{
   { key: "rejected", label: "Rejected", tone: "border-red-300 bg-red-50/40", icon: ShieldAlert, description: "Cannot proceed" },
 ];
 
-function CardItem({ row }: { row: BoardRow }) {
+const CardItem = memo(function CardItem({ row }: { row: BoardRow }) {
   const [expanded, setExpanded] = useState(false);
   const dealCount = row.deals?.length || 0;
   const checklistTicked = row.aml_checklist
@@ -148,7 +148,7 @@ function CardItem({ row }: { row: BoardRow }) {
       )}
     </div>
   );
-}
+});
 
 interface DealRow {
   id: string;
@@ -359,7 +359,7 @@ function DealsKanban({ data, loading }: { data: DealBoardData | undefined; loadi
   );
 }
 
-function DealCard({ row }: { row: DealRow }) {
+const DealCard = memo(function DealCard({ row }: { row: DealRow }) {
   const [expanded, setExpanded] = useState(false);
   const [expandedCp, setExpandedCp] = useState<string | null>(null);
 
@@ -449,7 +449,7 @@ function DealCard({ row }: { row: DealRow }) {
                     </div>
                   </div>
                   <button
-                    onClick={() => setExpandedCp(isOpen ? null : cp.id)}
+                    onClick={(e) => { e.stopPropagation(); setExpandedCp(isOpen ? null : cp.id); }}
                     className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
                     data-testid={`btn-expand-cp-kyc-${cp.id}`}
                   >
@@ -469,4 +469,4 @@ function DealCard({ row }: { row: DealRow }) {
       )}
     </div>
   );
-}
+});

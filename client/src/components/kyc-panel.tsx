@@ -95,6 +95,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   const [certifiedBy, setCertifiedBy] = useState("");
   const [docNotes, setDocNotes] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [sowNotes, setSowNotes] = useState<string | null>(null);
   const [veriffOpen, setVeriffOpen] = useState(false);
   const [veriffFirstName, setVeriffFirstName] = useState("");
   const [veriffLastName, setVeriffLastName] = useState("");
@@ -332,13 +333,14 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
             <Textarea
               className="mt-2 text-sm"
               placeholder="Source of wealth notes / evidence summary"
-              value={company.aml_source_of_wealth_notes || ""}
+              value={sowNotes ?? (company.aml_source_of_wealth_notes || "")}
+              onChange={(e) => setSowNotes(e.target.value)}
               onBlur={(e) => {
-                if (e.target.value !== (company.aml_source_of_wealth_notes || "")) {
-                  checklistMutation.mutate({ sourceOfWealthNotes: e.target.value });
+                const val = e.target.value;
+                if (val !== (company.aml_source_of_wealth_notes || "")) {
+                  checklistMutation.mutate({ sourceOfWealthNotes: val });
                 }
               }}
-              defaultValue={company.aml_source_of_wealth_notes || ""}
               data-testid="textarea-sow-notes"
             />
           </div>
