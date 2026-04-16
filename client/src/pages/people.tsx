@@ -774,11 +774,11 @@ function AgentsTab({
 const TENANT_SECTORS = [
   { key: "all", label: "All Brands", icon: Store },
   { key: "fashion", label: "Fashion", icon: Shirt, match: ["Tenant - Fashion", "Tenant - Clothing", "Tenant - Apparel", "Tenant - Accessories", "Tenant - Retail - Fashion"] },
-  { key: "food_drink", label: "Food & Drink", icon: Utensils, match: ["Tenant - Restaurant", "Tenant - Food & Drink", "Tenant - F&B", "Tenant - Café", "Tenant - Bar", "Tenant - Quick Service", "Tenant - Fast Casual", "Tenant - Fine Dining"] },
-  { key: "beauty", label: "Beauty & Wellness", icon: Sparkles, match: ["Tenant - Beauty", "Tenant - Wellness", "Tenant - Spa", "Tenant - Hair", "Tenant - Nails", "Tenant - Aesthetics"] },
+  { key: "food_drink", label: "Food & Drink", icon: Utensils, match: ["Tenant - Food & Drink", "Tenant - Restaurant", "Tenant - F&B", "Tenant - Café", "Tenant - Bar", "Tenant - Quick Service", "Tenant - Fast Casual", "Tenant - Fine Dining"] },
+  { key: "beauty", label: "Beauty & Wellness", icon: Sparkles, match: ["Tenant - Beauty & Wellness", "Tenant - Beauty", "Tenant - Wellness", "Tenant - Spa", "Tenant - Hair", "Tenant - Nails", "Tenant - Aesthetics"] },
   { key: "leisure", label: "Leisure & Entertainment", icon: Clapperboard, match: ["Tenant - Leisure", "Tenant - Entertainment", "Tenant - Experiential", "Tenant - Cinema", "Tenant - Gaming", "Tenant - Escape Room"] },
-  { key: "gym", label: "Gym & Fitness", icon: Dumbbell, match: ["Tenant - Gym", "Tenant - Fitness", "Tenant - Health & Fitness", "Tenant - Yoga", "Tenant - Pilates"] },
-  { key: "lifestyle", label: "Lifestyle & Home", icon: Flower2, match: ["Tenant - Lifestyle", "Tenant - Homewares", "Tenant - Gifts", "Tenant - Books", "Tenant - Art", "Tenant - Interiors"] },
+  { key: "gym", label: "Gym & Fitness", icon: Dumbbell, match: ["Tenant - Gym & Fitness", "Tenant - Gym", "Tenant - Fitness", "Tenant - Health & Fitness", "Tenant - Yoga", "Tenant - Pilates"] },
+  { key: "lifestyle", label: "Lifestyle & Home", icon: Flower2, match: ["Tenant - Lifestyle & Home", "Tenant - Lifestyle", "Tenant - Homewares", "Tenant - Gifts", "Tenant - Books", "Tenant - Art", "Tenant - Interiors"] },
   { key: "retail", label: "Other Retail", icon: ShoppingBag, match: ["Tenant - Retail", "Tenant", "Tenant - General Retail"] },
 ];
 
