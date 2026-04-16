@@ -194,6 +194,11 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
 }
 
 export function setupCrmRoutes(app: Express) {
+  // Ensure new comp columns exist (safe to re-run)
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_url TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_title TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_contact_id VARCHAR`).catch(() => {});
+
   app.use("/api/crm", requireAuth);
   app.get("/api/crm/stats", async (_req, res) => {
     try {
