@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -1331,6 +1332,34 @@ export default function WipReport() {
       ) : (
       <div className="flex gap-4 flex-1 min-h-0">
         <div className="flex-1 overflow-y-auto space-y-4 min-h-0">
+          {/* KPI stat cards — matching Investment Tracker style */}
+          <ScrollArea className="w-full shrink-0">
+            <div className="flex items-center gap-3 pb-1">
+              {[
+                { label: "Total Entries", value: filteredEntries.length.toString(), color: "bg-primary/60" },
+                { label: "Pipeline", value: filteredEntries.filter(e => e.stage === "pipeline").length.toString(), color: "bg-amber-500" },
+                { label: "WIP", value: formatFullCurrency(totalWip), color: "bg-blue-500" },
+                { label: "Invoiced", value: formatFullCurrency(totalInvoiced), color: "bg-green-500" },
+                { label: "Net Fees", value: formatFullCurrency(totalNetFees), color: "bg-emerald-600" },
+                { label: "Unique Deals", value: new Set(filteredEntries.map(e => e.dealId).filter(Boolean)).size.toString(), color: "bg-violet-500" },
+                { label: "Teams", value: new Set(filteredEntries.map(e => e.team).filter(Boolean)).size.toString(), color: "bg-sky-500" },
+              ].map(stat => (
+                <Card key={stat.label} className="flex-shrink-0 min-w-[120px]" data-testid={`stat-${stat.label.toLowerCase().replace(/\s/g, "-")}`}>
+                  <CardContent className="p-3">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2.5 h-2.5 rounded-full ${stat.color}`} />
+                      <div>
+                        <p className="text-lg font-bold">{stat.value}</p>
+                        <p className="text-xs text-muted-foreground">{stat.label}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <ClickableSummaryTable
               title="Group"
