@@ -108,8 +108,20 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
-    const [company, signals, repsForBrand, brandsForAgent, kyc, images, deals, parentGroup, siblings] = await Promise.all([
-      companyQ, signalsQ, repsForBrandQ, brandsForAgentQ, kycQ, imagesQ, dealsQ, parentGroupQ, siblingsQ,
+    // News articles mentioning this brand (title or summary match)
+    const newsQ = pool.query(
+      `SELECT n.id, n.title, n.summary, n.ai_summary, n.url, n.image_url, n.source_name, n.published_at, n.category
+         FROM news_articles n,
+              (SELECT name FROM crm_companies WHERE id = $1) AS co
+        WHERE (n.title ILIKE '%' || co.name || '%' OR n.summary ILIKE '%' || co.name || '%'
+               OR n.ai_summary ILIKE '%' || co.name || '%')
+        ORDER BY n.published_at DESC NULLS LAST
+        LIMIT 10`,
+      [companyId]
+    );
+
+    const [company, signals, repsForBrand, brandsForAgent, kyc, images, deals, parentGroup, siblings, news] = await Promise.all([
+      companyQ, signalsQ, repsForBrandQ, brandsForAgentQ, kycQ, imagesQ, dealsQ, parentGroupQ, siblingsQ, newsQ,
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
@@ -124,6 +136,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       deals: deals.rows,
       parentGroup: parentGroup.rows[0] || null,
       siblings: siblings.rows,
+      news: news.rows,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
