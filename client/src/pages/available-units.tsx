@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
@@ -273,6 +274,7 @@ const INTERNAL_BGP_TEAMS = new Set([
 export default function AvailableUnitsPage() {
   const { activeTeam } = useTeam();
   const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState("all");
   const [propertyFilter, setPropertyFilter] = useState("all");
   const [assetClassFilter, setAssetClassFilter] = useState("all");
@@ -824,11 +826,59 @@ export default function AvailableUnitsPage() {
         )}
       </div>
 
+      {/* KPI stat cards — matching Investment Tracker style */}
+      <ScrollArea className="w-full">
+        <div className="flex items-center gap-3 pb-1">
+          {MARKETING_STATUSES.map(s => {
+            const count = teamUnits.filter(u => u.marketingStatus === s).length;
+            return (
+              <Card
+                key={s}
+                className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${statusFilter === s ? "border-primary" : ""}`}
+                onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
+                data-testid={`stat-card-${s.toLowerCase().replace(/\s/g, "-")}`}
+              >
+                <CardContent className="p-3">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2.5 h-2.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
+                    <div>
+                      <p className="text-lg font-bold">{count}</p>
+                      <p className="text-xs text-muted-foreground">{s}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </ScrollArea>
+
+      {/* Selection bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2 bg-primary/5 border rounded-lg">
+          <span className="text-xs font-medium">{selectedIds.size} unit{selectedIds.size !== 1 ? "s" : ""} selected</span>
+          <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => setSelectedIds(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
+
       <Card>
         <ScrollableTable minWidth={1800}>
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-[36px] px-2">
+                  <Checkbox
+                    checked={filtered.length > 0 && filtered.every(u => selectedIds.has(u.id))}
+                    onCheckedChange={(c) => {
+                      if (c) setSelectedIds(new Set(filtered.map(u => u.id)));
+                      else setSelectedIds(new Set());
+                    }}
+                    aria-label="Select all"
+                    data-testid="checkbox-select-all-units"
+                  />
+                </TableHead>
                 <TableHead className="w-10 px-1"><Star className="w-3.5 h-3.5 text-muted-foreground" /></TableHead>
                 <TableHead className="w-[180px]">Property</TableHead>
                 <TableHead className="w-[140px]">Unit</TableHead>
@@ -854,7 +904,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={19} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={20} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -864,7 +914,21 @@ export default function AvailableUnitsPage() {
                   const prop = propertyMap[u.propertyId];
                   const deal = u.dealId ? dealMap[u.dealId] : null;
                   return (
-                    <TableRow key={u.id} data-testid={`row-unit-${u.id}`}>
+                    <TableRow key={u.id} className={selectedIds.has(u.id) ? "bg-primary/5" : ""} data-testid={`row-unit-${u.id}`}>
+                      <TableCell className="px-2">
+                        <Checkbox
+                          checked={selectedIds.has(u.id)}
+                          onCheckedChange={() => {
+                            setSelectedIds(prev => {
+                              const next = new Set(prev);
+                              if (next.has(u.id)) next.delete(u.id); else next.add(u.id);
+                              return next;
+                            });
+                          }}
+                          aria-label={`Select ${u.unitName || "unit"}`}
+                          data-testid={`checkbox-unit-${u.id}`}
+                        />
+                      </TableCell>
                       <TableCell className="px-1">
                         <button
                           onClick={(e) => { e.stopPropagation(); toggleFavoriteMutation.mutate(u.propertyId); }}
