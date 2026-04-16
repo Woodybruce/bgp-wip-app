@@ -5534,14 +5534,14 @@ async function runAutoEnrichmentCycle() {
             }
             if (!companyDomain && contact.company_name) companyName = contact.company_name;
 
-            const body: Record<string, any> = { reveal_personal_emails: false, reveal_phone_number: false };
-            if (contact.email) body.email = contact.email;
-            if (firstName) body.first_name = firstName;
-            if (lastName) body.last_name = lastName;
-            if (companyDomain) body.domain = companyDomain;
-            if (companyName) body.organization_name = companyName;
+            // mixed_people/search (replaces deprecated people/match)
+            const body: Record<string, any> = { page: 1, per_page: 1 };
+            if (contact.email) body.person_emails = [contact.email];
+            if (companyDomain) body.q_organization_domains_list = [companyDomain];
+            else if (companyName) body.organization_names = [companyName];
+            if (firstName || lastName) body.q_keywords = `${firstName} ${lastName}`.trim();
 
-            const apolloRes = await fetch("https://api.apollo.io/api/v1/people/match", {
+            const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
               method: "POST",
               headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloKey },
               body: JSON.stringify(body),
@@ -5554,7 +5554,7 @@ async function runAutoEnrichmentCycle() {
             }
 
             const data = await apolloRes.json() as any;
-            const person = data.person;
+            const person = (data.people || data.contacts || [])[0];
             if (!person) { await new Promise(r => setTimeout(r, 300)); continue; }
 
             const updates: Record<string, any> = {};
