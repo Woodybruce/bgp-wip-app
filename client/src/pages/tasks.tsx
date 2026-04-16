@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
+import { TaskNotesCanvas } from "@/components/task-notes-canvas";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import {
@@ -962,6 +963,7 @@ export default function TasksPage() {
                   rows={3}
                   data-testid="input-task-description"
                 />
+                <TaskNotesCanvas onTextRecognized={(text) => setEditForm(f => ({ ...f, description: f.description ? f.description + "\n" + text : text }))} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
