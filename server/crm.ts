@@ -4691,6 +4691,190 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
+  // ── Brands Hub aggregated data ───────────────────────────────────────
+  app.get("/api/brands/hub", requireAuth, async (_req, res) => {
+    try {
+      const tenantFilter = `company_type ILIKE 'Tenant -%'`;
+
+      // Category counts
+      const catRows = await pool.query(
+        `SELECT company_type, COUNT(*) as count FROM crm_companies WHERE ${tenantFilter} GROUP BY company_type`
+      ).then(r => r.rows);
+
+      // Who's hot — most recently active brands (deals, requirements, contacts updated last 60 days)
+      const hotRows = await pool.query(`
+        SELECT c.id, c.name, c.company_type, c.domain, c.description,
+               MAX(GREATEST(
+                 COALESCE(d.updated_at, '1970-01-01'),
+                 COALESCE(rl.updated_at, '1970-01-01'),
+                 COALESCE(ct.updated_at, '1970-01-01')
+               )) AS last_activity,
+               COUNT(DISTINCT d.id) AS deal_count,
+               COUNT(DISTINCT rl.id) AS req_count,
+               COUNT(DISTINCT ct.id) AS contact_count
+        FROM crm_companies c
+        LEFT JOIN crm_deals d ON (d.tenant_id = c.id) AND d.updated_at > NOW() - INTERVAL '90 days'
+        LEFT JOIN crm_requirements_leasing rl ON rl.company_id = c.id AND rl.updated_at > NOW() - INTERVAL '90 days'
+        LEFT JOIN crm_contacts ct ON ct.company_id = c.id AND ct.updated_at > NOW() - INTERVAL '90 days'
+        WHERE ${tenantFilter}
+        GROUP BY c.id, c.name, c.company_type, c.domain, c.description
+        HAVING MAX(GREATEST(
+          COALESCE(d.updated_at, '1970-01-01'),
+          COALESCE(rl.updated_at, '1970-01-01'),
+          COALESCE(ct.updated_at, '1970-01-01')
+        )) > NOW() - INTERVAL '90 days'
+        ORDER BY last_activity DESC
+        LIMIT 20
+      `).then(r => r.rows);
+
+      // Super brands — Luxury + Flagship Fashion
+      const superRows = await pool.query(`
+        SELECT id, name, company_type, domain, description
+        FROM crm_companies
+        WHERE company_type IN ('Tenant - Luxury','Tenant - Flagship Fashion','Tenant - Luxury Accessories')
+        ORDER BY name
+        LIMIT 60
+      `).then(r => r.rows);
+
+      // Top turnover — join with turnover_data, most recent per brand
+      const turnoverRows = await pool.query(`
+        SELECT DISTINCT ON (t.company_id)
+          t.id, t.company_id, t.company_name, t.turnover, t.turnover_per_sqft,
+          t.period, t.source, t.confidence, t.category,
+          c.company_type, c.domain
+        FROM turnover_data t
+        LEFT JOIN crm_companies c ON c.id = t.company_id
+        WHERE t.turnover IS NOT NULL
+        ORDER BY t.company_id, t.period DESC, t.turnover DESC
+      `).then(r => r.rows);
+
+      const topTurnover = [...turnoverRows].sort((a: any, b: any) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 20);
+
+      // Active requirements
+      const reqRows = await pool.query(`
+        SELECT rl.id, rl.company_id, c.name AS company_name, c.company_type, c.domain,
+               rl.size_min, rl.size_max, rl.locations, rl.use, rl.notes, rl.created_at,
+               COUNT(ct.id) AS contact_count
+        FROM crm_requirements_leasing rl
+        JOIN crm_companies c ON c.id = rl.company_id
+        LEFT JOIN crm_contacts ct ON ct.company_id = c.id
+        WHERE rl.status = 'Active' AND ${tenantFilter.replace('c.', 'c.')}
+        GROUP BY rl.id, rl.company_id, c.name, c.company_type, c.domain, rl.size_min, rl.size_max, rl.locations, rl.use, rl.notes, rl.created_at
+        ORDER BY rl.created_at DESC
+        LIMIT 30
+      `).then(r => r.rows);
+
+      // Total stats
+      const stats = await pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE ${tenantFilter}) AS total_brands,
+          COUNT(*) FILTER (WHERE ${tenantFilter} AND id IN (SELECT DISTINCT company_id FROM turnover_data WHERE company_id IS NOT NULL)) AS brands_with_turnover,
+          COUNT(*) FILTER (WHERE ${tenantFilter} AND id IN (SELECT DISTINCT company_id FROM crm_requirements_leasing WHERE status = 'Active' AND company_id IS NOT NULL)) AS brands_active_req
+        FROM crm_companies
+      `).then(r => r.rows[0]);
+
+      res.json({
+        stats,
+        categoryCounts: catRows,
+        hotBrands: hotRows,
+        superBrands: superRows,
+        topTurnover,
+        activeRequirements: reqRows,
+      });
+    } catch (err: any) {
+      console.error("[brands/hub]", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Research turnover for a brand via AI ──────────────────────────────
+  app.post("/api/brands/research-turnover/:id", requireAuth, async (req: any, res) => {
+    try {
+      const companyId = req.params.id;
+      const userId = req.session?.userId || req.tokenUserId;
+      const [company] = await pool.query(
+        `SELECT id, name, company_type, domain, companies_house_data FROM crm_companies WHERE id = $1`,
+        [companyId]
+      ).then(r => r.rows);
+
+      if (!company) return res.status(404).json({ error: "Company not found" });
+
+      // Check Companies House data for accounts first
+      let chTurnover: number | null = null;
+      let chPeriod: string | null = null;
+      if (company.companies_house_data?.accounts?.last_accounts?.period_end_on) {
+        const accts = company.companies_house_data.accounts;
+        chPeriod = accts.last_accounts.period_end_on?.substring(0, 4) || null;
+      }
+
+      // Use Claude to research/estimate turnover
+      const prompt = `You are a retail and brand finance research assistant with knowledge of major UK and international retail brands up to 2025.
+
+For the brand "${company.name}" (type: ${company.company_type || "Retail"}${company.domain ? `, website: ${company.domain}` : ""}), provide the most recent annual turnover/revenue figure available.
+
+Return ONLY valid JSON in this exact format:
+{
+  "turnover": <number in GBP, e.g. 5000000 for £5m. Use 0 if unknown>,
+  "year": <year as integer, e.g. 2023>,
+  "confidence": <"High", "Medium", or "Low">,
+  "source": <"Annual Accounts" | "Industry Report" | "News" | "AI Estimate" | "Companies House">,
+  "notes": <brief explanation of the figure and its source, max 100 chars>
+}
+
+Rules:
+- For global brands (Nike, Zara, H&M) report UK revenue if known, otherwise global converted to GBP
+- If the brand is primarily UK-based, report UK turnover
+- If genuinely unknown, set turnover to 0 and confidence to "Low"
+- Do not invent figures — Low confidence with real estimates is better than made-up High confidence`;
+
+      const completion = await callClaude({
+        model: CHATBGP_HELPER_MODEL,
+        messages: [{ role: "user", content: prompt }],
+        max_completion_tokens: 200,
+      });
+
+      const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+      let parsed: any = {};
+      try {
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch { /* leave empty */ }
+
+      const turnover = parsed.turnover && parsed.turnover > 0 ? parsed.turnover : null;
+      const period = parsed.year ? String(parsed.year) : new Date().getFullYear().toString();
+      const confidence = ["High", "Medium", "Low"].includes(parsed.confidence) ? parsed.confidence : "Low";
+      const source = parsed.source || "AI Estimate";
+      const notes = parsed.notes || `AI-researched turnover for ${company.name}`;
+
+      // Check if we already have a turnover entry for this company
+      const existing = await pool.query(
+        `SELECT id FROM turnover_data WHERE company_id = $1 AND source = $2 LIMIT 1`,
+        [companyId, source]
+      ).then(r => r.rows[0]);
+
+      let entry;
+      if (existing) {
+        entry = await pool.query(
+          `UPDATE turnover_data SET turnover = $1, period = $2, confidence = $3, notes = $4, updated_at = NOW() WHERE id = $5 RETURNING *`,
+          [turnover, period, confidence, notes, existing.id]
+        ).then(r => r.rows[0]);
+      } else {
+        const { nanoid } = await import("nanoid");
+        entry = await pool.query(
+          `INSERT INTO turnover_data (id, company_id, company_name, period, turnover, source, confidence, category, notes, added_by_user_id, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW()) RETURNING *`,
+          [nanoid(), companyId, company.name, period, turnover, source, confidence,
+           (company.company_type || "").replace("Tenant - ", ""), notes, userId]
+        ).then(r => r.rows[0]);
+      }
+
+      res.json({ success: true, entry, researched: { turnover, period, confidence, source, notes } });
+    } catch (err: any) {
+      console.error("[research-turnover]", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── My Portfolio dashboard endpoint ──────────────────────────────────
   app.get("/api/dashboard/my-portfolio", requireAuth, async (req: any, res) => {
     try {

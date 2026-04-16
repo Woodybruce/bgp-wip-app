@@ -71,6 +71,7 @@ const ImageStudio = lazy(() => import("@/pages/image-studio"));
 const AddinsPage = lazy(() => import("@/pages/addins"));
 const AvailableUnitsPage = lazy(() => import("@/pages/available-units"));
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
+const BrandsHub = lazy(() => import("@/pages/brands-hub"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
@@ -159,6 +160,7 @@ function Router() {
       <Route path="/aml-training" component={KycHub} />
       {/* Deep-link for a specific training module needs the legacy component */}
       <Route path="/aml-training/:id" component={AmlTraining} />
+      <Route path="/brands" component={BrandsHub} />
       <Route path="/turnover" component={TurnoverBoard} />
       <Route path="/wip-report" component={DealsHub} />
       <Route path="/upload" component={UploadPage} />
