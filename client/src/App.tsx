@@ -14,6 +14,7 @@ import { TeamProvider, useTeam } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { BrandProvider } from "@/lib/brand-context";
 import { EntitySidebarProvider } from "@/components/crm/entity-sidebar";
+import { ChatBGPProvider } from "@/contexts/chatbgp-context";
 import { ChatPanel } from "@/components/chat-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -348,7 +349,9 @@ function AuthenticatedApp() {
             </div>
           </header>
           <div className="flex-1 overflow-y-auto min-h-0">
-            <Router />
+            <ChatBGPProvider>
+              <Router />
+            </ChatBGPProvider>
           </div>
         </div>
         <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} />
