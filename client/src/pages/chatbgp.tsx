@@ -34,13 +34,7 @@ import {
 import { useLocation } from "wouter";
 import type { UnitMarketingFile } from "@shared/schema";
 import { ChatBGPMarkdown } from "@/components/chatbgp-markdown";
-
-type LocalMessage = {
-  id?: string;
-  role: "user" | "assistant";
-  content: string;
-  userId?: string | null;
-};
+import { useChatBGPState, type LocalMessage } from "@/contexts/chatbgp-context";
 
 function formatFileSize(bytes: number | null) {
   if (!bytes) return "";
@@ -1938,23 +1932,40 @@ function ProjectRow({
 }
 
 export default function ChatBGP() {
+  // Persistent state — survives navigation between pages
+  const chatState = useChatBGPState();
+  const {
+    activeThreadId, setActiveThreadId,
+    messages, setMessages, messagesRef,
+    input, setInput,
+    streamingContent, setStreamingContent,
+    completedActions, setCompletedActions,
+    messageQueueRef, queueLength, setQueueLength,
+    progressLabel, setProgressLabel,
+    activeProjectView, setActiveProjectView,
+  } = chatState;
+
+  // Ref tracking context value — needed in async callbacks to avoid stale closures
+  const activeThreadIdRef = useRef<string | null>(activeThreadId);
+  useEffect(() => { activeThreadIdRef.current = activeThreadId; }, [activeThreadId]);
+
+  // On mount, pick up URL params (deep-link into a thread or pre-fill a message)
   const urlParams = new URLSearchParams(window.location.search);
   const initialThreadId = urlParams.get("thread");
   const initialMessage = urlParams.get("message");
-  const [activeThreadId, _setActiveThreadId] = useState<string | null>(initialThreadId);
-  const activeThreadIdRef = useRef<string | null>(initialThreadId);
-  const [completedActions, setCompletedActions] = useState<Set<string>>(new Set());
-  const setActiveThreadId = (id: string | null) => {
-    activeThreadIdRef.current = id;
-    _setActiveThreadId(id);
-    setCompletedActions(new Set());
-    messageQueueRef.current = [];
-    setQueueLength(0);
-    if (id) setActiveProjectView(null);
-  };
-  const [messages, setMessages] = useState<LocalMessage[]>([]);
-  const [input, setInput] = useState(initialMessage || "");
   const initialMessageSentRef = useRef(false);
+
+  useEffect(() => {
+    if (initialThreadId && activeThreadId !== initialThreadId) {
+      setActiveThreadId(initialThreadId);
+    }
+    if (initialMessage && !input) {
+      setInput(initialMessage);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Local-only UI state — resets on navigation (fine)
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
@@ -1966,7 +1977,6 @@ export default function ChatBGP() {
   const [headerSearchQuery, setHeaderSearchQuery] = useState("");
   const headerSearchRef = useRef<HTMLInputElement>(null);
   const [infoPanelOpen, setInfoPanelOpen] = useState(false);
-  const [activeProjectView, setActiveProjectView] = useState<{ type: string; id: string; name: string; threads: any[]; dealChildren: any[] } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -1975,11 +1985,6 @@ export default function ChatBGP() {
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [filePreviews, setFilePreviews] = useState<Map<number, string>>(new Map());
   const [uploading, setUploading] = useState(false);
-  const messageQueueRef = useRef<string[]>([]);
-  const [queueLength, setQueueLength] = useState(0);
-  const [progressLabel, setProgressLabel] = useState("");
-  const [streamingContent, setStreamingContent] = useState("");
-  const messagesRef = useRef<LocalMessage[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);

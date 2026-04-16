@@ -15,7 +15,8 @@ import { saveFile, getFile } from "./file-storage";
 // --- Multi-provider image generation helpers ---
 
 async function generateWithFlux(prompt: string, size: string): Promise<Buffer | null> {
-  const key = process.env.FAL_KEY;
+  // Accept `FAL_KEY` (canonical) or plain `FAL` — Railway config has just "FAL"
+  const key = process.env.FAL_KEY || process.env.FAL;
   if (!key) return null;
   try {
     const res = await fetch("https://fal.run/fal-ai/flux-pro/v1.1", {

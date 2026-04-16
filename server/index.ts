@@ -103,6 +103,176 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_notes TEXT`,
     // Type-mismatch cleanup (may already be correct — that's fine)
     `ALTER TABLE crm_deals ALTER COLUMN break_option TYPE TEXT USING break_option::text`,
+    // Indexes for compliance-board counterparty joins (otherwise /api/kyc/board
+    // and /api/kyc/board/deals do four full scans of crm_deals per request).
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_landlord_id  ON crm_deals(landlord_id)  WHERE landlord_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_tenant_id    ON crm_deals(tenant_id)    WHERE tenant_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_vendor_id    ON crm_deals(vendor_id)    WHERE vendor_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_purchaser_id ON crm_deals(purchaser_id) WHERE purchaser_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_status       ON crm_deals(status)`,
+
+    // ── Brand Bible / deal flow — additive schema ─────────────────────────
+    // crm_companies: brand fields
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS is_tracked_brand BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS tracking_reason TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_group_id VARCHAR`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS concept_pitch TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS store_count INTEGER`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS rollout_status TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS backers TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS instagram_handle TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS agent_type TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS ai_generated_fields JSONB`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_is_tracked_brand ON crm_companies(is_tracked_brand) WHERE is_tracked_brand = true`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_brand_group_id   ON crm_companies(brand_group_id) WHERE brand_group_id IS NOT NULL`,
+
+    // crm_deals: stage + solicitor leg
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS stage TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS stage_entered_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS solicitor_firm TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS solicitor_contact TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS solicitor_instructed_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS draft_lease_received_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS comments_returned_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS engrossment_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS completion_target_date TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS solicitor_notes TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_stage ON crm_deals(stage) WHERE stage IS NOT NULL`,
+
+    // available_units: link to leasing schedule unit
+    `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS leasing_schedule_unit_id VARCHAR`,
+    `CREATE INDEX IF NOT EXISTS idx_available_units_leasing_schedule_unit_id ON available_units(leasing_schedule_unit_id) WHERE leasing_schedule_unit_id IS NOT NULL`,
+
+    // brand_agent_representations
+    `CREATE TABLE IF NOT EXISTS brand_agent_representations (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       brand_company_id VARCHAR NOT NULL,
+       agent_company_id VARCHAR NOT NULL,
+       agent_type TEXT NOT NULL,
+       region TEXT,
+       primary_contact_id VARCHAR,
+       start_date TIMESTAMP,
+       end_date TIMESTAMP,
+       notes TEXT,
+       created_at TIMESTAMP DEFAULT now(),
+       updated_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_brand ON brand_agent_representations(brand_company_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_agent ON brand_agent_representations(agent_company_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_brand_agent_rep_active ON brand_agent_representations(brand_company_id) WHERE end_date IS NULL`,
+
+    // brand_signals (time-series of openings / closures / funding / news)
+    `CREATE TABLE IF NOT EXISTS brand_signals (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       brand_company_id VARCHAR NOT NULL,
+       signal_type TEXT NOT NULL,
+       headline TEXT NOT NULL,
+       detail TEXT,
+       source TEXT,
+       signal_date TIMESTAMP,
+       magnitude TEXT,
+       sentiment TEXT,
+       ai_generated BOOLEAN DEFAULT false,
+       created_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_brand_signals_brand_date ON brand_signals(brand_company_id, signal_date DESC)`,
+
+    // leasing_pitch (per-property ERV / incentives / target tenants)
+    `CREATE TABLE IF NOT EXISTS leasing_pitch (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       property_id VARCHAR NOT NULL UNIQUE,
+       erv REAL,
+       erv_per_sqft REAL,
+       incentive_plan TEXT,
+       rent_free_months INTEGER,
+       capex_contribution REAL,
+       fit_out_contribution REAL,
+       target_brand_ids TEXT[],
+       marketing_strategy TEXT,
+       positioning TEXT,
+       ai_generated_fields JSONB,
+       created_at TIMESTAMP DEFAULT now(),
+       updated_at TIMESTAMP DEFAULT now()
+     )`,
+
+    // deal_hots (structured, versioned Heads of Terms)
+    `CREATE TABLE IF NOT EXISTS deal_hots (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       deal_id VARCHAR NOT NULL,
+       version INTEGER NOT NULL DEFAULT 1,
+       rent_pa REAL,
+       term_years REAL,
+       break_option TEXT,
+       rent_free_months REAL,
+       fit_out_contribution REAL,
+       deposit REAL,
+       rent_review_mechanism TEXT,
+       use_class TEXT,
+       alienation TEXT,
+       repair_obligations TEXT,
+       aga_required BOOLEAN DEFAULT false,
+       schedule_of_condition BOOLEAN DEFAULT false,
+       notes TEXT,
+       status TEXT DEFAULT 'draft',
+       signed_at TIMESTAMP,
+       signed_by TEXT,
+       created_by VARCHAR,
+       created_at TIMESTAMP DEFAULT now(),
+       updated_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_hots_deal_version ON deal_hots(deal_id, version DESC)`,
+
+    // deal_events (append-only audit log)
+    `CREATE TABLE IF NOT EXISTS deal_events (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       deal_id VARCHAR NOT NULL,
+       event_type TEXT NOT NULL,
+       from_stage TEXT,
+       to_stage TEXT,
+       payload JSONB,
+       actor_id VARCHAR,
+       actor_name TEXT,
+       occurred_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_deal_events_deal_occurred ON deal_events(deal_id, occurred_at DESC)`,
+
+    // Dedupe machinery — track merges so we can undo and hide merged rows
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS merged_into_id VARCHAR`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS merged_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS merged_by TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_merged_into ON crm_companies(merged_into_id) WHERE merged_into_id IS NOT NULL`,
+
+    `CREATE TABLE IF NOT EXISTS dedupe_candidates (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       cluster_key TEXT NOT NULL,
+       company_ids TEXT[] NOT NULL,
+       reason TEXT,
+       ai_verdict TEXT,
+       ai_confidence REAL,
+       status TEXT DEFAULT 'pending',
+       reviewed_by TEXT,
+       reviewed_at TIMESTAMP,
+       created_at TIMESTAMP DEFAULT now()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_dedupe_candidates_status ON dedupe_candidates(status)`,
+
+    `CREATE TABLE IF NOT EXISTS dedupe_merges (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       primary_id VARCHAR NOT NULL,
+       secondary_id VARCHAR NOT NULL,
+       merged_by TEXT,
+       merged_at TIMESTAMP DEFAULT now(),
+       secondary_snapshot JSONB,
+       reference_updates JSONB,
+       notes TEXT
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_dedupe_merges_primary ON dedupe_merges(primary_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_dedupe_merges_secondary ON dedupe_merges(secondary_id)`,
+
+    // Weekly client report preferences (per contact)
+    `ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS weekly_report_enabled BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS weekly_report_last_sent_at TIMESTAMP`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_contacts_weekly_report ON crm_contacts(weekly_report_enabled) WHERE weekly_report_enabled = true`,
   ];
 
   let ok = 0, skipped = 0;
@@ -120,7 +290,6 @@ import { pool } from "./db";
 })();
 import { setupAuth } from "./auth";
 import { setupMicrosoftRoutes } from "./microsoft";
-import { setupMondayRoutes } from "./monday";
 import { setupWhatsAppRoutes } from "./whatsapp";
 import { setupChatBGPRoutes } from "./chatbgp";
 import { setupNewsIntelligenceRoutes } from "./news-intelligence";
@@ -139,12 +308,22 @@ import { registerLegalDDRoutes } from "./legal-dd";
 import { setupSharedMailboxRoutes } from "./shared-mailbox";
 import { registerInteractionRoutes } from "./interactions";
 import { setupCrmRoutes, startAutoEnrichment } from "./crm";
-import { setupMondayImportRoutes } from "./monday-import";
 import companiesHouseRouter from "./companies-house";
 import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
 import veriffRouter from "./veriff";
+import kycOrchestratorRouter, { runPeriodicAmlReScreening } from "./kyc-orchestrator";
+import perplexityRouter from "./perplexity";
+import brandDedupeRouter from "./brand-dedupe";
+import brandProfileRouter from "./brand-profile";
+import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
+import apolloContactsRouter from "./apollo-contacts";
+import brandPackRouter from "./brand-pack";
+import dealDocsRouter from "./deal-docs";
+import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
+import dealStagesRouter from "./deal-stages";
+import leasingPitchRouter from "./leasing-pitch";
 import cadRouter from "./cad";
 import leasingScheduleRouter from "./leasing-schedule";
 import tenancyScheduleRouter from "./tenancy-schedule";
@@ -351,7 +530,6 @@ app.use("/api/branding/assets", express.static(
 (async () => {
   setupAuth(app);
   setupMicrosoftRoutes(app);
-  setupMondayRoutes(app);
   setupWhatsAppRoutes(app);
   setupChatBGPRoutes(app);
   setupArchivistRoutes(app);
@@ -373,7 +551,6 @@ app.use("/api/branding/assets", express.static(
   setupLeadsRoutes(app);
   registerMcpRoutes(app);
   setupCrmRoutes(app);
-  setupMondayImportRoutes(app);
   app.use(companiesHouseRouter);
   app.use(leasingScheduleRouter);
   app.use(tenancyScheduleRouter);
@@ -382,6 +559,17 @@ app.use("/api/branding/assets", express.static(
   app.use(kycClouseauRouter);
   app.use(amlComplianceRouter);
   app.use(veriffRouter);
+  app.use(kycOrchestratorRouter);
+  app.use(perplexityRouter);
+  app.use(brandDedupeRouter);
+  app.use(brandProfileRouter);
+  app.use(brandEnrichmentRouter);
+  app.use(apolloContactsRouter);
+  app.use(brandPackRouter);
+  app.use(dealDocsRouter);
+  app.use(weeklyReportRouter);
+  app.use(dealStagesRouter);
+  app.use(leasingPitchRouter);
   app.use(cadRouter);
 
   await registerRoutes(httpServer, app);
@@ -453,6 +641,49 @@ app.use("/api/branding/assets", express.static(
           );
         }
       }, 60 * 60 * 1000); // Check every hour
+
+      // Daily AML orchestrator re-sweep — 02:00 every night we pick up any
+      // company whose KYC has gone stale (past the firm's recheck_interval_days,
+      // default 365) or has an overdue aml_recheck_reminders row, and re-run
+      // the full sweep (Companies House + UBO + sanctions + adverse media).
+      // Capped at 25 companies per night so a single run can't blow through
+      // quotas. Production only — dev shouldn't be making live API calls overnight.
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 2) {
+            runPeriodicAmlReScreening().catch(err =>
+              console.error("[kyc-orch-cron] Periodic re-screening failed:", err?.message)
+            );
+          }
+        }, 60 * 60 * 1000);
+      }
+
+      // Nightly brand-enrichment — tops up stale / never-enriched brand rows.
+      // Runs at 4am (once per day, production only to avoid accidental API spend in dev).
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 4 && now.getMinutes() < 60) {
+            runNightlyBrandEnrichment().catch(err =>
+              console.error("[brand-enrich] nightly run failed:", err?.message)
+            );
+          }
+        }, 60 * 60 * 1000);
+      }
+
+      // Weekly client report cron — Monday 09:00 (production only, sends email)
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          // getDay(): 0=Sun, 1=Mon
+          if (now.getDay() === 1 && now.getHours() === 9 && now.getMinutes() < 60) {
+            runWeeklyClientReports().catch(err =>
+              console.error("[weekly-report] cron run failed:", err?.message)
+            );
+          }
+        }, 60 * 60 * 1000);
+      }
       setTimeout(async () => {
         try {
           const { db } = await import("./db");
@@ -609,13 +840,6 @@ app.use("/api/branding/assets", express.static(
           }
         } catch (err: any) {
           console.error("User creation error:", err?.message);
-        }
-
-        try {
-          const { seedInvestmentRequirements } = await import("./seed-invest-reqs");
-          await seedInvestmentRequirements();
-        } catch (err: any) {
-          console.error("Investment requirements seed error:", err?.message);
         }
 
         // Seed properties if production has fewer than dev

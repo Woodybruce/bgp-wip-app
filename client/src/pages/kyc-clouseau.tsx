@@ -93,6 +93,39 @@ interface HistoryItem {
   conducted_by: string;
   conducted_at: string;
   notes: string;
+  sources?: string[];
+}
+
+// Friendly labels + tones for the investigation sources returned by
+// /api/kyc-clouseau/recent (derived from the result JSON).
+const CLOUSEAU_SOURCE_META: Record<string, { label: string; tone: string; title: string }> = {
+  companies_house: { label: "CH", tone: "border-blue-300 text-blue-700 bg-blue-50", title: "Companies House filings, officers, PSCs" },
+  sanctions: { label: "OFSI/OFAC", tone: "border-red-300 text-red-700 bg-red-50", title: "UK OFSI + US OFAC sanctions screening" },
+  perplexity: { label: "Adverse media", tone: "border-purple-300 text-purple-700 bg-purple-50", title: "Perplexity adverse media web scan" },
+  land_registry: { label: "Land Registry", tone: "border-emerald-300 text-emerald-700 bg-emerald-50", title: "HM Land Registry / PropertyData titles" },
+  ai: { label: "AI", tone: "border-amber-300 text-amber-700 bg-amber-50", title: "Claude AI analysis" },
+};
+
+function cloustauSourcesFromResult(result: any): string[] {
+  if (!result || typeof result !== "object") return [];
+  const seen = new Set<string>();
+  if (result.companyProfile?.company_number || Array.isArray(result.officers) || Array.isArray(result.pscs)) seen.add("companies_house");
+  if (Array.isArray(result.sanctionsScreening)) seen.add("sanctions");
+  if (result.adverseMedia || Array.isArray(result.perplexityResults) || Array.isArray(result.adverseMediaFindings)) seen.add("perplexity");
+  if (result.propertiesOwned || result.propertyContext || result.landRegistry || result.matched) seen.add("land_registry");
+  if (typeof result.aiAnalysis === "string" && result.aiAnalysis.length > 10) seen.add("ai");
+  const order = ["companies_house", "sanctions", "perplexity", "land_registry", "ai"];
+  return order.filter(s => seen.has(s));
+}
+
+interface PropertyResolveResult {
+  resolvedAddress: string;
+  resolvedPostcode: string;
+  buildingName?: string;
+  matched: { freeholds: any[]; leaseholds: any[]; exact: boolean };
+  fallback: { freeholds: any[]; leaseholds: any[]; usedStreetNumberMatch: boolean };
+  context: { freeholds: any[]; leaseholds: any[] };
+  source: string;
 }
 
 function RiskBadge({ level, score }: { level?: string; score?: number }) {
@@ -116,6 +149,34 @@ function SanctionsBadge({ status }: { status: string }) {
   if (status === "clear") return <Badge variant="outline" className="text-emerald-600 border-emerald-300"><CheckCircle className="h-3 w-3 mr-1" />Clear</Badge>;
   if (status === "strong_match") return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />Match</Badge>;
   return <Badge variant="outline" className="text-amber-600 border-amber-300"><AlertTriangle className="h-3 w-3 mr-1" />Potential</Badge>;
+}
+
+// Renders the list of data providers that ran for a given investigation —
+// Companies House, OFSI/OFAC sanctions, Perplexity adverse media, Land
+// Registry, AI. Used on both Clouseau investigation detail views so the
+// analyst can see at a glance which sources were actually consulted.
+function SourcesStrip({ result }: { result: any }) {
+  const sources = cloustauSourcesFromResult(result);
+  if (sources.length === 0) return null;
+  return (
+    <div className="flex items-center gap-2 flex-wrap" data-testid="investigation-sources">
+      <span className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground">Sources checked</span>
+      <div className="flex flex-wrap gap-1">
+        {sources.map((s) => {
+          const meta = CLOUSEAU_SOURCE_META[s] || { label: s, tone: "border-slate-300 text-slate-700 bg-slate-50", title: s };
+          return (
+            <span
+              key={s}
+              title={meta.title}
+              className={`text-[10px] px-1.5 py-0.5 rounded border ${meta.tone} font-medium`}
+            >
+              {meta.label}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function MarkdownContent({ content }: { content: string }) {
@@ -303,6 +364,163 @@ function DaysSinceBadge({ dateStr }: { dateStr: string }) {
       <CalendarClock className="h-3 w-3" />
       {days}d ago
     </span>
+  );
+}
+
+// Global recent investigations — queries /api/kyc-clouseau/recent and shows a
+// compact clickable list in the sidebar so the whole team can see (and reopen)
+// every company / individual / property search that's been run.
+function RecentInvestigations({
+  onSelect,
+}: {
+  onSelect: (investigation: any) => void;
+}) {
+  const [typeFilter, setTypeFilter] = useState<"all" | "company" | "individual" | "property_intelligence">("all");
+  const [mineOnly, setMineOnly] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["kyc-recent", typeFilter, mineOnly],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("limit", "30");
+      if (typeFilter !== "all") params.set("type", typeFilter);
+      if (mineOnly) params.set("mine", "true");
+      const res = await apiRequest("GET", `/api/kyc-clouseau/recent?${params.toString()}`);
+      return res.json();
+    },
+    refetchInterval: 60000,
+  });
+
+  const investigations: HistoryItem[] = data?.investigations || [];
+
+  const loadReport = async (id: string) => {
+    try {
+      const res = await apiRequest("GET", `/api/kyc-clouseau/investigation/${id}`);
+      const row = await res.json();
+      if (row?.result) onSelect({ ...row.result, subject_type: row.subject_type, _investigationId: row.id });
+    } catch (err) {
+      console.warn("Failed to load investigation:", err);
+    }
+  };
+
+  const typeLabel = (t: string) => {
+    if (t === "property_intelligence") return "Property";
+    if (t === "individual") return "Individual";
+    return "Company";
+  };
+  const typeColor = (t: string) => {
+    if (t === "property_intelligence") return "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400";
+    if (t === "individual") return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
+    return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+  };
+
+  return (
+    <div className="border-t">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-between px-4 py-2 text-xs font-medium text-muted-foreground hover:bg-accent transition-colors"
+      >
+        <span className="flex items-center gap-1.5">
+          <Clock className="h-3 w-3" />
+          Recent Searches {!isLoading && investigations.length > 0 && `(${investigations.length})`}
+        </span>
+        <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+      </button>
+      {expanded && (
+        <>
+          <div className="px-3 pb-2 flex flex-wrap gap-1">
+            {(["all", "company", "individual", "property_intelligence"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTypeFilter(t)}
+                className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                  typeFilter === t ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
+                }`}
+              >
+                {t === "all" ? "All" : t === "property_intelligence" ? "Property" : t === "individual" ? "Individual" : "Company"}
+              </button>
+            ))}
+            <button
+              onClick={() => setMineOnly(!mineOnly)}
+              className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ml-auto ${
+                mineOnly ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
+              }`}
+            >
+              Mine only
+            </button>
+          </div>
+          <ScrollArea className="max-h-64">
+            <div className="px-2 pb-2 space-y-0.5">
+              {isLoading && (
+                <div className="text-[11px] text-muted-foreground text-center py-4">Loading...</div>
+              )}
+              {!isLoading && investigations.length === 0 && (
+                <div className="text-[11px] text-muted-foreground text-center py-4">No recent searches</div>
+              )}
+              {investigations.map((inv) => (
+                <button
+                  key={inv.id}
+                  onClick={() => loadReport(inv.id)}
+                  className="w-full text-left p-2 rounded hover:bg-accent transition-colors"
+                  data-testid={`recent-${inv.id}`}
+                >
+                  <div className="flex items-start justify-between gap-1">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium truncate">{inv.subject_name}</p>
+                      <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                        <span className={`text-[9px] px-1.5 py-0 rounded ${typeColor(inv.subject_type)}`}>
+                          {typeLabel(inv.subject_type)}
+                        </span>
+                        {inv.company_number && (
+                          <span className="text-[9px] text-muted-foreground">{inv.company_number}</span>
+                        )}
+                        {inv.sanctions_match && (
+                          <span className="text-[9px] bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 px-1 rounded">
+                            Sanctions
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[9px] text-muted-foreground">
+                          {new Date(inv.conducted_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                        </span>
+                        {inv.risk_level && (
+                          <span className={`text-[9px] px-1 rounded ${
+                            inv.risk_level === "critical" ? "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400" :
+                            inv.risk_level === "high" ? "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400" :
+                            inv.risk_level === "medium" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
+                            "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
+                          }`}>
+                            {inv.risk_level} {inv.risk_score}
+                          </span>
+                        )}
+                      </div>
+                      {inv.sources && inv.sources.length > 0 && (
+                        <div className="flex flex-wrap gap-0.5 mt-1" data-testid={`recent-sources-${inv.id}`}>
+                          {inv.sources.map((s) => {
+                            const meta = CLOUSEAU_SOURCE_META[s] || { label: s, tone: "border-slate-300 text-slate-700 bg-slate-50", title: s };
+                            return (
+                              <span
+                                key={s}
+                                title={meta.title}
+                                className={`text-[8px] px-1 py-0 rounded border ${meta.tone} font-medium leading-tight`}
+                              >
+                                {meta.label}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </ScrollArea>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -606,7 +824,7 @@ export default function KycClouseau() {
     pricePaid: landRegPrice,
   } : null);
 
-  const [searchMode, setSearchMode] = useState<"company" | "individual">("company");
+  const [searchMode, setSearchMode] = useState<"company" | "individual" | "property">("company");
   const [searchQuery, setSearchQuery] = useState(landRegName);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [investigation, setInvestigation] = useState<InvestigationResult | null>(null);
@@ -620,6 +838,39 @@ export default function KycClouseau() {
   const [individualName, setIndividualName] = useState("");
   const [individualDob, setIndividualDob] = useState("");
   const [individualCompanyNumbers, setIndividualCompanyNumbers] = useState("");
+
+  // Property search fields
+  const [propertyAddressInput, setPropertyAddressInput] = useState("");
+  const [propertyPostcodeInput, setPropertyPostcodeInput] = useState("");
+  const [propertyResolve, setPropertyResolve] = useState<PropertyResolveResult | null>(null);
+
+  // Background AI polling for property-intelligence investigations. The server
+  // returns the raw data fast and runs the Claude analysis in the background;
+  // this hook polls the investigation record until aiStatus becomes "complete"
+  // or "failed", then merges the narrative into state.
+  const [aiPollingId, setAiPollingId] = useState<number | null>(null);
+  useEffect(() => {
+    if (!aiPollingId) return;
+    let cancelled = false;
+    const start = Date.now();
+    const poll = async () => {
+      if (cancelled) return;
+      if (Date.now() - start > 240000) return; // 4 min cap
+      try {
+        const res = await apiRequest("GET", `/api/kyc-clouseau/investigation/${aiPollingId}`);
+        const row = await res.json();
+        const result = row?.result;
+        if (result && (result.aiStatus === "complete" || result.aiStatus === "failed")) {
+          setInvestigation((prev) => prev ? { ...prev, aiAnalysis: result.aiAnalysis, ...(result.aiStatus ? { aiStatus: result.aiStatus } : {}) } as any : prev);
+          setAiPollingId(null);
+          return;
+        }
+      } catch {}
+      setTimeout(poll, 4000);
+    };
+    const t = setTimeout(poll, 4000);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [aiPollingId]);
 
   function extractErrorMessage(err: unknown, fallback: string): string {
     if (err instanceof Error) {
@@ -714,10 +965,27 @@ export default function KycClouseau() {
       setIndividualResult(null);
       setSelectedOfficer(null);
       setOfficerDeepDive(null);
+      // Server returns raw data fast and runs AI in the background — poll the
+      // investigation record until aiStatus transitions to complete/failed.
+      if (data?.investigationId && data?.aiStatus === "pending") {
+        setAiPollingId(data.investigationId);
+      }
     },
     onError: (err) => {
       const message = extractErrorMessage(err, "Property intelligence investigation failed.");
       toast({ title: "Property Intelligence Error", description: message, variant: "destructive" });
+    },
+  });
+
+  const propertyResolveMutation = useMutation({
+    mutationFn: async (params: { address?: string; postcode?: string }) => {
+      const res = await apiRequest("POST", "/api/land-registry/resolve", params);
+      return res.json();
+    },
+    onSuccess: (data: PropertyResolveResult) => setPropertyResolve(data),
+    onError: (err) => {
+      const message = extractErrorMessage(err, "Could not resolve property.");
+      toast({ title: "Property Lookup Error", description: message, variant: "destructive" });
     },
   });
 
@@ -820,22 +1088,32 @@ export default function KycClouseau() {
             {/* Search mode tabs */}
             <div className="flex gap-1 p-0.5 bg-muted rounded-lg">
               <button
-                className={`flex-1 text-xs font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "company" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                className={`flex-1 text-[11px] font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "company" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                 onClick={() => setSearchMode("company")}
+                data-testid="mode-company"
               >
                 <Building2 className="h-3 w-3" />
                 Company
               </button>
               <button
-                className={`flex-1 text-xs font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "individual" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                className={`flex-1 text-[11px] font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "individual" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                 onClick={() => setSearchMode("individual")}
+                data-testid="mode-individual"
               >
                 <UserSearch className="h-3 w-3" />
                 Individual
               </button>
+              <button
+                className={`flex-1 text-[11px] font-medium py-1.5 px-2 rounded-md transition-colors flex items-center justify-center gap-1 ${searchMode === "property" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                onClick={() => setSearchMode("property")}
+                data-testid="mode-property"
+              >
+                <Home className="h-3 w-3" />
+                Property
+              </button>
             </div>
 
-            {searchMode === "company" ? (
+            {searchMode === "company" && (
               <div className="flex gap-2">
                 <Input
                   data-testid="input-search"
@@ -853,7 +1131,8 @@ export default function KycClouseau() {
                   {searchMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                 </Button>
               </div>
-            ) : (
+            )}
+            {searchMode === "individual" && (
               <div className="space-y-2">
                 <Input
                   data-testid="input-individual-name"
@@ -889,72 +1168,234 @@ export default function KycClouseau() {
                 </Button>
               </div>
             )}
+            {searchMode === "property" && (
+              <div className="space-y-2">
+                <Input
+                  data-testid="input-property-address"
+                  placeholder="Property address..."
+                  value={propertyAddressInput}
+                  onChange={(e) => setPropertyAddressInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && propertyResolveMutation.mutate({ address: propertyAddressInput, postcode: propertyPostcodeInput })}
+                />
+                <Input
+                  data-testid="input-property-postcode"
+                  placeholder="Postcode (e.g. W1K 6WA)"
+                  value={propertyPostcodeInput}
+                  onChange={(e) => setPropertyPostcodeInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && propertyResolveMutation.mutate({ address: propertyAddressInput, postcode: propertyPostcodeInput })}
+                />
+                <Button
+                  data-testid="button-property-lookup"
+                  className="w-full"
+                  onClick={() => propertyResolveMutation.mutate({ address: propertyAddressInput, postcode: propertyPostcodeInput })}
+                  disabled={propertyResolveMutation.isPending || (!propertyAddressInput.trim() && !propertyPostcodeInput.trim())}
+                >
+                  {propertyResolveMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Home className="h-4 w-4 mr-2" />
+                  )}
+                  Look up Property
+                </Button>
+                <p className="text-[10px] text-muted-foreground">
+                  Resolves via Land Registry → proprietor → full intelligence.
+                </p>
+              </div>
+            )}
           </div>
 
-          {searchMode === "company" && (
-            <ScrollArea className="flex-1">
-              <div className="p-2 space-y-1">
-                {searchResults.map((result, i) => (
-                  <button
-                    key={`${result.source}-${result.companyNumber}-${i}`}
-                    data-testid={`button-result-${i}`}
-                    className="w-full text-left p-3 rounded-lg hover:bg-accent transition-colors"
-                    onClick={() => handleInvestigate(result)}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{result.name}</p>
-                        <div className="flex items-center gap-2 mt-0.5">
-                          {result.companyNumber && (
-                            <span className="text-xs text-muted-foreground">{result.companyNumber}</span>
-                          )}
-                          {result.source === "crm" && (
-                            <Badge variant="outline" className="text-xs px-1 py-0">CRM</Badge>
+          <div className="flex-1 overflow-hidden flex flex-col">
+            {searchMode === "company" && (
+              <ScrollArea className="flex-1">
+                <div className="p-2 space-y-1">
+                  {searchResults.map((result, i) => (
+                    <button
+                      key={`${result.source}-${result.companyNumber}-${i}`}
+                      data-testid={`button-result-${i}`}
+                      className="w-full text-left p-3 rounded-lg hover:bg-accent transition-colors"
+                      onClick={() => handleInvestigate(result)}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{result.name}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            {result.companyNumber && (
+                              <span className="text-xs text-muted-foreground">{result.companyNumber}</span>
+                            )}
+                            {result.source === "crm" && (
+                              <Badge variant="outline" className="text-xs px-1 py-0">CRM</Badge>
+                            )}
+                          </div>
+                          {result.address && (
+                            <p className="text-xs text-muted-foreground mt-0.5 truncate">{result.address}</p>
                           )}
                         </div>
-                        {result.address && (
-                          <p className="text-xs text-muted-foreground mt-0.5 truncate">{result.address}</p>
-                        )}
+                        <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
                       </div>
-                      <ChevronRight className="h-4 w-4 text-muted-foreground flex-shrink-0 mt-0.5" />
+                    </button>
+                  ))}
+                  {searchMutation.isError && (
+                    <div className="p-4 text-center space-y-2" data-testid="error-search">
+                      <div className="inline-flex items-center gap-2 text-sm text-destructive">
+                        <XCircle className="h-4 w-4 flex-shrink-0" />
+                        <span>{extractErrorMessage(searchMutation.error, "Search failed. Please try again.")}</span>
+                      </div>
+                      <div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          data-testid="button-retry-search"
+                          onClick={handleSearch}
+                        >
+                          <RefreshCw className="h-3 w-3 mr-1" />
+                          Retry
+                        </Button>
+                      </div>
                     </div>
-                  </button>
-                ))}
-                {searchMutation.isError && (
-                  <div className="p-4 text-center space-y-2" data-testid="error-search">
-                    <div className="inline-flex items-center gap-2 text-sm text-destructive">
-                      <XCircle className="h-4 w-4 flex-shrink-0" />
-                      <span>{extractErrorMessage(searchMutation.error, "Search failed. Please try again.")}</span>
+                  )}
+                  {searchResults.length === 0 && !searchMutation.isPending && !searchMutation.isError && (
+                    <div className="p-4 text-center text-xs text-muted-foreground">
+                      Search for a company to begin your investigation
                     </div>
-                    <div>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        data-testid="button-retry-search"
-                        onClick={handleSearch}
-                      >
-                        <RefreshCw className="h-3 w-3 mr-1" />
-                        Retry
-                      </Button>
-                    </div>
-                  </div>
-                )}
-                {searchResults.length === 0 && !searchMutation.isPending && !searchMutation.isError && (
-                  <div className="p-8 text-center text-sm text-muted-foreground">
-                    Search for a company to begin your investigation
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-          )}
+                  )}
+                </div>
+              </ScrollArea>
+            )}
 
-          {searchMode === "individual" && (
-            <ScrollArea className="flex-1">
-              <div className="p-4 text-center text-sm text-muted-foreground">
-                Enter an individual's name above to search officer records, appointments, sanctions, and generate a full compliance profile.
-              </div>
-            </ScrollArea>
-          )}
+            {searchMode === "individual" && (
+              <ScrollArea className="flex-1">
+                <div className="p-4 text-center text-xs text-muted-foreground">
+                  Enter an individual's name above to search officer records, appointments, sanctions, and generate a full compliance profile.
+                </div>
+              </ScrollArea>
+            )}
+
+            {searchMode === "property" && (
+              <ScrollArea className="flex-1">
+                <div className="p-2 space-y-2">
+                  {propertyResolve && (
+                    <div className="rounded-lg border p-3 space-y-2">
+                      <div>
+                        <p className="text-[11px] font-medium">{propertyResolve.resolvedAddress || "Postcode only"}</p>
+                        {propertyResolve.resolvedPostcode && (
+                          <p className="text-[10px] text-muted-foreground">{propertyResolve.resolvedPostcode}</p>
+                        )}
+                        <Badge variant="outline" className="text-[9px] mt-1">{propertyResolve.source}</Badge>
+                      </div>
+
+                      {(propertyResolve.matched.freeholds.length > 0 || propertyResolve.matched.leaseholds.length > 0) && (
+                        <div>
+                          <p className="text-[10px] font-medium text-muted-foreground uppercase mt-2 mb-1">Matched Titles</p>
+                          {[...propertyResolve.matched.freeholds, ...propertyResolve.matched.leaseholds].map((t: any, i: number) => (
+                            <button
+                              key={`m-${i}`}
+                              onClick={() => {
+                                const name = t.proprietor_name_1 || t.proprietor_name || t.proprietor;
+                                if (!name) return;
+                                propertyIntelMutation.mutate({
+                                  companyName: name,
+                                  propertyAddress: propertyResolve.resolvedAddress || propertyAddressInput,
+                                  propertyName: t.property || propertyResolve.buildingName,
+                                });
+                              }}
+                              className="w-full text-left p-2 rounded border hover:bg-accent mb-1"
+                            >
+                              <p className="text-[11px] font-medium truncate">{t.proprietor_name_1 || t.proprietor_name || "Unknown"}</p>
+                              <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                                <Badge variant="outline" className="text-[9px]">{t.title_number || "—"}</Badge>
+                                <Badge variant="outline" className="text-[9px]">{t.tenure || (propertyResolve.matched.freeholds.includes(t) ? "FH" : "LH")}</Badge>
+                                {t.price_paid && <span className="text-[9px] text-muted-foreground">£{Number(t.price_paid).toLocaleString()}</span>}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {(propertyResolve.fallback.freeholds.length > 0 || propertyResolve.fallback.leaseholds.length > 0) && (
+                        <div>
+                          <p className="text-[10px] font-medium text-muted-foreground uppercase mt-2 mb-1">Street-number Match</p>
+                          {[...propertyResolve.fallback.freeholds, ...propertyResolve.fallback.leaseholds].map((t: any, i: number) => (
+                            <button
+                              key={`f-${i}`}
+                              onClick={() => {
+                                const name = t.proprietor_name_1 || t.proprietor_name || t.proprietor;
+                                if (!name) return;
+                                propertyIntelMutation.mutate({
+                                  companyName: name,
+                                  propertyAddress: propertyResolve.resolvedAddress || propertyAddressInput,
+                                });
+                              }}
+                              className="w-full text-left p-2 rounded border hover:bg-accent mb-1"
+                            >
+                              <p className="text-[11px] font-medium truncate">{t.proprietor_name_1 || "Unknown"}</p>
+                              <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                                <Badge variant="outline" className="text-[9px]">{t.title_number || "—"}</Badge>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {propertyResolve.matched.freeholds.length === 0 && propertyResolve.matched.leaseholds.length === 0 &&
+                       propertyResolve.fallback.freeholds.length === 0 && propertyResolve.fallback.leaseholds.length === 0 &&
+                       (propertyResolve.context.freeholds.length > 0 || propertyResolve.context.leaseholds.length > 0) && (
+                        <div>
+                          <p className="text-[10px] font-medium text-muted-foreground uppercase mt-2 mb-1">Postcode Titles ({propertyResolve.context.freeholds.length + propertyResolve.context.leaseholds.length})</p>
+                          {[...propertyResolve.context.freeholds, ...propertyResolve.context.leaseholds].slice(0, 10).map((t: any, i: number) => (
+                            <button
+                              key={`c-${i}`}
+                              onClick={() => {
+                                const name = t.proprietor_name_1 || t.proprietor_name || t.proprietor;
+                                if (!name) return;
+                                propertyIntelMutation.mutate({
+                                  companyName: name,
+                                  propertyAddress: propertyResolve.resolvedAddress || propertyAddressInput,
+                                });
+                              }}
+                              className="w-full text-left p-2 rounded border hover:bg-accent mb-1"
+                            >
+                              <p className="text-[11px] font-medium truncate">{t.proprietor_name_1 || "Unknown"}</p>
+                              <p className="text-[10px] text-muted-foreground truncate">
+                                {(Array.isArray(t.property) ? t.property.join(", ") : t.property) || "—"}
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {propertyResolveMutation.isError && (
+                    <div className="p-3 text-center text-[11px] text-destructive">
+                      {extractErrorMessage(propertyResolveMutation.error, "Could not resolve property.")}
+                    </div>
+                  )}
+                  {!propertyResolve && !propertyResolveMutation.isPending && !propertyResolveMutation.isError && (
+                    <div className="p-4 text-center text-[11px] text-muted-foreground">
+                      Enter a property address / postcode to see registered owners. Click an owner to run full property intelligence.
+                    </div>
+                  )}
+                </div>
+              </ScrollArea>
+            )}
+
+            <RecentInvestigations
+              onSelect={(inv) => {
+                // Route reopened results to the right view state
+                if (inv?.subject?.type === "property_intelligence" || inv?.subject_type === "property_intelligence") {
+                  setInvestigation(inv);
+                  setIndividualResult(null);
+                } else if (inv?.subject?.type === "individual" || inv?.subject_type === "individual") {
+                  setIndividualResult(inv);
+                  setInvestigation(null);
+                } else {
+                  setInvestigation(inv);
+                  setIndividualResult(null);
+                }
+                setSelectedOfficer(null);
+                setOfficerDeepDive(null);
+              }}
+            />
+          </div>
         </div>
 
         {/* Main content area */}
@@ -968,7 +1409,7 @@ export default function KycClouseau() {
                 <p className="font-medium">Investigating...</p>
                 <p className="text-sm text-muted-foreground mt-1">
                   {propertyIntelMutation.isPending
-                    ? "Full property intelligence: tracing UBO chain, deep-diving decision makers, mapping associates, analysing agents & availability..."
+                    ? "Full property intelligence: tracing UBO chain, deep-diving decision makers, mapping associates. AI narrative will follow once data lands."
                     : individualMutation.isPending
                     ? "Searching officer records, appointments, sanctions screening, and generating AI analysis"
                     : "Running Companies House lookup, sanctions screening, ownership trace, and AI analysis"}
@@ -1025,6 +1466,8 @@ export default function KycClouseau() {
                 </div>
                 <RiskBadge level={individualResult.riskLevel} score={individualResult.riskScore} />
               </div>
+
+              <SourcesStrip result={individualResult} />
 
               {/* Risk flags */}
               {(individualResult.flags?.length || 0) > 0 && (
@@ -1188,6 +1631,8 @@ export default function KycClouseau() {
                 </div>
               </div>
 
+              <SourcesStrip result={investigation} />
+
               {investigation.companyProfile?.company_number && (
                 <CrmMatchStrip
                   companyNumber={investigation.companyProfile.company_number}
@@ -1326,6 +1771,11 @@ export default function KycClouseau() {
                     <CardContent className="pt-6">
                       {investigation.aiAnalysis ? (
                         <MarkdownContent content={investigation.aiAnalysis} />
+                      ) : (investigation as any).aiStatus === "pending" || aiPollingId ? (
+                        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>AI analysis running in the background — raw intelligence is ready below, narrative will appear here when complete.</span>
+                        </div>
                       ) : (
                         <p className="text-sm text-muted-foreground">No AI analysis available</p>
                       )}

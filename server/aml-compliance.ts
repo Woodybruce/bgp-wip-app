@@ -1005,51 +1005,98 @@ router.get("/api/kyc/board", requireAuth, async (_req: Request, res: Response) =
     // Pull every company that's referenced by at least one live deal
     // (landlord/tenant/vendor/purchaser) so the board shows the people
     // we actually need to AML, not the entire CRM.
+    //
+    // Rewritten to avoid correlated subqueries per company — instead we
+    // build the deal list and doc count via GROUP BY joins on small sets.
     const result = await pool.query(
-      `WITH live_counterparties AS (
-        SELECT DISTINCT id, role FROM (
-          SELECT landlord_id AS id, 'landlord' AS role FROM crm_deals WHERE landlord_id IS NOT NULL AND status NOT IN ('Dead','Withdrawn','Lost')
-          UNION ALL
-          SELECT tenant_id, 'tenant' FROM crm_deals WHERE tenant_id IS NOT NULL AND status NOT IN ('Dead','Withdrawn','Lost')
-          UNION ALL
-          SELECT vendor_id, 'vendor' FROM crm_deals WHERE vendor_id IS NOT NULL AND status NOT IN ('Dead','Withdrawn','Lost')
-          UNION ALL
-          SELECT purchaser_id, 'purchaser' FROM crm_deals WHERE purchaser_id IS NOT NULL AND status NOT IN ('Dead','Withdrawn','Lost')
-        ) AS r WHERE id != ''
-      )
-      SELECT
-        c.id, c.name, c.kyc_status, c.kyc_checked_at, c.kyc_approved_by,
-        c.kyc_expires_at, c.aml_risk_level, c.aml_pep_status,
-        c.aml_checklist, c.companies_house_number,
-        (
-          SELECT COUNT(*) FROM kyc_documents kd WHERE kd.company_id = c.id AND kd.deleted_at IS NULL
-        )::int AS doc_count,
-        (
-          SELECT json_agg(json_build_object('id', d.id, 'name', d.name, 'role', lc.role))
-          FROM crm_deals d
-          JOIN live_counterparties lc ON (
-            (lc.role = 'landlord' AND d.landlord_id = c.id) OR
-            (lc.role = 'tenant' AND d.tenant_id = c.id) OR
-            (lc.role = 'vendor' AND d.vendor_id = c.id) OR
-            (lc.role = 'purchaser' AND d.purchaser_id = c.id)
-          )
-          WHERE d.status NOT IN ('Dead','Withdrawn','Lost')
-        ) AS deals
-      FROM crm_companies c
-      WHERE c.id IN (SELECT id FROM live_counterparties)
-      ORDER BY c.name ASC`
+      `WITH deal_roles AS (
+         SELECT d.id AS deal_id, d.name AS deal_name, d.landlord_id AS company_id, 'landlord' AS role
+           FROM crm_deals d WHERE d.landlord_id IS NOT NULL AND d.landlord_id <> '' AND d.status NOT IN ('Dead','Withdrawn','Lost')
+         UNION ALL
+         SELECT d.id, d.name, d.tenant_id, 'tenant'
+           FROM crm_deals d WHERE d.tenant_id IS NOT NULL AND d.tenant_id <> '' AND d.status NOT IN ('Dead','Withdrawn','Lost')
+         UNION ALL
+         SELECT d.id, d.name, d.vendor_id, 'vendor'
+           FROM crm_deals d WHERE d.vendor_id IS NOT NULL AND d.vendor_id <> '' AND d.status NOT IN ('Dead','Withdrawn','Lost')
+         UNION ALL
+         SELECT d.id, d.name, d.purchaser_id, 'purchaser'
+           FROM crm_deals d WHERE d.purchaser_id IS NOT NULL AND d.purchaser_id <> '' AND d.status NOT IN ('Dead','Withdrawn','Lost')
+       ),
+       company_deals AS (
+         SELECT company_id,
+                json_agg(json_build_object('id', deal_id, 'name', deal_name, 'role', role)
+                         ORDER BY deal_name) AS deals
+           FROM deal_roles
+          GROUP BY company_id
+       ),
+       company_docs AS (
+         SELECT kd.company_id, COUNT(*)::int AS doc_count
+           FROM kyc_documents kd
+          WHERE kd.deleted_at IS NULL
+          GROUP BY kd.company_id
+       )
+       SELECT
+         c.id, c.name, c.kyc_status, c.kyc_checked_at, c.kyc_approved_by,
+         c.kyc_expires_at, c.aml_risk_level, c.aml_pep_status,
+         c.aml_checklist, c.companies_house_number,
+         COALESCE(cd.doc_count, 0) AS doc_count,
+         cdl.deals
+       FROM crm_companies c
+       JOIN company_deals cdl ON cdl.company_id = c.id
+       LEFT JOIN company_docs cd ON cd.company_id = c.id
+       ORDER BY c.name ASC`
     );
+
+    // Checklist keys must match server/kyc-orchestrator.ts CHECKLIST_KEYS
+    // and client/src/components/kyc-panel.tsx CHECKLIST_ITEMS.
+    const CHECKLIST_KEYS = [
+      "id_verified", "address_verified", "ubo_identified", "company_cert",
+      "sof_evidenced", "sow_evidenced", "sanctions_clear", "pep_checked",
+      "adverse_media", "edd_complete", "risk_assessed", "mlro_review",
+    ];
+    const TOTAL_CHECKS = CHECKLIST_KEYS.length;
 
     const now = new Date();
     const rows = result.rows.map((r: any) => {
       const isExpired = r.kyc_expires_at ? new Date(r.kyc_expires_at) < now : false;
+      const checklist = (r.aml_checklist || {}) as Record<string, { ticked?: boolean; source?: string }>;
+      const tickedCount = CHECKLIST_KEYS.reduce(
+        (sum, k) => (checklist[k]?.ticked ? sum + 1 : sum),
+        0,
+      );
+      const autoTickedCount = CHECKLIST_KEYS.reduce(
+        (sum, k) => (checklist[k]?.ticked && checklist[k]?.source && checklist[k]?.source !== "manual" ? sum + 1 : sum),
+        0,
+      );
+      const mlroSignedOff = !!checklist["mlro_review"]?.ticked;
+      const hasAnyProgress = tickedCount > 0 || r.doc_count > 0;
+
+      // Board movement logic — cards slide rightwards as automation +
+      // manual review progress. "approved" still requires the MLRO to
+      // explicitly sign off (either via the kyc_status enum or by
+      // ticking mlro_review), so we never auto-approve.
       let column: "missing" | "in_review" | "approved" | "rejected" | "expired";
-      if (r.kyc_status === "approved" && isExpired) column = "expired";
-      else if (r.kyc_status === "approved") column = "approved";
-      else if (r.kyc_status === "rejected") column = "rejected";
-      else if (r.kyc_status === "in_review" || r.doc_count > 0) column = "in_review";
-      else column = "missing";
-      return { ...r, column, isExpired };
+      if (r.kyc_status === "rejected") {
+        column = "rejected";
+      } else if ((r.kyc_status === "approved" || mlroSignedOff) && isExpired) {
+        column = "expired";
+      } else if (r.kyc_status === "approved" || (mlroSignedOff && tickedCount === TOTAL_CHECKS)) {
+        column = "approved";
+      } else if (r.kyc_status === "in_review" || hasAnyProgress) {
+        column = "in_review";
+      } else {
+        column = "missing";
+      }
+
+      return {
+        ...r,
+        column,
+        isExpired,
+        checklist_ticked_count: tickedCount,
+        checklist_auto_ticked_count: autoTickedCount,
+        checklist_total: TOTAL_CHECKS,
+        mlro_signed_off: mlroSignedOff,
+      };
     });
 
     res.json({
@@ -1074,26 +1121,25 @@ router.get("/api/kyc/board/deals", requireAuth, async (_req: Request, res: Respo
   try {
     // Every live deal that hasn't been invoiced yet — these are the deals
     // that MUST have AML cleared on both sides before they can be invoiced.
+    //
+    // Rewritten to use 4 LEFT JOINs against crm_companies instead of 12
+    // scalar correlated subqueries per row.
     const result = await pool.query(
       `SELECT
          d.id, d.name, d.status, d.deal_type, d.fee, d.updated_at, d.property_id,
          d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id,
          d.kyc_approved, d.hots_completed_at,
          p.name AS property_name,
-         (SELECT c.name FROM crm_companies c WHERE c.id = d.landlord_id) AS landlord_name,
-         (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.landlord_id) AS landlord_kyc,
-         (SELECT c.kyc_expires_at FROM crm_companies c WHERE c.id = d.landlord_id) AS landlord_kyc_expires,
-         (SELECT c.name FROM crm_companies c WHERE c.id = d.tenant_id) AS tenant_name,
-         (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.tenant_id) AS tenant_kyc,
-         (SELECT c.kyc_expires_at FROM crm_companies c WHERE c.id = d.tenant_id) AS tenant_kyc_expires,
-         (SELECT c.name FROM crm_companies c WHERE c.id = d.vendor_id) AS vendor_name,
-         (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.vendor_id) AS vendor_kyc,
-         (SELECT c.kyc_expires_at FROM crm_companies c WHERE c.id = d.vendor_id) AS vendor_kyc_expires,
-         (SELECT c.name FROM crm_companies c WHERE c.id = d.purchaser_id) AS purchaser_name,
-         (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.purchaser_id) AS purchaser_kyc,
-         (SELECT c.kyc_expires_at FROM crm_companies c WHERE c.id = d.purchaser_id) AS purchaser_kyc_expires
+         lc.name AS landlord_name, lc.kyc_status AS landlord_kyc, lc.kyc_expires_at AS landlord_kyc_expires,
+         tc.name AS tenant_name,   tc.kyc_status AS tenant_kyc,   tc.kyc_expires_at AS tenant_kyc_expires,
+         vc.name AS vendor_name,   vc.kyc_status AS vendor_kyc,   vc.kyc_expires_at AS vendor_kyc_expires,
+         pc.name AS purchaser_name,pc.kyc_status AS purchaser_kyc,pc.kyc_expires_at AS purchaser_kyc_expires
        FROM crm_deals d
        LEFT JOIN crm_properties p ON d.property_id = p.id
+       LEFT JOIN crm_companies lc ON d.landlord_id  = lc.id
+       LEFT JOIN crm_companies tc ON d.tenant_id    = tc.id
+       LEFT JOIN crm_companies vc ON d.vendor_id    = vc.id
+       LEFT JOIN crm_companies pc ON d.purchaser_id = pc.id
        WHERE d.status NOT IN ('Invoiced', 'Completed', 'Dead', 'Withdrawn', 'Lost')
        ORDER BY d.updated_at DESC NULLS LAST`
     );

@@ -14,6 +14,7 @@ import { TeamProvider, useTeam } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { BrandProvider } from "@/lib/brand-context";
 import { EntitySidebarProvider } from "@/components/crm/entity-sidebar";
+import { ChatBGPProvider } from "@/contexts/chatbgp-context";
 import { ChatPanel } from "@/components/chat-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -79,6 +80,7 @@ const AmlTraining = lazy(() => import("@/pages/aml-training"));
 const KycHub = lazy(() => import("@/pages/kyc-hub"));
 const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
+const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
 
 
 function PageLoader() {
@@ -140,6 +142,7 @@ function Router() {
       <Route path="/subscriptions" component={Subscriptions} />
       <Route path="/chatbgp" component={ChatBGP} />
       <Route path="/enrichment" component={Enrichment} />
+      <Route path="/admin/dedupe" component={AdminDedupe} />
       <Route path="/land-registry" component={LandRegistry} />
       <Route path="/business-rates" component={VoaRatings} />
       <Route path="/board-report" component={BoardReport} />
@@ -346,7 +349,9 @@ function AuthenticatedApp() {
             </div>
           </header>
           <div className="flex-1 overflow-y-auto min-h-0">
-            <Router />
+            <ChatBGPProvider>
+              <Router />
+            </ChatBGPProvider>
           </div>
         </div>
         <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} />

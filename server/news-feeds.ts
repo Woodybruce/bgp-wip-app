@@ -343,7 +343,8 @@ async function extractCompsFromArticles(): Promise<{ extracted: number; created:
     const parsed = safeParseJSON(content);
     const comps = parsed?.comps || [];
     extracted = comps.length;
-    created = await saveExtractedComps(comps, "News Feed");
+    const articleRefs = leasingArticles.map(a => ({ url: a.url, title: a.title }));
+    created = await saveExtractedComps(comps, "News Feed", articleRefs);
   } catch (err: any) {
     console.error("[Comp Extract] AI extraction error:", err?.message?.slice(0, 200));
   }
@@ -371,17 +372,18 @@ For each transaction found, extract as many of these fields as possible:
 - postcode: if mentioned
 - completionDate: transaction date (YYYY-MM-DD if known)
 - comments: any other useful detail
+- sourceArticleIndex: integer — the 1-based article number this comp was extracted from
 
 Respond in JSON:
 {
   "comps": [
-    { "name": "...", "tenant": "...", ... }
+    { "name": "...", "tenant": "...", "sourceArticleIndex": 1, ... }
   ]
 }
 
 If no concrete transactions are found, return { "comps": [] }.`;
 
-async function saveExtractedComps(comps: any[], sourceEvidence: string): Promise<number> {
+async function saveExtractedComps(comps: any[], sourceEvidence: string, articles?: { url: string; title: string }[]): Promise<number> {
   let created = 0;
   const cleanNum = (v: any) => { if (v == null) return null; const n = parseFloat(String(v).replace(/[^0-9.-]/g, "")); return isNaN(n) ? null : String(n); };
 
@@ -397,6 +399,10 @@ async function saveExtractedComps(comps: any[], sourceEvidence: string): Promise
       .limit(1);
 
     if (existing.length > 0) continue;
+
+    // Derive source URL/title from the article index
+    const articleIdx = typeof comp.sourceArticleIndex === "number" ? comp.sourceArticleIndex - 1 : -1;
+    const sourceArticle = articles && articleIdx >= 0 && articleIdx < articles.length ? articles[articleIdx] : null;
 
     await db.insert(crmComps).values({
       name: comp.name,
@@ -415,6 +421,8 @@ async function saveExtractedComps(comps: any[], sourceEvidence: string): Promise
       completionDate: comp.completionDate || null,
       comments: comp.comments || null,
       sourceEvidence,
+      sourceUrl: sourceArticle?.url || null,
+      sourceTitle: sourceArticle?.title || null,
       verified: false,
       createdBy: "AI Auto-Extract",
     });
@@ -692,7 +700,7 @@ async function fetchGreenStreetArticles(): Promise<number> {
     const articles = Array.isArray(data) ? data : data.data || data.articles || [];
 
     const gsSourceArr = await db.select({ id: newsSources.id }).from(newsSources).where(eq(newsSources.name, "Green Street News")).limit(1);
-    let sourceId: number;
+    let sourceId: string;
     if (gsSourceArr.length === 0) {
       const inserted = await db.insert(newsSources).values({
         name: "Green Street News",

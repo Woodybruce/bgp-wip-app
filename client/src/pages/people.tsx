@@ -1,20 +1,26 @@
 import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
 import { useRoute, Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useTeam } from "@/lib/team-context";
 import type { User } from "@shared/schema";
 import {
   Building2, Users, Store, Crown, Search, Globe, MapPin,
   ChevronRight, ChevronDown, Building, Briefcase,
-  Phone, Mail, X, TrendingUp,
+  Phone, Mail, X, TrendingUp, Trash2,
   Handshake, ShoppingBag,
   Utensils, Clapperboard, ClipboardList, Dumbbell,
   Sparkles, Coffee, Shirt, Glasses, Heart, Wine, Music, Flower2,
 } from "lucide-react";
+import { ViewToggle } from "@/components/mobile-card-view";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { guessDomain, extractDomain } from "@/lib/company-logos";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty, CrmRequirementsLeasing, CrmRequirementsInvestment, InvestmentTracker } from "@shared/schema";
@@ -96,12 +102,16 @@ function LandlordsTab({
   properties,
   deals,
   onScopeLandlord,
+  onDeleteCompany,
+  viewMode = "card",
 }: {
   companies: CrmCompany[];
   contacts: CrmContact[];
   properties: CrmProperty[];
   deals: CrmDeal[];
   onScopeLandlord?: (id: string) => void;
+  onDeleteCompany?: (id: string, name: string) => void;
+  viewMode?: "table" | "card" | "board";
 }) {
   const [search, setSearch] = useState("");
   const [landlordFilter, setLandlordFilter] = useState<"all" | "clients" | "non-clients">("all");
@@ -199,6 +209,64 @@ function LandlordsTab({
         <p className="text-sm text-muted-foreground">{filtered.length} results</p>
       </div>
 
+      {viewMode === "table" ? (
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead className="text-center">Properties</TableHead>
+                  <TableHead className="text-center">Deals</TableHead>
+                  <TableHead className="text-center">Contacts</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((company) => {
+                  const compContacts = contactsByCompany[company.id] || [];
+                  const compProps = propertiesByLandlord[company.id] || [];
+                  const compDeals = dealsByLandlord[company.id] || [];
+                  const isClient = clientLandlords.some((cl) => cl.id === company.id);
+                  return (
+                    <TableRow key={company.id} className="cursor-pointer hover:bg-muted/50 group" onClick={() => window.location.href = `/companies/${company.id}`}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <CompanyLogo company={company} size="sm" />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-medium text-sm truncate">{company.name}</span>
+                              {isClient && <Crown className="w-3 h-3 text-amber-500 shrink-0" />}
+                            </div>
+                            {company.description && <p className="text-xs text-muted-foreground truncate max-w-[250px]">{company.description}</p>}
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{company.companyType || "Landlord"}</TableCell>
+                      <TableCell className="text-center text-sm">{compProps.length}</TableCell>
+                      <TableCell className="text-center text-sm">{compDeals.length}</TableCell>
+                      <TableCell className="text-center text-sm">{compContacts.length}</TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center gap-1 justify-end">
+                          {onScopeLandlord && (
+                            <button onClick={(e) => { e.stopPropagation(); onScopeLandlord(company.id); }} className="text-xs text-primary hover:text-primary/80 font-medium whitespace-nowrap">View People</button>
+                          )}
+                          {onDeleteCompany && (
+                            <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         {filtered.map((company) => {
           const compContacts = contactsByCompany[company.id] || [];
@@ -207,7 +275,17 @@ function LandlordsTab({
           const isClient = clientLandlords.some((cl) => cl.id === company.id);
           return (
             <Link key={company.id} href={`/companies/${company.id}`}>
-              <Card className="hover:shadow-md transition-shadow cursor-pointer h-full" data-testid={`card-landlord-${company.id}`}>
+              <Card className="hover:shadow-md transition-shadow cursor-pointer h-full relative group" data-testid={`card-landlord-${company.id}`}>
+                {onDeleteCompany && (
+                  <button
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
+                    className="absolute top-2 right-2 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
+                    title="Delete"
+                    data-testid={`button-delete-landlord-${company.id}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 <CardContent className="p-4">
                   <div className="flex items-start gap-3">
                     <CompanyLogo company={company} size="lg" />
@@ -255,6 +333,7 @@ function LandlordsTab({
           );
         })}
       </div>
+      )}
     </div>
   );
 }
@@ -263,10 +342,12 @@ function AgentsTab({
   companies,
   contacts,
   defaultTenantRep,
+  onDeleteCompany,
 }: {
   companies: CrmCompany[];
   contacts: CrmContact[];
   defaultTenantRep?: boolean;
+  onDeleteCompany?: (id: string, name: string) => void;
 }) {
   const [search, setSearch] = useState("");
   const [specialtyFilter, setSpecialtyFilter] = useState<string | null>(defaultTenantRep ? "Tenant Rep" : null);
@@ -519,11 +600,20 @@ function AgentsTab({
           const isExpanded = expandedCompany === company.id;
 
           return (
-            <Card key={company.id} className="overflow-hidden" data-testid={`card-agent-${company.id}`}>
+            <Card key={company.id} className="overflow-hidden group" data-testid={`card-agent-${company.id}`}>
               <div
-                className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
+                className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors relative"
                 onClick={() => setExpandedCompany(isExpanded ? null : company.id)}
               >
+                {onDeleteCompany && (
+                  <button
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
+                    className="absolute top-2 right-2 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
+                    title="Delete"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 <CompanyLogo company={company} size="md" />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -695,9 +785,13 @@ const TENANT_SECTORS = [
 function TenantsTab({
   companies,
   contacts,
+  onDeleteCompany,
+  viewMode = "card",
 }: {
   companies: CrmCompany[];
   contacts: CrmContact[];
+  onDeleteCompany?: (id: string, name: string) => void;
+  viewMode?: "table" | "card" | "board";
 }) {
   const [search, setSearch] = useState("");
   const [activeSector, setActiveSector] = useState("all");
@@ -821,6 +915,53 @@ function TenantsTab({
         <p className="text-sm text-muted-foreground">{filtered.length} results</p>
       </div>
 
+      {viewMode === "table" ? (
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Sector</TableHead>
+                  <TableHead className="text-center">Contacts</TableHead>
+                  <TableHead className="text-center">Requirements</TableHead>
+                  <TableHead></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((company) => {
+                  const compContacts = contactsByCompany[company.id] || [];
+                  const reqs = reqCountsByCompany[company.id];
+                  const totalReqs = reqs ? reqs.leasing + reqs.investment : 0;
+                  return (
+                    <TableRow key={company.id} className="cursor-pointer hover:bg-muted/50 group" onClick={() => window.location.href = `/companies/${company.id}`}>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <CompanyLogo company={company} size="sm" />
+                          <div className="min-w-0">
+                            <span className="font-medium text-sm truncate">{company.name}</span>
+                            {company.description && <p className="text-xs text-muted-foreground truncate max-w-[250px]">{company.description}</p>}
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm">{company.companyType?.replace("Tenant - ", "") || "Tenant"}</TableCell>
+                      <TableCell className="text-center text-sm">{compContacts.length}</TableCell>
+                      <TableCell className="text-center text-sm">{totalReqs > 0 ? totalReqs : "—"}</TableCell>
+                      <TableCell className="text-right">
+                        {onDeleteCompany && (
+                          <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </Card>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
         {filtered.map((company) => {
           const compContacts = contactsByCompany[company.id] || [];
@@ -841,7 +982,16 @@ function TenantsTab({
 
           return (
             <Link key={company.id} href={`/companies/${company.id}`}>
-              <Card className="hover:shadow-md transition-shadow cursor-pointer h-full" data-testid={`card-tenant-${company.id}`}>
+              <Card className="hover:shadow-md transition-shadow cursor-pointer h-full relative group" data-testid={`card-tenant-${company.id}`}>
+                {onDeleteCompany && (
+                  <button
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
+                    className="absolute top-2 right-2 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
+                    title="Delete"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 <CardContent className="p-3.5">
                   <div className="flex items-center gap-2.5">
                     <CompanyLogo company={company} size="md" />
@@ -879,6 +1029,7 @@ function TenantsTab({
           );
         })}
       </div>
+      )}
     </div>
   );
 }
@@ -933,12 +1084,33 @@ export default function PeoplePage() {
 
 function PeopleHub() {
   const { activeTeam } = useTeam();
+  const { toast } = useToast();
   const { data: user } = useQuery<User>({ queryKey: ["/api/auth/me"] });
   const effectiveTeam = activeTeam && activeTeam !== "all" ? activeTeam : user?.team;
   const isLandsec = effectiveTeam === "Landsec";
 
   const [tab, setTab] = useState<PeopleTab>(isLandsec ? "agents" : "landlords");
+  const [viewMode, setViewMode] = useState<"table" | "card" | "board">("card");
   const [scopedLandlord, setScopedLandlord] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ type: "company" | "contact"; id: string; name: string } | null>(null);
+
+  const deleteMutation = useMutation({
+    mutationFn: async ({ type, id }: { type: "company" | "contact"; id: string }) => {
+      await apiRequest("DELETE", `/api/crm/${type === "company" ? "companies" : "contacts"}/${id}`);
+    },
+    onSuccess: () => {
+      toast({ title: `${deleteTarget?.type === "company" ? "Company" : "Contact"} deleted` });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      setDeleteTarget(null);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Delete failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const onDeleteCompany = (id: string, name: string) => setDeleteTarget({ type: "company", id, name });
+  const onDeleteContact = (id: string, name: string) => setDeleteTarget({ type: "contact", id, name });
   const landsecAppliedRef = useRef(false);
   useEffect(() => {
     if (isLandsec && !landsecAppliedRef.current && tab === "landlords") {
@@ -998,7 +1170,9 @@ function PeopleHub() {
               : `${companies.length.toLocaleString()} companies · ${contacts.length.toLocaleString()} contacts`}
           </p>
         </div>
-        {scopedLandlord && (
+        <div className="flex items-center gap-2">
+          <ViewToggle view={viewMode} onToggle={setViewMode} />
+          {scopedLandlord && (
           <button
             onClick={handleClearScope}
             className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground border rounded-md px-3 py-1.5 hover:bg-muted transition-colors"
@@ -1008,6 +1182,7 @@ function PeopleHub() {
             Show all
           </button>
         )}
+        </div>
       </div>
 
       <div className="flex items-center gap-1 border-b">
@@ -1039,13 +1214,15 @@ function PeopleHub() {
               properties={properties}
               deals={deals}
               onScopeLandlord={handleScopeLandlord}
+              onDeleteCompany={onDeleteCompany}
+              viewMode={viewMode}
             />
           )}
           {tab === "agents" && (
-            <AgentsTab companies={companies} contacts={contacts} defaultTenantRep={isLandsec} />
+            <AgentsTab companies={companies} contacts={contacts} defaultTenantRep={isLandsec} onDeleteCompany={onDeleteCompany} />
           )}
           {tab === "tenants" && (
-            <TenantsTab companies={companies} contacts={contacts} />
+            <TenantsTab companies={companies} contacts={contacts} onDeleteCompany={onDeleteCompany} viewMode={viewMode} />
           )}
           {tab === "contacts" && !scopedLandlord && (
             <Suspense fallback={<PageLoader />}>
@@ -1059,6 +1236,26 @@ function PeopleHub() {
           )}
         </>
       )}
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteTarget?.type === "company" ? "Company" : "Contact"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{deleteTarget?.name}"? This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteTarget && deleteMutation.mutate({ type: deleteTarget.type, id: deleteTarget.id })}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

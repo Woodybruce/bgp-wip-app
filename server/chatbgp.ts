@@ -6931,12 +6931,13 @@ async function executeCrmToolRaw(
                 const lastName = nameParts[0]?.trim();
                 const firstName = nameParts[1]?.trim()?.split(/\s+/)[0];
 
-                const body: Record<string, any> = { reveal_personal_emails: false, reveal_phone_number: false };
-                if (firstName) body.first_name = firstName;
-                if (lastName) body.last_name = lastName;
-                body.organization_name = report.company.profile?.companyName || targetCompanyName;
+                // mixed_people/search (replaces deprecated people/match)
+                const body: Record<string, any> = { page: 1, per_page: 1 };
+                if (firstName || lastName) body.q_keywords = `${firstName || ""} ${lastName || ""}`.trim();
+                const orgName = report.company.profile?.companyName || targetCompanyName;
+                body.organization_names = [orgName];
 
-                const apolloRes = await timedFetch("https://api.apollo.io/api/v1/people/match", {
+                const apolloRes = await timedFetch("https://api.apollo.io/api/v1/mixed_people/search", {
                   method: "POST",
                   headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloApiKey },
                   body: JSON.stringify(body),
@@ -6944,20 +6945,21 @@ async function executeCrmToolRaw(
 
                 if (apolloRes.ok) {
                   const data = await apolloRes.json() as any;
-                  if (data.person) {
+                  const person = (data.people || data.contacts || [])[0];
+                  if (person) {
                     apolloResults.push({
                       name: officer.name,
                       role: officer.role,
-                      email: data.person.email,
-                      phone: data.person.phone_numbers?.[0]?.sanitized_number,
-                      title: data.person.title,
-                      linkedin: data.person.linkedin_url,
-                      city: data.person.city,
-                      company: data.person.organization?.name,
-                      companyWebsite: data.person.organization?.website_url,
-                      companyLinkedin: data.person.organization?.linkedin_url,
-                      companyIndustry: data.person.organization?.industry,
-                      companySize: data.person.organization?.estimated_num_employees,
+                      email: person.email,
+                      phone: person.phone_numbers?.[0]?.sanitized_number,
+                      title: person.title,
+                      linkedin: person.linkedin_url,
+                      city: person.city,
+                      company: person.organization?.name,
+                      companyWebsite: person.organization?.website_url,
+                      companyLinkedin: person.organization?.linkedin_url,
+                      companyIndustry: person.organization?.industry,
+                      companySize: person.organization?.estimated_num_employees,
                     });
                   }
                 }
@@ -7053,12 +7055,13 @@ async function executeCrmToolRaw(
             const nameParts = personName.split(/\s+/);
             const firstName = nameParts[0];
             const lastName = nameParts.slice(1).join(" ");
-            const body: Record<string, any> = { reveal_personal_emails: false, reveal_phone_number: false };
-            if (firstName) body.first_name = firstName;
-            if (lastName) body.last_name = lastName;
-            body.organization_name = targetCompanyName || companyName || "";
+            // mixed_people/search (replaces deprecated people/match)
+            const body: Record<string, any> = { page: 1, per_page: 1 };
+            if (firstName || lastName) body.q_keywords = `${firstName || ""} ${lastName || ""}`.trim();
+            const orgName = targetCompanyName || companyName || "";
+            if (orgName) body.organization_names = [orgName];
 
-            const apolloRes = await timedFetch("https://api.apollo.io/api/v1/people/match", {
+            const apolloRes = await timedFetch("https://api.apollo.io/api/v1/mixed_people/search", {
               method: "POST",
               headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloApiKey },
               body: JSON.stringify(body),
@@ -7066,16 +7069,17 @@ async function executeCrmToolRaw(
 
             if (apolloRes.ok) {
               const data = await apolloRes.json() as any;
-              if (data.person) {
+              const person = (data.people || data.contacts || [])[0];
+              if (person) {
                 report.person.apolloProfile = {
-                  email: data.person.email,
-                  phone: data.person.phone_numbers?.[0]?.sanitized_number,
-                  title: data.person.title,
-                  linkedin: data.person.linkedin_url,
-                  city: data.person.city,
-                  company: data.person.organization?.name,
-                  companyWebsite: data.person.organization?.website_url,
-                  industry: data.person.organization?.industry,
+                  email: person.email,
+                  phone: person.phone_numbers?.[0]?.sanitized_number,
+                  title: person.title,
+                  linkedin: person.linkedin_url,
+                  city: person.city,
+                  company: person.organization?.name,
+                  companyWebsite: person.organization?.website_url,
+                  industry: person.organization?.industry,
                 };
               }
             }
@@ -9603,7 +9607,7 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
         loopCount++;
         const isLastLoop = loopCount >= maxLoops;
         const loopOpts: any = {
-          model: CHATBGP_HELPER_MODEL,
+          model: CHATBGP_MODEL,
           messages: convMessages,
           max_completion_tokens: 4096,
         };

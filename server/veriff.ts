@@ -2,6 +2,8 @@ import crypto from "crypto";
 import { Router, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { sendFromSharedMailbox } from "./shared-mailbox";
+import { getWhatsAppConfig, sendWhatsAppText } from "./whatsapp";
 
 // Veriff Station API — https://developers.veriff.com/
 // We never echo the API key; it's read from Railway env on each request.
@@ -229,7 +231,7 @@ veriffRouter.get("/api/veriff/diagnostic", requireAuth, async (req: Request, res
 // Create a verification session for a counterparty (company contact)
 veriffRouter.post("/api/veriff/sessions", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { firstName, lastName, email, companyId, contactId, dealId } = req.body || {};
+    const { firstName, lastName, email, mobile, companyId, contactId, dealId } = req.body || {};
     if (!firstName || !lastName) return res.status(400).json({ error: "firstName and lastName required" });
     if (!companyId && !contactId) return res.status(400).json({ error: "companyId or contactId required" });
     const userId = (req as any).user?.id || (req.session as any)?.userId || null;
@@ -244,7 +246,45 @@ veriffRouter.post("/api/veriff/sessions", requireAuth, async (req: Request, res:
       [session.sessionId, companyId || null, contactId || null, dealId || null, firstName, lastName, email || null, session.status, session.verificationUrl, userId]
     ).catch((e) => console.warn("[veriff] insert session failed:", e?.message));
 
-    res.json(session);
+    // Send verification email to the counterparty if we have their address
+    if (email && session.verificationUrl) {
+      const fullName = `${firstName} ${lastName}`;
+      const emailBody = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px;">
+          <div style="font-size: 13px; font-weight: 600; letter-spacing: 0.02em; margin-bottom: 24px;">BRUCE GILLINGHAM POLLARD</div>
+          <h2 style="font-size: 20px; font-weight: 600; margin: 0 0 12px;">Identity Verification Required</h2>
+          <p style="font-size: 14px; color: #555; line-height: 1.6; margin: 0 0 20px;">
+            Dear ${fullName},<br/><br/>
+            As part of our Anti-Money Laundering (AML) compliance obligations, we need to verify your identity.
+            Please click the button below to complete a brief identity check — it takes approximately 2 minutes.
+          </p>
+          <a href="${session.verificationUrl}" style="display: inline-block; background: #111; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 500;">
+            Verify My Identity
+          </a>
+          <p style="font-size: 12px; color: #999; margin-top: 24px; line-height: 1.5;">
+            This link is unique to you and will expire after one use.
+            If you have any questions, please contact us directly.<br/>
+            This is a secure process powered by Veriff. Your data is handled in accordance with GDPR.
+          </p>
+        </div>`;
+      sendFromSharedMailbox([email], "BGP — Identity Verification Required", emailBody).catch(e =>
+        console.warn("[veriff] failed to send verification email:", e?.message)
+      );
+    }
+
+    // Send WhatsApp verification link if mobile number provided
+    if (mobile && session.verificationUrl) {
+      const waConfig = getWhatsAppConfig();
+      if (waConfig.token && waConfig.phoneNumberId) {
+        const waNumber = mobile.replace(/[^0-9]/g, "").replace(/^0/, "44"); // UK default
+        const fullName = `${firstName} ${lastName}`;
+        sendWhatsAppText(waConfig, waNumber,
+          `Hi ${fullName},\n\nBruce Gillingham Pollard requires identity verification as part of our AML compliance.\n\nPlease tap the link below to complete a brief identity check (approx. 2 minutes):\n\n${session.verificationUrl}\n\nThe link is unique to you and will expire after one use. Any questions, please contact us directly.`
+        ).catch(e => console.warn("[veriff] failed to send WhatsApp verification:", e?.message));
+      }
+    }
+
+    res.json({ ...session, emailSent: !!email });
   } catch (err: any) {
     console.error("[veriff] create session error:", err?.message);
     res.status(500).json({ error: err?.message || "Failed to create Veriff session" });
@@ -332,6 +372,21 @@ veriffRouter.post("/api/veriff/webhook", async (req: Request, res: Response) => 
             s.requested_by,
           ]
         ).catch((e) => console.warn("[veriff] kyc_documents insert failed:", e?.message));
+
+        // Auto-tick identity_verified + address_verified on the company's
+        // AML checklist — lazy-import the orchestrator to avoid a circular
+        // dep between veriff.ts and kyc-orchestrator.ts.
+        if (s.company_id) {
+          try {
+            const { autoTickFromVeriff } = await import("./kyc-orchestrator");
+            const ticked = await autoTickFromVeriff(s.company_id, sessionId, status);
+            if (ticked.length > 0) {
+              console.log(`[veriff] Auto-ticked ${ticked.join(", ")} for company ${s.company_id} from session ${sessionId}`);
+            }
+          } catch (e: any) {
+            console.warn("[veriff] Auto-tick failed:", e?.message);
+          }
+        }
       }
     }
 

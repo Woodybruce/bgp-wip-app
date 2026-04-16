@@ -1,7 +1,7 @@
 {
   "id": "bgp-dashboard",
   "name": "BGP Dashboard",
-  "description": "Connect to the BGP property management dashboard — query properties, deals, diary, contacts, Monday.com boards, and chat with ChatBGP AI assistant",
+  "description": "Connect to the BGP property management dashboard — browse the diary, read the AI-curated news feed, and chat with the ChatBGP AI assistant",
   "version": "1.0.0",
   "skills": ["skills/bgp"],
   "configSchema": {

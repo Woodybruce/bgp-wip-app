@@ -5,10 +5,37 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import { ViewToggle } from "@/components/mobile-card-view";
+import {
   ShieldCheck, ShieldAlert, Clock, AlertCircle, CheckCircle2,
   Loader2, FileText, Search, Building2, Sun, Handshake, ChevronRight,
-  ChevronDown, ChevronUp, ExternalLink, Building,
+  ChevronDown, ChevronUp, ExternalLink, Building, Database,
 } from "lucide-react";
+
+// Friendly labels + tones for automated check sources that populate aml_checklist.
+// Keep in sync with TickSource in server/kyc-orchestrator.ts.
+const SOURCE_META: Record<string, { label: string; tone: string; title: string }> = {
+  companies_house: { label: "Companies House", tone: "border-blue-300 text-blue-700 bg-blue-50", title: "UK company filings + UBO walk" },
+  veriff: { label: "Veriff", tone: "border-indigo-300 text-indigo-700 bg-indigo-50", title: "ID + address verification" },
+  sanctions: { label: "OFSI/OFAC", tone: "border-red-300 text-red-700 bg-red-50", title: "UK OFSI + US OFAC sanctions screening" },
+  perplexity: { label: "Adverse media", tone: "border-purple-300 text-purple-700 bg-purple-50", title: "Perplexity adverse media scan" },
+  clouseau: { label: "Clouseau", tone: "border-teal-300 text-teal-700 bg-teal-50", title: "Clouseau investigation" },
+  comply_advantage: { label: "ComplyAdvantage", tone: "border-amber-300 text-amber-700 bg-amber-50", title: "ComplyAdvantage PEP/sanctions" },
+  system: { label: "System", tone: "border-slate-300 text-slate-700 bg-slate-50", title: "Automated rule" },
+};
+
+function extractSources(checklist: any): string[] {
+  if (!checklist || typeof checklist !== "object") return [];
+  const seen = new Set<string>();
+  for (const v of Object.values(checklist as Record<string, { ticked?: boolean; source?: string }>)) {
+    if (v?.ticked && v.source && v.source !== "manual") seen.add(v.source);
+  }
+  // Stable ordering: automated evidence first, system last
+  const order = ["companies_house", "veriff", "sanctions", "perplexity", "clouseau", "comply_advantage", "system"];
+  return order.filter(s => seen.has(s));
+}
 import { KycPanel } from "@/components/kyc-panel";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -46,8 +73,6 @@ const COLUMNS: Array<{
   { key: "missing", label: "Documents pending", tone: "border-amber-300 bg-amber-50/30", icon: AlertCircle, description: "No KYC started — needs uploads" },
   { key: "in_review", label: "Under review", tone: "border-blue-300 bg-blue-50/30", icon: Clock, description: "Docs uploaded, awaiting MLRO sign-off" },
   { key: "approved", label: "Approved", tone: "border-emerald-400 bg-emerald-50/40", icon: CheckCircle2, description: "AML clean — invoice unlocked" },
-  { key: "expired", label: "Expired — re-check", tone: "border-orange-400 bg-orange-50/40", icon: Clock, description: "Past 12-month review date" },
-  { key: "rejected", label: "Rejected", tone: "border-red-300 bg-red-50/40", icon: ShieldAlert, description: "Cannot proceed" },
 ];
 
 const CardItem = memo(function CardItem({ row }: { row: BoardRow }) {
@@ -56,6 +81,7 @@ const CardItem = memo(function CardItem({ row }: { row: BoardRow }) {
   const checklistTicked = row.aml_checklist
     ? Object.values(row.aml_checklist as Record<string, { ticked?: boolean }>).filter(v => v?.ticked).length
     : 0;
+  const sources = extractSources(row.aml_checklist);
   const investigateHref = row.companies_house_number
     ? `/kyc-clouseau?tab=investigator&run=${encodeURIComponent(row.companies_house_number)}&name=${encodeURIComponent(row.name)}`
     : `/kyc-clouseau?tab=investigator&name=${encodeURIComponent(row.name)}`;
@@ -102,6 +128,25 @@ const CardItem = memo(function CardItem({ row }: { row: BoardRow }) {
             <span>· {dealCount} deal{dealCount === 1 ? "" : "s"}</span>
           )}
         </div>
+        {sources.length > 0 && (
+          <div className="flex items-start gap-1.5 mt-1.5" data-testid={`board-sources-${row.id}`}>
+            <Database className="w-3 h-3 text-muted-foreground shrink-0 mt-0.5" />
+            <div className="flex flex-wrap gap-1">
+              {sources.map(s => {
+                const meta = SOURCE_META[s] || { label: s, tone: "border-slate-300 text-slate-700 bg-slate-50", title: s };
+                return (
+                  <span
+                    key={s}
+                    title={meta.title}
+                    className={`text-[9px] px-1.5 py-0.5 rounded border ${meta.tone} font-medium`}
+                  >
+                    {meta.label}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {row.kyc_expires_at && (
           <div className={`text-[11px] mt-1 ${row.isExpired ? "text-red-600 font-semibold" : "text-muted-foreground"}`}>
             {row.isExpired ? "Re-check overdue" : "Re-check"} {new Date(row.kyc_expires_at).toLocaleDateString("en-GB")}
@@ -170,6 +215,7 @@ interface DealBoardData {
 export default function ComplianceBoard() {
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"table" | "card" | "board">("board");
 
   const { data, isLoading, error } = useQuery<BoardData>({
     queryKey: ["/api/kyc/board"],
@@ -209,6 +255,7 @@ export default function ComplianceBoard() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <ViewToggle view={viewMode} onToggle={setViewMode} showBoard />
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -247,8 +294,8 @@ export default function ComplianceBoard() {
         </TabsList>
 
         <TabsContent value="counterparties" className="mt-4">
-          {/* Summary row */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+          {/* Summary cards */}
+          <div className="grid grid-cols-3 gap-3 mb-5">
             {COLUMNS.map(col => {
               const count = data?.counts[col.key] || 0;
               const Icon = col.icon;
@@ -267,30 +314,145 @@ export default function ComplianceBoard() {
             })}
           </div>
 
-          {/* Kanban */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
-            {COLUMNS.map(col => {
-              const items = filtered.filter(r => r.column === col.key);
-              return (
-                <div key={col.key} className={`rounded-lg border-2 ${col.tone} p-2 min-h-[400px]`} data-testid={`board-column-${col.key}`}>
-                  <div className="flex items-center justify-between px-1 py-1.5 mb-2">
-                    <h3 className="font-semibold text-sm flex items-center gap-1.5">
-                      <col.icon className="w-3.5 h-3.5" />
-                      {col.label}
-                    </h3>
-                    <Badge variant="secondary">{items.length}</Badge>
-                  </div>
-                  <div className="space-y-2">
-                    {items.length === 0 ? (
-                      <div className="text-center text-xs text-muted-foreground italic py-8">None</div>
-                    ) : (
-                      items.map(row => <CardItem key={row.id} row={row} />)
-                    )}
-                  </div>
+          {viewMode === "board" && (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {COLUMNS.map(col => {
+                  const items = filtered.filter(r => r.column === col.key);
+                  return (
+                    <div key={col.key} className={`rounded-lg border-2 ${col.tone} p-2 min-h-[400px]`} data-testid={`board-column-${col.key}`}>
+                      <div className="flex items-center justify-between px-1 py-1.5 mb-2">
+                        <h3 className="font-semibold text-sm flex items-center gap-1.5">
+                          <col.icon className="w-3.5 h-3.5" />
+                          {col.label}
+                        </h3>
+                        <Badge variant="secondary">{items.length}</Badge>
+                      </div>
+                      <div className="space-y-2">
+                        {items.length === 0 ? (
+                          <div className="text-center text-xs text-muted-foreground italic py-8">None</div>
+                        ) : (
+                          items.map(row => <CardItem key={row.id} row={row} />)
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {((data?.counts.expired || 0) > 0 || (data?.counts.rejected || 0) > 0) && (
+                <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground px-1">
+                  {(data?.counts.expired || 0) > 0 && <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {data?.counts.expired} expired</span>}
+                  {(data?.counts.rejected || 0) > 0 && <span className="flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> {data?.counts.rejected} rejected</span>}
+                  <span>— not shown on board</span>
                 </div>
-              );
-            })}
-          </div>
+              )}
+            </>
+          )}
+
+          {viewMode === "table" && (
+            <div className="border rounded-lg overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="text-xs">
+                    <TableHead className="w-[200px]">Company</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Risk</TableHead>
+                    <TableHead>PEP</TableHead>
+                    <TableHead>Checklist</TableHead>
+                    <TableHead>Docs</TableHead>
+                    <TableHead>Sources</TableHead>
+                    <TableHead>Deals</TableHead>
+                    <TableHead>Re-check</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.length === 0 ? (
+                    <TableRow><TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-8">No counterparties found</TableCell></TableRow>
+                  ) : filtered.map(row => {
+                    const checklistTicked = row.aml_checklist
+                      ? Object.values(row.aml_checklist as Record<string, { ticked?: boolean }>).filter(v => v?.ticked).length
+                      : 0;
+                    const sources = extractSources(row.aml_checklist);
+                    return (
+                      <TableRow key={row.id} className="text-xs">
+                        <TableCell className="font-medium">
+                          <Link href={`/companies/${row.id}`} className="hover:text-primary hover:underline flex items-center gap-1.5">
+                            <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            {row.name}
+                          </Link>
+                          {row.companies_house_number && <span className="text-[10px] text-muted-foreground ml-5">CH {row.companies_house_number}</span>}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`text-[10px] ${
+                            row.column === "approved" ? "border-emerald-300 text-emerald-700 bg-emerald-50" :
+                            row.column === "in_review" ? "border-blue-300 text-blue-700 bg-blue-50" :
+                            "border-amber-300 text-amber-700 bg-amber-50"
+                          }`}>
+                            {COLUMNS.find(c => c.key === row.column)?.label || row.column}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {row.aml_risk_level ? (
+                            <Badge variant="outline" className={`text-[10px] ${
+                              row.aml_risk_level === "critical" ? "border-red-300 text-red-700" :
+                              row.aml_risk_level === "high" ? "border-orange-300 text-orange-700" :
+                              row.aml_risk_level === "medium" ? "border-amber-300 text-amber-700" :
+                              "border-emerald-300 text-emerald-700"
+                            }`}>{row.aml_risk_level}</Badge>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell>
+                          {row.aml_pep_status ? (
+                            <Badge variant="outline" className={`text-[10px] ${
+                              row.aml_pep_status === "clear" ? "border-emerald-300 text-emerald-700" : "border-purple-300 text-purple-700"
+                            }`}>{row.aml_pep_status === "clear" ? "Clear" : "PEP"}</Badge>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell>
+                          <span className={checklistTicked >= 12 ? "text-emerald-600 font-semibold" : ""}>{checklistTicked}/12</span>
+                        </TableCell>
+                        <TableCell>{row.doc_count}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-0.5">
+                            {sources.map(s => {
+                              const meta = SOURCE_META[s];
+                              return <span key={s} title={meta?.title || s} className={`text-[9px] px-1 py-0.5 rounded border ${meta?.tone || ""} font-medium`}>{meta?.label || s}</span>;
+                            })}
+                            {sources.length === 0 && <span className="text-muted-foreground">—</span>}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {row.deals && row.deals.length > 0 ? (
+                            <div className="space-y-0.5">
+                              {row.deals.slice(0, 2).map((d, i) => (
+                                <Link key={`${d.id}-${i}`} href={`/deals/${d.id}`} className="text-primary hover:underline block truncate max-w-[120px]">{d.name}</Link>
+                              ))}
+                              {row.deals.length > 2 && <span className="text-muted-foreground">+{row.deals.length - 2} more</span>}
+                            </div>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell>
+                          {row.kyc_expires_at ? (
+                            <span className={row.isExpired ? "text-red-600 font-semibold" : ""}>
+                              {new Date(row.kyc_expires_at).toLocaleDateString("en-GB")}
+                            </span>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
+          {viewMode === "card" && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filtered.length === 0 ? (
+                <div className="col-span-full text-center text-sm text-muted-foreground py-8">No counterparties found</div>
+              ) : filtered.map(row => <CardItem key={row.id} row={row} />)}
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="deals" className="mt-4">
