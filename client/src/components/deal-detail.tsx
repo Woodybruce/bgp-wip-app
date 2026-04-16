@@ -50,6 +50,7 @@ import { Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schema";
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
+import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import {
   DEAL_STATUS_COLORS,
   DEAL_TYPE_COLORS,
@@ -482,6 +483,22 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </Dialog>
 
       <DealKYCPanel deal={deal} companies={companies} />
+
+      {/* Brand profiles for counterparties on this deal */}
+      {[
+        { company: linkedTenant, role: "Tenant" },
+        { company: linkedLandlord, role: "Landlord" },
+      ]
+        .filter(({ company }) => !!company)
+        .filter(({ company }, i, arr) => arr.findIndex(a => a.company!.id === company!.id) === i)
+        .map(({ company, role }) => (
+          <div key={company!.id} data-testid={`deal-brand-${role.toLowerCase()}`}>
+            <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1 flex items-center gap-1.5">
+              <Building2 className="w-3 h-3" /> {role}: {company!.name}
+            </p>
+            <BrandProfilePanel companyId={company!.id} />
+          </div>
+        ))}
 
       <DealTimeline dealId={id} />
 
