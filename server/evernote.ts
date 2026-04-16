@@ -228,7 +228,7 @@ export function setupEvernoteRoutes(app: Express) {
         id: data.id || data.guid,
         title: data.title,
         content: data.content,
-        webUrl: data.webUrl || data.noteStoreUrl ? `https://www.evernote.com/shard/s1/nl/${data.id || data.guid}` : null,
+        webUrl: data.webUrl || (data.noteStoreUrl ? `https://www.evernote.com/shard/s1/nl/${data.id || data.guid}` : null),
       });
     } catch (e: any) {
       if (e.message.includes("Not connected")) return res.status(401).json({ error: e.message });

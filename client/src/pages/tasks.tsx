@@ -759,9 +759,16 @@ export default function TasksPage() {
                     <TaskRow
                       key={task.id}
                       task={task}
+                      subtasks={subtaskMap[task.id] || []}
                       onToggle={() => handleToggle(task)}
                       onEdit={() => openEdit(task)}
                       onDelete={() => deleteMutation.mutate(task.id)}
+                      onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
+                      onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
+                      onToggleSubtask={(id) => {
+                        const sub = tasks.find(t => t.id === id);
+                        if (sub) updateMutation.mutate({ id, status: sub.status === "done" ? "todo" : "done" });
+                      }}
                     />
                   ))}
                 </CardContent>
