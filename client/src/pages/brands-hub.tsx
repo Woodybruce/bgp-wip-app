@@ -546,9 +546,15 @@ function subMatch(companyType: string, sub: SubCat): boolean {
 }
 
 function BrandExplorer() {
-  const [activeCat, setActiveCat] = useState<string | null>(null);
-  const [activeSub, setActiveSub] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
+  const [activeCat, setActiveCat] = useState<string | null>(() => {
+    try { return localStorage.getItem("brand-explorer-cat") || null; } catch { return null; }
+  });
+  const [activeSub, setActiveSub] = useState<string | null>(() => {
+    try { return localStorage.getItem("brand-explorer-sub") || null; } catch { return null; }
+  });
+  const [search, setSearch] = useState(() => {
+    try { return localStorage.getItem("brand-explorer-search") || ""; } catch { return ""; }
+  });
 
   const { data: companies = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/companies"],
@@ -559,6 +565,19 @@ function BrandExplorer() {
     },
     staleTime: 120_000,
   });
+
+  const setCat = (v: string | null) => {
+    setActiveCat(v);
+    try { if (v) localStorage.setItem("brand-explorer-cat", v); else localStorage.removeItem("brand-explorer-cat"); } catch {}
+  };
+  const setSub = (v: string | null) => {
+    setActiveSub(v);
+    try { if (v) localStorage.setItem("brand-explorer-sub", v); else localStorage.removeItem("brand-explorer-sub"); } catch {}
+  };
+  const setSearchPersist = (v: string) => {
+    setSearch(v);
+    try { if (v) localStorage.setItem("brand-explorer-search", v); else localStorage.removeItem("brand-explorer-search"); } catch {}
+  };
 
   const catCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -596,7 +615,7 @@ function BrandExplorer() {
           className={`cursor-pointer rounded-xl p-4 text-white transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-br from-teal-500 to-teal-700 ${
             activeCat === null ? "shadow-lg ring-2 ring-teal-400 ring-offset-2" : "opacity-80 hover:opacity-100"
           }`}
-          onClick={() => { setActiveCat(null); setActiveSub(null); }}
+          onClick={() => { setCat(null); setSub(null); }}
         >
           <Store className="w-6 h-6 mb-2 opacity-90" />
           <div className="text-2xl font-bold">{companies.length}</div>
@@ -611,7 +630,7 @@ function BrandExplorer() {
               className={`cursor-pointer rounded-xl p-4 text-white transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-br ${cat.gradient} ${
                 isActive ? "shadow-lg ring-2 ring-white/40 ring-offset-2" : "opacity-80 hover:opacity-100"
               }`}
-              onClick={() => { setActiveCat(isActive ? null : cat.key); setActiveSub(null); }}
+              onClick={() => { setCat(isActive ? null : cat.key); setSub(null); }}
             >
               <Icon className="w-6 h-6 mb-2 opacity-90" />
               <div className="text-2xl font-bold">{catCounts[cat.key] || 0}</div>
@@ -625,7 +644,7 @@ function BrandExplorer() {
       {activeCatObj && (
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={() => setActiveSub(null)}
+            onClick={() => setSub(null)}
             className={`text-sm px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all border ${
               activeSub === null
                 ? `${activeCatObj.color} text-white border-transparent shadow-sm`
@@ -641,7 +660,7 @@ function BrandExplorer() {
             return (
               <button
                 key={sub.key}
-                onClick={() => setActiveSub(isActive ? null : sub.key)}
+                onClick={() => setSub(isActive ? null : sub.key)}
                 className={`text-sm px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all border ${
                   isActive
                     ? `${activeCatObj.color} text-white border-transparent shadow-sm`
@@ -663,7 +682,7 @@ function BrandExplorer() {
           <Input
             placeholder="Search brands..."
             value={search}
-            onChange={e => setSearch(e.target.value)}
+            onChange={e => setSearchPersist(e.target.value)}
             className="pl-9 h-9"
           />
         </div>
