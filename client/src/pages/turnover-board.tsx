@@ -1,6 +1,5 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Link } from "wouter";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -12,9 +11,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
 import {
-  TrendingUp, Search, Plus, Trash2, X, Check, Edit2, Loader2,
-  Building2, MapPin, PoundSterling, BarChart3, Filter, ArrowUpDown,
-  ChevronDown, ChevronRight, Store, Download, ExternalLink, AlertCircle,
+  TrendingUp, Search, Plus, Trash2, X, Check, Loader2,
+  Building2, MapPin, BarChart3, ArrowUpDown,
+  ChevronDown, ChevronRight, Store, ExternalLink,
 } from "lucide-react";
 
 interface TurnoverEntry {
@@ -49,7 +48,7 @@ const CONFIDENCES = ["High", "Medium", "Low"];
 const CATEGORIES = ["F&B", "Retail", "Leisure", "Services", "Health & Beauty", "Grocery", "Fashion", "Technology", "Hospitality", "Other"];
 
 function formatCurrency(val: number | null) {
-  if (!val) return "—";
+  if (val == null) return "—";
   if (val >= 1_000_000) return `£${(val / 1_000_000).toFixed(1)}m`;
   if (val >= 1_000) return `£${(val / 1_000).toFixed(0)}k`;
   return `£${val.toFixed(0)}`;
@@ -72,6 +71,8 @@ function sourceBadge(s: string) {
     "News": "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
     "Industry Report": "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200",
     "Companies House": "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200",
+    "OpenStreetMap": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200",
+    "CRM Comp": "bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200",
     "Other": "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
   };
   return colors[s] || "bg-gray-100 text-gray-700";
@@ -143,6 +144,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
       setFormAddress(null);
       toast({ title: "Entry added" });
     },
+    onError: () => toast({ title: "Failed to add entry", variant: "destructive" }),
   });
 
   const updateMutation = useMutation({
@@ -154,6 +156,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
       queryClient.invalidateQueries({ queryKey: ["/api/turnover"] });
       setEditingCell(null);
     },
+    onError: () => toast({ title: "Failed to update", variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -164,6 +167,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
       queryClient.invalidateQueries({ queryKey: ["/api/turnover"] });
       toast({ title: "Entry deleted" });
     },
+    onError: () => toast({ title: "Failed to delete", variant: "destructive" }),
   });
 
   const confirmMutation = useMutation({
@@ -175,15 +179,18 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
       queryClient.invalidateQueries({ queryKey: ["/api/turnover"] });
       toast({ title: "Store confirmed" });
     },
+    onError: () => toast({ title: "Failed to confirm", variant: "destructive" }),
   });
 
   async function handleFindStores(brandName: string) {
     setFindingStores(brandName);
     try {
       const res = await fetch(`/api/turnover/find-stores?brand=${encodeURIComponent(brandName)}`, { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const data = await res.json();
       setFoundStores(prev => ({ ...prev, [brandName]: data.stores || [] }));
       setExpandedBrands(prev => new Set([...prev, brandName]));
+      if (!data.stores?.length) toast({ title: `No stores found for ${brandName}` });
     } catch {
       toast({ title: "Failed to find stores", variant: "destructive" });
     } finally {
@@ -225,6 +232,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
       const q = search.toLowerCase();
       result = result.filter(e =>
         e.company_name.toLowerCase().includes(q) ||
+        (e.store_name || "").toLowerCase().includes(q) ||
         (e.property_name || "").toLowerCase().includes(q) ||
         (e.location || "").toLowerCase().includes(q) ||
         (e.notes || "").toLowerCase().includes(q)
@@ -291,7 +299,6 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
   function handlePropertySelect(propertyId: string) {
     const prop = properties.find((p: any) => p.id === propertyId);
     if (prop) {
-      const addr = typeof prop.address === "object" ? (prop.address?.line1 || prop.address?.postcode || "") : (prop.address || "");
       setForm(f => ({ ...f, property_id: propertyId, property_name: prop.name }));
     }
   }
@@ -436,11 +443,23 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
           <Card>
             <CardContent className="py-12 text-center">
               <BarChart3 className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-              <h3 className="font-medium mb-1">No turnover data yet</h3>
-              <p className="text-sm text-muted-foreground mb-4">Add your first entry to start tracking brand revenue</p>
-              <Button onClick={() => setShowAdd(true)} data-testid="button-add-first">
-                <Plus className="w-4 h-4 mr-1" /> Add Entry
-              </Button>
+              {entries.length === 0 ? (
+                <>
+                  <h3 className="font-medium mb-1">No turnover data yet</h3>
+                  <p className="text-sm text-muted-foreground mb-4">Add your first entry to start tracking brand revenue</p>
+                  <Button onClick={() => setShowAdd(true)} data-testid="button-add-first">
+                    <Plus className="w-4 h-4 mr-1" /> Add Entry
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <h3 className="font-medium mb-1">No matching entries</h3>
+                  <p className="text-sm text-muted-foreground mb-4">Try adjusting your search or filters</p>
+                  <Button variant="outline" onClick={() => { setSearch(""); setCategoryFilter("all"); setSourceFilter("all"); }}>
+                    Clear Filters
+                  </Button>
+                </>
+              )}
             </CardContent>
           </Card>
         ) : viewMode === "table" ? (
@@ -703,7 +722,7 @@ export default function TurnoverBoard({ embedded = false }: { embedded?: boolean
                         </thead>
                         <tbody className="divide-y">
                           {brandEntries.map(entry => (
-                            <tr key={entry.id} className={`hover:bg-muted/30 transition-colors ${entry.is_draft ? "opacity-70" : ""}`}>
+                            <tr key={entry.id} className={`hover:bg-muted/30 transition-colors ${entry.is_draft ? "opacity-60" : ""}`}>
                               <td className="px-4 py-2.5">
                                 <div className="flex items-center gap-1.5">
                                   <MapPin className="w-3 h-3 text-muted-foreground flex-shrink-0" />

@@ -12,7 +12,7 @@ import { getCompanyLogoUrl } from "@/lib/company-logos";
 import {
   Store, TrendingUp, Flame, Star, Search, ChevronRight,
   MapPin, Maximize2, Zap, BarChart3, RefreshCw, Building2,
-  ArrowUpRight, Users, FileText, Trophy, Sparkles, Play, Pause,
+  FileText, Trophy, Sparkles, Play, Pause,
   LayoutGrid, Crown, Shirt, Activity, ShoppingBag, Home as HomeIcon,
   Gift, Landmark, Briefcase, Utensils, Coffee, Wine, CakeSlice,
   UtensilsCrossed, Soup, Diamond, Car, Wifi, BookOpen, Smartphone,
@@ -131,7 +131,8 @@ type HubTab = "overview" | "explorer" | "turnover";
 export default function BrandsHub() {
   const { toast } = useToast();
   const searchParams = useSearch();
-  const initialTab = (new URLSearchParams(searchParams).get("tab") as HubTab) || "overview";
+  const rawTab = new URLSearchParams(searchParams).get("tab");
+  const initialTab: HubTab = rawTab && ["overview", "explorer", "turnover"].includes(rawTab) ? rawTab as HubTab : "overview";
   const [activeTab, setActiveTab] = useState<HubTab>(initialTab);
   const [search, setSearch] = useState("");
   const [researchingId, setResearchingId] = useState<string | null>(null);
@@ -237,7 +238,7 @@ export default function BrandsHub() {
           { label: "Total Brands", value: totalBrands, icon: Store, colour: "text-pink-500" },
           { label: "Active Requirements", value: activeReqs, icon: FileText, colour: "text-blue-500" },
           { label: "With Turnover Data", value: brandsWithTurnover, icon: BarChart3, colour: "text-emerald-500" },
-          { label: "Categories", value: 6, icon: Zap, colour: "text-purple-500" },
+          { label: "Categories", value: BRAND_CATEGORIES.length, icon: Zap, colour: "text-purple-500" },
         ].map(s => (
           <Card key={s.label}>
             <CardContent className="p-4 flex items-center gap-3">

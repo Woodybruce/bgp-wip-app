@@ -92,6 +92,8 @@ const aiNav = [
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
   { title: "Document Studio", url: "/templates", icon: FileTextIcon },
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
+  { title: "Property Intelligence", url: "/property-intelligence", icon: Globe, badge: "AI" },
+  { title: "Cann CAD", url: "/cad-measure", icon: Ruler },
 ];
 
 const microsoftNav = [
@@ -110,12 +112,6 @@ const adminNavBase = [
   { title: "Subscriptions & APIs", url: "/subscriptions", icon: CreditCard },
   { title: "Office Add-ins", url: "/addins", icon: Puzzle },
   { title: "Settings", url: "/settings", icon: Settings },
-];
-
-const toolsNav = [
-  { title: "Property Intelligence", url: "/property-intelligence", icon: Globe, badge: "AI" },
-  { title: "Turnover Data", url: "/brands?tab=turnover", icon: BarChart3 },
-  { title: "Cann CAD", url: "/cad-measure", icon: Ruler },
 ];
 
 function NavSection({ label, items }: { label: string; items: Array<{ title: string; url: string; icon: any; badge?: string }> }) {
@@ -266,8 +262,6 @@ export function AppSidebar() {
         <NavSection label="Microsoft 365" items={microsoftNav} />
         <SidebarSeparator />
         <NavSection label="Admin" items={adminNav} />
-        <SidebarSeparator />
-        <NavSection label="Tools" items={toolsNav} />
       </SidebarContent>
 
       <SidebarFooter className="p-3 space-y-2">
@@ -397,8 +391,8 @@ const mobileOverlayItems = [
   { title: "News", url: "/news", icon: Newspaper },
   { title: "Leads", url: "/leads", icon: UserPlus },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe },
+  { title: "Cann CAD", url: "/cad-measure", icon: Ruler },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
-  { title: "Turnover Data", url: "/brands?tab=turnover", icon: BarChart3 },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles },
   { title: "Office Add-ins", url: "/addins", icon: FileSpreadsheet },
   { title: "Settings", url: "/settings", icon: Settings },

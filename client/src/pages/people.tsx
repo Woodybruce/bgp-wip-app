@@ -777,7 +777,8 @@ function AgentsTab({
   );
 }
 
-// ── Two-tier tenant brand taxonomy ──────────────────────────────────
+// TenantsTab has been moved to Brand Intelligence (/brands?tab=explorer)
+// TODO: Remove dead TenantsTab code below (~370 lines) — no longer rendered
 type SubCategory = { key: string; label: string; icon: any; match: string[] };
 type TopCategory = { key: string; label: string; icon: any; color: string; gradient: string; subs: SubCategory[] };
 
