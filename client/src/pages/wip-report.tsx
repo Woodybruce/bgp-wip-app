@@ -814,11 +814,28 @@ export default function WipReport() {
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(new Set());
   const [selectedFiscalYears, setSelectedFiscalYears] = useState<Set<number>>(new Set());
   const [clickFilter, setClickFilter] = useState<ClickFilter>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [appendUploading, setAppendUploading] = useState(false);
   const [syncingXero, setSyncingXero] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback((checked: boolean, rows: WipDealEntry[]) => {
+    if (checked) {
+      setSelectedIds(new Set(rows.filter(e => e.id).map(e => e.id!)));
+    } else {
+      setSelectedIds(new Set());
+    }
+  }, []);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>, append = false) => {
     const file = e.target.files?.[0];
@@ -1387,10 +1404,39 @@ export default function WipReport() {
                 </Badge>
               )}
             </div>
+            {selectedIds.size > 0 && (
+              <div className="flex items-center gap-3 px-4 py-2 bg-primary/5 border-b">
+                <span className="text-xs font-medium">{selectedIds.size} selected</span>
+                <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => setSelectedIds(new Set())}>
+                  Clear
+                </Button>
+                <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={async () => {
+                  if (!confirm(`Delete ${selectedIds.size} selected entries?`)) return;
+                  try {
+                    for (const id of selectedIds) {
+                      await apiRequest("DELETE", `/api/wip/${id}`);
+                    }
+                    queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+                    toast({ title: `Deleted ${selectedIds.size} entries` });
+                    setSelectedIds(new Set());
+                  } catch { toast({ title: "Delete failed", variant: "destructive" }); }
+                }}>
+                  Delete Selected
+                </Button>
+              </div>
+            )}
             <ScrollableTable minWidth={1400}>
               <table className="w-full">
                 <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
                   <tr>
+                    <th className="w-[36px] px-2 py-2">
+                      <Checkbox
+                        checked={sortedDetailEntries.length > 0 && sortedDetailEntries.every(e => e.id && selectedIds.has(e.id))}
+                        onCheckedChange={(c) => toggleSelectAll(!!c, sortedDetailEntries)}
+                        aria-label="Select all"
+                        data-testid="checkbox-select-all"
+                      />
+                    </th>
                     {[
                       { key: "ref", label: "Deal", width: "w-40" },
                       { key: "groupName", label: "Group", width: "w-28" },
@@ -1421,7 +1467,17 @@ export default function WipReport() {
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-xs">
                   {sortedDetailEntries.map((e, i) => (
-                    <tr key={e.id || i} className="hover:bg-gray-50 group" data-testid={`wip-row-${i}`}>
+                    <tr key={e.id || i} className={`hover:bg-gray-50 group ${e.id && selectedIds.has(e.id) ? "bg-primary/5" : ""}`} data-testid={`wip-row-${i}`}>
+                      <td className="px-2 py-1.5">
+                        {e.id && (
+                          <Checkbox
+                            checked={selectedIds.has(e.id)}
+                            onCheckedChange={() => toggleSelect(e.id!)}
+                            aria-label={`Select ${e.ref || "row"}`}
+                            data-testid={`checkbox-select-${e.id}`}
+                          />
+                        )}
+                      </td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[180px]">
                         {e.dealId ? (
                           <Link href={`/deals/${e.dealId}`}>
@@ -1463,7 +1519,7 @@ export default function WipReport() {
                 </tbody>
                 <tfoot className="bg-gray-100 border-t font-semibold">
                   <tr>
-                    <td colSpan={7} className="px-2 py-1.5 text-gray-800">Total</td>
+                    <td colSpan={8} className="px-2 py-1.5 text-gray-800">Total</td>
                     <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
                       {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
                     </td>
