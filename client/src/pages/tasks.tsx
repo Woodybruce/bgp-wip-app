@@ -869,7 +869,7 @@ export default function TasksPage() {
                           <X className="w-3 h-3" />
                         </Button>
                       </div>
-                    )
+                    )}
 
                     {displayCompleted.length > 0 && (
                       <>
