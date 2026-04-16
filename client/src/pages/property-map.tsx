@@ -234,6 +234,11 @@ export default function PropertyMap() {
 
   const initMap = useCallback(() => {
     if (!mapRef.current || !scriptReady || googleMapRef.current) return;
+    if (typeof google === "undefined" || !google.maps) return;
+
+    // Defer init if container has no dimensions yet (lazy/suspense race)
+    const rect = mapRef.current.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return; // useEffect retry handles this
 
     const urlParams = new URLSearchParams(window.location.search);
     const qLat = parseFloat(urlParams.get("lat") || "");
@@ -264,6 +269,9 @@ export default function PropertyMap() {
 
     googleMapRef.current = map;
     infoWindowRef.current = new google.maps.InfoWindow();
+
+    // Force tile load after init — container may have resized during Suspense
+    setTimeout(() => google.maps.event.trigger(map, "resize"), 0);
 
     map.addListener("zoom_changed", () => {
       setMapZoom(map.getZoom() || DEFAULT_ZOOM);
@@ -331,7 +339,30 @@ export default function PropertyMap() {
 
   useEffect(() => {
     initMap();
-  }, [initMap]);
+    // If initMap bailed because the container had no dimensions, retry until it does
+    if (scriptReady && mapRef.current && !googleMapRef.current) {
+      const retryInterval = setInterval(() => {
+        if (googleMapRef.current) {
+          clearInterval(retryInterval);
+          return;
+        }
+        initMap();
+      }, 150);
+      return () => clearInterval(retryInterval);
+    }
+  }, [initMap, scriptReady]);
+
+  // Trigger resize when the map container size changes so tiles render
+  useEffect(() => {
+    const container = mapRef.current;
+    if (!container || !scriptReady) return;
+    const ro = new ResizeObserver(() => {
+      const map = googleMapRef.current;
+      if (map) google.maps.event.trigger(map, "resize");
+    });
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [scriptReady]);
 
   // Create markers when filtered properties change
   useEffect(() => {
