@@ -30,6 +30,7 @@ import { Button } from "@/components/ui/button";
 
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ViewToggle } from "@/components/mobile-card-view";
 import { InlineText, InlineNumber, InlineSelect, InlineDate, InlineLabelSelect } from "@/components/inline-edit";
 import { buildUserIdColorMap } from "@/lib/agent-colors";
 import type { InvestmentTracker, CrmProperty, CrmDeal, CrmCompany, CrmContact, InvestmentViewing, InvestmentOffer, InvestmentDistribution } from "@shared/schema";
@@ -802,6 +803,9 @@ function FilterHead({ label, value, options, onChange, className = "", colorMap 
 
 export default function InvestmentTrackerPage() {
   const [boardType, setBoardType] = useState<BoardType>("Purchases");
+  const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
+    typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
+  );
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [assetClassFilter, setAssetClassFilter] = useState("all");
@@ -1141,9 +1145,12 @@ export default function InvestmentTrackerPage() {
             {filtered.length} asset{filtered.length !== 1 ? "s" : ""} — {boardType}
           </p>
         </div>
-        <Button onClick={() => { setForm(makeEmptyForm(boardType)); setCreateOpen(true); }} data-testid="button-add-asset">
-          <Plus className="h-4 w-4 mr-1" /> Add Asset
-        </Button>
+        <div className="flex items-center gap-2">
+          <ViewToggle view={viewMode} onToggle={setViewMode} />
+          <Button onClick={() => { setForm(makeEmptyForm(boardType)); setCreateOpen(true); }} data-testid="button-add-asset">
+            <Plus className="h-4 w-4 mr-1" /> Add Asset
+          </Button>
+        </div>
       </div>
 
       <ScrollArea className="w-full shrink-0">
@@ -1202,7 +1209,7 @@ export default function InvestmentTrackerPage() {
             <button
               key={c}
               onClick={() => setAssetClassFilter(assetClassFilter === c ? "all" : c)}
-              className={`${ASSET_CLASS_COLORS[c] || "bg-gray-500"} text-white text-[10px] font-medium px-2 py-0.5 rounded-full transition-all whitespace-nowrap ${
+              className={`${ASSET_CLASS_COLORS[c] || "bg-gray-500"} text-white text-[11px] font-medium px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${
                 assetClassFilter === c ? "ring-2 ring-primary ring-offset-1 scale-105" : assetClassFilter !== "all" ? "opacity-40" : "hover:opacity-90"
               }`}
               data-testid={`filter-class-${c.toLowerCase().replace(/\s/g, "-")}`}
@@ -1405,6 +1412,73 @@ export default function InvestmentTrackerPage() {
         </div>
       )}
 
+      {viewMode === "card" ? (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {paginatedData.map(item => {
+              const statusColor = STATUS_LABEL_COLORS[item.status || ""] || "bg-gray-400";
+              const classColor = ASSET_CLASS_COLORS[item.assetType || ""] || "bg-gray-500";
+              return (
+                <Card key={item.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => setEditItem(item)}>
+                  <CardContent className="p-4 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <h3 className="font-semibold text-sm truncate">{item.assetName}</h3>
+                        {item.address && <p className="text-xs text-muted-foreground truncate">{item.address}</p>}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {item.status && <Badge className={`${statusColor} text-white text-[10px]`}>{item.status}</Badge>}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {item.assetType && <Badge className={`${classColor} text-white text-[10px]`}>{item.assetType}</Badge>}
+                      {item.tenure && <Badge variant="outline" className="text-[10px]">{item.tenure}</Badge>}
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-xs pt-1 border-t">
+                      {item.guidePrice != null && (
+                        <div>
+                          <p className="text-muted-foreground">Guide</p>
+                          <p className="font-semibold">£{Number(item.guidePrice).toLocaleString()}</p>
+                        </div>
+                      )}
+                      {item.sqft != null && (
+                        <div>
+                          <p className="text-muted-foreground">Sq Ft</p>
+                          <p className="font-semibold">{Number(item.sqft).toLocaleString()}</p>
+                        </div>
+                      )}
+                      {item.niy != null && (
+                        <div>
+                          <p className="text-muted-foreground">NIY</p>
+                          <p className="font-semibold">{Number(item.niy).toFixed(2)}%</p>
+                        </div>
+                      )}
+                    </div>
+                    {(item.vendor || item.client) && (
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground pt-1 border-t">
+                        {item.vendor && <span>Vendor: {item.vendor}</span>}
+                        {item.client && <span>Client: {item.client}</span>}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between py-3">
+              <span className="text-xs text-muted-foreground">
+                Showing {((page-1)*PAGE_SIZE)+1}–{Math.min(page*PAGE_SIZE, filtered.length)} of {filtered.length}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1}>Previous</Button>
+                <span className="text-xs">Page {page} of {totalPages}</span>
+                <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages, p+1))} disabled={page === totalPages}>Next</Button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
       <Card className="flex-1 min-h-0 overflow-hidden">
         <ScrollableTable minWidth={2100}>
             <Table className="table-fixed">
@@ -1765,6 +1839,7 @@ export default function InvestmentTrackerPage() {
           </div>
         )}
       </Card>
+      )}
 
       {/* Create / Edit Dialog */}
       <Dialog open={createOpen || !!editItem} onOpenChange={(open) => { if (!open) { setCreateOpen(false); setEditItem(null); } }}>

@@ -120,14 +120,13 @@ async function pingApollo(): Promise<PingResult> {
   const key = process.env.APOLLO_API_KEY;
   if (!key) return { ok: false, message: "APOLLO_API_KEY not set" };
   try {
-    // /people/match with an obviously-empty query: authed requests return 200
-    // with an empty person; unauth returns 401. This does not consume credits
-    // when no match is found.
+    // mixed_people/search with an empty query: authed requests return 200
+    // with an empty people array; unauth returns 401/403.
     const res = await withTimeout(
-      fetch("https://api.apollo.io/api/v1/people/match", {
+      fetch("https://api.apollo.io/api/v1/mixed_people/search", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Api-Key": key },
-        body: JSON.stringify({ reveal_personal_emails: false }),
+        body: JSON.stringify({ page: 1, per_page: 1 }),
       }),
       8000,
     );

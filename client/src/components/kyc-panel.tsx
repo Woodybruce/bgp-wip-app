@@ -139,10 +139,14 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
       const sent: string[] = [];
       if (veriffEmail) sent.push("email");
       if (veriffMobile) sent.push("WhatsApp");
-      toast({
-        title: "Veriff session created",
-        description: sent.length > 0 ? `Verification link sent via ${sent.join(" & ")}.` : "Copy the link below to send to the subject.",
-      });
+      if (sent.length > 0) {
+        toast({ title: "Verification link sent", description: `Sent via ${sent.join(" & ")}.` });
+      } else if (data?.verificationUrl) {
+        navigator.clipboard?.writeText(data.verificationUrl).catch(() => {});
+        toast({ title: "Veriff session created", description: "Verification link copied to clipboard. Send it to the subject." });
+      } else {
+        toast({ title: "Veriff session created" });
+      }
     },
     onError: (e: any) => toast({ title: "Veriff error", description: e?.message, variant: "destructive" }),
   });
@@ -575,10 +579,11 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <div className="space-y-2">
-                <Input value={veriffFirstName} onChange={(e) => setVeriffFirstName(e.target.value)} placeholder="First name" data-testid="input-veriff-firstname" />
-                <Input value={veriffLastName} onChange={(e) => setVeriffLastName(e.target.value)} placeholder="Last name" data-testid="input-veriff-lastname" />
+                <Input value={veriffFirstName} onChange={(e) => setVeriffFirstName(e.target.value)} placeholder="First name *" data-testid="input-veriff-firstname" />
+                <Input value={veriffLastName} onChange={(e) => setVeriffLastName(e.target.value)} placeholder="Last name *" data-testid="input-veriff-lastname" />
                 <Input value={veriffEmail} onChange={(e) => setVeriffEmail(e.target.value)} placeholder="Email — sends verification link" type="email" data-testid="input-veriff-email" />
                 <Input value={veriffMobile} onChange={(e) => setVeriffMobile(e.target.value)} placeholder="Mobile — sends WhatsApp link" type="tel" data-testid="input-veriff-mobile" />
+                {!veriffEmail && !veriffMobile && <p className="text-[10px] text-muted-foreground">Without email or mobile, the link will be copied to your clipboard to share manually.</p>}
               </div>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>

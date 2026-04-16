@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, Handshake, ShieldCheck,
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
-  Instagram, Coins, FileText, AlertCircle, Clock, Download,
+  Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
 } from "lucide-react";
 
 interface BrandProfile {
@@ -50,6 +50,17 @@ interface BrandProfile {
   deals: Array<any>;
   parentGroup: { id: string; name: string; store_count: number | null } | null;
   siblings: Array<any>;
+  news: Array<{
+    id: string;
+    title: string;
+    summary: string | null;
+    ai_summary: string | null;
+    url: string;
+    image_url: string | null;
+    source_name: string | null;
+    published_at: string | null;
+    category: string | null;
+  }>;
 }
 
 const ROLLOUT_OPTIONS = [
@@ -367,10 +378,25 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               )}
               {c.backers && (
                 <div className="col-span-2">
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <div className="text-[11px] text-muted-foreground flex items-center gap-1 mb-1">
                     <Coins className="w-3 h-3" /> Backers {aiFields.backers && <AiChip />}
                   </div>
-                  <div className="text-sm">{c.backers}</div>
+                  {Array.isArray(aiFields.backers_detail) && aiFields.backers_detail.length > 0 ? (
+                    <div className="space-y-1">
+                      {(aiFields.backers_detail as Array<{ name: string; type?: string; description?: string }>).map((b, i) => (
+                        <div key={i} className="flex items-start gap-1.5 text-sm">
+                          <span className="text-muted-foreground shrink-0 mt-0.5">•</span>
+                          <div className="min-w-0">
+                            <span className="font-medium">{b.name}</span>
+                            {b.type && <Badge variant="outline" className="ml-1.5 text-[9px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
+                            {b.description && <p className="text-[11px] text-muted-foreground leading-snug">{b.description}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm">{c.backers}</div>
+                  )}
                 </div>
               )}
               {c.instagram_handle && (
@@ -591,6 +617,52 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* News articles mentioning this brand */}
+            {data.news && data.news.length > 0 && (
+              <div>
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                  <Newspaper className="w-3 h-3" /> News ({data.news.length})
+                </div>
+                <div className="space-y-1.5">
+                  {data.news.slice(0, 5).map((article) => (
+                    <a
+                      key={article.id}
+                      href={article.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-start gap-2 text-xs group hover:bg-muted/40 rounded-md p-1.5 -mx-1.5 transition-colors"
+                    >
+                      {article.image_url && (
+                        <img
+                          src={article.image_url}
+                          alt=""
+                          className="w-10 h-10 rounded object-cover shrink-0 border"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                        />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{article.title}</p>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          {article.source_name && (
+                            <span className="text-[10px] text-muted-foreground">{article.source_name}</span>
+                          )}
+                          {article.published_at && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {article.source_name ? "·" : ""} {new Date(article.published_at).toLocaleDateString("en-GB")}
+                            </span>
+                          )}
+                          <ExternalLink className="w-2.5 h-2.5 text-muted-foreground ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                      </div>
+                    </a>
+                  ))}
+                  {data.news.length > 5 && (
+                    <p className="text-[10px] text-muted-foreground pl-1.5">+{data.news.length - 5} more articles</p>
+                  )}
                 </div>
               </div>
             )}

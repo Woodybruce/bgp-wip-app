@@ -263,7 +263,8 @@ veriffRouter.post("/api/veriff/sessions", requireAuth, async (req: Request, res:
           </a>
           <p style="font-size: 12px; color: #999; margin-top: 24px; line-height: 1.5;">
             This link is unique to you and will expire after one use.
-            If you have any questions, please contact us directly.
+            If you have any questions, please contact us directly.<br/>
+            This is a secure process powered by Veriff. Your data is handled in accordance with GDPR.
           </p>
         </div>`;
       sendFromSharedMailbox([email], "BGP — Identity Verification Required", emailBody).catch(e =>
@@ -283,7 +284,7 @@ veriffRouter.post("/api/veriff/sessions", requireAuth, async (req: Request, res:
       }
     }
 
-    res.json(session);
+    res.json({ ...session, emailSent: !!email });
   } catch (err: any) {
     console.error("[veriff] create session error:", err?.message);
     res.status(500).json({ error: err?.message || "Failed to create Veriff session" });

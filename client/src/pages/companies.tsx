@@ -1317,7 +1317,9 @@ function CompanyDetail({ id }: { id: string }) {
             </CardContent>
           </Card>
 
-          <BrandProfilePanel companyId={id} />
+          {!((company?.companyType || "").toLowerCase() === "landlord" || (company?.companyType || "").toLowerCase() === "client" || (company?.companyType || "").toLowerCase() === "landlord / client") && (
+            <BrandProfilePanel companyId={id} />
+          )}
 
           {linkedProperties.length > 0 && (() => {
             const userIdToName = new Map<string, string>();

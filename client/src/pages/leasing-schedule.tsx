@@ -3,6 +3,10 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { ViewToggle } from "@/components/mobile-card-view";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Card, CardContent } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -1769,6 +1773,9 @@ export default function LeasingSchedulePage() {
   const propertyId = params?.propertyId;
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
+    typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "card"
+  );
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 300);
     return () => clearTimeout(timer);
@@ -1825,6 +1832,16 @@ export default function LeasingSchedulePage() {
     );
   }, [properties, debouncedSearch]);
 
+  const stats = useMemo(() => {
+    const totalProps = filtered.length;
+    const totalUnits = filtered.reduce((s, p) => s + p.unit_count, 0);
+    const occupied = filtered.reduce((s, p) => s + p.occupied_count, 0);
+    const vacant = filtered.reduce((s, p) => s + p.vacant_count, 0);
+    const expiring = filtered.reduce((s, p) => s + p.expiring_soon, 0);
+    const occupancy = totalUnits > 0 ? Math.round((occupied / totalUnits) * 100) : 0;
+    return { totalProps, totalUnits, occupied, vacant, expiring, occupancy };
+  }, [filtered]);
+
   const byLandlord = useMemo(() => {
     const groups: Record<string, LeasingProperty[]> = {};
     for (const p of filtered) {
@@ -1844,15 +1861,18 @@ export default function LeasingSchedulePage() {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2" data-testid="page-title">
             <Building2 className="w-5 h-5" />Leasing Schedule Board
           </h1>
-          <p className="text-sm text-muted-foreground">Manage leasing schedules across all instruction properties</p>
+          <p className="text-sm text-muted-foreground">
+            {filtered.length} {filtered.length === 1 ? "property" : "properties"} · {stats.totalUnits} units
+          </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <ViewToggle view={viewMode} onToggle={setViewMode} />
           <div className="relative">
             <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-gray-400" />
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search properties..." className="pl-8 h-8 text-xs w-[200px]" data-testid="search-properties" />
@@ -1872,10 +1892,142 @@ export default function LeasingSchedulePage() {
         </div>
       </div>
 
+      {/* Stat cards — matching WIP / investment tracker style */}
+      <ScrollArea className="w-full shrink-0">
+        <div className="flex items-center gap-3 pb-1">
+          <Card className="flex-shrink-0 min-w-[120px]">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                <div>
+                  <p className="text-lg font-bold">{stats.totalProps}</p>
+                  <p className="text-xs text-muted-foreground">Properties</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="flex-shrink-0 min-w-[120px]">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-slate-500" />
+                <div>
+                  <p className="text-lg font-bold">{stats.totalUnits}</p>
+                  <p className="text-xs text-muted-foreground">Total Units</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="flex-shrink-0 min-w-[120px]">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                <div>
+                  <p className="text-lg font-bold">{stats.occupied}</p>
+                  <p className="text-xs text-muted-foreground">Occupied</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="flex-shrink-0 min-w-[120px]">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-gray-400" />
+                <div>
+                  <p className="text-lg font-bold">{stats.vacant}</p>
+                  <p className="text-xs text-muted-foreground">Vacant</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="flex-shrink-0 min-w-[120px]">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                <div>
+                  <p className="text-lg font-bold">{stats.expiring}</p>
+                  <p className="text-xs text-muted-foreground">Expiring Soon</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="flex-shrink-0 min-w-[120px]">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2">
+                <div className="w-2.5 h-2.5 rounded-full bg-purple-500" />
+                <div>
+                  <p className="text-lg font-bold">{stats.occupancy}%</p>
+                  <p className="text-xs text-muted-foreground">Occupancy</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+        <ScrollBar orientation="horizontal" />
+      </ScrollArea>
+
       {isLoading ? (
         <div className="flex items-center justify-center h-40">
           <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
         </div>
+      ) : viewMode === "table" ? (
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Property</TableHead>
+                  <TableHead>Landlord</TableHead>
+                  <TableHead>Asset Class</TableHead>
+                  <TableHead className="text-center">Units</TableHead>
+                  <TableHead className="text-center">Occupied</TableHead>
+                  <TableHead className="text-center">Vacant</TableHead>
+                  <TableHead className="text-center">Expiring</TableHead>
+                  <TableHead className="text-center">Occupancy</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map(p => {
+                  const occ = p.unit_count > 0 ? Math.round((p.occupied_count / p.unit_count) * 100) : 0;
+                  return (
+                    <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => window.location.href = `/leasing-schedule/${p.id}`}>
+                      <TableCell>
+                        <Link href={`/leasing-schedule/${p.id}`} className="font-medium text-sm hover:underline">{p.name}</Link>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {p.landlord_id ? (
+                          <Link href={`/companies/${p.landlord_id}`} className="hover:underline text-blue-600 dark:text-blue-400" onClick={(e: any) => e.stopPropagation()}>{p.landlord_name}</Link>
+                        ) : p.landlord_name || "—"}
+                      </TableCell>
+                      <TableCell className="text-sm">{p.asset_class || "—"}</TableCell>
+                      <TableCell className="text-center text-sm font-medium">{p.unit_count}</TableCell>
+                      <TableCell className="text-center text-sm text-emerald-600">{p.occupied_count}</TableCell>
+                      <TableCell className="text-center text-sm text-gray-400">{p.vacant_count}</TableCell>
+                      <TableCell className="text-center text-sm">
+                        {p.expiring_soon > 0 ? (
+                          <Badge variant="outline" className="text-[10px] border-amber-300 text-amber-700 bg-amber-50">{p.expiring_soon}</Badge>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center gap-2 justify-center">
+                          <div className="w-16 h-1.5 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${occ}%` }} />
+                          </div>
+                          <span className="text-xs font-medium">{occ}%</span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          {filtered.length === 0 && (
+            <div className="text-center py-12 text-gray-400">
+              <Building2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
+              <p className="text-sm">No leasing schedules found</p>
+            </div>
+          )}
+        </Card>
       ) : (
         <div className="space-y-6">
           {byLandlord.map(([landlord, props]) => {
