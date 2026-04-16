@@ -41,6 +41,7 @@ import {
   ShieldCheck,
   GraduationCap,
   Store,
+  Globe,
 } from "lucide-react";
 import {
   Sidebar,
@@ -78,6 +79,7 @@ const coreNavBase = [
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "Deals", url: "/deals", icon: BarChart3 },
+  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
   { title: "Requirements", url: "/requirements", icon: FileText },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "People Hub", url: "/contacts", icon: Users },
@@ -111,9 +113,7 @@ const adminNavBase = [
 ];
 
 const toolsNav = [
-  { title: "KYC & AML", url: "/kyc-clouseau", icon: ShieldCheck, badge: "AI" },
-  { title: "Land Registry", url: "/land-registry", icon: Landmark },
-  { title: "Business Rates", url: "/business-rates", icon: Receipt },
+  { title: "Property Intelligence", url: "/property-intelligence", icon: Globe, badge: "AI" },
   { title: "Turnover Data", url: "/brands?tab=turnover", icon: BarChart3 },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler },
 ];
@@ -123,10 +123,14 @@ function NavSection({ label, items }: { label: string; items: Array<{ title: str
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
     if (url.startsWith("#")) return false;
-    if (url === "/contacts") return location.startsWith("/contacts") || location.startsWith("/companies");
-    if (url === "/properties") return location.startsWith("/properties") || location.startsWith("/map") || location.startsWith("/edozo");
-    if (url === "/deals") return location.startsWith("/deals") || location.startsWith("/investment-tracker") || location.startsWith("/wip-report");
-    return location.startsWith(url);
+    // Strip query params for path-only matching
+    const path = url.split("?")[0];
+    if (path === "/contacts") return location.startsWith("/contacts") || location.startsWith("/companies");
+    if (path === "/properties") return location.startsWith("/properties") || location.startsWith("/map") || location.startsWith("/edozo");
+    if (path === "/deals") return location.startsWith("/deals") || location.startsWith("/investment-tracker") || location.startsWith("/wip-report");
+    if (path === "/property-intelligence") return location.startsWith("/property-intelligence");
+    if (path === "/kyc-clouseau") return location.startsWith("/kyc-clouseau") || location.startsWith("/aml-compliance") || location.startsWith("/compliance-board") || location.startsWith("/aml-training");
+    return location.startsWith(path);
   };
 
   return (
@@ -392,9 +396,8 @@ const mobileOverlayItems = [
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
   { title: "News", url: "/news", icon: Newspaper },
   { title: "Leads", url: "/leads", icon: UserPlus },
-  { title: "KYC & AML", url: "/kyc-clouseau", icon: ShieldCheck },
-  { title: "Land Registry", url: "/land-registry", icon: Landmark },
-  { title: "Business Rates", url: "/business-rates", icon: Receipt },
+  { title: "Property Intelligence", url: "/property-intelligence", icon: Globe },
+  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
   { title: "Turnover Data", url: "/brands?tab=turnover", icon: BarChart3 },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles },
   { title: "Office Add-ins", url: "/addins", icon: FileSpreadsheet },

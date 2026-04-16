@@ -79,6 +79,7 @@ const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
 const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
 const AmlTraining = lazy(() => import("@/pages/aml-training"));
 const KycHub = lazy(() => import("@/pages/kyc-hub"));
+const PropertyIntelligence = lazy(() => import("@/pages/property-intelligence"));
 const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
 const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
@@ -152,8 +153,13 @@ function Router() {
       <Route path="/leasing-schedule/:propertyId" component={LeasingSchedule} />
       <Route path="/tasks" component={TasksPage} />
       <Route path="/cad-measure" component={CadMeasure} />
-      {/* Unified KYC & AML hub — one page with four tabs. Old routes still
-          resolve here so existing links / external references don't break. */}
+      {/* Property Intelligence Hub — unified investigation hub with 5 tabs.
+          Legacy tool routes redirect here so old links keep working. */}
+      <Route path="/property-intelligence" component={PropertyIntelligence} />
+      <Route path="/land-registry" component={PropertyIntelligence} />
+      <Route path="/business-rates" component={PropertyIntelligence} />
+      {/* AML / KYC hub — compliance-focused tabs (board, training, settings).
+          The Investigator tool has moved to Property Intelligence. */}
       <Route path="/kyc-clouseau" component={KycHub} />
       <Route path="/aml-compliance" component={KycHub} />
       <Route path="/compliance-board" component={KycHub} />

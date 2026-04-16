@@ -60,6 +60,9 @@ export function registerLandRegistryRoutes(app: Express) {
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS notes text`).catch(() => {});
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS tags jsonb DEFAULT '[]'`).catch(() => {});
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS status varchar DEFAULT 'New'`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS voa_rateable_value integer`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS kyc_risk_level text`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS kyc_investigation_id integer`).catch(() => {});
 
   app.get("/api/land-registry/price-paid", requireAuth, async (req, res) => {
     try {
