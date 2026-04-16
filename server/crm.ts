@@ -4875,6 +4875,41 @@ Rules:
     }
   });
 
+  // ── Auto turnover research status / toggle / run-now ─────────────────
+  app.get("/api/brands/turnover-research/status", requireAuth, async (_req, res) => {
+    res.json({
+      enabled: autoTurnoverEnabled,
+      running: autoTurnoverRunning,
+      intervalHours: AUTO_TURNOVER_INTERVAL_HOURS,
+      batchSize: AUTO_TURNOVER_BATCH_SIZE,
+      lastRun: autoTurnoverLastRun,
+      lastResult: autoTurnoverLastResult,
+      nextRun: autoTurnoverEnabled && autoTurnoverLastRun
+        ? new Date(autoTurnoverLastRun.getTime() + AUTO_TURNOVER_INTERVAL_HOURS * 60 * 60 * 1000).toISOString()
+        : null,
+    });
+  });
+
+  app.post("/api/brands/turnover-research/toggle", requireAuth, async (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === "boolean") {
+      if (enabled && !autoTurnoverEnabled) {
+        startAutoTurnoverResearch();
+      } else if (!enabled && autoTurnoverEnabled) {
+        stopAutoTurnoverResearch();
+      }
+    }
+    res.json({ enabled: autoTurnoverEnabled });
+  });
+
+  app.post("/api/brands/turnover-research/run-now", requireAuth, async (_req, res) => {
+    if (autoTurnoverRunning) {
+      return res.json({ message: "Already running", running: true });
+    }
+    runAutoTurnoverCycle().catch(err => console.error("[auto-turnover] Manual trigger error:", err.message));
+    res.json({ message: "Turnover research cycle started", running: true });
+  });
+
   // ── My Portfolio dashboard endpoint ──────────────────────────────────
   app.get("/api/dashboard/my-portfolio", requireAuth, async (req: any, res) => {
     try {
@@ -6039,4 +6074,164 @@ export function stopAutoEnrichment() {
   }
   autoEnrichEnabled = false;
   console.log("[auto-enrich] Stopped");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto Turnover Research
+// Periodically finds tenant brands with no turnover data (or data >6 months old)
+// and runs Claude research on them in small batches.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const AUTO_TURNOVER_INTERVAL_HOURS = 18;
+const AUTO_TURNOVER_BATCH_SIZE = 4;
+let autoTurnoverInterval: ReturnType<typeof setInterval> | null = null;
+let autoTurnoverEnabled = true;
+let autoTurnoverRunning = false;
+let autoTurnoverLastRun: Date | null = null;
+let autoTurnoverLastResult: Record<string, any> | null = null;
+
+async function runAutoTurnoverCycle() {
+  if (autoTurnoverRunning) return;
+  autoTurnoverRunning = true;
+
+  const result: Record<string, any> = {
+    startedAt: new Date().toISOString(),
+    processed: 0,
+    skipped: 0,
+    errors: 0,
+    brands: [] as string[],
+  };
+
+  try {
+    // Pick tenant companies with no turnover data OR last entry > 6 months ago
+    const { rows: candidates } = await pool.query(`
+      SELECT c.id, c.name, c.company_type, c.domain
+      FROM crm_companies c
+      WHERE c.company_type ILIKE 'Tenant%'
+        AND (
+          NOT EXISTS (
+            SELECT 1 FROM turnover_data t WHERE t.company_id = c.id
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM turnover_data t
+            WHERE t.company_id = c.id
+              AND t.updated_at > NOW() - INTERVAL '6 months'
+          )
+        )
+      ORDER BY RANDOM()
+      LIMIT $1
+    `, [AUTO_TURNOVER_BATCH_SIZE]);
+
+    if (candidates.length === 0) {
+      result.message = "All brands have recent turnover data";
+      return;
+    }
+
+    const { nanoid } = await import("nanoid");
+
+    for (const company of candidates) {
+      try {
+        const prompt = `You are a retail and brand finance research assistant with knowledge of major UK and international retail brands up to 2025.
+
+For the brand "${company.name}" (type: ${company.company_type || "Retail"}${company.domain ? `, website: ${company.domain}` : ""}), provide the most recent annual turnover/revenue figure available.
+
+Return ONLY valid JSON in this exact format:
+{
+  "turnover": <number in GBP, e.g. 5000000 for £5m. Use 0 if unknown>,
+  "year": <year as integer, e.g. 2023>,
+  "confidence": <"High", "Medium", or "Low">,
+  "source": <"Annual Accounts" | "Industry Report" | "News" | "AI Estimate" | "Companies House">,
+  "notes": <brief explanation of the figure and its source, max 100 chars>
+}
+
+Rules:
+- For global brands (Nike, Zara, H&M) report UK revenue if known, otherwise global converted to GBP
+- If the brand is primarily UK-based, report UK turnover
+- If genuinely unknown, set turnover to 0 and confidence to "Low"
+- Do not invent figures — Low confidence with real estimates is better than made-up High confidence`;
+
+        const completion = await callClaude({
+          model: CHATBGP_HELPER_MODEL,
+          messages: [{ role: "user", content: prompt }],
+          max_completion_tokens: 200,
+        });
+
+        const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+        let parsed: any = {};
+        try {
+          const jsonMatch = raw.match(/\{[\s\S]*\}/);
+          if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+        } catch { /* leave empty */ }
+
+        const turnover = parsed.turnover && parsed.turnover > 0 ? parsed.turnover : null;
+        const period = parsed.year ? String(parsed.year) : new Date().getFullYear().toString();
+        const confidence = ["High", "Medium", "Low"].includes(parsed.confidence) ? parsed.confidence : "Low";
+        const source = parsed.source || "AI Estimate";
+        const notes = parsed.notes || `Auto-researched turnover for ${company.name}`;
+
+        const existing = await pool.query(
+          `SELECT id FROM turnover_data WHERE company_id = $1 AND source = $2 LIMIT 1`,
+          [company.id, source]
+        ).then(r => r.rows[0]);
+
+        if (existing) {
+          await pool.query(
+            `UPDATE turnover_data SET turnover = $1, period = $2, confidence = $3, notes = $4, updated_at = NOW() WHERE id = $5`,
+            [turnover, period, confidence, notes, existing.id]
+          );
+        } else {
+          await pool.query(
+            `INSERT INTO turnover_data (id, company_id, company_name, period, turnover, source, confidence, category, notes, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())`,
+            [nanoid(), company.id, company.name, period, turnover, source, confidence,
+             (company.company_type || "").replace("Tenant - ", ""), notes]
+          );
+        }
+
+        result.processed++;
+        result.brands.push(company.name);
+
+        // Small delay between API calls to avoid rate limits
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      } catch (err: any) {
+        console.error(`[auto-turnover] Error researching ${company.name}:`, err.message);
+        result.errors++;
+      }
+    }
+
+    if (result.processed > 0) {
+      console.log(`[auto-turnover] Cycle complete — ${result.processed} brands researched: ${result.brands.join(", ")}`);
+    }
+  } catch (err: any) {
+    console.error("[auto-turnover] Cycle error:", err.message);
+    result.error = err.message;
+  } finally {
+    autoTurnoverLastRun = new Date();
+    autoTurnoverLastResult = result;
+    autoTurnoverRunning = false;
+  }
+}
+
+export function startAutoTurnoverResearch() {
+  if (autoTurnoverInterval) return;
+  autoTurnoverEnabled = true;
+  console.log(`[auto-turnover] Started — running every ${AUTO_TURNOVER_INTERVAL_HOURS} hours (batch size: ${AUTO_TURNOVER_BATCH_SIZE})`);
+
+  // Initial run 90 seconds after server start (after auto-enrich has kicked off)
+  setTimeout(() => {
+    runAutoTurnoverCycle().catch(err => console.error("[auto-turnover] Initial run error:", err.message));
+  }, 90000);
+
+  autoTurnoverInterval = setInterval(() => {
+    runAutoTurnoverCycle().catch(err => console.error("[auto-turnover] Scheduled run error:", err.message));
+  }, AUTO_TURNOVER_INTERVAL_HOURS * 60 * 60 * 1000);
+}
+
+export function stopAutoTurnoverResearch() {
+  if (autoTurnoverInterval) {
+    clearInterval(autoTurnoverInterval);
+    autoTurnoverInterval = null;
+  }
+  autoTurnoverEnabled = false;
+  console.log("[auto-turnover] Stopped");
 }

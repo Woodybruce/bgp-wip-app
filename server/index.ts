@@ -307,7 +307,7 @@ import { registerVoaRoutes } from "./voa";
 import { registerLegalDDRoutes } from "./legal-dd";
 import { setupSharedMailboxRoutes } from "./shared-mailbox";
 import { registerInteractionRoutes } from "./interactions";
-import { setupCrmRoutes, startAutoEnrichment } from "./crm";
+import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
 import companiesHouseRouter from "./companies-house";
 import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
@@ -620,6 +620,7 @@ app.use("/api/branding/assets", express.static(
       const isProduction = process.env.NODE_ENV === "production";
       if (isProduction) {
         setTimeout(() => startAutoEnrichment(), 30000);
+        setTimeout(() => startAutoTurnoverResearch(), 30000);
         setTimeout(async () => {
           try {
             const { startImageSync } = await import("./image-studio");

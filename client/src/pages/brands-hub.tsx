@@ -12,7 +12,7 @@ import { getCompanyLogoUrl } from "@/lib/company-logos";
 import {
   Store, TrendingUp, Flame, Star, Search, ChevronRight,
   MapPin, Maximize2, Zap, BarChart3, RefreshCw, Building2,
-  ArrowUpRight, Users, FileText, Trophy, Sparkles,
+  ArrowUpRight, Users, FileText, Trophy, Sparkles, Play, Pause,
 } from "lucide-react";
 
 interface HubData {
@@ -389,12 +389,12 @@ export default function BrandsHub() {
       {/* ── Turnover Research Panel ─────────────────────────────────── */}
       <Card>
         <CardHeader className="pb-3 pt-4 px-5">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-violet-500" />
               <CardTitle className="text-sm font-semibold">Research Turnover</CardTitle>
             </div>
-            <p className="text-xs text-muted-foreground">AI searches Companies House + public records</p>
+            <AutoTurnoverStatus />
           </div>
         </CardHeader>
         <CardContent className="px-5 pb-4">
@@ -402,6 +402,101 @@ export default function BrandsHub() {
         </CardContent>
       </Card>
 
+    </div>
+  );
+}
+
+interface AutoTurnoverStatusData {
+  enabled: boolean;
+  running: boolean;
+  intervalHours: number;
+  batchSize: number;
+  lastRun: string | null;
+  lastResult: { processed?: number; brands?: string[]; error?: string } | null;
+  nextRun: string | null;
+}
+
+function AutoTurnoverStatus() {
+  const { toast } = useToast();
+
+  const { data: status, refetch } = useQuery<AutoTurnoverStatusData>({
+    queryKey: ["/api/brands/turnover-research/status"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/brands/turnover-research/status");
+      return res.json();
+    },
+    refetchInterval: (query) => (query.state.data?.running ? 5000 : 30000),
+    staleTime: 10_000,
+  });
+
+  const toggleMut = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const res = await apiRequest("POST", "/api/brands/turnover-research/toggle", { enabled });
+      return res.json();
+    },
+    onSuccess: () => refetch(),
+  });
+
+  const runNowMut = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/brands/turnover-research/run-now");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Research cycle started", description: `Researching up to ${status?.batchSize || 4} brands in background` });
+      setTimeout(() => refetch(), 3000);
+    },
+  });
+
+  if (!status) return null;
+
+  const lastRunAgo = status.lastRun
+    ? Math.floor((Date.now() - new Date(status.lastRun).getTime()) / 60000)
+    : null;
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      {status.running && (
+        <span className="flex items-center gap-1.5 text-[10px] text-violet-600 font-medium">
+          <span className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse" />
+          Researching…
+        </span>
+      )}
+      {!status.running && status.enabled && (
+        <span className="flex items-center gap-1.5 text-[10px] text-emerald-600">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+          Auto-on · {status.intervalHours}h cycle
+          {lastRunAgo !== null && ` · ${lastRunAgo < 60 ? `${lastRunAgo}m ago` : `${Math.floor(lastRunAgo / 60)}h ago`}`}
+          {status.lastResult?.processed ? ` · ${status.lastResult.processed} done` : ""}
+        </span>
+      )}
+      {!status.enabled && (
+        <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+          <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+          Auto-off
+        </span>
+      )}
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-6 text-[10px] px-2"
+        onClick={() => runNowMut.mutate()}
+        disabled={runNowMut.isPending || status.running}
+        title="Run a research batch now"
+      >
+        <RefreshCw className={`w-3 h-3 mr-1 ${status.running ? "animate-spin" : ""}`} />
+        Run now
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-6 text-[10px] px-2"
+        onClick={() => toggleMut.mutate(!status.enabled)}
+        disabled={toggleMut.isPending}
+        title={status.enabled ? "Pause auto-research" : "Resume auto-research"}
+      >
+        {status.enabled ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+      </Button>
     </div>
   );
 }
