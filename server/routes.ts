@@ -3723,7 +3723,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         query += ` AND t.status = $2`;
         params.push(status);
       }
-      query += ` ORDER BY CASE t.priority 
+      query += ` ORDER BY COALESCE(t.is_pinned, false) DESC, CASE t.priority
         WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
         t.due_date ASC NULLS LAST, t.sort_order ASC, t.created_at DESC`;
       const result = await pool.query(query, params);
@@ -3736,15 +3736,18 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { title, description, dueDate, priority, category, linkedDealId, linkedPropertyId, linkedContactId,
-              linkedOnenotePageId, linkedOnenotePageUrl, linkedEvernoteNoteId, linkedEvernoteNoteUrl } = req.body;
+              linkedOnenotePageId, linkedOnenotePageUrl, linkedEvernoteNoteId, linkedEvernoteNoteUrl,
+              parentTaskId, isPinned, tags } = req.body;
       if (!title || !title.trim()) return res.status(400).json({ error: "Title is required" });
       const result = await pool.query(
         `INSERT INTO user_tasks (user_id, title, description, due_date, priority, category, linked_deal_id, linked_property_id, linked_contact_id,
-          linked_onenote_page_id, linked_onenote_page_url, linked_evernote_note_id, linked_evernote_note_url)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+          linked_onenote_page_id, linked_onenote_page_url, linked_evernote_note_id, linked_evernote_note_url,
+          parent_task_id, is_pinned, tags)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
         [userId, title.trim(), description?.trim() || null, dueDate || null, priority || "medium", category || null,
          linkedDealId || null, linkedPropertyId || null, linkedContactId || null,
-         linkedOnenotePageId || null, linkedOnenotePageUrl || null, linkedEvernoteNoteId || null, linkedEvernoteNoteUrl || null]
+         linkedOnenotePageId || null, linkedOnenotePageUrl || null, linkedEvernoteNoteId || null, linkedEvernoteNoteUrl || null,
+         parentTaskId || null, isPinned || false, tags || null]
       );
       res.json(result.rows[0]);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -3764,13 +3767,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const allowed = ["title", "description", "priority", "category", "status", "sortOrder",
         "linkedDealId", "linkedPropertyId", "linkedContactId",
-        "linkedOnenotePageId", "linkedOnenotePageUrl", "linkedEvernoteNoteId", "linkedEvernoteNoteUrl"];
+        "linkedOnenotePageId", "linkedOnenotePageUrl", "linkedEvernoteNoteId", "linkedEvernoteNoteUrl",
+        "parentTaskId", "isPinned", "tags"];
       const colMap: Record<string, string> = {
         title: "title", description: "description", priority: "priority", category: "category",
         status: "status", sortOrder: "sort_order", linkedDealId: "linked_deal_id",
         linkedPropertyId: "linked_property_id", linkedContactId: "linked_contact_id",
         linkedOnenotePageId: "linked_onenote_page_id", linkedOnenotePageUrl: "linked_onenote_page_url",
         linkedEvernoteNoteId: "linked_evernote_note_id", linkedEvernoteNoteUrl: "linked_evernote_note_url",
+        parentTaskId: "parent_task_id", isPinned: "is_pinned", tags: "tags",
       };
 
       for (const key of allowed) {
