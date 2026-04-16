@@ -4669,11 +4669,11 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       // Get contacts linked to properties via crm_contact_properties
       const { rows: propertyContacts } = await pool.query(`
-        SELECT cp.property_id, c.id AS contact_id, c.first_name, c.last_name, c.email, c.job_title
+        SELECT cp.property_id, c.id AS contact_id, c.name, c.email, c.job_title
         FROM crm_contact_properties cp
         JOIN crm_contacts c ON c.id = cp.contact_id
         WHERE cp.property_id = ANY($1)
-        ORDER BY c.last_name ASC
+        ORDER BY c.name ASC
       `, [propertyIds]);
 
       // Group by property
@@ -4730,7 +4730,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         if (grouped.has(pc.property_id)) {
           grouped.get(pc.property_id)!.contacts.push({
             id: pc.contact_id,
-            name: [pc.first_name, pc.last_name].filter(Boolean).join(" "),
+            name: pc.name || "",
             email: pc.email,
             jobTitle: pc.job_title,
           });

@@ -1049,12 +1049,12 @@ const ALL_TABS: { key: PeopleTab; label: string; icon: any }[] = [
 
 const SCOPED_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "agents", label: "Agents", icon: Briefcase },
-  { key: "tenants", label: "Tenants", icon: Store },
+  { key: "tenants", label: "Tenant Brands", icon: Store },
 ];
 
 const LANDSEC_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "agents", label: "Agents", icon: Briefcase },
-  { key: "tenants", label: "Tenants", icon: Store },
+  { key: "tenants", label: "Tenant Brands", icon: Store },
   { key: "contacts", label: "All Contacts", icon: Users },
   { key: "all-companies", label: "All Companies", icon: Building },
 ];
