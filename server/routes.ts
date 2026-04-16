@@ -4039,20 +4039,56 @@ ${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuc
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Diagnostic: check OneNote token + scopes
+  app.get("/api/tasks/onenote/status", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { getValidMsToken } = await import("./microsoft");
+      const msToken = await getValidMsToken(req);
+      if (!msToken) {
+        return res.json({ connected: false, error: "No Microsoft token — sign out and back in", hasSession: !!req.session?.msTokens });
+      }
+      // Decode JWT to check scopes (middle part is the payload)
+      let scopes: string[] = [];
+      try {
+        const payload = JSON.parse(Buffer.from(msToken.split(".")[1], "base64").toString());
+        scopes = (payload.scp || "").split(" ");
+      } catch {}
+      const hasNotes = scopes.some(s => s.toLowerCase().includes("notes"));
+      // Test actual OneNote API call
+      const testRes = await fetch("https://graph.microsoft.com/v1.0/me/onenote/notebooks?$top=1", {
+        headers: { Authorization: `Bearer ${msToken}` }
+      });
+      const testBody = await testRes.text().catch(() => "");
+      return res.json({
+        connected: true,
+        hasNotesScope: hasNotes,
+        scopes,
+        onenoteApiStatus: testRes.status,
+        onenoteApiOk: testRes.ok,
+        onenoteApiResponse: testBody.slice(0, 500),
+      });
+    } catch (e: any) {
+      res.json({ connected: false, error: e.message });
+    }
+  });
+
   app.get("/api/tasks/import/onenote/notebooks", requireAuth, async (req: Request, res: Response) => {
     try {
       const { getValidMsToken } = await import("./microsoft");
       const msToken = await getValidMsToken(req);
       if (!msToken) {
-        return res.status(401).json({ error: "No Microsoft token available" });
+        return res.status(401).json({ error: "No Microsoft token available — please sign out and back in to reconnect Microsoft 365" });
       }
       const nbRes = await fetch("https://graph.microsoft.com/v1.0/me/onenote/notebooks?$select=id,displayName,lastModifiedDateTime&$orderby=lastModifiedDateTime desc&$top=20", {
         headers: { Authorization: `Bearer ${msToken}` }
       });
       if (!nbRes.ok) {
         const errText = await nbRes.text().catch(() => "");
-        console.error("[onenote] API error:", nbRes.status, errText.slice(0, 300));
-        return res.status(nbRes.status).json({ error: nbRes.status === 401 ? "Your Microsoft session has expired — please sign out and back in" : "Unable to access OneNote. Please try again." });
+        console.error("[onenote] API error:", nbRes.status, errText.slice(0, 500));
+        if (nbRes.status === 401 || nbRes.status === 403) {
+          return res.status(nbRes.status).json({ error: "OneNote access denied. Your Microsoft token may not include Notes permissions. Please sign out of BGP, then sign back in — you should see a consent prompt for OneNote access." });
+        }
+        return res.status(nbRes.status).json({ error: `OneNote API error (${nbRes.status}). ${errText.slice(0, 200)}` });
       }
       const data = await nbRes.json();
       const notebooks = (data.value || []).map((nb: any) => ({
