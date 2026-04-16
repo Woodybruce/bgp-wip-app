@@ -198,6 +198,11 @@ export function setupCrmRoutes(app: Express) {
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_url TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_title TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_contact_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_name TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_company TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_phone TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_email TEXT`).catch(() => {});
 
   app.use("/api/crm", requireAuth);
   app.get("/api/crm/stats", async (_req, res) => {
