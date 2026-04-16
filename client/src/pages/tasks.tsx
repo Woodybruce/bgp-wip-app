@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import {
@@ -39,6 +39,10 @@ interface Task {
   linked_deal_id: string | null;
   linked_property_id: string | null;
   linked_contact_id: string | null;
+  linked_onenote_page_id: string | null;
+  linked_onenote_page_url: string | null;
+  linked_evernote_note_id: string | null;
+  linked_evernote_note_url: string | null;
   sort_order: number;
   created_at: string;
   completed_at: string | null;
@@ -181,6 +185,22 @@ function TaskRow({ task, onToggle, onEdit, onDelete }: { task: Task; onToggle: (
               {task.contact_name}
             </span>
           )}
+          {task.linked_onenote_page_url && (
+            <a href={task.linked_onenote_page_url} target="_blank" rel="noopener noreferrer">
+              <span className="text-[11px] text-purple-600 flex items-center gap-1 hover:underline cursor-pointer">
+                <BookOpen className="w-3 h-3" />
+                OneNote
+              </span>
+            </a>
+          )}
+          {task.linked_evernote_note_url && (
+            <a href={task.linked_evernote_note_url} target="_blank" rel="noopener noreferrer">
+              <span className="text-[11px] text-green-600 flex items-center gap-1 hover:underline cursor-pointer">
+                <BookOpen className="w-3 h-3" />
+                Evernote
+              </span>
+            </a>
+          )}
         </div>
       </div>
 
@@ -296,6 +316,8 @@ export default function TasksPage() {
   const [editForm, setEditForm] = useState({
     title: "", description: "", priority: "medium", category: "", dueDate: "",
     linkedDealId: "", linkedPropertyId: "", linkedContactId: "",
+    linkedOnenotePageId: "", linkedOnenotePageUrl: "",
+    linkedEvernoteNoteId: "", linkedEvernoteNoteUrl: "",
   });
 
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -308,6 +330,26 @@ export default function TasksPage() {
   const [importingOnenote, setImportingOnenote] = useState(false);
   const [evernoteText, setEvernoteText] = useState("");
   const [importingEvernote, setImportingEvernote] = useState(false);
+
+  // Evernote connection + notebook browsing state
+  const [evernoteConnected, setEvernoteConnected] = useState(false);
+  const [evernoteNotebooks, setEvernoteNotebooks] = useState<any[]>([]);
+  const [evernoteNotes, setEvernoteNotes] = useState<any[]>([]);
+  const [selectedEvernoteNotebook, setSelectedEvernoteNotebook] = useState<string | null>(null);
+  const [evernoteLoading, setEvernoteLoading] = useState(false);
+
+  // Note linking state (for edit dialog)
+  const [showNotePicker, setShowNotePicker] = useState<"onenote" | "evernote" | null>(null);
+  const [notePickerNotebooks, setNotePickerNotebooks] = useState<any[]>([]);
+  const [notePickerSections, setNotePickerSections] = useState<any[]>([]);
+  const [notePickerPages, setNotePickerPages] = useState<any[]>([]);
+  const [notePickerStep, setNotePickerStep] = useState<"notebooks" | "sections" | "pages">("notebooks");
+
+  // Export to notes state (for edit dialog)
+  const [showExportPicker, setShowExportPicker] = useState<"onenote" | "evernote" | null>(null);
+  const [exportSections, setExportSections] = useState<any[]>([]);
+  const [exportNotebooks, setExportNotebooks] = useState<any[]>([]);
+  const [exporting, setExporting] = useState(false);
 
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
     queryKey: ["/api/tasks"],
@@ -456,6 +498,10 @@ export default function TasksPage() {
       linkedDealId: task.linked_deal_id || "",
       linkedPropertyId: task.linked_property_id || "",
       linkedContactId: task.linked_contact_id || "",
+      linkedOnenotePageId: task.linked_onenote_page_id || "",
+      linkedOnenotePageUrl: task.linked_onenote_page_url || "",
+      linkedEvernoteNoteId: task.linked_evernote_note_id || "",
+      linkedEvernoteNoteUrl: task.linked_evernote_note_url || "",
     });
     setShowEditDialog(true);
   };
@@ -472,6 +518,10 @@ export default function TasksPage() {
       linkedDealId: editForm.linkedDealId || null,
       linkedPropertyId: editForm.linkedPropertyId || null,
       linkedContactId: editForm.linkedContactId || null,
+      linkedOnenotePageId: editForm.linkedOnenotePageId || null,
+      linkedOnenotePageUrl: editForm.linkedOnenotePageUrl || null,
+      linkedEvernoteNoteId: editForm.linkedEvernoteNoteId || null,
+      linkedEvernoteNoteUrl: editForm.linkedEvernoteNoteUrl || null,
     });
   };
 
@@ -836,6 +886,282 @@ export default function TasksPage() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Linked Notes */}
+              <div className="border rounded-lg p-3 space-y-2 bg-muted/20">
+                <label className="text-xs font-semibold text-muted-foreground block">Linked Notes</label>
+                <div className="space-y-1.5">
+                  {editForm.linkedOnenotePageUrl ? (
+                    <div className="flex items-center gap-2 text-xs">
+                      <BookOpen className="w-3.5 h-3.5 text-purple-600" />
+                      <a href={editForm.linkedOnenotePageUrl} target="_blank" rel="noopener noreferrer" className="text-purple-600 hover:underline truncate flex-1">
+                        OneNote page linked
+                      </a>
+                      <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setEditForm(f => ({ ...f, linkedOnenotePageId: "", linkedOnenotePageUrl: "" }))}>
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="outline" size="sm" className="h-7 text-xs w-full justify-start gap-1.5"
+                      onClick={async () => {
+                        try {
+                          const res = await fetch("/api/tasks/import/onenote/notebooks", { headers: getAuthHeaders() });
+                          if (res.ok) {
+                            const nbs = await res.json();
+                            setNotePickerNotebooks(nbs);
+                            setNotePickerStep("notebooks");
+                            setShowNotePicker("onenote");
+                          } else {
+                            toast({ title: "Could not load OneNote notebooks", variant: "destructive" });
+                          }
+                        } catch { toast({ title: "OneNote not connected", variant: "destructive" }); }
+                      }}
+                    >
+                      <BookOpen className="w-3 h-3 text-purple-600" />
+                      Link OneNote Page
+                    </Button>
+                  )}
+                  {editForm.linkedEvernoteNoteUrl ? (
+                    <div className="flex items-center gap-2 text-xs">
+                      <BookOpen className="w-3.5 h-3.5 text-green-600" />
+                      <a href={editForm.linkedEvernoteNoteUrl} target="_blank" rel="noopener noreferrer" className="text-green-600 hover:underline truncate flex-1">
+                        Evernote note linked
+                      </a>
+                      <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setEditForm(f => ({ ...f, linkedEvernoteNoteId: "", linkedEvernoteNoteUrl: "" }))}>
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="outline" size="sm" className="h-7 text-xs w-full justify-start gap-1.5"
+                      onClick={async () => {
+                        try {
+                          const statusRes = await fetch("/api/evernote/status", { headers: getAuthHeaders() });
+                          const status = await statusRes.json();
+                          if (!status.connected) {
+                            toast({ title: "Evernote not connected — connect via Settings or Import dialog" });
+                            return;
+                          }
+                          const res = await fetch("/api/evernote/notebooks", { headers: getAuthHeaders() });
+                          if (res.ok) {
+                            const nbs = await res.json();
+                            setNotePickerNotebooks(nbs);
+                            setNotePickerStep("notebooks");
+                            setShowNotePicker("evernote");
+                          }
+                        } catch { toast({ title: "Evernote not available", variant: "destructive" }); }
+                      }}
+                    >
+                      <BookOpen className="w-3 h-3 text-green-600" />
+                      Link Evernote Note
+                    </Button>
+                  )}
+                </div>
+                {editTask && (
+                  <div className="flex gap-2 pt-1">
+                    <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1" onClick={async () => {
+                      try {
+                        const res = await fetch("/api/tasks/import/onenote/notebooks", { headers: getAuthHeaders() });
+                        if (res.ok) {
+                          const nbs = await res.json();
+                          setExportNotebooks(nbs);
+                          setShowExportPicker("onenote");
+                        }
+                      } catch { toast({ title: "OneNote not connected", variant: "destructive" }); }
+                    }}>
+                      Push to OneNote
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1" onClick={async () => {
+                      try {
+                        const statusRes = await fetch("/api/evernote/status", { headers: getAuthHeaders() });
+                        const status = await statusRes.json();
+                        if (!status.connected) {
+                          toast({ title: "Evernote not connected" });
+                          return;
+                        }
+                        const res = await fetch("/api/evernote/notebooks", { headers: getAuthHeaders() });
+                        if (res.ok) {
+                          const nbs = await res.json();
+                          setExportNotebooks(nbs);
+                          setShowExportPicker("evernote");
+                        }
+                      } catch { toast({ title: "Evernote not available", variant: "destructive" }); }
+                    }}>
+                      Push to Evernote
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Note picker sub-dialog */}
+              {showNotePicker && (
+                <div className="border rounded-lg p-3 bg-background space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold">
+                      {showNotePicker === "onenote" ? "Select OneNote Page" : "Select Evernote Note"}
+                    </span>
+                    <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setShowNotePicker(null)}>
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                  {notePickerStep === "notebooks" && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {notePickerNotebooks.map((nb: any) => (
+                        <button key={nb.id} className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1.5" onClick={async () => {
+                          if (showNotePicker === "onenote") {
+                            const res = await fetch(`/api/tasks/import/onenote/sections/${nb.id}`, { headers: getAuthHeaders() });
+                            if (res.ok) {
+                              const secs = await res.json();
+                              setNotePickerSections(secs);
+                              setNotePickerStep("sections");
+                            }
+                          } else {
+                            const res = await fetch(`/api/evernote/notebooks/${nb.id}/notes`, { headers: getAuthHeaders() });
+                            if (res.ok) {
+                              const notes = await res.json();
+                              setNotePickerPages(notes);
+                              setNotePickerStep("pages");
+                            }
+                          }
+                        }}>
+                          <FolderOpen className="w-3 h-3 text-muted-foreground" />
+                          {nb.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {notePickerStep === "sections" && showNotePicker === "onenote" && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      <button className="text-[10px] text-muted-foreground hover:underline mb-1" onClick={() => setNotePickerStep("notebooks")}>
+                        Back to notebooks
+                      </button>
+                      {notePickerSections.map((sec: any) => (
+                        <button key={sec.id} className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1.5" onClick={async () => {
+                          const res = await fetch(`/api/tasks/onenote/pages/${sec.id}`, { headers: getAuthHeaders() });
+                          if (res.ok) {
+                            const pages = await res.json();
+                            setNotePickerPages(pages);
+                            setNotePickerStep("pages");
+                          }
+                        }}>
+                          <FileText className="w-3 h-3 text-muted-foreground" />
+                          {sec.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {notePickerStep === "pages" && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      <button className="text-[10px] text-muted-foreground hover:underline mb-1" onClick={() => setNotePickerStep(showNotePicker === "onenote" ? "sections" : "notebooks")}>
+                        Back
+                      </button>
+                      {notePickerPages.map((page: any) => (
+                        <button key={page.id} className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1.5" onClick={() => {
+                          if (showNotePicker === "onenote") {
+                            setEditForm(f => ({ ...f, linkedOnenotePageId: page.id, linkedOnenotePageUrl: page.webUrl || "" }));
+                          } else {
+                            setEditForm(f => ({ ...f, linkedEvernoteNoteId: page.id, linkedEvernoteNoteUrl: page.webUrl || page.url || "" }));
+                          }
+                          setShowNotePicker(null);
+                          toast({ title: `${showNotePicker === "onenote" ? "OneNote page" : "Evernote note"} linked` });
+                        }}>
+                          <Notebook className="w-3 h-3 text-muted-foreground" />
+                          {page.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Export picker sub-dialog */}
+              {showExportPicker && editTask && (
+                <div className="border rounded-lg p-3 bg-background space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold">
+                      {showExportPicker === "onenote" ? "Export to OneNote — select section" : "Export to Evernote — select notebook"}
+                    </span>
+                    <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setShowExportPicker(null)}>
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                  {showExportPicker === "onenote" && exportSections.length === 0 && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {exportNotebooks.map((nb: any) => (
+                        <button key={nb.id} className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1.5" onClick={async () => {
+                          const res = await fetch(`/api/tasks/import/onenote/sections/${nb.id}`, { headers: getAuthHeaders() });
+                          if (res.ok) setExportSections(await res.json());
+                        }}>
+                          <FolderOpen className="w-3 h-3 text-muted-foreground" />
+                          {nb.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {showExportPicker === "onenote" && exportSections.length > 0 && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      <button className="text-[10px] text-muted-foreground hover:underline mb-1" onClick={() => setExportSections([])}>
+                        Back to notebooks
+                      </button>
+                      {exportSections.map((sec: any) => (
+                        <button key={sec.id} className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1.5" disabled={exporting} onClick={async () => {
+                          setExporting(true);
+                          try {
+                            const res = await fetch(`/api/tasks/${editTask.id}/export-onenote`, {
+                              method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+                              body: JSON.stringify({ sectionId: sec.id }),
+                            });
+                            if (res.ok) {
+                              const data = await res.json();
+                              setEditForm(f => ({ ...f, linkedOnenotePageId: data.pageId, linkedOnenotePageUrl: data.pageUrl || "" }));
+                              queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+                              toast({ title: "Task exported to OneNote" });
+                              setShowExportPicker(null);
+                            } else {
+                              toast({ title: "Export failed", variant: "destructive" });
+                            }
+                          } catch { toast({ title: "Export failed", variant: "destructive" }); }
+                          setExporting(false);
+                        }}>
+                          <FileText className="w-3 h-3 text-muted-foreground" />
+                          {sec.name}
+                          {exporting && <Loader2 className="w-3 h-3 animate-spin ml-auto" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {showExportPicker === "evernote" && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {exportNotebooks.map((nb: any) => (
+                        <button key={nb.id} className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1.5" disabled={exporting} onClick={async () => {
+                          setExporting(true);
+                          try {
+                            const res = await fetch(`/api/tasks/${editTask.id}/export-evernote`, {
+                              method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+                              body: JSON.stringify({ notebookId: nb.id }),
+                            });
+                            if (res.ok) {
+                              const data = await res.json();
+                              setEditForm(f => ({ ...f, linkedEvernoteNoteId: data.noteId, linkedEvernoteNoteUrl: data.noteUrl || "" }));
+                              queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+                              toast({ title: "Task exported to Evernote" });
+                              setShowExportPicker(null);
+                            } else {
+                              toast({ title: "Export failed", variant: "destructive" });
+                            }
+                          } catch { toast({ title: "Export failed", variant: "destructive" }); }
+                          setExporting(false);
+                        }}>
+                          <FolderOpen className="w-3 h-3 text-muted-foreground" />
+                          {nb.name}
+                          {exporting && <Loader2 className="w-3 h-3 animate-spin ml-auto" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowEditDialog(false)} data-testid="button-cancel-task">Cancel</Button>

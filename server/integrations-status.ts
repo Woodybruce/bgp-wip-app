@@ -47,6 +47,10 @@ const KEYS: KeyDef[] = [
   { name: "XERO_CLIENT_ID", label: "Xero Client ID", group: "Accounting" },
   { name: "XERO_CLIENT_SECRET", label: "Xero Client Secret", group: "Accounting" },
 
+  // Notes / Productivity
+  { name: "EVERNOTE_CLIENT_ID", label: "Evernote Client ID", group: "Notes" },
+  { name: "EVERNOTE_CLIENT_SECRET", label: "Evernote Client Secret", group: "Notes" },
+
   // KYC / AML
   { name: "VERIFF_API_KEY", label: "Veriff API Key", group: "KYC", fallbacks: ["VERIFF_PUBLIC_KEY", "VERIFF_KEY", "VERIFF_INTEGRATION_ID"] },
   { name: "VERIFF_SECRET", label: "Veriff Secret", group: "KYC", fallbacks: ["VERIFF_PRIVATE_KEY", "VERIFF_SHARED_SECRET"] },

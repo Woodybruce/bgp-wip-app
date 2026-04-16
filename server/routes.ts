@@ -3735,12 +3735,16 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { title, description, dueDate, priority, category, linkedDealId, linkedPropertyId, linkedContactId } = req.body;
+      const { title, description, dueDate, priority, category, linkedDealId, linkedPropertyId, linkedContactId,
+              linkedOnenotePageId, linkedOnenotePageUrl, linkedEvernoteNoteId, linkedEvernoteNoteUrl } = req.body;
       if (!title || !title.trim()) return res.status(400).json({ error: "Title is required" });
       const result = await pool.query(
-        `INSERT INTO user_tasks (user_id, title, description, due_date, priority, category, linked_deal_id, linked_property_id, linked_contact_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-        [userId, title.trim(), description?.trim() || null, dueDate || null, priority || "medium", category || null, linkedDealId || null, linkedPropertyId || null, linkedContactId || null]
+        `INSERT INTO user_tasks (user_id, title, description, due_date, priority, category, linked_deal_id, linked_property_id, linked_contact_id,
+          linked_onenote_page_id, linked_onenote_page_url, linked_evernote_note_id, linked_evernote_note_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING *`,
+        [userId, title.trim(), description?.trim() || null, dueDate || null, priority || "medium", category || null,
+         linkedDealId || null, linkedPropertyId || null, linkedContactId || null,
+         linkedOnenotePageId || null, linkedOnenotePageUrl || null, linkedEvernoteNoteId || null, linkedEvernoteNoteUrl || null]
       );
       res.json(result.rows[0]);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -3758,11 +3762,15 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const values: any[] = [];
       let idx = 1;
 
-      const allowed = ["title", "description", "priority", "category", "status", "sortOrder", "linkedDealId", "linkedPropertyId", "linkedContactId"];
+      const allowed = ["title", "description", "priority", "category", "status", "sortOrder",
+        "linkedDealId", "linkedPropertyId", "linkedContactId",
+        "linkedOnenotePageId", "linkedOnenotePageUrl", "linkedEvernoteNoteId", "linkedEvernoteNoteUrl"];
       const colMap: Record<string, string> = {
         title: "title", description: "description", priority: "priority", category: "category",
         status: "status", sortOrder: "sort_order", linkedDealId: "linked_deal_id",
-        linkedPropertyId: "linked_property_id", linkedContactId: "linked_contact_id"
+        linkedPropertyId: "linked_property_id", linkedContactId: "linked_contact_id",
+        linkedOnenotePageId: "linked_onenote_page_id", linkedOnenotePageUrl: "linked_onenote_page_url",
+        linkedEvernoteNoteId: "linked_evernote_note_id", linkedEvernoteNoteUrl: "linked_evernote_note_url",
       };
 
       for (const key of allowed) {
@@ -4175,6 +4183,177 @@ ${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuc
       res.json({ imported, total: items.length });
     } catch (e: any) {
       console.error("[evernote] Import error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── OneNote: list pages in a section (for "link note" picker) ─────────────
+  app.get("/api/tasks/onenote/pages/:sectionId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { getValidMsToken } = await import("./microsoft");
+      const msToken = await getValidMsToken(req);
+      if (!msToken) return res.status(401).json({ error: "No Microsoft token" });
+      const pRes = await fetch(
+        `https://graph.microsoft.com/v1.0/me/onenote/sections/${req.params.sectionId}/pages?$select=id,title,links,lastModifiedDateTime&$top=50&$orderby=lastModifiedDateTime desc`,
+        { headers: { Authorization: `Bearer ${msToken}` } }
+      );
+      if (!pRes.ok) return res.status(pRes.status).json({ error: "Failed to fetch pages" });
+      const data = await pRes.json();
+      res.json((data.value || []).map((p: any) => ({
+        id: p.id,
+        title: p.title,
+        webUrl: p.links?.oneNoteWebUrl?.href || null,
+        lastModified: p.lastModifiedDateTime,
+      })));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── OneNote: link a page to a task ──────────────────────────────────────────
+  app.post("/api/tasks/:id/link-onenote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { pageId, pageUrl } = req.body;
+      if (!pageId) return res.status(400).json({ error: "pageId required" });
+      const result = await pool.query(
+        `UPDATE user_tasks SET linked_onenote_page_id = $1, linked_onenote_page_url = $2 WHERE id = $3 AND user_id = $4 RETURNING *`,
+        [pageId, pageUrl || null, req.params.id, userId]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: "Task not found" });
+      res.json(result.rows[0]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── OneNote: unlink a page from a task ──────────────────────────────────────
+  app.delete("/api/tasks/:id/link-onenote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const result = await pool.query(
+        `UPDATE user_tasks SET linked_onenote_page_id = NULL, linked_onenote_page_url = NULL WHERE id = $1 AND user_id = $2 RETURNING *`,
+        [req.params.id, userId]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: "Task not found" });
+      res.json(result.rows[0]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── OneNote: export/push a task as a new OneNote page ───────────────────────
+  app.post("/api/tasks/:id/export-onenote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { sectionId } = req.body;
+      if (!sectionId) return res.status(400).json({ error: "sectionId required" });
+
+      const task = await pool.query("SELECT * FROM user_tasks WHERE id = $1 AND user_id = $2", [req.params.id, userId]);
+      if (!task.rows[0]) return res.status(404).json({ error: "Task not found" });
+      const t = task.rows[0];
+
+      const { getValidMsToken } = await import("./microsoft");
+      const msToken = await getValidMsToken(req);
+      if (!msToken) return res.status(401).json({ error: "No Microsoft token" });
+
+      const html = `<!DOCTYPE html><html><head><title>${t.title}</title></head><body>
+<h1>${t.title}</h1>
+<p><strong>Priority:</strong> ${t.priority} | <strong>Status:</strong> ${t.status}${t.due_date ? ` | <strong>Due:</strong> ${new Date(t.due_date).toLocaleDateString("en-GB")}` : ""}</p>
+${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
+<p style="color:#888;font-size:12px;">Exported from BGP Tasks</p>
+</body></html>`;
+
+      const pageRes = await fetch(
+        `https://graph.microsoft.com/v1.0/me/onenote/sections/${sectionId}/pages`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${msToken}`,
+            "Content-Type": "application/xhtml+xml",
+          },
+          body: html,
+        }
+      );
+      if (!pageRes.ok) {
+        const err = await pageRes.text();
+        console.error("[onenote-export]", err.slice(0, 300));
+        return res.status(pageRes.status).json({ error: "Failed to create OneNote page" });
+      }
+      const page = await pageRes.json();
+      const pageUrl = page.links?.oneNoteWebUrl?.href || null;
+
+      await pool.query(
+        `UPDATE user_tasks SET linked_onenote_page_id = $1, linked_onenote_page_url = $2 WHERE id = $3`,
+        [page.id, pageUrl, req.params.id]
+      );
+
+      res.json({ pageId: page.id, pageUrl, title: page.title });
+    } catch (e: any) {
+      console.error("[onenote-export]", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Evernote: link a note to a task ─────────────────────────────────────────
+  app.post("/api/tasks/:id/link-evernote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { noteId, noteUrl } = req.body;
+      if (!noteId) return res.status(400).json({ error: "noteId required" });
+      const result = await pool.query(
+        `UPDATE user_tasks SET linked_evernote_note_id = $1, linked_evernote_note_url = $2 WHERE id = $3 AND user_id = $4 RETURNING *`,
+        [noteId, noteUrl || null, req.params.id, userId]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: "Task not found" });
+      res.json(result.rows[0]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Evernote: unlink a note from a task ─────────────────────────────────────
+  app.delete("/api/tasks/:id/link-evernote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const result = await pool.query(
+        `UPDATE user_tasks SET linked_evernote_note_id = NULL, linked_evernote_note_url = NULL WHERE id = $1 AND user_id = $2 RETURNING *`,
+        [req.params.id, userId]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: "Task not found" });
+      res.json(result.rows[0]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Evernote: export/push a task as a new Evernote note ─────────────────────
+  app.post("/api/tasks/:id/export-evernote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { notebookId } = req.body;
+      if (!notebookId) return res.status(400).json({ error: "notebookId required" });
+
+      const task = await pool.query("SELECT * FROM user_tasks WHERE id = $1 AND user_id = $2", [req.params.id, userId]);
+      if (!task.rows[0]) return res.status(404).json({ error: "Task not found" });
+      const t = task.rows[0];
+
+      const { evernoteApi } = await import("./evernote");
+      const content = `Priority: ${t.priority} | Status: ${t.status}${t.due_date ? ` | Due: ${new Date(t.due_date).toLocaleDateString("en-GB")}` : ""}\n\n${t.description || ""}\n\nExported from BGP Tasks`;
+
+      const note = await evernoteApi(req.session, `/v3/notebooks/${notebookId}/notes`, {
+        method: "POST",
+        body: JSON.stringify({ title: t.title, content }),
+      });
+
+      const noteId = note.id || note.guid;
+      const noteUrl = note.webUrl || null;
+
+      await pool.query(
+        `UPDATE user_tasks SET linked_evernote_note_id = $1, linked_evernote_note_url = $2 WHERE id = $3`,
+        [noteId, noteUrl, req.params.id]
+      );
+
+      res.json({ noteId, noteUrl, title: t.title });
+    } catch (e: any) {
+      console.error("[evernote-export]", e.message);
+      if (e.message.includes("Not connected")) return res.status(401).json({ error: e.message });
       res.status(500).json({ error: e.message });
     }
   });

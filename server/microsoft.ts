@@ -17,6 +17,9 @@ const SCOPES = [
   "Mail.Read",
   "Mail.Read.Shared",
   "Mail.Send",
+  "Notes.Read",
+  "Notes.Read.All",
+  "Notes.ReadWrite.All",
 ];
 
 const SHAREPOINT_HOST = "brucegillinghampollardlimited.sharepoint.com";
