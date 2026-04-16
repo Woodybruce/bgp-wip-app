@@ -311,29 +311,32 @@ async function lookupPlanningData(postcode: string): Promise<any> {
 
     const results: Record<string, any[]> = {};
 
-    await Promise.all(
-      datasets.map(async (dataset) => {
-        try {
-          const resp = await fetch(
-            `https://www.planning.data.gov.uk/entity.json?dataset=${dataset}&longitude=${lng}&latitude=${lat}&limit=10`,
-            { signal: AbortSignal.timeout(15000) }
-          );
-          if (!resp.ok) return;
-          const data = await resp.json();
-          if (data.entities?.length > 0) {
-            results[dataset] = data.entities.map((e: any) => ({
-              name: e.name || e.reference,
-              reference: e.reference,
-              dataset: e.dataset,
-              startDate: e["start-date"],
-              documentUrl: e["document-url"] || e["documentation-url"],
-              designationDate: e["designation-date"],
-            }));
+    const [, planningApps] = await Promise.all([
+      Promise.all(
+        datasets.map(async (dataset) => {
+          try {
+            const resp = await fetch(
+              `https://www.planning.data.gov.uk/entity.json?dataset=${dataset}&longitude=${lng}&latitude=${lat}&limit=10`,
+              { signal: AbortSignal.timeout(15000) }
+            );
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (data.entities?.length > 0) {
+              results[dataset] = data.entities.map((e: any) => ({
+                name: e.name || e.reference,
+                reference: e.reference,
+                dataset: e.dataset,
+                startDate: e["start-date"],
+                documentUrl: e["document-url"] || e["documentation-url"],
+                designationDate: e["designation-date"],
+              }));
+            }
+          } catch {
           }
-        } catch {
-        }
-      })
-    );
+        })
+      ),
+      lookupPlanningApplications(lat, lng),
+    ]);
 
     return {
       conservationAreas: results["conservation-area"] || [],
@@ -350,11 +353,41 @@ async function lookupPlanningData(postcode: string): Promise<any> {
       locallyListedBuildings: results["locally-listed-building"] || [],
       heritageCoast: results["heritage-coast"] || [],
       specialAreasOfConservation: results["special-area-of-conservation"] || [],
+      planningApplications: planningApps || [],
       coordinates: { lat, lng },
     };
   } catch (e) {
     console.error("[property-lookup] Planning data error:", e);
     return null;
+  }
+}
+
+async function lookupPlanningApplications(lat: number, lng: number): Promise<any[]> {
+  try {
+    const tenYearsAgo = new Date();
+    tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
+    const fromDate = tenYearsAgo.toISOString().split("T")[0]; // YYYY-MM-DD
+
+    // Query planning.data.gov.uk for planning applications within ~500m radius
+    const url = `https://www.planning.data.gov.uk/entity.json?dataset=planning-application&longitude=${lng}&latitude=${lat}&geometry_relation=intersects&limit=100&entry_date_after=${fromDate}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!resp.ok) return [];
+    const data = await resp.json() as any;
+    const entities = data.entities || [];
+    return entities.map((e: any) => ({
+      reference: e.reference || e["application-reference"],
+      address: e.name || e.address || e["site-address"] || "",
+      description: e.description || e["development-description"] || e.proposal || "",
+      status: e["application-status"] || e.status || "",
+      type: e["application-type"] || e.type || "",
+      decidedAt: e["decision-date"] || e["determined-date"] || "",
+      receivedAt: e["entry-date"] || e["received-date"] || e["start-date"] || "",
+      decision: e.decision || "",
+      documentUrl: e["document-url"] || e["documentation-url"] || "",
+    })).filter((p: any) => p.reference || p.description);
+  } catch (e) {
+    console.error("[property-lookup] Planning applications lookup error:", e);
+    return [];
   }
 }
 

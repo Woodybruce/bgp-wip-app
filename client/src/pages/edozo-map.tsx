@@ -1656,6 +1656,7 @@ function PropertyPanel({
   onLoadLayer,
   loadingLayer,
   address,
+  onSearchSaved,
 }: {
   postcode: string;
   data: PropertyData | null;
@@ -1665,10 +1666,71 @@ function PropertyPanel({
   onLoadLayer: (layer: string) => void;
   loadingLayer: string | null;
   address?: string;
+  onSearchSaved?: (search: any) => void;
 }) {
-  const [viewMode, setViewMode] = useState<"summary" | "full">("summary");
   const [fullTitleData, setFullTitleData] = useState<any[] | null>(null);
   const [fullTitleLoading, setFullTitleLoading] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [savedSearchId, setSavedSearchId] = useState<number | null>(null);
+
+  // Auto-save this search when data first loads
+  useEffect(() => {
+    if (!data || loading || savedSearchId !== null) return;
+    const freeholds = data.propertyDataCoUk?.["freeholds"]?.data || [];
+    const leaseholds = data.propertyDataCoUk?.["leaseholds"]?.data || [];
+    const intelligence: any = {};
+    if (data.floodRisk) {
+      const coords = (data.floodRisk as any).postcodeData;
+      if (coords?.latitude && coords?.longitude) {
+        intelligence.flood = { coordinates: { lat: coords.latitude, lng: coords.longitude } };
+      }
+    }
+    const headers: Record<string, string> = {
+      ...getAuthHeaders(),
+      "Content-Type": "application/json",
+    };
+    const token = localStorage.getItem("bgp_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    fetch("/api/land-registry/searches", {
+      method: "POST",
+      credentials: "include",
+      headers,
+      body: JSON.stringify({
+        address: address || postcode,
+        postcode,
+        freeholds,
+        leaseholds,
+        intelligence,
+      }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(saved => {
+        if (saved?.id) {
+          setSavedSearchId(saved.id);
+          onSearchSaved?.(saved);
+        }
+      })
+      .catch(() => {});
+  }, [data, loading]);
+
+  // Update saved search when full title search completes
+  useEffect(() => {
+    if (!fullTitleData || savedSearchId === null) return;
+    const freeholds = fullTitleData.filter(t => t._tenure === "Freehold");
+    const leaseholds = fullTitleData.filter(t => t._tenure === "Leasehold");
+    const headers: Record<string, string> = {
+      ...getAuthHeaders(),
+      "Content-Type": "application/json",
+    };
+    const token = localStorage.getItem("bgp_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    fetch(`/api/land-registry/searches/${savedSearchId}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers,
+      body: JSON.stringify({ freeholds, leaseholds }),
+    }).catch(() => {});
+  }, [fullTitleData, savedSearchId]);
 
   const runFullTitleSearch = useCallback(async (freeholds: any[]) => {
     if (fullTitleLoading) return;
@@ -1745,36 +1807,32 @@ function PropertyPanel({
   return (
     <div className="absolute top-0 right-0 h-full w-[400px] bg-white border-l shadow-xl z-[1001] flex flex-col">
       <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
-        <div>
+        <div className="min-w-0 flex-1 mr-2">
           <h3 className="font-semibold text-sm" data-testid="panel-title">Property Intelligence</h3>
-          {address && <p className="text-xs text-gray-700 font-medium">{address}</p>}
+          {address && <p className="text-xs text-gray-700 font-medium truncate">{address}</p>}
           <p className="text-xs text-gray-500">{postcode}</p>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
+          {!loading && data && (
+            <button
+              onClick={async () => {
+                setGeneratingPdf(true);
+                try { await generatePropertyPDF(data, postcode); } catch {}
+                setGeneratingPdf(false);
+              }}
+              disabled={generatingPdf}
+              className="flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-gray-300 hover:border-indigo-400 hover:text-indigo-600 text-gray-600 transition-colors disabled:opacity-50"
+              title="Download PDF report"
+            >
+              {generatingPdf ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileDown className="w-3 h-3" />}
+              {generatingPdf ? "..." : "PDF"}
+            </button>
+          )}
           <button onClick={onClose} className="p-1 hover:bg-gray-200 rounded" data-testid="panel-close">
             <X className="w-4 h-4" />
           </button>
         </div>
       </div>
-
-      {!loading && data && (
-        <div className="flex border-b">
-          <button
-            onClick={() => setViewMode("summary")}
-            className={`flex-1 text-xs py-2 font-medium transition-colors ${viewMode === "summary" ? "border-b-2 border-indigo-500 text-indigo-700" : "text-gray-500 hover:text-gray-700"}`}
-            data-testid="tab-summary"
-          >
-            Summary
-          </button>
-          <button
-            onClick={() => setViewMode("full")}
-            className={`flex-1 text-xs py-2 font-medium transition-colors ${viewMode === "full" ? "border-b-2 border-indigo-500 text-indigo-700" : "text-gray-500 hover:text-gray-700"}`}
-            data-testid="tab-full-report"
-          >
-            Full Report
-          </button>
-        </div>
-      )}
 
       <ScrollArea className="flex-1">
         {loading ? (
@@ -1785,9 +1843,7 @@ function PropertyPanel({
             <Skeleton className="h-20 w-full" />
           </div>
         ) : data ? (
-          viewMode === "full" ? (
-            <FullReportView data={data} postcode={postcode} searchAddress={address} />
-          ) : (
+          (
             <div className="p-3 space-y-4">
               {summaryStats && (
                 <div className="grid grid-cols-3 gap-2">
@@ -1804,8 +1860,10 @@ function PropertyPanel({
                   <div className="text-center p-2 bg-violet-50 rounded border border-violet-100">
                     <div className="text-lg font-bold text-violet-700">
                       {(() => {
+                        const govApps = (data.planningData as any)?.planningApplications?.length || 0;
                         const raw = data.propertyDataCoUk?.["planning-applications"]?.data;
-                        return (Array.isArray(raw) ? raw.length : raw?.planning_applications?.length) || 0;
+                        const pdCount = (Array.isArray(raw) ? raw.length : raw?.planning_applications?.length) || 0;
+                        return govApps + pdCount;
                       })()}
                     </div>
                     <div className="text-[10px] text-violet-600">Planning Apps</div>
@@ -1842,16 +1900,16 @@ function PropertyPanel({
                     {sorted.slice(0, 8).map((t: any, i: number) => {
                       const isMatch = address ? titleMatchesAddress(t, address) : false;
                       return (
-                        <div key={i} className={`text-xs border rounded p-2 space-y-0.5 ${isMatch ? "bg-indigo-50 border-indigo-200" : "bg-gray-50"}`}>
-                          <div className="flex items-center gap-1.5">
-                            <Badge variant="outline" className={`text-[9px] px-1 py-0 ${t._tenure === "Freehold" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : "border-blue-300 text-blue-700 bg-blue-50"}`}>
+                        <div key={i} className={`text-xs border rounded p-2 space-y-0.5 overflow-hidden ${isMatch ? "bg-indigo-50 border-indigo-200" : "bg-gray-50"}`}>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Badge variant="outline" className={`text-[9px] px-1 py-0 shrink-0 ${t._tenure === "Freehold" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : "border-blue-300 text-blue-700 bg-blue-50"}`}>
                               {t._tenure === "Freehold" ? "F" : "L"}
                             </Badge>
-                            <span className="font-medium truncate">{t.proprietor_name_1 || t.address || "Unknown"}</span>
+                            <span className="font-medium truncate flex-1 min-w-0">{t.proprietor_name_1 || t.address || "Unknown"}</span>
                             {isMatch && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded font-medium shrink-0">MATCH</span>}
-                            {t.proprietor_category && <span className="text-[9px] text-gray-400 ml-auto shrink-0">{t.proprietor_category}</span>}
+                            {t.proprietor_category && <span className="text-[9px] text-gray-400 shrink-0">{t.proprietor_category}</span>}
                           </div>
-                          {t.title_number && <p className="text-gray-400 text-[10px]">Title: {t.title_number}{t.company_reg ? ` · Co. ${t.company_reg}` : ""}</p>}
+                          {t.title_number && <p className="text-gray-400 text-[10px] truncate">Title: {t.title_number}{t.company_reg ? ` · Co. ${t.company_reg}` : ""}</p>}
                           {t.proprietor_address && <p className="text-gray-400 text-[10px] truncate">{t.proprietor_address}</p>}
                           {t.plot_size && <p className="text-gray-400 text-[10px]">Plot: {t.plot_size} acres</p>}
                           {t.price_paid && <p className="text-gray-400 text-[10px]">Price: £{Number(t.price_paid).toLocaleString()}</p>}
@@ -1879,29 +1937,61 @@ function PropertyPanel({
 
                     {fullTitleData && fullTitleData.length > 0 && (
                       <div className="mt-2 border-t pt-2 space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[10px] font-semibold text-indigo-700">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[10px] font-semibold text-indigo-700 truncate">
                             Full Title Search — {fullTitleData.filter(t => t._tenure === "Freehold").length}F / {fullTitleData.filter(t => t._tenure === "Leasehold").length}L
                           </p>
-                          <button onClick={() => setFullTitleData(null)} className="text-[9px] text-gray-400 hover:text-gray-600" data-testid="btn-close-full-titles">Clear</button>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={() => {
+                                const rows = [
+                                  ["Tenure","Title Number","Proprietor","Category","Company Reg","Address","Plot Size (acres)","Parent Title","Leasehold Count"],
+                                  ...fullTitleData.map(t => [
+                                    t._tenure || "",
+                                    t.title_number || "",
+                                    t.proprietor_name_1 || "",
+                                    t.proprietor_category || "",
+                                    t.company_reg || "",
+                                    t.proprietor_address || "",
+                                    t.plot_size || "",
+                                    t._parentTitle || "",
+                                    t.leaseholdCount || "",
+                                  ])
+                                ];
+                                const csv = rows.map(r => r.map((v: any) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+                                const blob = new Blob([csv], { type: "text/csv" });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `Title_Search_${(address || postcode).replace(/[^a-zA-Z0-9]/g, "_")}.csv`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }}
+                              className="flex items-center gap-0.5 text-[9px] text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-1.5 py-0.5 hover:bg-indigo-50 transition-colors"
+                              title="Download all title search results as CSV"
+                            >
+                              <Download className="w-2.5 h-2.5" /> CSV
+                            </button>
+                            <button onClick={() => setFullTitleData(null)} className="text-[9px] text-gray-400 hover:text-gray-600" data-testid="btn-close-full-titles">Clear</button>
+                          </div>
                         </div>
                         {fullTitleData.map((t: any, i: number) => (
-                          <div key={i} className={`text-xs border rounded p-2 space-y-0.5 ${t._tenure === "Leasehold" ? "bg-blue-50/50 ml-3 border-blue-200" : "bg-emerald-50/50 border-emerald-200"}`}>
-                            <div className="flex items-center gap-1.5">
-                              <Badge variant="outline" className={`text-[9px] px-1 py-0 ${t._tenure === "Freehold" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : "border-blue-300 text-blue-700 bg-blue-50"}`}>
+                          <div key={i} className={`text-xs border rounded p-2 space-y-0.5 overflow-hidden ${t._tenure === "Leasehold" ? "bg-blue-50/50 ml-3 border-blue-200" : "bg-emerald-50/50 border-emerald-200"}`}>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <Badge variant="outline" className={`text-[9px] px-1 py-0 shrink-0 ${t._tenure === "Freehold" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : "border-blue-300 text-blue-700 bg-blue-50"}`}>
                                 {t._tenure === "Freehold" ? "F" : "L"}
                               </Badge>
-                              <span className="font-medium truncate text-[11px]">{t.proprietor_name_1 || "Unknown"}</span>
-                              {t.proprietor_category && <span className="text-[9px] text-gray-400 ml-auto shrink-0">{t.proprietor_category}</span>}
+                              <span className="font-medium truncate flex-1 min-w-0 text-[11px]">{t.proprietor_name_1 || "Unknown"}</span>
+                              {t.proprietor_category && <span className="text-[9px] text-gray-400 shrink-0">{t.proprietor_category}</span>}
                             </div>
-                            <p className="text-gray-400 text-[10px]">
+                            <p className="text-gray-400 text-[10px] truncate">
                               Title: {t.title_number}
                               {t.company_reg ? ` · Co. ${t.company_reg}` : ""}
                               {t.leaseholdCount ? ` · ${t.leaseholdCount} leases` : ""}
                             </p>
                             {t.proprietor_address && <p className="text-gray-400 text-[10px] truncate">{t.proprietor_address}</p>}
                             {t.plot_size && <p className="text-gray-400 text-[10px]">Plot: {t.plot_size} acres</p>}
-                            {t._parentTitle && <p className="text-blue-400 text-[9px]">Under freehold: {t._parentTitle}</p>}
+                            {t._parentTitle && <p className="text-blue-400 text-[9px] truncate">Under freehold: {t._parentTitle}</p>}
                           </div>
                         ))}
                       </div>
@@ -1929,27 +2019,55 @@ function PropertyPanel({
               )}
 
               {(() => {
-                const raw = data.propertyDataCoUk?.["planning-applications"]?.data;
-                const planningApps = Array.isArray(raw) ? raw : (raw?.planning_applications || []);
-                if (!planningApps || planningApps.length === 0) return null;
+                // Merge from planning.data.gov.uk (via planningData) + PropertyData API
+                const govApps: any[] = (data.planningData as any)?.planningApplications || [];
+                const pdRaw = data.propertyDataCoUk?.["planning-applications"]?.data;
+                const pdApps: any[] = Array.isArray(pdRaw) ? pdRaw : (pdRaw?.planning_applications || []);
+                // Normalise PropertyData format to match gov format
+                const pdNormalised = pdApps.map((pa: any) => ({
+                  reference: pa.application_number || pa.reference,
+                  address: pa.address || pa.site_address || "",
+                  description: pa.proposal || pa.description || "",
+                  status: pa.status || pa.decision || "",
+                  type: pa.application_type || pa.type || "",
+                  decidedAt: pa.dates?.decision || pa.decision_date || "",
+                  receivedAt: pa.dates?.received_at || pa.received_date || "",
+                  decision: pa.decision || "",
+                  documentUrl: pa.url || "",
+                }));
+                // Deduplicate by reference, gov data takes priority
+                const govRefs = new Set(govApps.map((a: any) => a.reference).filter(Boolean));
+                const merged = [...govApps, ...pdNormalised.filter((a: any) => !a.reference || !govRefs.has(a.reference))];
+                if (merged.length === 0) return null;
                 return (
-                  <DataSection title={`Planning Applications (${planningApps.length})`} icon={Landmark} color="text-violet-600">
-                    {planningApps.slice(0, 8).map((pa: any, i: number) => (
-                      <div key={i} className="text-xs border rounded p-2 space-y-0.5 bg-gray-50">
-                        <p className="font-medium truncate">{pa.proposal || pa.description || pa.address || "Application"}</p>
-                        <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                  <DataSection title={`Planning Applications — last 10 yrs (${merged.length})`} icon={Landmark} color="text-violet-600">
+                    {merged.slice(0, 10).map((pa: any, i: number) => (
+                      <div key={i} className="text-xs border rounded p-2 space-y-0.5 bg-gray-50 overflow-hidden">
+                        <p className="font-medium truncate">{pa.description || pa.address || pa.reference || "Application"}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap text-[10px] min-w-0">
                           {pa.status && (
-                            <Badge variant="outline" className={`text-[9px] px-1 py-0 ${pa.decision?.rating === "positive" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : pa.decision?.rating === "negative" ? "border-red-300 text-red-700 bg-red-50" : ""}`}>
+                            <Badge variant="outline" className={`text-[9px] px-1 py-0 shrink-0 ${
+                              /approv|grant|permit/i.test(pa.status || pa.decision) ? "border-emerald-300 text-emerald-700 bg-emerald-50" :
+                              /refus|reject/i.test(pa.status || pa.decision) ? "border-red-300 text-red-700 bg-red-50" : ""
+                            }`}>
                               {pa.status}
                             </Badge>
                           )}
-                          {pa.type && <span className="text-gray-500">{pa.type}</span>}
-                          {pa.dates?.received_at && <span className="text-gray-400">{pa.dates.received_at}</span>}
+                          {pa.type && <span className="text-gray-500 truncate">{pa.type}</span>}
+                          {(pa.receivedAt || pa.decidedAt) && (
+                            <span className="text-gray-400 shrink-0">{pa.receivedAt || pa.decidedAt}</span>
+                          )}
                         </div>
-                        {pa.address && <p className="text-[10px] text-gray-400 truncate">{pa.address}</p>}
+                        {pa.reference && <p className="text-[10px] text-gray-400">Ref: {pa.reference}</p>}
+                        {pa.address && pa.description && <p className="text-[10px] text-gray-400 truncate">{pa.address}</p>}
+                        {pa.documentUrl && (
+                          <a href={pa.documentUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-indigo-500 hover:underline inline-flex items-center gap-0.5">
+                            View <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        )}
                       </div>
                     ))}
-                    {planningApps.length > 8 && <p className="text-[10px] text-gray-400 text-center">+{planningApps.length - 8} more</p>}
+                    {merged.length > 10 && <p className="text-[10px] text-gray-400 text-center">+{merged.length - 10} more</p>}
                   </DataSection>
                 );
               })()}
@@ -3810,6 +3928,7 @@ export default function EdozoMap() {
             onLoadLayer={loadAdditionalLayer}
             loadingLayer={loadingLayer}
             address={currentArea !== selectedPostcode ? currentArea : undefined}
+            onSearchSaved={(saved) => setRecentSearches(prev => [saved, ...prev.filter(s => s.id !== saved.id)])}
             onClose={() => {
               setSelectedPostcode("");
               setPropertyData(null);
