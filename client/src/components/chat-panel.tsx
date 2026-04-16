@@ -1131,6 +1131,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unmountedRef = useRef(false);
+  const messageQueueRef = useRef<{ content: string; files: File[] }[]>([]);
 
   const { data: currentUser } = useQuery<UserType>({
     queryKey: ["/api/auth/me"],
@@ -2231,29 +2232,24 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
     }
   }, [input, isSending]);
 
-  const handleSend = () => {
-    const text = input.trim();
-    if ((!text && attachedFiles.length === 0) || isSending) return;
-    stopTyping();
-
-    const content = text || (attachedFiles.length > 0 ? `Please process these ${attachedFiles.length} file(s)` : "");
+  const processNextMessage = useCallback((queuedContent?: string, queuedFiles?: File[]) => {
+    const content = queuedContent ?? "";
+    const files = queuedFiles ?? [];
 
     if (isActiveThreadAi || !activeThreadId) {
       const userMessage: LocalChatMessage = {
         role: "user",
         content,
-        attachments: attachedFiles.length > 0 ? attachedFiles.map(f => f.name) : undefined,
+        attachments: files.length > 0 ? files.map(f => f.name) : undefined,
         userName: currentUser?.name,
       };
-      const newMessages = [...messages, userMessage];
-      const filesToSend = [...attachedFiles];
-      setMessages(newMessages);
-      setInput("");
-      setAttachedFiles([]);
-      aiSendMutation.mutate({ newMessages, files: filesToSend, threadId: activeThreadId });
+      setMessages(prev => {
+        const newMessages = [...prev, userMessage];
+        aiSendMutation.mutate({ newMessages, files, threadId: activeThreadId });
+        return newMessages;
+      });
     } else {
-      const hasChatBGPMention = text.toLowerCase().includes("@chatbgp");
-
+      const hasChatBGPMention = content.toLowerCase().includes("@chatbgp");
       const userMessage: LocalChatMessage = {
         role: "user",
         content,
@@ -2261,8 +2257,6 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
         userId: currentUser?.id,
       };
       setMessages(prev => [...prev, userMessage]);
-      setInput("");
-      setAttachedFiles([]);
 
       if (hasChatBGPMention && activeThreadId) {
         chatbgpMentionMutation.mutate({ content, threadId: activeThreadId });
@@ -2270,10 +2264,37 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
         teamSendMutation.mutate({ content, threadId: activeThreadId });
       }
     }
+  }, [activeThreadId, currentUser, isActiveThreadAi, aiSendMutation, teamSendMutation, chatbgpMentionMutation]);
+
+  // Drain the queue when a mutation finishes
+  useEffect(() => {
+    if (!isSending && messageQueueRef.current.length > 0) {
+      const next = messageQueueRef.current.shift()!;
+      processNextMessage(next.content, next.files);
+    }
+  }, [isSending, processNextMessage]);
+
+  const handleSend = () => {
+    const text = input.trim();
+    if (!text && attachedFiles.length === 0) return;
+    stopTyping();
+
+    const content = text || (attachedFiles.length > 0 ? `Please process these ${attachedFiles.length} file(s)` : "");
+    const filesToSend = [...attachedFiles];
+    setInput("");
+    setAttachedFiles([]);
 
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
+
+    if (isSending) {
+      // Queue the message — it will be sent when the current response finishes
+      messageQueueRef.current.push({ content, files: filesToSend });
+      return;
+    }
+
+    processNextMessage(content, filesToSend);
   };
 
   const handleCheckboxClick = useCallback((text: string) => {
@@ -2855,7 +2876,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
                       size="icon"
                       className="shrink-0 h-10 w-10 rounded-full bg-gray-900 text-white hover:bg-gray-800"
                       onClick={handleSend}
-                      disabled={(!input.trim() && attachedFiles.length === 0) || isSending}
+                      disabled={!input.trim() && attachedFiles.length === 0}
                       data-testid="button-panel-send-message"
                     >
                       <Send className="w-4 h-4" />
