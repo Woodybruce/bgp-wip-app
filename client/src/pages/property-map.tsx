@@ -685,8 +685,8 @@ export default function PropertyMap() {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-4 h-full flex flex-col" data-testid="property-map-page">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="p-4 sm:p-6 space-y-4 h-full flex flex-col overflow-hidden" data-testid="property-map-page">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-map-title">Property Map</h1>
           <p className="text-sm text-muted-foreground">
@@ -841,7 +841,7 @@ export default function PropertyMap() {
         </div>
       )}
 
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+      <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
         {Object.entries(STATUS_COLORS).map(([status, bg]) => (
           <div key={status} className="flex items-center gap-1">
             <div className={`w-2.5 h-2.5 rounded-full ${bg}`} />
