@@ -9063,7 +9063,7 @@ export function setupChatBGPRoutes(app: Express) {
     };
 
     const requestStart = Date.now();
-    const REQUEST_DEADLINE_MS = 240000; // 240 seconds — give extended thinking + multi-tool flows room to breathe
+    const REQUEST_DEADLINE_MS = 480000; // 8 minutes — complex multi-tool flows need room to breathe
     let clientDisconnected = false;
     const isOverDeadline = () => clientDisconnected || Date.now() - requestStart > REQUEST_DEADLINE_MS;
 
@@ -9267,7 +9267,7 @@ export function setupChatBGPRoutes(app: Express) {
           console.log(`[ChatBGP] Deadline reached after ${loopCount} loops`);
           const timeoutMsg = clientDisconnected
             ? "Connection lost. Please refresh and try again."
-            : "Request took too long. I've completed what I could - please ask a follow-up question if you need more.";
+            : "This is taking longer than expected — try breaking your request into smaller steps (e.g. ask me to check one category at a time).";
           await sendResult({ reply: timeoutMsg, partial: true });
           return;
         }
@@ -9672,7 +9672,7 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
       // Fell through the loop — write whatever's last
       clearInterval(heartbeat);
       try {
-        res.write(`data: ${JSON.stringify({ reply: "Request took too long. I've completed what I could — please ask a follow-up if you need more.", partial: true, ...(lastAction ? { action: lastAction } : {}) })}\n\n`);
+        res.write(`data: ${JSON.stringify({ reply: "This is taking longer than expected — try breaking your request into smaller steps.", partial: true, ...(lastAction ? { action: lastAction } : {}) })}\n\n`);
         res.end();
       } catch {}
     } catch (err: any) {

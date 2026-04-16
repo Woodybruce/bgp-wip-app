@@ -1482,7 +1482,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
           const fetchHeaders: Record<string, string> = { "Content-Type": "application/json" };
           if (token) fetchHeaders["Authorization"] = `Bearer ${token}`;
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 300000);
+          const timeoutId = setTimeout(() => controller.abort(), 600000);
           try {
             const res = await fetch("/api/chatbgp/chat", {
               method: "POST",
@@ -1604,13 +1604,13 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
         .catch(() => {});
     },
     onError: (err: any) => {
-      let msg = "Failed to get a response. Please try again.";
+      let msg = "Something went wrong — please try again.";
       try {
         const raw = err?.message || "";
         if (raw.includes("timed out") || raw.includes("AbortError")) {
-          msg = "Request timed out after 5 minutes. Please try again.";
+          msg = "Request timed out. Try a simpler question or break it into steps.";
         } else if (raw === "Load failed" || raw === "Failed to fetch" || raw.includes("NetworkError")) {
-          msg = "Connection lost — please check your signal and try again.";
+          msg = "Network error — check your connection and try again.";
         } else {
           const jsonStart = raw.indexOf("{");
           if (jsonStart >= 0) {
@@ -1621,7 +1621,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
           }
         }
       } catch {}
-      const errorContent = `Sorry, I couldn't respond: ${msg}`;
+      const errorContent = msg;
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: errorContent },
