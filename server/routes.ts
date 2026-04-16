@@ -2627,7 +2627,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         companyName = contact.company_name;
       }
 
-      // Build mixed_people/search body (replaces deprecated people/match)
+      // Build mixed_people/api_search body (replaces deprecated people/match)
       const body: Record<string, any> = {
         page: 1,
         per_page: 1,
@@ -2637,7 +2637,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       else if (companyName) body.organization_names = [companyName];
       if (firstName || lastName) body.q_keywords = `${firstName} ${lastName}`.trim();
 
-      const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+      const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2863,7 +2863,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const apiKey = process.env.APOLLO_API_KEY;
       if (!apiKey) return res.status(500).json({ error: "Apollo API key not configured" });
 
-      // Build mixed_people/search body (replaces deprecated people/match)
+      // Build mixed_people/api_search body (replaces deprecated people/match)
       const body: Record<string, any> = {
         page: 1,
         per_page: 1,
@@ -2873,7 +2873,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       else if (companyName) body.organization_names = [companyName];
       if (firstName || lastName) body.q_keywords = `${firstName || ""} ${lastName || ""}`.trim();
 
-      const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+      const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2955,7 +2955,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           const firstName = nameParts[0] || "";
           const lastName = nameParts.slice(1).join(" ") || "";
 
-          // Build mixed_people/search body (replaces deprecated people/match)
+          // Build mixed_people/api_search body (replaces deprecated people/match)
           const body: Record<string, any> = {
             page: 1,
             per_page: 1,
@@ -2965,7 +2965,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           else if (companyName) body.organization_names = [companyName];
           if (firstName || lastName) body.q_keywords = `${firstName} ${lastName}`.trim();
 
-          const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+          const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",

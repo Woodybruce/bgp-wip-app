@@ -131,7 +131,7 @@ async function pingApollo(): Promise<PingResult> {
     // mixed_people/search with an empty query: authed requests return 200
     // with an empty people array; unauth returns 401/403.
     const res = await withTimeout(
-      fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+      fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Api-Key": key },
         body: JSON.stringify({ page: 1, per_page: 1 }),

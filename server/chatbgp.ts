@@ -6931,13 +6931,13 @@ async function executeCrmToolRaw(
                 const lastName = nameParts[0]?.trim();
                 const firstName = nameParts[1]?.trim()?.split(/\s+/)[0];
 
-                // mixed_people/search (replaces deprecated people/match)
+                // mixed_people/api_search (replaces deprecated mixed_people/search)
                 const body: Record<string, any> = { page: 1, per_page: 1 };
                 if (firstName || lastName) body.q_keywords = `${firstName || ""} ${lastName || ""}`.trim();
                 const orgName = report.company.profile?.companyName || targetCompanyName;
                 body.organization_names = [orgName];
 
-                const apolloRes = await timedFetch("https://api.apollo.io/api/v1/mixed_people/search", {
+                const apolloRes = await timedFetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
                   method: "POST",
                   headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloApiKey },
                   body: JSON.stringify(body),
@@ -7055,13 +7055,13 @@ async function executeCrmToolRaw(
             const nameParts = personName.split(/\s+/);
             const firstName = nameParts[0];
             const lastName = nameParts.slice(1).join(" ");
-            // mixed_people/search (replaces deprecated people/match)
+            // mixed_people/api_search (replaces deprecated mixed_people/search)
             const body: Record<string, any> = { page: 1, per_page: 1 };
             if (firstName || lastName) body.q_keywords = `${firstName || ""} ${lastName || ""}`.trim();
             const orgName = targetCompanyName || companyName || "";
             if (orgName) body.organization_names = [orgName];
 
-            const apolloRes = await timedFetch("https://api.apollo.io/api/v1/mixed_people/search", {
+            const apolloRes = await timedFetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
               method: "POST",
               headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloApiKey },
               body: JSON.stringify(body),

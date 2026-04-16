@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 // Apollo contact discovery for a brand/company.
 //
-// Uses Apollo's /mixed_people/search endpoint to find key people (C-suite,
+// Uses Apollo's /mixed_people/api_search endpoint to find key people (C-suite,
 // Founders, Property/Real Estate heads, Marketing leads) associated with a
 // crm_companies row, then upserts them into crm_contacts.
 //
@@ -48,7 +48,7 @@ async function searchApollo(opts: { domain?: string; organizationName?: string; 
   if (opts.domain) body.q_organization_domains_list = [opts.domain];
   else if (opts.organizationName) body.organization_names = [opts.organizationName];
 
-  const res = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+  const res = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
