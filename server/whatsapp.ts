@@ -129,8 +129,6 @@ async function sendWhatsAppDocument(config: ReturnType<typeof getWhatsAppConfig>
   }
 }
 
-export { sendWhatsAppText, sendWhatsAppDocument };
-
 const sendMessageSchema = z.object({
   to: z.string().min(1, "Phone number is required").regex(/^\d+$/, "Phone number must contain only digits"),
   body: z.string().min(1, "Message body is required").max(4096, "Message too long"),

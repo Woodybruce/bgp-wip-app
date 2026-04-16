@@ -893,7 +893,6 @@ export const crmComps = pgTable("crm_comps", {
   passingRentPa: text("passing_rent_pa"),
   rentFreeMonths: text("rent_free_months"),
   evidenceSource: text("evidence_source"),
-  sourceUrl: text("source_url"),
   contactId: varchar("contact_id"),
   contactName: text("contact_name"),
   contactCompany: text("contact_company"),
