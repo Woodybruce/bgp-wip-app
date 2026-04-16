@@ -2,6 +2,8 @@ import crypto from "crypto";
 import { Router, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { sendFromSharedMailbox } from "./shared-mailbox";
+import { getWhatsAppConfig, sendWhatsAppText } from "./whatsapp";
 
 // Veriff Station API — https://developers.veriff.com/
 // We never echo the API key; it's read from Railway env on each request.
@@ -244,23 +246,41 @@ veriffRouter.post("/api/veriff/sessions", requireAuth, async (req: Request, res:
       [session.sessionId, companyId || null, contactId || null, dealId || null, firstName, lastName, email || null, session.status, session.verificationUrl, userId]
     ).catch((e) => console.warn("[veriff] insert session failed:", e?.message));
 
-    // Send verification link via email if provided
+    // Send verification email to the counterparty if we have their address
     if (email && session.verificationUrl) {
-      try {
-        const { sendSharedMailboxEmail } = await import("./shared-mailbox");
-        await sendSharedMailboxEmail({
-          to: email,
-          subject: "Identity Verification Request — Bruce Gillingham Pollard",
-          body: `<p>Dear ${firstName},</p>
-<p>As part of our compliance process, we need to verify your identity. Please click the link below to complete a quick ID and selfie check:</p>
-<p><a href="${session.verificationUrl}" style="display:inline-block;padding:10px 24px;background:#1a1a1a;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;">Verify my identity</a></p>
-<p>Or copy this link: <a href="${session.verificationUrl}">${session.verificationUrl}</a></p>
-<p>This is a secure process powered by Veriff. Your data is handled in accordance with GDPR.</p>
-<p>Thank you,<br/>Bruce Gillingham Pollard</p>`,
-        });
-        console.log(`[veriff] Verification link emailed to ${email}`);
-      } catch (emailErr: any) {
-        console.warn(`[veriff] Failed to email verification link to ${email}:`, emailErr?.message);
+      const fullName = `${firstName} ${lastName}`;
+      const emailBody = `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px;">
+          <div style="font-size: 13px; font-weight: 600; letter-spacing: 0.02em; margin-bottom: 24px;">BRUCE GILLINGHAM POLLARD</div>
+          <h2 style="font-size: 20px; font-weight: 600; margin: 0 0 12px;">Identity Verification Required</h2>
+          <p style="font-size: 14px; color: #555; line-height: 1.6; margin: 0 0 20px;">
+            Dear ${fullName},<br/><br/>
+            As part of our Anti-Money Laundering (AML) compliance obligations, we need to verify your identity.
+            Please click the button below to complete a brief identity check — it takes approximately 2 minutes.
+          </p>
+          <a href="${session.verificationUrl}" style="display: inline-block; background: #111; color: #fff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 14px; font-weight: 500;">
+            Verify My Identity
+          </a>
+          <p style="font-size: 12px; color: #999; margin-top: 24px; line-height: 1.5;">
+            This link is unique to you and will expire after one use.
+            If you have any questions, please contact us directly.<br/>
+            This is a secure process powered by Veriff. Your data is handled in accordance with GDPR.
+          </p>
+        </div>`;
+      sendFromSharedMailbox([email], "BGP — Identity Verification Required", emailBody).catch(e =>
+        console.warn("[veriff] failed to send verification email:", e?.message)
+      );
+    }
+
+    // Send WhatsApp verification link if mobile number provided
+    if (mobile && session.verificationUrl) {
+      const waConfig = getWhatsAppConfig();
+      if (waConfig.token && waConfig.phoneNumberId) {
+        const waNumber = mobile.replace(/[^0-9]/g, "").replace(/^0/, "44"); // UK default
+        const fullName = `${firstName} ${lastName}`;
+        sendWhatsAppText(waConfig, waNumber,
+          `Hi ${fullName},\n\nBruce Gillingham Pollard requires identity verification as part of our AML compliance.\n\nPlease tap the link below to complete a brief identity check (approx. 2 minutes):\n\n${session.verificationUrl}\n\nThe link is unique to you and will expire after one use. Any questions, please contact us directly.`
+        ).catch(e => console.warn("[veriff] failed to send WhatsApp verification:", e?.message));
       }
     }
 

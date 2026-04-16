@@ -289,7 +289,7 @@ export default function ComplianceBoard() {
 
         <TabsContent value="counterparties" className="mt-4">
           {/* Summary row */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+          <div className="grid grid-cols-3 gap-3 mb-5">
             {COLUMNS.map(col => {
               const count = data?.counts[col.key] || 0;
               const Icon = col.icon;
@@ -309,7 +309,7 @@ export default function ComplianceBoard() {
           </div>
 
           {/* Kanban */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {COLUMNS.map(col => {
               const items = filtered.filter(r => r.column === col.key);
               return (
@@ -332,6 +332,13 @@ export default function ComplianceBoard() {
               );
             })}
           </div>
+          {((data?.counts.expired || 0) > 0 || (data?.counts.rejected || 0) > 0) && (
+            <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground px-1">
+              {(data?.counts.expired || 0) > 0 && <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {data?.counts.expired} expired</span>}
+              {(data?.counts.rejected || 0) > 0 && <span className="flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> {data?.counts.rejected} rejected</span>}
+              <span>— not shown on board</span>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="deals" className="mt-4">
