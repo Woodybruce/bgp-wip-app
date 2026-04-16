@@ -69,8 +69,6 @@ const COLUMNS: Array<{
   { key: "missing", label: "Documents pending", tone: "border-amber-300 bg-amber-50/30", icon: AlertCircle, description: "No KYC started — needs uploads" },
   { key: "in_review", label: "Under review", tone: "border-blue-300 bg-blue-50/30", icon: Clock, description: "Docs uploaded, awaiting MLRO sign-off" },
   { key: "approved", label: "Approved", tone: "border-emerald-400 bg-emerald-50/40", icon: CheckCircle2, description: "AML clean — invoice unlocked" },
-  { key: "expired", label: "Expired — re-check", tone: "border-orange-400 bg-orange-50/40", icon: Clock, description: "Past 12-month review date" },
-  { key: "rejected", label: "Rejected", tone: "border-red-300 bg-red-50/40", icon: ShieldAlert, description: "Cannot proceed" },
 ];
 
 function CardItem({ row }: { row: BoardRow }) {
@@ -311,7 +309,7 @@ export default function ComplianceBoard() {
           </div>
 
           {/* Kanban */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {COLUMNS.map(col => {
               const items = filtered.filter(r => r.column === col.key);
               return (

@@ -32,7 +32,7 @@ import {
   Calculator, Building2, MapPin, Scale, CheckCircle2,
   MoreHorizontal, Ruler, Loader2, Newspaper, Sparkles,
   FileText, Upload, X, Paperclip, FileDown, Info, Presentation,
-  TrendingUp, Inbox, ArrowRight, Eye, ExternalLink,
+  TrendingUp, Inbox, ArrowRight, Eye, ExternalLink, Phone, Mail, User,
 } from "lucide-react";
 import type { CrmComp } from "@shared/schema";
 import jsPDF from "jspdf";
@@ -998,6 +998,10 @@ export default function Comps() {
     queryKey: ["/api/crm/companies"],
   });
 
+  const { data: contacts = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/contacts"],
+  });
+
   const propertyOptions = useMemo(() =>
     properties.map((p: any) => ({ id: p.id, name: p.name })).sort((a, b) => a.name.localeCompare(b.name)),
     [properties]
@@ -1007,6 +1011,23 @@ export default function Comps() {
     companies.map((c: any) => ({ id: c.id, name: c.name })).sort((a, b) => a.name.localeCompare(b.name)),
     [companies]
   );
+
+  const contactOptions = useMemo(() =>
+    contacts.map((c: any) => ({ id: c.id, name: c.name })).sort((a, b) => a.name.localeCompare(b.name)),
+    [contacts]
+  );
+
+  const contactById = useMemo(() => {
+    const m = new Map<string, any>();
+    contacts.forEach((c: any) => m.set(c.id, c));
+    return m;
+  }, [contacts]);
+
+  const companyById = useMemo(() => {
+    const m = new Map<string, any>();
+    companies.forEach((c: any) => m.set(c.id, c));
+    return m;
+  }, [companies]);
 
   const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
@@ -1633,6 +1654,8 @@ export default function Comps() {
                 <SortHeader field="rentFreeMonths">RF (m)</SortHeader>
                 <SortHeader field="fitoutContribution">Incentive</SortHeader>
                 <SortHeader field="ltActStatus">L&T Act</SortHeader>
+                <SortHeader field="sourceEvidence">Source</SortHeader>
+                <SortHeader field="sourceContactId">Contact</SortHeader>
                 <SortHeader field="dealId">Deal</SortHeader>
                 <SortHeader field="verified">Ver.</SortHeader>
                 <SortHeader field="comments">Comments</SortHeader>
@@ -1862,6 +1885,69 @@ export default function Comps() {
                       }}
                       onSave={v => updateMutation.mutate({ id: comp.id, field: "ltActStatus", value: v })}
                     />
+                  </td>
+                  {/* Source column */}
+                  <td className="px-2 py-1.5">
+                    <div className="flex flex-col gap-0.5">
+                      <InlineLabelSelect
+                        value={comp.sourceEvidence || ""}
+                        options={["BGP Direct", "News Feed", "Team Email", "SharePoint File", "Agent", "Other"]}
+                        colorMap={{
+                          "BGP Direct": "bg-green-600 text-white",
+                          "News Feed": "bg-amber-600 text-white",
+                          "Team Email": "bg-purple-600 text-white",
+                          "SharePoint File": "bg-cyan-600 text-white",
+                          "Agent": "bg-blue-600 text-white",
+                          "Other": "bg-gray-600 text-white",
+                        }}
+                        onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceEvidence", value: v })}
+                      />
+                      {(comp as any).sourceUrl && (
+                        <a
+                          href={(comp as any).sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[10px] text-primary hover:underline flex items-center gap-0.5 truncate max-w-[120px]"
+                          title={(comp as any).sourceTitle || (comp as any).sourceUrl}
+                        >
+                          <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                          {(comp as any).sourceTitle || "View source"}
+                        </a>
+                      )}
+                    </div>
+                  </td>
+                  {/* Contact (source provider) column */}
+                  <td className="px-2 py-1.5">
+                    {(() => {
+                      const ct = (comp as any).sourceContactId ? contactById.get((comp as any).sourceContactId) : null;
+                      const co = ct?.companyId ? companyById.get(ct.companyId) : null;
+                      return ct ? (
+                        <div className="space-y-0.5">
+                          <Link href={`/contacts/${ct.id}`} className="text-[11px] font-medium text-primary hover:underline truncate block max-w-[130px]">{ct.name}</Link>
+                          {co && <p className="text-[10px] text-muted-foreground truncate max-w-[130px]">{co.name}</p>}
+                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                            {ct.phone && (
+                              <a href={`tel:${ct.phone}`} className="flex items-center gap-0.5 hover:text-foreground" onClick={(e: any) => e.stopPropagation()}>
+                                <Phone className="w-2.5 h-2.5" />
+                              </a>
+                            )}
+                            {ct.email && (
+                              <a href={`mailto:${ct.email}`} className="flex items-center gap-0.5 hover:text-foreground" onClick={(e: any) => e.stopPropagation()}>
+                                <Mail className="w-2.5 h-2.5" />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <InlineLinkSelect
+                          value={(comp as any).sourceContactId || ""}
+                          options={contactOptions}
+                          href={(comp as any).sourceContactId ? `/contacts/${(comp as any).sourceContactId}` : undefined}
+                          onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceContactId", value: v })}
+                          compact
+                        />
+                      );
+                    })()}
                   </td>
                   <td className="px-2 py-1.5">
                     <DealCell

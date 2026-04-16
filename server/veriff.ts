@@ -229,7 +229,7 @@ veriffRouter.get("/api/veriff/diagnostic", requireAuth, async (req: Request, res
 // Create a verification session for a counterparty (company contact)
 veriffRouter.post("/api/veriff/sessions", requireAuth, async (req: Request, res: Response) => {
   try {
-    const { firstName, lastName, email, companyId, contactId, dealId } = req.body || {};
+    const { firstName, lastName, email, mobile, companyId, contactId, dealId } = req.body || {};
     if (!firstName || !lastName) return res.status(400).json({ error: "firstName and lastName required" });
     if (!companyId && !contactId) return res.status(400).json({ error: "companyId or contactId required" });
     const userId = (req as any).user?.id || (req.session as any)?.userId || null;
@@ -244,7 +244,27 @@ veriffRouter.post("/api/veriff/sessions", requireAuth, async (req: Request, res:
       [session.sessionId, companyId || null, contactId || null, dealId || null, firstName, lastName, email || null, session.status, session.verificationUrl, userId]
     ).catch((e) => console.warn("[veriff] insert session failed:", e?.message));
 
-    res.json(session);
+    // Send verification link via email if provided
+    if (email && session.verificationUrl) {
+      try {
+        const { sendSharedMailboxEmail } = await import("./shared-mailbox");
+        await sendSharedMailboxEmail({
+          to: email,
+          subject: "Identity Verification Request — Bruce Gillingham Pollard",
+          body: `<p>Dear ${firstName},</p>
+<p>As part of our compliance process, we need to verify your identity. Please click the link below to complete a quick ID and selfie check:</p>
+<p><a href="${session.verificationUrl}" style="display:inline-block;padding:10px 24px;background:#1a1a1a;color:#fff;border-radius:6px;text-decoration:none;font-weight:600;">Verify my identity</a></p>
+<p>Or copy this link: <a href="${session.verificationUrl}">${session.verificationUrl}</a></p>
+<p>This is a secure process powered by Veriff. Your data is handled in accordance with GDPR.</p>
+<p>Thank you,<br/>Bruce Gillingham Pollard</p>`,
+        });
+        console.log(`[veriff] Verification link emailed to ${email}`);
+      } catch (emailErr: any) {
+        console.warn(`[veriff] Failed to email verification link to ${email}:`, emailErr?.message);
+      }
+    }
+
+    res.json({ ...session, emailSent: !!email });
   } catch (err: any) {
     console.error("[veriff] create session error:", err?.message);
     res.status(500).json({ error: err?.message || "Failed to create Veriff session" });

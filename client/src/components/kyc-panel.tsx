@@ -99,6 +99,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   const [veriffFirstName, setVeriffFirstName] = useState("");
   const [veriffLastName, setVeriffLastName] = useState("");
   const [veriffEmail, setVeriffEmail] = useState("");
+  const [veriffMobile, setVeriffMobile] = useState("");
 
   const { data: veriffStatus } = useQuery<{ configured: boolean }>({
     queryKey: ["/api/veriff/status"],
@@ -125,6 +126,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
         firstName: veriffFirstName,
         lastName: veriffLastName,
         email: veriffEmail || undefined,
+        mobile: veriffMobile || undefined,
         companyId,
         dealId,
       });
@@ -132,14 +134,15 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
     },
     onSuccess: (data: any) => {
       setVeriffOpen(false);
-      setVeriffFirstName(""); setVeriffLastName(""); setVeriffEmail("");
+      setVeriffFirstName(""); setVeriffLastName(""); setVeriffEmail(""); setVeriffMobile("");
       queryClient.invalidateQueries({ queryKey: ["/api/veriff/sessions", { companyId }] });
-      toast({
-        title: "Veriff session created",
-        description: data?.verificationUrl ? "Copy the link to send to the subject, or open it now." : "",
-      });
-      if (data?.verificationUrl) {
-        window.open(data.verificationUrl, "_blank", "noopener,noreferrer");
+      if (data?.emailSent) {
+        toast({ title: "Verification link sent", description: `Email sent to ${veriffEmail} with the verification link.` });
+      } else if (data?.verificationUrl) {
+        navigator.clipboard?.writeText(data.verificationUrl).catch(() => {});
+        toast({ title: "Veriff session created", description: "Verification link copied to clipboard. Send it to the subject." });
+      } else {
+        toast({ title: "Veriff session created" });
       }
     },
     onError: (e: any) => toast({ title: "Veriff error", description: e?.message, variant: "destructive" }),
@@ -573,9 +576,11 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <div className="space-y-2">
-                <Input value={veriffFirstName} onChange={(e) => setVeriffFirstName(e.target.value)} placeholder="First name" data-testid="input-veriff-firstname" />
-                <Input value={veriffLastName} onChange={(e) => setVeriffLastName(e.target.value)} placeholder="Last name" data-testid="input-veriff-lastname" />
-                <Input value={veriffEmail} onChange={(e) => setVeriffEmail(e.target.value)} placeholder="Email (optional)" type="email" data-testid="input-veriff-email" />
+                <Input value={veriffFirstName} onChange={(e) => setVeriffFirstName(e.target.value)} placeholder="First name *" data-testid="input-veriff-firstname" />
+                <Input value={veriffLastName} onChange={(e) => setVeriffLastName(e.target.value)} placeholder="Last name *" data-testid="input-veriff-lastname" />
+                <Input value={veriffEmail} onChange={(e) => setVeriffEmail(e.target.value)} placeholder="Email — sends verification link" type="email" data-testid="input-veriff-email" />
+                <Input value={veriffMobile} onChange={(e) => setVeriffMobile(e.target.value)} placeholder="Mobile (optional)" type="tel" data-testid="input-veriff-mobile" />
+                {!veriffEmail && <p className="text-[10px] text-muted-foreground">Without an email, the link will be copied to your clipboard to share manually.</p>}
               </div>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
