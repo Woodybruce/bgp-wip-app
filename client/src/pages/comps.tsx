@@ -38,6 +38,7 @@ import type { CrmComp } from "@shared/schema";
 import jsPDF from "jspdf";
 import { Link } from "wouter";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
+import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import InvestmentCompsPage from "@/pages/investment-comps";
 
 interface CompFile {
@@ -952,6 +953,154 @@ function NetRentCalculator({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** Hybrid input: type to search BGP properties + Google Places, or enter a manual address */
+function PropertyAddressInput({ value, propertyOptions, onSelectProperty, onSelectAddress, onManualInput }: {
+  value: string;
+  propertyOptions: { id: string; name: string }[];
+  onSelectProperty: (p: { id: string; name: string }) => void;
+  onSelectAddress: (addr: { formatted: string; placeId: string; lat?: number; lng?: number; street?: string; city?: string; region?: string; postcode?: string; country?: string }) => void;
+  onManualInput: (v: string) => void;
+}) {
+  const [query, setQuery] = useState(value);
+  const [showDrop, setShowDrop] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const autocompleteService = useRef<google.maps.places.AutocompleteService | null>(null);
+  const placesService = useRef<google.maps.places.PlacesService | null>(null);
+  const [googlePredictions, setGooglePredictions] = useState<google.maps.places.AutocompletePrediction[]>([]);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => { setQuery(value); }, [value]);
+
+  useEffect(() => {
+    import("@/lib/google-maps-loader").then(({ loadGoogleMaps }) =>
+      loadGoogleMaps().then((ok) => {
+        if (ok) {
+          autocompleteService.current = new google.maps.places.AutocompleteService();
+          const div = document.createElement("div");
+          placesService.current = new google.maps.places.PlacesService(div);
+        }
+      })
+    );
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setShowDrop(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const matchingProps = useMemo(() => {
+    if (query.length < 2) return [];
+    const q = query.toLowerCase();
+    return propertyOptions.filter(p => p.name.toLowerCase().includes(q)).slice(0, 5);
+  }, [query, propertyOptions]);
+
+  const searchGoogle = useCallback((input: string) => {
+    if (!autocompleteService.current || input.length < 3) { setGooglePredictions([]); return; }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      autocompleteService.current!.getPlacePredictions(
+        { input, componentRestrictions: { country: "gb" }, locationBias: { center: { lat: 51.5074, lng: -0.1278 }, radius: 50000 } } as any,
+        (results, status) => {
+          if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+            setGooglePredictions(results.filter(r => {
+              const types = r.types || [];
+              return !(types.includes("country") || types.includes("administrative_area_level_1"));
+            }).slice(0, 5));
+          } else setGooglePredictions([]);
+        }
+      );
+    }, 300);
+  }, []);
+
+  const selectGooglePlace = (prediction: google.maps.places.AutocompletePrediction) => {
+    if (!placesService.current) return;
+    placesService.current.getDetails(
+      { placeId: prediction.place_id, fields: ["formatted_address", "geometry", "place_id", "address_components"] },
+      (place, status) => {
+        if (status === google.maps.places.PlacesServiceStatus.OK && place) {
+          const comp = (type: string) => place.address_components?.find((c: any) => c.types.includes(type))?.long_name;
+          const streetNumber = comp("street_number") || "";
+          const route = comp("route") || "";
+          const street = [streetNumber, route].filter(Boolean).join(" ");
+          onSelectAddress({
+            formatted: place.formatted_address || prediction.description,
+            placeId: place.place_id || prediction.place_id,
+            lat: place.geometry?.location?.lat(),
+            lng: place.geometry?.location?.lng(),
+            street: street || undefined,
+            city: comp("postal_town") || comp("locality") || undefined,
+            region: comp("administrative_area_level_2") || comp("administrative_area_level_1") || undefined,
+            postcode: comp("postal_code") || undefined,
+            country: comp("country") || undefined,
+          });
+          setQuery(place.formatted_address || prediction.description);
+          setShowDrop(false);
+          setGooglePredictions([]);
+        }
+      }
+    );
+  };
+
+  const handleChange = (v: string) => {
+    setQuery(v);
+    onManualInput(v);
+    searchGoogle(v);
+    setShowDrop(v.length >= 2);
+  };
+
+  const hasResults = matchingProps.length > 0 || googlePredictions.length > 0;
+
+  return (
+    <div ref={containerRef} className="relative">
+      <Input
+        value={query}
+        onChange={e => handleChange(e.target.value)}
+        onFocus={() => hasResults && query.length >= 2 && setShowDrop(true)}
+        placeholder="Search BGP property or type address..."
+        className="h-9"
+        data-testid="create-comp-name"
+      />
+      {showDrop && hasResults && (
+        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border rounded-md shadow-lg max-h-[240px] overflow-y-auto">
+          {matchingProps.length > 0 && (
+            <>
+              <div className="px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wide bg-muted/50">BGP Properties</div>
+              {matchingProps.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => { onSelectProperty(p); setQuery(p.name); setShowDrop(false); }}
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2"
+                >
+                  <Building2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                  <span>{p.name}</span>
+                </button>
+              ))}
+            </>
+          )}
+          {googlePredictions.length > 0 && (
+            <>
+              <div className="px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wide bg-muted/50">Google Addresses</div>
+              {googlePredictions.map(p => (
+                <button
+                  key={p.place_id}
+                  onClick={() => selectGooglePlace(p)}
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2"
+                >
+                  <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  <span>{p.description}</span>
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Comps() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
@@ -1058,13 +1207,17 @@ export default function Comps() {
     return companyByName.get(n) || null;
   }, [companyByName]);
 
-  const propertyLinkFor = useCallback((comp: CrmComp): string => {
-    if (comp.propertyId) return `/properties/${comp.propertyId}`;
+  const propertyLinkFor = useCallback((comp: CrmComp): { href: string; external: boolean } => {
+    if (comp.propertyId) return { href: `/properties/${comp.propertyId}`, external: false };
     if (comp.name) {
       const match = propertyByName.get(normName(comp.name));
-      if (match) return `/properties/${match}`;
+      if (match) return { href: `/properties/${match}`, external: false };
     }
-    return "/properties";
+    // No BGP property — link to Google Maps with the address/name
+    const addr = comp.address as any;
+    const googleUrl = buildGoogleMapsUrl(addr?.formatted || comp.name);
+    if (googleUrl) return { href: googleUrl, external: true };
+    return { href: "/properties", external: false };
   }, [propertyByName]);
 
   const { data: deals = [] } = useQuery<{ id: string; name: string; status?: string | null }[]>({
@@ -1274,8 +1427,11 @@ export default function Comps() {
   }, [filtered]);
 
   const [newName, setNewName] = useState("");
+  const [newPropertyId, setNewPropertyId] = useState<string | null>(null);
+  const [newAddress, setNewAddress] = useState<any>(null);
   const [newTenant, setNewTenant] = useState("");
   const [newArea, setNewArea] = useState("");
+  const [newPostcode, setNewPostcode] = useState("");
   const [newUseClass, setNewUseClass] = useState("");
   const [newTxnType, setNewTxnType] = useState("");
   const [newHeadlineRent, setNewHeadlineRent] = useState("");
@@ -1283,7 +1439,8 @@ export default function Comps() {
   const [newDate, setNewDate] = useState("");
 
   const resetCreateForm = () => {
-    setNewName(""); setNewTenant(""); setNewArea(""); setNewUseClass("");
+    setNewName(""); setNewPropertyId(null); setNewAddress(null);
+    setNewTenant(""); setNewArea(""); setNewPostcode(""); setNewUseClass("");
     setNewTxnType(""); setNewHeadlineRent(""); setNewZoneA(""); setNewDate("");
   };
 
@@ -1708,20 +1865,59 @@ export default function Comps() {
                   </td>
                   <td className="px-2 py-1.5 align-top">
                     <div className="flex items-center gap-1">
-                      <Link
-                        href={propertyLinkFor(comp)}
-                        className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block"
-                        data-testid={`comp-name-${comp.id}`}
-                      >
-                        {comp.name}
-                      </Link>
+                      {(() => {
+                        const link = propertyLinkFor(comp);
+                        return link.external ? (
+                          <a
+                            href={link.href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block"
+                            data-testid={`comp-name-${comp.id}`}
+                          >
+                            {comp.name}
+                          </a>
+                        ) : (
+                          <Link
+                            href={link.href}
+                            className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block"
+                            data-testid={`comp-name-${comp.id}`}
+                          >
+                            {comp.name}
+                          </Link>
+                        );
+                      })()}
                       <InlineLinkSelect
                         value={comp.propertyId}
                         options={propertyOptions}
                         href={comp.propertyId ? `/properties/${comp.propertyId}` : undefined}
-                        onSave={(v) => updateMutation.mutate({ id: comp.id, field: "propertyId", value: v })}
+                        onSave={(v) => {
+                          updateMutation.mutate({ id: comp.id, field: "propertyId", value: v });
+                          // Auto-fill area + postcode from property address when area is empty
+                          if (v) {
+                            const prop = properties.find((p: any) => p.id === v);
+                            const addr = prop?.address as any;
+                            if (addr?.city && !comp.areaLocation) {
+                              updateMutation.mutate({ id: comp.id, field: "areaLocation", value: addr.city });
+                            }
+                            if (addr?.postcode && !comp.postcode) {
+                              updateMutation.mutate({ id: comp.id, field: "postcode", value: addr.postcode });
+                            }
+                          }
+                        }}
                         compact
                       />
+                      {!comp.propertyId && !propertyByName.get(normName(comp.name || "")) && (
+                        <a
+                          href={buildGoogleMapsUrl((comp.address as any)?.formatted || comp.name) || "#"}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="shrink-0 p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-blue-600 transition-colors"
+                          title="View on Google Maps"
+                        >
+                          <MapPin className="w-3 h-3" />
+                        </a>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 flex-wrap">
                       {comp.postcode && <span className="text-[10px] text-muted-foreground">{comp.postcode}</span>}
@@ -2125,13 +2321,28 @@ export default function Comps() {
                           </DropdownMenu>
                         </td>
                         <td className="px-2 py-1.5 truncate">
-                          <Link
-                            href={propertyLinkFor(lead)}
-                            className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block w-full"
-                            data-testid={`lead-name-${lead.id}`}
-                          >
-                            {lead.name || "Untitled"}
-                          </Link>
+                          {(() => {
+                            const link = propertyLinkFor(lead);
+                            return link.external ? (
+                              <a
+                                href={link.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block w-full"
+                                data-testid={`lead-name-${lead.id}`}
+                              >
+                                {lead.name || "Untitled"}
+                              </a>
+                            ) : (
+                              <Link
+                                href={link.href}
+                                className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block w-full"
+                                data-testid={`lead-name-${lead.id}`}
+                              >
+                                {lead.name || "Untitled"}
+                              </Link>
+                            );
+                          })()}
                           {lead.postcode && <div className="text-[10px] text-muted-foreground">{lead.postcode}</div>}
                         </td>
                         <td className="px-2 py-1.5 truncate">{lead.tenant || "—"}</td>
@@ -2385,7 +2596,41 @@ export default function Comps() {
           <div className="space-y-3 mt-2">
             <div>
               <label className="text-xs font-medium mb-1 block">Property / Address *</label>
-              <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="10 Mount Street, W1K" className="h-9" data-testid="create-comp-name" />
+              <PropertyAddressInput
+                value={newName}
+                propertyOptions={propertyOptions}
+                onSelectProperty={(p) => {
+                  setNewName(p.name);
+                  setNewPropertyId(p.id);
+                  setNewAddress(null);
+                  // Auto-fill area from property if available
+                  const prop = properties.find((pr: any) => pr.id === p.id);
+                  if (prop) {
+                    const addr = prop.address as any;
+                    if (addr?.city && !newArea) setNewArea(addr.city);
+                    if (addr?.postcode && !newPostcode) setNewPostcode(addr.postcode);
+                  }
+                }}
+                onSelectAddress={(addr) => {
+                  setNewName(addr.formatted);
+                  setNewPropertyId(null);
+                  setNewAddress(addr);
+                  if (addr.city && !newArea) setNewArea(addr.city);
+                  if (addr.region && !newArea) setNewArea(addr.region);
+                  if (addr.postcode) setNewPostcode(addr.postcode);
+                }}
+                onManualInput={(v) => { setNewName(v); setNewPropertyId(null); setNewAddress(null); }}
+              />
+              {newPropertyId && (
+                <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1">
+                  <Building2 className="w-2.5 h-2.5" /> Linked to BGP property
+                </p>
+              )}
+              {!newPropertyId && newAddress && (
+                <p className="text-[10px] text-blue-600 mt-1 flex items-center gap-1">
+                  <MapPin className="w-2.5 h-2.5" /> Google address
+                </p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -2445,8 +2690,11 @@ export default function Comps() {
               disabled={!newName.trim() || createMutation.isPending}
               onClick={() => createMutation.mutate({
                 name: newName.trim(),
+                propertyId: newPropertyId || undefined,
+                address: newAddress ? { formatted: newAddress.formatted, placeId: newAddress.placeId, lat: newAddress.lat, lng: newAddress.lng, street: newAddress.street, city: newAddress.city, region: newAddress.region, postcode: newAddress.postcode, country: newAddress.country } : undefined,
                 tenant: newTenant || null,
                 areaLocation: newArea || null,
+                postcode: newPostcode || null,
                 useClass: newUseClass || null,
                 transactionType: newTxnType || null,
                 headlineRent: newHeadlineRent || null,
