@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import crypto from "crypto";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { pingComplyAdvantage } from "./comply-advantage";
 
 async function requireAdmin(req: Request, res: Response, next: Function) {
   const userId = (req.session as any)?.userId || (req as any).tokenUserId;
@@ -49,6 +50,9 @@ const KEYS: KeyDef[] = [
   // KYC / AML
   { name: "VERIFF_API_KEY", label: "Veriff API Key", group: "KYC", fallbacks: ["VERIFF_PUBLIC_KEY", "VERIFF_KEY", "VERIFF_INTEGRATION_ID"] },
   { name: "VERIFF_SECRET", label: "Veriff Secret", group: "KYC", fallbacks: ["VERIFF_PRIVATE_KEY", "VERIFF_SHARED_SECRET"] },
+  { name: "COMPLY_ADVANTAGE_USERNAME", label: "ComplyAdvantage Username", group: "KYC" },
+  { name: "COMPLY_ADVANTAGE_PASSWORD", label: "ComplyAdvantage Password", group: "KYC" },
+  { name: "COMPLY_ADVANTAGE_REALM", label: "ComplyAdvantage Realm", group: "KYC" },
 
   // Web search / research
   { name: "PERPLEXITY_API_KEY", label: "Perplexity", group: "Research", fallbacks: ["PERPLEXITY_API", "PERPLEXITY API", "PERPLEXITY"] },
@@ -371,7 +375,7 @@ export function registerIntegrationsStatusRoutes(app: Express) {
 
   // Live connectivity checks — actually hit each upstream API.
   app.get("/api/integrations/ping", requireAuth, requireAdmin, async (req: Request, res: Response) => {
-    const [apollo, companiesHouse, xero, veriff, perplexity, exa, osPlaces, fal] = await Promise.all([
+    const [apollo, companiesHouse, xero, veriff, perplexity, exa, osPlaces, fal, complyAdvantage] = await Promise.all([
       pingApollo(),
       pingCompaniesHouse(),
       pingXero(req),
@@ -380,7 +384,8 @@ export function registerIntegrationsStatusRoutes(app: Express) {
       pingExa(),
       pingOsPlaces(),
       pingFal(),
+      pingComplyAdvantage(),
     ]);
-    res.json({ apollo, companiesHouse, xero, veriff, perplexity, exa, osPlaces, fal });
+    res.json({ apollo, companiesHouse, xero, veriff, perplexity, exa, osPlaces, fal, complyAdvantage });
   });
 }
