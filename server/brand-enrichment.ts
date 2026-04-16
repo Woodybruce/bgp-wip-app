@@ -15,8 +15,14 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { Router, type Request, type Response } from "express";
 import { requireAuth } from "./auth";
-import { pool } from "./db";
+import { pool, db } from "./db";
+import { imageStudioImages } from "@shared/schema";
+import { eq, and, ilike } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
+import sharp from "sharp";
+import path from "path";
+import fs from "fs/promises";
+import crypto from "crypto";
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -49,6 +55,7 @@ Return a JSON object that best describes this company's current public profile f
   "store_count": integer UK store count or null,
   "rollout_status": one of ${JSON.stringify(ROLLOUT_VALUES)} or null,
   "backers": "Names of investors, parent group, or notable backers (comma-separated string), or null",
+  "backers_detail": [{"name":"Backer Co","type":"PE fund|VC|parent group|angel|sovereign wealth|family office|other","description":"1-sentence about who they are and what they're known for"}] or null — up to 5 most notable backers/investors,
   "instagram_handle": "handle without the @, or null",
   "description": "1-sentence corporate description, or null",
   "industry": "e.g. 'Fashion retail', 'QSR restaurant', 'Fitness', or null",
@@ -134,6 +141,12 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
     updated.push(field);
   }
 
+  // Store structured backers_detail in ai_generated_fields (not a column, just JSONB)
+  if (Array.isArray(aiOut.backers_detail) && aiOut.backers_detail.length > 0) {
+    aiFields.backers_detail = aiOut.backers_detail;
+    if (!updated.includes("backers_detail")) updated.push("backers_detail");
+  }
+
   if (updated.length) {
     sets.push(`ai_generated_fields = $${i++}`);
     vals.push(JSON.stringify(aiFields));
@@ -146,6 +159,13 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
     `UPDATE crm_companies SET ${sets.join(", ")} WHERE id = $${i}`,
     vals
   );
+
+  // Auto-fetch brand images (fire-and-forget — don't block the enrichment response)
+  if (c.is_tracked_brand || updated.includes("concept_pitch")) {
+    fetchBrandImages(companyId, c.name, aiOut?.industry || c.industry || undefined).catch(e =>
+      console.warn(`[brand-images] Background fetch failed for ${c.name}:`, e?.message)
+    );
+  }
 
   return { updated, skipped };
 }
@@ -243,6 +263,132 @@ export async function runNightlyBrandEnrichment() {
     await new Promise(r => setTimeout(r, 300));
   }
   console.log(`[brand-enrich] done — ${ok} enriched, ${failed} failed`);
+}
+
+// ─── Auto-fetch brand images via Unsplash / Pexels ─────────────────────
+//
+// Called after AI enrichment. Searches for storefront / interior / brand
+// shots and imports up to 5 into image_studio_images tagged with the
+// brand name.  Skipped if brand already has ≥3 images.
+
+const IMAGE_DIR = path.join(process.cwd(), "uploads", "image-studio");
+
+async function ensureImageDir() {
+  await fs.mkdir(IMAGE_DIR, { recursive: true });
+}
+
+async function makeThumbnail(buf: Buffer): Promise<{ thumbnail: string; width: number; height: number }> {
+  const meta = await sharp(buf).metadata();
+  const thumb = await sharp(buf).resize(200, 200, { fit: "cover" }).jpeg({ quality: 70 }).toBuffer();
+  return { thumbnail: thumb.toString("base64"), width: meta.width || 0, height: meta.height || 0 };
+}
+
+interface StockHit { url: string; description: string; photographer: string; source: string }
+
+async function searchUnsplash(query: string, count: number): Promise<StockHit[]> {
+  const key = process.env.UNSPLASH_ACCESS_KEY;
+  if (!key) return [];
+  try {
+    const res = await fetch(
+      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&per_page=${count}&orientation=landscape`,
+      { headers: { Authorization: `Client-ID ${key}` } }
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as any;
+    return (data.results || []).map((r: any) => ({
+      url: r.urls?.regular || r.urls?.small,
+      description: r.description || r.alt_description || query,
+      photographer: r.user?.name || "Unsplash",
+      source: "unsplash",
+    }));
+  } catch { return []; }
+}
+
+async function searchPexels(query: string, count: number): Promise<StockHit[]> {
+  const key = process.env.PEXELS_API_KEY;
+  if (!key) return [];
+  try {
+    const res = await fetch(
+      `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=${count}&orientation=landscape`,
+      { headers: { Authorization: key } }
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as any;
+    return (data.photos || []).map((p: any) => ({
+      url: p.src?.large || p.src?.medium,
+      description: p.alt || query,
+      photographer: p.photographer || "Pexels",
+      source: "pexels",
+    }));
+  } catch { return []; }
+}
+
+async function fetchBrandImages(companyId: string, brandName: string, industry?: string): Promise<number> {
+  // Skip if we already have enough images for this brand
+  const existing = await pool.query(
+    `SELECT COUNT(*)::int AS cnt FROM image_studio_images WHERE LOWER(brand_name) = LOWER($1)`,
+    [brandName]
+  );
+  if ((existing.rows[0]?.cnt || 0) >= 3) return 0;
+
+  await ensureImageDir();
+
+  // Build brand-specific queries — these yield much better results than generic stock
+  const concept = industry || "store";
+  const queries = [
+    `${brandName} ${concept} exterior storefront`,
+    `${brandName} ${concept} interior`,
+  ];
+
+  const allHits: StockHit[] = [];
+  for (const q of queries) {
+    const unsplash = await searchUnsplash(q, 3);
+    if (unsplash.length > 0) {
+      allHits.push(...unsplash);
+    } else {
+      const pexels = await searchPexels(q, 3);
+      allHits.push(...pexels);
+    }
+    if (allHits.length >= 5) break;
+  }
+
+  const toImport = allHits.slice(0, 5);
+  let imported = 0;
+  for (const hit of toImport) {
+    if (!hit.url) continue;
+    try {
+      const resp = await fetch(hit.url);
+      if (!resp.ok) continue;
+      const buf = Buffer.from(await resp.arrayBuffer());
+      if (buf.length < 5000) continue; // skip tiny images
+
+      const filename = `brand-${crypto.randomUUID()}.jpg`;
+      const filePath = path.join(IMAGE_DIR, filename);
+      await fs.writeFile(filePath, buf);
+
+      const { thumbnail, width, height } = await makeThumbnail(buf);
+
+      await db.insert(imageStudioImages).values({
+        fileName: `${brandName} — ${hit.description}`.slice(0, 200),
+        category: "Brand",
+        tags: ["brand-auto", brandName, hit.source],
+        description: `Auto-fetched from ${hit.source} for ${brandName}. Photo: ${hit.photographer}`,
+        source: hit.source,
+        brandName,
+        mimeType: "image/jpeg",
+        fileSize: buf.length,
+        width,
+        height,
+        thumbnailData: thumbnail,
+        localPath: filePath,
+      });
+      imported++;
+    } catch (err: any) {
+      console.warn(`[brand-images] Failed to import image for ${brandName}:`, err.message);
+    }
+  }
+  if (imported > 0) console.log(`[brand-images] Imported ${imported} images for ${brandName}`);
+  return imported;
 }
 
 export default router;

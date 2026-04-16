@@ -367,10 +367,25 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               )}
               {c.backers && (
                 <div className="col-span-2">
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <div className="text-[11px] text-muted-foreground flex items-center gap-1 mb-1">
                     <Coins className="w-3 h-3" /> Backers {aiFields.backers && <AiChip />}
                   </div>
-                  <div className="text-sm">{c.backers}</div>
+                  {Array.isArray(aiFields.backers_detail) && aiFields.backers_detail.length > 0 ? (
+                    <div className="space-y-1">
+                      {(aiFields.backers_detail as Array<{ name: string; type?: string; description?: string }>).map((b, i) => (
+                        <div key={i} className="flex items-start gap-1.5 text-sm">
+                          <span className="text-muted-foreground shrink-0 mt-0.5">•</span>
+                          <div className="min-w-0">
+                            <span className="font-medium">{b.name}</span>
+                            {b.type && <Badge variant="outline" className="ml-1.5 text-[9px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
+                            {b.description && <p className="text-[11px] text-muted-foreground leading-snug">{b.description}</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-sm">{c.backers}</div>
+                  )}
                 </div>
               )}
               {c.instagram_handle && (
