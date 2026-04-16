@@ -704,22 +704,6 @@ export default function AvailableUnitsPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {MARKETING_STATUSES.map(s => (
-          <Card
-            key={s}
-            className={`cursor-pointer transition-all ${statusFilter === s ? "ring-2 ring-primary" : ""}`}
-            onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-            data-testid={`card-status-${s.toLowerCase().replace(/\s/g, "-")}`}
-          >
-            <CardContent className="p-3 text-center">
-              <div className="text-2xl font-bold">{stats[s] || 0}</div>
-              <Badge className={`text-xs mt-1 ${STATUS_COLORS[s] || ""}`}>{s}</Badge>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
           <CardContent className="p-4">
