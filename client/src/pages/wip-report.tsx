@@ -1436,21 +1436,11 @@ export default function WipReport() {
             {selectedIds.size > 0 && (
               <div className="flex items-center gap-3 px-4 py-2 bg-primary/5 border-b">
                 <span className="text-xs font-medium">{selectedIds.size} selected</span>
+                <span className="text-xs text-muted-foreground">
+                  {formatFullCurrency(sortedDetailEntries.filter(e => e.id && selectedIds.has(e.id)).reduce((s, e) => s + (e.amtWip || 0) + (e.amtInvoice || 0), 0))} total
+                </span>
                 <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => setSelectedIds(new Set())}>
-                  Clear
-                </Button>
-                <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={async () => {
-                  if (!confirm(`Delete ${selectedIds.size} selected entries?`)) return;
-                  try {
-                    for (const id of selectedIds) {
-                      await apiRequest("DELETE", `/api/wip/${id}`);
-                    }
-                    queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
-                    toast({ title: `Deleted ${selectedIds.size} entries` });
-                    setSelectedIds(new Set());
-                  } catch { toast({ title: "Delete failed", variant: "destructive" }); }
-                }}>
-                  Delete Selected
+                  Clear Selection
                 </Button>
               </div>
             )}
