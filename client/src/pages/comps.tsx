@@ -1598,6 +1598,8 @@ export default function Comps() {
               <col style={{ width: 56 }} />
               <col style={{ width: 64 }} />
               <col style={{ width: 110 }} />
+              <col style={{ width: 120 }} />
+              <col style={{ width: 160 }} />
               <col style={{ width: 130 }} />
               <col style={{ width: 130 }} />
               <col style={{ width: 60 }} />
@@ -1633,6 +1635,8 @@ export default function Comps() {
                 <SortHeader field="rentFreeMonths">RF (m)</SortHeader>
                 <SortHeader field="fitoutContribution">Incentive</SortHeader>
                 <SortHeader field="ltActStatus">L&T Act</SortHeader>
+                <SortHeader field="sourceUrl">Source</SortHeader>
+                <SortHeader field="contactName">Contact</SortHeader>
                 <SortHeader field="dealId">Deal</SortHeader>
                 <SortHeader field="verified">Ver.</SortHeader>
                 <SortHeader field="comments">Comments</SortHeader>
@@ -1862,6 +1866,51 @@ export default function Comps() {
                       }}
                       onSave={v => updateMutation.mutate({ id: comp.id, field: "ltActStatus", value: v })}
                     />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-1">
+                      {comp.sourceEvidence && (
+                        <span className={`text-[9px] px-1 rounded shrink-0 ${
+                          comp.sourceEvidence === "News Feed" ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
+                          comp.sourceEvidence === "Team Email" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400" :
+                          comp.sourceEvidence === "SharePoint File" ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400" :
+                          comp.sourceEvidence === "BGP Direct" ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
+                          "bg-muted text-muted-foreground"
+                        }`}>{comp.sourceEvidence === "News Feed" ? "News" : comp.sourceEvidence === "Team Email" ? "Email" : comp.sourceEvidence === "SharePoint File" ? "File" : comp.sourceEvidence === "BGP Direct" ? "BGP" : comp.sourceEvidence}</span>
+                      )}
+                      {comp.sourceUrl ? (
+                        <a href={comp.sourceUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline flex items-center gap-0.5 truncate" title={comp.sourceUrl}>
+                          <ExternalLink className="w-3 h-3 shrink-0" />
+                          <span className="truncate text-[11px]">Link</span>
+                        </a>
+                      ) : (
+                        <InlineText value="" placeholder="Add URL" onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceUrl", value: v })} className="text-[11px] truncate" />
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      {comp.contactName ? (
+                        <div className="flex items-center gap-1 min-w-0">
+                          {comp.contactId ? (
+                            <Link href={`/contacts/${comp.contactId}`} className="text-[11px] font-medium text-primary hover:underline truncate">
+                              {comp.contactName}
+                            </Link>
+                          ) : (
+                            <span className="text-[11px] font-medium truncate">{comp.contactName}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <InlineText value="" placeholder="Name" onSave={v => updateMutation.mutate({ id: comp.id, field: "contactName", value: v })} className="text-[11px]" />
+                      )}
+                      {comp.contactCompany && <span className="text-[10px] text-muted-foreground truncate">{comp.contactCompany}</span>}
+                      {(comp.contactPhone || comp.contactEmail) && (
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                          {comp.contactPhone && <a href={`tel:${comp.contactPhone}`} className="hover:text-primary">{comp.contactPhone}</a>}
+                          {comp.contactEmail && <a href={`mailto:${comp.contactEmail}`} className="hover:text-primary truncate">{comp.contactEmail}</a>}
+                        </div>
+                      )}
+                    </div>
                   </td>
                   <td className="px-2 py-1.5">
                     <DealCell

@@ -99,6 +99,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   const [veriffFirstName, setVeriffFirstName] = useState("");
   const [veriffLastName, setVeriffLastName] = useState("");
   const [veriffEmail, setVeriffEmail] = useState("");
+  const [veriffMobile, setVeriffMobile] = useState("");
 
   const { data: veriffStatus } = useQuery<{ configured: boolean }>({
     queryKey: ["/api/veriff/status"],
@@ -125,6 +126,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
         firstName: veriffFirstName,
         lastName: veriffLastName,
         email: veriffEmail || undefined,
+        mobile: veriffMobile || undefined,
         companyId,
         dealId,
       });
@@ -132,15 +134,15 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
     },
     onSuccess: (data: any) => {
       setVeriffOpen(false);
-      setVeriffFirstName(""); setVeriffLastName(""); setVeriffEmail("");
+      setVeriffFirstName(""); setVeriffLastName(""); setVeriffEmail(""); setVeriffMobile("");
       queryClient.invalidateQueries({ queryKey: ["/api/veriff/sessions", { companyId }] });
+      const sent: string[] = [];
+      if (veriffEmail) sent.push("email");
+      if (veriffMobile) sent.push("WhatsApp");
       toast({
         title: "Veriff session created",
-        description: data?.verificationUrl ? "Copy the link to send to the subject, or open it now." : "",
+        description: sent.length > 0 ? `Verification link sent via ${sent.join(" & ")}.` : "Copy the link below to send to the subject.",
       });
-      if (data?.verificationUrl) {
-        window.open(data.verificationUrl, "_blank", "noopener,noreferrer");
-      }
     },
     onError: (e: any) => toast({ title: "Veriff error", description: e?.message, variant: "destructive" }),
   });
@@ -575,7 +577,8 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
               <div className="space-y-2">
                 <Input value={veriffFirstName} onChange={(e) => setVeriffFirstName(e.target.value)} placeholder="First name" data-testid="input-veriff-firstname" />
                 <Input value={veriffLastName} onChange={(e) => setVeriffLastName(e.target.value)} placeholder="Last name" data-testid="input-veriff-lastname" />
-                <Input value={veriffEmail} onChange={(e) => setVeriffEmail(e.target.value)} placeholder="Email (optional)" type="email" data-testid="input-veriff-email" />
+                <Input value={veriffEmail} onChange={(e) => setVeriffEmail(e.target.value)} placeholder="Email — sends verification link" type="email" data-testid="input-veriff-email" />
+                <Input value={veriffMobile} onChange={(e) => setVeriffMobile(e.target.value)} placeholder="Mobile — sends WhatsApp link" type="tel" data-testid="input-veriff-mobile" />
               </div>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
