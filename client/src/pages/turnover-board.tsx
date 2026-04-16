@@ -69,7 +69,7 @@ function sourceBadge(s: string) {
   return colors[s] || "bg-gray-100 text-gray-700";
 }
 
-export default function TurnoverBoard() {
+export default function TurnoverBoard({ embedded = false }: { embedded?: boolean }) {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
@@ -233,18 +233,27 @@ export default function TurnoverBoard() {
   );
 
   return (
-    <div className="p-4 sm:p-6 space-y-4" data-testid="turnover-board-page">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
-              Turnover Data
-            </h1>
-            <p className="text-sm text-muted-foreground">Brand revenue intelligence across your portfolio</p>
+    <div className={embedded ? "space-y-4" : "p-4 sm:p-6 space-y-4"} data-testid="turnover-board-page">
+        {!embedded && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">
+                Turnover Data
+              </h1>
+              <p className="text-sm text-muted-foreground">Brand revenue intelligence across your portfolio</p>
+            </div>
+            <Button onClick={() => setShowAdd(true)} data-testid="button-add-entry">
+              <Plus className="w-4 h-4 mr-1" /> Add Entry
+            </Button>
           </div>
-          <Button onClick={() => setShowAdd(true)} data-testid="button-add-entry">
-            <Plus className="w-4 h-4 mr-1" /> Add Entry
-          </Button>
-        </div>
+        )}
+        {embedded && (
+          <div className="flex justify-end">
+            <Button onClick={() => setShowAdd(true)} data-testid="button-add-entry">
+              <Plus className="w-4 h-4 mr-1" /> Add Entry
+            </Button>
+          </div>
+        )}
 
         <div className="flex items-center gap-3 overflow-x-auto pb-1">
           <Card className="flex-shrink-0 min-w-[120px]" data-testid="stat-total-entries">

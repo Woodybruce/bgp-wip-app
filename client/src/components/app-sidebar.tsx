@@ -114,7 +114,7 @@ const toolsNav = [
   { title: "KYC & AML", url: "/kyc-clouseau", icon: ShieldCheck, badge: "AI" },
   { title: "Land Registry", url: "/land-registry", icon: Landmark },
   { title: "Business Rates", url: "/business-rates", icon: Receipt },
-  { title: "Turnover Data", url: "/turnover", icon: BarChart3 },
+  { title: "Turnover Data", url: "/brands?tab=turnover", icon: BarChart3 },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler },
 ];
 
@@ -395,7 +395,7 @@ const mobileOverlayItems = [
   { title: "KYC & AML", url: "/kyc-clouseau", icon: ShieldCheck },
   { title: "Land Registry", url: "/land-registry", icon: Landmark },
   { title: "Business Rates", url: "/business-rates", icon: Receipt },
-  { title: "Turnover Data", url: "/turnover", icon: BarChart3 },
+  { title: "Turnover Data", url: "/brands?tab=turnover", icon: BarChart3 },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles },
   { title: "Office Add-ins", url: "/addins", icon: FileSpreadsheet },
   { title: "Settings", url: "/settings", icon: Settings },

@@ -1,6 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,7 +13,15 @@ import {
   Store, TrendingUp, Flame, Star, Search, ChevronRight,
   MapPin, Maximize2, Zap, BarChart3, RefreshCw, Building2,
   ArrowUpRight, Users, FileText, Trophy, Sparkles, Play, Pause,
+  LayoutGrid, Crown, Shirt, Activity, ShoppingBag, Home as HomeIcon,
+  Gift, Landmark, Briefcase, Utensils, Coffee, Wine, CakeSlice,
+  UtensilsCrossed, Soup, Diamond, Car, Wifi, BookOpen, Smartphone,
+  Flower2, Clapperboard, Tv, Gamepad2, Baby, Palette, PartyPopper,
+  HeartPulse, Bath, Dumbbell, Tag, Wrench, Watch, Gem, Footprints,
+  ShoppingCart,
 } from "lucide-react";
+
+const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 
 interface HubData {
   stats: {
@@ -118,8 +126,13 @@ function confidenceColour(c: string) {
   return "bg-slate-400";
 }
 
+type HubTab = "overview" | "explorer" | "turnover";
+
 export default function BrandsHub() {
   const { toast } = useToast();
+  const searchParams = useSearch();
+  const initialTab = (new URLSearchParams(searchParams).get("tab") as HubTab) || "overview";
+  const [activeTab, setActiveTab] = useState<HubTab>(initialTab);
   const [search, setSearch] = useState("");
   const [researchingId, setResearchingId] = useState<string | null>(null);
 
@@ -194,13 +207,37 @@ export default function BrandsHub() {
         </Link>
       </div>
 
+      {/* ── Tabs ───────────────────────────────────────────────────── */}
+      <div className="flex gap-1 border-b">
+        {([
+          { key: "overview", label: "Overview", icon: BarChart3 },
+          { key: "explorer", label: "Brand Explorer", icon: LayoutGrid },
+          { key: "turnover", label: "Turnover Board", icon: TrendingUp },
+        ] as { key: HubTab; label: string; icon: any }[]).map(t => (
+          <button
+            key={t.key}
+            onClick={() => setActiveTab(t.key)}
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
+              activeTab === t.key
+                ? "border-pink-500 text-pink-600"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <t.icon className="w-3.5 h-3.5" />
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "overview" && (<>
+
       {/* ── Stats bar ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: "Total Brands", value: totalBrands, icon: Store, colour: "text-pink-500" },
           { label: "Active Requirements", value: activeReqs, icon: FileText, colour: "text-blue-500" },
           { label: "With Turnover Data", value: brandsWithTurnover, icon: BarChart3, colour: "text-emerald-500" },
-          { label: "Categories", value: 5, icon: Zap, colour: "text-purple-500" },
+          { label: "Categories", value: 6, icon: Zap, colour: "text-purple-500" },
         ].map(s => (
           <Card key={s.label}>
             <CardContent className="p-4 flex items-center gap-3">
@@ -402,6 +439,255 @@ export default function BrandsHub() {
         </CardContent>
       </Card>
 
+      </>)}
+
+      {activeTab === "explorer" && (
+        <BrandExplorer />
+      )}
+
+      {activeTab === "turnover" && (
+        <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+          <TurnoverBoard embedded={true} />
+        </Suspense>
+      )}
+
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Brand Explorer (moved from People Hub)
+// ─────────────────────────────────────────────────────────────────────────────
+
+type SubCat = { key: string; label: string; icon: any; match: string[] };
+type TopCat = { key: string; label: string; icon: any; color: string; gradient: string; subs: SubCat[] };
+
+const BRAND_CATEGORIES: TopCat[] = [
+  {
+    key: "luxury", label: "Luxury", icon: Diamond, color: "bg-yellow-600", gradient: "from-yellow-500 to-amber-600",
+    subs: [
+      { key: "luxury-fashion", label: "Luxury Fashion", icon: Crown, match: ["Tenant - Luxury", "Tenant - Luxury Fashion"] },
+      { key: "luxury-accessories", label: "Luxury Accessories", icon: Gem, match: ["Tenant - Luxury Accessories"] },
+      { key: "luxury-beauty", label: "Luxury Beauty", icon: Sparkles, match: ["Tenant - Luxury Beauty"] },
+      { key: "watches-jewellery", label: "Watches & Jewellery", icon: Watch, match: ["Tenant - Jewellery & Watches", "Tenant - Jewellery", "Tenant - Watches"] },
+    ],
+  },
+  {
+    key: "retail", label: "Fashion & Retail", icon: Store, color: "bg-pink-600", gradient: "from-pink-500 to-rose-600",
+    subs: [
+      { key: "flagship-fashion", label: "Flagship Fashion", icon: Crown, match: ["Tenant - Flagship Fashion"] },
+      { key: "fashion", label: "Fashion", icon: Shirt, match: ["Tenant - Fashion", "Tenant - Clothing", "Tenant - Apparel", "Tenant - Womenswear", "Tenant - Menswear", "Tenant - Kidswear", "Tenant - Lingerie"] },
+      { key: "athleisure", label: "Athleisure", icon: Activity, match: ["Tenant - Athleisure", "Tenant - Sportswear"] },
+      { key: "footwear", label: "Footwear", icon: Footprints, match: ["Tenant - Footwear", "Tenant - Shoes"] },
+      { key: "accessories", label: "Accessories", icon: ShoppingBag, match: ["Tenant - Accessories & Footwear", "Tenant - Accessories"] },
+      { key: "beauty", label: "Beauty / Skincare / Fragrance", icon: Sparkles, match: ["Tenant - Beauty", "Tenant - Skincare", "Tenant - Fragrance", "Tenant - Beauty & Wellness", "Tenant - Cosmetics"] },
+      { key: "homewares", label: "Homewares", icon: HomeIcon, match: ["Tenant - Homewares", "Tenant - Home", "Tenant - Interiors"] },
+      { key: "lifestyle", label: "Lifestyle & Home", icon: Flower2, match: ["Tenant - Lifestyle & Home", "Tenant - Lifestyle", "Tenant - Art"] },
+      { key: "gifts", label: "Gifts & Perfumes", icon: Gift, match: ["Tenant - Gifts & Perfumes", "Tenant - Gifts", "Tenant - Gifts & Speciality"] },
+      { key: "department", label: "Department Stores", icon: Building2, match: ["Tenant - Department Store"] },
+      { key: "technology", label: "Technology & Electronics", icon: Smartphone, match: ["Tenant - Technology", "Tenant - Electronics", "Tenant - Tech"] },
+      { key: "automotive", label: "Automotive", icon: Car, match: ["Tenant - Automotive", "Tenant - Cars"] },
+      { key: "telecoms", label: "Telecoms", icon: Wifi, match: ["Tenant - Telecoms", "Tenant - Telecommunications"] },
+      { key: "books", label: "Books & Stationery", icon: BookOpen, match: ["Tenant - Books", "Tenant - Stationery", "Tenant - Books & Stationery"] },
+      { key: "financial", label: "Financial Services", icon: Landmark, match: ["Tenant - Financial Services", "Tenant - Bank", "Tenant - Finance"] },
+      { key: "services", label: "Services", icon: Briefcase, match: ["Tenant - Services", "Tenant - Optician", "Tenant - Travel", "Tenant - Other Services"] },
+      { key: "other-retail", label: "Other Retail", icon: Store, match: ["Tenant - Retail", "Tenant - General Retail"] },
+    ],
+  },
+  {
+    key: "restaurants", label: "Food & Drink", icon: Utensils, color: "bg-rose-600", gradient: "from-rose-500 to-red-600",
+    subs: [
+      { key: "fine-dining", label: "Fine Dining", icon: UtensilsCrossed, match: ["Tenant - Fine Dining"] },
+      { key: "casual-dining", label: "Casual Dining", icon: Utensils, match: ["Tenant - Casual Dining", "Tenant - Restaurant", "Tenant - Food & Drink"] },
+      { key: "quick-service", label: "Quick Service", icon: Soup, match: ["Tenant - Quick Service", "Tenant - Fast Casual", "Tenant - Fast Food", "Tenant - QSR"] },
+      { key: "cafes", label: "Cafés & Coffee", icon: Coffee, match: ["Tenant - Café", "Tenant - Coffee", "Tenant - Café & Coffee", "Tenant - F&B"] },
+      { key: "bars", label: "Bars & Pubs", icon: Wine, match: ["Tenant - Bar", "Tenant - Pub", "Tenant - Wine Bar"] },
+      { key: "bakery", label: "Bakery & Patisserie", icon: CakeSlice, match: ["Tenant - Bakery", "Tenant - Patisserie"] },
+    ],
+  },
+  {
+    key: "leisure", label: "Leisure & Experience", icon: Clapperboard, color: "bg-purple-600", gradient: "from-purple-500 to-violet-600",
+    subs: [
+      { key: "cinema", label: "Cinema", icon: Tv, match: ["Tenant - Cinema", "Tenant - Cinema & Film"] },
+      { key: "experiential", label: "Experiential", icon: PartyPopper, match: ["Tenant - Experiential", "Tenant - Activation", "Tenant - Entertainment"] },
+      { key: "immersive", label: "Immersive Experience", icon: Zap, match: ["Tenant - Immersive Experience", "Tenant - Immersive"] },
+      { key: "gaming", label: "Gaming & Escape Rooms", icon: Gamepad2, match: ["Tenant - Gaming", "Tenant - Escape Room", "Tenant - Bowling", "Tenant - Arcade"] },
+      { key: "family", label: "Family Entertainment", icon: Baby, match: ["Tenant - Family Entertainment", "Tenant - Family", "Tenant - Soft Play", "Tenant - Kids Entertainment"] },
+      { key: "leisure-other", label: "Other Leisure", icon: Clapperboard, match: ["Tenant - Leisure"] },
+      { key: "arts", label: "Arts & Culture", icon: Palette, match: ["Tenant - Arts", "Tenant - Culture", "Tenant - Gallery"] },
+    ],
+  },
+  {
+    key: "health", label: "Health & Wellness", icon: Dumbbell, color: "bg-orange-600", gradient: "from-orange-500 to-amber-600",
+    subs: [
+      { key: "gym", label: "Gym & Fitness", icon: Dumbbell, match: ["Tenant - Gym", "Tenant - Fitness", "Tenant - Gym & Fitness", "Tenant - Health & Fitness"] },
+      { key: "wellness", label: "Wellness & Spa", icon: Bath, match: ["Tenant - Wellness", "Tenant - Spa", "Tenant - Hair", "Tenant - Nails", "Tenant - Aesthetics"] },
+      { key: "yoga", label: "Yoga & Pilates", icon: HeartPulse, match: ["Tenant - Yoga", "Tenant - Pilates"] },
+    ],
+  },
+  {
+    key: "national", label: "National & Regional", icon: MapPin, color: "bg-teal-600", gradient: "from-teal-500 to-emerald-600",
+    subs: [
+      { key: "grocery", label: "Grocery & Convenience", icon: ShoppingCart, match: ["Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket"] },
+      { key: "value-retail", label: "Value & Discount", icon: Tag, match: ["Tenant - Value Retail", "Tenant - Discount", "Tenant - Pound Store"] },
+      { key: "trade-diy", label: "Trade & DIY", icon: Wrench, match: ["Tenant - Trade", "Tenant - DIY", "Tenant - Hardware", "Tenant - Builders Merchants"] },
+      { key: "national-other", label: "Other National", icon: Building2, match: ["Tenant - National Retail", "Tenant - High Street"] },
+    ],
+  },
+];
+
+function catMatch(companyType: string, cat: TopCat): boolean {
+  const t = (companyType || "").toLowerCase().trim();
+  return cat.subs.some(s => s.match.some(m => m.toLowerCase() === t));
+}
+function subMatch(companyType: string, sub: SubCat): boolean {
+  const t = (companyType || "").toLowerCase().trim();
+  return sub.match.some(m => m.toLowerCase() === t);
+}
+
+function BrandExplorer() {
+  const [activeCat, setActiveCat] = useState<string | null>(null);
+  const [activeSub, setActiveSub] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+
+  const { data: companies = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/companies"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/crm/companies");
+      const all = await res.json();
+      return (all as any[]).filter((c: any) => (c.companyType || "").startsWith("Tenant"));
+    },
+    staleTime: 120_000,
+  });
+
+  const catCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    BRAND_CATEGORIES.forEach(cat => {
+      counts[cat.key] = companies.filter(c => catMatch(c.companyType, cat)).length;
+      cat.subs.forEach(sub => {
+        counts[sub.key] = companies.filter(c => subMatch(c.companyType, sub)).length;
+      });
+    });
+    return counts;
+  }, [companies]);
+
+  const activeCatObj = BRAND_CATEGORIES.find(c => c.key === activeCat);
+
+  const filtered = useMemo(() => {
+    let list = companies;
+    if (activeSub && activeCatObj) {
+      const sub = activeCatObj.subs.find(s => s.key === activeSub);
+      if (sub) list = list.filter(c => subMatch(c.companyType, sub));
+    } else if (activeCatObj) {
+      list = list.filter(c => catMatch(c.companyType, activeCatObj));
+    }
+    if (search.trim()) {
+      const s = search.toLowerCase();
+      list = list.filter(c => c.name.toLowerCase().includes(s));
+    }
+    return list.sort((a: any, b: any) => a.name.localeCompare(b.name));
+  }, [companies, activeCat, activeSub, activeCatObj, search]);
+
+  return (
+    <div className="space-y-4">
+      {/* Category cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
+        <div
+          className={`cursor-pointer rounded-xl p-4 text-white transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-br from-teal-500 to-teal-700 ${
+            activeCat === null ? "shadow-lg ring-2 ring-teal-400 ring-offset-2" : "opacity-80 hover:opacity-100"
+          }`}
+          onClick={() => { setActiveCat(null); setActiveSub(null); }}
+        >
+          <Store className="w-6 h-6 mb-2 opacity-90" />
+          <div className="text-2xl font-bold">{companies.length}</div>
+          <div className="text-xs font-medium opacity-90 mt-0.5">All Brands</div>
+        </div>
+        {BRAND_CATEGORIES.map(cat => {
+          const isActive = activeCat === cat.key;
+          const Icon = cat.icon;
+          return (
+            <div
+              key={cat.key}
+              className={`cursor-pointer rounded-xl p-4 text-white transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-br ${cat.gradient} ${
+                isActive ? "shadow-lg ring-2 ring-white/40 ring-offset-2" : "opacity-80 hover:opacity-100"
+              }`}
+              onClick={() => { setActiveCat(isActive ? null : cat.key); setActiveSub(null); }}
+            >
+              <Icon className="w-6 h-6 mb-2 opacity-90" />
+              <div className="text-2xl font-bold">{catCounts[cat.key] || 0}</div>
+              <div className="text-xs font-medium opacity-90 mt-0.5">{cat.label}</div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Subcategory pills */}
+      {activeCatObj && (
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setActiveSub(null)}
+            className={`text-sm px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all border ${
+              activeSub === null
+                ? `${activeCatObj.color} text-white border-transparent shadow-sm`
+                : "bg-muted/50 hover:bg-muted border-border text-foreground"
+            }`}
+          >
+            All {activeCatObj.label} <span className="text-xs opacity-75">({catCounts[activeCatObj.key] || 0})</span>
+          </button>
+          {activeCatObj.subs.map(sub => {
+            const count = catCounts[sub.key] || 0;
+            const isActive = activeSub === sub.key;
+            const Icon = sub.icon;
+            return (
+              <button
+                key={sub.key}
+                onClick={() => setActiveSub(isActive ? null : sub.key)}
+                className={`text-sm px-4 py-2 rounded-lg font-medium flex items-center gap-2 transition-all border ${
+                  isActive
+                    ? `${activeCatObj.color} text-white border-transparent shadow-sm`
+                    : "bg-muted/50 hover:bg-muted border-border text-foreground"
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {sub.label} <span className="text-xs opacity-75">({count})</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Search + count */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search brands..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="pl-9 h-9"
+          />
+        </div>
+        <p className="text-sm text-muted-foreground">{filtered.length} results</p>
+      </div>
+
+      {/* Brand cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-2">
+        {filtered.map((c: any) => (
+          <Link key={c.id} href={`/companies/${c.id}`}>
+            <div className="flex flex-col items-center gap-1.5 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors cursor-pointer text-center group">
+              <BrandLogo name={c.name} domain={c.domain} size={36} />
+              <p className="text-xs font-medium leading-tight truncate w-full group-hover:text-primary transition-colors">{c.name}</p>
+              <p className="text-[10px] text-muted-foreground truncate w-full">{(c.companyType || "").replace("Tenant - ", "")}</p>
+            </div>
+          </Link>
+        ))}
+        {!filtered.length && (
+          <div className="col-span-full text-center py-12 text-muted-foreground">
+            <Store className="w-10 h-10 mx-auto mb-2 opacity-20" />
+            <p className="text-sm">No brands found</p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -23,6 +23,7 @@ import {
   Tv, Gamepad2, Baby, Palette, PartyPopper,
   HeartPulse, Bath,
   Diamond, Car, Wifi, Landmark, Gift, Home, Activity, Zap,
+  Tag, Wrench,
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -806,7 +807,6 @@ const TENANT_CATEGORIES: TopCategory[] = [
       { key: "technology", label: "Technology & Electronics", icon: Smartphone, match: ["Tenant - Technology", "Tenant - Electronics", "Tenant - Tech"] },
       { key: "automotive", label: "Automotive", icon: Car, match: ["Tenant - Automotive", "Tenant - Cars"] },
       { key: "telecoms", label: "Telecoms", icon: Wifi, match: ["Tenant - Telecoms", "Tenant - Telecommunications"] },
-      { key: "grocery", label: "Grocery & Convenience", icon: ShoppingCart, match: ["Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket"] },
       { key: "books", label: "Books & Stationery", icon: BookOpen, match: ["Tenant - Books", "Tenant - Stationery", "Tenant - Books & Stationery"] },
       { key: "financial", label: "Financial Services", icon: Landmark, match: ["Tenant - Financial Services", "Tenant - Bank", "Tenant - Finance"] },
       { key: "services", label: "Services", icon: Briefcase, match: ["Tenant - Services", "Tenant - Optician", "Tenant - Travel", "Tenant - Other Services"] },
@@ -822,7 +822,15 @@ const TENANT_CATEGORIES: TopCategory[] = [
       { key: "cafes", label: "Cafés & Coffee", icon: Coffee, match: ["Tenant - Café", "Tenant - Coffee", "Tenant - Café & Coffee", "Tenant - F&B"] },
       { key: "bars", label: "Bars & Pubs", icon: Wine, match: ["Tenant - Bar", "Tenant - Pub", "Tenant - Wine Bar"] },
       { key: "bakery", label: "Bakery & Patisserie", icon: CakeSlice, match: ["Tenant - Bakery", "Tenant - Patisserie"] },
-      { key: "foodstores", label: "Food Stores", icon: ShoppingCart, match: ["Tenant - Grocery"] },
+    ],
+  },
+  {
+    key: "national", label: "National & Regional", icon: MapPin, color: "bg-teal-600", gradient: "from-teal-500 to-emerald-600",
+    subs: [
+      { key: "grocery", label: "Grocery & Convenience", icon: ShoppingCart, match: ["Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket"] },
+      { key: "value-retail", label: "Value & Discount", icon: Tag, match: ["Tenant - Value Retail", "Tenant - Discount", "Tenant - Pound Store"] },
+      { key: "trade-diy", label: "Trade & DIY", icon: Wrench, match: ["Tenant - Trade", "Tenant - DIY", "Tenant - Hardware", "Tenant - Builders Merchants"] },
+      { key: "national-other", label: "Other National", icon: Building2, match: ["Tenant - National Retail", "Tenant - High Street"] },
     ],
   },
   {
@@ -1345,7 +1353,22 @@ function PeopleHub() {
             <AgentsTab companies={companies} contacts={contacts} defaultTenantRep={isLandsec} onDeleteCompany={onDeleteCompany} />
           )}
           {tab === "tenants" && (
-            <TenantsTab companies={companies} contacts={contacts} onDeleteCompany={onDeleteCompany} viewMode={viewMode} />
+            <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center">
+                <Store className="w-8 h-8 text-white" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold">Brand Explorer has moved</h2>
+                <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+                  The full brand board with category filters, subcategories, and turnover data is now in Brand Intelligence.
+                </p>
+              </div>
+              <Link href="/brands?tab=explorer">
+                <Button className="bg-gradient-to-r from-pink-500 to-rose-600 hover:from-pink-600 hover:to-rose-700 text-white">
+                  Open Brand Explorer <ChevronRight className="w-4 h-4 ml-1" />
+                </Button>
+              </Link>
+            </div>
           )}
           {tab === "contacts" && !scopedLandlord && (
             <Suspense fallback={<PageLoader />}>
