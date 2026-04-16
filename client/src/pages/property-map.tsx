@@ -685,7 +685,7 @@ export default function PropertyMap() {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-4" data-testid="property-map-page">
+    <div className="p-4 sm:p-6 space-y-4 h-full flex flex-col" data-testid="property-map-page">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-map-title">Property Map</h1>
@@ -850,7 +850,7 @@ export default function PropertyMap() {
         ))}
       </div>
 
-      <div className={`flex gap-4 ${viewMode === "map" ? "" : "flex-col lg:flex-row"}`} style={{ height: "calc(100vh - 300px)" }}>
+      <div className={`flex gap-4 flex-1 min-h-0 ${viewMode === "map" ? "" : "flex-col lg:flex-row"}`}>
         {viewMode === "split" && (
           <div className="lg:w-[350px] w-full lg:h-full h-[300px] overflow-y-auto space-y-2 flex-shrink-0" data-testid="property-list-panel">
             <p className="text-xs text-muted-foreground sticky top-0 bg-background py-1 z-10">
