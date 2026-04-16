@@ -19,7 +19,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
+  ChevronDown,
 } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useState, useMemo, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -275,6 +283,7 @@ export default function AvailableUnitsPage() {
   const { activeTeam } = useTeam();
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState("all");
   const [propertyFilter, setPropertyFilter] = useState("all");
   const [assetClassFilter, setAssetClassFilter] = useState("all");
@@ -502,6 +511,32 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       setDeleteItem(null);
       toast({ title: "Unit deleted" });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      await Promise.all(ids.map(id => apiRequest("DELETE", `/api/available-units/${id}`)));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      const count = selectedIds.size;
+      setSelectedIds(new Set());
+      setBulkDeleteOpen(false);
+      toast({ title: `${count} unit${count !== 1 ? "s" : ""} deleted` });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const bulkStatusMutation = useMutation({
+    mutationFn: async ({ ids, status }: { ids: string[]; status: string }) => {
+      await Promise.all(ids.map(id => apiRequest("PATCH", `/api/available-units/${id}`, { marketingStatus: status })));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      setSelectedIds(new Set());
+      toast({ title: "Status updated" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -853,12 +888,34 @@ export default function AvailableUnitsPage() {
         </div>
       </ScrollArea>
 
-      {/* Selection bar */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2 bg-primary/5 border rounded-lg">
-          <span className="text-xs font-medium">{selectedIds.size} unit{selectedIds.size !== 1 ? "s" : ""} selected</span>
-          <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => setSelectedIds(new Set())}>
-            Clear
+        <div className="flex items-center gap-3 rounded-md border bg-background px-4 py-2 shadow-sm">
+          <span className="text-sm font-medium">{selectedIds.size} unit{selectedIds.size !== 1 ? "s" : ""} selected</span>
+          <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} data-testid="bulk-clear-selection">
+            <X className="w-3.5 h-3.5 mr-1" />Clear
+          </Button>
+          <div className="h-4 w-px bg-border" />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" data-testid="bulk-change-status">
+                Change Status<ChevronDown className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              {MARKETING_STATUSES.map(s => (
+                <DropdownMenuItem
+                  key={s}
+                  onClick={() => bulkStatusMutation.mutate({ ids: Array.from(selectedIds), status: s })}
+                  data-testid={`bulk-status-${s.toLowerCase().replace(/\s/g, "-")}`}
+                >
+                  <span className={`w-2 h-2 rounded-full mr-2 ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
+                  {s}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button variant="destructive" size="sm" onClick={() => setBulkDeleteOpen(true)} data-testid="bulk-delete-units">
+            <Trash2 className="w-3.5 h-3.5 mr-1.5" />Delete
           </Button>
         </div>
       )}
@@ -1199,6 +1256,27 @@ export default function AvailableUnitsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedIds.size} unit{selectedIds.size !== 1 ? "s" : ""}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete {selectedIds.size} selected unit{selectedIds.size !== 1 ? "s" : ""}. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => bulkDeleteMutation.mutate(Array.from(selectedIds))}
+              disabled={bulkDeleteMutation.isPending}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <UnitMatchesDialog unit={matchItem} onClose={() => setMatchItem(null)} />
 
