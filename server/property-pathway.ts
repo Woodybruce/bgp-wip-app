@@ -142,7 +142,9 @@ async function setStageStatus(runId: string, stage: keyof StageStatusMap, status
   const stageStatus = { ...(run.stageStatus as StageStatusMap), [stage]: status };
   const stageResults = { ...(run.stageResults as StageResults), ...(resultsPatch || {}) };
   const stageNumber = parseInt(stage.replace("stage", ""), 10);
-  const newCurrentStage = status === "completed" && stageNumber >= run.currentStage ? Math.min(7, stageNumber + 1) : run.currentStage;
+  // A skipped stage shouldn't block later stages — advance past it like a completed stage.
+  const shouldAdvance = (status === "completed" || status === "skipped") && stageNumber >= run.currentStage;
+  const newCurrentStage = shouldAdvance ? Math.min(7, stageNumber + 1) : run.currentStage;
   return updateRun(runId, { stageStatus, stageResults, currentStage: newCurrentStage });
 }
 
