@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Loader2, Map, LayoutGrid, ShieldCheck, Landmark, Receipt, FileSearch } from "lucide-react";
+import { Loader2, Map, LayoutGrid, ShieldCheck, Landmark, Receipt, FileSearch, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -14,12 +14,13 @@ const EdozoMap = lazy(() => import("@/pages/edozo-map"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
 const LandRegistry = lazy(() => import("@/pages/land-registry"));
 const VoaRatings = lazy(() => import("@/pages/voa-ratings"));
+const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
 
-type TabId = "map" | "board" | "investigator" | "land-registry" | "business-rates";
+type TabId = "pathway" | "map" | "investigator" | "land-registry" | "business-rates";
 
 const TABS: Array<{ id: TabId; label: string; icon: any }> = [
+  { id: "pathway", label: "Pathway", icon: Sparkles },
   { id: "map", label: "Map", icon: Map },
-  { id: "board", label: "Investigation Board", icon: LayoutGrid },
   { id: "investigator", label: "Investigator", icon: ShieldCheck },
   { id: "land-registry", label: "Land Registry", icon: Landmark },
   { id: "business-rates", label: "Business Rates", icon: Receipt },
@@ -240,15 +241,17 @@ function InvestigationBoard({ onOpenInMap }: { onOpenInMap: (search: SavedSearch
 }
 
 function readTabFromUrl(): TabId {
-  if (typeof window === "undefined") return "map";
+  if (typeof window === "undefined") return "pathway";
   const params = new URLSearchParams(window.location.search);
-  const t = (params.get("tab") || "").toLowerCase() as TabId;
-  if (TABS.some((x) => x.id === t)) return t;
+  const raw = (params.get("tab") || "").toLowerCase();
+  // Redirect the old Investigation Board tab to the new Pathway
+  if (raw === "board") return "pathway";
+  if (TABS.some((x) => x.id === raw)) return raw as TabId;
   // Handle legacy path redirects
   const path = window.location.pathname;
   if (path.startsWith("/land-registry")) return "land-registry";
   if (path.startsWith("/business-rates")) return "business-rates";
-  return "map";
+  return "pathway";
 }
 
 const TabLoader = () => (
@@ -312,11 +315,11 @@ export default function PropertyIntelligence() {
 
         <div className="flex-1 overflow-y-auto">
           <Suspense fallback={<TabLoader />}>
+            <TabsContent value="pathway" className="m-0">
+              <PropertyPathway />
+            </TabsContent>
             <TabsContent value="map" className="m-0 h-full">
               <EdozoMap initialSearch={pendingSearch} onSearchConsumed={() => setPendingSearch(null)} />
-            </TabsContent>
-            <TabsContent value="board" className="m-0">
-              <InvestigationBoard onOpenInMap={openMap} />
             </TabsContent>
             <TabsContent value="investigator" className="m-0 h-full">
               <KycClouseau />
