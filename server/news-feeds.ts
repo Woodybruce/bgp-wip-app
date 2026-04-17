@@ -443,24 +443,23 @@ async function extractCompsFromEmails(): Promise<{ extracted: number; created: n
 
     if (teamEmails.length === 0) return { extracted: 0, created: 0 };
 
-    const propertyKeywords = ["letting", "lease", "tenant", "rent", "sq ft", "psf", "zone a", "lease renewal", "comp", "comparable", "transaction"];
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    // Search all-time for comp-related emails — no date restriction.
+    // Use Graph $search so we only pull emails that mention these terms rather than
+    // fetching everything and filtering client-side.
+    const compSearchQuery = encodeURIComponent('"zone a" OR "net effective" OR "ITZA" OR "new letting" OR "rent free" OR "headline rent" OR "comparable" OR "sq ft" OR "psf" OR "lease renewal"');
 
     const emailTexts: string[] = [];
 
     for (const email of teamEmails.slice(0, 15)) {
       try {
-        const searchPath = `/users/${email}/messages?$filter=receivedDateTime ge ${sevenDaysAgo}&$top=25&$select=subject,bodyPreview,from,receivedDateTime&$orderby=receivedDateTime desc`;
+        const searchPath = `/users/${email}/messages?$search=${compSearchQuery}&$top=50&$select=subject,bodyPreview,from,receivedDateTime&$orderby=receivedDateTime desc`;
         const data = await graphRequest(searchPath);
         const messages = data?.value || [];
 
         for (const msg of messages) {
           const preview = msg.bodyPreview || "";
           const subject = msg.subject || "";
-          const combined = `${subject} ${preview}`.toLowerCase();
-          const hasCompContent = propertyKeywords.some(k => combined.includes(k));
-          if (!hasCompContent) continue;
-
+          // Graph $search already filtered by comp keywords — push all results
           emailTexts.push(
             `Email from ${msg.from?.emailAddress?.name || "Unknown"} (${msg.from?.emailAddress?.address || ""}):\nSubject: ${subject}\nDate: ${msg.receivedDateTime?.split("T")[0] || "unknown"}\nPreview: ${preview.slice(0, 500)}`
           );
@@ -472,7 +471,7 @@ async function extractCompsFromEmails(): Promise<{ extracted: number; created: n
 
     if (emailTexts.length === 0) return { extracted: 0, created: 0 };
 
-    const batchText = emailTexts.slice(0, 30).join("\n\n---\n\n");
+    const batchText = emailTexts.slice(0, 50).join("\n\n---\n\n");
 
     const response = await callClaude({
       model: CHATBGP_HELPER_MODEL,
