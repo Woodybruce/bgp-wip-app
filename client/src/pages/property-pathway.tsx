@@ -572,11 +572,16 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </CardHeader>
               <CardContent className="text-xs space-y-1 max-h-72 overflow-y-auto">
                 {s1.sharepointHits.map((f: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0">
-                    <a href={f.webUrl} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate hover:underline">
-                      <span className="font-medium">{f.name}</span>
-                      <span className="text-muted-foreground ml-1">· {f.path.replace(/^\//, "")}</span>
-                    </a>
+                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0 hover:bg-muted/40 rounded px-1 -mx-1">
+                    {f.webUrl ? (
+                      <a href={f.webUrl} target="_blank" rel="noreferrer" className="min-w-0 flex-1 flex items-center gap-1.5 cursor-pointer group">
+                        <span className="font-medium text-primary group-hover:underline truncate">{f.name}</span>
+                        <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0" />
+                        <span className="text-muted-foreground truncate hidden sm:inline">· {f.path.replace(/^\//, "")}</span>
+                      </a>
+                    ) : (
+                      <span className="min-w-0 flex-1 font-medium truncate">{f.name}</span>
+                    )}
                     <span className="text-muted-foreground shrink-0 ml-2 flex items-center gap-1.5">
                       {f.type === "folder" && <Badge variant="outline" className="text-[9px]">folder</Badge>}
                       {f.sizeMB ? <span>{f.sizeMB} MB</span> : null}
@@ -596,11 +601,14 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </CardHeader>
               <CardContent className="text-xs space-y-1">
                 {s1.brochureFiles.map((b: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0">
+                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0 hover:bg-muted/40 rounded px-1 -mx-1">
                     {b.webUrl ? (
-                      <a href={b.webUrl} target="_blank" rel="noreferrer" className="truncate font-medium hover:underline">{b.name}</a>
+                      <a href={b.webUrl} target="_blank" rel="noreferrer" className="min-w-0 flex-1 flex items-center gap-1.5 cursor-pointer group">
+                        <span className="font-medium text-primary group-hover:underline truncate">{b.name}</span>
+                        <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0" />
+                      </a>
                     ) : (
-                      <span className="truncate font-medium">{b.name}</span>
+                      <span className="min-w-0 flex-1 font-medium truncate">{b.name}</span>
                     )}
                     <span className="text-muted-foreground shrink-0 ml-2">{b.source}{b.date ? ` · ${new Date(b.date).toLocaleDateString("en-GB")}` : ""}</span>
                   </div>
