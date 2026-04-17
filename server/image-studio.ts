@@ -323,6 +323,51 @@ async function requireAdmin(req: Request, res: Response, next: Function) {
   next();
 }
 
+/**
+ * Capture a Google Street View image for an address and save to image_studio_images.
+ * Exposed for the property-pathway orchestrator (Stage 6).
+ */
+export async function captureStreetViewForAddress(args: { address: string; propertyId?: string | null; heading?: number; pitch?: number; fov?: number }): Promise<{ id: string; localPath: string }> {
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (!apiKey) throw new Error("GOOGLE_API_KEY not configured");
+
+  const params = new URLSearchParams({
+    size: "1200x800",
+    location: args.address,
+    heading: String(args.heading ?? 0),
+    pitch: String(args.pitch ?? 0),
+    fov: String(args.fov ?? 90),
+    key: apiKey,
+  });
+  const resp = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params}`);
+  if (!resp.ok) throw new Error(`Street View fetch failed: ${resp.status}`);
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  const safeName = args.address.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-").slice(0, 80);
+  const filename = `streetview-${safeName}-${crypto.randomUUID().slice(0, 8)}.jpg`;
+  const filePath = path.join(IMAGE_DIR, filename);
+  fs.writeFileSync(filePath, buffer);
+
+  const { thumbnail, width, height } = await generateThumbnail(buffer);
+
+  const [inserted] = await db.insert(imageStudioImages).values({
+    fileName: `Street View — ${args.address}`,
+    category: "Street Views",
+    tags: ["Street View", "Google", "Exterior", "pathway"],
+    description: `Google Street View capture of ${args.address} (auto — property pathway Stage 6)`,
+    source: "streetview",
+    propertyId: args.propertyId || undefined,
+    address: args.address,
+    mimeType: "image/jpeg",
+    fileSize: buffer.length,
+    width,
+    height,
+    thumbnailData: thumbnail,
+    localPath: filePath,
+  }).returning();
+
+  return { id: inserted.id, localPath: filePath };
+}
+
 export function registerImageStudioRoutes(app: Express) {
   ensureTable().catch(err => console.error("[image-studio] Table setup error:", err.message));
 

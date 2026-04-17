@@ -72,7 +72,7 @@ Known facts (do not contradict):
 Output JSON only. No prose, no code fences.`;
 }
 
-async function enrichCompany(companyId: string): Promise<{ updated: string[]; skipped: string[]; reason?: string }> {
+async function enrichCompany(companyId: string): Promise<{ updated: string[]; skipped: string[]; reason?: string; aiOut?: any }> {
   const q = await pool.query(
     `SELECT id, name, domain, domain_url, companies_house_number, concept_pitch, store_count,
             rollout_status, backers, instagram_handle, description, industry, employee_count,
@@ -167,7 +167,17 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
     );
   }
 
-  return { updated, skipped };
+  return { updated, skipped, aiOut };
+}
+
+// Exported for property-pathway orchestrator (Stage 2)
+export async function enrichBrandById(companyId: string): Promise<Record<string, any>> {
+  const r = await enrichCompany(companyId);
+  const out: Record<string, any> = {};
+  for (const f of r.updated) {
+    out[f] = r.aiOut?.[f];
+  }
+  return out;
 }
 
 // ─── Endpoints ──────────────────────────────────────────────────────────

@@ -317,6 +317,8 @@ import { setupSharedMailboxRoutes } from "./shared-mailbox";
 import { registerInteractionRoutes } from "./interactions";
 import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
 import companiesHouseRouter from "./companies-house";
+import { registerPropertyPathwayRoutes } from "./property-pathway";
+import { registerRetailContextPlanRoutes } from "./retail-context-plan";
 import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
@@ -561,6 +563,8 @@ app.use("/api/branding/assets", express.static(
   registerMcpRoutes(app);
   setupCrmRoutes(app);
   app.use(companiesHouseRouter);
+  registerPropertyPathwayRoutes(app);
+  registerRetailContextPlanRoutes(app);
   app.use(leasingScheduleRouter);
   app.use(tenancyScheduleRouter);
   app.use(turnoverRouter);

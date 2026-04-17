@@ -84,6 +84,7 @@ const PropertyIntelligence = lazy(() => import("@/pages/property-intelligence"))
 const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
 const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
+const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
 
 
 function PageLoader() {
@@ -168,6 +169,7 @@ function Router() {
       {/* Deep-link for a specific training module needs the legacy component */}
       <Route path="/aml-training/:id" component={AmlTraining} />
       <Route path="/brands" component={BrandsHub} />
+      <Route path="/property-pathway" component={PropertyPathway} />
       <Route path="/turnover" component={TurnoverBoard} />
       <Route path="/wip-report" component={DealsHub} />
       <Route path="/upload" component={UploadPage} />

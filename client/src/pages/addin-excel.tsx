@@ -1126,6 +1126,49 @@ function valuesToCsv(rows: any[][], maxRows: number, maxCols: number): string {
   return csv;
 }
 
+async function getWorkbookAsBytes(): Promise<Uint8Array | null> {
+  const Office = (window as any).Office;
+  if (!Office?.context?.document?.getFileAsync) return null;
+  return await new Promise((resolve, reject) => {
+    Office.context.document.getFileAsync(Office.FileType.Compressed, { sliceSize: 65536 }, (result: any) => {
+      if (result.status !== "succeeded") {
+        reject(new Error(result.error?.message || "Could not read workbook"));
+        return;
+      }
+      const file = result.value;
+      const totalSlices = file.sliceCount;
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+
+      const getSlice = (i: number) => {
+        file.getSliceAsync(i, (sliceResult: any) => {
+          if (sliceResult.status !== "succeeded") {
+            file.closeAsync(() => {});
+            reject(new Error(sliceResult.error?.message || "Slice read failed"));
+            return;
+          }
+          const data = sliceResult.value.data as ArrayBuffer | Uint8Array | number[];
+          const arr = data instanceof Uint8Array ? data : data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data as number[]);
+          chunks.push(arr);
+          received++;
+          if (received === totalSlices) {
+            file.closeAsync(() => {
+              const total = chunks.reduce((sum, c) => sum + c.length, 0);
+              const merged = new Uint8Array(total);
+              let offset = 0;
+              for (const c of chunks) { merged.set(c, offset); offset += c.length; }
+              resolve(merged);
+            });
+          } else {
+            getSlice(i + 1);
+          }
+        });
+      };
+      getSlice(0);
+    });
+  });
+}
+
 async function readFullWorkbook(): Promise<WorkbookInfo | null> {
   try {
     if (!window.Excel) return null;
@@ -1782,6 +1825,14 @@ function AddinExcel() {
   const [excelContext, setExcelContext] = useState("");
   const [workbookInfo, setWorkbookInfo] = useState<WorkbookInfo | null>(null);
   const [readingSheet, setReadingSheet] = useState(false);
+  const [linkedModelRunId, setLinkedModelRunId] = useState<string | null>(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("modelRunId") || localStorage.getItem("bgp_addin_model_run_id");
+    } catch { return null; }
+  });
+  const [linkedModelRunName, setLinkedModelRunName] = useState<string | null>(null);
+  const [savingModel, setSavingModel] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [showSpPicker, setShowSpPicker] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -2064,6 +2115,50 @@ function AddinExcel() {
     setExcelContext("");
   };
 
+  // Fetch linked model run name once we have an id + token
+  useEffect(() => {
+    if (!linkedModelRunId || !token) return;
+    try { localStorage.setItem("bgp_addin_model_run_id", linkedModelRunId); } catch {}
+    fetch(`/api/models/runs/${linkedModelRunId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setLinkedModelRunName(data.name || null); })
+      .catch(() => {});
+  }, [linkedModelRunId, token]);
+
+  const saveWorkbookToModelStudio = async () => {
+    if (!linkedModelRunId) {
+      alert("No model run linked. Open this add-in from the Model Studio or ChatBGP to link one.");
+      return;
+    }
+    setSavingModel(true);
+    try {
+      const bytes = await getWorkbookAsBytes();
+      if (!bytes) throw new Error("Could not read workbook — Excel Online doesn't support this. Open in desktop Excel.");
+      const form = new FormData();
+      const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      form.append("file", blob, (workbookInfo?.fileName || "workbook") + ".xlsx");
+      const res = await fetch(`/api/models/runs/${linkedModelRunId}/save-version`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Save failed");
+      setMessages(prev => [...prev, {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: `Saved as version ${data.version?.version || "?"} to Model Studio${data.version?.sharepointUrl ? " and mirrored to SharePoint" : ""}. Outputs refreshed.`,
+        timestamp: new Date(),
+      }]);
+    } catch (err: any) {
+      alert(`Save failed: ${err.message}`);
+    } finally {
+      setSavingModel(false);
+    }
+  };
+
   if (!token) {
     return <AddinLogin onLogin={handleLogin} />;
   }
@@ -2072,9 +2167,23 @@ function AddinExcel() {
     <div className="flex flex-col h-screen bg-background text-foreground" style={{ maxWidth: 450 }}>
       <AddinHeader
         title="ChatBGP"
-        subtitle="Opus 4.6 · Hardcore Builder"
+        subtitle={linkedModelRunName ? `Model: ${linkedModelRunName}` : "Opus 4.6 · Hardcore Builder"}
         onNewChat={clearChat}
       >
+        {linkedModelRunId && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 rounded-full hover:bg-muted/80 text-[11px] gap-1"
+            onClick={saveWorkbookToModelStudio}
+            disabled={savingModel}
+            title="Save current workbook as a new version in Model Studio"
+            data-testid="button-save-to-model-studio"
+          >
+            {savingModel ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+            Save to Studio
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon"

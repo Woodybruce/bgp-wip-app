@@ -1858,6 +1858,54 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
+      name: "start_property_pathway",
+      description: "Start a new end-to-end Property Pathway investigation on an address. This orchestrates all BGP app modules — email + SharePoint search, CRM lookup, Land Registry, brand enrichment, property intelligence, image studio, model studio, and Why Buy document generation. Returns a runId to use with advance_property_pathway and get_property_pathway. Always use this instead of ad-hoc tool chaining when the user asks for a comprehensive property investigation, deal briefing, or Why Buy document.",
+      parameters: {
+        type: "object",
+        properties: {
+          address: { type: "string", description: "The property address, e.g. '18-22 Haymarket' or '17 Dover Street'" },
+          postcode: { type: "string", description: "UK postcode, e.g. 'SW1Y 4DG'" },
+          propertyId: { type: "string", description: "Optional CRM property id if this already has a record" },
+        },
+        required: ["address"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "advance_property_pathway",
+      description: "Run the next stage (or a specific stage) of a Property Pathway investigation. Stages: 1=Initial Search (email/SharePoint/CRM/LandReg/folder tree), 2=Brand Intelligence, 3=Review summary, 4=Property Intelligence (titles/planning/KYC), 5=Investigation Board ready, 6=Studios (Street View + Retail Context Plan + model seed), 7=Why Buy PDF. Always summarise what was found after each stage and ask the user before advancing.",
+      parameters: {
+        type: "object",
+        properties: {
+          runId: { type: "string", description: "The pathway run id returned by start_property_pathway" },
+          stage: { type: "number", description: "Optional specific stage to run (1-7). Defaults to current stage." },
+        },
+        required: ["runId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "get_property_pathway",
+      description: "Fetch the current state of a Property Pathway run — all stages, findings, images, model links, and the Why Buy PDF URL if generated. Use this to answer follow-up questions about a pathway investigation without re-running anything.",
+      parameters: {
+        type: "object",
+        properties: {
+          runId: { type: "string", description: "The pathway run id" },
+        },
+        required: ["runId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "generate_pdf",
       description: "Generate a professional PDF document from HTML content and save it as a downloadable file. Use this when the user asks for a PDF, report, or printable document. The HTML content will be converted to a clean, branded PDF with BGP header and page numbers. Returns a download link.",
       parameters: {
@@ -5247,7 +5295,6 @@ async function executeCrmToolRaw(
         $search: `"${searchQuery}"`,
         $top: String(top),
         $select: "id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,conversationId",
-        $orderby: "receivedDateTime desc",
       });
       const res = await fetch(url, { headers });
       if (!res.ok) {
@@ -5255,7 +5302,9 @@ async function executeCrmToolRaw(
         return { data: { error: `Email search failed: ${res.status} ${errText.slice(0, 200)}` } };
       }
       const data = await res.json();
-      const messages = (data.value || []).map((msg: any) => ({
+      const messages = (data.value || [])
+        .sort((a: any, b: any) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
+        .map((msg: any) => ({
         id: msg.id,
         subject: msg.subject || "(No subject)",
         from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown",
@@ -8316,7 +8365,6 @@ export async function handleCrmToolCall(
         $search: `"${searchQuery}"`,
         $top: String(top),
         $select: "id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,conversationId",
-        $orderby: "receivedDateTime desc",
       });
       const searchRes = await fetch(url, { headers });
       if (!searchRes.ok) {
@@ -8324,7 +8372,9 @@ export async function handleCrmToolCall(
         return { handled: true, response: { reply: `Email search failed: ${searchRes.status} ${errText.slice(0, 200)}` } };
       }
       const data = await searchRes.json();
-      const messages = (data.value || []).map((msg: any) => ({
+      const messages = (data.value || [])
+        .sort((a: any, b: any) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
+        .map((msg: any) => ({
         id: msg.id,
         subject: msg.subject || "(No subject)",
         from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown",
@@ -8927,6 +8977,70 @@ export function setupChatBGPRoutes(app: Express) {
       }
     }
     // Property lookup — geocode then fetch
+    // Property Pathway — orchestrator thin wrappers
+    if (tcName === "start_property_pathway") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const userId = req.session?.userId || (req as any).tokenUserId || null;
+        const [runRow] = await db.insert(propertyPathwayRuns).values({
+          address: String(tcArgs.address || "").trim(),
+          postcode: tcArgs.postcode ? String(tcArgs.postcode).trim() : null,
+          propertyId: tcArgs.propertyId || null,
+          currentStage: 1,
+          stageStatus: {},
+          stageResults: {},
+          startedBy: userId,
+        }).returning();
+        return {
+          data: { runId: runRow.id, address: runRow.address, currentStage: runRow.currentStage, nextStep: "Call advance_property_pathway with stage 1 to run Initial Search" },
+          action: { type: "navigate", path: `/property-pathway?runId=${runRow.id}` },
+        };
+      } catch (err: any) {
+        return { data: { error: `Failed to start pathway: ${err?.message}` } };
+      }
+    }
+    if (tcName === "advance_property_pathway") {
+      try {
+        const { runStage } = await import("./property-pathway");
+        const runId = String(tcArgs.runId);
+        const stage = tcArgs.stage ? Number(tcArgs.stage) : undefined;
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        const [existing] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
+        if (!existing) return { data: { error: "Pathway run not found" } };
+        const targetStage = stage ?? existing.currentStage;
+        const updated = await runStage(runId, targetStage, req);
+        const sres: any = updated.stageResults;
+        const summary = sres?.[`stage${targetStage}`]?.summary || sres?.stage3?.summary || `Stage ${targetStage} completed`;
+        return {
+          data: {
+            runId: updated.id,
+            stageRun: targetStage,
+            nextStage: updated.currentStage,
+            status: updated.stageStatus,
+            summary,
+            whyBuyUrl: updated.whyBuyDocumentUrl || null,
+          },
+        };
+      } catch (err: any) {
+        return { data: { error: `Failed to advance pathway: ${err?.message}` } };
+      }
+    }
+    if (tcName === "get_property_pathway") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, String(tcArgs.runId))).limit(1);
+        if (!run) return { data: { error: "Pathway run not found" } };
+        return { data: run };
+      } catch (err: any) {
+        return { data: { error: `Failed to fetch pathway: ${err?.message}` } };
+      }
+    }
+
     if (tcName === "property_lookup") {
       const { performPropertyLookup, formatPropertyReport } = await import("./property-lookup");
       const args = { ...tcArgs };

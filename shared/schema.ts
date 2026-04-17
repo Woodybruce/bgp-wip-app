@@ -1882,6 +1882,47 @@ export const amlRecheckReminders = pgTable("aml_recheck_reminders", {
 });
 export type AmlRecheckReminder = typeof amlRecheckReminders.$inferSelect;
 
+export const propertyPathwayRuns = pgTable("property_pathway_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id"),
+  address: text("address").notNull(),
+  postcode: text("postcode"),
+  currentStage: integer("current_stage").notNull().default(1),
+  stageStatus: jsonb("stage_status").notNull().default(sql`'{}'::jsonb`),
+  stageResults: jsonb("stage_results").notNull().default(sql`'{}'::jsonb`),
+  sharepointFolderPath: text("sharepoint_folder_path"),
+  sharepointFolderUrl: text("sharepoint_folder_url"),
+  modelRunId: varchar("model_run_id"),
+  whyBuyDocumentUrl: text("why_buy_document_url"),
+  startedBy: varchar("started_by"),
+  startedAt: timestamp("started_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+});
+
+export const insertPropertyPathwayRunSchema = createInsertSchema(propertyPathwayRuns).omit({ id: true, startedAt: true, updatedAt: true, completedAt: true });
+export type InsertPropertyPathwayRun = z.infer<typeof insertPropertyPathwayRunSchema>;
+export type PropertyPathwayRun = typeof propertyPathwayRuns.$inferSelect;
+
+export const excelModelRunVersions = pgTable("excel_model_run_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  modelRunId: varchar("model_run_id").notNull(),
+  version: integer("version").notNull(),
+  filePath: text("file_path").notNull(),
+  inputValues: jsonb("input_values"),
+  outputValues: jsonb("output_values"),
+  sharepointUrl: text("sharepoint_url"),
+  sharepointDriveItemId: text("sharepoint_drive_item_id"),
+  savedBy: varchar("saved_by"),
+  savedByName: text("saved_by_name"),
+  notes: text("notes"),
+  savedAt: timestamp("saved_at").defaultNow(),
+});
+
+export const insertExcelModelRunVersionSchema = createInsertSchema(excelModelRunVersions).omit({ id: true, savedAt: true });
+export type InsertExcelModelRunVersion = z.infer<typeof insertExcelModelRunVersionSchema>;
+export type ExcelModelRunVersion = typeof excelModelRunVersions.$inferSelect;
+
 export const loginSchema = z.object({
   username: z.string().min(1, "Username is required"),
   password: z.string().min(1, "Password is required"),
