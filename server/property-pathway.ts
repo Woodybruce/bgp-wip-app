@@ -15,7 +15,7 @@ import {
 } from "@shared/schema";
 import { inArray } from "drizzle-orm";
 import { performPropertyLookup } from "./property-lookup";
-import { executeCreateSharePointFolder } from "./utils/sharepoint-operations";
+import { executeCreateSharePointFolder, executeUploadFileToSharePoint } from "./utils/sharepoint-operations";
 
 /**
  * Property Pathway Orchestrator
@@ -51,9 +51,9 @@ type StageStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 
 interface StageResults {
   stage1?: {
-    emailHits?: Array<{ subject: string; from: string; date: string; msgId: string; preview: string; hasAttachments: boolean }>;
+    emailHits?: Array<{ subject: string; from: string; date: string; msgId: string; mailboxEmail?: string; preview: string; hasAttachments: boolean; webLink?: string | null }>;
     sharepointHits?: Array<{ name: string; path: string; webUrl: string; modifiedAt?: string; sizeMB?: number; type?: string }>;
-    brochureFiles?: Array<{ source: "email" | "sharepoint"; name: string; ref: string; date?: string; webUrl?: string }>;
+    brochureFiles?: Array<{ source: "email" | "sharepoint" | "sharepoint-uploaded"; name: string; ref: string; date?: string; webUrl?: string; sizeMB?: number }>;
     crmHits?: { properties: any[]; deals: any[]; companies: any[] };
     deals?: Array<{ id: string; name: string; stage?: string; status?: string; dealType?: string; team?: string[]; rentPa?: number; fee?: number; createdAt?: string }>;
     tenancy?: { occupier?: string; units?: Array<{ id: string; unitName: string; floor?: string; sqft?: number; askingRent?: number; marketingStatus?: string; useClass?: string }>; status?: "vacant" | "let" | "mixed" | "unknown" };
@@ -205,6 +205,50 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     console.error("[pathway stage1] Land reg lookup error:", err?.message);
   }
 
+  // 1b-2. Ensure SharePoint folder tree exists BEFORE scanning for brochures
+  // so attachment uploads have a home on first-ever run. Reuses existing run
+  // folder if already set, otherwise creates the tree.
+  let folderTree: NonNullable<StageResults["stage1"]>["folderTree"] | undefined;
+  if (run.sharepointFolderPath && run.sharepointFolderUrl) {
+    folderTree = {
+      root: run.sharepointFolderPath,
+      webUrl: run.sharepointFolderUrl,
+      children: STANDARD_FOLDER_TREE,
+    };
+  } else {
+    try {
+      const propertyFolderName = address.replace(/[\/\\:*?"<>|]/g, "-").slice(0, 120);
+      const root = await executeCreateSharePointFolder(
+        { folderName: propertyFolderName, parentPath: "Investment" },
+        req
+      );
+      for (const child of STANDARD_FOLDER_TREE) {
+        try {
+          await executeCreateSharePointFolder(
+            { folderName: child, parentPath: `Investment/${propertyFolderName}` },
+            req
+          );
+        } catch {
+          // sub-folder create may fail if already exists — carry on
+        }
+      }
+      folderTree = {
+        root: root.folder.path,
+        webUrl: root.folder.webUrl,
+        children: STANDARD_FOLDER_TREE,
+      };
+      // Persist immediately so the in-memory run + later steps can use it
+      run.sharepointFolderPath = folderTree.root;
+      run.sharepointFolderUrl = folderTree.webUrl;
+      await updateRun(run.id, {
+        sharepointFolderPath: folderTree.root,
+        sharepointFolderUrl: folderTree.webUrl,
+      });
+    } catch (err: any) {
+      console.error("[pathway stage1] Folder tree create error:", err?.message);
+    }
+  }
+
   // 1c. Email search via Microsoft Graph — searches shared mailbox + all BGP team members' mailboxes.
   //     Requires Mail.Read application permission on the Azure app (admin-consented).
   //     Each mailbox returning a 403 is silently skipped (no permission for that box).
@@ -231,12 +275,28 @@ async function runStage1(runId: string, req: Request): Promise<void> {
       console.warn("[pathway stage1] team mailbox list error:", err?.message);
     }
 
-    const searchQuery = postcode || address.split(",")[0].trim();
+    // Build a stricter search query — require BOTH postcode AND primary address
+    // token so we don't drag in unrelated emails that merely mention one of them.
+    const primaryAddressToken = (address.split(",")[0] || "").trim();
+    const searchQuery = postcode && primaryAddressToken
+      ? `"${postcode}" AND "${primaryAddressToken}"`
+      : (postcode || primaryAddressToken);
+
+    // Relevance filter: drop hits that don't mention the primary address token
+    // anywhere in subject or preview — Graph's $search is fuzzy and bleeds in
+    // emails that only mention the postcode in a signature or attached comp sheet.
+    const primaryTokenLc = primaryAddressToken.toLowerCase();
+    const mentionsAddress = (msg: any) => {
+      if (!primaryTokenLc) return true;
+      const hay = `${msg.subject || ""} ${msg.bodyPreview || ""}`.toLowerCase();
+      return hay.includes(primaryTokenLc);
+    };
+
     const seen = new Set<string>();
     for (const mb of mailboxes) {
       try {
         const searchRes: any = await graphRequest(
-          `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(`"${searchQuery}"`)}&$top=15&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`
+          `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(searchQuery)}&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`
         ).catch((e: any) => {
           // A 403 means the app isn't admin-consented for this mailbox — don't log it per-user, we handle at summary time
           if (/403/.test(e?.message || "")) return null;
@@ -247,12 +307,14 @@ async function runStage1(runId: string, req: Request): Promise<void> {
         for (const msg of messages) {
           const dedupeKey = msg.internetMessageId || msg.id;
           if (seen.has(dedupeKey)) continue;
+          if (!mentionsAddress(msg)) continue; // drop noise
           seen.add(dedupeKey);
           emailHits.push({
             subject: msg.subject ? `${msg.subject} · via ${mb.owner}` : `(no subject) · via ${mb.owner}`,
             from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "unknown",
             date: msg.receivedDateTime,
             msgId: msg.id,
+            mailboxEmail: mb.email,
             preview: (msg.bodyPreview || "").slice(0, 200),
             hasAttachments: !!msg.hasAttachments,
             webLink: msg.webLink || null,
@@ -373,12 +435,84 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     console.error("[pathway stage1] investment_comps query error:", err?.message);
   }
 
-  // 1c-6. Identify likely brochure attachments from email hits
+  // 1c-6. Identify likely brochure attachments from email hits — and actually
+  // fetch the attachments, uploading any PDFs to the pathway SharePoint folder
+  // so they become clickable links in the board.
   const brochureFiles: NonNullable<StageResults["stage1"]>["brochureFiles"] = [];
-  for (const e of emailHits) {
-    if (e.hasAttachments && /brochure|particulars|marketing|teaser|flyer|om|memorandum/i.test(e.subject)) {
-      brochureFiles.push({ source: "email", name: e.subject, ref: e.msgId, date: e.date });
+  const BROCHURE_SUBJECT_RE = /brochure|particulars|marketing|teaser|flyer|\bom\b|memorandum|information memorandum|investment memo/i;
+  const BROCHURE_FILENAME_RE = /brochure|particulars|teaser|flyer|memorandum|investment|marketing|\bim\b|\bom\b/i;
+  const NOISE_FILENAME_RE = /^(signature|image|logo|disclaimer|footer)/i;
+
+  try {
+    const { graphRequest } = await import("./shared-mailbox");
+    for (const e of emailHits) {
+      if (!e.hasAttachments) continue;
+      if (!BROCHURE_SUBJECT_RE.test(e.subject)) continue;
+      if (!e.mailboxEmail) {
+        // Fallback: record metadata only
+        brochureFiles.push({ source: "email", name: e.subject, ref: e.msgId, date: e.date });
+        continue;
+      }
+      try {
+        const atts: any = await graphRequest(
+          `/users/${encodeURIComponent(e.mailboxEmail)}/messages/${e.msgId}/attachments?$select=id,name,size,contentType,isInline`
+        ).catch(() => null);
+        const attachments = atts?.value || [];
+        for (const a of attachments) {
+          const filename = String(a.name || "");
+          if (a.isInline) continue;
+          if (NOISE_FILENAME_RE.test(filename)) continue;
+          // Accept PDFs outright, otherwise only if filename looks brochure-y
+          const isPdf = /\.pdf$/i.test(filename) || /application\/pdf/i.test(a.contentType || "");
+          if (!isPdf && !BROCHURE_FILENAME_RE.test(filename)) continue;
+
+          // Fetch raw bytes
+          let fileBuffer: Buffer | null = null;
+          try {
+            const rawRes: any = await graphRequest(
+              `/users/${encodeURIComponent(e.mailboxEmail)}/messages/${e.msgId}/attachments/${a.id}`
+            );
+            if (rawRes?.contentBytes) {
+              fileBuffer = Buffer.from(rawRes.contentBytes, "base64");
+            }
+          } catch (err: any) {
+            console.warn("[pathway stage1] attachment fetch failed:", filename, err?.message);
+          }
+
+          // If we have a run folder and bytes, upload to SharePoint
+          let savedUrl: string | undefined;
+          let sizeMB: number | undefined;
+          if (fileBuffer && run.sharepointFolderPath) {
+            const brochureFolder = `${run.sharepointFolderPath.replace(/^BGP share drive\//, "")}/Brochure & Marketing`;
+            try {
+              const up = await executeUploadFileToSharePoint(
+                { folderPath: brochureFolder, filename, content: fileBuffer, contentType: a.contentType },
+                req
+              );
+              savedUrl = up.file.webUrl;
+              sizeMB = up.file.sizeMB;
+            } catch (err: any) {
+              console.warn("[pathway stage1] brochure upload failed:", filename, err?.message);
+            }
+          } else if (fileBuffer) {
+            sizeMB = +(fileBuffer.length / 1024 / 1024).toFixed(2);
+          }
+
+          brochureFiles.push({
+            source: savedUrl ? "sharepoint-uploaded" : "email",
+            name: filename,
+            ref: e.msgId,
+            date: e.date,
+            webUrl: savedUrl,
+            sizeMB,
+          });
+        }
+      } catch (err: any) {
+        console.warn("[pathway stage1] attachment scan failed for", e.msgId, err?.message);
+      }
     }
+  } catch (err: any) {
+    console.error("[pathway stage1] brochure attachment scan error:", err?.message);
   }
 
   // 1c-7. Engagements — unit viewings for units on this property, plus interactions with related deals
@@ -454,42 +588,6 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     }
   } catch (err: any) {
     console.error("[pathway stage1] SharePoint search setup error:", err?.message);
-  }
-
-  // 1d. SharePoint folder tree — reuse existing if run already has one, otherwise create
-  let folderTree: NonNullable<StageResults["stage1"]>["folderTree"] | undefined;
-  if (run.sharepointFolderPath && run.sharepointFolderUrl) {
-    // Run already has a folder — don't create again; just reference it
-    folderTree = {
-      root: run.sharepointFolderPath,
-      webUrl: run.sharepointFolderUrl,
-      children: STANDARD_FOLDER_TREE,
-    };
-  } else {
-    try {
-      const propertyFolderName = address.replace(/[\/\\:*?"<>|]/g, "-").slice(0, 120);
-      const root = await executeCreateSharePointFolder(
-        { folderName: propertyFolderName, parentPath: "Investment" },
-        req
-      );
-      for (const child of STANDARD_FOLDER_TREE) {
-        try {
-          await executeCreateSharePointFolder(
-            { folderName: child, parentPath: `Investment/${propertyFolderName}` },
-            req
-          );
-        } catch {
-          // sub-folder create may fail if already exists — carry on
-        }
-      }
-      folderTree = {
-        root: root.folder.path,
-        webUrl: root.folder.webUrl,
-        children: STANDARD_FOLDER_TREE,
-      };
-    } catch (err: any) {
-      console.error("[pathway stage1] Folder tree create error:", err?.message);
-    }
   }
 
   const summary = [
@@ -606,6 +704,18 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
     googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`,
   };
 
+  // Auto-populate `tenant` from AI-extracted main tenant so Stage 2 doesn't
+  // skip when we clearly know the occupier. Only set it if the existing run
+  // doesn't already have a manually-set tenant.
+  const existingTenant = (run.stageResults as StageResults)?.stage1?.tenant;
+  let derivedTenant = existingTenant;
+  if (!derivedTenant && aiFacts?.mainTenants && aiFacts.mainTenants.length > 0) {
+    derivedTenant = { name: aiFacts.mainTenants[0] };
+  }
+  if (!derivedTenant && tenancy?.occupier) {
+    derivedTenant = { name: tenancy.occupier };
+  }
+
   await setStageStatus(runId, "stage1", "completed", {
     stage1: {
       emailHits,
@@ -623,6 +733,7 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
       aiBriefing,
       aiFacts,
       propertyImage,
+      tenant: derivedTenant,
     },
   });
   await updateRun(runId, {

@@ -446,7 +446,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                   <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Tenants</p>
                   {s1.aiFacts?.mainTenants && s1.aiFacts.mainTenants.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mb-1.5">
-                      {s1.aiFacts.mainTenants.map((t, i) => (
+                      {s1.aiFacts.mainTenants.map((t: string, i: number) => (
                         <Badge key={i} variant="secondary" className="text-[10px]">{t}</Badge>
                       ))}
                     </div>
