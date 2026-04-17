@@ -300,12 +300,9 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           {run.postcode && <p className="text-sm text-muted-foreground">{run.postcode}</p>}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={onReload} title="Reload saved state from server">
-            <AlertCircle className="w-4 h-4" />
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => onAdvance(1)} disabled={advancing} title="Re-run Stage 1 with latest logic (emails, brochures, SharePoint, AI briefing)">
+          <Button variant="ghost" size="sm" onClick={() => onAdvance(1)} disabled={advancing} title="Re-scan for new emails, attachments, SharePoint items, and regenerate the briefing">
             {advancing ? <Clock className="w-4 h-4 mr-1 animate-spin" /> : <Search className="w-4 h-4 mr-1" />}
-            Re-run Stage 1
+            Refresh
           </Button>
           <Button variant="ghost" size="sm" onClick={onDelete} className="text-muted-foreground hover:text-destructive" title="Delete investigation">
             <Trash2 className="w-4 h-4" />
