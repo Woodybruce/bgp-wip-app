@@ -8,7 +8,7 @@ import { getAuthHeaders } from "@/lib/queryClient";
 import {
   Building2, FolderOpen, MapPin, ShieldCheck, Sparkles,
   FileText, Image as ImageIcon, ChevronRight, ArrowRight,
-  Check, Clock, AlertCircle, Plus, Search, Download, ExternalLink,
+  Check, Clock, AlertCircle, Plus, Search, Download, ExternalLink, Trash2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -101,16 +101,39 @@ export default function PropertyPathway() {
         body: JSON.stringify({ address: newAddress.trim(), postcode: newPostcode.trim() || undefined }),
       });
       if (!res.ok) throw new Error("Failed to start");
-      const { run } = await res.json();
+      const { run, existing } = await res.json();
       setNewAddress("");
       setNewPostcode("");
       await loadRuns();
       setSelectedRun(run);
       navigate(`/property-pathway?runId=${run.id}`);
-      // auto-advance Stage 1
-      advanceRun(run.id, 1);
+      if (existing) {
+        toast({ title: "Opened existing investigation", description: `Resuming ${run.address}.` });
+      } else {
+        advanceRun(run.id, 1); // auto-advance Stage 1 on brand new runs only
+      }
     } catch (err: any) {
       toast({ title: "Could not start", description: err.message, variant: "destructive" });
+    }
+  }
+
+  async function deleteRun(runId: string) {
+    if (!confirm("Delete this investigation? SharePoint folders and CRM records will not be affected.")) return;
+    try {
+      const res = await fetch(`/api/property-pathway/${runId}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setRuns(prev => prev.filter(r => r.id !== runId));
+      if (selectedRun?.id === runId) {
+        setSelectedRun(null);
+        navigate("/property-pathway");
+      }
+      toast({ title: "Investigation deleted" });
+    } catch (err: any) {
+      toast({ title: "Could not delete", description: err.message, variant: "destructive" });
     }
   }
 
@@ -178,6 +201,7 @@ export default function PropertyPathway() {
       advancing={advancing}
       onReload={() => loadRun(selectedRun.id)}
       onSetTenant={(name) => setTenant(selectedRun.id, name)}
+      onDelete={() => deleteRun(selectedRun.id)}
     />;
   }
 
@@ -216,27 +240,39 @@ export default function PropertyPathway() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {runs.map(r => (
-              <button
+              <div
                 key={r.id}
-                onClick={() => { setSelectedRun(r); navigate(`/property-pathway?runId=${r.id}`); }}
-                className="text-left p-4 rounded-lg border bg-card hover:bg-muted/40 transition"
+                className="group relative p-4 rounded-lg border bg-card hover:bg-muted/40 transition"
               >
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{r.address}</p>
-                    {r.postcode && <p className="text-xs text-muted-foreground mt-0.5">{r.postcode}</p>}
+                <button
+                  onClick={(e) => { e.stopPropagation(); deleteRun(r.id); }}
+                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                  title="Delete investigation"
+                  data-testid={`button-delete-pathway-${r.id}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => { setSelectedRun(r); navigate(`/property-pathway?runId=${r.id}`); }}
+                  className="text-left w-full"
+                >
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{r.address}</p>
+                      {r.postcode && <p className="text-xs text-muted-foreground mt-0.5">{r.postcode}</p>}
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
                   </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {STAGE_LABELS.map(s => (
-                    <span key={s.n} className={`text-[10px] px-1.5 py-0.5 rounded ${stageBadgeColor(r.stageStatus?.[`stage${s.n}`])}`}>
-                      {s.n}
-                    </span>
-                  ))}
-                </div>
-                <p className="text-[10px] text-muted-foreground mt-2">Updated {new Date(r.updatedAt).toLocaleString("en-GB")}</p>
-              </button>
+                  <div className="flex flex-wrap gap-1">
+                    {STAGE_LABELS.map(s => (
+                      <span key={s.n} className={`text-[10px] px-1.5 py-0.5 rounded ${stageBadgeColor(r.stageStatus?.[`stage${s.n}`])}`}>
+                        {s.n}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-2">Updated {new Date(r.updatedAt).toLocaleString("en-GB")}</p>
+                </button>
+              </div>
             ))}
           </div>
         )}
@@ -245,7 +281,7 @@ export default function PropertyPathway() {
   );
 }
 
-function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant }: { run: PathwayRun; onBack: () => void; onAdvance: (stage?: number) => void; advancing: boolean; onReload: () => void; onSetTenant: (name: string) => void }) {
+function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, onDelete }: { run: PathwayRun; onBack: () => void; onAdvance: (stage?: number) => void; advancing: boolean; onReload: () => void; onSetTenant: (name: string) => void; onDelete: () => void }) {
   const s1 = run.stageResults?.stage1;
   const s2 = run.stageResults?.stage2;
   const s4 = run.stageResults?.stage4;
@@ -265,6 +301,9 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant }:
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={onReload}>Refresh</Button>
+          <Button variant="ghost" size="sm" onClick={onDelete} className="text-muted-foreground hover:text-destructive" title="Delete investigation">
+            <Trash2 className="w-4 h-4" />
+          </Button>
           <Button onClick={() => onAdvance(nextStage)} disabled={advancing || run.currentStage > 7} className="gap-1.5">
             {advancing ? <Clock className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
             Run Stage {nextStage}
@@ -303,6 +342,43 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant }:
       {/* Stage 1 — Initial Search findings */}
       {s1 && (
         <>
+          {/* AI briefing synthesising everything we found */}
+          {s1.aiBriefing && (
+            <Card className="border-primary/40 bg-primary/5">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" /> Analyst briefing</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                {s1.aiBriefing.headline && (
+                  <p className="text-[15px] font-medium leading-snug">{s1.aiBriefing.headline}</p>
+                )}
+                {s1.aiBriefing.bullets?.length > 0 && (
+                  <ul className="space-y-1.5 text-muted-foreground">
+                    {s1.aiBriefing.bullets.map((b: string, i: number) => (
+                      <li key={i} className="flex gap-2">
+                        <span className="text-primary shrink-0">·</span>
+                        <span>{b}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {s1.aiBriefing.keyQuestions?.length > 0 && (
+                  <div className="pt-2 border-t border-primary/20">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5">Next questions</p>
+                    <ul className="space-y-1 text-xs">
+                      {s1.aiBriefing.keyQuestions.map((q: string, i: number) => (
+                        <li key={i} className="flex gap-2">
+                          <span className="text-primary shrink-0">?</span>
+                          <span>{q}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
             <CardHeader className="pb-3 flex flex-row items-center justify-between">
               <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Initial Search — summary</CardTitle>

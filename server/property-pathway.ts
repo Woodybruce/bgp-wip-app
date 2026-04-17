@@ -10,6 +10,7 @@ import {
   availableUnits,
   investmentComps,
   unitViewings,
+  users,
   type PropertyPathwayRun,
 } from "@shared/schema";
 import { inArray } from "drizzle-orm";
@@ -63,6 +64,7 @@ interface StageResults {
     tenant?: { name: string; companyNumber?: string };
     folderTree?: { root: string; webUrl: string; children: string[] };
     summary?: string;
+    aiBriefing?: { bullets: string[]; headline: string; keyQuestions: string[] };
   };
   stage2?: {
     companyId?: string;
@@ -190,25 +192,65 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     console.error("[pathway stage1] Land reg lookup error:", err?.message);
   }
 
-  // 1c. Email search via Microsoft Graph (app-only, uses shared mailbox helper)
+  // 1c. Email search via Microsoft Graph — searches shared mailbox + all BGP team members' mailboxes.
+  //     Requires Mail.Read application permission on the Azure app (admin-consented).
+  //     Each mailbox returning a 403 is silently skipped (no permission for that box).
   const emailHits: NonNullable<StageResults["stage1"]>["emailHits"] = [];
   try {
     const { graphRequest } = await import("./shared-mailbox");
-    const searchQuery = postcode || address.split(",")[0].trim();
-    const searchRes = await graphRequest(
-      `/users/chatbgp@brucegillinghampollard.com/messages?$search="${encodeURIComponent(searchQuery)}"&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments`
-    ).catch(() => null);
-    const messages = searchRes?.value || [];
-    for (const msg of messages.slice(0, 25)) {
-      emailHits.push({
-        subject: msg.subject || "(no subject)",
-        from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "unknown",
-        date: msg.receivedDateTime,
-        msgId: msg.id,
-        preview: (msg.bodyPreview || "").slice(0, 200),
-        hasAttachments: !!msg.hasAttachments,
-      });
+
+    // Build the list of mailboxes to search: shared mailbox first, then every active BGP user
+    const mailboxes: Array<{ email: string; owner: string }> = [
+      { email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox" },
+    ];
+    try {
+      const activeUsers = await db
+        .select({ username: users.username, email: users.email, name: users.name })
+        .from(users)
+        .where(eq(users.isActive, true));
+      for (const u of activeUsers) {
+        const mailbox = u.email || u.username;
+        if (mailbox && /@brucegillinghampollard\.com$/i.test(mailbox) && mailbox.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
+          mailboxes.push({ email: mailbox, owner: u.name || mailbox });
+        }
+      }
+    } catch (err: any) {
+      console.warn("[pathway stage1] team mailbox list error:", err?.message);
     }
+
+    const searchQuery = postcode || address.split(",")[0].trim();
+    const seen = new Set<string>();
+    for (const mb of mailboxes) {
+      try {
+        const searchRes: any = await graphRequest(
+          `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(`"${searchQuery}"`)}&$top=15&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId`
+        ).catch((e: any) => {
+          // A 403 means the app isn't admin-consented for this mailbox — don't log it per-user, we handle at summary time
+          if (/403/.test(e?.message || "")) return null;
+          console.warn(`[pathway stage1] mailbox ${mb.email} error:`, e?.message);
+          return null;
+        });
+        const messages = searchRes?.value || [];
+        for (const msg of messages) {
+          const dedupeKey = msg.internetMessageId || msg.id;
+          if (seen.has(dedupeKey)) continue;
+          seen.add(dedupeKey);
+          emailHits.push({
+            subject: msg.subject ? `${msg.subject} · via ${mb.owner}` : `(no subject) · via ${mb.owner}`,
+            from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "unknown",
+            date: msg.receivedDateTime,
+            msgId: msg.id,
+            preview: (msg.bodyPreview || "").slice(0, 200),
+            hasAttachments: !!msg.hasAttachments,
+          });
+        }
+      } catch (err: any) {
+        console.warn(`[pathway stage1] mailbox search failed for ${mb.email}:`, err?.message);
+      }
+    }
+    // Cap total hits at 60 to keep payload manageable
+    emailHits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    emailHits.splice(60);
   } catch (err: any) {
     console.error("[pathway stage1] Email search error:", err?.message);
   }
@@ -442,6 +484,68 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     folderTree ? `SharePoint folder tree ready.` : null,
   ].filter(Boolean).join(" ");
 
+  // 1e. AI briefing — synthesise everything into a short "what do we know" card
+  let aiBriefing: NonNullable<StageResults["stage1"]>["aiBriefing"] | undefined;
+  try {
+    if (process.env.ANTHROPIC_API_KEY) {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const briefContext = {
+        address,
+        postcode,
+        ownership: initialOwnership,
+        crmProperty: crmMatch ? { name: crmMatch.name, status: crmMatch.status, notes: crmMatch.notes, proprietorName: crmMatch.proprietorName, proprietorType: crmMatch.proprietorType } : null,
+        deals: deals.slice(0, 10),
+        tenancy: tenancy ? { status: tenancy.status, unitCount: tenancy.units?.length } : null,
+        engagements: engagements.slice(0, 10),
+        pricePaidHistory: pricePaidHistory.slice(0, 8),
+        comps: comps.slice(0, 8),
+        brochureCount: brochureFiles.length,
+        sharepointCount: sharepointHits.length,
+        emailCount: emailHits.length,
+        // Include email subject + preview for context
+        recentEmails: emailHits.slice(0, 15).map((e) => ({ subject: e.subject, from: e.from, date: e.date, preview: e.preview })),
+      };
+      const prompt = `You are BGP's head of investment briefing an analyst. From the Stage 1 intelligence pool below, write a concise briefing that reads like a senior agent summarising what we know in front of a whiteboard.
+
+Return STRICT JSON only — no prose, no code fences:
+{
+  "headline": "1-sentence top-line (e.g. 'Trophy Mayfair retail/office, let to Dover Street Market until 2034, last marketed at £65m in 2023 by Goldenberg')",
+  "bullets": [
+    "4-8 concise bullets — each a specific observation grounded in the data. Lead with what we know, not what's missing.",
+    "Weave in lease terms, rents, ownership, tenant covenant, BGP history with the asset, past marketing, comps — anything concrete.",
+    "Use British English. No fluff. No 'further investigation required' clichés."
+  ],
+  "keyQuestions": [
+    "2-4 specific follow-ups a senior analyst would ask next. Short and actionable."
+  ]
+}
+
+Intelligence pool:
+${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
+
+      const msg = await anthropic.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 800,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const txt = (msg.content as any[]).map((b) => (b.type === "text" ? b.text : "")).join("");
+      const match = txt.match(/\{[\s\S]*\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        if (Array.isArray(parsed.bullets)) {
+          aiBriefing = {
+            headline: String(parsed.headline || "").slice(0, 300),
+            bullets: parsed.bullets.map((b: any) => String(b).slice(0, 400)).slice(0, 10),
+            keyQuestions: Array.isArray(parsed.keyQuestions) ? parsed.keyQuestions.map((q: any) => String(q).slice(0, 300)).slice(0, 6) : [],
+          };
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error("[pathway stage1] AI briefing error:", err?.message);
+  }
+
   await setStageStatus(runId, "stage1", "completed", {
     stage1: {
       emailHits,
@@ -456,6 +560,7 @@ async function runStage1(runId: string, req: Request): Promise<void> {
       brochureFiles,
       folderTree,
       summary,
+      aiBriefing,
     },
   });
   await updateRun(runId, {
@@ -695,13 +800,33 @@ export async function runStage(runId: string, stageNumber: number, req: Request)
 // ============================================================================
 
 export function registerPropertyPathwayRoutes(app: Express) {
-  // Start a new pathway run
+  // Start a new pathway run — returns existing run for the same address+postcode if one exists (unless force=true)
   app.post("/api/property-pathway/start", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { address, postcode, propertyId } = req.body as { address?: string; postcode?: string; propertyId?: string };
+      const { address, postcode, propertyId, force } = req.body as { address?: string; postcode?: string; propertyId?: string; force?: boolean };
       if (!address || typeof address !== "string") {
         return res.status(400).json({ error: "address required" });
       }
+      const normalisedAddr = address.trim().replace(/\s+/g, " ").toLowerCase();
+      const normalisedPostcode = (postcode || "").trim().replace(/\s+/g, "").toUpperCase();
+
+      // Dedupe: look for an existing (non-deleted) run matching address±postcode
+      if (!force) {
+        const existing = await db
+          .select()
+          .from(propertyPathwayRuns)
+          .orderBy(desc(propertyPathwayRuns.updatedAt))
+          .limit(200);
+        const match = existing.find((r) => {
+          const rAddr = (r.address || "").trim().replace(/\s+/g, " ").toLowerCase();
+          const rPostcode = (r.postcode || "").trim().replace(/\s+/g, "").toUpperCase();
+          return rAddr === normalisedAddr && (!normalisedPostcode || !rPostcode || rPostcode === normalisedPostcode);
+        });
+        if (match) {
+          return res.json({ success: true, run: match, existing: true });
+        }
+      }
+
       const userId = req.session.userId || req.tokenUserId || null;
       const [run] = await db
         .insert(propertyPathwayRuns)
@@ -715,10 +840,23 @@ export function registerPropertyPathwayRoutes(app: Express) {
           startedBy: userId,
         })
         .returning();
-      res.json({ success: true, run });
+      res.json({ success: true, run, existing: false });
     } catch (err: any) {
       console.error("[pathway start] error:", err?.message);
       res.status(500).json({ error: err?.message || "Failed to start pathway" });
+    }
+  });
+
+  // Delete a pathway run (removes the row — SharePoint folder + CRM records untouched)
+  app.delete("/api/property-pathway/:runId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const runId = String(req.params.runId);
+      const deleted = await db.delete(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).returning();
+      if (!deleted.length) return res.status(404).json({ error: "Run not found" });
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("[pathway delete] error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to delete pathway" });
     }
   });
 
