@@ -116,6 +116,7 @@ export const users = pgTable("users", {
   dashboardWidgets: jsonb("dashboard_widgets").$type<string[]>(),
   dashboardLayout: jsonb("dashboard_layout").$type<Record<string, any>>(),
   profilePicUrl: text("profile_pic_url"),
+  clientViewMode: boolean("client_view_mode").default(false),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
@@ -440,6 +441,7 @@ export const crmCompanies = pgTable("crm_companies", {
   aiDisabled: boolean("ai_disabled").default(false),
   linkedinUrl: text("linkedin_url"),
   phone: text("phone"),
+  website: text("website"),
   industry: text("industry"),
   employeeCount: text("employee_count"),
   annualRevenue: text("annual_revenue"),
@@ -592,12 +594,16 @@ export const crmContacts = pgTable("crm_contacts", {
   contactType: text("contact_type"),
   agentSpecialty: text("agent_specialty"),
   phone: text("phone"),
+  phoneMobile: text("phone_mobile"),
+  subGroup: text("sub_group"),
   bgpClient: boolean("bgp_client").default(false),
   isFavourite: boolean("is_favourite").default(false),
   nextMeetingDate: text("next_meeting_date"),
   notes: text("notes"),
   avatarUrl: text("avatar_url"),
   linkedinUrl: text("linkedin_url"),
+  weeklyReportEnabled: boolean("weekly_report_enabled").default(false),
+  weeklyReportLastSentAt: timestamp("weekly_report_last_sent_at"),
   lastEnrichedAt: timestamp("last_enriched_at"),
   enrichmentSource: text("enrichment_source"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -617,6 +623,10 @@ export const crmProperties = pgTable("crm_properties", {
   landlordId: varchar("landlord_id"),
   status: text("status"),
   address: jsonb("address"),
+  postcode: text("postcode"),
+  latitude: text("latitude"),
+  longitude: text("longitude"),
+  tags: text("tags"),
   bgpEngagement: text("bgp_engagement").array(),
   assetClass: text("asset_class"),
   tenure: text("tenure"),
@@ -1922,6 +1932,90 @@ export const excelModelRunVersions = pgTable("excel_model_run_versions", {
 export const insertExcelModelRunVersionSchema = createInsertSchema(excelModelRunVersions).omit({ id: true, savedAt: true });
 export type InsertExcelModelRunVersion = z.infer<typeof insertExcelModelRunVersionSchema>;
 export type ExcelModelRunVersion = typeof excelModelRunVersions.$inferSelect;
+
+// ─── Infrastructure tables (managed by framework, declared so drizzle-kit leaves them alone) ───
+
+// Express session store (managed by connect-pg-simple)
+export const session = pgTable("session", {
+  sid: varchar("sid").primaryKey(),
+  sess: jsonb("sess").notNull(),
+  expire: timestamp("expire", { precision: 6, withTimezone: false }).notNull(),
+});
+
+// API bearer tokens
+export const authTokens = pgTable("auth_tokens", {
+  id: serial("id").primaryKey(),
+  token: text("token").notNull().unique("auth_tokens_token_key"),
+  userId: varchar("user_id").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+// SSO exchange codes (short-lived auth tokens)
+export const ssoExchangeCodes = pgTable("sso_exchange_codes", {
+  id: serial("id").primaryKey(),
+  code: text("code").notNull().unique("sso_exchange_codes_code_key"),
+  userId: varchar("user_id").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+// Code change audit log (ChatBGP self-build actions)
+export const codeChanges = pgTable("code_changes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  toolUsed: text("tool_used"),
+  filePath: text("file_path"),
+  shellCommand: text("shell_command"),
+  shellOutput: text("shell_output"),
+  description: text("description"),
+  beforeContent: text("before_content"),
+  afterContent: text("after_content"),
+  status: text("status").default("applied"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Per-user activity / telemetry
+export const userActivity = pgTable("user_activity", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().unique("user_activity_user_id_key"),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  loginCount: integer("login_count").default(0),
+  lastActiveAt: timestamp("last_active_at", { withTimezone: true }),
+  pageViews: integer("page_views").default(0),
+  loginMethod: text("login_method"),
+  o365Linked: boolean("o365_linked").default(false),
+  o365LinkedAt: timestamp("o365_linked_at", { withTimezone: true }),
+  currentSessionStart: timestamp("current_session_start", { withTimezone: true }),
+  lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
+  totalSessionMinutes: integer("total_session_minutes").default(0),
+  chatbgpMessageCount: integer("chatbgp_message_count").default(0),
+  lastChatbgpAt: timestamp("last_chatbgp_at", { withTimezone: true }),
+});
+
+// Blob storage for uploaded files
+export const fileStorage = pgTable("file_storage", {
+  storageKey: varchar("storage_key").primaryKey(),
+  data: text("data").notNull(), // bytea on DB, represented as text for drizzle compatibility
+  contentType: varchar("content_type").notNull().default("application/octet-stream"),
+  originalName: varchar("original_name"),
+  size: integer("size"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// AML training module definitions
+export const amlTrainingModules = pgTable("aml_training_modules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  description: text("description"),
+  contentMarkdown: text("content_markdown").notNull(),
+  quiz: jsonb("quiz").notNull().default(sql`'[]'::jsonb`),
+  passScore: integer("pass_score").default(80),
+  estimatedMinutes: integer("estimated_minutes"),
+  requiredForRoles: text("required_for_roles").array(),
+  active: boolean("active").default(true),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
 
 export const loginSchema = z.object({
   username: z.string().min(1, "Username is required"),
