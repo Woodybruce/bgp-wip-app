@@ -151,19 +151,28 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     console.error("[pathway stage1] CRM search error:", err?.message);
   }
 
-  // 1b. Basic land registry / ownership
+  // 1b. Ownership — prefer CRM data if we already have it, fall back to PropertyData freeholds lookup
   let initialOwnership: NonNullable<StageResults["stage1"]>["initialOwnership"] = null;
+  const crmMatch = crmHits.properties[0];
+  if (crmMatch?.proprietorName || crmMatch?.titleNumber) {
+    initialOwnership = {
+      titleNumber: crmMatch.titleNumber || "unknown",
+      proprietorName: crmMatch.proprietorName || undefined,
+      proprietorCategory: crmMatch.proprietorType || undefined,
+    };
+  }
+  // Enrich with PropertyData lookup regardless, in case CRM is incomplete
   try {
     const lookup = await performPropertyLookup({ address, postcode, layers: ["core"] });
     const freeholds = lookup.propertyDataCoUk?.freeholds?.data || [];
     if (freeholds.length > 0) {
       const best = freeholds[0];
       initialOwnership = {
-        titleNumber: best.title_number || best.title || "unknown",
-        proprietorName: best.proprietor_name_1,
-        proprietorCategory: best.proprietor_category,
-        pricePaid: best.price_paid ? Number(best.price_paid) : undefined,
-        dateOfPurchase: best.date_proprietor_added,
+        titleNumber: best.title_number || best.title || initialOwnership?.titleNumber || "unknown",
+        proprietorName: best.proprietor_name_1 || initialOwnership?.proprietorName,
+        proprietorCategory: best.proprietor_category || initialOwnership?.proprietorCategory,
+        pricePaid: best.price_paid ? Number(best.price_paid) : initialOwnership?.pricePaid,
+        dateOfPurchase: best.date_proprietor_added || initialOwnership?.dateOfPurchase,
       };
     }
   } catch (err: any) {

@@ -127,6 +127,20 @@ export default function PropertyPathway() {
       const { run } = await res.json();
       setSelectedRun(run);
       loadRuns();
+      // Toast the stage outcome so the user sees what happened
+      const ranStage = stage ?? (run.currentStage - 1);
+      const status = run.stageStatus?.[`stage${ranStage}`];
+      const results = run.stageResults?.[`stage${ranStage}`];
+      if (status === "skipped") {
+        toast({
+          title: `Stage ${ranStage} skipped`,
+          description: results?.reason || "Stage was skipped — see board for details.",
+        });
+      } else if (status === "failed") {
+        toast({ title: `Stage ${ranStage} failed`, description: results?.reason || "See server logs.", variant: "destructive" });
+      } else if (status === "completed") {
+        toast({ title: `Stage ${ranStage} complete`, description: results?.summary ? String(results.summary).slice(0, 200) : "Findings added to board." });
+      }
     } catch (err: any) {
       toast({ title: "Stage failed", description: err.message, variant: "destructive" });
     } finally {
@@ -134,8 +148,37 @@ export default function PropertyPathway() {
     }
   }
 
+  async function setTenant(runId: string, tenantName: string, companyNumber?: string) {
+    try {
+      const runRes = await fetch(`/api/property-pathway/${runId}`, { headers: getAuthHeaders(), credentials: "include" });
+      if (!runRes.ok) throw new Error("Could not load run");
+      const run = await runRes.json();
+      const stageResults = { ...(run.stageResults || {}) };
+      stageResults.stage1 = { ...(stageResults.stage1 || {}), tenant: { name: tenantName, ...(companyNumber ? { companyNumber } : {}) } };
+      const res = await fetch(`/api/property-pathway/${runId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ stageResults }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const updated = await res.json();
+      setSelectedRun(updated);
+      toast({ title: "Tenant set", description: `${tenantName} linked to this run. Run Stage 2 again to enrich the brand.` });
+    } catch (err: any) {
+      toast({ title: "Could not set tenant", description: err.message, variant: "destructive" });
+    }
+  }
+
   if (selectedRun) {
-    return <RunDetail run={selectedRun} onBack={() => { setSelectedRun(null); navigate("/property-pathway"); }} onAdvance={(s) => advanceRun(selectedRun.id, s)} advancing={advancing} onReload={() => loadRun(selectedRun.id)} />;
+    return <RunDetail
+      run={selectedRun}
+      onBack={() => { setSelectedRun(null); navigate("/property-pathway"); }}
+      onAdvance={(s) => advanceRun(selectedRun.id, s)}
+      advancing={advancing}
+      onReload={() => loadRun(selectedRun.id)}
+      onSetTenant={(name) => setTenant(selectedRun.id, name)}
+    />;
   }
 
   return (
@@ -202,13 +245,15 @@ export default function PropertyPathway() {
   );
 }
 
-function RunDetail({ run, onBack, onAdvance, advancing, onReload }: { run: PathwayRun; onBack: () => void; onAdvance: (stage?: number) => void; advancing: boolean; onReload: () => void }) {
+function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant }: { run: PathwayRun; onBack: () => void; onAdvance: (stage?: number) => void; advancing: boolean; onReload: () => void; onSetTenant: (name: string) => void }) {
   const s1 = run.stageResults?.stage1;
   const s2 = run.stageResults?.stage2;
   const s4 = run.stageResults?.stage4;
   const s6 = run.stageResults?.stage6;
   const s7 = run.stageResults?.stage7;
+  const s2Status = run.stageStatus?.stage2;
   const nextStage = Math.min(run.currentStage, 7);
+  const [tenantInput, setTenantInput] = useState("");
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-4">
@@ -293,7 +338,32 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload }: { run: Pathw
       )}
 
       {/* Stage 2 — Brand Intelligence */}
-      {s2 && !s2.skipped && (
+      {s2Status === "skipped" ? (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" /> Brand Intelligence — skipped</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm space-y-3">
+            <p className="text-muted-foreground">
+              {s2?.reason || "No tenant was identified in Stage 1."} Set the tenant here and re-run Stage 2.
+            </p>
+            <div className="flex gap-2 items-end max-w-md">
+              <div className="flex-1">
+                <label className="text-xs text-muted-foreground mb-1 block">Tenant / occupier</label>
+                <Input value={tenantInput} onChange={e => setTenantInput(e.target.value)} placeholder="e.g. Dover Street Market" className="h-9" />
+              </div>
+              <Button
+                onClick={() => { if (tenantInput.trim()) { onSetTenant(tenantInput.trim()); setTenantInput(""); } }}
+                disabled={!tenantInput.trim()}
+                className="h-9"
+              >
+                Set tenant
+              </Button>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => onAdvance(2)}>Re-run Stage 2</Button>
+          </CardContent>
+        </Card>
+      ) : s2 && !s2.skipped ? (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" /> Brand Intelligence</CardTitle>
@@ -312,7 +382,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload }: { run: Pathw
             )}
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
       {/* Stage 4 — Property Intelligence */}
       {s4 && (
