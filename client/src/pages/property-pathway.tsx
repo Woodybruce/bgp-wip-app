@@ -246,7 +246,7 @@ export default function PropertyPathway() {
               >
                 <button
                   onClick={(e) => { e.stopPropagation(); deleteRun(r.id); }}
-                  className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
+                  className="absolute top-2 right-2 p-1.5 rounded hover:bg-destructive/10 text-muted-foreground/50 hover:text-destructive transition"
                   title="Delete investigation"
                   data-testid={`button-delete-pathway-${r.id}`}
                 >
