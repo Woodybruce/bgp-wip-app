@@ -9443,7 +9443,10 @@ export function setupChatBGPRoutes(app: Express) {
             console.log(`[ChatBGP] Loop ${loopCount}: tool=${tcName}${tcArgs?.command ? ' cmd=' + tcArgs.command.substring(0, 80) : ''}`);
 
             try {
-              const toolTimeoutMs = tcName.includes("sharepoint") || tcName.includes("file") ? 20000 : 15000;
+              const toolTimeoutMs =
+                tcName.includes("property_pathway") || tcName === "run_model" || tcName === "deep_investigate" ? 240000 :
+                tcName.includes("sharepoint") || tcName.includes("file") ? 20000 :
+                15000;
               const toolResult = await withTimeout(
                 executeAnyTool(tcName, tcArgs, req, msToken),
                 toolTimeoutMs,
@@ -9750,7 +9753,10 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
             let tcArgs: any;
             try { tcArgs = JSON.parse(tc.function.arguments); } catch { tcArgs = {}; }
             try {
-              const toolTimeoutMs = tcName.includes("sharepoint") || tcName.includes("file") ? 20000 : 15000;
+              const toolTimeoutMs =
+                tcName.includes("property_pathway") || tcName === "run_model" || tcName === "deep_investigate" ? 240000 :
+                tcName.includes("sharepoint") || tcName.includes("file") ? 20000 :
+                15000;
               const toolResult = await withTimeout(
                 executeAnyTool(tcName, tcArgs, req, msToken),
                 toolTimeoutMs,
