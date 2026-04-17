@@ -86,10 +86,40 @@ export async function executeCreateSharePointFolder(
   }
 
   const fullPath = parentPath ? `${parentPath}/${args.folderName}` : args.folderName;
-  const encodedPath = encodeURIComponent(fullPath);
+  const encodedParent = encodeURIComponent(parentPath);
+  const encodedFullPath = encodeURIComponent(fullPath);
 
+  // First: check if folder already exists at the exact path — if so, reuse it
+  try {
+    const lookup = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedFullPath}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (lookup.ok) {
+      const existing = await lookup.json();
+      if (existing?.folder) {
+        return {
+          success: true,
+          folder: {
+            name: existing.name,
+            path: fullPath,
+            webUrl: existing.webUrl,
+            id: existing.id,
+          },
+          message: `Folder "${args.folderName}" already exists at: ${fullPath} — reusing`,
+          existed: true,
+        };
+      }
+    }
+  } catch {
+    // fall through to create
+  }
+
+  const createUrl = parentPath
+    ? `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedParent}:/children`
+    : `https://graph.microsoft.com/v1.0/drives/${driveId}/root/children`;
   const resp = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedPath}:/children`,
+    createUrl,
     {
       method: "POST",
       headers: {
@@ -99,7 +129,7 @@ export async function executeCreateSharePointFolder(
       body: JSON.stringify({
         name: args.folderName,
         folder: {},
-        "@microsoft.graph.conflictBehavior": "rename"
+        "@microsoft.graph.conflictBehavior": "fail"
       })
     }
   );

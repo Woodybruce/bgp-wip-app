@@ -223,7 +223,7 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     for (const mb of mailboxes) {
       try {
         const searchRes: any = await graphRequest(
-          `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(`"${searchQuery}"`)}&$top=15&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId`
+          `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(`"${searchQuery}"`)}&$top=15&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`
         ).catch((e: any) => {
           // A 403 means the app isn't admin-consented for this mailbox — don't log it per-user, we handle at summary time
           if (/403/.test(e?.message || "")) return null;
@@ -242,6 +242,7 @@ async function runStage1(runId: string, req: Request): Promise<void> {
             msgId: msg.id,
             preview: (msg.bodyPreview || "").slice(0, 200),
             hasAttachments: !!msg.hasAttachments,
+            webLink: msg.webLink || null,
           });
         }
       } catch (err: any) {
@@ -442,31 +443,40 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     console.error("[pathway stage1] SharePoint search setup error:", err?.message);
   }
 
-  // 1d. Create SharePoint folder tree
+  // 1d. SharePoint folder tree — reuse existing if run already has one, otherwise create
   let folderTree: NonNullable<StageResults["stage1"]>["folderTree"] | undefined;
-  try {
-    const propertyFolderName = address.replace(/[\/\\:*?"<>|]/g, "-").slice(0, 120);
-    const root = await executeCreateSharePointFolder(
-      { folderName: propertyFolderName, parentPath: "Investment" },
-      req
-    );
-    for (const child of STANDARD_FOLDER_TREE) {
-      try {
-        await executeCreateSharePointFolder(
-          { folderName: child, parentPath: `Investment/${propertyFolderName}` },
-          req
-        );
-      } catch {
-        // sub-folder create may fail if already exists — carry on
-      }
-    }
+  if (run.sharepointFolderPath && run.sharepointFolderUrl) {
+    // Run already has a folder — don't create again; just reference it
     folderTree = {
-      root: root.folder.path,
-      webUrl: root.folder.webUrl,
+      root: run.sharepointFolderPath,
+      webUrl: run.sharepointFolderUrl,
       children: STANDARD_FOLDER_TREE,
     };
-  } catch (err: any) {
-    console.error("[pathway stage1] Folder tree create error:", err?.message);
+  } else {
+    try {
+      const propertyFolderName = address.replace(/[\/\\:*?"<>|]/g, "-").slice(0, 120);
+      const root = await executeCreateSharePointFolder(
+        { folderName: propertyFolderName, parentPath: "Investment" },
+        req
+      );
+      for (const child of STANDARD_FOLDER_TREE) {
+        try {
+          await executeCreateSharePointFolder(
+            { folderName: child, parentPath: `Investment/${propertyFolderName}` },
+            req
+          );
+        } catch {
+          // sub-folder create may fail if already exists — carry on
+        }
+      }
+      folderTree = {
+        root: root.folder.path,
+        webUrl: root.folder.webUrl,
+        children: STANDARD_FOLDER_TREE,
+      };
+    } catch (err: any) {
+      console.error("[pathway stage1] Folder tree create error:", err?.message);
+    }
   }
 
   const summary = [
@@ -807,7 +817,17 @@ export function registerPropertyPathwayRoutes(app: Express) {
       if (!address || typeof address !== "string") {
         return res.status(400).json({ error: "address required" });
       }
-      const normalisedAddr = address.trim().replace(/\s+/g, " ").toLowerCase();
+      // Normalise aggressively: lowercase, collapse whitespace, strip spaces
+      // around hyphens, remove punctuation — so "18-22 Haymarket",
+      // "18 - 22 Haymarket", and "18—22 haymarket." all match.
+      const normaliseAddr = (s: string) =>
+        s.trim()
+          .toLowerCase()
+          .replace(/[—–]/g, "-")
+          .replace(/\s*-\s*/g, "-")
+          .replace(/[.,]/g, "")
+          .replace(/\s+/g, " ");
+      const normalisedAddr = normaliseAddr(address);
       const normalisedPostcode = (postcode || "").trim().replace(/\s+/g, "").toUpperCase();
 
       // Dedupe: look for an existing (non-deleted) run matching address±postcode
@@ -818,9 +838,12 @@ export function registerPropertyPathwayRoutes(app: Express) {
           .orderBy(desc(propertyPathwayRuns.updatedAt))
           .limit(200);
         const match = existing.find((r) => {
-          const rAddr = (r.address || "").trim().replace(/\s+/g, " ").toLowerCase();
+          const rAddr = normaliseAddr(r.address || "");
           const rPostcode = (r.postcode || "").trim().replace(/\s+/g, "").toUpperCase();
-          return rAddr === normalisedAddr && (!normalisedPostcode || !rPostcode || rPostcode === normalisedPostcode);
+          if (normalisedPostcode && rPostcode) {
+            return rPostcode === normalisedPostcode;
+          }
+          return rAddr === normalisedAddr;
         });
         if (match) {
           return res.json({ success: true, run: match, existing: true });

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -390,14 +390,55 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
               {s1.summary && <p className="text-muted-foreground">{s1.summary}</p>}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                <InfoBlock label="Owner" value={s1.initialOwnership?.proprietorName || "Not resolved"} />
-                <InfoBlock label="Title" value={s1.initialOwnership?.titleNumber || "—"} />
-                <InfoBlock label="Paid" value={s1.initialOwnership?.pricePaid ? `£${(s1.initialOwnership.pricePaid / 1e6).toFixed(1)}m` : "—"} />
-                <InfoBlock label="Date" value={s1.initialOwnership?.dateOfPurchase || "—"} />
+
+              {/* Ownership */}
+              <div className="border rounded-lg p-3 bg-muted/20">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Ownership</p>
+                {s1.initialOwnership?.proprietorName ? (
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                    <div><span className="text-muted-foreground">Owner:</span> <span className="font-medium">{s1.initialOwnership.proprietorName}</span></div>
+                    <div><span className="text-muted-foreground">Title:</span> <span className="font-medium">{s1.initialOwnership.titleNumber || "—"}</span></div>
+                    <div><span className="text-muted-foreground">Paid:</span> <span className="font-medium">{s1.initialOwnership.pricePaid ? `£${(s1.initialOwnership.pricePaid / 1e6).toFixed(1)}m` : "—"}</span></div>
+                    <div><span className="text-muted-foreground">Date:</span> <span className="font-medium">{s1.initialOwnership.dateOfPurchase || "—"}</span></div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Owner not resolved via Land Registry or CRM. Advance to Stage 4 (Property Intelligence) for deeper lookups.</p>
+                )}
+              </div>
+
+              {/* Pipeline counts */}
+              <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+                <CountBlock label="Emails" value={s1.emailHits?.length || 0} />
+                <CountBlock label="SharePoint" value={s1.sharepointHits?.length || 0} />
+                <CountBlock label="Deals" value={s1.deals?.length || 0} />
+                <CountBlock label="Units" value={s1.tenancy?.units?.length || 0} />
+                <CountBlock label="Comps" value={s1.comps?.length || 0} />
+                <CountBlock label="Brochures" value={s1.brochureFiles?.length || 0} />
               </div>
             </CardContent>
           </Card>
+
+          {/* CRM property matches */}
+          {s1.crmHits?.properties && s1.crmHits.properties.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> CRM properties ({s1.crmHits.properties.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm space-y-1">
+                {s1.crmHits.properties.map((p: any) => (
+                  <Link key={p.id} href={`/properties/${p.id}`}>
+                    <div className="flex items-center justify-between py-1.5 border-b last:border-b-0 hover:bg-muted/50 px-2 -mx-2 rounded cursor-pointer">
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{p.name}</p>
+                        <p className="text-xs text-muted-foreground">{[p.status, p.assetClass, p.team].filter(Boolean).join(" · ")}</p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                    </div>
+                  </Link>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Deals on file */}
           {s1.deals && s1.deals.length > 0 && (
@@ -407,16 +448,18 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </CardHeader>
               <CardContent className="text-sm space-y-1">
                 {s1.deals.map((d: any) => (
-                  <div key={d.id} className="flex items-center justify-between py-1.5 border-b last:border-b-0">
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{d.name}</p>
-                      <p className="text-xs text-muted-foreground">{[d.dealType, d.stage || d.status, d.team?.join?.(", ")].filter(Boolean).join(" · ")}</p>
+                  <Link key={d.id} href={`/deals/${d.id}`}>
+                    <div className="flex items-center justify-between py-1.5 border-b last:border-b-0 hover:bg-muted/50 px-2 -mx-2 rounded cursor-pointer">
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{d.name}</p>
+                        <p className="text-xs text-muted-foreground">{[d.dealType, d.stage || d.status, d.team?.join?.(", ")].filter(Boolean).join(" · ")}</p>
+                      </div>
+                      <div className="text-right text-xs text-muted-foreground shrink-0">
+                        {d.rentPa ? `£${d.rentPa.toLocaleString()} pa` : ""}
+                        {d.createdAt && <span className="block">{new Date(d.createdAt).toLocaleDateString("en-GB")}</span>}
+                      </div>
                     </div>
-                    <div className="text-right text-xs text-muted-foreground shrink-0">
-                      {d.rentPa ? `£${d.rentPa.toLocaleString()} pa` : ""}
-                      {d.createdAt && <span className="block">{new Date(d.createdAt).toLocaleDateString("en-GB")}</span>}
-                    </div>
-                  </div>
+                  </Link>
                 ))}
               </CardContent>
             </Card>
@@ -564,12 +607,16 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Emails ({s1.emailHits.length})</CardTitle>
               </CardHeader>
               <CardContent className="text-xs space-y-1.5">
-                {s1.emailHits.slice(0, 12).map((h: any, i: number) => (
-                  <div key={i} className="border-l-2 border-muted pl-2 py-0.5">
-                    <p className="font-medium truncate">{h.subject}{h.hasAttachments ? " 📎" : ""}</p>
-                    <p className="text-muted-foreground">{h.from} — {new Date(h.date).toLocaleDateString("en-GB")}</p>
-                  </div>
-                ))}
+                {s1.emailHits.slice(0, 12).map((h: any, i: number) => {
+                  const Wrapper: any = h.webLink ? "a" : "div";
+                  const wrapperProps = h.webLink ? { href: h.webLink, target: "_blank", rel: "noreferrer", className: "block border-l-2 border-muted hover:border-primary pl-2 py-0.5 hover:bg-muted/50 rounded-r cursor-pointer" } : { className: "border-l-2 border-muted pl-2 py-0.5" };
+                  return (
+                    <Wrapper key={i} {...wrapperProps}>
+                      <p className="font-medium truncate">{h.subject}{h.hasAttachments ? " 📎" : ""}{h.webLink ? <ExternalLink className="w-3 h-3 inline ml-1 text-muted-foreground" /> : null}</p>
+                      <p className="text-muted-foreground">{h.from} — {new Date(h.date).toLocaleDateString("en-GB")}</p>
+                    </Wrapper>
+                  );
+                })}
               </CardContent>
             </Card>
           )}
@@ -692,6 +739,15 @@ function InfoBlock({ label, value }: { label: string; value: string }) {
     <div className="border rounded-lg p-3">
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="text-sm font-medium mt-0.5 truncate">{value}</p>
+    </div>
+  );
+}
+
+function CountBlock({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="border rounded-lg p-2 text-center">
+      <p className="text-lg font-bold">{value}</p>
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
     </div>
   );
 }
