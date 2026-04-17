@@ -374,6 +374,52 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant }:
             </Card>
           )}
 
+          {/* Engagements — viewings + interactions */}
+          {s1.engagements && s1.engagements.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Who has engaged ({s1.engagements.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs space-y-1">
+                {s1.engagements.slice(0, 20).map((e: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0">
+                    <div className="min-w-0">
+                      <span className="font-medium">{e.contact || e.company || "Unknown"}</span>
+                      {e.company && e.contact && <span className="text-muted-foreground ml-1">· {e.company}</span>}
+                      {e.unitName && <span className="text-muted-foreground ml-1">· {e.unitName}</span>}
+                      {e.outcome && <Badge variant="outline" className="ml-2 text-[9px]">{e.outcome}</Badge>}
+                    </div>
+                    <span className="text-muted-foreground shrink-0 ml-2">{e.date ? new Date(e.date).toLocaleDateString("en-GB") : ""}</span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Existing SharePoint folders / files */}
+          {s1.sharepointHits && s1.sharepointHits.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><FolderOpen className="w-4 h-4" /> SharePoint already has ({s1.sharepointHits.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs space-y-1 max-h-72 overflow-y-auto">
+                {s1.sharepointHits.map((f: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0">
+                    <a href={f.webUrl} target="_blank" rel="noreferrer" className="min-w-0 flex-1 truncate hover:underline">
+                      <span className="font-medium">{f.name}</span>
+                      <span className="text-muted-foreground ml-1">· {f.path.replace(/^\//, "")}</span>
+                    </a>
+                    <span className="text-muted-foreground shrink-0 ml-2 flex items-center gap-1.5">
+                      {f.type === "folder" && <Badge variant="outline" className="text-[9px]">folder</Badge>}
+                      {f.sizeMB ? <span>{f.sizeMB} MB</span> : null}
+                      {f.modifiedAt ? <span>{new Date(f.modifiedAt).toLocaleDateString("en-GB")}</span> : null}
+                    </span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Brochures identified */}
           {s1.brochureFiles && s1.brochureFiles.length > 0 && (
             <Card>
@@ -383,7 +429,11 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant }:
               <CardContent className="text-xs space-y-1">
                 {s1.brochureFiles.map((b: any, i: number) => (
                   <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0">
-                    <span className="truncate font-medium">{b.name}</span>
+                    {b.webUrl ? (
+                      <a href={b.webUrl} target="_blank" rel="noreferrer" className="truncate font-medium hover:underline">{b.name}</a>
+                    ) : (
+                      <span className="truncate font-medium">{b.name}</span>
+                    )}
                     <span className="text-muted-foreground shrink-0 ml-2">{b.source}{b.date ? ` · ${new Date(b.date).toLocaleDateString("en-GB")}` : ""}</span>
                   </div>
                 ))}

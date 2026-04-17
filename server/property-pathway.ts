@@ -9,8 +9,10 @@ import {
   crmDeals,
   availableUnits,
   investmentComps,
+  unitViewings,
   type PropertyPathwayRun,
 } from "@shared/schema";
+import { inArray } from "drizzle-orm";
 import { performPropertyLookup } from "./property-lookup";
 import { executeCreateSharePointFolder } from "./utils/sharepoint-operations";
 
@@ -49,11 +51,12 @@ type StageStatus = "pending" | "running" | "completed" | "failed" | "skipped";
 interface StageResults {
   stage1?: {
     emailHits?: Array<{ subject: string; from: string; date: string; msgId: string; preview: string; hasAttachments: boolean }>;
-    sharepointHits?: Array<{ name: string; path: string; webUrl: string; modifiedAt: string }>;
-    brochureFiles?: Array<{ source: "email" | "sharepoint"; name: string; ref: string; date?: string }>;
+    sharepointHits?: Array<{ name: string; path: string; webUrl: string; modifiedAt?: string; sizeMB?: number; type?: string }>;
+    brochureFiles?: Array<{ source: "email" | "sharepoint"; name: string; ref: string; date?: string; webUrl?: string }>;
     crmHits?: { properties: any[]; deals: any[]; companies: any[] };
     deals?: Array<{ id: string; name: string; stage?: string; status?: string; dealType?: string; team?: string[]; rentPa?: number; fee?: number; createdAt?: string }>;
     tenancy?: { occupier?: string; units?: Array<{ id: string; unitName: string; floor?: string; sqft?: number; askingRent?: number; marketingStatus?: string; useClass?: string }>; status?: "vacant" | "let" | "mixed" | "unknown" };
+    engagements?: Array<{ source: "unit_viewing" | "investment_viewing" | "interaction"; contact?: string; company?: string; date?: string; outcome?: string; notes?: string; unitName?: string }>;
     pricePaidHistory?: Array<{ address?: string; price?: number; date?: string; type?: string }>;
     comps?: Array<{ address: string; price?: number; yield?: number; date?: string; type?: string }>;
     initialOwnership?: { titleNumber: string; proprietorName?: string; proprietorCategory?: string; pricePaid?: number; dateOfPurchase?: string } | null;
@@ -322,6 +325,81 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     }
   }
 
+  // 1c-7. Engagements — unit viewings for units on this property, plus interactions with related deals
+  const engagements: NonNullable<StageResults["stage1"]>["engagements"] = [];
+  try {
+    const unitIds = tenancy?.units?.map((u) => u.id) || [];
+    if (unitIds.length) {
+      const viewings = await db.select().from(unitViewings).where(inArray(unitViewings.unitId, unitIds)).limit(30);
+      for (const v of viewings) {
+        engagements.push({
+          source: "unit_viewing",
+          contact: v.contactName ?? undefined,
+          company: v.companyName ?? undefined,
+          date: v.viewingDate ?? undefined,
+          outcome: v.outcome ?? undefined,
+          notes: v.notes ? String(v.notes).slice(0, 200) : undefined,
+          unitName: tenancy?.units?.find((u) => u.id === v.unitId)?.unitName,
+        });
+      }
+    }
+  } catch (err: any) {
+    console.error("[pathway stage1] unit_viewings query error:", err?.message);
+  }
+
+  // 1c-8. SharePoint search — find any existing folders/files matching the address
+  const sharepointHits: NonNullable<StageResults["stage1"]>["sharepointHits"] = [];
+  try {
+    const { getValidMsToken } = await import("./microsoft");
+    const { getSharePointDriveId } = await import("./utils/sharepoint-operations");
+    const token = await getValidMsToken(req);
+    if (token) {
+      const driveId = await getSharePointDriveId(token);
+      if (driveId) {
+        // Search terms: the street/building name (first part of address) + postcode
+        const streetTerm = address.split(",")[0].trim();
+        const queries = [streetTerm, postcode].filter((q) => q && q.length >= 3);
+        const seen = new Set<string>();
+        for (const q of queries) {
+          try {
+            const searchUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/root/search(q='${encodeURIComponent(q)}')`;
+            const resp = await fetch(searchUrl, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) });
+            if (!resp.ok) continue;
+            const data: any = await resp.json();
+            for (const item of (data.value || []).slice(0, 40)) {
+              if (seen.has(item.id)) continue;
+              seen.add(item.id);
+              const path = item.parentReference?.path?.replace(/\/drive\/root:/, "") || "";
+              const hit = {
+                name: item.name,
+                path,
+                webUrl: item.webUrl,
+                modifiedAt: item.lastModifiedDateTime,
+                sizeMB: item.size ? Math.round((item.size / 1024 / 1024) * 100) / 100 : undefined,
+                type: item.file?.mimeType || (item.folder ? "folder" : "file"),
+              };
+              sharepointHits.push(hit);
+              // Any brochure-like file name also gets surfaced in brochureFiles
+              if (item.file && /brochure|particulars|teaser|flyer|memorandum|om\.pdf|pitch/i.test(item.name)) {
+                brochureFiles.push({
+                  source: "sharepoint",
+                  name: item.name,
+                  ref: item.id,
+                  date: item.lastModifiedDateTime,
+                  webUrl: item.webUrl,
+                });
+              }
+            }
+          } catch (err: any) {
+            console.warn("[pathway stage1] SharePoint search error:", err?.message);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.error("[pathway stage1] SharePoint search setup error:", err?.message);
+  }
+
   // 1d. Create SharePoint folder tree
   let folderTree: NonNullable<StageResults["stage1"]>["folderTree"] | undefined;
   try {
@@ -355,8 +433,10 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     initialOwnership?.proprietorName ? `Owner: ${initialOwnership.proprietorName} (title ${initialOwnership.titleNumber}).` : `Ownership not resolved.`,
     deals.length ? `${deals.length} deal(s) in pipeline/history.` : null,
     tenancy?.units?.length ? `${tenancy.units.length} unit(s) on file — ${tenancy.status}.` : null,
+    engagements.length ? `${engagements.length} viewing(s)/interaction(s) logged.` : null,
     emailHits.length ? `${emailHits.length} email(s) in shared mailbox.` : null,
-    brochureFiles.length ? `${brochureFiles.length} brochure-style attachment(s) identified.` : null,
+    sharepointHits.length ? `${sharepointHits.length} existing SharePoint item(s) matching this address.` : null,
+    brochureFiles.length ? `${brochureFiles.length} brochure-style file(s) identified.` : null,
     pricePaidHistory.length ? `${pricePaidHistory.length} past transaction(s) on this street.` : null,
     comps.length ? `${comps.length} investment comp(s) in same outward code.` : null,
     folderTree ? `SharePoint folder tree ready.` : null,
@@ -365,10 +445,12 @@ async function runStage1(runId: string, req: Request): Promise<void> {
   await setStageStatus(runId, "stage1", "completed", {
     stage1: {
       emailHits,
+      sharepointHits,
       crmHits,
       initialOwnership,
       deals,
       tenancy,
+      engagements,
       pricePaidHistory,
       comps,
       brochureFiles,
