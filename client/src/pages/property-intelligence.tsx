@@ -275,7 +275,16 @@ export default function PropertyIntelligence() {
     return () => window.removeEventListener("popstate", handler);
   }, []);
 
-  const openMap = () => handleTabChange("map");
+  const [pendingSearch, setPendingSearch] = useState<{ address: string; postcode: string | null } | null>(null);
+
+  const openMap = (search?: any) => {
+    if (search?.address) {
+      setPendingSearch({ address: search.address, postcode: search.postcode });
+    } else {
+      setPendingSearch(null);
+    }
+    handleTabChange("map");
+  };
 
   return (
     <div className="flex flex-col h-full min-h-screen">
@@ -304,7 +313,7 @@ export default function PropertyIntelligence() {
         <div className="flex-1 overflow-y-auto">
           <Suspense fallback={<TabLoader />}>
             <TabsContent value="map" className="m-0 h-full">
-              <EdozoMap />
+              <EdozoMap initialSearch={pendingSearch} onSearchConsumed={() => setPendingSearch(null)} />
             </TabsContent>
             <TabsContent value="board" className="m-0">
               <InvestigationBoard onOpenInMap={openMap} />

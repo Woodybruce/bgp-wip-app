@@ -2981,7 +2981,7 @@ out body;>;out skel qt;`;
   }
 }
 
-export default function EdozoMap() {
+export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialSearch?: { address: string; postcode: string | null } | null; onSearchConsumed?: () => void } = {}) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const buildingLayerRef = useRef<L.LayerGroup | null>(null);
@@ -3519,6 +3519,26 @@ export default function EdozoMap() {
     suppressSearchRef.current = true;
     setSearchQuery(result.label);
   };
+
+  // Auto-search when navigating from Investigation Board
+  useEffect(() => {
+    if (!initialSearch?.address && !initialSearch?.postcode) return;
+    const query = initialSearch.address || initialSearch.postcode || "";
+    if (!query) return;
+
+    // If we have a postcode, load property data directly
+    if (initialSearch.postcode) {
+      suppressSearchRef.current = true;
+      setSearchQuery(query);
+      setSelectedPostcode(initialSearch.postcode);
+      loadPropertyData(initialSearch.postcode, undefined, initialSearch.address || undefined);
+    } else {
+      // Otherwise trigger an address search
+      suppressSearchRef.current = false;
+      setSearchQuery(query);
+    }
+    onSearchConsumed?.();
+  }, [initialSearch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [activePdLayers, setActivePdLayers] = useState<string[]>(["core"]);
   const [loadingLayer, setLoadingLayer] = useState<string | null>(null);
