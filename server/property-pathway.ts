@@ -6,6 +6,9 @@ import {
   propertyPathwayRuns,
   crmProperties,
   crmCompanies,
+  crmDeals,
+  availableUnits,
+  investmentComps,
   type PropertyPathwayRun,
 } from "@shared/schema";
 import { performPropertyLookup } from "./property-lookup";
@@ -47,7 +50,12 @@ interface StageResults {
   stage1?: {
     emailHits?: Array<{ subject: string; from: string; date: string; msgId: string; preview: string; hasAttachments: boolean }>;
     sharepointHits?: Array<{ name: string; path: string; webUrl: string; modifiedAt: string }>;
+    brochureFiles?: Array<{ source: "email" | "sharepoint"; name: string; ref: string; date?: string }>;
     crmHits?: { properties: any[]; deals: any[]; companies: any[] };
+    deals?: Array<{ id: string; name: string; stage?: string; status?: string; dealType?: string; team?: string[]; rentPa?: number; fee?: number; createdAt?: string }>;
+    tenancy?: { occupier?: string; units?: Array<{ id: string; unitName: string; floor?: string; sqft?: number; askingRent?: number; marketingStatus?: string; useClass?: string }>; status?: "vacant" | "let" | "mixed" | "unknown" };
+    pricePaidHistory?: Array<{ address?: string; price?: number; date?: string; type?: string }>;
+    comps?: Array<{ address: string; price?: number; yield?: number; date?: string; type?: string }>;
     initialOwnership?: { titleNumber: string; proprietorName?: string; proprietorCategory?: string; pricePaid?: number; dateOfPurchase?: string } | null;
     tenant?: { name: string; companyNumber?: string };
     folderTree?: { root: string; webUrl: string; children: string[] };
@@ -202,6 +210,118 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     console.error("[pathway stage1] Email search error:", err?.message);
   }
 
+  // 1c-2. Deal history — every crm_deal linked to the matching CRM property
+  const deals: NonNullable<StageResults["stage1"]>["deals"] = [];
+  if (crmMatch?.id) {
+    try {
+      const dealRows = await db.select().from(crmDeals).where(eq(crmDeals.propertyId, crmMatch.id)).limit(25);
+      for (const d of dealRows) {
+        deals.push({
+          id: d.id,
+          name: d.name,
+          stage: d.stage ?? undefined,
+          status: d.status ?? undefined,
+          dealType: d.dealType ?? undefined,
+          team: d.team ?? undefined,
+          rentPa: d.rentPa ?? undefined,
+          fee: d.fee ?? undefined,
+          createdAt: d.createdAt ? new Date(d.createdAt as any).toISOString() : undefined,
+        });
+      }
+    } catch (err: any) {
+      console.error("[pathway stage1] crm_deals query error:", err?.message);
+    }
+  }
+
+  // 1c-3. Tenancy — available_units rows for this CRM property
+  let tenancy: NonNullable<StageResults["stage1"]>["tenancy"] | undefined;
+  if (crmMatch?.id) {
+    try {
+      const units = await db.select().from(availableUnits).where(eq(availableUnits.propertyId, crmMatch.id)).limit(50);
+      if (units.length) {
+        const vacant = units.filter((u) => (u.marketingStatus || "Available").toLowerCase() === "available").length;
+        const let_ = units.length - vacant;
+        const status: "vacant" | "let" | "mixed" | "unknown" = vacant === units.length ? "vacant" : let_ === units.length ? "let" : "mixed";
+        tenancy = {
+          status,
+          units: units.map((u) => ({
+            id: u.id,
+            unitName: u.unitName,
+            floor: u.floor ?? undefined,
+            sqft: u.sqft ?? undefined,
+            askingRent: u.askingRent ?? undefined,
+            marketingStatus: u.marketingStatus ?? undefined,
+            useClass: u.useClass ?? undefined,
+          })),
+        };
+      }
+    } catch (err: any) {
+      console.error("[pathway stage1] available_units query error:", err?.message);
+    }
+  }
+
+  // 1c-4. Price paid history — PropertyData sold-prices by postcode (street-filtered client-side)
+  const pricePaidHistory: NonNullable<StageResults["stage1"]>["pricePaidHistory"] = [];
+  if (postcode && process.env.PROPERTYDATA_API_KEY) {
+    try {
+      const pdRes = await fetch(`https://api.propertydata.co.uk/sold-prices?key=${process.env.PROPERTYDATA_API_KEY}&postcode=${encodeURIComponent(postcode.replace(/\s+/g, ""))}`, { signal: AbortSignal.timeout(15000) });
+      if (pdRes.ok) {
+        const pd: any = await pdRes.json();
+        const sold: any[] = pd?.data?.transactions || pd?.data || [];
+        const streetKey = address.split(",")[0].trim().toLowerCase();
+        for (const row of sold.slice(0, 40)) {
+          const rowAddr = (row.address || row.full_address || "").toLowerCase();
+          if (!streetKey || rowAddr.includes(streetKey.split(/\s+/).slice(-1)[0]?.slice(0, 10) || "")) {
+            pricePaidHistory.push({
+              address: row.address || row.full_address,
+              price: row.price ? Number(row.price) : undefined,
+              date: row.date || row.transaction_date,
+              type: row.type || row.property_type,
+            });
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error("[pathway stage1] sold-prices lookup error:", err?.message);
+    }
+  }
+
+  // 1c-5. Investment comps nearby — share the same postcode outward code
+  const comps: NonNullable<StageResults["stage1"]>["comps"] = [];
+  try {
+    const outward = postcode ? postcode.toUpperCase().replace(/\s+/g, "").slice(0, -3) : "";
+    if (outward) {
+      const { pool } = await import("./db");
+      const res = await pool.query(
+        `SELECT address, price, cap_rate, transaction_date, subtype
+           FROM investment_comps
+          WHERE UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $1
+          ORDER BY transaction_date DESC NULLS LAST
+          LIMIT 15`,
+        [`${outward}%`]
+      );
+      for (const r of res.rows) {
+        comps.push({
+          address: r.address,
+          price: r.price ? Number(r.price) : undefined,
+          yield: r.cap_rate ? Number(r.cap_rate) : undefined,
+          date: r.transaction_date,
+          type: r.subtype,
+        });
+      }
+    }
+  } catch (err: any) {
+    console.error("[pathway stage1] investment_comps query error:", err?.message);
+  }
+
+  // 1c-6. Identify likely brochure attachments from email hits
+  const brochureFiles: NonNullable<StageResults["stage1"]>["brochureFiles"] = [];
+  for (const e of emailHits) {
+    if (e.hasAttachments && /brochure|particulars|marketing|teaser|flyer|om|memorandum/i.test(e.subject)) {
+      brochureFiles.push({ source: "email", name: e.subject, ref: e.msgId, date: e.date });
+    }
+  }
+
   // 1d. Create SharePoint folder tree
   let folderTree: NonNullable<StageResults["stage1"]>["folderTree"] | undefined;
   try {
@@ -231,17 +351,27 @@ async function runStage1(runId: string, req: Request): Promise<void> {
 
   const summary = [
     `Initial search complete for ${address}.`,
-    crmHits.properties.length ? `Found ${crmHits.properties.length} matching CRM property record(s).` : `No existing CRM records.`,
-    initialOwnership?.proprietorName ? `Current owner: ${initialOwnership.proprietorName} (title ${initialOwnership.titleNumber}).` : `Ownership not resolved yet.`,
-    emailHits.length ? `${emailHits.length} email(s) found in shared mailbox referencing this property.` : `No emails found.`,
-    folderTree ? `SharePoint folder tree created at ${folderTree.root}.` : `Folder tree creation deferred.`,
-  ].join(" ");
+    crmHits.properties.length ? `${crmHits.properties.length} CRM property record(s).` : `No existing CRM records.`,
+    initialOwnership?.proprietorName ? `Owner: ${initialOwnership.proprietorName} (title ${initialOwnership.titleNumber}).` : `Ownership not resolved.`,
+    deals.length ? `${deals.length} deal(s) in pipeline/history.` : null,
+    tenancy?.units?.length ? `${tenancy.units.length} unit(s) on file — ${tenancy.status}.` : null,
+    emailHits.length ? `${emailHits.length} email(s) in shared mailbox.` : null,
+    brochureFiles.length ? `${brochureFiles.length} brochure-style attachment(s) identified.` : null,
+    pricePaidHistory.length ? `${pricePaidHistory.length} past transaction(s) on this street.` : null,
+    comps.length ? `${comps.length} investment comp(s) in same outward code.` : null,
+    folderTree ? `SharePoint folder tree ready.` : null,
+  ].filter(Boolean).join(" ");
 
   await setStageStatus(runId, "stage1", "completed", {
     stage1: {
       emailHits,
       crmHits,
       initialOwnership,
+      deals,
+      tenancy,
+      pricePaidHistory,
+      comps,
+      brochureFiles,
       folderTree,
       summary,
     },

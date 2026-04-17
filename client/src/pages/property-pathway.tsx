@@ -302,39 +302,152 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant }:
 
       {/* Stage 1 — Initial Search findings */}
       {s1 && (
-        <Card>
-          <CardHeader className="pb-3 flex flex-row items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Initial Search</CardTitle>
-            {run.sharepointFolderUrl && (
-              <a href={run.sharepointFolderUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-                <FolderOpen className="w-3 h-3" /> Open SharePoint
-              </a>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            {s1.summary && <p className="text-muted-foreground">{s1.summary}</p>}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <InfoBlock label="Emails" value={`${s1.emailHits?.length || 0}`} />
-              <InfoBlock label="CRM matches" value={`${s1.crmHits?.properties?.length || 0}`} />
-              <InfoBlock label="Owner" value={s1.initialOwnership?.proprietorName || "Not resolved"} />
-              <InfoBlock label="Title" value={s1.initialOwnership?.titleNumber || "—"} />
-            </div>
-            {s1.emailHits && s1.emailHits.length > 0 && (
-              <details className="text-xs">
-                <summary className="cursor-pointer text-muted-foreground hover:text-foreground">View {s1.emailHits.length} emails</summary>
-                <ul className="mt-2 space-y-1.5">
-                  {s1.emailHits.slice(0, 15).map((h: any, i: number) => (
-                    <li key={i} className="border-l-2 border-muted pl-2">
-                      <p className="font-medium truncate">{h.subject}</p>
-                      <p className="text-muted-foreground">{h.from} — {new Date(h.date).toLocaleDateString("en-GB")}</p>
-                      <p className="text-muted-foreground line-clamp-2">{h.preview}</p>
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-          </CardContent>
-        </Card>
+        <>
+          <Card>
+            <CardHeader className="pb-3 flex flex-row items-center justify-between">
+              <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Initial Search — summary</CardTitle>
+              {run.sharepointFolderUrl && (
+                <a href={run.sharepointFolderUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+                  <FolderOpen className="w-3 h-3" /> Open SharePoint
+                </a>
+              )}
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              {s1.summary && <p className="text-muted-foreground">{s1.summary}</p>}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <InfoBlock label="Owner" value={s1.initialOwnership?.proprietorName || "Not resolved"} />
+                <InfoBlock label="Title" value={s1.initialOwnership?.titleNumber || "—"} />
+                <InfoBlock label="Paid" value={s1.initialOwnership?.pricePaid ? `£${(s1.initialOwnership.pricePaid / 1e6).toFixed(1)}m` : "—"} />
+                <InfoBlock label="Date" value={s1.initialOwnership?.dateOfPurchase || "—"} />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Deals on file */}
+          {s1.deals && s1.deals.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> BGP deal history ({s1.deals.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="text-sm space-y-1">
+                {s1.deals.map((d: any) => (
+                  <div key={d.id} className="flex items-center justify-between py-1.5 border-b last:border-b-0">
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{d.name}</p>
+                      <p className="text-xs text-muted-foreground">{[d.dealType, d.stage || d.status, d.team?.join?.(", ")].filter(Boolean).join(" · ")}</p>
+                    </div>
+                    <div className="text-right text-xs text-muted-foreground shrink-0">
+                      {d.rentPa ? `£${d.rentPa.toLocaleString()} pa` : ""}
+                      {d.createdAt && <span className="block">{new Date(d.createdAt).toLocaleDateString("en-GB")}</span>}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Tenancy / units */}
+          {s1.tenancy?.units && s1.tenancy.units.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <MapPin className="w-4 h-4" /> Tenancy — {s1.tenancy.units.length} unit(s)
+                  <Badge variant="outline" className="ml-2 text-[10px]">{s1.tenancy.status}</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs space-y-1">
+                {s1.tenancy.units.slice(0, 15).map((u: any) => (
+                  <div key={u.id} className="flex items-center justify-between py-1 border-b last:border-b-0">
+                    <div className="min-w-0">
+                      <span className="font-medium">{u.unitName}</span>
+                      {u.floor && <span className="text-muted-foreground ml-1">· {u.floor}</span>}
+                      {u.useClass && <span className="text-muted-foreground ml-1">· {u.useClass}</span>}
+                    </div>
+                    <div className="text-right text-muted-foreground shrink-0">
+                      {u.sqft ? `${Math.round(u.sqft).toLocaleString()} sqft` : ""}
+                      {u.askingRent ? <span className="ml-2">£{u.askingRent.toLocaleString()}</span> : ""}
+                      {u.marketingStatus && <Badge variant="outline" className="ml-2 text-[9px]">{u.marketingStatus}</Badge>}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Brochures identified */}
+          {s1.brochureFiles && s1.brochureFiles.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Brochures on file ({s1.brochureFiles.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs space-y-1">
+                {s1.brochureFiles.map((b: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0">
+                    <span className="truncate font-medium">{b.name}</span>
+                    <span className="text-muted-foreground shrink-0 ml-2">{b.source}{b.date ? ` · ${new Date(b.date).toLocaleDateString("en-GB")}` : ""}</span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Past transactions */}
+          {s1.pricePaidHistory && s1.pricePaidHistory.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><Download className="w-4 h-4" /> Past transactions — this street</CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs space-y-1">
+                {s1.pricePaidHistory.slice(0, 12).map((t: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0">
+                    <span className="truncate">{t.address}</span>
+                    <span className="text-muted-foreground shrink-0 ml-2">
+                      {t.price ? `£${t.price.toLocaleString()}` : "—"}{t.date ? ` · ${t.date}` : ""}
+                    </span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Investment comps */}
+          {s1.comps && s1.comps.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> Investment comps — same postcode</CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs space-y-1">
+                {s1.comps.slice(0, 12).map((c: any, i: number) => (
+                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0">
+                    <span className="truncate">{c.address}</span>
+                    <span className="text-muted-foreground shrink-0 ml-2">
+                      {c.price ? `£${(c.price / 1e6).toFixed(1)}m` : "—"}
+                      {c.yield ? ` · ${(c.yield * 100).toFixed(2)}%` : ""}
+                      {c.date ? ` · ${c.date}` : ""}
+                    </span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Email hits — full list */}
+          {s1.emailHits && s1.emailHits.length > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Emails ({s1.emailHits.length})</CardTitle>
+              </CardHeader>
+              <CardContent className="text-xs space-y-1.5">
+                {s1.emailHits.slice(0, 12).map((h: any, i: number) => (
+                  <div key={i} className="border-l-2 border-muted pl-2 py-0.5">
+                    <p className="font-medium truncate">{h.subject}{h.hasAttachments ? " 📎" : ""}</p>
+                    <p className="text-muted-foreground">{h.from} — {new Date(h.date).toLocaleDateString("en-GB")}</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
 
       {/* Stage 2 — Brand Intelligence */}
