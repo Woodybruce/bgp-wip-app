@@ -382,29 +382,78 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           <Card>
             <CardHeader className="pb-3 flex flex-row items-center justify-between">
               <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Initial Search — summary</CardTitle>
-              {run.sharepointFolderUrl && (
-                <a href={run.sharepointFolderUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-                  <FolderOpen className="w-3 h-3" /> Open SharePoint
-                </a>
-              )}
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              {s1.summary && <p className="text-muted-foreground">{s1.summary}</p>}
-
-              {/* Ownership */}
-              <div className="border rounded-lg p-3 bg-muted/20">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Ownership</p>
-                {s1.initialOwnership?.proprietorName ? (
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-                    <div><span className="text-muted-foreground">Owner:</span> <span className="font-medium">{s1.initialOwnership.proprietorName}</span></div>
-                    <div><span className="text-muted-foreground">Title:</span> <span className="font-medium">{s1.initialOwnership.titleNumber || "—"}</span></div>
-                    <div><span className="text-muted-foreground">Paid:</span> <span className="font-medium">{s1.initialOwnership.pricePaid ? `£${(s1.initialOwnership.pricePaid / 1e6).toFixed(1)}m` : "—"}</span></div>
-                    <div><span className="text-muted-foreground">Date:</span> <span className="font-medium">{s1.initialOwnership.dateOfPurchase || "—"}</span></div>
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">Owner not resolved via Land Registry or CRM. Advance to Stage 4 (Property Intelligence) for deeper lookups.</p>
+              <div className="flex items-center gap-3">
+                {s1.propertyImage?.googleMapsUrl && (
+                  <a href={s1.propertyImage.googleMapsUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+                    <MapPin className="w-3 h-3" /> Google Maps
+                  </a>
+                )}
+                {run.sharepointFolderUrl && (
+                  <a href={run.sharepointFolderUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+                    <FolderOpen className="w-3 h-3" /> Open SharePoint
+                  </a>
                 )}
               </div>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="flex gap-3">
+                {s1.propertyImage?.streetViewUrl && (
+                  <a href={s1.propertyImage.googleMapsUrl || "#"} target="_blank" rel="noreferrer" className="shrink-0 block hover:opacity-90 transition-opacity">
+                    <img
+                      src={s1.propertyImage.streetViewUrl}
+                      alt={`Street view of ${run.address}`}
+                      className="w-40 h-24 md:w-56 md:h-32 rounded-lg object-cover border"
+                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                    />
+                  </a>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium">{run.address}{run.postcode ? `, ${run.postcode}` : ""}</p>
+                  {s1.aiFacts?.listedStatus && <Badge variant="outline" className="mt-1 text-[10px]">{s1.aiFacts.listedStatus}</Badge>}
+                  {s1.aiFacts?.currentUse && <p className="text-xs text-muted-foreground mt-1">{s1.aiFacts.currentUse}</p>}
+                  {s1.summary && <p className="text-xs text-muted-foreground mt-2">{s1.summary}</p>}
+                </div>
+              </div>
+
+              {/* Ownership — prefer Land Reg structured data, fall back to AI-extracted facts */}
+              <div className="border rounded-lg p-3 bg-muted/20">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Ownership</p>
+                {(() => {
+                  const ownerName = s1.initialOwnership?.proprietorName || s1.aiFacts?.owner;
+                  const titleNum = s1.initialOwnership?.titleNumber;
+                  const paid = s1.initialOwnership?.pricePaid ? `£${(s1.initialOwnership.pricePaid / 1e6).toFixed(1)}m` : s1.aiFacts?.purchasePrice;
+                  const date = s1.initialOwnership?.dateOfPurchase || s1.aiFacts?.purchaseDate;
+                  const coNumber = s1.aiFacts?.ownerCompanyNumber;
+
+                  if (!ownerName && !titleNum && !paid && !date) {
+                    return <p className="text-xs text-muted-foreground">Owner not resolved via Land Registry or CRM. Advance to Stage 4 (Property Intelligence) for deeper lookups.</p>;
+                  }
+                  return (
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                      <div><span className="text-muted-foreground">Owner:</span> <span className="font-medium">{ownerName || "—"}</span>{coNumber ? <span className="text-muted-foreground ml-1">(Co# {coNumber})</span> : null}</div>
+                      <div><span className="text-muted-foreground">Title:</span> <span className="font-medium">{titleNum || "—"}</span></div>
+                      <div><span className="text-muted-foreground">Paid:</span> <span className="font-medium">{paid || "—"}</span></div>
+                      <div><span className="text-muted-foreground">Date:</span> <span className="font-medium">{date || "—"}</span></div>
+                      {s1.aiFacts?.refurbCost && <div><span className="text-muted-foreground">Refurb:</span> <span className="font-medium">{s1.aiFacts.refurbCost}</span></div>}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Tenants */}
+              {((s1.aiFacts?.mainTenants && s1.aiFacts.mainTenants.length > 0) || s1.aiFacts?.leaseStatus) && (
+                <div className="border rounded-lg p-3 bg-muted/20">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Tenants</p>
+                  {s1.aiFacts?.mainTenants && s1.aiFacts.mainTenants.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-1.5">
+                      {s1.aiFacts.mainTenants.map((t, i) => (
+                        <Badge key={i} variant="secondary" className="text-[10px]">{t}</Badge>
+                      ))}
+                    </div>
+                  )}
+                  {s1.aiFacts?.leaseStatus && <p className="text-xs text-muted-foreground">{s1.aiFacts.leaseStatus}</p>}
+                </div>
+              )}
 
               {/* Pipeline counts */}
               <div className="grid grid-cols-3 md:grid-cols-6 gap-2">

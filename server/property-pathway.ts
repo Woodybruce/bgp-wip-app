@@ -65,6 +65,19 @@ interface StageResults {
     folderTree?: { root: string; webUrl: string; children: string[] };
     summary?: string;
     aiBriefing?: { bullets: string[]; headline: string; keyQuestions: string[] };
+    aiFacts?: {
+      owner?: string;
+      ownerCompanyNumber?: string;
+      purchasePrice?: string;
+      purchaseDate?: string;
+      refurbCost?: string;
+      currentUse?: string;
+      sizeSqft?: string;
+      mainTenants?: string[];
+      leaseStatus?: string;
+      listedStatus?: string;
+    };
+    propertyImage?: { streetViewUrl?: string; googleMapsUrl?: string };
   };
   stage2?: {
     companyId?: string;
@@ -496,6 +509,7 @@ async function runStage1(runId: string, req: Request): Promise<void> {
 
   // 1e. AI briefing — synthesise everything into a short "what do we know" card
   let aiBriefing: NonNullable<StageResults["stage1"]>["aiBriefing"] | undefined;
+  let aiFacts: NonNullable<StageResults["stage1"]>["aiFacts"] | undefined;
   try {
     if (process.env.ANTHROPIC_API_KEY) {
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
@@ -516,7 +530,7 @@ async function runStage1(runId: string, req: Request): Promise<void> {
         // Include email subject + preview for context
         recentEmails: emailHits.slice(0, 15).map((e) => ({ subject: e.subject, from: e.from, date: e.date, preview: e.preview })),
       };
-      const prompt = `You are BGP's head of investment briefing an analyst. From the Stage 1 intelligence pool below, write a concise briefing that reads like a senior agent summarising what we know in front of a whiteboard.
+      const prompt = `You are BGP's head of investment briefing an analyst. From the Stage 1 intelligence pool below, extract KEY FACTS and write a briefing.
 
 Return STRICT JSON only — no prose, no code fences:
 {
@@ -528,7 +542,19 @@ Return STRICT JSON only — no prose, no code fences:
   ],
   "keyQuestions": [
     "2-4 specific follow-ups a senior analyst would ask next. Short and actionable."
-  ]
+  ],
+  "facts": {
+    "owner": "Registered owner if mentioned — e.g. 'Amsprop Estates Limited'. Omit if not in data.",
+    "ownerCompanyNumber": "Companies House number if mentioned — e.g. '02801817'. Omit if not in data.",
+    "purchasePrice": "Last recorded acquisition price — e.g. '£31m (Nov 2013)'. Omit if not in data.",
+    "purchaseDate": "Date of last acquisition — e.g. 'Nov 2013'. Omit if not in data.",
+    "refurbCost": "Capex spent on refurb if mentioned — e.g. '£60m'. Omit if not in data.",
+    "currentUse": "Use class / split — e.g. 'Mixed-use retail/offices, 36,500 sq ft'. Omit if not in data.",
+    "sizeSqft": "Numeric sqft if mentioned — e.g. '36500'. Omit if not in data.",
+    "mainTenants": ["Array of main tenants — e.g. ['Dover Street Market', 'Rose Bakery']. Empty array if none."],
+    "leaseStatus": "Lease status summary — e.g. 'Let to Dover Street Market since March 2016'. Omit if not known.",
+    "listedStatus": "Listed building status if mentioned — e.g. 'Grade II listed'. Omit if not in data."
+  }
 }
 
 Intelligence pool:
@@ -536,10 +562,10 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
 
       const msg = await anthropic.messages.create({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 800,
+        max_tokens: 1200,
         messages: [{ role: "user", content: prompt }],
       });
-      const txt = (msg.content as any[]).map((b) => (b.type === "text" ? b.text : "")).join("");
+      const txt = (msg.content as any[]).map((b: any) => (b.type === "text" ? b.text : "")).join("");
       const match = txt.match(/\{[\s\S]*\}/);
       if (match) {
         const parsed = JSON.parse(match[0]);
@@ -550,11 +576,35 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
             keyQuestions: Array.isArray(parsed.keyQuestions) ? parsed.keyQuestions.map((q: any) => String(q).slice(0, 300)).slice(0, 6) : [],
           };
         }
+        if (parsed.facts && typeof parsed.facts === "object") {
+          aiFacts = {
+            owner: parsed.facts.owner ? String(parsed.facts.owner).slice(0, 200) : undefined,
+            ownerCompanyNumber: parsed.facts.ownerCompanyNumber ? String(parsed.facts.ownerCompanyNumber).slice(0, 20) : undefined,
+            purchasePrice: parsed.facts.purchasePrice ? String(parsed.facts.purchasePrice).slice(0, 60) : undefined,
+            purchaseDate: parsed.facts.purchaseDate ? String(parsed.facts.purchaseDate).slice(0, 40) : undefined,
+            refurbCost: parsed.facts.refurbCost ? String(parsed.facts.refurbCost).slice(0, 60) : undefined,
+            currentUse: parsed.facts.currentUse ? String(parsed.facts.currentUse).slice(0, 200) : undefined,
+            sizeSqft: parsed.facts.sizeSqft ? String(parsed.facts.sizeSqft).slice(0, 20) : undefined,
+            mainTenants: Array.isArray(parsed.facts.mainTenants) ? parsed.facts.mainTenants.map((t: any) => String(t).slice(0, 100)).slice(0, 10) : [],
+            leaseStatus: parsed.facts.leaseStatus ? String(parsed.facts.leaseStatus).slice(0, 300) : undefined,
+            listedStatus: parsed.facts.listedStatus ? String(parsed.facts.listedStatus).slice(0, 100) : undefined,
+          };
+        }
       }
     }
   } catch (err: any) {
     console.error("[pathway stage1] AI briefing error:", err?.message);
   }
+
+  // Build Google Street View thumbnail + Maps link from address + postcode
+  const mapsQuery = encodeURIComponent([address, postcode].filter(Boolean).join(", "));
+  const gmapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || "";
+  const propertyImage = {
+    streetViewUrl: gmapsKey
+      ? `https://maps.googleapis.com/maps/api/streetview?size=640x360&location=${mapsQuery}&fov=80&key=${gmapsKey}`
+      : undefined,
+    googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`,
+  };
 
   await setStageStatus(runId, "stage1", "completed", {
     stage1: {
@@ -571,6 +621,8 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
       folderTree,
       summary,
       aiBriefing,
+      aiFacts,
+      propertyImage,
     },
   });
   await updateRun(runId, {
