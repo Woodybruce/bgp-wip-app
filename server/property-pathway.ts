@@ -82,6 +82,20 @@ interface StageResults {
   stage2?: {
     companyId?: string;
     enrichedFields?: Record<string, any>;
+    company?: {
+      id: string;
+      name: string;
+      domain?: string | null;
+      industry?: string | null;
+      description?: string | null;
+      conceptPitch?: string | null;
+      storeCount?: number | null;
+      instagramHandle?: string | null;
+      companiesHouseNumber?: string | null;
+      backers?: string | null;
+      backersDetail?: Array<{ name: string; type: string; description: string }>;
+      rolloutStatus?: string | null;
+    };
     skipped?: boolean;
     reason?: string;
   };
@@ -784,8 +798,34 @@ async function runStage2(runId: string, _req: Request): Promise<void> {
       console.warn("[pathway stage2] brand-enrichment not available yet:", err?.message);
     }
 
+    // Re-fetch the company row so we have the freshly-enriched fields + domain + ai_generated_fields (which holds backers_detail)
+    const [enrichedCompany] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, company.id)).limit(1);
+
+    // Pull backers_detail out of ai_generated_fields (it isn't a column, it's stored as JSONB there)
+    const aiGen = (enrichedCompany as any)?.aiGeneratedFields || (enrichedCompany as any)?.ai_generated_fields || {};
+    const backersDetail = Array.isArray(aiGen.backers_detail) ? aiGen.backers_detail : undefined;
+
     await setStageStatus(runId, "stage2", "completed", {
-      stage2: { companyId: company.id, enrichedFields },
+      stage2: {
+        companyId: company.id,
+        enrichedFields,
+        company: enrichedCompany
+          ? {
+              id: enrichedCompany.id,
+              name: enrichedCompany.name,
+              domain: (enrichedCompany as any).domain || (enrichedCompany as any).domainUrl || null,
+              industry: (enrichedCompany as any).industry || null,
+              description: (enrichedCompany as any).description || null,
+              conceptPitch: (enrichedCompany as any).conceptPitch || (enrichedCompany as any).concept_pitch || null,
+              storeCount: (enrichedCompany as any).storeCount ?? (enrichedCompany as any).store_count ?? null,
+              instagramHandle: (enrichedCompany as any).instagramHandle || (enrichedCompany as any).instagram_handle || null,
+              companiesHouseNumber: (enrichedCompany as any).companiesHouseNumber || (enrichedCompany as any).companies_house_number || null,
+              backers: (enrichedCompany as any).backers || null,
+              backersDetail,
+              rolloutStatus: (enrichedCompany as any).rolloutStatus || (enrichedCompany as any).rollout_status || null,
+            }
+          : undefined,
+      },
     });
   } catch (err: any) {
     console.error("[pathway stage2] failed:", err?.message);

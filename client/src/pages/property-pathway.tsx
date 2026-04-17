@@ -711,19 +711,85 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
         </Card>
       ) : s2 && !s2.skipped ? (
         <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" /> Brand Intelligence</CardTitle>
+          <CardHeader className="pb-3 flex flex-row items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Sparkles className="w-4 h-4" /> Brand Intelligence
+              {s2.company?.name && <span className="text-muted-foreground font-normal text-sm">· {s2.company.name}</span>}
+            </CardTitle>
+            {s2.companyId && (
+              <Link href={`/companies/${s2.companyId}`}>
+                <Button variant="ghost" size="sm" className="text-xs gap-1">
+                  Open company <ChevronRight className="w-3 h-3" />
+                </Button>
+              </Link>
+            )}
           </CardHeader>
-          <CardContent className="text-sm space-y-2">
-            <p className="text-xs text-muted-foreground">Enriched fields: {Object.keys(s2.enrichedFields || {}).join(", ") || "(none)"}</p>
-            {s2.enrichedFields && (
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                {Object.entries(s2.enrichedFields).map(([k, v]) => (
-                  <div key={k} className="border rounded p-2">
-                    <p className="text-muted-foreground capitalize">{k.replace(/_/g, " ")}</p>
-                    <p className="font-medium">{String(v).slice(0, 120)}</p>
-                  </div>
-                ))}
+          <CardContent className="text-sm space-y-3">
+            {/* Brand header — link to domain, tenant legal entity, industry */}
+            <div className="flex flex-wrap items-center gap-2">
+              {s2.company?.domain && (
+                <a href={`https://${s2.company.domain.replace(/^https?:\/\//, "")}`} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+                  <ExternalLink className="w-3 h-3" /> {s2.company.domain}
+                </a>
+              )}
+              {s2.company?.instagramHandle && (
+                <a href={`https://instagram.com/${s2.company.instagramHandle}`} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+                  <ExternalLink className="w-3 h-3" /> @{s2.company.instagramHandle}
+                </a>
+              )}
+              {s2.company?.companiesHouseNumber && (
+                <a href={`https://find-and-update.company-information.service.gov.uk/company/${s2.company.companiesHouseNumber}`} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+                  <ExternalLink className="w-3 h-3" /> Co# {s2.company.companiesHouseNumber}
+                </a>
+              )}
+            </div>
+
+            {/* Tenant legal entity (from Stage 1) — if different from brand */}
+            {s1?.tenant?.name && s2.company?.name && s1.tenant.name.toLowerCase() !== s2.company.name.toLowerCase() && (
+              <div className="border rounded-lg p-3 bg-muted/20">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Tenant (leaseholder)</p>
+                <p className="font-medium text-sm">{s1.tenant.name}{s1.tenant.companyNumber ? ` (Co# ${s1.tenant.companyNumber})` : ""}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">The legal entity on the lease — typically an SPV of the trading brand ({s2.company.name}).</p>
+              </div>
+            )}
+
+            {/* Core facts */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {s2.company?.industry && <InfoBlock label="Industry" value={s2.company.industry} />}
+              {s2.company?.storeCount != null && <InfoBlock label="UK Stores" value={String(s2.company.storeCount)} />}
+              {s2.company?.rolloutStatus && <InfoBlock label="Rollout" value={s2.company.rolloutStatus} />}
+              {s2.company?.backers && <InfoBlock label="Backers" value={s2.company.backers} />}
+            </div>
+
+            {/* Description + concept pitch */}
+            {s2.company?.description && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Description</p>
+                <p className="text-sm">{s2.company.description}</p>
+              </div>
+            )}
+            {s2.company?.conceptPitch && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Concept Pitch</p>
+                <p className="text-sm text-muted-foreground">{s2.company.conceptPitch}</p>
+              </div>
+            )}
+
+            {/* Backers detail — structured list */}
+            {s2.company?.backersDetail && s2.company.backersDetail.length > 0 && (
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">Backers detail</p>
+                <div className="space-y-1.5">
+                  {s2.company.backersDetail.map((b: any, i: number) => (
+                    <div key={i} className="border-l-2 border-primary/40 pl-2">
+                      <p className="text-sm font-medium">
+                        {b.name}
+                        {b.type && <span className="text-xs text-muted-foreground ml-1.5">· {b.type}</span>}
+                      </p>
+                      {b.description && <p className="text-xs text-muted-foreground">{b.description}</p>}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </CardContent>
