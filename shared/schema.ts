@@ -1944,7 +1944,7 @@ export const session = pgTable("session", {
 
 // API bearer tokens
 export const authTokens = pgTable("auth_tokens", {
-  id: serial("id").primaryKey(),
+  id: integer("id").primaryKey().notNull().default(sql`nextval('auth_tokens_id_seq'::regclass)`),
   token: text("token").notNull().unique("auth_tokens_token_key"),
   userId: varchar("user_id").notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -1953,7 +1953,7 @@ export const authTokens = pgTable("auth_tokens", {
 
 // SSO exchange codes (short-lived auth tokens)
 export const ssoExchangeCodes = pgTable("sso_exchange_codes", {
-  id: serial("id").primaryKey(),
+  id: integer("id").primaryKey().notNull().default(sql`nextval('sso_exchange_codes_id_seq'::regclass)`),
   code: text("code").notNull().unique("sso_exchange_codes_code_key"),
   userId: varchar("user_id").notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -1975,7 +1975,7 @@ export const codeChanges = pgTable("code_changes", {
 
 // Per-user activity / telemetry
 export const userActivity = pgTable("user_activity", {
-  id: serial("id").primaryKey(),
+  id: integer("id").primaryKey().notNull().default(sql`nextval('user_activity_id_seq'::regclass)`),
   userId: varchar("user_id").notNull().unique("user_activity_user_id_key"),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   loginCount: integer("login_count").default(0),
