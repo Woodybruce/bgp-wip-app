@@ -3343,6 +3343,54 @@ Be concise, professional, and use British English. All document advice should al
     }
   });
 
+  app.post("/api/doc-runs/:id/refine", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { message, history } = req.body;
+      if (!message || typeof message !== "string" || message.length > 5000) {
+        return res.status(400).json({ message: "A valid message is required (max 5,000 chars)" });
+      }
+      const run = await storage.getDocumentRun(req.params.id);
+      if (!run) return res.status(404).json({ message: "Document run not found" });
+
+      const systemPrompt = `You are refining a BGP (Bruce Gillingham Pollard) professional property document.
+You are a senior property advisor and document specialist. Make precise, high-quality edits as requested.
+
+RULES:
+- Return the COMPLETE updated document — every section, not just the changed parts
+- Preserve all existing structure and formatting (headings, bullets, tables)
+- Match the professional BGP tone: precise, confident, no filler words
+- Keep markdown formatting (# headings, ## subheadings, **bold**, bullet points)
+- Only change what the user asked for — don't add unsolicited content
+- Document type: ${(run as any).document_type || "General"}`;
+
+      const messages: any[] = [{ role: "system", content: systemPrompt }];
+
+      // Include recent conversation history for context (up to 8 previous turns)
+      if (Array.isArray(history)) {
+        for (const h of history.slice(-8)) {
+          if (h.role === "user" || h.role === "assistant") {
+            messages.push({ role: h.role, content: String(h.content).slice(0, 2000) });
+          }
+        }
+      }
+
+      messages.push({
+        role: "user",
+        content: `Here is the current document:\n\n${(run as any).content}\n\n---\n\nPlease make this change: ${message}`,
+      });
+
+      const completion = await callDocOpus({ messages, max_completion_tokens: 16384, temperature: 0.2 });
+      const newContent = completion.choices[0]?.message?.content;
+      if (!newContent) return res.status(500).json({ message: "No content returned from AI" });
+
+      await storage.updateDocumentRun(req.params.id, { content: newContent });
+      res.json({ content: newContent });
+    } catch (err: any) {
+      console.error("[doc-refine]", err?.message || err);
+      res.status(500).json({ message: err?.message || "Failed to refine document" });
+    }
+  });
+
   app.delete("/api/doc-runs/:id", requireAuth, async (req: Request, res: Response) => {
     try {
       await storage.deleteDocumentRun(req.params.id);

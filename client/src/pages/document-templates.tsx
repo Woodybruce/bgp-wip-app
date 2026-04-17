@@ -2850,10 +2850,92 @@ function DesignPreview({ design, scale = 0.35, allPages = false }: { design: str
   }
 }
 
+// Simple markdown-to-styled-JSX renderer for document previews
+function MarkdownPreview({ content }: { content: string }) {
+  const lines = content.split("\n");
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+
+  function parseInline(text: string): React.ReactNode {
+    const parts: React.ReactNode[] = [];
+    const regex = /(\*\*\*(.*?)\*\*\*|\*\*(.*?)\*\*|\*(.*?)\*|`(.*?)`)/g;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    let key = 0;
+    while ((m = regex.exec(text)) !== null) {
+      if (m.index > last) parts.push(text.slice(last, m.index));
+      if (m[2] !== undefined) parts.push(<strong key={key++}><em>{m[2]}</em></strong>);
+      else if (m[3] !== undefined) parts.push(<strong key={key++}>{m[3]}</strong>);
+      else if (m[4] !== undefined) parts.push(<em key={key++}>{m[4]}</em>);
+      else if (m[5] !== undefined) parts.push(<code key={key++} className="bg-muted px-1 rounded text-xs font-mono">{m[5]}</code>);
+      last = regex.lastIndex;
+    }
+    if (last < text.length) parts.push(text.slice(last));
+    return parts.length === 1 ? parts[0] : parts;
+  }
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed) { elements.push(<div key={i} className="h-3" />); i++; continue; }
+
+    if (trimmed.startsWith("# ")) {
+      elements.push(<h1 key={i} className="text-2xl font-bold mt-6 mb-2 text-foreground border-b pb-2">{parseInline(trimmed.slice(2))}</h1>);
+      i++; continue;
+    }
+    if (trimmed.startsWith("## ")) {
+      elements.push(<h2 key={i} className="text-lg font-semibold mt-5 mb-2 text-foreground">{parseInline(trimmed.slice(3))}</h2>);
+      i++; continue;
+    }
+    if (trimmed.startsWith("### ")) {
+      elements.push(<h3 key={i} className="text-base font-semibold mt-4 mb-1.5 text-foreground">{parseInline(trimmed.slice(4))}</h3>);
+      i++; continue;
+    }
+    if (trimmed === "---" || trimmed === "***") {
+      elements.push(<hr key={i} className="my-4 border-border" />);
+      i++; continue;
+    }
+    // Bullet list block
+    if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+      const items: React.ReactNode[] = [];
+      while (i < lines.length && (lines[i].trim().startsWith("- ") || lines[i].trim().startsWith("* "))) {
+        items.push(<li key={i} className="ml-4">{parseInline(lines[i].trim().slice(2))}</li>);
+        i++;
+      }
+      elements.push(<ul key={`ul-${i}`} className="list-disc list-inside space-y-1 my-2 text-sm">{items}</ul>);
+      continue;
+    }
+    // Numbered list block
+    if (/^\d+\.\s/.test(trimmed)) {
+      const items: React.ReactNode[] = [];
+      while (i < lines.length && /^\d+\.\s/.test(lines[i].trim())) {
+        items.push(<li key={i} className="ml-4">{parseInline(lines[i].trim().replace(/^\d+\.\s/, ""))}</li>);
+        i++;
+      }
+      elements.push(<ol key={`ol-${i}`} className="list-decimal list-inside space-y-1 my-2 text-sm">{items}</ol>);
+      continue;
+    }
+    elements.push(<p key={i} className="text-sm leading-relaxed">{parseInline(trimmed)}</p>);
+    i++;
+  }
+  return <div className="space-y-1 px-1">{elements}</div>;
+}
+
 function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void }) {
   const { toast } = useToast();
   const [previewRun, setPreviewRun] = useState<string | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>("all");
+  const [refineMessages, setRefineMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [refineInput, setRefineInput] = useState("");
+  const [refining, setRefining] = useState(false);
+  const refineEndRef = useRef<HTMLDivElement>(null);
+
+  // Reset refine chat when switching documents
+  useEffect(() => {
+    setRefineMessages([]);
+    setRefineInput("");
+  }, [previewRun]);
 
   const { data: runs, isLoading } = useQuery<DocumentRun[]>({
     queryKey: ["/api/doc-runs"],
@@ -2872,6 +2954,34 @@ function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     toast({ title: "Copied to clipboard" });
+  };
+
+  const sendRefine = async (runId: string) => {
+    const msg = refineInput.trim();
+    if (!msg || refining) return;
+    const newMessages = [...refineMessages, { role: "user" as const, content: msg }];
+    setRefineMessages(newMessages);
+    setRefineInput("");
+    setRefining(true);
+    try {
+      const res = await apiRequest("POST", `/api/doc-runs/${runId}/refine`, {
+        message: msg,
+        history: refineMessages,
+      });
+      const data = await res.json();
+      if (data.content) {
+        queryClient.invalidateQueries({ queryKey: ["/api/doc-runs"] });
+        setRefineMessages([...newMessages, { role: "assistant" as const, content: "Done — document updated. You can see the changes in the preview above." }]);
+      } else {
+        throw new Error(data.message || "No content returned");
+      }
+    } catch (err: any) {
+      toast({ title: "Refine failed", description: err?.message || "Something went wrong", variant: "destructive" });
+      setRefineMessages([...newMessages, { role: "assistant" as const, content: "Sorry, something went wrong. Please try again." }]);
+    } finally {
+      setRefining(false);
+      setTimeout(() => refineEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    }
   };
 
   // Category tag mapping for document_type
@@ -2989,13 +3099,79 @@ function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void
             <Card>
               <CardContent className="py-6">
                 <ScrollArea className="max-h-[600px]">
-                  <div className="whitespace-pre-wrap text-sm leading-relaxed" data-testid={`text-doc-preview-content-${run.id}`}>
-                    {run.content}
+                  <div data-testid={`text-doc-preview-content-${run.id}`}>
+                    <MarkdownPreview content={run.content} />
                   </div>
                 </ScrollArea>
               </CardContent>
             </Card>
           )}
+
+          {/* Refinement chat panel */}
+          <Card className="border-primary/20 bg-gradient-to-br from-background to-muted/20">
+            <CardHeader className="pb-3 pt-4">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-primary" />
+                <CardTitle className="text-sm font-medium">Refine with AI</CardTitle>
+                <Badge variant="secondary" className="text-[10px] h-4 px-1.5">Opus</Badge>
+                {refineMessages.length > 0 && (
+                  <button
+                    className="ml-auto text-[10px] text-muted-foreground hover:text-foreground"
+                    onClick={() => setRefineMessages([])}
+                  >
+                    Clear chat
+                  </button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0 space-y-3">
+              {refineMessages.length > 0 && (
+                <ScrollArea className="max-h-48 pr-1">
+                  <div className="space-y-3 pb-1">
+                    {refineMessages.map((m, idx) => (
+                      <div key={idx} className={`flex gap-2 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                        {m.role === "assistant" && (
+                          <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+                            <Bot className="w-3 h-3 text-primary" />
+                          </div>
+                        )}
+                        <div className={`rounded-lg px-3 py-2 text-xs max-w-[85%] leading-relaxed ${m.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"}`}>
+                          {m.content}
+                        </div>
+                      </div>
+                    ))}
+                    {refining && (
+                      <div className="flex gap-2 justify-start">
+                        <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+                          <Bot className="w-3 h-3 text-primary" />
+                        </div>
+                        <div className="bg-muted rounded-lg px-3 py-2">
+                          <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
+                        </div>
+                      </div>
+                    )}
+                    <div ref={refineEndRef} />
+                  </div>
+                </ScrollArea>
+              )}
+              <div className="flex gap-2">
+                <Input
+                  placeholder="e.g. Make the executive summary more concise, add a risk section…"
+                  value={refineInput}
+                  onChange={e => setRefineInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendRefine(run.id); } }}
+                  disabled={refining}
+                  className="text-xs h-9"
+                />
+                <Button size="sm" className="h-9 px-3 shrink-0" onClick={() => sendRefine(run.id)} disabled={refining || !refineInput.trim()}>
+                  {refining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                </Button>
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Ask Claude to add, remove, rewrite, or restructure any part of this document. The original is automatically saved.
+              </p>
+            </CardContent>
+          </Card>
         </div>
       );
     }
