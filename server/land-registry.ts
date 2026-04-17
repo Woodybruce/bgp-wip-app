@@ -997,18 +997,49 @@ Respond with ONLY a JSON object (no markdown, no backticks):
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { address, postcode, freeholds, leaseholds, intelligence, aiSummary, ownership } = req.body;
       if (!address) return res.status(400).json({ error: "Address required" });
-      const [row] = await db.insert(landRegistrySearches).values({
-        userId,
-        address,
-        postcode: postcode || null,
-        freeholdsCount: Array.isArray(freeholds) ? freeholds.length : 0,
-        leaseholdsCount: Array.isArray(leaseholds) ? leaseholds.length : 0,
-        freeholds: freeholds || [],
-        leaseholds: leaseholds || [],
-        intelligence: intelligence || {},
-        aiSummary: aiSummary || null,
-        ownership: ownership || null,
-      }).returning();
+      // Deduplicate: if this user already has a search for the same postcode (or
+      // same normalised address when no postcode), update it instead of inserting.
+      const normaliseAddr = (s: string) => s.toLowerCase().replace(/[\s\-]+/g, "");
+      const existingRows = await db.select().from(landRegistrySearches)
+        .where(eq(landRegistrySearches.userId, userId));
+      const existing = existingRows.find(r =>
+        (postcode && r.postcode && r.postcode.replace(/\s/g, "").toLowerCase() === postcode.replace(/\s/g, "").toLowerCase()) ||
+        (!postcode && normaliseAddr(r.address) === normaliseAddr(address))
+      );
+
+      let row;
+      if (existing) {
+        const [updated] = await db.update(landRegistrySearches)
+          .set({
+            address,
+            postcode: postcode || existing.postcode,
+            freeholdsCount: Array.isArray(freeholds) ? freeholds.length : existing.freeholdsCount,
+            leaseholdsCount: Array.isArray(leaseholds) ? leaseholds.length : existing.leaseholdsCount,
+            freeholds: freeholds || existing.freeholds,
+            leaseholds: leaseholds || existing.leaseholds,
+            intelligence: intelligence || existing.intelligence,
+            aiSummary: aiSummary || existing.aiSummary,
+            ownership: ownership || existing.ownership,
+            createdAt: new Date(),
+          })
+          .where(eq(landRegistrySearches.id, existing.id))
+          .returning();
+        row = updated;
+      } else {
+        const [inserted] = await db.insert(landRegistrySearches).values({
+          userId,
+          address,
+          postcode: postcode || null,
+          freeholdsCount: Array.isArray(freeholds) ? freeholds.length : 0,
+          leaseholdsCount: Array.isArray(leaseholds) ? leaseholds.length : 0,
+          freeholds: freeholds || [],
+          leaseholds: leaseholds || [],
+          intelligence: intelligence || {},
+          aiSummary: aiSummary || null,
+          ownership: ownership || null,
+        }).returning();
+        row = inserted;
+      }
       res.json(row);
     } catch (e: any) {
       console.error("[land-registry-searches] Save error:", e);
