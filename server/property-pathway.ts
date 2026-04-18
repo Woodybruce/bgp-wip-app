@@ -392,31 +392,55 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     // Fallback
     if (searchPhrases.length === 0) searchPhrases.push(`"${primaryAddressToken || address}"`);
 
-    // Relevance filter — keep almost everything Graph found (it already
-    // searched body + attachments intelligently). Only drop if the SUBJECT
-    // explicitly mentions a DIFFERENT UK postcode — that's the clearest
-    // signal an email is about a different property entirely (the classic
-    // Rob-Barnes-Basingstoke case: subject "Basingstoke x Ji Chickens"
-    // with Haymarket only in an attached comps sheet).
+    // Relevance filter — tuned to drop newsletter spam but keep genuine hits.
+    // Logic:
+    //   1. If subject contains a DIFFERENT UK postcode → drop (clearly another property)
+    //   2. Drop known newsletter/marketing senders (Propel, CoStar, Estates Gazette, etc.)
+    //   3. Keep if postcode or any distinctive address word appears in subject or preview
+    //   4. Drop everything else (Haymarket mention was probably in an attachment or
+    //      newsletter body — low signal for investigation purposes)
     const postcodeLc = (postcode || "").toLowerCase().replace(/\s+/g, "");
-    // UK postcode: 1-2 letters, 1 digit, optional letter/digit, space (optional), 1 digit, 2 letters
     const POSTCODE_RE = /\b([a-z]{1,2}\d[a-z\d]?)\s*(\d[a-z]{2})\b/gi;
+    const addressWords = primaryAddressToken
+      .toLowerCase()
+      .match(/[a-z0-9-]+/g)
+      ?.filter((w: string) => w.length >= 3 && !["the", "and", "for", "with", "from", "street", "road", "avenue", "lane", "place"].includes(w))
+      || [];
+    const NEWSLETTER_SENDERS = [
+      "propelinfo", "propel", "bigpropfirst", "costar", "estatesgazette", "egi", "react news",
+      "propertyweek", "property week", "pie mag", "resi mag", "bisnow", "mailchimp",
+      "mailerlite", "substack", "newsletter", "no-reply", "noreply", "do-not-reply",
+    ];
     const mentionsAddress = (msg: any) => {
       const subject = String(msg.subject || "").toLowerCase();
-      // If no postcode set for the pathway, trust Graph entirely
-      if (!postcodeLc) return true;
-      // Extract all postcodes from the subject only (body can be noisy)
+      const preview = String(msg.bodyPreview || "").toLowerCase();
+      const fromAddr = String(msg.from?.emailAddress?.address || "").toLowerCase();
+      const fromName = String(msg.from?.emailAddress?.name || "").toLowerCase();
+      const hay = `${subject} ${preview}`;
+      const hayNoSpaces = hay.replace(/\s+/g, "");
+
+      // 1) Different postcode in subject → drop
       const postcodesInSubject: string[] = [];
       let m: RegExpExecArray | null;
       const re = new RegExp(POSTCODE_RE);
       while ((m = re.exec(subject)) !== null) {
         postcodesInSubject.push((m[1] + m[2]).toLowerCase());
       }
-      // No postcode in subject → trust Graph's match
-      if (postcodesInSubject.length === 0) return true;
-      // Any postcode in subject matches ours → keep
-      if (postcodesInSubject.includes(postcodeLc)) return true;
-      // A different postcode appears in the subject → drop (different property)
+      if (postcodesInSubject.length > 0 && postcodeLc && !postcodesInSubject.includes(postcodeLc)) {
+        return false;
+      }
+
+      // 2) Newsletter / marketing sender → drop
+      for (const n of NEWSLETTER_SENDERS) {
+        if (fromAddr.includes(n) || fromName.includes(n)) return false;
+      }
+
+      // 3) Postcode in subject or preview → keep (strong signal)
+      if (postcodeLc && hayNoSpaces.includes(postcodeLc)) return true;
+      // 4) Any distinctive address word in subject or preview → keep
+      if (addressWords.some((w) => hay.includes(w))) return true;
+
+      // Otherwise, drop — Graph matched but the word was in an attachment or body (low signal)
       return false;
     };
 
@@ -424,10 +448,15 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     let totalReturnedFromGraph = 0;
 
     const pushMsg = (msg: any, ownerLabel: string, mailboxEmail?: string) => {
-      const dedupeKey = msg.internetMessageId || msg.id;
-      if (seen.has(dedupeKey)) return;
+      // Dedupe by internetMessageId (same message across mailboxes) AND also
+      // by subject+sender (catches newsletters sent as separate messages to
+      // each mailbox, which have different internetMessageIds)
+      const primaryKey = msg.internetMessageId || msg.id;
+      const subjFromKey = `${String(msg.subject || "").trim().toLowerCase()}|${String(msg.from?.emailAddress?.address || "").trim().toLowerCase()}`;
+      if (seen.has(primaryKey) || seen.has(subjFromKey)) return;
       if (!mentionsAddress(msg)) return;
-      seen.add(dedupeKey);
+      seen.add(primaryKey);
+      seen.add(subjFromKey);
       emailHits.push({
         subject: msg.subject ? `${msg.subject} · via ${ownerLabel}` : `(no subject) · via ${ownerLabel}`,
         from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "unknown",
