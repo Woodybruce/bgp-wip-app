@@ -550,9 +550,16 @@ Use all tools available. Iterate — searches feed more searches. When done, ret
       const txt = textBlocks.map((b: any) => b.text).join("\n");
       const match = txt.match(/\{[\s\S]*\}/);
       if (!match) {
-        throw new Error("Investigator returned no parseable JSON");
+        console.warn(`[investigator] No JSON in final response (iter ${i}): ${txt.slice(0, 300)}`);
+        return { toolTrace, confidence: "low" as const };
       }
-      const result = JSON.parse(match[0]) as InvestigativeStage1Result;
+      let result: InvestigativeStage1Result;
+      try {
+        result = JSON.parse(match[0]) as InvestigativeStage1Result;
+      } catch (parseErr: any) {
+        console.warn(`[investigator] JSON.parse failed: ${parseErr?.message} — returning empty`);
+        return { toolTrace, confidence: "low" as const };
+      }
       result.toolTrace = toolTrace;
       console.log(`[investigator] Done in ${((Date.now() - started) / 1000).toFixed(1)}s (${i + 1} Claude calls, ${toolTrace.length} tool uses)`);
       return result;
@@ -581,5 +588,6 @@ Use all tools available. Iterate — searches feed more searches. When done, ret
     messages.push({ role: "user", content: toolResults });
   }
 
-  throw new Error(`Investigator hit max iterations (${MAX_ITERATIONS}) without returning JSON`);
+  console.warn(`[investigator] Hit max iterations (${MAX_ITERATIONS}) — returning partial result`);
+  return { toolTrace, confidence: "low" as const };
 }
