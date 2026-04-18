@@ -1241,7 +1241,7 @@ ${identity}
 - DROP items clearly about a different town/area (Leicester, Soho Square, Edinburgh, Warwick Street, Basingstoke, Chelsea, Islington, Mayfair-but-named-specific-building, Glasshouse, etc.) unless they explicitly tie to our target.
 - DROP pure marketing noise: newsletters, market roundups, "What's On" emails, restaurant reservations/receipts, "opening announcements", automated notifications.
 - KEEP GENEROUSLY when the email mentions: the owner (by name), the tenant/occupier, the agent handling this instruction, the Companies House number, the title number, the size/specs, or just the address without contradiction.
-- KEEP brochures/teasers/particulars/memorandums — any marketing material that could plausibly be for THIS building (leasing brochures count). When in doubt on brochures, KEEP rather than drop; user will review.
+- BROCHURES are special: there should only be 1–4 brochures for a single building (1 investment brochure + maybe a leasing brochure + any historic reprints). Be STRICT: only KEEP a brochure if the filename or source email subject names THIS specific building. Drop generic-sounding ones, drop brochures named for other buildings/streets/towns. If in doubt about a brochure, DROP it — user sees the email 📎 tag if they need to find it manually.
 - If an item is ambiguous but could plausibly be about this building, KEEP it. Drop only clear mismatches.
 
 === EMAILS (index Enn) ===
@@ -1308,7 +1308,10 @@ Return STRICT JSON only, no prose, no code fences:
         };
 
         const filteredEmails = blendIfOverFiltered(emailHits, keepE, 0.4, 8);
-        const filteredBrochures = blendIfOverFiltered(brochureFiles, keepB, 0.5, 3);
+        // Brochures: strict cap of 4 — there should realistically only be 1-2
+        // brochures for a single building (investment + leasing at most).
+        // Trust AI picks here and cap hard; no blend-back, so noise gets dropped.
+        const filteredBrochures = brochureFiles.filter((_, i) => keepB.has(i)).slice(0, 4);
         const filteredSharepoint = blendIfOverFiltered(sharepointHits, keepS, 0.3, 8);
 
         console.log(`[pathway stage1] AI relevance pass: emails ${emailHits.length}->${filteredEmails.length} (AI kept ${keepE.size}), brochures ${brochureFiles.length}->${filteredBrochures.length} (AI kept ${keepB.size}), sharepoint ${sharepointHits.length}->${filteredSharepoint.length} (AI kept ${keepS.size})`);
@@ -1325,8 +1328,9 @@ Return STRICT JSON only, no prose, no code fences:
     }
   }
 
-  // Final safety cap
+  // Final safety caps
   emailHits.splice(60);
+  brochureFiles.splice(4);
 
   // Build Google Street View thumbnail + Maps link from address + postcode
   const mapsQuery = encodeURIComponent([address, postcode].filter(Boolean).join(", "));
