@@ -722,14 +722,14 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             )}
           </div>
 
-          {/* Emails — full list at bottom */}
+          {/* Emails — full list at bottom, scrollable so all hits fit */}
           {s1.emailHits && s1.emailHits.length > 0 && (
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Emails ({s1.emailHits.length})</CardTitle>
               </CardHeader>
-              <CardContent className="text-[11px] grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 pb-2">
-                {s1.emailHits.slice(0, 16).map((h: any, i: number) => {
+              <CardContent className="text-[11px] grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 pb-2 max-h-[500px] overflow-y-auto">
+                {s1.emailHits.map((h: any, i: number) => {
                   const Wrapper: any = h.webLink ? "a" : "div";
                   const wrapperProps = h.webLink ? { href: h.webLink, target: "_blank", rel: "noreferrer", className: "block border-l-2 border-muted hover:border-primary pl-1.5 py-0.5 hover:bg-muted/50 rounded-r cursor-pointer" } : { className: "border-l-2 border-muted pl-1.5 py-0.5" };
                   return (

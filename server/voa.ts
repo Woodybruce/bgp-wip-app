@@ -162,7 +162,7 @@ async function runVoaImportInProcess(opts: { baCodes?: string[]; listYear?: stri
 
   for await (const line of rl) {
     if (!line.trim()) continue;
-    const parsed = parseCsvLine(line);
+    const parsed = parseVoaLine(line);
     if (!parsed) { skipped++; continue; }
     if (!targetBaCodes.includes(parsed.baCode)) { skipped++; continue; }
     batch.push({ ...parsed, listYear: year });

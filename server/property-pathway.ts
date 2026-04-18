@@ -460,39 +460,40 @@ async function runStage1(runId: string, req: Request): Promise<void> {
       }
     }
 
-    // Team mailboxes via app-only token (requires admin-consented Mail.Read).
-    // X-AnchorMailbox header routes the request to the correct Exchange backend
-    // — critical for reliable $search results on multi-mailbox tenants.
+    // Team mailboxes via app-only token — parallelised to avoid Stage 1 timeout.
+    // 30 mailboxes × 2 phrases = 60 requests; sequential would take ~2-3 min.
+    // Running them concurrently with Promise.all drops total time to ~5 seconds.
     const errorsByMailbox: Record<string, string> = {};
-    let successfulMailboxes = 0;
+    const successfulMailboxes = new Set<string>();
+    const jobs: Array<Promise<void>> = [];
     for (const mb of mailboxes) {
-      let mbSuccessful = false;
       for (const phrase of searchPhrases) {
-        try {
-          const searchRes: any = await graphRequest(
-            `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(phrase)}&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
-            { headers: { "X-AnchorMailbox": mb.email } }
-          );
-          mbSuccessful = true;
-          const messages = searchRes?.value || [];
-          totalReturnedFromGraph += messages.length;
-          for (const msg of messages) pushMsg(msg, mb.owner, mb.email);
-        } catch (err: any) {
-          // Record the first error per mailbox for visibility (not every phrase)
-          if (!errorsByMailbox[mb.email]) {
-            errorsByMailbox[mb.email] = String(err?.message || err).slice(0, 200);
+        jobs.push((async () => {
+          try {
+            const searchRes: any = await graphRequest(
+              `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(phrase)}&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
+              { headers: { "X-AnchorMailbox": mb.email } }
+            );
+            successfulMailboxes.add(mb.email);
+            const messages = searchRes?.value || [];
+            totalReturnedFromGraph += messages.length;
+            for (const msg of messages) pushMsg(msg, mb.owner, mb.email);
+          } catch (err: any) {
+            if (!errorsByMailbox[mb.email]) {
+              errorsByMailbox[mb.email] = String(err?.message || err).slice(0, 200);
+            }
           }
-        }
+        })());
       }
-      if (mbSuccessful) successfulMailboxes++;
     }
+    await Promise.all(jobs);
     if (Object.keys(errorsByMailbox).length > 0) {
       console.warn(`[pathway stage1] Mailboxes that errored:`, JSON.stringify(errorsByMailbox, null, 2));
     }
-    console.log(`[pathway stage1] Email search: delegated=${delegatedToken ? "yes" : "no"}, phrases=${searchPhrases.length}, mailboxes tried=${mailboxes.length}, mailboxes OK=${successfulMailboxes} -> ${totalReturnedFromGraph} raw hits, ${emailHits.length} kept after filter`);
+    console.log(`[pathway stage1] Email search: delegated=${delegatedToken ? "yes" : "no"}, phrases=${searchPhrases.length}, mailboxes tried=${mailboxes.length}, mailboxes OK=${successfulMailboxes.size} -> ${totalReturnedFromGraph} raw hits, ${emailHits.length} kept after filter`);
     // Cap total hits at 60 to keep payload manageable
     emailHits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    emailHits.splice(60);
+    emailHits.splice(150);
   } catch (err: any) {
     console.error("[pathway stage1] Email search error:", err?.message);
   }
