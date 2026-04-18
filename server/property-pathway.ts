@@ -313,21 +313,30 @@ async function runStage1(runId: string, req: Request): Promise<void> {
       console.warn("[pathway stage1] team mailbox list error:", err?.message);
     }
 
-    // Build a stricter search query — require BOTH postcode AND primary address
-    // token so we don't drag in unrelated emails that merely mention one of them.
+    // Build a broad-ish search: postcode OR primary-address-token so Graph
+    // returns plenty of candidates, then relevance-filter client-side below.
     const primaryAddressToken = (address.split(",")[0] || "").trim();
     const searchQuery = postcode && primaryAddressToken
-      ? `"${postcode}" AND "${primaryAddressToken}"`
+      ? `"${postcode}" OR "${primaryAddressToken}"`
       : (postcode || primaryAddressToken);
 
-    // Relevance filter: drop hits that don't mention the primary address token
-    // anywhere in subject or preview — Graph's $search is fuzzy and bleeds in
-    // emails that only mention the postcode in a signature or attached comp sheet.
-    const primaryTokenLc = primaryAddressToken.toLowerCase();
+    // Relevance filter — drop hits that don't credibly mention this property.
+    // Credible = postcode in subject/preview, OR any meaningful address word
+    // (>=3 chars, excluding trivial words) appears. This catches emails that
+    // say "18-22 Haymarket", "Haymarket building", "18 Haymarket Mayfair" etc.
+    // but drops Rob-Barnes-Basingstoke emails whose only mention of SW1Y 4DG
+    // is a comp sheet signature.
+    const addressWords = (address.toLowerCase().match(/[a-z0-9-]+/g) || [])
+      .filter((w) => w.length >= 3 && !["the", "and", "for", "street", "road", "avenue"].includes(w));
+    const postcodeLc = (postcode || "").toLowerCase().replace(/\s+/g, "");
     const mentionsAddress = (msg: any) => {
-      if (!primaryTokenLc) return true;
-      const hay = `${msg.subject || ""} ${msg.bodyPreview || ""}`.toLowerCase();
-      return hay.includes(primaryTokenLc);
+      const raw = `${msg.subject || ""} ${msg.bodyPreview || ""}`.toLowerCase();
+      const rawNoSpaces = raw.replace(/\s+/g, "");
+      // Postcode match is the gold standard
+      if (postcodeLc && rawNoSpaces.includes(postcodeLc)) return true;
+      // Otherwise any address word match is enough — if an email mentions
+      // "Haymarket" or "18-22", assume it's relevant
+      return addressWords.some((w) => raw.includes(w));
     };
 
     const seen = new Set<string>();
