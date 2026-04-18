@@ -50,6 +50,61 @@ export async function getSharePointDriveId(token: string): Promise<string | null
 }
 
 /**
+ * Look up a folder at `parentPath/folderName` and return it if it exists,
+ * without creating anything. Returns null if not found.
+ */
+export async function lookupSharePointFolderIfExists(
+  args: { folderName: string; parentPath?: string },
+  req: Request
+): Promise<{ name: string; path: string; webUrl: string; id: string } | null> {
+  const token = await getValidMsToken(req);
+  if (!token) return null;
+  const driveId = await getSharePointDriveId(token);
+  if (!driveId) return null;
+
+  // Apply the team-folder prefix mapping (mirrors executeCreateSharePointFolder)
+  let parentPath = args.parentPath || "";
+  const teamFolderMappings: Record<string, string> = {
+    "Investment": "BGP share drive/Investment",
+    "London": "BGP share drive/London Leasing",
+    "London Leasing": "BGP share drive/London Leasing",
+    "National": "BGP share drive/National Leasing",
+    "National Leasing": "BGP share drive/National Leasing",
+    "Development": "BGP share drive/Development & Re-purposing",
+    "Tenant Rep": "BGP share drive/Tenant Rep",
+    "Lease Advisory": "BGP share drive/Lease Advisory",
+    "Office": "BGP share drive/Office - Corporate",
+    "Corporate": "BGP share drive/Office - Corporate",
+  };
+  if (teamFolderMappings[parentPath]) {
+    parentPath = teamFolderMappings[parentPath];
+  } else if (parentPath && !parentPath.startsWith("BGP share drive")) {
+    parentPath = `BGP share drive/${parentPath}`;
+  }
+
+  const fullPath = parentPath ? `${parentPath}/${args.folderName}` : args.folderName;
+  const encodedPath = encodeURIComponent(fullPath);
+
+  try {
+    const resp = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedPath}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!resp.ok) return null;
+    const item = await resp.json();
+    if (!item?.folder) return null;
+    return {
+      name: item.name,
+      path: fullPath,
+      webUrl: item.webUrl,
+      id: item.id,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Create a SharePoint folder
  */
 export async function executeCreateSharePointFolder(

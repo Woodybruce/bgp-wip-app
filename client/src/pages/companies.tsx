@@ -1089,12 +1089,23 @@ function CompanyDetail({ id }: { id: string }) {
       <CompanyFormDialog open={editOpen} onOpenChange={setEditOpen} company={company} />
 
       <div className="flex items-center gap-3 flex-wrap">
-        <Link href="/companies">
-          <Button variant="ghost" size="sm" data-testid="button-back-companies">
-            <ArrowLeft className="w-4 h-4 mr-1" />
-            Back
-          </Button>
-        </Link>
+        <Button
+          variant="ghost"
+          size="sm"
+          data-testid="button-back-companies"
+          onClick={() => {
+            // Go back to where we came from (Pathway, Brand Intelligence, etc.).
+            // Fall back to the companies list if there's no history (e.g. deep-link load).
+            if (window.history.length > 1) {
+              window.history.back();
+            } else {
+              window.location.href = "/companies";
+            }
+          }}
+        >
+          <ArrowLeft className="w-4 h-4 mr-1" />
+          Back
+        </Button>
         <CompanyLogoImg domain={company.domainUrl || company.domain} name={company.name} size={40} />
         <div className="flex-1">
           <h1 className="text-xl font-bold" data-testid="text-company-detail-name">{company.name}</h1>

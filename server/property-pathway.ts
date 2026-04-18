@@ -250,9 +250,10 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     }
   }
 
-  // 1b-2. Ensure SharePoint folder tree exists BEFORE scanning for brochures
-  // so attachment uploads have a home on first-ever run. Reuses existing run
-  // folder if already set, otherwise creates the tree.
+  // 1b-2. SharePoint folder tree — NEVER auto-create in Stage 1 (would spawn
+  // a new folder every search, cluttering SharePoint). Only surface the
+  // folder if one already exists (either stored on the run, or discoverable
+  // at the expected Investment/{address} path).
   let folderTree: NonNullable<StageResults["stage1"]>["folderTree"] | undefined;
   if (run.sharepointFolderPath && run.sharepointFolderUrl) {
     folderTree = {
@@ -262,35 +263,27 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     };
   } else {
     try {
+      const { lookupSharePointFolderIfExists } = await import("./utils/sharepoint-operations");
       const propertyFolderName = address.replace(/[\/\\:*?"<>|]/g, "-").slice(0, 120);
-      const root = await executeCreateSharePointFolder(
+      const existing = await lookupSharePointFolderIfExists(
         { folderName: propertyFolderName, parentPath: "Investment" },
         req
       );
-      for (const child of STANDARD_FOLDER_TREE) {
-        try {
-          await executeCreateSharePointFolder(
-            { folderName: child, parentPath: `Investment/${propertyFolderName}` },
-            req
-          );
-        } catch {
-          // sub-folder create may fail if already exists — carry on
-        }
+      if (existing) {
+        folderTree = {
+          root: existing.path,
+          webUrl: existing.webUrl,
+          children: STANDARD_FOLDER_TREE,
+        };
+        run.sharepointFolderPath = folderTree.root;
+        run.sharepointFolderUrl = folderTree.webUrl;
+        await updateRun(run.id, {
+          sharepointFolderPath: folderTree.root,
+          sharepointFolderUrl: folderTree.webUrl,
+        });
       }
-      folderTree = {
-        root: root.folder.path,
-        webUrl: root.folder.webUrl,
-        children: STANDARD_FOLDER_TREE,
-      };
-      // Persist immediately so the in-memory run + later steps can use it
-      run.sharepointFolderPath = folderTree.root;
-      run.sharepointFolderUrl = folderTree.webUrl;
-      await updateRun(run.id, {
-        sharepointFolderPath: folderTree.root,
-        sharepointFolderUrl: folderTree.webUrl,
-      });
     } catch (err: any) {
-      console.error("[pathway stage1] Folder tree create error:", err?.message);
+      console.warn("[pathway stage1] Folder lookup (non-fatal):", err?.message);
     }
   }
 

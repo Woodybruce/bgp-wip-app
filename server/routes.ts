@@ -2746,10 +2746,40 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         } catch {}
       }
 
-      const params = new URLSearchParams();
-      if (domain) params.set("domain", domain);
-      if (!domain) params.set("name", company.name);
+      // Apollo's /organizations/enrich requires a domain — passing `name` alone
+      // returns 422. If we don't have a domain, try to discover one via the
+      // mixed_companies/api_search endpoint first, then enrich.
+      if (!domain) {
+        try {
+          const searchRes = await fetch(`https://api.apollo.io/api/v1/mixed_companies/api_search`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-cache",
+              "X-Api-Key": apiKey,
+            },
+            body: JSON.stringify({ q_organization_name: company.name, per_page: 1 }),
+          });
+          if (searchRes.ok) {
+            const searchData: any = await searchRes.json();
+            const first = searchData?.organizations?.[0] || searchData?.accounts?.[0];
+            if (first?.primary_domain) domain = first.primary_domain;
+            else if (first?.website_url) {
+              try { domain = new URL(first.website_url).hostname.replace(/^www\./, ""); } catch {}
+            }
+          }
+        } catch (err: any) {
+          console.warn("[apollo] Pre-enrich search failed:", err?.message);
+        }
+      }
 
+      if (!domain) {
+        return res.status(400).json({
+          error: `No domain available for "${company.name}". Apollo's enrich API requires a company website/domain. Add a domain to the company record and try again.`,
+        });
+      }
+
+      const params = new URLSearchParams({ domain });
       const apolloRes = await fetch(`https://api.apollo.io/api/v1/organizations/enrich?${params.toString()}`, {
         method: "GET",
         headers: {
@@ -2762,7 +2792,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!apolloRes.ok) {
         const errText = await apolloRes.text();
         console.error("[apollo] Company API error:", apolloRes.status, errText);
-        return res.status(apolloRes.status).json({ error: `Apollo API error: ${apolloRes.status}` });
+        // Surface Apollo's own error message so the user understands what's wrong
+        let apolloMsg = "";
+        try { apolloMsg = JSON.parse(errText)?.error || JSON.parse(errText)?.errors?.[0] || ""; } catch {}
+        return res.status(apolloRes.status).json({
+          error: `Apollo ${apolloRes.status}: ${apolloMsg || errText.slice(0, 200) || "No details"}. Domain tried: ${domain}`,
+        });
       }
 
       const data = await apolloRes.json() as any;
