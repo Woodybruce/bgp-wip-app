@@ -463,22 +463,24 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 })()}
 
                 {/* Rates headline */}
-                {s1.rates && s1.rates.assessmentCount && s1.rates.assessmentCount > 0 && (
-                  <div className="border rounded p-2 bg-muted/20">
-                    <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Business Rates (VOA)</p>
+                <div className="border rounded p-2 bg-muted/20">
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Business Rates (VOA)</p>
+                    {run.postcode && (
+                      <a href={`https://www.tax.service.gov.uk/business-rates-find/search?postcode=${encodeURIComponent(run.postcode)}`} target="_blank" rel="noreferrer" className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5">
+                        gov.uk <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    )}
+                  </div>
+                  {s1.rates && s1.rates.assessmentCount && s1.rates.assessmentCount > 0 ? (
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
                       <div><span className="text-muted-foreground">Total RV:</span> <span className="font-medium">{s1.rates.totalRateableValue ? `£${s1.rates.totalRateableValue.toLocaleString()}` : "—"}</span></div>
                       <div><span className="text-muted-foreground">Assessments:</span> <span className="font-medium">{s1.rates.assessmentCount}</span></div>
-                      {s1.rates.voaSearchUrl && (
-                        <div className="col-span-2">
-                          <a href={s1.rates.voaSearchUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5 text-[11px]">
-                            Check on gov.uk <ExternalLink className="w-2.5 h-2.5" />
-                          </a>
-                        </div>
-                      )}
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <p className="text-[10px] text-muted-foreground">No VOA data indexed for this postcode. Check directly on gov.uk, or ask an admin to run the VOA import for this billing authority.</p>
+                  )}
+                </div>
 
                 {/* Compact pipeline counts */}
                 <div className="grid grid-cols-6 gap-1.5">

@@ -247,6 +247,39 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     console.error("[pathway stage1] Land reg / VOA lookup error:", err?.message);
   }
 
+  // Rates fallback: if performPropertyLookup returned no VOA data but we have
+  // a postcode, query the voa_ratings table directly. This handles the case
+  // where the lookup helper's street filter was too strict OR street wasn't
+  // passed through.
+  if (voaEntries.length === 0 && postcode) {
+    try {
+      const { pool } = await import("./db");
+      const normalisedPc = postcode.replace(/\s+/g, "").toUpperCase();
+      const formattedPc = normalisedPc.length > 3 ? `${normalisedPc.slice(0, -3)} ${normalisedPc.slice(-3)}` : normalisedPc;
+      const res = await pool.query(
+        `SELECT firm_name, number_or_name, street, town, postcode, description_text, rateable_value, effective_date
+           FROM voa_ratings
+          WHERE UPPER(REPLACE(postcode, ' ', '')) = $1
+          ORDER BY rateable_value DESC NULLS LAST
+          LIMIT 30`,
+        [normalisedPc]
+      );
+      for (const r of res.rows) {
+        voaEntries.push({
+          firmName: r.firm_name || undefined,
+          address: [r.number_or_name, r.street, r.town].filter(Boolean).join(", "),
+          postcode: r.postcode || formattedPc,
+          description: r.description_text || undefined,
+          rateableValue: r.rateable_value != null ? Number(r.rateable_value) : null,
+          effectiveDate: r.effective_date || undefined,
+        });
+      }
+      console.log(`[pathway stage1] VOA direct query for ${formattedPc}: ${voaEntries.length} rows`);
+    } catch (err: any) {
+      console.warn("[pathway stage1] VOA direct query error:", err?.message);
+    }
+  }
+
   // 1b-1. If we have a proprietor name, try to match it to an existing CRM company
   // so the owner cell can link straight through. Also surface Companies House number
   // if the CRM record has one.
@@ -331,64 +364,64 @@ async function runStage1(runId: string, req: Request): Promise<void> {
       console.warn("[pathway stage1] team mailbox list error:", err?.message);
     }
 
-    // Build a broad-ish search: postcode OR primary-address-token so Graph
-    // returns plenty of candidates, then relevance-filter client-side below.
+    // Graph's $search is flaky with OR between quoted phrases — some tenants
+    // parse it differently. Run separate searches per phrase and merge, which
+    // is more reliable than relying on the OR operator.
     const primaryAddressToken = (address.split(",")[0] || "").trim();
-    const searchQuery = postcode && primaryAddressToken
-      ? `"${postcode}" OR "${primaryAddressToken}"`
-      : (postcode || primaryAddressToken);
+    const searchPhrases: string[] = [];
+    if (postcode) searchPhrases.push(`"${postcode}"`);
+    if (primaryAddressToken && primaryAddressToken !== postcode) searchPhrases.push(`"${primaryAddressToken}"`);
+    if (searchPhrases.length === 0) searchPhrases.push(`"${address}"`);
 
-    // Relevance filter — drop hits that don't credibly mention this property.
-    // Credible = postcode in subject/preview, OR any meaningful address word
-    // (>=3 chars, excluding trivial words) appears. This catches emails that
-    // say "18-22 Haymarket", "Haymarket building", "18 Haymarket Mayfair" etc.
-    // but drops Rob-Barnes-Basingstoke emails whose only mention of SW1Y 4DG
-    // is a comp sheet signature.
+    // Lenient relevance filter: keep if postcode or any meaningful address word
+    // appears in subject or preview. Only drops clear noise; we'd rather have
+    // a few extras than miss real hits.
     const addressWords = (address.toLowerCase().match(/[a-z0-9-]+/g) || [])
-      .filter((w) => w.length >= 3 && !["the", "and", "for", "street", "road", "avenue"].includes(w));
+      .filter((w) => w.length >= 3 && !["the", "and", "for", "with", "from", "street", "road", "avenue"].includes(w));
     const postcodeLc = (postcode || "").toLowerCase().replace(/\s+/g, "");
     const mentionsAddress = (msg: any) => {
       const raw = `${msg.subject || ""} ${msg.bodyPreview || ""}`.toLowerCase();
       const rawNoSpaces = raw.replace(/\s+/g, "");
-      // Postcode match is the gold standard
       if (postcodeLc && rawNoSpaces.includes(postcodeLc)) return true;
-      // Otherwise any address word match is enough — if an email mentions
-      // "Haymarket" or "18-22", assume it's relevant
       return addressWords.some((w) => raw.includes(w));
     };
 
     const seen = new Set<string>();
+    let totalReturnedFromGraph = 0;
     for (const mb of mailboxes) {
-      try {
-        const searchRes: any = await graphRequest(
-          `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(searchQuery)}&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`
-        ).catch((e: any) => {
-          // A 403 means the app isn't admin-consented for this mailbox — don't log it per-user, we handle at summary time
-          if (/403/.test(e?.message || "")) return null;
-          console.warn(`[pathway stage1] mailbox ${mb.email} error:`, e?.message);
-          return null;
-        });
-        const messages = searchRes?.value || [];
-        for (const msg of messages) {
-          const dedupeKey = msg.internetMessageId || msg.id;
-          if (seen.has(dedupeKey)) continue;
-          if (!mentionsAddress(msg)) continue; // drop noise
-          seen.add(dedupeKey);
-          emailHits.push({
-            subject: msg.subject ? `${msg.subject} · via ${mb.owner}` : `(no subject) · via ${mb.owner}`,
-            from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "unknown",
-            date: msg.receivedDateTime,
-            msgId: msg.id,
-            mailboxEmail: mb.email,
-            preview: (msg.bodyPreview || "").slice(0, 200),
-            hasAttachments: !!msg.hasAttachments,
-            webLink: msg.webLink || null,
+      for (const phrase of searchPhrases) {
+        try {
+          const searchRes: any = await graphRequest(
+            `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(phrase)}&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`
+          ).catch((e: any) => {
+            if (/403/.test(e?.message || "")) return null;
+            console.warn(`[pathway stage1] mailbox ${mb.email} (${phrase}) error:`, e?.message);
+            return null;
           });
+          const messages = searchRes?.value || [];
+          totalReturnedFromGraph += messages.length;
+          for (const msg of messages) {
+            const dedupeKey = msg.internetMessageId || msg.id;
+            if (seen.has(dedupeKey)) continue;
+            if (!mentionsAddress(msg)) continue;
+            seen.add(dedupeKey);
+            emailHits.push({
+              subject: msg.subject ? `${msg.subject} · via ${mb.owner}` : `(no subject) · via ${mb.owner}`,
+              from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "unknown",
+              date: msg.receivedDateTime,
+              msgId: msg.id,
+              mailboxEmail: mb.email,
+              preview: (msg.bodyPreview || "").slice(0, 200),
+              hasAttachments: !!msg.hasAttachments,
+              webLink: msg.webLink || null,
+            });
+          }
+        } catch (err: any) {
+          console.warn(`[pathway stage1] mailbox search failed for ${mb.email} (${phrase}):`, err?.message);
         }
-      } catch (err: any) {
-        console.warn(`[pathway stage1] mailbox search failed for ${mb.email}:`, err?.message);
       }
     }
+    console.log(`[pathway stage1] Email search: ${searchPhrases.length} phrase(s) x ${mailboxes.length} mailbox(es) -> ${totalReturnedFromGraph} raw hits, ${emailHits.length} kept after relevance filter`);
     // Cap total hits at 60 to keep payload manageable
     emailHits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     emailHits.splice(60);
