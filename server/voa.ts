@@ -45,6 +45,19 @@ const LONDON_POSTCODE_AREAS = [
   "BR", "CR", "DA", "EN", "HA", "IG", "KT", "RM", "SM", "TW", "UB",
 ];
 
+// London + Home Counties postcode areas for the auto-seed.
+// Covers: all London plus Surrey (GU, RH), Kent (ME, TN, CT), Essex (SS, CM, CO),
+// Hertfordshire (AL, SG, WD, HP), Buckinghamshire (MK, HP, SL), Berkshire (RG, SL),
+// Hampshire (SO, PO, GU), East/West Sussex (BN, RH, PO), Oxfordshire (OX).
+const LONDON_AND_HOME_COUNTIES_POSTCODE_AREAS = [
+  // London
+  "EC", "WC", "NW", "SE", "SW", "W", "N", "E",
+  "BR", "CR", "DA", "EN", "HA", "IG", "KT", "RM", "SM", "TW", "UB",
+  // Home counties ring
+  "AL", "CB", "CM", "CO", "CT", "GU", "HP", "LU", "ME", "MK", "OX",
+  "PO", "RG", "RH", "SG", "SL", "SO", "SS", "TN", "WD", "BN",
+];
+
 function postcodeMatchesAreas(postcode: string, areas: string[]): boolean {
   if (!postcode) return false;
   const pc = postcode.toUpperCase().replace(/\s+/g, "");
@@ -113,43 +126,74 @@ function parseVoaLine(line: string): {
   };
 }
 
-// Run the VOA CSV import in-process (same code path as POST /api/voa/import)
-// but without needing HTTP. Used for the auto-seed startup job.
-async function runVoaImportInProcess(opts: { baCodes?: string[]; listYear?: string }): Promise<{ imported: number; skipped: number }> {
+// Run the VOA CSV import in-process using native fetch + jszip (no curl/unzip
+// dependencies — Railway containers may not have them). If baCodes provided,
+// filters by BA code; if postcodeAreas provided, filters by postcode area;
+// otherwise defaults to London + home counties postcode areas.
+async function runVoaImportInProcess(opts: { baCodes?: string[]; listYear?: string; postcodeAreas?: string[] }): Promise<{ imported: number; skipped: number; message?: string }> {
   const year = opts.listYear || "2023";
-  const targetBaCodes = opts.baCodes && opts.baCodes.length > 0 ? opts.baCodes : ["5990", "5600"];
   const zipUrl = DOWNLOAD_URLS[year];
   if (!zipUrl) throw new Error(`No download URL for list year ${year}`);
 
+  const usePostcodeFilter = (!opts.baCodes || opts.baCodes.length === 0);
+  const targetPostcodeAreas = (opts.postcodeAreas && opts.postcodeAreas.length > 0)
+    ? opts.postcodeAreas.map((a) => a.toUpperCase())
+    : LONDON_AND_HOME_COUNTIES_POSTCODE_AREAS;
+  const targetBaCodes = opts.baCodes && opts.baCodes.length > 0 ? opts.baCodes : [];
+
   const tmpDir = "/tmp/voa-import";
   if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
-
   const zipPath = path.join(tmpDir, `voa-${year}.zip`);
   const extractDir = path.join(tmpDir, `voa-${year}-extract`);
 
-  if (!fs.existsSync(zipPath)) {
-    console.log(`[VOA auto] Downloading ${year} rating list...`);
-    execSync(`curl -sL "${zipUrl}" -o "${zipPath}"`, { timeout: 120000 });
+  // === Download via native fetch ===
+  if (!fs.existsSync(zipPath) || fs.statSync(zipPath).size < 1024) {
+    console.log(`[VOA auto] Downloading ${year} rating list from ${zipUrl}...`);
+    const resp = await fetch(zipUrl);
+    if (!resp.ok) throw new Error(`Download failed: ${resp.status} ${resp.statusText}`);
+    const ab = await resp.arrayBuffer();
+    const buf = Buffer.from(ab);
+    if (buf.length < 1024) throw new Error(`Downloaded file too small (${buf.length} bytes) — likely error page`);
+    fs.writeFileSync(zipPath, buf);
+    console.log(`[VOA auto] Downloaded ${(buf.length / 1024 / 1024).toFixed(1)} MB to ${zipPath}`);
   }
 
-  if (!fs.existsSync(extractDir)) {
-    fs.mkdirSync(extractDir, { recursive: true });
-    console.log(`[VOA auto] Extracting...`);
-    execSync(`unzip -o "${zipPath}" -d "${extractDir}"`, { timeout: 120000 });
+  // === Extract via jszip ===
+  const zipBuffer = fs.readFileSync(zipPath);
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(zipBuffer);
+
+  // Find the CSV file — look for anything with "baseline" or "listentries" in name + ending .csv
+  const csvEntry = Object.values(zip.files).find((f: any) => !f.dir && /\.csv$/i.test(f.name) && /baseline|listentries|compiled/i.test(f.name));
+  if (!csvEntry) {
+    const allNames = Object.keys(zip.files).slice(0, 20).join(", ");
+    throw new Error(`No CSV file found in ZIP. Contents: ${allNames}`);
+  }
+  console.log(`[VOA auto] Extracting ${(csvEntry as any).name}...`);
+
+  if (!fs.existsSync(extractDir)) fs.mkdirSync(extractDir, { recursive: true });
+  const csvPath = path.join(extractDir, path.basename((csvEntry as any).name));
+
+  if (!fs.existsSync(csvPath) || fs.statSync(csvPath).size < 1024) {
+    const csvContent = await (csvEntry as any).async("nodebuffer");
+    fs.writeFileSync(csvPath, csvContent);
+    console.log(`[VOA auto] Wrote ${(csvContent.length / 1024 / 1024).toFixed(1)} MB CSV`);
   }
 
-  const csvFiles = fs.readdirSync(extractDir).filter(f => f.includes("baseline-csv.csv") && !f.includes("historic"));
-  if (csvFiles.length === 0) throw new Error("No CSV file found");
-  const csvPath = path.join(extractDir, csvFiles[0]);
+  // === Clear existing rows for this scope ===
+  if (targetBaCodes.length > 0) {
+    await db.delete(voaRatings).where(
+      and(
+        sql`${voaRatings.baCode} IN (${sql.join(targetBaCodes.map(c => sql`${c}`), sql`, `)})`,
+        eq(voaRatings.listYear, year)
+      )
+    );
+  } else {
+    // Clear all rows for the year (postcode-area import is wholesale)
+    await db.delete(voaRatings).where(eq(voaRatings.listYear, year));
+  }
 
-  // Clear existing rows for these BAs so we don't double-insert
-  await db.delete(voaRatings).where(
-    and(
-      sql`${voaRatings.baCode} IN (${sql.join(targetBaCodes.map(c => sql`${c}`), sql`, `)})`,
-      eq(voaRatings.listYear, year)
-    )
-  );
-
+  // === Parse + insert ===
   let imported = 0;
   let skipped = 0;
   let batch: any[] = [];
@@ -164,7 +208,14 @@ async function runVoaImportInProcess(opts: { baCodes?: string[]; listYear?: stri
     if (!line.trim()) continue;
     const parsed = parseVoaLine(line);
     if (!parsed) { skipped++; continue; }
-    if (!targetBaCodes.includes(parsed.baCode)) { skipped++; continue; }
+
+    // Filter: BA codes take priority, else postcode area
+    if (targetBaCodes.length > 0) {
+      if (!targetBaCodes.includes(parsed.baCode)) { skipped++; continue; }
+    } else if (usePostcodeFilter) {
+      if (!postcodeMatchesAreas(parsed.postcode, targetPostcodeAreas)) { skipped++; continue; }
+    }
+
     batch.push({ ...parsed, listYear: year });
     if (batch.length >= BATCH_SIZE) {
       await db.insert(voaRatings).values(batch);
@@ -176,37 +227,36 @@ async function runVoaImportInProcess(opts: { baCodes?: string[]; listYear?: stri
     await db.insert(voaRatings).values(batch);
     imported += batch.length;
   }
-  return { imported, skipped };
+  return { imported, skipped, message: `Scope: ${targetBaCodes.length > 0 ? `BA codes [${targetBaCodes.join(", ")}]` : `postcode areas [${targetPostcodeAreas.join(", ")}]`}` };
 }
 
-// Auto-seed the VOA table on server startup if it's empty. Runs in the
-// background so it doesn't block boot. Re-checks monthly so we pick up
-// refreshed data when VOA publishes a new list.
+// Auto-seed the VOA table on server startup. Runs in background so it doesn't
+// block boot. Re-checks every 30 days so we pick up VOA list updates.
+// Scope: London + home counties postcode areas (wholesale import).
 export function startVoaAutoImport() {
   const CHECK_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-  const DEFAULT_BA_CODES = ["5990", "5600"]; // Westminster + K&C
+  // Threshold: if we have fewer than ~30k rows, assume we need a fresh import.
+  // A full London + home counties import should yield well above that.
+  const MIN_ROWS_THRESHOLD = 30000;
 
   const maybeImport = async () => {
     try {
       const [{ c }] = await db.select({ c: sql<number>`COUNT(*)::int` }).from(voaRatings)
-        .where(and(
-          sql`${voaRatings.baCode} IN (${sql.join(DEFAULT_BA_CODES.map(c => sql`${c}`), sql`, `)})`,
-          eq(voaRatings.listYear, "2023")
-        ));
-      if ((c || 0) > 0) {
-        console.log(`[VOA auto] Already have ${c} rows for Westminster+K&C — skipping auto-import.`);
+        .where(eq(voaRatings.listYear, "2023"));
+      if ((c || 0) >= MIN_ROWS_THRESHOLD) {
+        console.log(`[VOA auto] Already have ${c} rows for 2023 list — skipping auto-import.`);
         return;
       }
-      console.log("[VOA auto] No VOA data for default BAs — running auto-import...");
-      const { imported } = await runVoaImportInProcess({ baCodes: DEFAULT_BA_CODES });
-      console.log(`[VOA auto] Imported ${imported} rows.`);
+      console.log(`[VOA auto] Only ${c || 0} rows indexed — running London + home counties import...`);
+      const { imported, skipped, message } = await runVoaImportInProcess({});
+      console.log(`[VOA auto] Imported ${imported} rows (${skipped} skipped). ${message || ""}`);
     } catch (err: any) {
       console.error("[VOA auto] Auto-import error:", err?.message || err);
     }
   };
 
-  // First check after 60s so boot finishes cleanly
-  setTimeout(maybeImport, 60_000);
+  // First check after 90s so boot + other auto-jobs finish cleanly
+  setTimeout(maybeImport, 90_000);
   setInterval(maybeImport, CHECK_INTERVAL_MS);
 }
 

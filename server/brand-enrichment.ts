@@ -26,7 +26,12 @@ import crypto from "crypto";
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const MODEL = "claude-haiku-4-5-20251001";
+// Brand enrichment runs once per tracked brand and feeds every downstream
+// decision (concept pitch, backer detail, rollout status). Use Opus for best
+// factual accuracy, fall back to Sonnet then Haiku on failure.
+const MODEL_PRIMARY = "claude-opus-4-7";
+const MODEL_FALLBACK_1 = "claude-sonnet-4-6";
+const MODEL_FALLBACK_2 = "claude-haiku-4-5-20251001";
 
 // Fields Claude is allowed to write. Everything else (CH number, address,
 // registered legal name, founded year from CH) we leave alone.
@@ -87,17 +92,28 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
 
   const prompt = buildPrompt(c);
   let aiOut: any = null;
-  try {
-    const msg = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 500,
-      messages: [{ role: "user", content: prompt }],
-    });
-    const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
-    const match = txt.match(/\{[\s\S]*\}/);
-    if (match) aiOut = JSON.parse(match[0]);
-  } catch (e: any) {
-    return { updated: [], skipped: [], reason: `AI call failed: ${e?.message || e}` };
+  const modelsToTry = [MODEL_PRIMARY, MODEL_FALLBACK_1, MODEL_FALLBACK_2];
+  let lastErr: any = null;
+  for (const model of modelsToTry) {
+    try {
+      const msg = await anthropic.messages.create({
+        model,
+        max_tokens: 800,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
+      const match = txt.match(/\{[\s\S]*\}/);
+      if (match) {
+        aiOut = JSON.parse(match[0]);
+        break;
+      }
+    } catch (e: any) {
+      lastErr = e;
+      console.warn(`[brand-enrichment] ${model} failed (${e?.message}), trying next`);
+    }
+  }
+  if (!aiOut && lastErr) {
+    return { updated: [], skipped: [], reason: `AI call failed: ${lastErr?.message || lastErr}` };
   }
 
   if (!aiOut || typeof aiOut !== "object") {
