@@ -241,7 +241,20 @@ async function extractTextFromBuffer(buffer: Buffer, fileName: string): Promise<
   try {
     const { extractTextFromFile } = await import("./utils/file-extractor");
     const text = await extractTextFromFile(tempPath, fileName);
-    return text ? text.replace(/\0/g, "") : text;
+    const cleaned = text ? text.replace(/\0/g, "") : text;
+    if (ext === ".pdf" && (!cleaned || cleaned.trim().length < 50)) {
+      const { isOcrConfigured, ocrPdfBuffer } = await import("./ocr");
+      if (isOcrConfigured()) {
+        console.log(`[archivist] OCR fallback for ${fileName} (extracted ${cleaned?.trim().length || 0} chars)`);
+        const ocrText = await ocrPdfBuffer(buffer, fileName);
+        if (ocrText && ocrText.trim().length >= 50) {
+          console.log(`[archivist] OCR recovered ${ocrText.trim().length} chars from ${fileName}`);
+          return ocrText.replace(/\0/g, "");
+        }
+        console.warn(`[archivist] OCR produced no usable text for ${fileName} — image-based PDF, OCR failed`);
+      }
+    }
+    return cleaned;
   } finally {
     try { fs.unlinkSync(tempPath); } catch {}
   }
