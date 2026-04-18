@@ -643,7 +643,11 @@ app.use("/api/branding/assets", express.static(
           }
         }, 60000);
         setTimeout(() => startArchivist(), 300000);
-        startVoaAutoImport();
+        // VOA auto-import disabled — was OOM-killing the server. Admin can
+        // run POST /api/voa/import manually (or hit GET /api/voa/status?import=1)
+        // when the service has enough headroom, ideally from a one-off job.
+        // To re-enable: uncomment the line below AND ensure ≥2GB memory.
+        // startVoaAutoImport();
       } else {
         console.log("[dev] Skipping background crawls (image-sync, archivist, auto-enrich) — production only");
       }
