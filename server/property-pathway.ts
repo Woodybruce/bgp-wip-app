@@ -1184,6 +1184,87 @@ export async function runStage(runId: string, stageNumber: number, req: Request)
 // ============================================================================
 
 export function registerPropertyPathwayRoutes(app: Express) {
+  // Diagnostic: which mailboxes can the app actually search?
+  // Tries a harmless "test" $search per mailbox, reports which work / which error.
+  app.get("/api/pathway/email-access-check", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { graphRequest } = await import("./shared-mailbox");
+      const { getValidMsToken } = await import("./microsoft");
+
+      // Enumerate team mailboxes (same logic as runStage1)
+      const mailboxes: Array<{ email: string; owner: string }> = [
+        { email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox" },
+      ];
+      try {
+        const activeUsers = await db
+          .select({ username: users.username, email: users.email, name: users.name })
+          .from(users)
+          .where(eq(users.isActive, true));
+        for (const u of activeUsers) {
+          const mailbox = u.email || u.username;
+          if (mailbox && /@brucegillinghampollard\.com$/i.test(mailbox) && mailbox.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
+            mailboxes.push({ email: mailbox, owner: u.name || mailbox });
+          }
+        }
+      } catch {}
+
+      // Test delegated token
+      const delegatedToken = await getValidMsToken(req).catch(() => null);
+      let delegatedStatus: any = { available: false };
+      if (delegatedToken) {
+        try {
+          const resp = await fetch(
+            `https://graph.microsoft.com/v1.0/me/messages?$top=1&$select=id`,
+            { headers: { Authorization: `Bearer ${delegatedToken}` } }
+          );
+          delegatedStatus = {
+            available: true,
+            me_messages: resp.ok ? "OK" : `${resp.status}: ${(await resp.text()).slice(0, 150)}`,
+          };
+        } catch (err: any) {
+          delegatedStatus = { available: true, me_messages: `error: ${err?.message}` };
+        }
+      }
+
+      // Test app-token on every team mailbox
+      const mailboxResults: Array<{ email: string; owner: string; status: string; error?: string }> = [];
+      for (const mb of mailboxes) {
+        try {
+          await graphRequest(`/users/${encodeURIComponent(mb.email)}/messages?$top=1&$select=id`);
+          mailboxResults.push({ email: mb.email, owner: mb.owner, status: "OK" });
+        } catch (err: any) {
+          const errMsg = String(err?.message || err).slice(0, 250);
+          let hint = "";
+          if (/403/.test(errMsg)) {
+            if (/ApplicationAccessPolicy/i.test(errMsg)) hint = "Blocked by ApplicationAccessPolicy — scope restriction";
+            else hint = "Forbidden — Mail.Read Application permission not effective (maybe token still cached)";
+          } else if (/MailboxNotEnabledForRESTAPI/i.test(errMsg)) {
+            hint = "User has no Exchange Online mailbox / not licensed";
+          } else if (/ResourceNotFound|404/.test(errMsg)) {
+            hint = "Mailbox not found — email address doesn't match a real user";
+          }
+          mailboxResults.push({ email: mb.email, owner: mb.owner, status: "ERROR", error: errMsg + (hint ? ` — ${hint}` : "") });
+        }
+      }
+
+      const okCount = mailboxResults.filter((m) => m.status === "OK").length;
+      res.json({
+        summary: {
+          delegatedToken: delegatedStatus,
+          appTokenMailboxes: { total: mailboxes.length, ok: okCount, failing: mailboxes.length - okCount },
+          verdict: okCount === mailboxes.length
+            ? "All team mailboxes accessible — pathway email search should work"
+            : okCount === 0
+              ? "NO team mailboxes accessible — app-only Mail.Read permission is not effective. Try waiting or re-consenting."
+              : `${okCount}/${mailboxes.length} mailboxes accessible. See failures below.`,
+        },
+        mailboxes: mailboxResults,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Unknown error" });
+    }
+  });
+
   // Start a new pathway run — returns existing run for the same address+postcode if one exists (unless force=true)
   app.post("/api/property-pathway/start", requireAuth, async (req: Request, res: Response) => {
     try {
