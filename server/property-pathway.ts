@@ -867,20 +867,33 @@ async function runStage1(runId: string, req: Request): Promise<void> {
 
   try {
     const { graphRequest } = await import("./shared-mailbox");
-    for (const e of emailHits) {
-      if (!e.hasAttachments) continue;
-      // Check email relevance specifically — is this email subject ABOUT our property?
+
+    // First pass: identify candidate emails fast (no attachment fetches yet)
+    const candidateEmails = emailHits.filter((e) => {
+      if (!e.hasAttachments) return false;
+      const subjectLc = String(e.subject || "").toLowerCase();
+      const previewLc = String(e.preview || "").toLowerCase();
+      const subjAboutProperty =
+        (!!pcLc && (subjectLc.replace(/\s+/g, "").includes(pcLc) || previewLc.replace(/\s+/g, "").includes(pcLc))) ||
+        propertyDistinctiveWords.some((w: string) => subjectLc.includes(w) || previewLc.includes(w));
+      return BROCHURE_SUBJECT_RE.test(e.subject) || subjAboutProperty;
+    });
+
+    // Cap to top 15 to prevent runaway fetching on spammy searches
+    const topCandidates = candidateEmails.slice(0, 15);
+
+    // Per-email attachment processor. Returns brochure records to push.
+    const processEmail = async (e: any): Promise<any[]> => {
+      const out: any[] = [];
       const subjectLc = String(e.subject || "").toLowerCase();
       const previewLc = String(e.preview || "").toLowerCase();
       const subjAboutProperty =
         (!!pcLc && (subjectLc.replace(/\s+/g, "").includes(pcLc) || previewLc.replace(/\s+/g, "").includes(pcLc))) ||
         propertyDistinctiveWords.some((w: string) => subjectLc.includes(w) || previewLc.includes(w));
 
-      // Require either explicit brochure subject, or email clearly about the property
-      if (!BROCHURE_SUBJECT_RE.test(e.subject) && !subjAboutProperty) continue;
       if (!e.mailboxEmail) {
-        brochureFiles.push({ source: "email", name: e.subject, ref: e.msgId, date: e.date });
-        continue;
+        out.push({ source: "email", name: e.subject, ref: e.msgId, date: e.date });
+        return out;
       }
       try {
         const atts: any = await graphRequest(
@@ -892,27 +905,30 @@ async function runStage1(runId: string, req: Request): Promise<void> {
           if (a.isInline) continue;
           if (NOISE_FILENAME_RE.test(filename)) continue;
 
-          // === Confidence gate ===
-          // A. Filename explicitly names this property → ALWAYS keep
           const filenameMatchesProperty = propertyDistinctiveWords.some((w: string) => filename.toLowerCase().includes(w));
-          // B. Filename names a DIFFERENT known property → drop
           if (!filenameMatchesProperty && filenameLooksLikeDifferentProperty(filename)) continue;
 
-          // C. Fallback: brochure-ish filename AND email specifically about property
           const isPdf = /\.pdf$/i.test(filename) || /application\/pdf/i.test(a.contentType || "");
           const filenameBrochurish = BROCHURE_FILENAME_RE.test(filename);
           if (!filenameMatchesProperty) {
-            // Only accept if email was specifically about this property AND file looks brochure-y
             if (!subjAboutProperty) continue;
             if (!isPdf && !filenameBrochurish) continue;
           }
 
-          // Fetch raw bytes
+          // Skip giant files (>50MB) — likely not brochures and will slow us down
+          if (a.size && a.size > 50 * 1024 * 1024) {
+            console.warn(`[pathway stage1] skipping oversized attachment: ${filename} (${Math.round(a.size / 1024 / 1024)}MB)`);
+            out.push({ source: "email", name: filename, ref: e.msgId, date: e.date, sizeMB: +(a.size / 1024 / 1024).toFixed(2) });
+            continue;
+          }
+
+          // Fetch + upload with timeout
           let fileBuffer: Buffer | null = null;
           try {
-            const rawRes: any = await graphRequest(
-              `/users/${encodeURIComponent(e.mailboxEmail)}/messages/${e.msgId}/attachments/${a.id}`
-            );
+            const rawRes: any = await Promise.race([
+              graphRequest(`/users/${encodeURIComponent(e.mailboxEmail)}/messages/${e.msgId}/attachments/${a.id}`),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("attachment fetch timeout")), 30000)),
+            ]);
             if (rawRes?.contentBytes) {
               fileBuffer = Buffer.from(rawRes.contentBytes, "base64");
             }
@@ -920,16 +936,18 @@ async function runStage1(runId: string, req: Request): Promise<void> {
             console.warn("[pathway stage1] attachment fetch failed:", filename, err?.message);
           }
 
-          // If we have a run folder and bytes, upload to SharePoint
           let savedUrl: string | undefined;
           let sizeMB: number | undefined;
           if (fileBuffer && run.sharepointFolderPath) {
             const brochureFolder = `${run.sharepointFolderPath.replace(/^BGP share drive\//, "")}/Brochure & Marketing`;
             try {
-              const up = await executeUploadFileToSharePoint(
-                { folderPath: brochureFolder, filename, content: fileBuffer, contentType: a.contentType },
-                req
-              );
+              const up = await Promise.race([
+                executeUploadFileToSharePoint(
+                  { folderPath: brochureFolder, filename, content: fileBuffer, contentType: a.contentType },
+                  req
+                ),
+                new Promise<any>((_, reject) => setTimeout(() => reject(new Error("SharePoint upload timeout")), 60000)),
+              ]);
               savedUrl = up.file.webUrl;
               sizeMB = up.file.sizeMB;
             } catch (err: any) {
@@ -939,7 +957,7 @@ async function runStage1(runId: string, req: Request): Promise<void> {
             sizeMB = +(fileBuffer.length / 1024 / 1024).toFixed(2);
           }
 
-          brochureFiles.push({
+          out.push({
             source: savedUrl ? "sharepoint-uploaded" : "email",
             name: filename,
             ref: e.msgId,
@@ -951,6 +969,15 @@ async function runStage1(runId: string, req: Request): Promise<void> {
       } catch (err: any) {
         console.warn("[pathway stage1] attachment scan failed for", e.msgId, err?.message);
       }
+      return out;
+    };
+
+    // Process in parallel with concurrency 5 so we don't hammer Graph or RAM
+    const CONCURRENCY = 5;
+    for (let i = 0; i < topCandidates.length; i += CONCURRENCY) {
+      const slice = topCandidates.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(slice.map(processEmail));
+      for (const r of results) brochureFiles.push(...r);
     }
   } catch (err: any) {
     console.error("[pathway stage1] brochure attachment scan error:", err?.message);

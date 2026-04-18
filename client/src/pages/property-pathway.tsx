@@ -501,7 +501,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                   <CountBlock label="Emails" value={s1.emailHits?.length || 0} />
                   <CountBlock label="SP" value={s1.sharepointHits?.length || 0} />
                   <CountBlock label="Deals" value={s1.deals?.length || 0} />
-                  <CountBlock label="Units" value={s1.tenancy?.units?.length || 0} />
+                  <CountBlock label="Brochures" value={s1.brochureFiles?.length || 0} />
                   <CountBlock label="Comps" value={s1.comps?.length || 0} />
                   <CountBlock label="Rates" value={s1.rates?.assessmentCount || 0} />
                 </div>
