@@ -552,6 +552,19 @@ app.use("/api/branding/assets", express.static(
   setupEvernoteRoutes(app);
   registerLandRegistryRoutes(app);
   registerVoaRoutes(app);
+  // Probe the VOA SQLite snapshot at boot so we log where rates data is coming
+  // from. No-op if the file isn't mounted — callers gracefully degrade.
+  try {
+    const { voaSqliteInfo } = await import("./voa-sqlite");
+    const info = voaSqliteInfo();
+    if (info.available) {
+      console.log(`[voa-sqlite] backend=sqlite path=${info.path} rows=${info.rowCount} builtAt=${info.builtAt} areas=${info.areas}`);
+    } else {
+      console.log("[voa-sqlite] backend=postgres (no SQLite file present — falling back to voa_ratings table)");
+    }
+  } catch (err: any) {
+    console.warn("[voa-sqlite] probe error:", err?.message || err);
+  }
   registerLegalDDRoutes(app);
   setupSharedMailboxRoutes(app);
   registerInteractionRoutes(app);

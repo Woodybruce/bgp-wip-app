@@ -17,3 +17,8 @@ attached_assets/
 
 # Build artifacts
 *.log
+
+# VOA SQLite snapshots (built locally by scripts/build-voa-sqlite.ts,
+# deployed to Railway volume — never committed).
+data/
+.voa-cache/

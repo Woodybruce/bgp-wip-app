@@ -298,17 +298,34 @@ export function registerVoaRoutes(app: Express) {
   // Add ?import=1 to force an import run inline (may take 1-2 min, returns result).
   app.get("/api/voa/status", requireAuth, async (req, res) => {
     try {
-      const counts: any = await pool.query(
-        `SELECT ba_code, list_year, COUNT(*)::int AS rows
-           FROM voa_ratings
-          GROUP BY ba_code, list_year
-          ORDER BY rows DESC`
-      );
-      const total: any = await pool.query(`SELECT COUNT(*)::int AS total FROM voa_ratings`);
-      const base = {
-        totalRows: total.rows[0]?.total || 0,
-        byBaCode: counts.rows.map((r: any) => ({ baCode: r.ba_code, name: nameForBa(r.ba_code), listYear: r.list_year, rows: r.rows })),
-      };
+      // Prefer SQLite snapshot if present.
+      const { voaSqliteAvailable, voaStatus, voaSqliteInfo } = await import("./voa-sqlite");
+      let base: any;
+      if (voaSqliteAvailable()) {
+        const s = voaStatus();
+        const info = voaSqliteInfo();
+        base = {
+          source: "sqlite",
+          sqlitePath: info.path,
+          builtAt: info.builtAt,
+          areas: info.areas,
+          totalRows: s.totalRows,
+          byBaCode: s.byBaCode.map((r) => ({ baCode: r.baCode, name: nameForBa(r.baCode), listYear: r.listYear, rows: r.rows })),
+        };
+      } else {
+        const counts: any = await pool.query(
+          `SELECT ba_code, list_year, COUNT(*)::int AS rows
+             FROM voa_ratings
+            GROUP BY ba_code, list_year
+            ORDER BY rows DESC`
+        );
+        const total: any = await pool.query(`SELECT COUNT(*)::int AS total FROM voa_ratings`);
+        base = {
+          source: "postgres",
+          totalRows: total.rows[0]?.total || 0,
+          byBaCode: counts.rows.map((r: any) => ({ baCode: r.ba_code, name: nameForBa(r.ba_code), listYear: r.list_year, rows: r.rows })),
+        };
+      }
       if (req.query.import === "1") {
         try {
           const ba = typeof req.query.baCodes === "string" ? req.query.baCodes.split(",") : ["5990", "5600"];
@@ -330,6 +347,24 @@ export function registerVoaRoutes(app: Express) {
       const pageNum = Math.max(1, Number(page) || 1);
       const limit = Math.min(100, Math.max(1, Number(limitParam) || 50));
       const offset = (pageNum - 1) * limit;
+
+      // Prefer SQLite.
+      const { voaSqliteAvailable, searchVoaRatings } = await import("./voa-sqlite");
+      if (voaSqliteAvailable()) {
+        const r = searchVoaRatings({
+          search: typeof search === "string" ? search : undefined,
+          baCode: typeof baCode === "string" ? baCode : undefined,
+          descriptionCode: typeof descriptionCode === "string" ? descriptionCode : undefined,
+          postcode: typeof postcode === "string" ? postcode : undefined,
+          minRv: minRv ? Number(minRv) : undefined,
+          maxRv: maxRv ? Number(maxRv) : undefined,
+          sortBy: (typeof sortBy === "string" ? sortBy : "rateable_value") as any,
+          sortDir: sortDir === "asc" ? "asc" : "desc",
+          page: pageNum,
+          limit,
+        });
+        return res.json({ ...r, baNames: { ...BA_NAMES, ...BA_NAMES_RUNTIME } });
+      }
 
       const conditions: any[] = [];
       if (baCode) conditions.push(eq(voaRatings.baCode, String(baCode)));
@@ -376,6 +411,15 @@ export function registerVoaRoutes(app: Express) {
 
   app.get("/api/voa/stats", requireAuth, async (_req, res) => {
     try {
+      const { voaSqliteAvailable, voaStats } = await import("./voa-sqlite");
+      if (voaSqliteAvailable()) {
+        const s = voaStats();
+        return res.json({
+          byAuthority: s.byAuthority.map((r: any) => ({ ...r, name: nameForBa(r.baCode) })),
+          byType: s.byType,
+          baNames: { ...BA_NAMES, ...BA_NAMES_RUNTIME },
+        });
+      }
       const stats = await db.select({
         baCode: voaRatings.baCode,
         count: sql<number>`count(*)`,
@@ -407,6 +451,10 @@ export function registerVoaRoutes(app: Express) {
 
   app.get("/api/voa/description-codes", requireAuth, async (_req, res) => {
     try {
+      const { voaSqliteAvailable, voaDescriptionCodes } = await import("./voa-sqlite");
+      if (voaSqliteAvailable()) {
+        return res.json(voaDescriptionCodes());
+      }
       const codes = await db.select({
         code: voaRatings.descriptionCode,
         text: voaRatings.descriptionText,

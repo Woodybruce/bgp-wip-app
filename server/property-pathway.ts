@@ -574,33 +574,49 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   }
 
   // Rates fallback: if performPropertyLookup returned no VOA data but we have
-  // a postcode, query the voa_ratings table directly. This handles the case
-  // where the lookup helper's street filter was too strict OR street wasn't
-  // passed through.
+  // a postcode, query VOA directly. Prefer the local SQLite snapshot
+  // (server/voa-sqlite.ts); if it's not mounted yet, fall back to the legacy
+  // Postgres voa_ratings table so we don't regress during rollout.
   if (voaEntries.length === 0 && postcode) {
     try {
-      const { pool } = await import("./db");
-      const normalisedPc = postcode.replace(/\s+/g, "").toUpperCase();
-      const formattedPc = normalisedPc.length > 3 ? `${normalisedPc.slice(0, -3)} ${normalisedPc.slice(-3)}` : normalisedPc;
-      const res = await pool.query(
-        `SELECT firm_name, number_or_name, street, town, postcode, description_text, rateable_value, effective_date
-           FROM voa_ratings
-          WHERE UPPER(REPLACE(postcode, ' ', '')) = $1
-          ORDER BY rateable_value DESC NULLS LAST
-          LIMIT 30`,
-        [normalisedPc]
-      );
-      for (const r of res.rows) {
-        voaEntries.push({
-          firmName: r.firm_name || undefined,
-          address: [r.number_or_name, r.street, r.town].filter(Boolean).join(", "),
-          postcode: r.postcode || formattedPc,
-          description: r.description_text || undefined,
-          rateableValue: r.rateable_value != null ? Number(r.rateable_value) : null,
-          effectiveDate: r.effective_date || undefined,
-        });
+      const { voaSqliteAvailable, lookupVoaByPostcode } = await import("./voa-sqlite");
+      if (voaSqliteAvailable()) {
+        const rows = lookupVoaByPostcode(postcode, undefined, 30);
+        for (const r of rows) {
+          voaEntries.push({
+            firmName: r.firmName || undefined,
+            address: r.address,
+            postcode: r.postcode,
+            description: r.description || undefined,
+            rateableValue: r.rateableValue,
+            effectiveDate: r.effectiveDate || undefined,
+          });
+        }
+        console.log(`[pathway stage1] VOA SQLite lookup for ${postcode}: ${voaEntries.length} rows`);
+      } else {
+        const { pool } = await import("./db");
+        const normalisedPc = postcode.replace(/\s+/g, "").toUpperCase();
+        const formattedPc = normalisedPc.length > 3 ? `${normalisedPc.slice(0, -3)} ${normalisedPc.slice(-3)}` : normalisedPc;
+        const res = await pool.query(
+          `SELECT firm_name, number_or_name, street, town, postcode, description_text, rateable_value, effective_date
+             FROM voa_ratings
+            WHERE UPPER(REPLACE(postcode, ' ', '')) = $1
+            ORDER BY rateable_value DESC NULLS LAST
+            LIMIT 30`,
+          [normalisedPc]
+        );
+        for (const r of res.rows) {
+          voaEntries.push({
+            firmName: r.firm_name || undefined,
+            address: [r.number_or_name, r.street, r.town].filter(Boolean).join(", "),
+            postcode: r.postcode || formattedPc,
+            description: r.description_text || undefined,
+            rateableValue: r.rateable_value != null ? Number(r.rateable_value) : null,
+            effectiveDate: r.effective_date || undefined,
+          });
+        }
+        console.log(`[pathway stage1] VOA Postgres fallback for ${formattedPc}: ${voaEntries.length} rows`);
       }
-      console.log(`[pathway stage1] VOA direct query for ${formattedPc}: ${voaEntries.length} rows`);
     } catch (err: any) {
       console.warn("[pathway stage1] VOA direct query error:", err?.message);
     }
