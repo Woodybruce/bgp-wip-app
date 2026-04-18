@@ -311,7 +311,7 @@ import { registerLandRegistryRoutes } from "./land-registry";
 const activeRequests = new Set<string>();
 const requestQueue: Array<{ req: Request; res: Response; next: NextFunction }> = [];
 const MAX_CONCURRENT_AI_REQUESTS = 3;
-import { registerVoaRoutes } from "./voa";
+import { registerVoaRoutes, startVoaAutoImport } from "./voa";
 import { registerLegalDDRoutes } from "./legal-dd";
 import { setupSharedMailboxRoutes } from "./shared-mailbox";
 import { registerInteractionRoutes } from "./interactions";
@@ -643,6 +643,7 @@ app.use("/api/branding/assets", express.static(
           }
         }, 60000);
         setTimeout(() => startArchivist(), 300000);
+        startVoaAutoImport();
       } else {
         console.log("[dev] Skipping background crawls (image-sync, archivist, auto-enrich) — production only");
       }

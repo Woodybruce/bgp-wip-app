@@ -113,6 +113,103 @@ function parseVoaLine(line: string): {
   };
 }
 
+// Run the VOA CSV import in-process (same code path as POST /api/voa/import)
+// but without needing HTTP. Used for the auto-seed startup job.
+async function runVoaImportInProcess(opts: { baCodes?: string[]; listYear?: string }): Promise<{ imported: number; skipped: number }> {
+  const year = opts.listYear || "2023";
+  const targetBaCodes = opts.baCodes && opts.baCodes.length > 0 ? opts.baCodes : ["5990", "5600"];
+  const zipUrl = DOWNLOAD_URLS[year];
+  if (!zipUrl) throw new Error(`No download URL for list year ${year}`);
+
+  const tmpDir = "/tmp/voa-import";
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+
+  const zipPath = path.join(tmpDir, `voa-${year}.zip`);
+  const extractDir = path.join(tmpDir, `voa-${year}-extract`);
+
+  if (!fs.existsSync(zipPath)) {
+    console.log(`[VOA auto] Downloading ${year} rating list...`);
+    execSync(`curl -sL "${zipUrl}" -o "${zipPath}"`, { timeout: 120000 });
+  }
+
+  if (!fs.existsSync(extractDir)) {
+    fs.mkdirSync(extractDir, { recursive: true });
+    console.log(`[VOA auto] Extracting...`);
+    execSync(`unzip -o "${zipPath}" -d "${extractDir}"`, { timeout: 120000 });
+  }
+
+  const csvFiles = fs.readdirSync(extractDir).filter(f => f.includes("baseline-csv.csv") && !f.includes("historic"));
+  if (csvFiles.length === 0) throw new Error("No CSV file found");
+  const csvPath = path.join(extractDir, csvFiles[0]);
+
+  // Clear existing rows for these BAs so we don't double-insert
+  await db.delete(voaRatings).where(
+    and(
+      sql`${voaRatings.baCode} IN (${sql.join(targetBaCodes.map(c => sql`${c}`), sql`, `)})`,
+      eq(voaRatings.listYear, year)
+    )
+  );
+
+  let imported = 0;
+  let skipped = 0;
+  let batch: any[] = [];
+  const BATCH_SIZE = 500;
+
+  const rl = createInterface({
+    input: createReadStream(csvPath, { encoding: "utf-8" }),
+    crlfDelay: Infinity,
+  });
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    const parsed = parseCsvLine(line);
+    if (!parsed) { skipped++; continue; }
+    if (!targetBaCodes.includes(parsed.baCode)) { skipped++; continue; }
+    batch.push({ ...parsed, listYear: year });
+    if (batch.length >= BATCH_SIZE) {
+      await db.insert(voaRatings).values(batch);
+      imported += batch.length;
+      batch = [];
+    }
+  }
+  if (batch.length > 0) {
+    await db.insert(voaRatings).values(batch);
+    imported += batch.length;
+  }
+  return { imported, skipped };
+}
+
+// Auto-seed the VOA table on server startup if it's empty. Runs in the
+// background so it doesn't block boot. Re-checks monthly so we pick up
+// refreshed data when VOA publishes a new list.
+export function startVoaAutoImport() {
+  const CHECK_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+  const DEFAULT_BA_CODES = ["5990", "5600"]; // Westminster + K&C
+
+  const maybeImport = async () => {
+    try {
+      const [{ c }] = await db.select({ c: sql<number>`COUNT(*)::int` }).from(voaRatings)
+        .where(and(
+          sql`${voaRatings.baCode} IN (${sql.join(DEFAULT_BA_CODES.map(c => sql`${c}`), sql`, `)})`,
+          eq(voaRatings.listYear, "2023")
+        ));
+      if ((c || 0) > 0) {
+        console.log(`[VOA auto] Already have ${c} rows for Westminster+K&C — skipping auto-import.`);
+        return;
+      }
+      console.log("[VOA auto] No VOA data for default BAs — running auto-import...");
+      const { imported } = await runVoaImportInProcess({ baCodes: DEFAULT_BA_CODES });
+      console.log(`[VOA auto] Imported ${imported} rows.`);
+    } catch (err: any) {
+      console.error("[VOA auto] Auto-import error:", err?.message || err);
+    }
+  };
+
+  // First check after 60s so boot finishes cleanly
+  setTimeout(maybeImport, 60_000);
+  setInterval(maybeImport, CHECK_INTERVAL_MS);
+}
+
 export function registerVoaRoutes(app: Express) {
   app.get("/api/voa/ratings", requireAuth, async (req, res) => {
     try {
