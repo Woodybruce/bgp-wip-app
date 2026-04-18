@@ -1,16 +1,32 @@
 import webpush from "web-push";
 import { pool } from "./db";
 
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY || "";
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY || "";
+// Normalise VAPID keys: the web-push library requires URL-safe base64 WITHOUT
+// padding ("=" or "+" or "/"). Handle common paste mistakes silently.
+function normaliseVapidKey(raw: string): string {
+  return String(raw || "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/=+$/, "")    // strip padding
+    .replace(/\+/g, "-")   // base64 → base64url
+    .replace(/\//g, "_");
+}
+
+const VAPID_PUBLIC_KEY = normaliseVapidKey(process.env.VAPID_PUBLIC_KEY || "");
+const VAPID_PRIVATE_KEY = normaliseVapidKey(process.env.VAPID_PRIVATE_KEY || "");
 
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails(
-    "mailto:admin@brucegillinghampollard.com",
-    VAPID_PUBLIC_KEY,
-    VAPID_PRIVATE_KEY
-  );
-  console.log("[push] Web Push configured");
+  try {
+    webpush.setVapidDetails(
+      "mailto:admin@brucegillinghampollard.com",
+      VAPID_PUBLIC_KEY,
+      VAPID_PRIVATE_KEY
+    );
+    console.log("[push] Web Push configured");
+  } catch (err: any) {
+    // Never let a bad VAPID key kill the server — push is optional.
+    console.warn("[push] VAPID key rejected — push notifications disabled:", err?.message);
+  }
 } else {
   console.warn("[push] VAPID keys not set — push notifications disabled");
 }
