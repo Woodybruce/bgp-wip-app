@@ -603,25 +603,31 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     // Fallback
     if (searchPhrases.length === 0) searchPhrases.push(`"${primaryAddressToken || address}"`);
 
-    // Relevance filter — TRUST Graph's match by default. Graph's $search scans
-    // the full email body + attachments with relevance ranking, so if it returned
-    // the hit, the phrase appeared SOMEWHERE credible. Only drop:
-    //   1. Subjects that explicitly name a DIFFERENT postcode (clearly another property)
-    //   2. Known newsletter/marketing senders (automated noise)
-    //
-    // This means generic-subject emails like "London Trophy Requirement" or
-    // "FW: TRE Valuation" are KEPT — the AI filter stage handles final curation.
+    // Relevance filter — keep emails where the postcode OR address word
+    // appears in subject/preview, plus drop different-postcode subjects and
+    // newsletter senders. Graph across 30 mailboxes returns hundreds of hits
+    // where "Haymarket" is just in a signature/attachment/footer — trusting
+    // Graph blindly produces massive noise.
     const postcodeLc = (postcode || "").toLowerCase().replace(/\s+/g, "");
     const POSTCODE_RE = /\b([a-z]{1,2}\d[a-z\d]?)\s*(\d[a-z]{2})\b/gi;
+    const addressWords = primaryAddressToken
+      .toLowerCase()
+      .match(/[a-z0-9-]+/g)
+      ?.filter((w: string) => w.length >= 4 && !["the", "and", "for", "with", "from", "street", "road", "avenue", "lane", "place", "square", "house", "building"].includes(w))
+      || [];
     const NEWSLETTER_SENDERS = [
       "propelinfo", "propel", "bigpropfirst", "costar", "estatesgazette", "egi", "react news",
       "propertyweek", "property week", "pie mag", "resi mag", "bisnow", "mailchimp",
       "mailerlite", "substack", "newsletter", "no-reply", "noreply", "do-not-reply",
+      "firmdale", "fallow",
     ];
     const mentionsAddress = (msg: any) => {
       const subject = String(msg.subject || "").toLowerCase();
+      const preview = String(msg.bodyPreview || "").toLowerCase();
       const fromAddr = String(msg.from?.emailAddress?.address || "").toLowerCase();
       const fromName = String(msg.from?.emailAddress?.name || "").toLowerCase();
+      const hay = `${subject} ${preview}`;
+      const hayNoSpaces = hay.replace(/\s+/g, "");
 
       // 1) Different postcode in subject → drop (clearly another property)
       const postcodesInSubject: string[] = [];
@@ -639,8 +645,13 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
         if (fromAddr.includes(n) || fromName.includes(n)) return false;
       }
 
-      // 3) Trust Graph — keep the hit. AI filter will do final curation.
-      return true;
+      // 3) Postcode in subject/preview → keep (strong signal)
+      if (postcodeLc && hayNoSpaces.includes(postcodeLc)) return true;
+      // 4) Address word in subject/preview → keep
+      if (addressWords.some((w) => hay.includes(w))) return true;
+
+      // Otherwise, Graph matched on body/attachment content — too noisy at 30-mailbox scale.
+      return false;
     };
 
     const seen = new Set<string>();
@@ -725,9 +736,9 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     }
     console.log(`[pathway stage1] Email search: delegated=${delegatedToken ? "yes" : "no"}, phrases=${searchPhrases.length}, mailboxes tried=${mailboxes.length}, mailboxes OK=${successfulMailboxes.size} -> ${totalReturnedFromGraph} raw hits, ${emailHits.length} kept after regex filter`);
     emailHits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    // Cap at 80 most-recent to keep AI prompt size manageable. We sort by date
-    // so the newest (most likely to be the live deal) are always included.
-    emailHits.splice(80);
+    // Cap at 120 — the regex filter is already tight, so this just protects
+    // against pathological cases. Older relevant emails (2015, 2023) stay in.
+    emailHits.splice(120);
   } catch (err: any) {
     console.error("[pathway stage1] Email search error:", err?.message);
   }
