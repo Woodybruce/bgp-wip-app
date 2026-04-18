@@ -67,7 +67,15 @@ async function lookupPricePaid(postcode: string, street?: string): Promise<any[]
 }
 
 async function lookupVOA(postcode: string, street?: string): Promise<any[]> {
+  // VOA is now served by a local SQLite snapshot (server/voa-sqlite.ts).
+  // If the file is missing, the SQLite reader returns [] and we fall through
+  // to the legacy Postgres table as a safety net during rollout.
   try {
+    const { voaSqliteAvailable, lookupVoaByPostcode } = await import("./voa-sqlite");
+    if (voaSqliteAvailable()) {
+      return lookupVoaByPostcode(postcode, street, 20);
+    }
+    // Fallback: legacy Postgres path (will be dropped in Phase 2)
     const normalizedPc = postcode.replace(/\s+/g, "").trim();
     const formattedPc = normalizedPc.length > 3
       ? normalizedPc.slice(0, -3) + " " + normalizedPc.slice(-3)

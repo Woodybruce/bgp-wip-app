@@ -376,12 +376,127 @@ function derivedTenantForFilter(run: any, aiFacts: any, tenancy: any): string | 
 
 async function runStage1(runId: string, req: Request): Promise<void> {
   try {
-    await runStage1Inner(runId, req);
+    // Feature flag — autonomous investigator vs classic pipeline.
+    // Set USE_AUTONOMOUS_STAGE1=1 to use the Claude-driven multi-pass investigator
+    // that iterates tools like ChatBGP does (search → read → re-search → extract).
+    if (process.env.USE_AUTONOMOUS_STAGE1 === "1") {
+      await runStage1Autonomous(runId, req);
+    } else {
+      await runStage1Inner(runId, req);
+    }
   } catch (err: any) {
     const reason = err?.message || String(err);
     console.error(`[pathway stage1] FATAL — ${reason}`, err?.stack);
     await setStageStatus(runId, "stage1", "failed", { stage1: { summary: `Stage 1 failed: ${reason}`, emailHits: [], sharepointHits: [], crmHits: { properties: [], deals: [], companies: [] }, deals: [], comps: [], brochureFiles: [] } as any }).catch(() => {});
     throw err;
+  }
+}
+
+// Autonomous investigator wrapper — delegates Stage 1 to Claude+tools
+async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
+  const run = await getRun(runId);
+  if (!run) throw new Error("Run not found");
+  await setStageStatus(runId, "stage1", "running");
+
+  const { runInvestigativeStage1 } = await import("./pathway-investigator");
+  const started = Date.now();
+  const result = await runInvestigativeStage1({
+    address: run.address,
+    postcode: run.postcode,
+    req,
+  });
+
+  // Google Street View + Maps link
+  const mapsQuery = encodeURIComponent([run.address, run.postcode].filter(Boolean).join(", "));
+  const gmapsKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY || "";
+  const propertyImage = {
+    streetViewUrl: gmapsKey
+      ? `https://maps.googleapis.com/maps/api/streetview?size=640x360&location=${mapsQuery}&fov=80&key=${gmapsKey}`
+      : undefined,
+    googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`,
+  };
+
+  // Map investigator result into the existing stage1 shape so the UI works unchanged
+  const stage1Payload: any = {
+    emailHits: (result.keyEmails || []).map((e) => ({
+      subject: e.subject,
+      from: e.from,
+      date: e.date,
+      msgId: e.msgId,
+      mailboxEmail: e.mailboxEmail,
+      preview: e.preview || "",
+      hasAttachments: !!e.hasAttachments,
+      webLink: e.webLink || null,
+    })),
+    sharepointHits: (result.sharepointMatches || []).map((s) => ({
+      name: s.name,
+      path: s.path,
+      webUrl: s.webUrl,
+      type: s.type,
+    })),
+    crmHits: {
+      properties: result.crmMatches?.properties || [],
+      deals: result.crmMatches?.deals || [],
+      companies: result.crmMatches?.companies || [],
+    },
+    deals: result.crmMatches?.deals || [],
+    tenancy: { status: "unknown", units: [] },
+    engagements: [],
+    pricePaidHistory: [],
+    comps: [],
+    brochureFiles: (result.brochures || []).map((b) => ({
+      source: b.source === "sharepoint" ? "sharepoint" : "email",
+      name: b.name,
+      ref: b.ref || "",
+      date: b.date,
+      webUrl: b.webUrl,
+    })),
+    initialOwnership: result.ownership ? {
+      titleNumber: result.ownership.titleNumber || "unknown",
+      proprietorName: result.ownership.owner,
+      proprietorCompanyNumber: result.ownership.ownerCompanyNumber,
+      pricePaid: undefined,
+      dateOfPurchase: result.ownership.dateOfPurchase,
+    } : null,
+    tenant: result.tenancy?.tenant ? {
+      name: result.tenancy.tenant,
+      companyNumber: result.tenancy.tenantCompanyNumber,
+    } : undefined,
+    aiBriefing: result.aiBriefing,
+    aiFacts: {
+      owner: result.ownership?.owner,
+      ownerCompanyNumber: result.ownership?.ownerCompanyNumber,
+      purchasePrice: result.ownership?.pricePaid,
+      purchaseDate: result.ownership?.dateOfPurchase,
+      refurbCost: result.ownership?.refurbCost,
+      currentUse: result.property?.currentUse,
+      sizeSqft: result.property?.sizeSqft,
+      mainTenants: result.tenancy?.mainOccupiers || (result.tenancy?.tenant ? [result.tenancy.tenant] : []),
+      leaseStatus: result.tenancy?.leaseStatus,
+      listedStatus: result.property?.listedStatus,
+    },
+    propertyImage,
+    rates: result.rates ? {
+      totalRateableValue: result.rates.totalRV,
+      assessmentCount: result.rates.assessmentCount,
+      entries: result.rates.entries || [],
+    } : undefined,
+    summary: result.aiBriefing?.headline || `Investigation complete for ${run.address}.`,
+    toolTrace: result.toolTrace,
+  };
+
+  console.log(`[pathway stage1 autonomous] Completed in ${((Date.now() - started) / 1000).toFixed(1)}s — ${stage1Payload.emailHits.length} emails, ${stage1Payload.brochureFiles.length} brochures, ${stage1Payload.sharepointHits.length} sharepoint`);
+
+  await setStageStatus(runId, "stage1", "completed", { stage1: stage1Payload });
+  if (result.sharepointMatches && result.sharepointMatches.length > 0) {
+    // Try to find the canonical folder for this property
+    const folderMatch = result.sharepointMatches.find((s) => s.type === "folder" && (s.path || "").includes("Investment"));
+    if (folderMatch) {
+      await updateRun(runId, {
+        sharepointFolderPath: folderMatch.path,
+        sharepointFolderUrl: folderMatch.webUrl,
+      });
+    }
   }
 }
 
