@@ -1217,6 +1217,79 @@ export async function runStage(runId: string, stageNumber: number, req: Request)
 // ============================================================================
 
 export function registerPropertyPathwayRoutes(app: Express) {
+  // Fetch a single email's full details + attachment list from any BGP mailbox.
+  // Used by the pathway's in-app email viewer so users don't have to open Outlook.
+  app.get("/api/pathway/email/:mailboxEmail/:msgId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { graphRequest } = await import("./shared-mailbox");
+      const mailboxEmail = String(req.params.mailboxEmail);
+      const msgId = String(req.params.msgId);
+
+      const [msg, atts]: [any, any] = await Promise.all([
+        graphRequest(
+          `/users/${encodeURIComponent(mailboxEmail)}/messages/${encodeURIComponent(msgId)}?$select=id,subject,from,toRecipients,ccRecipients,receivedDateTime,body,bodyPreview,hasAttachments,webLink`,
+          { headers: { "X-AnchorMailbox": mailboxEmail } }
+        ),
+        graphRequest(
+          `/users/${encodeURIComponent(mailboxEmail)}/messages/${encodeURIComponent(msgId)}/attachments?$select=id,name,size,contentType,isInline`,
+          { headers: { "X-AnchorMailbox": mailboxEmail } }
+        ).catch(() => ({ value: [] })),
+      ]);
+
+      res.json({
+        id: msg.id,
+        subject: msg.subject || "(No subject)",
+        from: {
+          name: msg.from?.emailAddress?.name,
+          email: msg.from?.emailAddress?.address,
+        },
+        to: (msg.toRecipients || []).map((r: any) => ({ name: r.emailAddress?.name, email: r.emailAddress?.address })),
+        cc: (msg.ccRecipients || []).map((r: any) => ({ name: r.emailAddress?.name, email: r.emailAddress?.address })),
+        date: msg.receivedDateTime,
+        bodyContentType: msg.body?.contentType || "text",
+        bodyHtml: msg.body?.contentType === "html" ? (msg.body?.content || "") : "",
+        bodyText: msg.body?.contentType === "text" ? (msg.body?.content || "") : (msg.bodyPreview || ""),
+        hasAttachments: !!msg.hasAttachments,
+        webLink: msg.webLink || null,
+        attachments: (atts?.value || [])
+          .filter((a: any) => !a.isInline)
+          .map((a: any) => ({ id: a.id, name: a.name, size: a.size, contentType: a.contentType })),
+      });
+    } catch (err: any) {
+      console.error("[pathway email fetch] error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to fetch email" });
+    }
+  });
+
+  // Download a specific attachment from a specific email. Streams the raw bytes.
+  app.get("/api/pathway/email/:mailboxEmail/:msgId/attachment/:attachmentId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { graphRequest } = await import("./shared-mailbox");
+      const mailboxEmail = String(req.params.mailboxEmail);
+      const msgId = String(req.params.msgId);
+      const attachmentId = String(req.params.attachmentId);
+
+      const att: any = await graphRequest(
+        `/users/${encodeURIComponent(mailboxEmail)}/messages/${encodeURIComponent(msgId)}/attachments/${encodeURIComponent(attachmentId)}`,
+        { headers: { "X-AnchorMailbox": mailboxEmail } }
+      );
+
+      if (!att || !att.contentBytes) {
+        return res.status(404).json({ error: "Attachment content not available" });
+      }
+
+      const buffer = Buffer.from(att.contentBytes, "base64");
+      const filename = String(att.name || "attachment").replace(/"/g, "");
+      res.setHeader("Content-Type", att.contentType || "application/octet-stream");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Length", String(buffer.length));
+      res.end(buffer);
+    } catch (err: any) {
+      console.error("[pathway attachment download] error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to download attachment" });
+    }
+  });
+
   // Diagnostic: which mailboxes can the app actually search?
   // Tries a harmless "test" $search per mailbox, reports which work / which error.
   app.get("/api/pathway/email-access-check", requireAuth, async (req: Request, res: Response) => {

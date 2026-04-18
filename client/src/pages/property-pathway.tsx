@@ -4,11 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { getAuthHeaders } from "@/lib/queryClient";
 import {
   Building2, FolderOpen, MapPin, ShieldCheck, Sparkles,
   FileText, Image as ImageIcon, ChevronRight, ArrowRight,
   Check, Clock, AlertCircle, Plus, Search, Download, ExternalLink, Trash2,
+  Copy, Paperclip, Loader2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -290,6 +292,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
   const s2Status = run.stageStatus?.stage2;
   const nextStage = Math.min(run.currentStage, 7);
   const [tenantInput, setTenantInput] = useState("");
+  const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-4">
@@ -722,25 +725,38 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             )}
           </div>
 
-          {/* Emails — full list at bottom, scrollable so all hits fit */}
+          {/* Emails — full list at bottom, scrollable so all hits fit.
+              Click opens in-app viewer (dialog) so users can read the email
+              and download attachments without being bounced to Outlook Web. */}
           {s1.emailHits && s1.emailHits.length > 0 && (
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Emails ({s1.emailHits.length})</CardTitle>
               </CardHeader>
-              <CardContent className="text-[11px] grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 pb-2 max-h-[500px] overflow-y-auto">
-                {s1.emailHits.map((h: any, i: number) => {
-                  const Wrapper: any = h.webLink ? "a" : "div";
-                  const wrapperProps = h.webLink ? { href: h.webLink, target: "_blank", rel: "noreferrer", className: "block border-l-2 border-muted hover:border-primary pl-1.5 py-0.5 hover:bg-muted/50 rounded-r cursor-pointer" } : { className: "border-l-2 border-muted pl-1.5 py-0.5" };
-                  return (
-                    <Wrapper key={i} {...wrapperProps}>
-                      <p className="font-medium truncate">{h.subject}{h.hasAttachments ? " 📎" : ""}</p>
-                      <p className="text-muted-foreground text-[10px]">{h.from} — {new Date(h.date).toLocaleDateString("en-GB")}</p>
-                    </Wrapper>
-                  );
-                })}
+              <CardContent className="text-[11px] grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 pb-2 max-h-[250px] overflow-y-auto">
+                {s1.emailHits.map((h: any, i: number) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => h.mailboxEmail ? setOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail }) : null}
+                    disabled={!h.mailboxEmail}
+                    className="text-left border-l-2 border-muted hover:border-primary pl-1.5 py-0.5 hover:bg-muted/50 rounded-r cursor-pointer disabled:cursor-default disabled:opacity-60"
+                  >
+                    <p className="font-medium truncate">{h.subject}{h.hasAttachments ? " 📎" : ""}</p>
+                    <p className="text-muted-foreground text-[10px]">{h.from} — {new Date(h.date).toLocaleDateString("en-GB")}</p>
+                  </button>
+                ))}
               </CardContent>
             </Card>
+          )}
+
+          {/* In-app email viewer — opens on click, fetches full body + attachments */}
+          {openEmail && (
+            <EmailViewerDialog
+              msgId={openEmail.msgId}
+              mailboxEmail={openEmail.mailboxEmail}
+              onClose={() => setOpenEmail(null)}
+            />
           )}
         </>
       )}
@@ -938,4 +954,182 @@ function CountBlock({ label, value }: { label: string; value: number }) {
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
     </div>
   );
+}
+
+interface EmailDetail {
+  id: string;
+  subject: string;
+  from: { name?: string; email?: string };
+  to: Array<{ name?: string; email?: string }>;
+  cc: Array<{ name?: string; email?: string }>;
+  date: string;
+  bodyContentType: "text" | "html";
+  bodyHtml: string;
+  bodyText: string;
+  hasAttachments: boolean;
+  webLink: string | null;
+  attachments: Array<{ id: string; name: string; size: number; contentType: string }>;
+}
+
+function EmailViewerDialog({ msgId, mailboxEmail, onClose }: { msgId: string; mailboxEmail: string; onClose: () => void }) {
+  const [email, setEmail] = useState<EmailDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch(
+          `/api/pathway/email/${encodeURIComponent(mailboxEmail)}/${encodeURIComponent(msgId)}`,
+          { headers: getAuthHeaders(), credentials: "include" }
+        );
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (!cancelled) setEmail(data);
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message || "Failed to load email");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [msgId, mailboxEmail]);
+
+  const copyBody = () => {
+    if (!email) return;
+    const text = email.bodyText || stripHtml(email.bodyHtml);
+    navigator.clipboard.writeText(text);
+    toast({ title: "Email body copied" });
+  };
+
+  const copyAll = () => {
+    if (!email) return;
+    const header = [
+      `From: ${email.from.name || ""} <${email.from.email || ""}>`,
+      `To: ${email.to.map((r) => r.email).filter(Boolean).join(", ")}`,
+      email.cc.length ? `Cc: ${email.cc.map((r) => r.email).filter(Boolean).join(", ")}` : null,
+      `Date: ${new Date(email.date).toLocaleString("en-GB")}`,
+      `Subject: ${email.subject}`,
+    ].filter(Boolean).join("\n");
+    const body = email.bodyText || stripHtml(email.bodyHtml);
+    navigator.clipboard.writeText(`${header}\n\n${body}`);
+    toast({ title: "Full email copied" });
+  };
+
+  const downloadAttachment = async (a: { id: string; name: string }) => {
+    try {
+      const res = await fetch(
+        `/api/pathway/email/${encodeURIComponent(mailboxEmail)}/${encodeURIComponent(msgId)}/attachment/${encodeURIComponent(a.id)}`,
+        { headers: getAuthHeaders(), credentials: "include" }
+      );
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = a.name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast({ title: "Download failed", description: err?.message || "Unknown error", variant: "destructive" });
+    }
+  };
+
+  return (
+    <Dialog open={true} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="text-base pr-8">{loading ? "Loading email…" : email?.subject || "Email"}</DialogTitle>
+        </DialogHeader>
+
+        {loading && (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          </div>
+        )}
+
+        {error && (
+          <div className="py-8 text-center">
+            <AlertCircle className="w-8 h-8 mx-auto text-destructive mb-2" />
+            <p className="text-sm text-muted-foreground">{error}</p>
+          </div>
+        )}
+
+        {email && !loading && (
+          <>
+            <div className="border-b pb-2 mb-2 text-xs space-y-0.5">
+              <div><span className="text-muted-foreground">From:</span> <span className="font-medium">{email.from.name || email.from.email}</span> {email.from.email && email.from.name && <span className="text-muted-foreground">&lt;{email.from.email}&gt;</span>}</div>
+              <div><span className="text-muted-foreground">To:</span> {email.to.map((r) => r.name || r.email).join(", ")}</div>
+              {email.cc.length > 0 && <div><span className="text-muted-foreground">Cc:</span> {email.cc.map((r) => r.name || r.email).join(", ")}</div>}
+              <div><span className="text-muted-foreground">Date:</span> {new Date(email.date).toLocaleString("en-GB")}</div>
+            </div>
+
+            <div className="flex items-center gap-2 mb-2">
+              <Button variant="outline" size="sm" onClick={copyBody} className="h-7 text-xs gap-1">
+                <Copy className="w-3 h-3" /> Copy body
+              </Button>
+              <Button variant="outline" size="sm" onClick={copyAll} className="h-7 text-xs gap-1">
+                <Copy className="w-3 h-3" /> Copy full email
+              </Button>
+              {email.webLink && (
+                <a href={email.webLink} target="_blank" rel="noreferrer">
+                  <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
+                    Open in Outlook <ExternalLink className="w-3 h-3" />
+                  </Button>
+                </a>
+              )}
+            </div>
+
+            {email.attachments.length > 0 && (
+              <div className="border rounded p-2 mb-2 bg-muted/20">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5 flex items-center gap-1">
+                  <Paperclip className="w-3 h-3" /> {email.attachments.length} attachment{email.attachments.length !== 1 ? "s" : ""}
+                </p>
+                <div className="space-y-1">
+                  {email.attachments.map((a) => (
+                    <button key={a.id} onClick={() => downloadAttachment(a)} className="flex items-center gap-2 w-full text-left text-xs hover:bg-muted/50 p-1 rounded group">
+                      <Download className="w-3 h-3 text-muted-foreground group-hover:text-primary shrink-0" />
+                      <span className="truncate flex-1">{a.name}</span>
+                      <span className="text-muted-foreground text-[10px] shrink-0">{formatBytes(a.size)}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto border rounded p-3 bg-background">
+              {email.bodyContentType === "html" && email.bodyHtml ? (
+                <div
+                  className="text-sm prose prose-sm max-w-none dark:prose-invert [&_a]:text-primary [&_a]:underline [&_img]:max-w-full [&_table]:border-collapse"
+                  dangerouslySetInnerHTML={{ __html: email.bodyHtml }}
+                />
+              ) : (
+                <pre className="text-sm whitespace-pre-wrap font-sans">{email.bodyText || "(No body content)"}</pre>
+              )}
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function stripHtml(html: string): string {
+  if (!html) return "";
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  return tmp.textContent || tmp.innerText || "";
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return "—";
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
 }
