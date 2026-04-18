@@ -10,7 +10,7 @@ import {
   Building2, FolderOpen, MapPin, ShieldCheck, Sparkles,
   FileText, Image as ImageIcon, ChevronRight, ArrowRight,
   Check, Clock, AlertCircle, Plus, Search, Download, ExternalLink, Trash2,
-  Copy, Paperclip, Loader2,
+  Copy, Paperclip, Loader2, TrendingUp, RefreshCw,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -293,6 +293,33 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
   const nextStage = Math.min(run.currentStage, 7);
   const [tenantInput, setTenantInput] = useState("");
   const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
+  const [marketIntel, setMarketIntel] = useState<any>(run.stageResults?.marketIntel || null);
+  const [runningIntel, setRunningIntel] = useState(false);
+  const { toast } = useToast();
+
+  // Sync marketIntel when run prop changes (e.g. after reload)
+  useEffect(() => {
+    if (run.stageResults?.marketIntel) setMarketIntel(run.stageResults.marketIntel);
+  }, [run.stageResults?.marketIntel]);
+
+  async function fetchMarketIntel() {
+    setRunningIntel(true);
+    try {
+      const res = await fetch(`/api/property-pathway/${run.id}/market-intel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const { marketIntel: intel } = await res.json();
+      setMarketIntel(intel);
+      toast({ title: "Market intel ready", description: `${intel.leasingHistory?.length || 0} leases · ${intel.currentAvailability?.length || 0} available · ${intel.comparables?.length || 0} comps` });
+    } catch (err: any) {
+      toast({ title: "Market intel failed", description: err?.message || "Something went wrong", variant: "destructive" });
+    } finally {
+      setRunningIntel(false);
+    }
+  }
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-4">
@@ -934,6 +961,146 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           </CardContent>
         </Card>
       )}
+
+      {/* Market Intel — on-demand web crawl for comps, availability, leasing history */}
+      <Card className="border-primary/20">
+        <CardHeader className="pb-3 flex flex-row items-center justify-between">
+          <CardTitle className="text-base flex items-center gap-2">
+            <TrendingUp className="w-4 h-4" /> Market Intel
+            {marketIntel?.generatedAt && (
+              <span className="text-[10px] text-muted-foreground font-normal">
+                — {new Date(marketIntel.generatedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
+          </CardTitle>
+          <Button size="sm" variant={marketIntel ? "outline" : "default"} onClick={fetchMarketIntel} disabled={runningIntel} className="h-7 text-xs gap-1.5">
+            {runningIntel ? <><Loader2 className="w-3 h-3 animate-spin" /> Crawling…</> : marketIntel ? <><RefreshCw className="w-3 h-3" /> Re-run</> : <><Search className="w-3 h-3" /> Run Market Intel</>}
+          </Button>
+        </CardHeader>
+        <CardContent className="text-sm space-y-4 pb-4">
+          {!marketIntel && !runningIntel && (
+            <p className="text-muted-foreground text-sm">
+              Searches Perplexity + Exa across EG, CoStar, PropertyWeek, and property portals to find leasing history, current availability, and comparable transactions near this building.
+            </p>
+          )}
+          {runningIntel && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                Crawling EG, CoStar, PropertyWeek, Rightmove, and web sources… this takes ~30 seconds.
+              </div>
+            </div>
+          )}
+          {marketIntel && !runningIntel && (
+            <div className="space-y-4">
+              {/* Key findings */}
+              {marketIntel.keyFindings?.length > 0 && (
+                <div className="rounded-lg border bg-primary/5 border-primary/20 p-3">
+                  <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-2">Key findings</p>
+                  <ul className="space-y-1.5">
+                    {marketIntel.keyFindings.map((f: string, i: number) => (
+                      <li key={i} className="flex gap-2 text-[12px]">
+                        <span className="text-primary shrink-0 font-bold">·</span>
+                        <span>{f}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {/* Market context */}
+              {marketIntel.marketContext && (
+                <div>
+                  <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Market Context</p>
+                  <p className="text-[12px] text-muted-foreground leading-relaxed">{marketIntel.marketContext}</p>
+                </div>
+              )}
+              {/* Leasing history */}
+              {marketIntel.leasingHistory?.length > 0 && (
+                <div>
+                  <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-2">Leasing History — this building</p>
+                  <div className="space-y-1.5">
+                    {marketIntel.leasingHistory.map((l: any, i: number) => (
+                      <div key={i} className="border rounded p-2.5 bg-muted/20 grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1 text-[11px]">
+                        {l.tenant && <div className="col-span-2 md:col-span-1"><span className="text-muted-foreground">Tenant: </span><span className="font-medium">{l.tenant}</span></div>}
+                        {l.area && <div><span className="text-muted-foreground">Area: </span><span className="font-medium">{l.area}</span></div>}
+                        {l.rent && <div><span className="text-muted-foreground">Rent: </span><span className="font-medium">{l.rent}</span></div>}
+                        {l.date && <div><span className="text-muted-foreground">Date: </span><span className="font-medium">{l.date}</span></div>}
+                        {l.term && <div><span className="text-muted-foreground">Term: </span><span className="font-medium">{l.term}</span></div>}
+                        {l.notes && <div className="col-span-2 md:col-span-4"><span className="text-muted-foreground">Notes: </span>{l.notes}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Comparables */}
+              {marketIntel.comparables?.length > 0 && (
+                <div>
+                  <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-2">Comparable Transactions — submarket</p>
+                  <div className="space-y-1.5">
+                    {marketIntel.comparables.map((c: any, i: number) => (
+                      <div key={i} className="border rounded p-2.5 bg-muted/20 grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1 text-[11px]">
+                        {c.address && <div className="col-span-2"><span className="text-muted-foreground">Address: </span><span className="font-medium">{c.address}</span></div>}
+                        {c.tenant && <div><span className="text-muted-foreground">Tenant: </span><span className="font-medium">{c.tenant}</span></div>}
+                        {c.rent && <div><span className="text-muted-foreground">Rent: </span><span className="font-medium">{c.rent}</span></div>}
+                        {c.area && <div><span className="text-muted-foreground">Area: </span><span className="font-medium">{c.area}</span></div>}
+                        {c.date && <div><span className="text-muted-foreground">Date: </span><span className="font-medium">{c.date}</span></div>}
+                        {c.source && <div><span className="text-muted-foreground">Source: </span>{c.source}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Current availability */}
+              {marketIntel.currentAvailability?.length > 0 && (
+                <div>
+                  <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-2">Current Availability — nearby</p>
+                  <div className="space-y-1.5">
+                    {marketIntel.currentAvailability.map((a: any, i: number) => (
+                      <div key={i} className="border rounded p-2.5 bg-muted/20 grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-1 text-[11px]">
+                        {a.address && (
+                          <div className="col-span-2">
+                            <span className="text-muted-foreground">Address: </span>
+                            {a.url ? (
+                              <a href={a.url} target="_blank" rel="noreferrer" className="font-medium text-primary hover:underline inline-flex items-center gap-0.5">
+                                {a.address} <ExternalLink className="w-2.5 h-2.5" />
+                              </a>
+                            ) : (
+                              <span className="font-medium">{a.address}</span>
+                            )}
+                          </div>
+                        )}
+                        {a.area && <div><span className="text-muted-foreground">Size: </span><span className="font-medium">{a.area}</span></div>}
+                        {a.asking && <div><span className="text-muted-foreground">Asking: </span><span className="font-medium">{a.asking}</span></div>}
+                        {a.type && <div><span className="text-muted-foreground">Use: </span>{a.type}</div>}
+                        {a.agent && <div><span className="text-muted-foreground">Agent: </span>{a.agent}</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {/* Empty state */}
+              {!marketIntel.keyFindings?.length && !marketIntel.leasingHistory?.length && !marketIntel.comparables?.length && !marketIntel.currentAvailability?.length && (
+                <p className="text-sm text-muted-foreground">No structured data found — try re-running or searching manually on EG / CoStar.</p>
+              )}
+              {/* Citations */}
+              {marketIntel.citations?.length > 0 && (
+                <details className="text-[10px]">
+                  <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Sources ({marketIntel.citations.length})</summary>
+                  <div className="mt-2 space-y-1 max-h-36 overflow-y-auto">
+                    {marketIntel.citations.map((c: any, i: number) => (
+                      <div key={i}>
+                        <a href={c.url} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5 truncate max-w-full">
+                          {c.title || c.url} <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

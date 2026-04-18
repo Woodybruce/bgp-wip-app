@@ -16,6 +16,8 @@ import {
 import { inArray } from "drizzle-orm";
 import { performPropertyLookup } from "./property-lookup";
 import { executeCreateSharePointFolder, executeUploadFileToSharePoint } from "./utils/sharepoint-operations";
+import { askPerplexity } from "./perplexity";
+import { callClaude } from "./utils/anthropic-client";
 
 /**
  * Property Pathway Orchestrator
@@ -144,6 +146,16 @@ interface StageResults {
     documentUrl?: string;
     sharepointUrl?: string;
     pdfPath?: string;
+  };
+  marketIntel?: {
+    leasingHistory: Array<{ tenant?: string; area?: string; rent?: string; date?: string; term?: string; notes?: string }>;
+    currentAvailability: Array<{ address?: string; area?: string; asking?: string; type?: string; agent?: string; url?: string }>;
+    comparables: Array<{ address?: string; tenant?: string; rent?: string; area?: string; date?: string; source?: string }>;
+    marketContext?: string;
+    keyFindings?: string[];
+    citations?: Array<{ url: string; title?: string }>;
+    generatedAt?: string;
+    error?: string;
   };
 }
 
@@ -1720,6 +1732,187 @@ export function registerPropertyPathwayRoutes(app: Express) {
       res.json(runs);
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ============================================================================
+  // MARKET INTEL — on-demand web crawl for comps, availability, leasing history
+  // ============================================================================
+
+  app.post("/api/property-pathway/:runId/market-intel", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const run = await getRun(String(req.params.runId));
+      if (!run) return res.status(404).json({ error: "Run not found" });
+
+      const address = run.address;
+      const postcode = run.postcode || "";
+      const location = [address, postcode].filter(Boolean).join(", ");
+      const area = postcode ? postcode.split(" ")[0] : "central London";
+      const exaKey = process.env.EXA_API_KEY;
+
+      console.log(`[market-intel] Starting crawl for ${location}`);
+
+      // Run three searches in parallel: leasing history, availability/comps, Exa portal crawl
+      const [leasingRes, availRes, exaRes] = await Promise.allSettled([
+        askPerplexity(
+          `What leases have been signed at ${location}? Who are the current and historic tenants/occupiers? Include tenant names, floor areas, rents (headline, zone A, ITZA, net effective), lease dates, lease lengths, and rent-free periods where known.`,
+          {
+            systemPrompt: "You are a UK commercial property market researcher. Find factual lease transaction data for this specific building. Include specific rents in £ psf or £ pa, areas in sq ft, lease lengths, and dates. Be specific and cite sources like EG, CoStar, PropertyWeek, Estates Gazette, or CBRE/Savills/JLL/BGP press releases.",
+            maxTokens: 1500,
+            temperature: 0.1,
+          }
+        ),
+        askPerplexity(
+          `What commercial property (office, retail, or other) is currently available to let or for sale near ${location}? What are the most recent comparable lease transactions in ${area}? Include asking rents, achieved rents, sizes, use classes, agents, and transaction dates.`,
+          {
+            systemPrompt: "You are a UK commercial property market researcher. Find current availability listings and recent comparable lease or investment transactions. For availability: address, size, asking rent, agent. For comps: tenant or buyer, rent achieved, size, date, source. Be specific with figures.",
+            maxTokens: 1500,
+            temperature: 0.1,
+          }
+        ),
+        exaKey
+          ? Promise.allSettled([
+              // Search property portals for this specific building
+              fetch("https://api.exa.ai/search", {
+                method: "POST",
+                headers: { "x-api-key": exaKey, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  query: `"${address}" ${postcode} commercial property lease tenant`,
+                  numResults: 6,
+                  contents: { text: { maxCharacters: 1200 } },
+                }),
+                signal: AbortSignal.timeout(12000),
+              }).then(r => r.json()),
+              // Search for area market reports and comps
+              fetch("https://api.exa.ai/search", {
+                method: "POST",
+                headers: { "x-api-key": exaKey, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  query: `${area} commercial property market rent comparable 2024 2025 office retail lease`,
+                  numResults: 5,
+                  contents: { text: { maxCharacters: 1200 } },
+                }),
+                signal: AbortSignal.timeout(12000),
+              }).then(r => r.json()),
+            ])
+          : Promise.resolve(null),
+      ]);
+
+      // Collect raw text for Claude synthesis
+      const parts: string[] = [];
+      const citations: Array<{ url: string; title?: string }> = [];
+
+      if (leasingRes.status === "fulfilled") {
+        parts.push(`=== LEASING HISTORY & HISTORIC TENANTS ===\n${leasingRes.value.answer}`);
+        citations.push(...leasingRes.value.citations);
+      } else {
+        console.warn("[market-intel] Perplexity leasing query failed:", (leasingRes as any).reason?.message);
+      }
+
+      if (availRes.status === "fulfilled") {
+        parts.push(`=== CURRENT AVAILABILITY & COMPARABLES ===\n${availRes.value.answer}`);
+        citations.push(...availRes.value.citations);
+      } else {
+        console.warn("[market-intel] Perplexity availability query failed:", (availRes as any).reason?.message);
+      }
+
+      if (exaRes.status === "fulfilled" && Array.isArray(exaRes.value)) {
+        for (const settled of exaRes.value) {
+          if (settled.status === "fulfilled" && settled.value?.results) {
+            const exaText = (settled.value.results as any[])
+              .map((r: any) => `SOURCE: ${r.title || r.url}\nURL: ${r.url}\n${(r.text || "").slice(0, 900)}`)
+              .join("\n\n---\n\n");
+            if (exaText.trim()) parts.push(`=== WEB SOURCES ===\n${exaText}`);
+            for (const r of settled.value.results) {
+              if (r.url) citations.push({ url: r.url, title: r.title });
+            }
+          }
+        }
+      }
+
+      if (parts.length === 0) {
+        return res.status(503).json({ error: "All search providers failed. Check PERPLEXITY_API_KEY and EXA_API_KEY." });
+      }
+
+      const rawData = parts.join("\n\n");
+
+      // Claude synthesises into structured JSON
+      const synthesis = await callClaude({
+        model: "claude-opus-4-6",
+        messages: [{
+          role: "user",
+          content: `You are a senior property analyst at BGP (Bruce Gillingham Pollard), a leading London commercial property agency. Synthesise the raw web research below into structured market intelligence for ${location}.
+
+Return a JSON object with exactly this structure (no prose around it):
+{
+  "leasingHistory": [
+    { "tenant": "...", "area": "X,XXX sq ft", "rent": "£XX psf headline / £XXXk pa", "date": "Month YYYY or YYYY", "term": "X years", "notes": "rent-free, break clause, etc." }
+  ],
+  "currentAvailability": [
+    { "address": "...", "area": "X,XXX sq ft", "asking": "£XX psf", "type": "office|retail|industrial|mixed", "agent": "...", "url": "https://..." }
+  ],
+  "comparables": [
+    { "address": "...", "tenant": "...", "rent": "£XX psf", "area": "X,XXX sq ft", "date": "Month YYYY or YYYY", "source": "EG/CoStar/Agent" }
+  ],
+  "marketContext": "3-5 sentence summary of submarket conditions, rent levels, demand drivers, and any notable trends for ${area}.",
+  "keyFindings": [
+    "Concise factual finding 1 — include numbers where possible",
+    "Concise factual finding 2",
+    "Concise factual finding 3",
+    "Concise factual finding 4"
+  ]
+}
+
+RULES:
+- Only include entries that have at least two meaningful populated fields — omit sparse entries
+- Never invent or hallucinate data. If something is uncertain, mark it "(unconfirmed)" or omit it
+- Rents must be in £ psf or £ pa format with actual numbers
+- Areas must be in sq ft with actual numbers
+- Dates as specific as source allows — "Q1 2024" is fine, "2020s" is not
+- leasingHistory = transactions that have completed at this specific building
+- comparables = transactions elsewhere in the submarket that serve as rent evidence
+- currentAvailability = what is currently on the market nearby
+
+RAW RESEARCH:
+${rawData.slice(0, 14000)}`,
+        }],
+        max_completion_tokens: 2500,
+        temperature: 0.1,
+      });
+
+      const raw = synthesis.choices[0]?.message?.content || "{}";
+      let parsed: any = { leasingHistory: [], currentAvailability: [], comparables: [], keyFindings: [], marketContext: "" };
+      try {
+        const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+        const start = cleaned.indexOf("{");
+        const end = cleaned.lastIndexOf("}");
+        if (start >= 0 && end > start) {
+          parsed = JSON.parse(cleaned.slice(start, end + 1));
+        }
+      } catch (e: any) {
+        console.warn("[market-intel] Claude JSON parse failed:", e?.message);
+        parsed.marketContext = raw.slice(0, 600);
+      }
+
+      const intel: StageResults["marketIntel"] = {
+        leasingHistory: Array.isArray(parsed.leasingHistory) ? parsed.leasingHistory : [],
+        currentAvailability: Array.isArray(parsed.currentAvailability) ? parsed.currentAvailability : [],
+        comparables: Array.isArray(parsed.comparables) ? parsed.comparables : [],
+        marketContext: parsed.marketContext || "",
+        keyFindings: Array.isArray(parsed.keyFindings) ? parsed.keyFindings : [],
+        citations: citations
+          .filter((c, i, arr) => c.url && arr.findIndex((x) => x.url === c.url) === i)
+          .slice(0, 20),
+        generatedAt: new Date().toISOString(),
+      };
+
+      const stageResults = { ...((run.stageResults as StageResults) || {}), marketIntel: intel };
+      const updated = await updateRun(run.id, { stageResults });
+      console.log(`[market-intel] Done for ${location} — ${intel.leasingHistory.length} leases, ${intel.currentAvailability.length} available, ${intel.comparables.length} comps`);
+      res.json({ success: true, marketIntel: intel, run: updated });
+    } catch (err: any) {
+      console.error("[market-intel]", err?.message || err);
+      res.status(500).json({ error: err?.message || "Market intel failed" });
     }
   });
 

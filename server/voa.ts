@@ -144,41 +144,36 @@ async function runVoaImportInProcess(opts: { baCodes?: string[]; listYear?: stri
   const tmpDir = "/tmp/voa-import";
   if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
   const zipPath = path.join(tmpDir, `voa-${year}.zip`);
-  const extractDir = path.join(tmpDir, `voa-${year}-extract`);
 
-  // === Download via native fetch ===
+  // === Download via streaming fetch → file (keeps memory low) ===
   if (!fs.existsSync(zipPath) || fs.statSync(zipPath).size < 1024) {
     console.log(`[VOA auto] Downloading ${year} rating list from ${zipUrl}...`);
     const resp = await fetch(zipUrl);
     if (!resp.ok) throw new Error(`Download failed: ${resp.status} ${resp.statusText}`);
-    const ab = await resp.arrayBuffer();
-    const buf = Buffer.from(ab);
-    if (buf.length < 1024) throw new Error(`Downloaded file too small (${buf.length} bytes) — likely error page`);
-    fs.writeFileSync(zipPath, buf);
-    console.log(`[VOA auto] Downloaded ${(buf.length / 1024 / 1024).toFixed(1)} MB to ${zipPath}`);
+    if (!resp.body) throw new Error("No response body");
+    const fileStream = fs.createWriteStream(zipPath);
+    // Web ReadableStream → Node writable. Use stream-pipeline semantics.
+    const { Readable } = await import("stream");
+    const { pipeline } = await import("stream/promises");
+    await pipeline(Readable.fromWeb(resp.body as any), fileStream);
+    const size = fs.statSync(zipPath).size;
+    if (size < 1024) throw new Error(`Downloaded file too small (${size} bytes) — likely error page`);
+    console.log(`[VOA auto] Downloaded ${(size / 1024 / 1024).toFixed(1)} MB to ${zipPath}`);
   }
 
-  // === Extract via jszip ===
-  const zipBuffer = fs.readFileSync(zipPath);
-  const JSZip = (await import("jszip")).default;
-  const zip = await JSZip.loadAsync(zipBuffer);
-
-  // Find the CSV file — look for anything with "baseline" or "listentries" in name + ending .csv
-  const csvEntry = Object.values(zip.files).find((f: any) => !f.dir && /\.csv$/i.test(f.name) && /baseline|listentries|compiled/i.test(f.name));
+  // === Stream the CSV directly out of the ZIP (never fully in memory) ===
+  // @ts-ignore - unzipper has no types
+  const unzipper = (await import("unzipper")).default || (await import("unzipper"));
+  const directory: any = await unzipper.Open.file(zipPath);
+  const csvEntry: any = directory.files.find((f: any) =>
+    !f.type?.includes("Directory") && /\.csv$/i.test(f.path) && /baseline|listentries|compiled/i.test(f.path)
+  );
   if (!csvEntry) {
-    const allNames = Object.keys(zip.files).slice(0, 20).join(", ");
-    throw new Error(`No CSV file found in ZIP. Contents: ${allNames}`);
+    const names = directory.files.slice(0, 20).map((f: any) => f.path).join(", ");
+    throw new Error(`No CSV file found in ZIP. Contents: ${names}`);
   }
-  console.log(`[VOA auto] Extracting ${(csvEntry as any).name}...`);
-
-  if (!fs.existsSync(extractDir)) fs.mkdirSync(extractDir, { recursive: true });
-  const csvPath = path.join(extractDir, path.basename((csvEntry as any).name));
-
-  if (!fs.existsSync(csvPath) || fs.statSync(csvPath).size < 1024) {
-    const csvContent = await (csvEntry as any).async("nodebuffer");
-    fs.writeFileSync(csvPath, csvContent);
-    console.log(`[VOA auto] Wrote ${(csvContent.length / 1024 / 1024).toFixed(1)} MB CSV`);
-  }
+  console.log(`[VOA auto] Streaming ${csvEntry.path} out of ZIP...`);
+  const csvStream = csvEntry.stream();
 
   // === Clear existing rows for this scope ===
   if (targetBaCodes.length > 0) {
@@ -193,16 +188,20 @@ async function runVoaImportInProcess(opts: { baCodes?: string[]; listYear?: stri
     await db.delete(voaRatings).where(eq(voaRatings.listYear, year));
   }
 
-  // === Parse + insert ===
+  // === Parse + insert (streaming from ZIP entry, never buffers full CSV) ===
   let imported = 0;
   let skipped = 0;
   let batch: any[] = [];
   const BATCH_SIZE = 500;
 
+  csvStream.setEncoding("utf-8");
   const rl = createInterface({
-    input: createReadStream(csvPath, { encoding: "utf-8" }),
+    input: csvStream,
     crlfDelay: Infinity,
   });
+
+  // Yield to the event loop periodically so user requests aren't blocked.
+  const yieldToEventLoop = () => new Promise((r) => setImmediate(r));
 
   for await (const line of rl) {
     if (!line.trim()) continue;
@@ -221,6 +220,8 @@ async function runVoaImportInProcess(opts: { baCodes?: string[]; listYear?: stri
       await db.insert(voaRatings).values(batch);
       imported += batch.length;
       batch = [];
+      // Give user requests a chance to run between batches
+      await yieldToEventLoop();
     }
   }
   if (batch.length > 0) {
@@ -230,13 +231,16 @@ async function runVoaImportInProcess(opts: { baCodes?: string[]; listYear?: stri
   return { imported, skipped, message: `Scope: ${targetBaCodes.length > 0 ? `BA codes [${targetBaCodes.join(", ")}]` : `postcode areas [${targetPostcodeAreas.join(", ")}]`}` };
 }
 
-// Auto-seed the VOA table on server startup. Runs in background so it doesn't
-// block boot. Re-checks every 30 days so we pick up VOA list updates.
+// Auto-seed the VOA table on server startup. Runs in background with frequent
+// event-loop yields so user requests aren't blocked by the heavy CSV parse.
+// Re-checks every 30 days so we pick up VOA list updates.
 // Scope: London + home counties postcode areas (wholesale import).
 export function startVoaAutoImport() {
+  if (process.env.DISABLE_VOA_AUTO_IMPORT === "1") {
+    console.log("[VOA auto] Disabled via env var");
+    return;
+  }
   const CHECK_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-  // Threshold: if we have fewer than ~30k rows, assume we need a fresh import.
-  // A full London + home counties import should yield well above that.
   const MIN_ROWS_THRESHOLD = 30000;
 
   const maybeImport = async () => {
@@ -247,7 +251,7 @@ export function startVoaAutoImport() {
         console.log(`[VOA auto] Already have ${c} rows for 2023 list — skipping auto-import.`);
         return;
       }
-      console.log(`[VOA auto] Only ${c || 0} rows indexed — running London + home counties import...`);
+      console.log(`[VOA auto] Only ${c || 0} rows indexed — running London + home counties import (event-loop-friendly)...`);
       const { imported, skipped, message } = await runVoaImportInProcess({});
       console.log(`[VOA auto] Imported ${imported} rows (${skipped} skipped). ${message || ""}`);
     } catch (err: any) {
@@ -255,8 +259,10 @@ export function startVoaAutoImport() {
     }
   };
 
-  // First check after 90s so boot + other auto-jobs finish cleanly
-  setTimeout(maybeImport, 90_000);
+  // Delay first run to 15 minutes post-boot so heavy user requests (Stage 1
+  // runs, etc.) aren't contending with the import for memory/CPU. Then
+  // re-check every 30 days.
+  setTimeout(maybeImport, 15 * 60 * 1000);
   setInterval(maybeImport, CHECK_INTERVAL_MS);
 }
 
