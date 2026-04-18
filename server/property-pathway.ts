@@ -431,7 +431,9 @@ async function runStage1(runId: string, req: Request): Promise<void> {
       }
     }
 
-    // Team mailboxes via app-only token (requires admin-consented Mail.Read)
+    // Team mailboxes via app-only token (requires admin-consented Mail.Read).
+    // X-AnchorMailbox header routes the request to the correct Exchange backend
+    // — critical for reliable $search results on multi-mailbox tenants.
     const errorsByMailbox: Record<string, string> = {};
     let successfulMailboxes = 0;
     for (const mb of mailboxes) {
@@ -439,7 +441,8 @@ async function runStage1(runId: string, req: Request): Promise<void> {
       for (const phrase of searchPhrases) {
         try {
           const searchRes: any = await graphRequest(
-            `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(phrase)}&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`
+            `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(phrase)}&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
+            { headers: { "X-AnchorMailbox": mb.email } }
           );
           mbSuccessful = true;
           const messages = searchRes?.value || [];
@@ -1226,12 +1229,30 @@ export function registerPropertyPathwayRoutes(app: Express) {
         }
       }
 
-      // Test app-token on every team mailbox
-      const mailboxResults: Array<{ email: string; owner: string; status: string; error?: string }> = [];
+      // Test app-token on every team mailbox — tries BOTH a plain list AND a $search
+      // so we can tell whether Graph's search index itself is the problem.
+      const searchTerm = String(req.query.search || "Haymarket");
+      const mailboxResults: Array<{ email: string; owner: string; status: string; listCount?: number; searchCount?: number; error?: string }> = [];
       for (const mb of mailboxes) {
         try {
-          await graphRequest(`/users/${encodeURIComponent(mb.email)}/messages?$top=1&$select=id`);
-          mailboxResults.push({ email: mb.email, owner: mb.owner, status: "OK" });
+          // 1) Plain list — does permission work at all
+          const listRes: any = await graphRequest(`/users/${encodeURIComponent(mb.email)}/messages?$top=3&$select=id,subject`);
+          const listCount = listRes?.value?.length || 0;
+
+          // 2) $search — does the search index work on this mailbox
+          let searchCount = 0;
+          try {
+            const searchRes: any = await graphRequest(
+              `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(`"${searchTerm}"`)}&$top=5&$select=id,subject,from`,
+              { headers: { "X-AnchorMailbox": mb.email } }
+            );
+            searchCount = searchRes?.value?.length || 0;
+          } catch (searchErr: any) {
+            // Record but don't fail the whole check
+            mailboxResults.push({ email: mb.email, owner: mb.owner, status: "SEARCH_ERROR", listCount, error: String(searchErr?.message || searchErr).slice(0, 200) });
+            continue;
+          }
+          mailboxResults.push({ email: mb.email, owner: mb.owner, status: "OK", listCount, searchCount });
         } catch (err: any) {
           const errMsg = String(err?.message || err).slice(0, 250);
           let hint = "";
@@ -1246,17 +1267,34 @@ export function registerPropertyPathwayRoutes(app: Express) {
           mailboxResults.push({ email: mb.email, owner: mb.owner, status: "ERROR", error: errMsg + (hint ? ` — ${hint}` : "") });
         }
       }
+      const totalSearchHits = mailboxResults.reduce((sum, m) => sum + (m.searchCount || 0), 0);
 
       const okCount = mailboxResults.filter((m) => m.status === "OK").length;
+      const searchErrorCount = mailboxResults.filter((m) => m.status === "SEARCH_ERROR").length;
+      let verdict: string;
+      if (okCount === mailboxes.length) {
+        verdict = totalSearchHits > 0
+          ? `✅ All team mailboxes accessible AND $search works (${totalSearchHits} total matches for "${searchTerm}" across all boxes). Pathway email search should work.`
+          : `⚠️ All team mailboxes accessible but $search returned 0 results across all ${mailboxes.length} boxes for "${searchTerm}". This suggests the Graph search index isn't finding matches even when emails exist — might need ConsistencyLevel header or a different search approach.`;
+      } else if (searchErrorCount > 0) {
+        verdict = `⚠️ ${searchErrorCount}/${mailboxes.length} mailboxes could be listed but $search errored. Permission works but search doesn't.`;
+      } else if (okCount === 0) {
+        verdict = "❌ NO team mailboxes accessible — app-only Mail.Read permission is not effective. Restart Railway or re-consent.";
+      } else {
+        verdict = `${okCount}/${mailboxes.length} mailboxes accessible. See failures below.`;
+      }
       res.json({
         summary: {
           delegatedToken: delegatedStatus,
-          appTokenMailboxes: { total: mailboxes.length, ok: okCount, failing: mailboxes.length - okCount },
-          verdict: okCount === mailboxes.length
-            ? "All team mailboxes accessible — pathway email search should work"
-            : okCount === 0
-              ? "NO team mailboxes accessible — app-only Mail.Read permission is not effective. Try waiting or re-consenting."
-              : `${okCount}/${mailboxes.length} mailboxes accessible. See failures below.`,
+          appTokenMailboxes: {
+            total: mailboxes.length,
+            ok: okCount,
+            searchErrored: searchErrorCount,
+            failing: mailboxes.length - okCount - searchErrorCount,
+            totalSearchHits,
+            searchTerm,
+          },
+          verdict,
         },
         mailboxes: mailboxResults,
       });
