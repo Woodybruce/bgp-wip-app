@@ -343,6 +343,107 @@ function setCache<T>(key: string, data: T, ttlMs: number): void {
   contextCache.set(key, { data, expiresAt: Date.now() + ttlMs });
 }
 
+// Shared implementation of the search_emails tool, used by two handler sites.
+// - Default (no mailbox arg): uses the current user's delegated token on /me/messages.
+// - mailbox === "all": fans out across the shared inbox + every active BGP user's mailbox
+//   via the app-only token on /users/{email}/messages (requires Mail.Read Application).
+// - mailbox === specific email: uses the app-only token to search just that mailbox.
+async function runSearchEmailsTool(opts: { query: string; top: number; mailbox: string; req: any }):
+  Promise<{ messages: any[]; scope: string } | { error: string }> {
+  const { query, top, mailbox, req } = opts;
+  const mapMsg = (msg: any, via?: string) => ({
+    id: msg.id,
+    subject: (msg.subject || "(No subject)") + (via ? ` · via ${via}` : ""),
+    from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown",
+    fromEmail: msg.from?.emailAddress?.address || "",
+    to: (msg.toRecipients || []).map((r: any) => r.emailAddress?.name || r.emailAddress?.address).join(", "),
+    date: msg.receivedDateTime,
+    preview: (msg.bodyPreview || "").slice(0, 200).replace(/\n/g, " "),
+    isRead: msg.isRead,
+    hasAttachments: msg.hasAttachments,
+    msgId: msg.id,
+  });
+  const selectFields = "id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,conversationId";
+
+  // App-token path (used for mailbox=email or mailbox=all)
+  if (mailbox && mailbox !== "me") {
+    try {
+      const { graphRequest } = await import("./shared-mailbox");
+
+      // Build the list of mailboxes to query
+      const mailboxes: Array<{ email: string; owner: string }> = [];
+      if (mailbox === "all") {
+        const { db } = await import("./db");
+        const { users } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        mailboxes.push({ email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox" });
+        try {
+          const activeUsers = await db
+            .select({ username: users.username, email: users.email, name: users.name })
+            .from(users)
+            .where(eq(users.isActive, true));
+          for (const u of activeUsers) {
+            const mb = u.email || u.username;
+            if (mb && /@brucegillinghampollard\.com$/i.test(mb) && mb.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
+              mailboxes.push({ email: mb, owner: u.name || mb });
+            }
+          }
+        } catch {}
+      } else {
+        mailboxes.push({ email: mailbox, owner: mailbox });
+      }
+
+      const seen = new Set<string>();
+      const collected: any[] = [];
+      const errors: string[] = [];
+      for (const mb of mailboxes) {
+        try {
+          const url = `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(`"${query}"`)}&$top=${top}&$select=${encodeURIComponent(selectFields)}`;
+          const data = await graphRequest(url);
+          for (const msg of data?.value || []) {
+            if (seen.has(msg.id)) continue;
+            seen.add(msg.id);
+            collected.push(mapMsg(msg, mailbox === "all" ? mb.owner : undefined));
+          }
+        } catch (err: any) {
+          errors.push(`${mb.email}: ${String(err?.message || err).slice(0, 120)}`);
+        }
+      }
+      collected.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      const scope = mailbox === "all" ? `${mailboxes.length} mailboxes` : mailbox;
+      if (collected.length === 0 && errors.length > 0) {
+        return { error: `No results, and all mailboxes errored. First: ${errors[0]}` };
+      }
+      return { messages: collected.slice(0, top), scope };
+    } catch (err: any) {
+      return { error: `App-token search setup error: ${err?.message || "unknown"}` };
+    }
+  }
+
+  // Default path: delegated /me/messages
+  try {
+    const token = await getValidMsToken(req);
+    if (!token) return { error: "Not connected to Microsoft 365. Please sign in first." };
+    const url = "https://graph.microsoft.com/v1.0/me/messages?" + new URLSearchParams({
+      $search: `"${query}"`,
+      $top: String(top),
+      $select: selectFields,
+    });
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+    if (!res.ok) {
+      const errText = await res.text();
+      return { error: `Email search failed: ${res.status} ${errText.slice(0, 200)}` };
+    }
+    const data = await res.json();
+    const messages = (data.value || [])
+      .sort((a: any, b: any) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
+      .map((msg: any) => mapMsg(msg));
+    return { messages, scope: "my inbox" };
+  } catch (err: any) {
+    return { error: `Email search error: ${err?.message || "unknown"}` };
+  }
+}
+
 export function invalidateContextCache(prefix?: string): void {
   if (!prefix) {
     contextCache.clear();
@@ -2032,12 +2133,13 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "search_emails",
-      description: "Search the user's Outlook inbox for emails matching a query. Returns up to 50 results. Use this when the user asks to find specific emails, conversations, or correspondence beyond the 15 most recent shown in context. Supports searching by keyword, sender name, subject, or date range.",
+      description: "Search Outlook for emails matching a query. By default searches the signed-in user's inbox. Pass `mailbox` to search a specific BGP teammate's inbox, or 'all' to search across every team member's mailbox plus the shared inbox (uses app-level Mail.Read). Returns up to 50 results. Use when the user asks to find specific emails, correspondence, or historic threads beyond the 15 most recent shown in context.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Search query — matches against subject, body, sender, and recipients. Use KQL syntax: e.g. 'from:john subject:proposal', 'hasattachment:true landsec', 'received>=2025-01-01'" },
+          query: { type: "string", description: "Search query — matches against subject, body, sender, recipients, and attachments. Use KQL syntax: e.g. 'from:john subject:proposal', 'hasattachment:true landsec', 'received>=2025-01-01'" },
           top: { type: "number", description: "Number of results to return (default 25, max 50)" },
+          mailbox: { type: "string", description: "Optional. A specific BGP mailbox email address (e.g. 'jack@brucegillinghampollard.com') to search, OR the literal string 'all' to fan out across every active BGP user's mailbox plus the shared inbox. Omit to search only the current user's inbox." },
         },
         required: ["query"],
       },
@@ -5286,37 +5388,12 @@ async function executeCrmToolRaw(
 
   if (fnName === "search_emails") {
     try {
-      const token = await getValidMsToken(req);
-      if (!token) return { data: { error: "Not connected to Microsoft 365. Please sign in first." } };
       const searchQuery = fnArgs.query;
       const top = Math.min(fnArgs.top || 25, 50);
-      const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-      const url = "https://graph.microsoft.com/v1.0/me/messages?" + new URLSearchParams({
-        $search: `"${searchQuery}"`,
-        $top: String(top),
-        $select: "id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,conversationId",
-      });
-      const res = await fetch(url, { headers });
-      if (!res.ok) {
-        const errText = await res.text();
-        return { data: { error: `Email search failed: ${res.status} ${errText.slice(0, 200)}` } };
-      }
-      const data = await res.json();
-      const messages = (data.value || [])
-        .sort((a: any, b: any) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
-        .map((msg: any) => ({
-        id: msg.id,
-        subject: msg.subject || "(No subject)",
-        from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown",
-        fromEmail: msg.from?.emailAddress?.address || "",
-        to: (msg.toRecipients || []).map((r: any) => r.emailAddress?.name || r.emailAddress?.address).join(", "),
-        date: msg.receivedDateTime,
-        preview: (msg.bodyPreview || "").slice(0, 200).replace(/\n/g, " "),
-        isRead: msg.isRead,
-        hasAttachments: msg.hasAttachments,
-        msgId: msg.id,
-      }));
-      return { data: { results: messages, count: messages.length, query: searchQuery } };
+      const mailboxArg = typeof fnArgs.mailbox === "string" ? fnArgs.mailbox.trim().toLowerCase() : "";
+      const results = await runSearchEmailsTool({ query: searchQuery, top, mailbox: mailboxArg, req });
+      if ("error" in results) return { data: { error: results.error } };
+      return { data: { results: results.messages, count: results.messages.length, query: searchQuery, scope: results.scope } };
     } catch (searchErr: any) {
       return { data: { error: `Email search error: ${searchErr?.message || "Unknown error"}` } };
     }
@@ -8356,38 +8433,13 @@ export async function handleCrmToolCall(
 
   if (fnName === "search_emails") {
     try {
-      const token = await getValidMsToken(req);
-      if (!token) return { handled: true, response: { reply: "Not connected to Microsoft 365. Please sign in first." } };
       const searchQuery = fnArgs.query;
       const top = Math.min(fnArgs.top || 25, 50);
-      const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-      const url = "https://graph.microsoft.com/v1.0/me/messages?" + new URLSearchParams({
-        $search: `"${searchQuery}"`,
-        $top: String(top),
-        $select: "id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,conversationId",
-      });
-      const searchRes = await fetch(url, { headers });
-      if (!searchRes.ok) {
-        const errText = await searchRes.text();
-        return { handled: true, response: { reply: `Email search failed: ${searchRes.status} ${errText.slice(0, 200)}` } };
-      }
-      const data = await searchRes.json();
-      const messages = (data.value || [])
-        .sort((a: any, b: any) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
-        .map((msg: any) => ({
-        id: msg.id,
-        subject: msg.subject || "(No subject)",
-        from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown",
-        fromEmail: msg.from?.emailAddress?.address || "",
-        to: (msg.toRecipients || []).map((r: any) => r.emailAddress?.name || r.emailAddress?.address).join(", "),
-        date: msg.receivedDateTime,
-        preview: (msg.bodyPreview || "").slice(0, 200).replace(/\n/g, " "),
-        isRead: msg.isRead,
-        hasAttachments: msg.hasAttachments,
-        msgId: msg.id,
-      }));
-      const reply = await summaryHelper({ results: messages, count: messages.length, query: searchQuery });
-      return { handled: true, response: { reply: reply || `Found ${messages.length} emails matching "${searchQuery}".` } };
+      const mailboxArg = typeof fnArgs.mailbox === "string" ? fnArgs.mailbox.trim().toLowerCase() : "";
+      const results = await runSearchEmailsTool({ query: searchQuery, top, mailbox: mailboxArg, req });
+      if ("error" in results) return { handled: true, response: { reply: results.error } };
+      const reply = await summaryHelper({ results: results.messages, count: results.messages.length, query: searchQuery, scope: results.scope });
+      return { handled: true, response: { reply: reply || `Found ${results.messages.length} emails matching "${searchQuery}" (${results.scope}).` } };
     } catch (searchErr: any) {
       return { handled: true, response: { reply: `Email search error: ${searchErr?.message || "Unknown error"}` } };
     }
