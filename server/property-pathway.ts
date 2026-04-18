@@ -375,6 +375,17 @@ function derivedTenantForFilter(run: any, aiFacts: any, tenancy: any): string | 
 }
 
 async function runStage1(runId: string, req: Request): Promise<void> {
+  try {
+    await runStage1Inner(runId, req);
+  } catch (err: any) {
+    const reason = err?.message || String(err);
+    console.error(`[pathway stage1] FATAL — ${reason}`, err?.stack);
+    await setStageStatus(runId, "stage1", "failed", { stage1: { summary: `Stage 1 failed: ${reason}`, emailHits: [], sharepointHits: [], crmHits: { properties: [], deals: [], companies: [] }, deals: [], comps: [], brochureFiles: [] } as any }).catch(() => {});
+    throw err;
+  }
+}
+
+async function runStage1Inner(runId: string, req: Request): Promise<void> {
   const stage1Start = Date.now();
   const phaseTimer = (label: string, startMs: number) => {
     console.log(`[pathway stage1] ${label} took ${Date.now() - startMs}ms`);
@@ -1955,8 +1966,8 @@ export function registerPropertyPathwayRoutes(app: Express) {
 
   // Advance to / run a specific stage
   app.post("/api/property-pathway/:runId/advance", requireAuth, async (req: Request, res: Response) => {
+    const runId = String(req.params.runId);
     try {
-      const runId = String(req.params.runId);
       const { stage } = req.body as { stage?: number };
       const run = await getRun(runId);
       if (!run) return res.status(404).json({ error: "Run not found" });
@@ -1964,8 +1975,13 @@ export function registerPropertyPathwayRoutes(app: Express) {
       const updated = await runStage(runId, targetStage, req);
       res.json({ success: true, run: updated });
     } catch (err: any) {
-      console.error("[pathway advance] error:", err?.message);
-      res.status(500).json({ error: err?.message || "Failed to advance pathway" });
+      console.error("[pathway advance] error:", err?.message, err?.stack);
+      // Return the current run state so the client can show partial data + the exact error
+      const currentRun = await getRun(runId).catch(() => null);
+      res.status(500).json({
+        error: err?.message || "Failed to advance pathway",
+        run: currentRun,
+      });
     }
   });
 

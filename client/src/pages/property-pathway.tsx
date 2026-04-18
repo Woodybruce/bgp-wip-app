@@ -148,7 +148,20 @@ export default function PropertyPathway() {
         credentials: "include",
         body: JSON.stringify(stage ? { stage } : {}),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        // Try to extract the structured error body so we can show the real reason
+        let errMsg = "";
+        let partialRun: any = null;
+        try {
+          const body = await res.json();
+          errMsg = body.error || `HTTP ${res.status}`;
+          partialRun = body.run || null;
+        } catch {
+          errMsg = await res.text().catch(() => `HTTP ${res.status}`);
+        }
+        if (partialRun) setSelectedRun(partialRun);
+        throw new Error(errMsg.slice(0, 300));
+      }
       const { run } = await res.json();
       setSelectedRun(run);
       loadRuns();
