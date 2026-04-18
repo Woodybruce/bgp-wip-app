@@ -375,6 +375,10 @@ function derivedTenantForFilter(run: any, aiFacts: any, tenancy: any): string | 
 }
 
 async function runStage1(runId: string, req: Request): Promise<void> {
+  const stage1Start = Date.now();
+  const phaseTimer = (label: string, startMs: number) => {
+    console.log(`[pathway stage1] ${label} took ${Date.now() - startMs}ms`);
+  };
   const run = await getRun(runId);
   if (!run) throw new Error("Run not found");
   await setStageStatus(runId, "stage1", "running");
@@ -1146,22 +1150,28 @@ Return STRICT JSON only — no prose, no code fences:
 Intelligence pool:
 ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
 
-      // Analyst briefing — what humans read and act on. Use Sonnet for better
-      // factual accuracy and synthesis than Haiku. Falls back to Haiku on failure.
+      // Analyst briefing — Sonnet with a 40s timeout + Haiku fallback.
+      // Previously Sonnet with no timeout could hang on long prompts.
+      const briefingStart = Date.now();
+      const withTimeoutB = <T>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+        Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))]);
+
       let msg: any;
       try {
-        msg = await anthropic.messages.create({
+        msg = await withTimeoutB(anthropic.messages.create({
           model: "claude-sonnet-4-6",
           max_tokens: 1500,
           messages: [{ role: "user", content: prompt }],
-        });
+        }), 40000, "Sonnet briefing");
+        console.log(`[pathway stage1] Briefing Sonnet OK in ${Date.now() - briefingStart}ms`);
       } catch (sErr: any) {
         console.warn(`[pathway stage1] Sonnet briefing failed (${sErr?.message}), falling back to Haiku`);
-        msg = await anthropic.messages.create({
+        msg = await withTimeoutB(anthropic.messages.create({
           model: "claude-haiku-4-5-20251001",
           max_tokens: 1200,
           messages: [{ role: "user", content: prompt }],
-        });
+        }), 20000, "Haiku briefing");
+        console.log(`[pathway stage1] Briefing Haiku OK in ${Date.now() - briefingStart}ms`);
       }
       const txt = (msg.content as any[]).map((b: any) => (b.type === "text" ? b.text : "")).join("");
       const match = txt.match(/\{[\s\S]*\}/);
@@ -1216,9 +1226,10 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
         aiFacts?.mainTenants && aiFacts.mainTenants.length > 0 ? `Main tenants: ${aiFacts.mainTenants.join(", ")}` : null,
       ].filter(Boolean).join("\n");
 
-      const emailsForFilter = emailHits.map((e, i) => `E${i}. SUBJ: ${(e.subject || "").slice(0, 180)}\n     FROM: ${(e.from || "").slice(0, 80)}\n     PREV: ${(e.preview || "").slice(0, 180)}`);
-      const brochuresForFilter = brochureFiles.map((b, i) => `B${i}. ${b.name}${b.sizeMB ? ` (${b.sizeMB}MB)` : ""} — source: ${b.source}`);
-      const sharepointsForFilter = sharepointHits.map((s, i) => `S${i}. ${s.name} — path: ${s.path || "/"}`);
+      // Truncate aggressively — Opus/Sonnet slow down a lot with huge prompts
+      const emailsForFilter = emailHits.slice(0, 80).map((e, i) => `E${i}. ${(e.subject || "").slice(0, 140)} | FROM: ${(e.from || "").slice(0, 50)} | PREV: ${(e.preview || "").slice(0, 100)}`);
+      const brochuresForFilter = brochureFiles.slice(0, 40).map((b, i) => `B${i}. ${b.name}${b.sizeMB ? ` (${b.sizeMB}MB)` : ""}`);
+      const sharepointsForFilter = sharepointHits.slice(0, 60).map((s, i) => `S${i}. ${s.name} — ${(s.path || "/").slice(0, 80)}`);
 
       const filterPrompt = `You are curating intelligence for a property investigation. Be thoughtful — keep items that are PLAUSIBLY about the target building, drop only items that are CLEARLY about a different building or are pure noise.
 
@@ -1249,26 +1260,30 @@ Return STRICT JSON only, no prose, no code fences:
   "keepSharepoint": [array of S indexes]
 }`;
 
-      // Use Opus for the relevance filter — this decision gates every downstream
-      // stage (what emails inform the briefing, which brochures to review, etc).
-      // Opus distinguishes "18-22 Haymarket" from "11 Haymarket" and "Haymarket
-      // House" reliably. Falls back to Sonnet if Opus is unavailable/rate-limited.
-      const FILTER_OPUS = "claude-opus-4-7";
-      const FILTER_FALLBACK = "claude-sonnet-4-6";
+      // Sonnet primary (faster than Opus, still 95%+ as accurate on this task).
+      // Opus tended to time out on large prompts. Haiku as last-resort fallback.
+      const FILTER_PRIMARY = "claude-sonnet-4-6";
+      const FILTER_FALLBACK = "claude-haiku-4-5-20251001";
+      const filterStart = Date.now();
+      const withTimeout = <T>(p: Promise<T>, ms: number, label: string): Promise<T> =>
+        Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))]);
+
       let msg: any;
       try {
-        msg = await anthropic.messages.create({
-          model: FILTER_OPUS,
-          max_tokens: 1500,
+        msg = await withTimeout(anthropic.messages.create({
+          model: FILTER_PRIMARY,
+          max_tokens: 1200,
           messages: [{ role: "user", content: filterPrompt }],
-        });
-      } catch (opusErr: any) {
-        console.warn(`[pathway stage1] Opus filter failed (${opusErr?.message}), falling back to Sonnet`);
-        msg = await anthropic.messages.create({
+        }), 45000, "Sonnet filter");
+        console.log(`[pathway stage1] AI filter Sonnet OK in ${Date.now() - filterStart}ms`);
+      } catch (primaryErr: any) {
+        console.warn(`[pathway stage1] Sonnet filter failed (${primaryErr?.message}), trying Haiku`);
+        msg = await withTimeout(anthropic.messages.create({
           model: FILTER_FALLBACK,
-          max_tokens: 1500,
+          max_tokens: 1200,
           messages: [{ role: "user", content: filterPrompt }],
-        });
+        }), 20000, "Haiku filter");
+        console.log(`[pathway stage1] AI filter Haiku OK in ${Date.now() - filterStart}ms`);
       }
       const txt = (msg.content as any[]).map((b: any) => (b.type === "text" ? b.text : "")).join("");
       const jsonMatch = txt.match(/\{[\s\S]*\}/);
@@ -1381,6 +1396,8 @@ Return STRICT JSON only, no prose, no code fences:
       console.warn("[pathway stage1] tenant CRM match error:", err?.message);
     }
   }
+
+  console.log(`[pathway stage1] Completing after ${((Date.now() - stage1Start) / 1000).toFixed(1)}s — ${emailHits.length} emails, ${brochureFiles.length} brochures, ${sharepointHits.length} sharepoint, ${deals.length} deals, ${comps.length} comps, ${rates?.assessmentCount || 0} rates`);
 
   await setStageStatus(runId, "stage1", "completed", {
     stage1: {
