@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { requireAuth } from "./auth";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { voaRatings } from "@shared/schema";
 import { eq, ilike, and, or, sql, desc, asc } from "drizzle-orm";
 import { createReadStream } from "fs";
@@ -211,6 +211,37 @@ export function startVoaAutoImport() {
 }
 
 export function registerVoaRoutes(app: Express) {
+  // Diagnostic: check VOA data status + manually trigger import.
+  // Visit /api/voa/status to see row counts per BA code.
+  // Add ?import=1 to force an import run inline (may take 1-2 min, returns result).
+  app.get("/api/voa/status", requireAuth, async (req, res) => {
+    try {
+      const counts: any = await pool.query(
+        `SELECT ba_code, list_year, COUNT(*)::int AS rows
+           FROM voa_ratings
+          GROUP BY ba_code, list_year
+          ORDER BY rows DESC`
+      );
+      const total: any = await pool.query(`SELECT COUNT(*)::int AS total FROM voa_ratings`);
+      const base = {
+        totalRows: total.rows[0]?.total || 0,
+        byBaCode: counts.rows.map((r: any) => ({ baCode: r.ba_code, name: nameForBa(r.ba_code), listYear: r.list_year, rows: r.rows })),
+      };
+      if (req.query.import === "1") {
+        try {
+          const ba = typeof req.query.baCodes === "string" ? req.query.baCodes.split(",") : ["5990", "5600"];
+          const r = await runVoaImportInProcess({ baCodes: ba });
+          return res.json({ ...base, importTriggered: { imported: r.imported, skipped: r.skipped, baCodes: ba } });
+        } catch (err: any) {
+          return res.json({ ...base, importTriggered: { error: String(err?.message || err) } });
+        }
+      }
+      res.json(base);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Unknown" });
+    }
+  });
+
   app.get("/api/voa/ratings", requireAuth, async (req, res) => {
     try {
       const { search, baCode, descriptionCode, postcode, minRv, maxRv, sortBy, sortDir, page, limit: limitParam } = req.query;
