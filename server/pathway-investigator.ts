@@ -29,7 +29,7 @@ const INVESTIGATOR_TOOLS: any[] = [
     input_schema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Search keyword or quoted postcode. IMPORTANT: For an address use just the street/building NAME word, not the number — e.g. 'Haymarket' (not '18-22 Haymarket'), 'Regent' (not '120 Regent Street'). For postcodes use the quoted form e.g. \"SW1Y 4DG\". Single words match anywhere in the email; quoted phrases require exact match. Examples: Haymarket, \"SW1Y 4DG\", Amsprop, Goldenberg, 02801817." },
+        query: { type: "string", description: "Search keyword. IMPORTANT: For an address use just the street/building NAME word, not the number — e.g. Haymarket (not 18-22 Haymarket), Regent (not 120 Regent Street). For a postcode pass it without quotes e.g. SW1Y 4DG. Never wrap values in quotes — the tool handles quoting. Examples: Haymarket, SW1Y 4DG, Amsprop, Goldenberg, 02801817." },
         top: { type: "number", description: "Max results per mailbox (default 15, max 25)" },
       },
       required: ["query"],
@@ -166,9 +166,10 @@ async function executeInvestigatorTool(toolName: string, input: any, req: Reques
 
         // Graph $search with a quoted phrase requires EXACT match — so "18-22 Haymarket"
         // finds almost nothing. A bare word like Haymarket matches anywhere in the email.
-        // Rule: wrap in quotes only if the query already contains a space AND looks like
-        // a postcode or multi-word name (not a house-number prefix like "18-22 ...").
-        const raw = String(input.query || "").trim();
+        // Rule: wrap in quotes only if the query is a postcode or multi-word name
+        // (not a house-number prefix like "18-22 ...").
+        // Strip any outer quotes Claude may have already added to avoid double-quoting.
+        const raw = String(input.query || "").trim().replace(/^"+|"+$/g, "");
         const looksLikePostcode = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i.test(raw);
         const hasSpace = raw.includes(" ");
         const graphQuery = (looksLikePostcode || (hasSpace && !/^\d/.test(raw)))
