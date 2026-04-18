@@ -915,11 +915,23 @@ Return STRICT JSON only — no prose, no code fences:
 Intelligence pool:
 ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
 
-      const msg = await anthropic.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 1200,
-        messages: [{ role: "user", content: prompt }],
-      });
+      // Analyst briefing — what humans read and act on. Use Sonnet for better
+      // factual accuracy and synthesis than Haiku. Falls back to Haiku on failure.
+      let msg: any;
+      try {
+        msg = await anthropic.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1500,
+          messages: [{ role: "user", content: prompt }],
+        });
+      } catch (sErr: any) {
+        console.warn(`[pathway stage1] Sonnet briefing failed (${sErr?.message}), falling back to Haiku`);
+        msg = await anthropic.messages.create({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 1200,
+          messages: [{ role: "user", content: prompt }],
+        });
+      }
       const txt = (msg.content as any[]).map((b: any) => (b.type === "text" ? b.text : "")).join("");
       const match = txt.match(/\{[\s\S]*\}/);
       if (match) {
@@ -1005,11 +1017,27 @@ Return STRICT JSON only, no prose, no code fences:
   "keepSharepoint": [array of S indexes]
 }`;
 
-      const msg = await anthropic.messages.create({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 800,
-        messages: [{ role: "user", content: filterPrompt }],
-      });
+      // Use Opus for the relevance filter — this decision gates every downstream
+      // stage (what emails inform the briefing, which brochures to review, etc).
+      // Opus distinguishes "18-22 Haymarket" from "11 Haymarket" and "Haymarket
+      // House" reliably. Falls back to Sonnet if Opus is unavailable/rate-limited.
+      const FILTER_OPUS = "claude-opus-4-7";
+      const FILTER_FALLBACK = "claude-sonnet-4-6";
+      let msg: any;
+      try {
+        msg = await anthropic.messages.create({
+          model: FILTER_OPUS,
+          max_tokens: 1500,
+          messages: [{ role: "user", content: filterPrompt }],
+        });
+      } catch (opusErr: any) {
+        console.warn(`[pathway stage1] Opus filter failed (${opusErr?.message}), falling back to Sonnet`);
+        msg = await anthropic.messages.create({
+          model: FILTER_FALLBACK,
+          max_tokens: 1500,
+          messages: [{ role: "user", content: filterPrompt }],
+        });
+      }
       const txt = (msg.content as any[]).map((b: any) => (b.type === "text" ? b.text : "")).join("");
       const jsonMatch = txt.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
