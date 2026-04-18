@@ -8982,10 +8982,35 @@ export function setupChatBGPRoutes(app: Express) {
       try {
         const { db } = await import("./db");
         const { propertyPathwayRuns } = await import("@shared/schema");
+        const { desc } = await import("drizzle-orm");
         const userId = req.session?.userId || (req as any).tokenUserId || null;
+        const address = String(tcArgs.address || "").trim();
+        const postcode = tcArgs.postcode ? String(tcArgs.postcode).trim() : null;
+
+        // Dedupe (same logic as POST /api/property-pathway/start) — same postcode
+        // or aggressively-normalised address wins. Prevents duplicate runs when
+        // ChatBGP spawns a new investigation for an address we already track.
+        const normaliseAddr = (s: string) =>
+          s.trim().toLowerCase().replace(/[—–]/g, "-").replace(/\s*-\s*/g, "-").replace(/[.,]/g, "").replace(/\s+/g, " ");
+        const normalisedAddr = normaliseAddr(address);
+        const normalisedPostcode = (postcode || "").replace(/\s+/g, "").toUpperCase();
+        const existing = await db.select().from(propertyPathwayRuns).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(200);
+        const match = existing.find((r) => {
+          const rAddr = normaliseAddr(r.address || "");
+          const rPostcode = (r.postcode || "").replace(/\s+/g, "").toUpperCase();
+          if (normalisedPostcode && rPostcode) return rPostcode === normalisedPostcode;
+          return rAddr === normalisedAddr;
+        });
+        if (match) {
+          return {
+            data: { runId: match.id, address: match.address, currentStage: match.currentStage, existing: true, nextStep: `Existing investigation reused. Call advance_property_pathway to continue from stage ${match.currentStage}.` },
+            action: { type: "navigate", path: `/property-pathway?runId=${match.id}` },
+          };
+        }
+
         const [runRow] = await db.insert(propertyPathwayRuns).values({
-          address: String(tcArgs.address || "").trim(),
-          postcode: tcArgs.postcode ? String(tcArgs.postcode).trim() : null,
+          address,
+          postcode,
           propertyId: tcArgs.propertyId || null,
           currentStage: 1,
           stageStatus: {},
