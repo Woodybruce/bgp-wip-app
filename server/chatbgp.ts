@@ -1993,13 +1993,28 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "get_property_pathway",
-      description: "Fetch the current state of a Property Pathway run — all stages, findings, images, model links, and the Why Buy PDF URL if generated. Use this to answer follow-up questions about a pathway investigation without re-running anything.",
+      description: "Fetch the current state of a Property Pathway run — all stages, findings, images, model links, market intel (lease comps, availability, submarket context crawled from EG / CoStar / web during Stage 1), and the Why Buy PDF URL if generated. Use this to answer follow-up questions about a pathway investigation without re-running anything. If the user refers to a current investigation by address rather than runId, call list_property_pathway first to find the right runId.",
       parameters: {
         type: "object",
         properties: {
           runId: { type: "string", description: "The pathway run id" },
         },
         required: ["runId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "list_property_pathway",
+      description: "List active and recent Property Pathway investigations on the board — address, current stage, who started it, last update. Use this when the user asks a general question about what's being worked on (\"how's Haymarket going?\", \"what investigations are open?\") so you can match their address/context to the right runId, then call get_property_pathway for detail.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Optional substring match on address/postcode to narrow the list" },
+          limit: { type: "number", description: "Max runs to return (default 15)" },
+        },
       },
     },
   });
@@ -9115,6 +9130,31 @@ export function setupChatBGPRoutes(app: Express) {
         return { data: run };
       } catch (err: any) {
         return { data: { error: `Failed to fetch pathway: ${err?.message}` } };
+      }
+    }
+
+    if (tcName === "list_property_pathway") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const { desc, or, ilike } = await import("drizzle-orm");
+        const limit = Math.min(Math.max(Number(tcArgs.limit) || 15, 1), 50);
+        const q = tcArgs.query ? String(tcArgs.query).trim() : "";
+        const query = db.select({
+          id: propertyPathwayRuns.id,
+          address: propertyPathwayRuns.address,
+          postcode: propertyPathwayRuns.postcode,
+          currentStage: propertyPathwayRuns.currentStage,
+          stageStatus: propertyPathwayRuns.stageStatus,
+          createdAt: propertyPathwayRuns.createdAt,
+          updatedAt: propertyPathwayRuns.updatedAt,
+        }).from(propertyPathwayRuns);
+        const rows = q
+          ? await query.where(or(ilike(propertyPathwayRuns.address, `%${q}%`), ilike(propertyPathwayRuns.postcode, `%${q}%`))).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(limit)
+          : await query.orderBy(desc(propertyPathwayRuns.updatedAt)).limit(limit);
+        return { data: { count: rows.length, runs: rows } };
+      } catch (err: any) {
+        return { data: { error: `Failed to list pathway runs: ${err?.message}` } };
       }
     }
 
