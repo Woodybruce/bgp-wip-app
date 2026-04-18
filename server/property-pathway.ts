@@ -1228,6 +1228,90 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
     console.error("[pathway stage1] AI briefing error:", err?.message);
   }
 
+  // === Investigative secondary email search ===
+  // After Stage 1's first pass found the 2015/2024 "Haymarket"-subject emails,
+  // the AI briefing has now extracted the deal identity (owner, tenant, agent,
+  // Companies House number). Use those as search terms to find the OTHER
+  // emails that don't mention the address explicitly but are demonstrably
+  // about this deal — like Jack's "London Trophy Requirement", the "TRE
+  // Valuation" forwards, the "Albemarle Street" / Goldenberg thread.
+  // Searches only user's inbox + shared mailbox (lightweight, not all 30).
+  try {
+    const { getValidMsToken } = await import("./microsoft");
+    const userTok = await getValidMsToken(req).catch(() => null);
+    const { graphRequest } = await import("./shared-mailbox");
+
+    // Collect investigative terms from what we've learned so far
+    const investigativeTerms = new Set<string>();
+    const addTerm = (s: string | undefined | null) => {
+      if (!s) return;
+      const firstWord = String(s).split(/[\s,]+/)[0]?.replace(/[^\w]/g, "");
+      if (firstWord && firstWord.length >= 4) investigativeTerms.add(firstWord);
+    };
+    addTerm(initialOwnership?.proprietorName);       // e.g. "Amsprop"
+    addTerm(aiFacts?.owner);                          // AI-extracted owner
+    addTerm(derivedTenantForFilter(run, aiFacts, tenancy));  // e.g. "Dover"
+    (aiFacts?.mainTenants || []).forEach(addTerm);
+    // Historic Companies House number is a very tight match
+    if (initialOwnership?.proprietorCompanyNumber) investigativeTerms.add(initialOwnership.proprietorCompanyNumber);
+    if (aiFacts?.ownerCompanyNumber) investigativeTerms.add(aiFacts.ownerCompanyNumber);
+
+    // Remove terms already covered by the primary search
+    const primaryToken = (address.split(",")[0] || "").trim().toLowerCase().split(/\s+/)[0];
+    if (primaryToken) investigativeTerms.delete(primaryToken);
+
+    const dedupeKeys = new Set(emailHits.map((e) => e.msgId));
+    let secondaryAdded = 0;
+
+    // Only run if we have something distinctive to search for
+    if (investigativeTerms.size > 0) {
+      const inboxes: Array<{ label: string; url: (t: string) => string; headers?: Record<string, string> }> = [];
+      if (userTok) {
+        inboxes.push({
+          label: "my inbox",
+          url: (t) => `https://graph.microsoft.com/v1.0/me/messages?$search=${encodeURIComponent(`"${t}"`)}&$top=10&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
+          headers: { Authorization: `Bearer ${userTok}` },
+        });
+      }
+      inboxes.push({
+        label: "Shared inbox",
+        url: (t) => `/users/chatbgp@brucegillinghampollard.com/messages?$search=${encodeURIComponent(`"${t}"`)}&$top=10&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
+      });
+
+      for (const term of investigativeTerms) {
+        for (const inbox of inboxes) {
+          try {
+            const useGraph = !inbox.headers;
+            const data: any = useGraph
+              ? await graphRequest(inbox.url(term))
+              : await fetch(inbox.url(term), { headers: inbox.headers }).then((r) => r.ok ? r.json() : null);
+            for (const msg of (data?.value || [])) {
+              if (dedupeKeys.has(msg.id)) continue;
+              dedupeKeys.add(msg.id);
+              emailHits.push({
+                subject: msg.subject ? `${msg.subject} · via ${inbox.label}` : `(no subject) · via ${inbox.label}`,
+                from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "unknown",
+                date: msg.receivedDateTime,
+                msgId: msg.id,
+                mailboxEmail: inbox.label === "Shared inbox" ? "chatbgp@brucegillinghampollard.com" : undefined,
+                preview: (msg.bodyPreview || "").slice(0, 200),
+                hasAttachments: !!msg.hasAttachments,
+                webLink: msg.webLink || null,
+              });
+              secondaryAdded++;
+            }
+          } catch {}
+        }
+      }
+    }
+    if (secondaryAdded > 0) {
+      console.log(`[pathway stage1] Secondary investigative search added ${secondaryAdded} emails (terms: ${[...investigativeTerms].join(", ")})`);
+      emailHits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }
+  } catch (err: any) {
+    console.warn("[pathway stage1] secondary search failed:", err?.message);
+  }
+
   // === Unified AI relevance pass ===
   // Now that we've extracted property identity (owner, tenant, size, listed status),
   // use it to filter emails + brochures + SharePoint hits down to items specifically
