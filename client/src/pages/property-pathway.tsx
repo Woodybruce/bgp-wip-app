@@ -309,7 +309,18 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           </Button>
           <Button onClick={() => onAdvance(nextStage)} disabled={advancing || run.currentStage > 7} className="gap-1.5">
             {advancing ? <Clock className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
-            Run Stage {nextStage}
+            {(() => {
+              switch (nextStage) {
+                case 1: return "Run Initial Search";
+                case 2: return "Run Brand Intelligence";
+                case 3: return "Review & Confirm";
+                case 4: return "Purchase Property Intelligence";
+                case 5: return "Build Investigation Board";
+                case 6: return "Run Studio Time";
+                case 7: return "Generate Why Buy";
+                default: return `Run Stage ${nextStage}`;
+              }
+            })()}
           </Button>
         </div>
       </div>
