@@ -462,6 +462,24 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                   );
                 })()}
 
+                {/* Rates headline */}
+                {s1.rates && s1.rates.assessmentCount && s1.rates.assessmentCount > 0 && (
+                  <div className="border rounded p-2 bg-muted/20">
+                    <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Business Rates (VOA)</p>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                      <div><span className="text-muted-foreground">Total RV:</span> <span className="font-medium">{s1.rates.totalRateableValue ? `£${s1.rates.totalRateableValue.toLocaleString()}` : "—"}</span></div>
+                      <div><span className="text-muted-foreground">Assessments:</span> <span className="font-medium">{s1.rates.assessmentCount}</span></div>
+                      {s1.rates.voaSearchUrl && (
+                        <div className="col-span-2">
+                          <a href={s1.rates.voaSearchUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center gap-0.5 text-[11px]">
+                            Check on gov.uk <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* Compact pipeline counts */}
                 <div className="grid grid-cols-6 gap-1.5">
                   <CountBlock label="Emails" value={s1.emailHits?.length || 0} />
@@ -469,7 +487,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                   <CountBlock label="Deals" value={s1.deals?.length || 0} />
                   <CountBlock label="Units" value={s1.tenancy?.units?.length || 0} />
                   <CountBlock label="Comps" value={s1.comps?.length || 0} />
-                  <CountBlock label="Broch" value={s1.brochureFiles?.length || 0} />
+                  <CountBlock label="Rates" value={s1.rates?.assessmentCount || 0} />
                 </div>
               </CardContent>
             </Card>
@@ -664,6 +682,26 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                     <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
                       <span className="truncate flex-1">{e.contact || e.company || "Unknown"}</span>
                       {e.outcome && <Badge variant="outline" className="text-[8px] py-0 px-1 shrink-0">{e.outcome}</Badge>}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* VOA Rates — per-assessment list (useful for multi-let buildings) */}
+            {s1.rates?.entries && s1.rates.entries.length > 0 && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> Rates ({s1.rates.entries.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="text-[11px] space-y-0.5 pb-2">
+                  {s1.rates.entries.slice(0, 12).map((e: any, i: number) => (
+                    <div key={i} className="flex items-start gap-1 py-0.5 border-b last:border-b-0">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-medium">{e.firmName || e.description || "—"}</p>
+                        <p className="truncate text-muted-foreground text-[10px]">{e.description || ""}</p>
+                      </div>
+                      <span className="text-muted-foreground text-[10px] shrink-0">{e.rateableValue ? `£${e.rateableValue.toLocaleString()}` : "—"}</span>
                     </div>
                   ))}
                 </CardContent>

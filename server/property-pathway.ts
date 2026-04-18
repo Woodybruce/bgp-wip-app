@@ -86,6 +86,19 @@ interface StageResults {
       listedStatus?: string;
     };
     propertyImage?: { streetViewUrl?: string; googleMapsUrl?: string };
+    rates?: {
+      totalRateableValue?: number;
+      assessmentCount?: number;
+      entries: Array<{
+        firmName?: string;
+        address?: string;
+        postcode?: string;
+        description?: string;
+        rateableValue?: number | null;
+        effectiveDate?: string;
+      }>;
+      voaSearchUrl?: string;
+    };
   };
   stage2?: {
     companyId?: string;
@@ -211,7 +224,9 @@ async function runStage1(runId: string, req: Request): Promise<void> {
       proprietorCategory: crmMatch.proprietorType || undefined,
     };
   }
-  // Enrich with PropertyData lookup regardless, in case CRM is incomplete
+  // Enrich with PropertyData lookup regardless, in case CRM is incomplete.
+  // Also picks up VOA rateable-value entries for rates/business-rates surface.
+  let voaEntries: Array<{ firmName?: string; address?: string; postcode?: string; description?: string; rateableValue?: number | null; effectiveDate?: string; }> = [];
   try {
     const lookup = await performPropertyLookup({ address, postcode, layers: ["core"] });
     const freeholds = lookup.propertyDataCoUk?.freeholds?.data || [];
@@ -225,8 +240,11 @@ async function runStage1(runId: string, req: Request): Promise<void> {
         dateOfPurchase: best.date_proprietor_added || initialOwnership?.dateOfPurchase,
       };
     }
+    if (Array.isArray((lookup as any).voaRatings)) {
+      voaEntries = (lookup as any).voaRatings;
+    }
   } catch (err: any) {
-    console.error("[pathway stage1] Land reg lookup error:", err?.message);
+    console.error("[pathway stage1] Land reg / VOA lookup error:", err?.message);
   }
 
   // 1b-1. If we have a proprietor name, try to match it to an existing CRM company
@@ -672,6 +690,9 @@ async function runStage1(runId: string, req: Request): Promise<void> {
         brochureCount: brochureFiles.length,
         sharepointCount: sharepointHits.length,
         emailCount: emailHits.length,
+        // Include VOA rateable value data so briefing can surface unit splits,
+        // occupier identities and hint at rent levels.
+        voaRates: voaEntries.slice(0, 15).map((e) => ({ firmName: e.firmName, address: e.address, description: e.description, rateableValue: e.rateableValue })),
         // Include email subject + preview for context
         recentEmails: emailHits.slice(0, 15).map((e) => ({ subject: e.subject, from: e.from, date: e.date, preview: e.preview })),
       };
@@ -751,6 +772,33 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
     googleMapsUrl: `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`,
   };
 
+  // Rateable value / business rates summary.
+  // - Filter to entries that look like this address (street-match, not just postcode)
+  // - Sum their RVs to give a headline total
+  // - Include a VOA search URL so users can cross-check on gov.uk
+  let rates: NonNullable<StageResults["stage1"]>["rates"] | undefined;
+  if (voaEntries.length > 0) {
+    const primaryAddressToken = (address.split(",")[0] || "").toLowerCase();
+    const addressTokens = primaryAddressToken.match(/[a-z0-9]+/g)?.filter((w) => w.length >= 3) || [];
+    const streetMatch = (e: any) => {
+      if (!addressTokens.length) return true;
+      const hay = `${e.address || ""} ${e.firmName || ""}`.toLowerCase();
+      return addressTokens.some((t) => hay.includes(t));
+    };
+    const matched = voaEntries.filter(streetMatch);
+    const entries = matched.length > 0 ? matched : voaEntries; // if nothing matches street-wise, fall back to all
+    const totalRateableValue = entries.reduce((sum, e) => sum + (e.rateableValue || 0), 0);
+    const voaSearchUrl = postcode
+      ? `https://www.tax.service.gov.uk/business-rates-find/search?postcode=${encodeURIComponent(postcode)}`
+      : `https://www.tax.service.gov.uk/business-rates-find/`;
+    rates = {
+      totalRateableValue: totalRateableValue || undefined,
+      assessmentCount: entries.length,
+      entries: entries.slice(0, 20),
+      voaSearchUrl,
+    };
+  }
+
   // Auto-populate `tenant` from AI-extracted main tenant so Stage 2 doesn't
   // skip when we clearly know the occupier. Only set it if the existing run
   // doesn't already have a manually-set tenant.
@@ -800,6 +848,7 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
       aiBriefing,
       aiFacts,
       propertyImage,
+      rates,
       tenant: derivedTenant,
     },
   });
