@@ -338,12 +338,17 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     }
   }
 
-  // 1c. Email search via Microsoft Graph — searches shared mailbox + all BGP team members' mailboxes.
-  //     Requires Mail.Read application permission on the Azure app (admin-consented).
-  //     Each mailbox returning a 403 is silently skipped (no permission for that box).
+  // 1c. Email search via Microsoft Graph.
+  //     - PRIMARY: search the current user's OWN inbox using their delegated
+  //       token (same path ChatBGP uses — always works for the signed-in user).
+  //     - BONUS: also search the shared inbox + team mailboxes using the app
+  //       token, IF the Azure app has admin-consented Mail.Read. Silently
+  //       skipped on 403 (no permission).
   const emailHits: NonNullable<StageResults["stage1"]>["emailHits"] = [];
   try {
     const { graphRequest } = await import("./shared-mailbox");
+    const { getValidMsToken } = await import("./microsoft");
+    const delegatedToken = await getValidMsToken(req).catch(() => null);
 
     // Build the list of mailboxes to search: shared mailbox first, then every active BGP user
     const mailboxes: Array<{ email: string; owner: string }> = [
@@ -388,40 +393,71 @@ async function runStage1(runId: string, req: Request): Promise<void> {
 
     const seen = new Set<string>();
     let totalReturnedFromGraph = 0;
+
+    const pushMsg = (msg: any, ownerLabel: string, mailboxEmail?: string) => {
+      const dedupeKey = msg.internetMessageId || msg.id;
+      if (seen.has(dedupeKey)) return;
+      if (!mentionsAddress(msg)) return;
+      seen.add(dedupeKey);
+      emailHits.push({
+        subject: msg.subject ? `${msg.subject} · via ${ownerLabel}` : `(no subject) · via ${ownerLabel}`,
+        from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "unknown",
+        date: msg.receivedDateTime,
+        msgId: msg.id,
+        mailboxEmail,
+        preview: (msg.bodyPreview || "").slice(0, 200),
+        hasAttachments: !!msg.hasAttachments,
+        webLink: msg.webLink || null,
+      });
+    };
+
+    // PRIMARY: current user's OWN inbox via delegated token (always works)
+    if (delegatedToken) {
+      for (const phrase of searchPhrases) {
+        try {
+          const url = `https://graph.microsoft.com/v1.0/me/messages?$search=${encodeURIComponent(phrase)}&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`;
+          const resp = await fetch(url, { headers: { Authorization: `Bearer ${delegatedToken}`, "Content-Type": "application/json" } });
+          if (!resp.ok) {
+            console.warn(`[pathway stage1] /me/messages search (${phrase}) failed: ${resp.status}`);
+            continue;
+          }
+          const data: any = await resp.json();
+          const messages = data?.value || [];
+          totalReturnedFromGraph += messages.length;
+          for (const msg of messages) pushMsg(msg, "My inbox");
+        } catch (err: any) {
+          console.warn(`[pathway stage1] /me/messages search error (${phrase}):`, err?.message);
+        }
+      }
+    }
+
+    // Team mailboxes via app-only token (requires admin-consented Mail.Read)
+    const errorsByMailbox: Record<string, string> = {};
+    let successfulMailboxes = 0;
     for (const mb of mailboxes) {
+      let mbSuccessful = false;
       for (const phrase of searchPhrases) {
         try {
           const searchRes: any = await graphRequest(
             `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(phrase)}&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`
-          ).catch((e: any) => {
-            if (/403/.test(e?.message || "")) return null;
-            console.warn(`[pathway stage1] mailbox ${mb.email} (${phrase}) error:`, e?.message);
-            return null;
-          });
+          );
+          mbSuccessful = true;
           const messages = searchRes?.value || [];
           totalReturnedFromGraph += messages.length;
-          for (const msg of messages) {
-            const dedupeKey = msg.internetMessageId || msg.id;
-            if (seen.has(dedupeKey)) continue;
-            if (!mentionsAddress(msg)) continue;
-            seen.add(dedupeKey);
-            emailHits.push({
-              subject: msg.subject ? `${msg.subject} · via ${mb.owner}` : `(no subject) · via ${mb.owner}`,
-              from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "unknown",
-              date: msg.receivedDateTime,
-              msgId: msg.id,
-              mailboxEmail: mb.email,
-              preview: (msg.bodyPreview || "").slice(0, 200),
-              hasAttachments: !!msg.hasAttachments,
-              webLink: msg.webLink || null,
-            });
-          }
+          for (const msg of messages) pushMsg(msg, mb.owner, mb.email);
         } catch (err: any) {
-          console.warn(`[pathway stage1] mailbox search failed for ${mb.email} (${phrase}):`, err?.message);
+          // Record the first error per mailbox for visibility (not every phrase)
+          if (!errorsByMailbox[mb.email]) {
+            errorsByMailbox[mb.email] = String(err?.message || err).slice(0, 200);
+          }
         }
       }
+      if (mbSuccessful) successfulMailboxes++;
     }
-    console.log(`[pathway stage1] Email search: ${searchPhrases.length} phrase(s) x ${mailboxes.length} mailbox(es) -> ${totalReturnedFromGraph} raw hits, ${emailHits.length} kept after relevance filter`);
+    if (Object.keys(errorsByMailbox).length > 0) {
+      console.warn(`[pathway stage1] Mailboxes that errored:`, JSON.stringify(errorsByMailbox, null, 2));
+    }
+    console.log(`[pathway stage1] Email search: delegated=${delegatedToken ? "yes" : "no"}, phrases=${searchPhrases.length}, mailboxes tried=${mailboxes.length}, mailboxes OK=${successfulMailboxes} -> ${totalReturnedFromGraph} raw hits, ${emailHits.length} kept after filter`);
     // Cap total hits at 60 to keep payload manageable
     emailHits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     emailHits.splice(60);
