@@ -145,19 +145,37 @@ async function runVoaImportInProcess(opts: { baCodes?: string[]; listYear?: stri
   if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
   const zipPath = path.join(tmpDir, `voa-${year}.zip`);
 
+  // Known minimum size for a legitimate VOA 2023 list download.
+  // Full ZIP is ~450 MB. If we have anything less than 400 MB on disk, it's
+  // almost certainly a truncated / partial download from a previous crash.
+  const MIN_LEGIT_ZIP_MB = 400;
+
   // === Download via streaming fetch → file (keeps memory low) ===
-  if (!fs.existsSync(zipPath) || fs.statSync(zipPath).size < 1024) {
+  if (!fs.existsSync(zipPath) || fs.statSync(zipPath).size < MIN_LEGIT_ZIP_MB * 1024 * 1024) {
+    // Delete any corrupted partial download before re-trying
+    if (fs.existsSync(zipPath)) {
+      console.log(`[VOA auto] Deleting corrupted/incomplete ZIP at ${zipPath}`);
+      fs.unlinkSync(zipPath);
+    }
     console.log(`[VOA auto] Downloading ${year} rating list from ${zipUrl}...`);
     const resp = await fetch(zipUrl);
     if (!resp.ok) throw new Error(`Download failed: ${resp.status} ${resp.statusText}`);
     if (!resp.body) throw new Error("No response body");
+    const contentLength = Number(resp.headers.get("content-length") || 0);
     const fileStream = fs.createWriteStream(zipPath);
-    // Web ReadableStream → Node writable. Use stream-pipeline semantics.
     const { Readable } = await import("stream");
     const { pipeline } = await import("stream/promises");
     await pipeline(Readable.fromWeb(resp.body as any), fileStream);
     const size = fs.statSync(zipPath).size;
-    if (size < 1024) throw new Error(`Downloaded file too small (${size} bytes) — likely error page`);
+    // Sanity check: if declared Content-Length exists, size must match
+    if (contentLength > 0 && size !== contentLength) {
+      fs.unlinkSync(zipPath);
+      throw new Error(`Download truncated — got ${size} bytes, expected ${contentLength}`);
+    }
+    if (size < MIN_LEGIT_ZIP_MB * 1024 * 1024) {
+      fs.unlinkSync(zipPath);
+      throw new Error(`Downloaded file too small (${(size / 1024 / 1024).toFixed(1)} MB) — expected >${MIN_LEGIT_ZIP_MB} MB`);
+    }
     console.log(`[VOA auto] Downloaded ${(size / 1024 / 1024).toFixed(1)} MB to ${zipPath}`);
   }
 
@@ -231,9 +249,10 @@ async function runVoaImportInProcess(opts: { baCodes?: string[]; listYear?: stri
   return { imported, skipped, message: `Scope: ${targetBaCodes.length > 0 ? `BA codes [${targetBaCodes.join(", ")}]` : `postcode areas [${targetPostcodeAreas.join(", ")}]`}` };
 }
 
-// Auto-seed the VOA table on server startup. Runs in background with frequent
-// event-loop yields so user requests aren't blocked by the heavy CSV parse.
-// Re-checks every 30 days so we pick up VOA list updates.
+// Auto-seed the VOA table on server startup. Runs ONCE per server boot if the
+// table is under-populated. Does NOT retry on the same boot — if it fails,
+// admin should investigate (check /api/voa/status with ?import=1).
+// Re-checks after 30 days for VOA list updates.
 // Scope: London + home counties postcode areas (wholesale import).
 export function startVoaAutoImport() {
   if (process.env.DISABLE_VOA_AUTO_IMPORT === "1") {
@@ -242,28 +261,35 @@ export function startVoaAutoImport() {
   }
   const CHECK_INTERVAL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
   const MIN_ROWS_THRESHOLD = 30000;
+  let ranThisBoot = false;
 
   const maybeImport = async () => {
+    if (ranThisBoot) {
+      console.log("[VOA auto] Already attempted this boot — skipping (restart server to retry)");
+      return;
+    }
+    ranThisBoot = true;
     try {
       const [{ c }] = await db.select({ c: sql<number>`COUNT(*)::int` }).from(voaRatings)
         .where(eq(voaRatings.listYear, "2023"));
       if ((c || 0) >= MIN_ROWS_THRESHOLD) {
-        console.log(`[VOA auto] Already have ${c} rows for 2023 list — skipping auto-import.`);
+        console.log(`[VOA auto] Already have ${c} rows for 2023 list — skipping.`);
         return;
       }
-      console.log(`[VOA auto] Only ${c || 0} rows indexed — running London + home counties import (event-loop-friendly)...`);
+      console.log(`[VOA auto] Only ${c || 0} rows — running London + home counties import...`);
       const { imported, skipped, message } = await runVoaImportInProcess({});
       console.log(`[VOA auto] Imported ${imported} rows (${skipped} skipped). ${message || ""}`);
     } catch (err: any) {
-      console.error("[VOA auto] Auto-import error:", err?.message || err);
+      console.error("[VOA auto] Auto-import error (will NOT retry this boot):", err?.message || err);
+      console.error("[VOA auto] To retry, restart the server or hit /api/voa/status?import=1");
     }
   };
 
-  // Delay first run to 15 minutes post-boot so heavy user requests (Stage 1
-  // runs, etc.) aren't contending with the import for memory/CPU. Then
-  // re-check every 30 days.
+  // Delay to 15 min post-boot so it doesn't fight with early user requests
   setTimeout(maybeImport, 15 * 60 * 1000);
-  setInterval(maybeImport, CHECK_INTERVAL_MS);
+  // Re-check every 30 days (resets ranThisBoot since that's process-local,
+  // but this interval only fires while the server stays up)
+  setInterval(() => { ranThisBoot = false; maybeImport(); }, CHECK_INTERVAL_MS);
 }
 
 export function registerVoaRoutes(app: Express) {

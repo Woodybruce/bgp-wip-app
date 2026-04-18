@@ -700,18 +700,20 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
       }
     }
 
-    // Team mailboxes via app-only token — parallelised to avoid Stage 1 timeout.
-    // 30 mailboxes × 2 phrases = 60 requests; sequential would take ~2-3 min.
-    // Running them concurrently with Promise.all drops total time to ~5 seconds.
+    // Team mailboxes via app-only token — batched to keep memory low.
+    // Running all 60 requests concurrently blew Railway's memory budget.
+    // Concurrency 6 = ~10 waves, still fast (~30-60s) but peak memory stays reasonable.
     const errorsByMailbox: Record<string, string> = {};
     const successfulMailboxes = new Set<string>();
-    const jobs: Array<Promise<void>> = [];
+    const CONC = 6;
+
+    const allJobs: Array<() => Promise<void>> = [];
     for (const mb of mailboxes) {
       for (const phrase of searchPhrases) {
-        jobs.push((async () => {
+        allJobs.push(async () => {
           try {
             const searchRes: any = await graphRequest(
-              `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(phrase)}&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
+              `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(phrase)}&$top=15&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
               { headers: { "X-AnchorMailbox": mb.email } }
             );
             successfulMailboxes.add(mb.email);
@@ -723,10 +725,13 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
               errorsByMailbox[mb.email] = String(err?.message || err).slice(0, 200);
             }
           }
-        })());
+        });
       }
     }
-    await Promise.all(jobs);
+    // Run jobs in rolling waves of CONC
+    for (let i = 0; i < allJobs.length; i += CONC) {
+      await Promise.all(allJobs.slice(i, i + CONC).map((j) => j()));
+    }
     if (Object.keys(errorsByMailbox).length > 0) {
       console.warn(`[pathway stage1] Mailboxes that errored:`, JSON.stringify(errorsByMailbox, null, 2));
     }
@@ -894,8 +899,8 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
       return BROCHURE_SUBJECT_RE.test(e.subject) || subjAboutProperty;
     });
 
-    // Cap to top 15 to prevent runaway fetching on spammy searches
-    const topCandidates = candidateEmails.slice(0, 15);
+    // Cap to top 8 candidates to keep memory + time low
+    const topCandidates = candidateEmails.slice(0, 8);
 
     // Per-email attachment processor. Returns brochure records to push.
     const processEmail = async (e: any): Promise<any[]> => {
@@ -930,8 +935,8 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
             if (!isPdf && !filenameBrochurish) continue;
           }
 
-          // Skip giant files (>50MB) — likely not brochures and will slow us down
-          if (a.size && a.size > 50 * 1024 * 1024) {
+          // Skip large files (>15MB) — not typical brochures, and tight memory
+          if (a.size && a.size > 15 * 1024 * 1024) {
             console.warn(`[pathway stage1] skipping oversized attachment: ${filename} (${Math.round(a.size / 1024 / 1024)}MB)`);
             out.push({ source: "email", name: filename, ref: e.msgId, date: e.date, sizeMB: +(a.size / 1024 / 1024).toFixed(2) });
             continue;
@@ -987,8 +992,9 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
       return out;
     };
 
-    // Process in parallel with concurrency 5 so we don't hammer Graph or RAM
-    const CONCURRENCY = 5;
+    // Process in parallel with concurrency 2 to keep memory low
+    // (each brochure can be up to 15MB buffered temporarily)
+    const CONCURRENCY = 2;
     for (let i = 0; i < topCandidates.length; i += CONCURRENCY) {
       const slice = topCandidates.slice(i, i + CONCURRENCY);
       const results = await Promise.all(slice.map(processEmail));
