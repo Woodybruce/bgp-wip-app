@@ -512,15 +512,17 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             )}
           </div>
 
-          {/* Dense sub-cards: SharePoint / Brochures / CRM / Deals / Comps / Past trans / Tenancy / Engagements */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {/* Dense sub-cards in 4-col grid on wide screens.
+              Row 1 order: SharePoint, Brochures, CRM, Comps (as requested).
+              Row 2: Deals, Street sales, Units, Engagements. */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
             {/* SharePoint */}
             {s1.sharepointHits && s1.sharepointHits.length > 0 && (
               <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xs flex items-center gap-1.5"><FolderOpen className="w-3.5 h-3.5" /> SharePoint ({s1.sharepointHits.length})</CardTitle>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2"><FolderOpen className="w-4 h-4" /> SharePoint ({s1.sharepointHits.length})</CardTitle>
                 </CardHeader>
-                <CardContent className="text-[11px] space-y-0.5 max-h-48 overflow-y-auto pb-2">
+                <CardContent className="text-[11px] space-y-0.5 max-h-56 overflow-y-auto pb-2">
                   {s1.sharepointHits.slice(0, 15).map((f: any, i: number) => (
                     <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
                       {f.webUrl ? (
@@ -541,8 +543,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {/* Brochures */}
             {s1.brochureFiles && s1.brochureFiles.length > 0 && (
               <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xs flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Brochures ({s1.brochureFiles.length})</CardTitle>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Brochures ({s1.brochureFiles.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
                   {s1.brochureFiles.map((b: any, i: number) => (
@@ -565,8 +567,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {/* CRM properties */}
             {s1.crmHits?.properties && s1.crmHits.properties.length > 0 && (
               <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xs flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> CRM ({s1.crmHits.properties.length})</CardTitle>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> CRM ({s1.crmHits.properties.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
                   {s1.crmHits.properties.map((p: any) => (
@@ -581,11 +583,28 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </Card>
             )}
 
+            {/* Investment comps */}
+            {s1.comps && s1.comps.length > 0 && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> Comps ({s1.comps.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="text-[11px] space-y-0.5 pb-2">
+                  {s1.comps.slice(0, 10).map((c: any, i: number) => (
+                    <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
+                      <span className="truncate flex-1">{c.address}</span>
+                      <span className="text-muted-foreground text-[10px] shrink-0">{c.price ? `£${(c.price / 1e6).toFixed(1)}m` : "—"}{c.yield ? ` ${(c.yield * 100).toFixed(1)}%` : ""}</span>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
             {/* Deals */}
             {s1.deals && s1.deals.length > 0 && (
               <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xs flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> Deals ({s1.deals.length})</CardTitle>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> Deals ({s1.deals.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
                   {s1.deals.slice(0, 10).map((d: any) => (
@@ -600,28 +619,11 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </Card>
             )}
 
-            {/* Investment comps */}
-            {s1.comps && s1.comps.length > 0 && (
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xs flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> Comps ({s1.comps.length})</CardTitle>
-                </CardHeader>
-                <CardContent className="text-[11px] space-y-0.5 pb-2">
-                  {s1.comps.slice(0, 10).map((c: any, i: number) => (
-                    <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
-                      <span className="truncate flex-1">{c.address}</span>
-                      <span className="text-muted-foreground text-[10px] shrink-0">{c.price ? `£${(c.price / 1e6).toFixed(1)}m` : "—"}{c.yield ? ` ${(c.yield * 100).toFixed(1)}%` : ""}</span>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
-
             {/* Past transactions */}
             {s1.pricePaidHistory && s1.pricePaidHistory.length > 0 && (
               <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xs flex items-center gap-1.5"><Download className="w-3.5 h-3.5" /> Street sales ({s1.pricePaidHistory.length})</CardTitle>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2"><Download className="w-4 h-4" /> Street sales ({s1.pricePaidHistory.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
                   {s1.pricePaidHistory.slice(0, 10).map((t: any, i: number) => (
@@ -637,8 +639,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {/* Tenancy units */}
             {s1.tenancy?.units && s1.tenancy.units.length > 0 && (
               <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xs flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5" /> Units ({s1.tenancy.units.length})<Badge variant="outline" className="text-[9px] py-0 ml-1">{s1.tenancy.status}</Badge></CardTitle>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2"><MapPin className="w-4 h-4" /> Units ({s1.tenancy.units.length}) <Badge variant="outline" className="text-[10px] py-0">{s1.tenancy.status}</Badge></CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
                   {s1.tenancy.units.slice(0, 10).map((u: any) => (
@@ -654,8 +656,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             {/* Engagements */}
             {s1.engagements && s1.engagements.length > 0 && (
               <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-xs flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> Engaged ({s1.engagements.length})</CardTitle>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Engaged ({s1.engagements.length})</CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
                   {s1.engagements.slice(0, 10).map((e: any, i: number) => (
@@ -672,8 +674,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           {/* Emails — full list at bottom */}
           {s1.emailHits && s1.emailHits.length > 0 && (
             <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-xs flex items-center gap-1.5"><Search className="w-3.5 h-3.5" /> Emails ({s1.emailHits.length})</CardTitle>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Emails ({s1.emailHits.length})</CardTitle>
               </CardHeader>
               <CardContent className="text-[11px] grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 pb-2">
                 {s1.emailHits.slice(0, 16).map((h: any, i: number) => {
