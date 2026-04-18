@@ -603,20 +603,16 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     // Fallback
     if (searchPhrases.length === 0) searchPhrases.push(`"${primaryAddressToken || address}"`);
 
-    // Relevance filter — tuned to drop newsletter spam but keep genuine hits.
-    // Logic:
-    //   1. If subject contains a DIFFERENT UK postcode → drop (clearly another property)
-    //   2. Drop known newsletter/marketing senders (Propel, CoStar, Estates Gazette, etc.)
-    //   3. Keep if postcode or any distinctive address word appears in subject or preview
-    //   4. Drop everything else (Haymarket mention was probably in an attachment or
-    //      newsletter body — low signal for investigation purposes)
+    // Relevance filter — TRUST Graph's match by default. Graph's $search scans
+    // the full email body + attachments with relevance ranking, so if it returned
+    // the hit, the phrase appeared SOMEWHERE credible. Only drop:
+    //   1. Subjects that explicitly name a DIFFERENT postcode (clearly another property)
+    //   2. Known newsletter/marketing senders (automated noise)
+    //
+    // This means generic-subject emails like "London Trophy Requirement" or
+    // "FW: TRE Valuation" are KEPT — the AI filter stage handles final curation.
     const postcodeLc = (postcode || "").toLowerCase().replace(/\s+/g, "");
     const POSTCODE_RE = /\b([a-z]{1,2}\d[a-z\d]?)\s*(\d[a-z]{2})\b/gi;
-    const addressWords = primaryAddressToken
-      .toLowerCase()
-      .match(/[a-z0-9-]+/g)
-      ?.filter((w: string) => w.length >= 3 && !["the", "and", "for", "with", "from", "street", "road", "avenue", "lane", "place"].includes(w))
-      || [];
     const NEWSLETTER_SENDERS = [
       "propelinfo", "propel", "bigpropfirst", "costar", "estatesgazette", "egi", "react news",
       "propertyweek", "property week", "pie mag", "resi mag", "bisnow", "mailchimp",
@@ -624,13 +620,10 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     ];
     const mentionsAddress = (msg: any) => {
       const subject = String(msg.subject || "").toLowerCase();
-      const preview = String(msg.bodyPreview || "").toLowerCase();
       const fromAddr = String(msg.from?.emailAddress?.address || "").toLowerCase();
       const fromName = String(msg.from?.emailAddress?.name || "").toLowerCase();
-      const hay = `${subject} ${preview}`;
-      const hayNoSpaces = hay.replace(/\s+/g, "");
 
-      // 1) Different postcode in subject → drop
+      // 1) Different postcode in subject → drop (clearly another property)
       const postcodesInSubject: string[] = [];
       let m: RegExpExecArray | null;
       const re = new RegExp(POSTCODE_RE);
@@ -646,13 +639,8 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
         if (fromAddr.includes(n) || fromName.includes(n)) return false;
       }
 
-      // 3) Postcode in subject or preview → keep (strong signal)
-      if (postcodeLc && hayNoSpaces.includes(postcodeLc)) return true;
-      // 4) Any distinctive address word in subject or preview → keep
-      if (addressWords.some((w) => hay.includes(w))) return true;
-
-      // Otherwise, drop — Graph matched but the word was in an attachment or body (low signal)
-      return false;
+      // 3) Trust Graph — keep the hit. AI filter will do final curation.
+      return true;
     };
 
     const seen = new Set<string>();
@@ -737,7 +725,9 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     }
     console.log(`[pathway stage1] Email search: delegated=${delegatedToken ? "yes" : "no"}, phrases=${searchPhrases.length}, mailboxes tried=${mailboxes.length}, mailboxes OK=${successfulMailboxes.size} -> ${totalReturnedFromGraph} raw hits, ${emailHits.length} kept after regex filter`);
     emailHits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    emailHits.splice(200);
+    // Cap at 80 most-recent to keep AI prompt size manageable. We sort by date
+    // so the newest (most likely to be the live deal) are always included.
+    emailHits.splice(80);
   } catch (err: any) {
     console.error("[pathway stage1] Email search error:", err?.message);
   }
@@ -799,7 +789,12 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
       const pdRes = await fetch(`https://api.propertydata.co.uk/sold-prices?key=${process.env.PROPERTYDATA_API_KEY}&postcode=${encodeURIComponent(postcode.replace(/\s+/g, ""))}`, { signal: AbortSignal.timeout(15000) });
       if (pdRes.ok) {
         const pd: any = await pdRes.json();
-        const sold: any[] = pd?.data?.transactions || pd?.data || [];
+        // PropertyData's response shape varies: sometimes {data: {transactions: []}},
+        // sometimes {data: []}, sometimes {data: {}} when no results. Normalise.
+        let sold: any[] = [];
+        if (Array.isArray(pd?.data?.transactions)) sold = pd.data.transactions;
+        else if (Array.isArray(pd?.data)) sold = pd.data;
+        else if (Array.isArray(pd?.transactions)) sold = pd.transactions;
         const streetKey = address.split(",")[0].trim().toLowerCase();
         for (const row of sold.slice(0, 40)) {
           const rowAddr = (row.address || row.full_address || "").toLowerCase();
@@ -1167,8 +1162,9 @@ Return STRICT JSON only — no prose, no code fences:
 Intelligence pool:
 ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
 
-      // Analyst briefing — Sonnet with a 40s timeout + Haiku fallback.
-      // Previously Sonnet with no timeout could hang on long prompts.
+      // Analyst briefing — Haiku primary (5x faster than Sonnet, Railway edge
+      // times out at 45s so speed > marginal quality gain here).
+      // Sonnet as fallback for cases where Haiku can't structure the JSON.
       const briefingStart = Date.now();
       const withTimeoutB = <T>(p: Promise<T>, ms: number, label: string): Promise<T> =>
         Promise.race([p, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))]);
@@ -1176,19 +1172,19 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
       let msg: any;
       try {
         msg = await withTimeoutB(anthropic.messages.create({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1500,
-          messages: [{ role: "user", content: prompt }],
-        }), 40000, "Sonnet briefing");
-        console.log(`[pathway stage1] Briefing Sonnet OK in ${Date.now() - briefingStart}ms`);
-      } catch (sErr: any) {
-        console.warn(`[pathway stage1] Sonnet briefing failed (${sErr?.message}), falling back to Haiku`);
-        msg = await withTimeoutB(anthropic.messages.create({
           model: "claude-haiku-4-5-20251001",
           max_tokens: 1200,
           messages: [{ role: "user", content: prompt }],
         }), 20000, "Haiku briefing");
         console.log(`[pathway stage1] Briefing Haiku OK in ${Date.now() - briefingStart}ms`);
+      } catch (hErr: any) {
+        console.warn(`[pathway stage1] Haiku briefing failed (${hErr?.message}), falling back to Sonnet`);
+        msg = await withTimeoutB(anthropic.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1200,
+          messages: [{ role: "user", content: prompt }],
+        }), 20000, "Sonnet briefing");
+        console.log(`[pathway stage1] Briefing Sonnet OK in ${Date.now() - briefingStart}ms`);
       }
       const txt = (msg.content as any[]).map((b: any) => (b.type === "text" ? b.text : "")).join("");
       const match = txt.match(/\{[\s\S]*\}/);
@@ -1324,7 +1320,11 @@ Return STRICT JSON only, no prose, no code fences:
           return merged;
         };
 
-        const filteredEmails = blendIfOverFiltered(emailHits, keepE, 0.4, 8);
+        // Trust the AI's email picks if it keeps at least 5 items, otherwise
+        // blend back recent hits so user has visibility on borderline cases.
+        const filteredEmails = keepE.size >= 5
+          ? emailHits.filter((_, i) => keepE.has(i))
+          : blendIfOverFiltered(emailHits, keepE, 0.3, 8);
         // Brochures: strict cap of 4 — there should realistically only be 1-2
         // brochures for a single building (investment + leasing at most).
         // Trust AI picks here and cap hard; no blend-back, so noise gets dropped.
@@ -1974,15 +1974,27 @@ export function registerPropertyPathwayRoutes(app: Express) {
   app.post("/api/property-pathway/:runId/advance", requireAuth, async (req: Request, res: Response) => {
     const runId = String(req.params.runId);
     try {
-      const { stage } = req.body as { stage?: number };
+      const { stage, async: asyncMode } = req.body as { stage?: number; async?: boolean };
       const run = await getRun(runId);
       if (!run) return res.status(404).json({ error: "Run not found" });
       const targetStage = stage ?? run.currentStage;
+
+      // Async mode: kick off stage in background, return immediately.
+      // Client polls /api/property-pathway/:runId to watch for completion.
+      // Avoids Railway's 45s edge timeout for heavy stages.
+      if (asyncMode || targetStage === 1) {
+        runStage(runId, targetStage, req).catch((err: any) => {
+          console.error(`[pathway advance async] stage ${targetStage} error:`, err?.message);
+        });
+        return res.status(202).json({ success: true, async: true, runId, targetStage });
+      }
+
       const updated = await runStage(runId, targetStage, req);
+      if (res.headersSent) return; // guard against edge-timed-out responses
       res.json({ success: true, run: updated });
     } catch (err: any) {
       console.error("[pathway advance] error:", err?.message, err?.stack);
-      // Return the current run state so the client can show partial data + the exact error
+      if (res.headersSent) return;
       const currentRun = await getRun(runId).catch(() => null);
       res.status(500).json({
         error: err?.message || "Failed to advance pathway",

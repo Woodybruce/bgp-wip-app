@@ -149,7 +149,6 @@ export default function PropertyPathway() {
         body: JSON.stringify(stage ? { stage } : {}),
       });
       if (!res.ok) {
-        // Try to extract the structured error body so we can show the real reason
         let errMsg = "";
         let partialRun: any = null;
         try {
@@ -162,7 +161,48 @@ export default function PropertyPathway() {
         if (partialRun) setSelectedRun(partialRun);
         throw new Error(errMsg.slice(0, 300));
       }
-      const { run } = await res.json();
+
+      const body = await res.json();
+
+      // Async mode: stage is running in background, poll for completion
+      if (body.async) {
+        const targetStage = body.targetStage;
+        const stageKey = `stage${targetStage}`;
+        toast({ title: `Stage ${targetStage} running in background`, description: "This usually takes 30-90 seconds. Watching for completion..." });
+
+        const pollStart = Date.now();
+        const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+        let lastStatus: string | undefined;
+
+        while (Date.now() - pollStart < POLL_TIMEOUT_MS) {
+          await new Promise((r) => setTimeout(r, 3000));
+          try {
+            const pollRes = await fetch(`/api/property-pathway/${runId}`, { headers: getAuthHeaders(), credentials: "include" });
+            if (!pollRes.ok) continue;
+            const polled = await pollRes.json();
+            setSelectedRun(polled);
+            lastStatus = polled.stageStatus?.[stageKey];
+            if (lastStatus === "completed" || lastStatus === "failed" || lastStatus === "skipped") {
+              break;
+            }
+          } catch {}
+        }
+
+        loadRuns();
+        const finalResults = (selectedRun as any)?.stageResults?.[stageKey] || {};
+        if (lastStatus === "skipped") {
+          toast({ title: `Stage ${targetStage} skipped`, description: finalResults?.reason || "Stage was skipped — see board for details." });
+        } else if (lastStatus === "failed") {
+          toast({ title: `Stage ${targetStage} failed`, description: finalResults?.reason || finalResults?.summary || "See server logs.", variant: "destructive" });
+        } else if (lastStatus === "completed") {
+          toast({ title: `Stage ${targetStage} complete`, description: finalResults?.summary ? String(finalResults.summary).slice(0, 200) : "Findings added to board." });
+        } else {
+          toast({ title: "Still running", description: "Stage is taking longer than usual. Check the board in a minute.", variant: "destructive" });
+        }
+        return;
+      }
+
+      const { run } = body;
       setSelectedRun(run);
       loadRuns();
       // Toast the stage outcome so the user sees what happened
