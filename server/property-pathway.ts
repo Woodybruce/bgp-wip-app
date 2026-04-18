@@ -634,18 +634,56 @@ async function runStage1(runId: string, req: Request): Promise<void> {
   // 1c-6. Identify likely brochure attachments from email hits — and actually
   // fetch the attachments, uploading any PDFs to the pathway SharePoint folder
   // so they become clickable links in the board.
+  //
+  // Matching rules (ordered by confidence):
+  //   A. Filename contains the property's distinctive word → DEFINITELY this property
+  //   B. Filename contains a DIFFERENT well-known property name → NOT this property, drop
+  //   C. Otherwise: only accept if email subject contains property's distinctive
+  //      word OR postcode (i.e. email is specifically about this property),
+  //      AND filename has brochure-like keywords OR is a reasonably-sized PDF.
   const brochureFiles: NonNullable<StageResults["stage1"]>["brochureFiles"] = [];
   const BROCHURE_SUBJECT_RE = /brochure|particulars|marketing|teaser|flyer|\bom\b|memorandum|information memorandum|investment memo/i;
   const BROCHURE_FILENAME_RE = /brochure|particulars|teaser|flyer|memorandum|investment|marketing|\bim\b|\bom\b/i;
   const NOISE_FILENAME_RE = /^(signature|image|logo|disclaimer|footer)/i;
 
+  // Distinctive words from the subject property (e.g. "haymarket")
+  const brochurePrimaryToken = (address.split(",")[0] || "").trim();
+  const propertyDistinctiveWords = (brochurePrimaryToken
+    .toLowerCase()
+    .match(/[a-z]+/g) || [])
+    .filter((w: string) => w.length >= 5 && !["street", "road", "avenue", "lane", "place", "square", "house", "building", "floor", "suite", "unit"].includes(w));
+  const pcLc = (postcode || "").toLowerCase().replace(/\s+/g, "");
+
+  const filenameLooksLikeDifferentProperty = (fn: string): boolean => {
+    // If filename contains OUR property word → it's ours
+    const fnLc = fn.toLowerCase();
+    if (propertyDistinctiveWords.some((w: string) => fnLc.includes(w))) return false;
+    // Otherwise check for well-known London property/street names that would indicate a
+    // different property. If the filename leads with one of these, it's almost certainly
+    // not about our target.
+    // We use filename words >=5 chars as a proxy for "probably a property name".
+    const firstWords = fn.replace(/\.\w+$/, "").split(/[\s_\-]+/).filter((w) => /^[A-Za-z]{5,}$/.test(w)).slice(0, 2);
+    if (firstWords.length === 0) return false;
+    // If our address words don't appear at all AND the filename leads with capitalised
+    // property-like words, flag as different property
+    const suspiciousPropertyLeadRE = /^(islington|glasshouse|hammersmith|regent|bond|mayfair|soho|pall|kingsway|sloane|fleet|oxford|bank|lombard|fenchurch|cannon|chancery|gracechurch|belgrave|knightsbridge|piccadilly|kensington|chelsea|shoreditch|clerkenwell|farringdon|blackfriars|waterloo|borough|marylebone|victoria|paddington|euston|holborn|covent|russell|bloomsbury|fitzrovia)/i;
+    return suspiciousPropertyLeadRE.test(fn);
+  };
+
   try {
     const { graphRequest } = await import("./shared-mailbox");
     for (const e of emailHits) {
       if (!e.hasAttachments) continue;
-      if (!BROCHURE_SUBJECT_RE.test(e.subject)) continue;
+      // Check email relevance specifically — is this email subject ABOUT our property?
+      const subjectLc = String(e.subject || "").toLowerCase();
+      const previewLc = String(e.preview || "").toLowerCase();
+      const subjAboutProperty =
+        (!!pcLc && (subjectLc.replace(/\s+/g, "").includes(pcLc) || previewLc.replace(/\s+/g, "").includes(pcLc))) ||
+        propertyDistinctiveWords.some((w: string) => subjectLc.includes(w) || previewLc.includes(w));
+
+      // Require either explicit brochure subject, or email clearly about the property
+      if (!BROCHURE_SUBJECT_RE.test(e.subject) && !subjAboutProperty) continue;
       if (!e.mailboxEmail) {
-        // Fallback: record metadata only
         brochureFiles.push({ source: "email", name: e.subject, ref: e.msgId, date: e.date });
         continue;
       }
@@ -658,9 +696,21 @@ async function runStage1(runId: string, req: Request): Promise<void> {
           const filename = String(a.name || "");
           if (a.isInline) continue;
           if (NOISE_FILENAME_RE.test(filename)) continue;
-          // Accept PDFs outright, otherwise only if filename looks brochure-y
+
+          // === Confidence gate ===
+          // A. Filename explicitly names this property → ALWAYS keep
+          const filenameMatchesProperty = propertyDistinctiveWords.some((w: string) => filename.toLowerCase().includes(w));
+          // B. Filename names a DIFFERENT known property → drop
+          if (!filenameMatchesProperty && filenameLooksLikeDifferentProperty(filename)) continue;
+
+          // C. Fallback: brochure-ish filename AND email specifically about property
           const isPdf = /\.pdf$/i.test(filename) || /application\/pdf/i.test(a.contentType || "");
-          if (!isPdf && !BROCHURE_FILENAME_RE.test(filename)) continue;
+          const filenameBrochurish = BROCHURE_FILENAME_RE.test(filename);
+          if (!filenameMatchesProperty) {
+            // Only accept if email was specifically about this property AND file looks brochure-y
+            if (!subjAboutProperty) continue;
+            if (!isPdf && !filenameBrochurish) continue;
+          }
 
           // Fetch raw bytes
           let fileBuffer: Buffer | null = null;
