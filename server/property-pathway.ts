@@ -369,14 +369,28 @@ async function runStage1(runId: string, req: Request): Promise<void> {
       console.warn("[pathway stage1] team mailbox list error:", err?.message);
     }
 
-    // Graph's $search is flaky with OR between quoted phrases — some tenants
-    // parse it differently. Run separate searches per phrase and merge, which
-    // is more reliable than relying on the OR operator.
+    // Build word-based search phrases. Graph's $search treats quoted
+    // multi-word strings as EXACT phrase match — so `"18-22 Haymarket"` only
+    // matches emails with that literal string, missing emails that just say
+    // "Haymarket" or "18 Haymarket House". Instead: pick the most distinctive
+    // single word(s) from the address (e.g. "Haymarket"), plus the postcode.
+    // Single words aren't treated as phrases, so they match case-insensitively.
     const primaryAddressToken = (address.split(",")[0] || "").trim();
+    // Pick distinctive words from the address — >=4 chars, skipping common road/type words and pure numbers.
+    const STOPWORDS = new Set(["street", "road", "avenue", "lane", "place", "square", "house", "building", "floor", "suite", "unit", "the", "and"]);
+    const distinctiveWords = primaryAddressToken
+      .toLowerCase()
+      .match(/[a-z]+/g) // letters only — skips pure numbers like "18" and "22"
+      ?.filter((w) => w.length >= 4 && !STOPWORDS.has(w))
+      || [];
     const searchPhrases: string[] = [];
+    // Primary phrase: most distinctive word (often the street/building name).
+    // Single-word queries work reliably with $search.
+    if (distinctiveWords.length > 0) searchPhrases.push(distinctiveWords[0]);
+    // Also try the postcode as a separate query (most specific signal)
     if (postcode) searchPhrases.push(`"${postcode}"`);
-    if (primaryAddressToken && primaryAddressToken !== postcode) searchPhrases.push(`"${primaryAddressToken}"`);
-    if (searchPhrases.length === 0) searchPhrases.push(`"${address}"`);
+    // Fallback
+    if (searchPhrases.length === 0) searchPhrases.push(`"${primaryAddressToken || address}"`);
 
     // Lenient relevance filter: keep if postcode or any meaningful address word
     // appears in subject or preview. Only drops clear noise; we'd rather have
