@@ -187,6 +187,15 @@ async function setStageStatus(runId: string, stage: keyof StageStatusMap, status
 // STAGE 1 — Initial Search
 // ============================================================================
 
+// Helper: best-effort tenant name from whatever data has been collected so far
+function derivedTenantForFilter(run: any, aiFacts: any, tenancy: any): string | null {
+  const existing = run?.stageResults?.stage1?.tenant?.name;
+  if (existing) return existing;
+  if (aiFacts?.mainTenants && aiFacts.mainTenants.length > 0) return aiFacts.mainTenants[0];
+  if (tenancy?.occupier) return tenancy.occupier;
+  return null;
+}
+
 async function runStage1(runId: string, req: Request): Promise<void> {
   const run = await getRun(runId);
   if (!run) throw new Error("Run not found");
@@ -521,60 +530,7 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     }
     console.log(`[pathway stage1] Email search: delegated=${delegatedToken ? "yes" : "no"}, phrases=${searchPhrases.length}, mailboxes tried=${mailboxes.length}, mailboxes OK=${successfulMailboxes.size} -> ${totalReturnedFromGraph} raw hits, ${emailHits.length} kept after regex filter`);
     emailHits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    emailHits.splice(200); // hard cap before AI stage to control cost
-
-    // === AI relevance pass ===
-    // If we still have >25 hits after regex filtering, use Claude Haiku to
-    // decide which are genuinely about THIS property. A single batch call
-    // scores all emails at once — ~2 seconds, ~$0.002 per pathway run.
-    if (emailHits.length > 25 && process.env.ANTHROPIC_API_KEY) {
-      try {
-        const Anthropic = (await import("@anthropic-ai/sdk")).default;
-        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        const emailList = emailHits.map((e, i) => ({
-          i,
-          subject: (e.subject || "").slice(0, 200),
-          from: (e.from || "").slice(0, 100),
-          preview: (e.preview || "").slice(0, 200),
-        }));
-        const filterPrompt = `You are curating an email list for a property investigation.
-
-TARGET PROPERTY: ${address}${postcode ? `, ${postcode}` : ""}
-
-Rules:
-- KEEP if: email is specifically about THIS property (deal discussion, rent review, viewing, lease, brochure, investment analysis, internal note, tenant correspondence, agent update, ownership query, refinance, valuation, planning)
-- DROP if: newsletter, market roundup, unrelated property, generic marketing blast, automated notification, "review our newsletter" style, or unrelated deal that merely mentions this property name in passing
-
-Return STRICT JSON only — an array of indexes to KEEP (e.g. [0, 2, 5, 7, 12]). Nothing else, no prose, no code fences.
-
-EMAILS:
-${emailList.map((e) => `${e.i}. SUBJ: ${e.subject}\n   FROM: ${e.from}\n   PREV: ${e.preview}`).join("\n\n")}`;
-
-        const msg = await anthropic.messages.create({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 400,
-          messages: [{ role: "user", content: filterPrompt }],
-        });
-        const txt = (msg.content as any[]).map((b: any) => (b.type === "text" ? b.text : "")).join("");
-        const match = txt.match(/\[[\d,\s]*\]/);
-        if (match) {
-          const keepIdx = new Set<number>(JSON.parse(match[0]).map((n: any) => Number(n)));
-          const filtered = emailHits.filter((_, i) => keepIdx.has(i));
-          if (filtered.length >= 3) { // sanity: don't let AI filter everything out
-            console.log(`[pathway stage1] AI relevance pass: ${emailHits.length} -> ${filtered.length} emails`);
-            emailHits.length = 0;
-            emailHits.push(...filtered);
-          } else {
-            console.warn(`[pathway stage1] AI filter returned too few (${filtered.length}) — keeping regex-filtered list`);
-          }
-        }
-      } catch (err: any) {
-        console.warn("[pathway stage1] AI relevance pass failed (keeping regex list):", err?.message);
-      }
-    }
-
-    // Final cap
-    emailHits.splice(60);
+    emailHits.splice(200);
   } catch (err: any) {
     console.error("[pathway stage1] Email search error:", err?.message);
   }
@@ -994,6 +950,94 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
   } catch (err: any) {
     console.error("[pathway stage1] AI briefing error:", err?.message);
   }
+
+  // === Unified AI relevance pass ===
+  // Now that we've extracted property identity (owner, tenant, size, listed status),
+  // use it to filter emails + brochures + SharePoint hits down to items specifically
+  // about THIS building — not other buildings on the same street.
+  if (process.env.ANTHROPIC_API_KEY && (emailHits.length > 10 || brochureFiles.length > 2 || sharepointHits.length > 10)) {
+    try {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+      // Build property identity from everything we know
+      const identity = [
+        `Address: ${address}${postcode ? `, ${postcode}` : ""}`,
+        initialOwnership?.proprietorName || aiFacts?.owner ? `Owner: ${initialOwnership?.proprietorName || aiFacts?.owner}` : null,
+        initialOwnership?.proprietorCompanyNumber || aiFacts?.ownerCompanyNumber ? `Companies House: ${initialOwnership?.proprietorCompanyNumber || aiFacts?.ownerCompanyNumber}` : null,
+        derivedTenantForFilter(run, aiFacts, tenancy) ? `Tenant/Occupier: ${derivedTenantForFilter(run, aiFacts, tenancy)}` : null,
+        initialOwnership?.titleNumber ? `Title number: ${initialOwnership.titleNumber}` : null,
+        aiFacts?.sizeSqft ? `Size: ${aiFacts.sizeSqft} sq ft` : null,
+        aiFacts?.listedStatus ? `Heritage: ${aiFacts.listedStatus}` : null,
+        aiFacts?.currentUse ? `Use: ${aiFacts.currentUse}` : null,
+        aiFacts?.mainTenants && aiFacts.mainTenants.length > 0 ? `Main tenants: ${aiFacts.mainTenants.join(", ")}` : null,
+      ].filter(Boolean).join("\n");
+
+      const emailsForFilter = emailHits.map((e, i) => `E${i}. SUBJ: ${(e.subject || "").slice(0, 180)}\n     FROM: ${(e.from || "").slice(0, 80)}\n     PREV: ${(e.preview || "").slice(0, 180)}`);
+      const brochuresForFilter = brochureFiles.map((b, i) => `B${i}. ${b.name}${b.sizeMB ? ` (${b.sizeMB}MB)` : ""} — source: ${b.source}`);
+      const sharepointsForFilter = sharepointHits.map((s, i) => `S${i}. ${s.name} — path: ${s.path || "/"}`);
+
+      const filterPrompt = `You are curating intelligence for a property investigation. Be STRICT. Only keep items that are clearly about the EXACT BUILDING — not other buildings on the same street, not different numbers, not a nearby shop.
+
+=== TARGET BUILDING IDENTITY ===
+${identity}
+
+=== DISTINGUISHING RULES ===
+- "${address.split(",")[0]}" is the street name — many other buildings share it. DROP anything that names a DIFFERENT building number/name on the same street (e.g. if target is "18-22 Haymarket" then DROP "11 Haymarket", "11/12 Haymarket", "52 Haymarket", "Haymarket House", "Haymarket Towers", "1-19 Haymarket Leicester", anywhere else).
+- DROP newsletters, market roundups, Firmdale/hotel "What's On" emails, restaurant reservations/receipts, generic marketing blasts, restaurant opening announcements.
+- DROP any item naming a different town or area (Leicester, Soho Square, Edinburgh, Warwick Street, Basingstoke, etc.) unless tied to our target building specifically.
+- KEEP: anything that clearly ties to this building — mentions the owner, tenant/occupier, title number, exact address, size, listed status, Companies House number, agent handling this instruction, or discussion about this specific investment/lease.
+- KEEP: genuine brochures/teasers/particulars/memorandums for THIS specific building (leasing brochures count too — we want any marketing material for the exact building).
+
+=== EMAILS (index Enn) ===
+${emailsForFilter.join("\n\n")}
+
+=== BROCHURES (index Bnn) ===
+${brochuresForFilter.join("\n")}
+
+=== SHAREPOINT HITS (index Snn) ===
+${sharepointsForFilter.join("\n")}
+
+Return STRICT JSON only, no prose, no code fences:
+{
+  "keepEmails": [array of E indexes as integers — just the numbers after E],
+  "keepBrochures": [array of B indexes],
+  "keepSharepoint": [array of S indexes]
+}`;
+
+      const msg = await anthropic.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 800,
+        messages: [{ role: "user", content: filterPrompt }],
+      });
+      const txt = (msg.content as any[]).map((b: any) => (b.type === "text" ? b.text : "")).join("");
+      const jsonMatch = txt.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        const keepE = new Set<number>((parsed.keepEmails || []).map((n: any) => Number(n)));
+        const keepB = new Set<number>((parsed.keepBrochures || []).map((n: any) => Number(n)));
+        const keepS = new Set<number>((parsed.keepSharepoint || []).map((n: any) => Number(n)));
+
+        const filteredEmails = emailHits.filter((_, i) => keepE.has(i));
+        const filteredBrochures = brochureFiles.filter((_, i) => keepB.has(i));
+        const filteredSharepoint = sharepointHits.filter((_, i) => keepS.has(i));
+
+        console.log(`[pathway stage1] AI relevance pass: emails ${emailHits.length}->${filteredEmails.length}, brochures ${brochureFiles.length}->${filteredBrochures.length}, sharepoint ${sharepointHits.length}->${filteredSharepoint.length}`);
+
+        emailHits.length = 0;
+        emailHits.push(...filteredEmails);
+        brochureFiles.length = 0;
+        brochureFiles.push(...filteredBrochures);
+        sharepointHits.length = 0;
+        sharepointHits.push(...filteredSharepoint);
+      }
+    } catch (err: any) {
+      console.warn("[pathway stage1] AI relevance pass failed (keeping regex-filtered lists):", err?.message);
+    }
+  }
+
+  // Final safety cap
+  emailHits.splice(60);
 
   // Build Google Street View thumbnail + Maps link from address + postcode
   const mapsQuery = encodeURIComponent([address, postcode].filter(Boolean).join(", "));
