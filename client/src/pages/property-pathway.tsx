@@ -601,14 +601,14 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </Card>
             )}
 
-            {/* Brochures */}
-            {s1.brochureFiles && s1.brochureFiles.length > 0 && (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Brochures ({s1.brochureFiles.length})</CardTitle>
-                </CardHeader>
-                <CardContent className="text-[11px] space-y-0.5 pb-2">
-                  {s1.brochureFiles.map((b: any, i: number) => (
+            {/* Brochures — always show card so users know the pathway looked */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Brochures ({s1.brochureFiles?.length || 0})</CardTitle>
+              </CardHeader>
+              <CardContent className="text-[11px] space-y-0.5 pb-2">
+                {s1.brochureFiles && s1.brochureFiles.length > 0 ? (
+                  s1.brochureFiles.map((b: any, i: number) => (
                     <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
                       {b.webUrl ? (
                         <a href={b.webUrl} target="_blank" rel="noreferrer" className="min-w-0 flex-1 flex items-center gap-1 cursor-pointer group">
@@ -620,10 +620,14 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                       )}
                       {b.sizeMB && <span className="text-muted-foreground text-[10px] shrink-0">{b.sizeMB}M</span>}
                     </div>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
+                  ))
+                ) : (
+                  <p className="text-muted-foreground text-[11px] py-1">
+                    No brochure identified for this specific building yet. Check emails tagged 📎 — a brochure email may exist but needs manual matching.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
 
             {/* CRM properties */}
             {s1.crmHits?.properties && s1.crmHits.properties.length > 0 && (

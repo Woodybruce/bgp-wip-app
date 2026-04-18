@@ -1001,17 +1001,18 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
       const brochuresForFilter = brochureFiles.map((b, i) => `B${i}. ${b.name}${b.sizeMB ? ` (${b.sizeMB}MB)` : ""} — source: ${b.source}`);
       const sharepointsForFilter = sharepointHits.map((s, i) => `S${i}. ${s.name} — path: ${s.path || "/"}`);
 
-      const filterPrompt = `You are curating intelligence for a property investigation. Be STRICT. Only keep items that are clearly about the EXACT BUILDING — not other buildings on the same street, not different numbers, not a nearby shop.
+      const filterPrompt = `You are curating intelligence for a property investigation. Be thoughtful — keep items that are PLAUSIBLY about the target building, drop only items that are CLEARLY about a different building or are pure noise.
 
 === TARGET BUILDING IDENTITY ===
 ${identity}
 
 === DISTINGUISHING RULES ===
-- "${address.split(",")[0]}" is the street name — many other buildings share it. DROP anything that names a DIFFERENT building number/name on the same street (e.g. if target is "18-22 Haymarket" then DROP "11 Haymarket", "11/12 Haymarket", "52 Haymarket", "Haymarket House", "Haymarket Towers", "1-19 Haymarket Leicester", anywhere else).
-- DROP newsletters, market roundups, Firmdale/hotel "What's On" emails, restaurant reservations/receipts, generic marketing blasts, restaurant opening announcements.
-- DROP any item naming a different town or area (Leicester, Soho Square, Edinburgh, Warwick Street, Basingstoke, etc.) unless tied to our target building specifically.
-- KEEP: anything that clearly ties to this building — mentions the owner, tenant/occupier, title number, exact address, size, listed status, Companies House number, agent handling this instruction, or discussion about this specific investment/lease.
-- KEEP: genuine brochures/teasers/particulars/memorandums for THIS specific building (leasing brochures count too — we want any marketing material for the exact building).
+- "${address.split(",")[0]}" is the street name — many other buildings share it. DROP items that clearly name a DIFFERENT specific building (e.g. "Haymarket House", "Haymarket Towers", "11 Haymarket", "11/12 Haymarket", "52 Haymarket", "1-19 Haymarket Leicester").
+- DROP items clearly about a different town/area (Leicester, Soho Square, Edinburgh, Warwick Street, Basingstoke, Chelsea, Islington, Mayfair-but-named-specific-building, Glasshouse, etc.) unless they explicitly tie to our target.
+- DROP pure marketing noise: newsletters, market roundups, "What's On" emails, restaurant reservations/receipts, "opening announcements", automated notifications.
+- KEEP GENEROUSLY when the email mentions: the owner (by name), the tenant/occupier, the agent handling this instruction, the Companies House number, the title number, the size/specs, or just the address without contradiction.
+- KEEP brochures/teasers/particulars/memorandums — any marketing material that could plausibly be for THIS building (leasing brochures count). When in doubt on brochures, KEEP rather than drop; user will review.
+- If an item is ambiguous but could plausibly be about this building, KEEP it. Drop only clear mismatches.
 
 === EMAILS (index Enn) ===
 ${emailsForFilter.join("\n\n")}
@@ -1058,11 +1059,25 @@ Return STRICT JSON only, no prose, no code fences:
         const keepB = new Set<number>((parsed.keepBrochures || []).map((n: any) => Number(n)));
         const keepS = new Set<number>((parsed.keepSharepoint || []).map((n: any) => Number(n)));
 
-        const filteredEmails = emailHits.filter((_, i) => keepE.has(i));
-        const filteredBrochures = brochureFiles.filter((_, i) => keepB.has(i));
-        const filteredSharepoint = sharepointHits.filter((_, i) => keepS.has(i));
+        // Safety net — if the AI filter is too aggressive and drops a huge
+        // chunk, blend: keep AI's picks PLUS the most recent N from the
+        // regex-filtered list. Prevents the UI going empty on ambiguous
+        // cases where the AI plays it safe.
+        const blendIfOverFiltered = <T>(original: T[], keep: Set<number>, minFraction = 0.4, floor = 5): T[] => {
+          const aiPicks = original.filter((_, i) => keep.has(i));
+          const minKeep = Math.min(original.length, Math.max(floor, Math.ceil(original.length * minFraction)));
+          if (aiPicks.length >= minKeep) return aiPicks;
+          // AI was too aggressive — add back the most recent items not in AI picks
+          const rest = original.filter((_, i) => !keep.has(i));
+          const merged = [...aiPicks, ...rest].slice(0, minKeep);
+          return merged;
+        };
 
-        console.log(`[pathway stage1] AI relevance pass: emails ${emailHits.length}->${filteredEmails.length}, brochures ${brochureFiles.length}->${filteredBrochures.length}, sharepoint ${sharepointHits.length}->${filteredSharepoint.length}`);
+        const filteredEmails = blendIfOverFiltered(emailHits, keepE, 0.4, 8);
+        const filteredBrochures = blendIfOverFiltered(brochureFiles, keepB, 0.5, 3);
+        const filteredSharepoint = blendIfOverFiltered(sharepointHits, keepS, 0.3, 8);
+
+        console.log(`[pathway stage1] AI relevance pass: emails ${emailHits.length}->${filteredEmails.length} (AI kept ${keepE.size}), brochures ${brochureFiles.length}->${filteredBrochures.length} (AI kept ${keepB.size}), sharepoint ${sharepointHits.length}->${filteredSharepoint.length} (AI kept ${keepS.size})`);
 
         emailHits.length = 0;
         emailHits.push(...filteredEmails);
