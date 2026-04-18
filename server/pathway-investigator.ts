@@ -29,7 +29,7 @@ const INVESTIGATOR_TOOLS: any[] = [
     input_schema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Search phrase. Can be a single word or quoted phrase. Examples: \"SW1Y 4DG\", Amsprop, \"Dover Street Market\", Goldenberg, 02801817 (Companies House number)." },
+        query: { type: "string", description: "Search keyword or quoted postcode. IMPORTANT: For an address use just the street/building NAME word, not the number — e.g. 'Haymarket' (not '18-22 Haymarket'), 'Regent' (not '120 Regent Street'). For postcodes use the quoted form e.g. \"SW1Y 4DG\". Single words match anywhere in the email; quoted phrases require exact match. Examples: Haymarket, \"SW1Y 4DG\", Amsprop, Goldenberg, 02801817." },
         top: { type: "number", description: "Max results per mailbox (default 15, max 25)" },
       },
       required: ["query"],
@@ -162,10 +162,23 @@ async function executeInvestigatorTool(toolName: string, input: any, req: Reques
         const CONC = 6;
         const results: any[] = [];
         const seen = new Set<string>();
+        let searchErrors = 0;
+
+        // Graph $search with a quoted phrase requires EXACT match — so "18-22 Haymarket"
+        // finds almost nothing. A bare word like Haymarket matches anywhere in the email.
+        // Rule: wrap in quotes only if the query already contains a space AND looks like
+        // a postcode or multi-word name (not a house-number prefix like "18-22 ...").
+        const raw = String(input.query || "").trim();
+        const looksLikePostcode = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i.test(raw);
+        const hasSpace = raw.includes(" ");
+        const graphQuery = (looksLikePostcode || (hasSpace && !/^\d/.test(raw)))
+          ? `"${raw}"`   // postcode or multi-word name like "Dover Street Market" → quoted
+          : raw;         // single word or number-prefixed address → unquoted
+
         const jobs = mailboxes.map((mb) => async () => {
           try {
             const data: any = await graphRequest(
-              `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(`"${input.query}"`)}&$top=${top}&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
+              `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(graphQuery)}&$top=${top}&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
               { headers: { "X-AnchorMailbox": mb.email } }
             );
             for (const msg of (data?.value || [])) {
@@ -185,13 +198,17 @@ async function executeInvestigatorTool(toolName: string, input: any, req: Reques
                 webLink: msg.webLink || null,
               });
             }
-          } catch {}
+          } catch (err: any) {
+            searchErrors++;
+            console.warn(`[investigator] search_emails error for ${mb.email}: ${String(err?.message || err).slice(0, 120)}`);
+          }
         });
         for (let i = 0; i < jobs.length; i += CONC) {
           await Promise.all(jobs.slice(i, i + CONC).map((j) => j()));
         }
         results.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        return { query: input.query, count: results.length, results: results.slice(0, 50) };
+        console.log(`[investigator] search_emails q=${JSON.stringify(graphQuery)} → ${results.length} results, ${searchErrors} errors`);
+        return { query: input.query, count: results.length, results: results.slice(0, 50), searchErrors: searchErrors > 0 ? searchErrors : undefined };
       }
 
       case "read_email": {
@@ -476,7 +493,8 @@ APPROACH (like ChatBGP does conversationally):
 7. Check VOA for rateable values — reveals unit splits in multi-let buildings
 
 BE THOROUGH: typical property has 5-15 relevant emails spread across the team. Don't stop at the first pass.
-BE DISCERNING: many emails on a street (like "Haymarket") are about OTHER buildings. Only keep emails specifically about THIS building.
+SEARCH STRATEGY: For search_emails, use the street/building NAME word only — e.g. 'Haymarket' not '18-22 Haymarket'. Number-prefixed queries return almost nothing because they require exact phrase match. Search the postcode separately as "SW1Y 4DG".
+BE DISCERNING: many emails on a street (like "Haymarket") are about OTHER buildings. Only keep emails specifically about THIS building in keyEmails.
 
 FINAL OUTPUT: When you've gathered enough, return STRICT JSON only (no prose, no markdown fences) matching this schema:
 {
