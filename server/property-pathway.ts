@@ -392,17 +392,32 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     // Fallback
     if (searchPhrases.length === 0) searchPhrases.push(`"${primaryAddressToken || address}"`);
 
-    // Lenient relevance filter: keep if postcode or any meaningful address word
-    // appears in subject or preview. Only drops clear noise; we'd rather have
-    // a few extras than miss real hits.
-    const addressWords = (address.toLowerCase().match(/[a-z0-9-]+/g) || [])
-      .filter((w) => w.length >= 3 && !["the", "and", "for", "with", "from", "street", "road", "avenue"].includes(w));
+    // Relevance filter — keep almost everything Graph found (it already
+    // searched body + attachments intelligently). Only drop if the SUBJECT
+    // explicitly mentions a DIFFERENT UK postcode — that's the clearest
+    // signal an email is about a different property entirely (the classic
+    // Rob-Barnes-Basingstoke case: subject "Basingstoke x Ji Chickens"
+    // with Haymarket only in an attached comps sheet).
     const postcodeLc = (postcode || "").toLowerCase().replace(/\s+/g, "");
+    // UK postcode: 1-2 letters, 1 digit, optional letter/digit, space (optional), 1 digit, 2 letters
+    const POSTCODE_RE = /\b([a-z]{1,2}\d[a-z\d]?)\s*(\d[a-z]{2})\b/gi;
     const mentionsAddress = (msg: any) => {
-      const raw = `${msg.subject || ""} ${msg.bodyPreview || ""}`.toLowerCase();
-      const rawNoSpaces = raw.replace(/\s+/g, "");
-      if (postcodeLc && rawNoSpaces.includes(postcodeLc)) return true;
-      return addressWords.some((w) => raw.includes(w));
+      const subject = String(msg.subject || "").toLowerCase();
+      // If no postcode set for the pathway, trust Graph entirely
+      if (!postcodeLc) return true;
+      // Extract all postcodes from the subject only (body can be noisy)
+      const postcodesInSubject: string[] = [];
+      let m: RegExpExecArray | null;
+      const re = new RegExp(POSTCODE_RE);
+      while ((m = re.exec(subject)) !== null) {
+        postcodesInSubject.push((m[1] + m[2]).toLowerCase());
+      }
+      // No postcode in subject → trust Graph's match
+      if (postcodesInSubject.length === 0) return true;
+      // Any postcode in subject matches ours → keep
+      if (postcodesInSubject.includes(postcodeLc)) return true;
+      // A different postcode appears in the subject → drop (different property)
+      return false;
     };
 
     const seen = new Set<string>();
