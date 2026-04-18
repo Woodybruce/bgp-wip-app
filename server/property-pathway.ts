@@ -60,8 +60,16 @@ interface StageResults {
     engagements?: Array<{ source: "unit_viewing" | "investment_viewing" | "interaction"; contact?: string; company?: string; date?: string; outcome?: string; notes?: string; unitName?: string }>;
     pricePaidHistory?: Array<{ address?: string; price?: number; date?: string; type?: string }>;
     comps?: Array<{ address: string; price?: number; yield?: number; date?: string; type?: string }>;
-    initialOwnership?: { titleNumber: string; proprietorName?: string; proprietorCategory?: string; pricePaid?: number; dateOfPurchase?: string } | null;
-    tenant?: { name: string; companyNumber?: string };
+    initialOwnership?: {
+      titleNumber: string;
+      proprietorName?: string;
+      proprietorCategory?: string;
+      pricePaid?: number;
+      dateOfPurchase?: string;
+      proprietorCompanyId?: string;
+      proprietorCompanyNumber?: string;
+    } | null;
+    tenant?: { name: string; companyNumber?: string; companyId?: string };
     folderTree?: { root: string; webUrl: string; children: string[] };
     summary?: string;
     aiBriefing?: { bullets: string[]; headline: string; keyQuestions: string[] };
@@ -219,6 +227,27 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     }
   } catch (err: any) {
     console.error("[pathway stage1] Land reg lookup error:", err?.message);
+  }
+
+  // 1b-1. If we have a proprietor name, try to match it to an existing CRM company
+  // so the owner cell can link straight through. Also surface Companies House number
+  // if the CRM record has one.
+  if (initialOwnership?.proprietorName) {
+    try {
+      const name = initialOwnership.proprietorName.trim();
+      const [ownerCompany] = await db
+        .select()
+        .from(crmCompanies)
+        .where(ilike(crmCompanies.name, name))
+        .limit(1);
+      if (ownerCompany) {
+        initialOwnership.proprietorCompanyId = ownerCompany.id;
+        const chNum = (ownerCompany as any).companiesHouseNumber || (ownerCompany as any).companies_house_number;
+        if (chNum) initialOwnership.proprietorCompanyNumber = String(chNum);
+      }
+    } catch (err: any) {
+      console.warn("[pathway stage1] owner CRM match error:", err?.message);
+    }
   }
 
   // 1b-2. Ensure SharePoint folder tree exists BEFORE scanning for brochures
@@ -730,6 +759,26 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
   }
   if (!derivedTenant && tenancy?.occupier) {
     derivedTenant = { name: tenancy.occupier };
+  }
+
+  // Enrich tenant with CRM company id + Companies House number if we have them
+  if (derivedTenant?.name) {
+    try {
+      const [tenantCompany] = await db
+        .select()
+        .from(crmCompanies)
+        .where(ilike(crmCompanies.name, derivedTenant.name))
+        .limit(1);
+      if (tenantCompany) {
+        derivedTenant = {
+          ...derivedTenant,
+          companyId: tenantCompany.id,
+          companyNumber: derivedTenant.companyNumber || (tenantCompany as any).companiesHouseNumber || (tenantCompany as any).companies_house_number || undefined,
+        };
+      }
+    } catch (err: any) {
+      console.warn("[pathway stage1] tenant CRM match error:", err?.message);
+    }
   }
 
   await setStageStatus(runId, "stage1", "completed", {

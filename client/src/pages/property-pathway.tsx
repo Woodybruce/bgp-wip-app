@@ -345,335 +345,344 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
       {/* Stage 1 — Initial Search findings */}
       {s1 && (
         <>
-          {/* AI briefing synthesising everything we found */}
-          {s1.aiBriefing && (
-            <Card className="border-primary/40 bg-primary/5">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" /> Analyst briefing</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                {s1.aiBriefing.headline && (
-                  <p className="text-[15px] font-medium leading-snug">{s1.aiBriefing.headline}</p>
-                )}
-                {s1.aiBriefing.bullets?.length > 0 && (
-                  <ul className="space-y-1.5 text-muted-foreground">
-                    {s1.aiBriefing.bullets.map((b: string, i: number) => (
-                      <li key={i} className="flex gap-2">
-                        <span className="text-primary shrink-0">·</span>
-                        <span>{b}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {s1.aiBriefing.keyQuestions?.length > 0 && (
-                  <div className="pt-2 border-t border-primary/20">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground mb-1.5">Next questions</p>
-                    <ul className="space-y-1 text-xs">
-                      {s1.aiBriefing.keyQuestions.map((q: string, i: number) => (
-                        <li key={i} className="flex gap-2">
-                          <span className="text-primary shrink-0">?</span>
-                          <span>{q}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          <Card>
-            <CardHeader className="pb-3 flex flex-row items-center justify-between">
-              <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Initial Search — summary</CardTitle>
-              <div className="flex items-center gap-3">
-                {s1.propertyImage?.googleMapsUrl && (
-                  <a href={s1.propertyImage.googleMapsUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-                    <MapPin className="w-3 h-3" /> Google Maps
-                  </a>
-                )}
-                {run.sharepointFolderUrl && (
-                  <a href={run.sharepointFolderUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-                    <FolderOpen className="w-3 h-3" /> Open SharePoint
-                  </a>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              <div className="flex gap-3">
-                {s1.propertyImage?.streetViewUrl && (
-                  <a href={s1.propertyImage.googleMapsUrl || "#"} target="_blank" rel="noreferrer" className="shrink-0 block hover:opacity-90 transition-opacity">
-                    <img
-                      src={s1.propertyImage.streetViewUrl}
-                      alt={`Street view of ${run.address}`}
-                      className="w-40 h-24 md:w-56 md:h-32 rounded-lg object-cover border"
-                      onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
-                    />
-                  </a>
-                )}
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium">{run.address}{run.postcode ? `, ${run.postcode}` : ""}</p>
-                  {s1.aiFacts?.listedStatus && <Badge variant="outline" className="mt-1 text-[10px]">{s1.aiFacts.listedStatus}</Badge>}
-                  {s1.aiFacts?.currentUse && <p className="text-xs text-muted-foreground mt-1">{s1.aiFacts.currentUse}</p>}
-                  {s1.summary && <p className="text-xs text-muted-foreground mt-2">{s1.summary}</p>}
+          {/* Side-by-side: Initial Search summary (left) + Analyst briefing (right) */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <Card>
+              <CardHeader className="pb-2 flex flex-row items-center justify-between">
+                <CardTitle className="text-sm flex items-center gap-2"><Search className="w-4 h-4" /> Initial Search</CardTitle>
+                <div className="flex items-center gap-2">
+                  {s1.propertyImage?.googleMapsUrl && (
+                    <a href={s1.propertyImage.googleMapsUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1">
+                      <MapPin className="w-3 h-3" /> Maps
+                    </a>
+                  )}
+                  {run.sharepointFolderUrl && (
+                    <a href={run.sharepointFolderUrl} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline inline-flex items-center gap-1">
+                      <FolderOpen className="w-3 h-3" /> SharePoint
+                    </a>
+                  )}
                 </div>
-              </div>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm pb-3">
+                {/* Building image + address */}
+                <div className="flex gap-2.5">
+                  {s1.propertyImage?.streetViewUrl && (
+                    <a href={s1.propertyImage.googleMapsUrl || "#"} target="_blank" rel="noreferrer" className="shrink-0 block hover:opacity-90 transition-opacity">
+                      <img
+                        src={s1.propertyImage.streetViewUrl}
+                        alt={`Street view of ${run.address}`}
+                        className="w-28 h-20 rounded object-cover border"
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
+                      />
+                    </a>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm">{run.address}{run.postcode ? `, ${run.postcode}` : ""}</p>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                      {s1.aiFacts?.listedStatus && <Badge variant="outline" className="text-[9px] py-0">{s1.aiFacts.listedStatus}</Badge>}
+                      {s1.aiFacts?.sizeSqft && <Badge variant="outline" className="text-[9px] py-0">{s1.aiFacts.sizeSqft} sq ft</Badge>}
+                    </div>
+                    {s1.aiFacts?.currentUse && <p className="text-[11px] text-muted-foreground mt-0.5">{s1.aiFacts.currentUse}</p>}
+                  </div>
+                </div>
 
-              {/* Ownership — prefer Land Reg structured data, fall back to AI-extracted facts */}
-              <div className="border rounded-lg p-3 bg-muted/20">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Ownership</p>
+                {/* Ownership — clickable links */}
                 {(() => {
                   const ownerName = s1.initialOwnership?.proprietorName || s1.aiFacts?.owner;
                   const titleNum = s1.initialOwnership?.titleNumber;
                   const paid = s1.initialOwnership?.pricePaid ? `£${(s1.initialOwnership.pricePaid / 1e6).toFixed(1)}m` : s1.aiFacts?.purchasePrice;
                   const date = s1.initialOwnership?.dateOfPurchase || s1.aiFacts?.purchaseDate;
-                  const coNumber = s1.aiFacts?.ownerCompanyNumber;
+                  const ownerCompanyId = s1.initialOwnership?.proprietorCompanyId;
+                  const ownerCoNumber = s1.initialOwnership?.proprietorCompanyNumber || s1.aiFacts?.ownerCompanyNumber;
 
                   if (!ownerName && !titleNum && !paid && !date) {
-                    return <p className="text-xs text-muted-foreground">Owner not resolved via Land Registry or CRM. Advance to Stage 4 (Property Intelligence) for deeper lookups.</p>;
+                    return <p className="text-[11px] text-muted-foreground">Owner not resolved. Advance to Stage 4 for deeper lookups.</p>;
                   }
+
+                  // Owner link logic: CRM company wins, else Companies House, else plain text
+                  let ownerEl: any = ownerName || "—";
+                  if (ownerName && ownerCompanyId) {
+                    ownerEl = <Link href={`/companies/${ownerCompanyId}`}><span className="text-primary hover:underline cursor-pointer font-medium">{ownerName}</span></Link>;
+                  } else if (ownerName && ownerCoNumber) {
+                    ownerEl = <a href={`https://find-and-update.company-information.service.gov.uk/company/${ownerCoNumber}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{ownerName}<ExternalLink className="w-2.5 h-2.5" /></a>;
+                  } else if (ownerName) {
+                    ownerEl = <a href={`https://find-and-update.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(ownerName)}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{ownerName}<ExternalLink className="w-2.5 h-2.5" /></a>;
+                  }
+
+                  // Title link — to our Land Registry tab pre-filtered by postcode
+                  let titleEl: any = titleNum || "—";
+                  if (titleNum && run.postcode) {
+                    titleEl = <Link href={`/property-intelligence?tab=land-registry&postcode=${encodeURIComponent(run.postcode)}`}><span className="text-primary hover:underline cursor-pointer font-medium">{titleNum}</span></Link>;
+                  } else if (titleNum) {
+                    titleEl = <span className="font-medium">{titleNum}</span>;
+                  }
+
                   return (
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-                      <div><span className="text-muted-foreground">Owner:</span> <span className="font-medium">{ownerName || "—"}</span>{coNumber ? <span className="text-muted-foreground ml-1">(Co# {coNumber})</span> : null}</div>
-                      <div><span className="text-muted-foreground">Title:</span> <span className="font-medium">{titleNum || "—"}</span></div>
-                      <div><span className="text-muted-foreground">Paid:</span> <span className="font-medium">{paid || "—"}</span></div>
-                      <div><span className="text-muted-foreground">Date:</span> <span className="font-medium">{date || "—"}</span></div>
-                      {s1.aiFacts?.refurbCost && <div><span className="text-muted-foreground">Refurb:</span> <span className="font-medium">{s1.aiFacts.refurbCost}</span></div>}
+                    <div className="border rounded p-2 bg-muted/20">
+                      <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Ownership</p>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                        <div><span className="text-muted-foreground">Owner:</span> {ownerEl}{ownerCoNumber ? <span className="text-muted-foreground text-[10px] ml-0.5">(Co# {ownerCoNumber})</span> : null}</div>
+                        <div><span className="text-muted-foreground">Title:</span> {titleEl}</div>
+                        <div><span className="text-muted-foreground">Paid:</span> <span className="font-medium">{paid || "—"}</span></div>
+                        <div><span className="text-muted-foreground">Date:</span> <span className="font-medium">{date || "—"}</span></div>
+                        {s1.aiFacts?.refurbCost && <div className="col-span-2"><span className="text-muted-foreground">Refurb spend:</span> <span className="font-medium">{s1.aiFacts.refurbCost}</span></div>}
+                      </div>
                     </div>
                   );
                 })()}
-              </div>
 
-              {/* Tenants */}
-              {((s1.aiFacts?.mainTenants && s1.aiFacts.mainTenants.length > 0) || s1.aiFacts?.leaseStatus) && (
-                <div className="border rounded-lg p-3 bg-muted/20">
-                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2">Tenants</p>
-                  {s1.aiFacts?.mainTenants && s1.aiFacts.mainTenants.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mb-1.5">
-                      {s1.aiFacts.mainTenants.map((t: string, i: number) => (
-                        <Badge key={i} variant="secondary" className="text-[10px]">{t}</Badge>
+                {/* Lease terms — structured table */}
+                {(() => {
+                  const tenant = s1.tenant;
+                  const hasLeaseData = tenant || s1.aiFacts?.leaseStatus || (s1.aiFacts?.mainTenants && s1.aiFacts.mainTenants.length > 0);
+                  if (!hasLeaseData) return null;
+
+                  // Tenant link logic
+                  let tenantEl: any = tenant?.name || (s1.aiFacts?.mainTenants?.[0]) || "—";
+                  if (tenant?.name && tenant.companyId) {
+                    tenantEl = <Link href={`/companies/${tenant.companyId}`}><span className="text-primary hover:underline cursor-pointer font-medium">{tenant.name}</span></Link>;
+                  } else if (tenant?.name && tenant.companyNumber) {
+                    tenantEl = <a href={`https://find-and-update.company-information.service.gov.uk/company/${tenant.companyNumber}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{tenant.name}<ExternalLink className="w-2.5 h-2.5" /></a>;
+                  } else if (tenant?.name) {
+                    tenantEl = <a href={`https://find-and-update.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(tenant.name)}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{tenant.name}<ExternalLink className="w-2.5 h-2.5" /></a>;
+                  }
+
+                  return (
+                    <div className="border rounded p-2 bg-muted/20">
+                      <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Tenancy</p>
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                        <div><span className="text-muted-foreground">Tenant:</span> {tenantEl}</div>
+                        {tenant?.companyNumber && <div><span className="text-muted-foreground">Co#:</span> <span className="font-medium">{tenant.companyNumber}</span></div>}
+                        {s1.aiFacts?.leaseStatus && <div className="col-span-2"><span className="text-muted-foreground">Status:</span> <span className="font-medium">{s1.aiFacts.leaseStatus}</span></div>}
+                        {s1.aiFacts?.mainTenants && s1.aiFacts.mainTenants.length > 1 && (
+                          <div className="col-span-2"><span className="text-muted-foreground">Other occupiers:</span> <span className="font-medium">{s1.aiFacts.mainTenants.slice(1).join(", ")}</span></div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Compact pipeline counts */}
+                <div className="grid grid-cols-6 gap-1.5">
+                  <CountBlock label="Emails" value={s1.emailHits?.length || 0} />
+                  <CountBlock label="SP" value={s1.sharepointHits?.length || 0} />
+                  <CountBlock label="Deals" value={s1.deals?.length || 0} />
+                  <CountBlock label="Units" value={s1.tenancy?.units?.length || 0} />
+                  <CountBlock label="Comps" value={s1.comps?.length || 0} />
+                  <CountBlock label="Broch" value={s1.brochureFiles?.length || 0} />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* AI briefing synthesising everything we found */}
+            {s1.aiBriefing && (
+              <Card className="border-primary/40 bg-primary/5">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-2"><Sparkles className="w-4 h-4" /> Analyst briefing</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm pb-3">
+                  {s1.aiBriefing.headline && (
+                    <p className="text-sm font-medium leading-snug">{s1.aiBriefing.headline}</p>
+                  )}
+                  {s1.aiBriefing.bullets?.length > 0 && (
+                    <ul className="space-y-1 text-[12px] text-muted-foreground">
+                      {s1.aiBriefing.bullets.map((b: string, i: number) => (
+                        <li key={i} className="flex gap-1.5">
+                          <span className="text-primary shrink-0">·</span>
+                          <span>{b}</span>
+                        </li>
                       ))}
+                    </ul>
+                  )}
+                  {s1.aiBriefing.keyQuestions?.length > 0 && (
+                    <div className="pt-1.5 border-t border-primary/20">
+                      <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Next questions</p>
+                      <ul className="space-y-0.5 text-[11px]">
+                        {s1.aiBriefing.keyQuestions.map((q: string, i: number) => (
+                          <li key={i} className="flex gap-1.5">
+                            <span className="text-primary shrink-0">?</span>
+                            <span>{q}</span>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
-                  {s1.aiFacts?.leaseStatus && <p className="text-xs text-muted-foreground">{s1.aiFacts.leaseStatus}</p>}
-                </div>
-              )}
+                </CardContent>
+              </Card>
+            )}
+          </div>
 
-              {/* Pipeline counts */}
-              <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-                <CountBlock label="Emails" value={s1.emailHits?.length || 0} />
-                <CountBlock label="SharePoint" value={s1.sharepointHits?.length || 0} />
-                <CountBlock label="Deals" value={s1.deals?.length || 0} />
-                <CountBlock label="Units" value={s1.tenancy?.units?.length || 0} />
-                <CountBlock label="Comps" value={s1.comps?.length || 0} />
-                <CountBlock label="Brochures" value={s1.brochureFiles?.length || 0} />
-              </div>
-            </CardContent>
-          </Card>
+          {/* Dense sub-cards: SharePoint / Brochures / CRM / Deals / Comps / Past trans / Tenancy / Engagements */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {/* SharePoint */}
+            {s1.sharepointHits && s1.sharepointHits.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs flex items-center gap-1.5"><FolderOpen className="w-3.5 h-3.5" /> SharePoint ({s1.sharepointHits.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="text-[11px] space-y-0.5 max-h-48 overflow-y-auto pb-2">
+                  {s1.sharepointHits.slice(0, 15).map((f: any, i: number) => (
+                    <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
+                      {f.webUrl ? (
+                        <a href={f.webUrl} target="_blank" rel="noreferrer" className="min-w-0 flex-1 flex items-center gap-1 cursor-pointer group">
+                          <span className="text-primary group-hover:underline truncate">{f.name}</span>
+                          <ExternalLink className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
+                        </a>
+                      ) : (
+                        <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                      )}
+                      {f.type === "folder" && <Badge variant="outline" className="text-[8px] py-0 px-1 shrink-0">f</Badge>}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
 
-          {/* CRM property matches */}
-          {s1.crmHits?.properties && s1.crmHits.properties.length > 0 && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> CRM properties ({s1.crmHits.properties.length})</CardTitle>
-              </CardHeader>
-              <CardContent className="text-sm space-y-1">
-                {s1.crmHits.properties.map((p: any) => (
-                  <Link key={p.id} href={`/properties/${p.id}`}>
-                    <div className="flex items-center justify-between py-1.5 border-b last:border-b-0 hover:bg-muted/50 px-2 -mx-2 rounded cursor-pointer">
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">{p.name}</p>
-                        <p className="text-xs text-muted-foreground">{[p.status, p.assetClass, p.team].filter(Boolean).join(" · ")}</p>
+            {/* Brochures */}
+            {s1.brochureFiles && s1.brochureFiles.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Brochures ({s1.brochureFiles.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="text-[11px] space-y-0.5 pb-2">
+                  {s1.brochureFiles.map((b: any, i: number) => (
+                    <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
+                      {b.webUrl ? (
+                        <a href={b.webUrl} target="_blank" rel="noreferrer" className="min-w-0 flex-1 flex items-center gap-1 cursor-pointer group">
+                          <span className="text-primary group-hover:underline truncate">{b.name}</span>
+                          <ExternalLink className="w-2.5 h-2.5 text-muted-foreground shrink-0" />
+                        </a>
+                      ) : (
+                        <span className="min-w-0 flex-1 truncate">{b.name}</span>
+                      )}
+                      {b.sizeMB && <span className="text-muted-foreground text-[10px] shrink-0">{b.sizeMB}M</span>}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* CRM properties */}
+            {s1.crmHits?.properties && s1.crmHits.properties.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> CRM ({s1.crmHits.properties.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="text-[11px] space-y-0.5 pb-2">
+                  {s1.crmHits.properties.map((p: any) => (
+                    <Link key={p.id} href={`/properties/${p.id}`}>
+                      <div className="flex items-center gap-1 py-0.5 border-b last:border-b-0 hover:bg-muted/50 cursor-pointer">
+                        <span className="text-primary truncate flex-1">{p.name}</span>
+                        <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
                       </div>
-                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                    </div>
-                  </Link>
-                ))}
-              </CardContent>
-            </Card>
-          )}
+                    </Link>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
 
-          {/* Deals on file */}
-          {s1.deals && s1.deals.length > 0 && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> BGP deal history ({s1.deals.length})</CardTitle>
-              </CardHeader>
-              <CardContent className="text-sm space-y-1">
-                {s1.deals.map((d: any) => (
-                  <Link key={d.id} href={`/deals/${d.id}`}>
-                    <div className="flex items-center justify-between py-1.5 border-b last:border-b-0 hover:bg-muted/50 px-2 -mx-2 rounded cursor-pointer">
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">{d.name}</p>
-                        <p className="text-xs text-muted-foreground">{[d.dealType, d.stage || d.status, d.team?.join?.(", ")].filter(Boolean).join(" · ")}</p>
+            {/* Deals */}
+            {s1.deals && s1.deals.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> Deals ({s1.deals.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="text-[11px] space-y-0.5 pb-2">
+                  {s1.deals.slice(0, 10).map((d: any) => (
+                    <Link key={d.id} href={`/deals/${d.id}`}>
+                      <div className="flex items-center gap-1 py-0.5 border-b last:border-b-0 hover:bg-muted/50 cursor-pointer">
+                        <span className="text-primary truncate flex-1">{d.name}</span>
+                        <span className="text-muted-foreground text-[10px] shrink-0">{d.stage || d.status || ""}</span>
                       </div>
-                      <div className="text-right text-xs text-muted-foreground shrink-0">
-                        {d.rentPa ? `£${d.rentPa.toLocaleString()} pa` : ""}
-                        {d.createdAt && <span className="block">{new Date(d.createdAt).toLocaleDateString("en-GB")}</span>}
-                      </div>
+                    </Link>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Investment comps */}
+            {s1.comps && s1.comps.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5" /> Comps ({s1.comps.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="text-[11px] space-y-0.5 pb-2">
+                  {s1.comps.slice(0, 10).map((c: any, i: number) => (
+                    <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
+                      <span className="truncate flex-1">{c.address}</span>
+                      <span className="text-muted-foreground text-[10px] shrink-0">{c.price ? `£${(c.price / 1e6).toFixed(1)}m` : "—"}{c.yield ? ` ${(c.yield * 100).toFixed(1)}%` : ""}</span>
                     </div>
-                  </Link>
-                ))}
-              </CardContent>
-            </Card>
-          )}
+                  ))}
+                </CardContent>
+              </Card>
+            )}
 
-          {/* Tenancy / units */}
-          {s1.tenancy?.units && s1.tenancy.units.length > 0 && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <MapPin className="w-4 h-4" /> Tenancy — {s1.tenancy.units.length} unit(s)
-                  <Badge variant="outline" className="ml-2 text-[10px]">{s1.tenancy.status}</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="text-xs space-y-1">
-                {s1.tenancy.units.slice(0, 15).map((u: any) => (
-                  <div key={u.id} className="flex items-center justify-between py-1 border-b last:border-b-0">
-                    <div className="min-w-0">
-                      <span className="font-medium">{u.unitName}</span>
-                      {u.floor && <span className="text-muted-foreground ml-1">· {u.floor}</span>}
-                      {u.useClass && <span className="text-muted-foreground ml-1">· {u.useClass}</span>}
+            {/* Past transactions */}
+            {s1.pricePaidHistory && s1.pricePaidHistory.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs flex items-center gap-1.5"><Download className="w-3.5 h-3.5" /> Street sales ({s1.pricePaidHistory.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="text-[11px] space-y-0.5 pb-2">
+                  {s1.pricePaidHistory.slice(0, 10).map((t: any, i: number) => (
+                    <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
+                      <span className="truncate flex-1">{t.address}</span>
+                      <span className="text-muted-foreground text-[10px] shrink-0">{t.price ? `£${(t.price / 1000).toFixed(0)}k` : "—"}</span>
                     </div>
-                    <div className="text-right text-muted-foreground shrink-0">
-                      {u.sqft ? `${Math.round(u.sqft).toLocaleString()} sqft` : ""}
-                      {u.askingRent ? <span className="ml-2">£{u.askingRent.toLocaleString()}</span> : ""}
-                      {u.marketingStatus && <Badge variant="outline" className="ml-2 text-[9px]">{u.marketingStatus}</Badge>}
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Tenancy units */}
+            {s1.tenancy?.units && s1.tenancy.units.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5" /> Units ({s1.tenancy.units.length})<Badge variant="outline" className="text-[9px] py-0 ml-1">{s1.tenancy.status}</Badge></CardTitle>
+                </CardHeader>
+                <CardContent className="text-[11px] space-y-0.5 pb-2">
+                  {s1.tenancy.units.slice(0, 10).map((u: any) => (
+                    <div key={u.id} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
+                      <span className="truncate flex-1">{u.unitName}{u.floor ? ` · ${u.floor}` : ""}</span>
+                      {u.sqft && <span className="text-muted-foreground text-[10px] shrink-0">{Math.round(u.sqft / 1000)}k sf</span>}
                     </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
+                  ))}
+                </CardContent>
+              </Card>
+            )}
 
-          {/* Engagements — viewings + interactions */}
-          {s1.engagements && s1.engagements.length > 0 && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="w-4 h-4" /> Who has engaged ({s1.engagements.length})</CardTitle>
-              </CardHeader>
-              <CardContent className="text-xs space-y-1">
-                {s1.engagements.slice(0, 20).map((e: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0">
-                    <div className="min-w-0">
-                      <span className="font-medium">{e.contact || e.company || "Unknown"}</span>
-                      {e.company && e.contact && <span className="text-muted-foreground ml-1">· {e.company}</span>}
-                      {e.unitName && <span className="text-muted-foreground ml-1">· {e.unitName}</span>}
-                      {e.outcome && <Badge variant="outline" className="ml-2 text-[9px]">{e.outcome}</Badge>}
+            {/* Engagements */}
+            {s1.engagements && s1.engagements.length > 0 && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs flex items-center gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> Engaged ({s1.engagements.length})</CardTitle>
+                </CardHeader>
+                <CardContent className="text-[11px] space-y-0.5 pb-2">
+                  {s1.engagements.slice(0, 10).map((e: any, i: number) => (
+                    <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
+                      <span className="truncate flex-1">{e.contact || e.company || "Unknown"}</span>
+                      {e.outcome && <Badge variant="outline" className="text-[8px] py-0 px-1 shrink-0">{e.outcome}</Badge>}
                     </div>
-                    <span className="text-muted-foreground shrink-0 ml-2">{e.date ? new Date(e.date).toLocaleDateString("en-GB") : ""}</span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+          </div>
 
-          {/* Existing SharePoint folders / files */}
-          {s1.sharepointHits && s1.sharepointHits.length > 0 && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><FolderOpen className="w-4 h-4" /> SharePoint already has ({s1.sharepointHits.length})</CardTitle>
-              </CardHeader>
-              <CardContent className="text-xs space-y-1 max-h-72 overflow-y-auto">
-                {s1.sharepointHits.map((f: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0 hover:bg-muted/40 rounded px-1 -mx-1">
-                    {f.webUrl ? (
-                      <a href={f.webUrl} target="_blank" rel="noreferrer" className="min-w-0 flex-1 flex items-center gap-1.5 cursor-pointer group">
-                        <span className="font-medium text-primary group-hover:underline truncate">{f.name}</span>
-                        <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0" />
-                        <span className="text-muted-foreground truncate hidden sm:inline">· {f.path.replace(/^\//, "")}</span>
-                      </a>
-                    ) : (
-                      <span className="min-w-0 flex-1 font-medium truncate">{f.name}</span>
-                    )}
-                    <span className="text-muted-foreground shrink-0 ml-2 flex items-center gap-1.5">
-                      {f.type === "folder" && <Badge variant="outline" className="text-[9px]">folder</Badge>}
-                      {f.sizeMB ? <span>{f.sizeMB} MB</span> : null}
-                      {f.modifiedAt ? <span>{new Date(f.modifiedAt).toLocaleDateString("en-GB")}</span> : null}
-                    </span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Brochures identified */}
-          {s1.brochureFiles && s1.brochureFiles.length > 0 && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Brochures on file ({s1.brochureFiles.length})</CardTitle>
-              </CardHeader>
-              <CardContent className="text-xs space-y-1">
-                {s1.brochureFiles.map((b: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0 hover:bg-muted/40 rounded px-1 -mx-1">
-                    {b.webUrl ? (
-                      <a href={b.webUrl} target="_blank" rel="noreferrer" className="min-w-0 flex-1 flex items-center gap-1.5 cursor-pointer group">
-                        <span className="font-medium text-primary group-hover:underline truncate">{b.name}</span>
-                        <ExternalLink className="w-3 h-3 text-muted-foreground shrink-0" />
-                      </a>
-                    ) : (
-                      <span className="min-w-0 flex-1 font-medium truncate">{b.name}</span>
-                    )}
-                    <span className="text-muted-foreground shrink-0 ml-2">{b.source}{b.date ? ` · ${new Date(b.date).toLocaleDateString("en-GB")}` : ""}</span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Past transactions */}
-          {s1.pricePaidHistory && s1.pricePaidHistory.length > 0 && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><Download className="w-4 h-4" /> Past transactions — this street</CardTitle>
-              </CardHeader>
-              <CardContent className="text-xs space-y-1">
-                {s1.pricePaidHistory.slice(0, 12).map((t: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0">
-                    <span className="truncate">{t.address}</span>
-                    <span className="text-muted-foreground shrink-0 ml-2">
-                      {t.price ? `£${t.price.toLocaleString()}` : "—"}{t.date ? ` · ${t.date}` : ""}
-                    </span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Investment comps */}
-          {s1.comps && s1.comps.length > 0 && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> Investment comps — same postcode</CardTitle>
-              </CardHeader>
-              <CardContent className="text-xs space-y-1">
-                {s1.comps.slice(0, 12).map((c: any, i: number) => (
-                  <div key={i} className="flex items-center justify-between py-1 border-b last:border-b-0">
-                    <span className="truncate">{c.address}</span>
-                    <span className="text-muted-foreground shrink-0 ml-2">
-                      {c.price ? `£${(c.price / 1e6).toFixed(1)}m` : "—"}
-                      {c.yield ? ` · ${(c.yield * 100).toFixed(2)}%` : ""}
-                      {c.date ? ` · ${c.date}` : ""}
-                    </span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Email hits — full list */}
+          {/* Emails — full list at bottom */}
           {s1.emailHits && s1.emailHits.length > 0 && (
             <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Emails ({s1.emailHits.length})</CardTitle>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-xs flex items-center gap-1.5"><Search className="w-3.5 h-3.5" /> Emails ({s1.emailHits.length})</CardTitle>
               </CardHeader>
-              <CardContent className="text-xs space-y-1.5">
-                {s1.emailHits.slice(0, 12).map((h: any, i: number) => {
+              <CardContent className="text-[11px] grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 pb-2">
+                {s1.emailHits.slice(0, 16).map((h: any, i: number) => {
                   const Wrapper: any = h.webLink ? "a" : "div";
-                  const wrapperProps = h.webLink ? { href: h.webLink, target: "_blank", rel: "noreferrer", className: "block border-l-2 border-muted hover:border-primary pl-2 py-0.5 hover:bg-muted/50 rounded-r cursor-pointer" } : { className: "border-l-2 border-muted pl-2 py-0.5" };
+                  const wrapperProps = h.webLink ? { href: h.webLink, target: "_blank", rel: "noreferrer", className: "block border-l-2 border-muted hover:border-primary pl-1.5 py-0.5 hover:bg-muted/50 rounded-r cursor-pointer" } : { className: "border-l-2 border-muted pl-1.5 py-0.5" };
                   return (
                     <Wrapper key={i} {...wrapperProps}>
-                      <p className="font-medium truncate">{h.subject}{h.hasAttachments ? " 📎" : ""}{h.webLink ? <ExternalLink className="w-3 h-3 inline ml-1 text-muted-foreground" /> : null}</p>
-                      <p className="text-muted-foreground">{h.from} — {new Date(h.date).toLocaleDateString("en-GB")}</p>
+                      <p className="font-medium truncate">{h.subject}{h.hasAttachments ? " 📎" : ""}</p>
+                      <p className="text-muted-foreground text-[10px]">{h.from} — {new Date(h.date).toLocaleDateString("en-GB")}</p>
                     </Wrapper>
                   );
                 })}
