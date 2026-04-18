@@ -519,10 +519,62 @@ async function runStage1(runId: string, req: Request): Promise<void> {
     if (Object.keys(errorsByMailbox).length > 0) {
       console.warn(`[pathway stage1] Mailboxes that errored:`, JSON.stringify(errorsByMailbox, null, 2));
     }
-    console.log(`[pathway stage1] Email search: delegated=${delegatedToken ? "yes" : "no"}, phrases=${searchPhrases.length}, mailboxes tried=${mailboxes.length}, mailboxes OK=${successfulMailboxes.size} -> ${totalReturnedFromGraph} raw hits, ${emailHits.length} kept after filter`);
-    // Cap total hits at 60 to keep payload manageable
+    console.log(`[pathway stage1] Email search: delegated=${delegatedToken ? "yes" : "no"}, phrases=${searchPhrases.length}, mailboxes tried=${mailboxes.length}, mailboxes OK=${successfulMailboxes.size} -> ${totalReturnedFromGraph} raw hits, ${emailHits.length} kept after regex filter`);
     emailHits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    emailHits.splice(150);
+    emailHits.splice(200); // hard cap before AI stage to control cost
+
+    // === AI relevance pass ===
+    // If we still have >25 hits after regex filtering, use Claude Haiku to
+    // decide which are genuinely about THIS property. A single batch call
+    // scores all emails at once — ~2 seconds, ~$0.002 per pathway run.
+    if (emailHits.length > 25 && process.env.ANTHROPIC_API_KEY) {
+      try {
+        const Anthropic = (await import("@anthropic-ai/sdk")).default;
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const emailList = emailHits.map((e, i) => ({
+          i,
+          subject: (e.subject || "").slice(0, 200),
+          from: (e.from || "").slice(0, 100),
+          preview: (e.preview || "").slice(0, 200),
+        }));
+        const filterPrompt = `You are curating an email list for a property investigation.
+
+TARGET PROPERTY: ${address}${postcode ? `, ${postcode}` : ""}
+
+Rules:
+- KEEP if: email is specifically about THIS property (deal discussion, rent review, viewing, lease, brochure, investment analysis, internal note, tenant correspondence, agent update, ownership query, refinance, valuation, planning)
+- DROP if: newsletter, market roundup, unrelated property, generic marketing blast, automated notification, "review our newsletter" style, or unrelated deal that merely mentions this property name in passing
+
+Return STRICT JSON only — an array of indexes to KEEP (e.g. [0, 2, 5, 7, 12]). Nothing else, no prose, no code fences.
+
+EMAILS:
+${emailList.map((e) => `${e.i}. SUBJ: ${e.subject}\n   FROM: ${e.from}\n   PREV: ${e.preview}`).join("\n\n")}`;
+
+        const msg = await anthropic.messages.create({
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 400,
+          messages: [{ role: "user", content: filterPrompt }],
+        });
+        const txt = (msg.content as any[]).map((b: any) => (b.type === "text" ? b.text : "")).join("");
+        const match = txt.match(/\[[\d,\s]*\]/);
+        if (match) {
+          const keepIdx = new Set<number>(JSON.parse(match[0]).map((n: any) => Number(n)));
+          const filtered = emailHits.filter((_, i) => keepIdx.has(i));
+          if (filtered.length >= 3) { // sanity: don't let AI filter everything out
+            console.log(`[pathway stage1] AI relevance pass: ${emailHits.length} -> ${filtered.length} emails`);
+            emailHits.length = 0;
+            emailHits.push(...filtered);
+          } else {
+            console.warn(`[pathway stage1] AI filter returned too few (${filtered.length}) — keeping regex-filtered list`);
+          }
+        }
+      } catch (err: any) {
+        console.warn("[pathway stage1] AI relevance pass failed (keeping regex list):", err?.message);
+      }
+    }
+
+    // Final cap
+    emailHits.splice(60);
   } catch (err: any) {
     console.error("[pathway stage1] Email search error:", err?.message);
   }
