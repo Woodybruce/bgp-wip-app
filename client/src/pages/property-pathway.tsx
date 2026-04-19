@@ -646,7 +646,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           {/* Dense sub-cards in 4-col grid on wide screens.
               Row 1 order: SharePoint, Brochures, CRM, Comps (as requested).
               Row 2: Deals, Street sales, Units, Engagements. */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
             {/* SharePoint */}
             {s1.sharepointHits && s1.sharepointHits.length > 0 && (
               <Card>
