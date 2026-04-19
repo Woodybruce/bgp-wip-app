@@ -703,12 +703,14 @@ Do NOT skip these — the official title number, ownership, and rates data depen
   const userPrompt = `Investigate: ${opts.address}${opts.postcode ? `, ${opts.postcode}` : ""}${prefetchSummary}
 ${noPostcodeInstructions}
 Your investigation steps:
+→ FIRST PASS emails: call search_emails with the street/building name (e.g. "Haymarket" or "18-22 Haymarket") across ALL mailboxes. Then call search_emails again with just the postcode "${opts.postcode || ""}". Put every relevant hit in keyEmails.
 ${hasLandReg ? "✓ Land Registry already fetched above" : "→ Call land_registry_lookup to get official title numbers and ownership"}
 ${hasVoa ? "✓ VOA rates already fetched above" : "→ Call voa_rates_lookup for business rates"}
 → Call valuation_lookup for market rent £/sq ft, estimated ERV and estimated capital value
 ${hasCrm ? "✓ CRM already searched above" : "→ Call crm_lookup"}
 → Call property_data_lookup for planning history, EPC, floor areas
 → Look up Companies House for the owner and tenant
+→ SECOND PASS emails: once you have owner/tenant names and company numbers from Land Reg + Companies House, call search_emails AGAIN for each distinctive name (e.g. "Amsprop", "Dover Street Market", "Gainesville Partnership") to catch correspondence that didn't mention the street.
 → Search the web for this address (tenants, sales, news, planning decisions)
 → Search SharePoint and knowledge base
 → Return the JSON.`;
