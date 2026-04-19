@@ -107,19 +107,19 @@ const INVESTIGATOR_TOOLS: any[] = [
   },
   {
     name: "property_data_lookup",
-    description: "Fetch detailed property data for a postcode: planning applications (last 10 years), EPC/energy efficiency, floor areas, flood risk, listed buildings, conservation area, demographics, commercial rents, sold prices. Call this for any postcode where you want planning history or detailed property intelligence.",
+    description: "Fetch detailed property data: planning applications (last 10 years), EPC/energy efficiency, floor areas, flood risk, listed buildings, conservation area, commercial rents. Provide uprn for exact building data, or postcode for area-level data.",
     input_schema: {
       type: "object",
       properties: {
         postcode: { type: "string", description: "UK postcode, e.g. SW1Y 4DG" },
+        uprn: { type: "string", description: "UPRN for exact building lookup — use this if available, more precise than postcode" },
         address: { type: "string", description: "Full address for context" },
         layers: {
           type: "array",
           items: { type: "string", enum: ["core", "planning", "market", "area"] },
-          description: "Which data layers to fetch. core=titles+planning_apps, planning=designations+heritage, market=rents+yields+demand, area=demographics+crime+schools. Default: [\"core\",\"planning\"]",
+          description: "Data layers to fetch. Default: [\"core\",\"planning\"]",
         },
       },
-      required: ["postcode"],
     },
   },
 ];
@@ -462,6 +462,7 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
         const result = await performPropertyLookup({
           address: input.address,
           postcode: input.postcode,
+          uprn: input.uprn,
           layers,
           propertyDataLayers: layers,
         });

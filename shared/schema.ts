@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, real, jsonb, uuid, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, real, jsonb, uuid, serial, doublePrecision } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -1897,6 +1897,10 @@ export const propertyPathwayRuns = pgTable("property_pathway_runs", {
   propertyId: varchar("property_id"),
   address: text("address").notNull(),
   postcode: text("postcode"),
+  formattedAddress: text("formatted_address"),
+  uprn: text("uprn"),
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
   currentStage: integer("current_stage").notNull().default(1),
   stageStatus: jsonb("stage_status").notNull().default(sql`'{}'::jsonb`),
   stageResults: jsonb("stage_results").notNull().default(sql`'{}'::jsonb`),

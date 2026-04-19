@@ -398,6 +398,9 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   await setStageStatus(runId, "stage1", "running");
 
   const { runInvestigativeStage1, executeInvestigatorTool } = await import("./pathway-investigator");
+  const runAny = run as any;
+  const uprn: string | null = runAny.uprn || null;
+  const streetName = run.address.split(",")[0].replace(/^\d[\d\s\-–]+/, "").trim();
 
   // Phase 1: Run deterministic APIs immediately (~5-10s) and save partial results
   // so the user sees ownership/rates/CRM data while the Claude email loop runs.
@@ -410,10 +413,13 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
           .then((r) => prefetch.push({ tool: "land_registry_lookup", result: r })).catch(() => {})
       : Promise.resolve(),
     run.postcode
-      ? executeInvestigatorTool("voa_rates_lookup", { postcode: run.postcode, street: run.address.split(",")[0].replace(/^\d[\d\s\-–]+/, "").trim() }, req)
+      ? executeInvestigatorTool("voa_rates_lookup", { postcode: run.postcode, street: streetName }, req)
           .then((r) => prefetch.push({ tool: "voa_rates_lookup", result: r })).catch(() => {})
       : Promise.resolve(),
   ]);
+  if (uprn) {
+    prefetch.push({ tool: "uprn_resolved", result: { uprn, formattedAddress: runAny.formattedAddress, lat: runAny.lat, lng: runAny.lng } });
+  }
   const crmPF = prefetch.find((p) => p.tool === "crm_lookup")?.result;
   const landRegPF = prefetch.find((p) => p.tool === "land_registry_lookup")?.result;
   const voaPF = prefetch.find((p) => p.tool === "voa_rates_lookup")?.result;
@@ -2261,11 +2267,68 @@ export function registerPropertyPathwayRoutes(app: Express) {
       }
 
       const userId = req.session.userId || req.tokenUserId || null;
+
+      // Two-step address resolution: Google Geocoding → confirmed postcode + coords,
+      // then PropertyData address-match-uprn → UPRN for exact building
+      let resolvedFormattedAddress: string | null = null;
+      let resolvedLat: number | null = null;
+      let resolvedLng: number | null = null;
+      let resolvedUprn: string | null = null;
+      let finalPostcode = resolvedPostcode || null;
+
+      const googleKey = process.env.GOOGLE_API_KEY || process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY;
+      if (googleKey) {
+        try {
+          const geoUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${googleKey}&region=uk&components=country:GB`;
+          const geoRes = await fetch(geoUrl, { signal: AbortSignal.timeout(8000) });
+          if (geoRes.ok) {
+            const geoData: any = await geoRes.json();
+            const result = geoData?.results?.[0];
+            if (result) {
+              resolvedFormattedAddress = result.formatted_address || null;
+              resolvedLat = result.geometry?.location?.lat ?? null;
+              resolvedLng = result.geometry?.location?.lng ?? null;
+              const pcComponent = result.address_components?.find((c: any) => c.types?.includes("postal_code"));
+              if (pcComponent?.long_name && !finalPostcode) {
+                finalPostcode = pcComponent.long_name.trim().toUpperCase();
+              }
+              console.log(`[pathway start] Google geocoded "${address}" → "${resolvedFormattedAddress}", postcode=${finalPostcode}`);
+            }
+          }
+        } catch (err: any) {
+          console.warn("[pathway start] Google geocoding failed (non-fatal):", err?.message);
+        }
+      }
+
+      // PropertyData UPRN lookup — requires postcode
+      const pdKey = process.env.PROPERTYDATA_API_KEY;
+      if (pdKey && finalPostcode) {
+        try {
+          const streetPart = address.split(",")[0].trim();
+          const uprnUrl = `https://api.propertydata.co.uk/address-match-uprn?key=${pdKey}&address=${encodeURIComponent(streetPart)}&postcode=${encodeURIComponent(finalPostcode)}`;
+          const uprnRes = await fetch(uprnUrl, { signal: AbortSignal.timeout(8000) });
+          if (uprnRes.ok) {
+            const uprnData: any = await uprnRes.json();
+            const match = uprnData?.data?.[0] || uprnData?.results?.[0] || uprnData?.data;
+            if (match?.uprn || uprnData?.uprn) {
+              resolvedUprn = String(match?.uprn || uprnData?.uprn);
+              console.log(`[pathway start] PropertyData UPRN for "${address}" = ${resolvedUprn}`);
+            }
+          }
+        } catch (err: any) {
+          console.warn("[pathway start] PropertyData UPRN lookup failed (non-fatal):", err?.message);
+        }
+      }
+
       const [run] = await db
         .insert(propertyPathwayRuns)
         .values({
-          address,
-          postcode: postcode || null,
+          address: resolvedFormattedAddress || address,
+          postcode: finalPostcode || null,
+          formattedAddress: resolvedFormattedAddress,
+          uprn: resolvedUprn,
+          lat: resolvedLat,
+          lng: resolvedLng,
           propertyId: propertyId || null,
           currentStage: 1,
           stageStatus: {},

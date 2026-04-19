@@ -581,6 +581,7 @@ export async function performPropertyLookup(params: {
   postcode?: string;
   street?: string;
   buildingNameOrNumber?: string;
+  uprn?: string;
   layers?: string[];
   propertyDataLayers?: string[];
 }): Promise<PropertyLookupResult> {
