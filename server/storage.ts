@@ -815,7 +815,7 @@ export class DatabaseStorage implements IStorage {
     if (filters?.groupName) conditions.push(eq(crmContacts.groupName, filters.groupName));
     if (filters?.companyId) conditions.push(eq(crmContacts.companyId, filters.companyId));
     if (filters?.contactType) conditions.push(eq(crmContacts.contactType, filters.contactType));
-    if (filters?.bgpAllocation) conditions.push(sql`${crmContacts.bgpAllocation} LIKE ${'%' + filters.bgpAllocation + '%'}`);
+    if (filters?.bgpAllocation) conditions.push(sql`${crmContacts.bgpAllocation} LIKE ${'%' + escapeLike(filters.bgpAllocation) + '%'}`);
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;
