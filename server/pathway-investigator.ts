@@ -500,17 +500,18 @@ export async function runInvestigativeStage1(opts: {
 
   const systemPrompt = `You are BGP's senior property investigator. Given an address, you gather everything we know about the property by orchestrating calls to the available tools.
 
-APPROACH (like ChatBGP does conversationally):
-1. Start broad: search emails for the address/postcode, search SharePoint, check CRM, look up Land Registry
-2. Collect BREADCRUMBS from early findings: owner name, tenant name, Companies House numbers, agent names, historic references (e.g. "Burberry HQ" if mentioned)
-3. Re-search emails using those breadcrumbs — find the "London Trophy Requirement" and "TRE Valuation" style emails that don't name the address directly
-4. Read the most interesting emails in full (read_email) to surface details
-5. Extract brochure/accounts/lease attachments (extract_attachment) to read contents
-6. Look up Companies House for owner + tenant — get directors, PSCs, accounts
-7. Check VOA for rateable values — reveals unit splits in multi-let buildings
+APPROACH — follow this sequence:
+1. IMMEDIATELY call crm_lookup (type=all) — we may already have the property, deals and company on file
+2. IMMEDIATELY call land_registry — gets owner/title/price paid without needing any emails
+3. IMMEDIATELY call voa_rates — gets rateable value from the postcode
+4. Then search emails: use the street NAME word only (e.g. 'Haymarket' not '18-22 Haymarket') plus the postcode as a separate query
+5. Collect BREADCRUMBS from early findings: owner name, tenant name, Companies House numbers, agent names
+6. Re-search emails using those breadcrumbs — find emails that reference the owner or tenant but not the address directly
+7. Read the most interesting emails in full (read_email) and extract brochure attachments (extract_attachment)
+8. Look up Companies House for owner + tenant
+9. Search SharePoint / knowledge base
 
-BE THOROUGH: typical property has 5-15 relevant emails spread across the team. Don't stop at the first pass.
-SEARCH STRATEGY: For search_emails, use the street/building NAME word only — e.g. 'Haymarket' not '18-22 Haymarket'. Number-prefixed queries return almost nothing because they require exact phrase match. Search the postcode separately as "SW1Y 4DG".
+SEARCH STRATEGY: For search_emails, use the street/building NAME word only — e.g. 'Haymarket' not '18-22 Haymarket'. Pass postcodes without quotes e.g. SW1Y 4DG.
 BE DISCERNING: many emails on a street (like "Haymarket") are about OTHER buildings. Only keep emails specifically about THIS building in keyEmails.
 
 FINAL OUTPUT: When you've gathered enough, return STRICT JSON only (no prose, no markdown fences) matching this schema:
@@ -533,7 +534,7 @@ Omit fields you have no data for. Keep keyEmails to max 15, brochures to max 4 (
 
   const userPrompt = `Investigate: ${opts.address}${opts.postcode ? `, ${opts.postcode}` : ""}
 
-Use all tools available. Iterate — searches feed more searches. When done, return the JSON.`;
+Start by calling crm_lookup, land_registry, and voa_rates immediately — these give ownership and rates data without needing emails. Then search emails using the street name word and postcode. Iterate — use breadcrumbs to search further. When done, return the JSON.`;
 
   const messages: any[] = [{ role: "user", content: userPrompt }];
   const toolTrace: Array<{ tool: string; input: any; summary: string }> = [];
