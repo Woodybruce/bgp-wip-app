@@ -627,7 +627,7 @@ Then return the JSON.`;
     try {
       response = await anthropic.messages.create({
         model: MODEL_PRIMARY,
-        max_tokens: 4096,
+        max_tokens: 16000,
         system: systemPrompt,
         tools: INVESTIGATOR_TOOLS,
         messages,
@@ -636,7 +636,7 @@ Then return the JSON.`;
       console.warn(`[investigator] ${MODEL_PRIMARY} iter ${i} failed: ${err?.message} — falling back to ${MODEL_FALLBACK}`);
       response = await anthropic.messages.create({
         model: MODEL_FALLBACK,
-        max_tokens: 4096,
+        max_tokens: 8192,
         system: systemPrompt,
         tools: INVESTIGATOR_TOOLS,
         messages,
@@ -659,8 +659,31 @@ Then return the JSON.`;
       try {
         result = JSON.parse(match[0]) as InvestigativeStage1Result;
       } catch (parseErr: any) {
-        console.warn(`[investigator] JSON.parse failed: ${parseErr?.message} — returning empty`);
-        return { toolTrace, confidence: "low" as const };
+        console.warn(`[investigator] JSON.parse failed: ${parseErr?.message} — attempting truncation repair`);
+        // Try to salvage truncated JSON by closing open structures
+        try {
+          let partial = match[0];
+          // Count unclosed braces/brackets and add missing closers
+          let braces = 0, brackets = 0, inStr = false, escape = false;
+          for (const ch of partial) {
+            if (escape) { escape = false; continue; }
+            if (ch === "\\") { escape = true; continue; }
+            if (ch === '"') { inStr = !inStr; continue; }
+            if (inStr) continue;
+            if (ch === "{") braces++;
+            else if (ch === "}") braces--;
+            else if (ch === "[") brackets++;
+            else if (ch === "]") brackets--;
+          }
+          // Trim trailing incomplete key/value (cut at last complete comma or colon)
+          partial = partial.replace(/,\s*$/, "").replace(/:\s*"[^"]*$/, ": null");
+          partial += "]".repeat(Math.max(0, brackets)) + "}".repeat(Math.max(0, braces));
+          result = JSON.parse(partial) as InvestigativeStage1Result;
+          console.log(`[investigator] Truncated JSON repaired successfully`);
+        } catch (repairErr: any) {
+          console.warn(`[investigator] JSON repair also failed: ${repairErr?.message} — returning empty`);
+          return { toolTrace, confidence: "low" as const };
+        }
       }
 
       // If Claude returned no keyEmails but we accumulated emails from search_emails,

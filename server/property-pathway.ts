@@ -2235,7 +2235,10 @@ export function registerPropertyPathwayRoutes(app: Express) {
           .replace(/[.,]/g, "")
           .replace(/\s+/g, " ");
       const normalisedAddr = normaliseAddr(address);
-      const normalisedPostcode = (postcode || "").trim().replace(/\s+/g, "").toUpperCase();
+      // Extract postcode from address if not provided separately
+      const UK_POSTCODE_RE = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
+      const resolvedPostcode = postcode || address.match(UK_POSTCODE_RE)?.[1] || "";
+      const normalisedPostcode = resolvedPostcode.trim().replace(/\s+/g, "").toUpperCase();
 
       // Dedupe: look for an existing (non-deleted) run matching address±postcode
       if (!force) {
