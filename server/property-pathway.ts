@@ -518,7 +518,11 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
       purchasePrice: result.ownership?.pricePaid,
       purchaseDate: result.ownership?.dateOfPurchase,
       refurbCost: result.ownership?.refurbCost,
-      currentUse: result.property?.currentUse,
+      currentUse: result.property?.currentUse
+        ? String(result.property.currentUse)
+            .replace(/^(not confirmed[^.]*\.|data source[^.]*\.|property_data_lookup[^.]*\.)\s*/i, "")
+            .slice(0, 120)
+        : undefined,
       sizeSqft: result.property?.sizeSqft,
       mainTenants: result.tenancy?.mainOccupiers || (result.tenancy?.tenant ? [result.tenancy.tenant] : []),
       leaseStatus: result.tenancy?.leaseStatus,

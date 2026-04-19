@@ -444,12 +444,12 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                     </a>
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm">{run.address}{run.postcode ? `, ${run.postcode}` : ""}</p>
+                    <p className="font-medium text-sm break-words">{run.address}{run.postcode ? `, ${run.postcode}` : ""}</p>
                     <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
                       {s1.aiFacts?.listedStatus && <Badge variant="outline" className="text-[9px] py-0">{s1.aiFacts.listedStatus}</Badge>}
                       {s1.aiFacts?.sizeSqft && <Badge variant="outline" className="text-[9px] py-0">{s1.aiFacts.sizeSqft} sq ft</Badge>}
                     </div>
-                    {s1.aiFacts?.currentUse && <p className="text-[11px] text-muted-foreground mt-0.5">{s1.aiFacts.currentUse}</p>}
+                    {s1.aiFacts?.currentUse && <p className="text-[11px] text-muted-foreground mt-0.5 break-words line-clamp-2">{s1.aiFacts.currentUse}</p>}
                   </div>
                 </div>
 
