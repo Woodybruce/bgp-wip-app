@@ -15,6 +15,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Request } from "express";
 import { pool } from "./db";
+import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
 const MODEL_PRIMARY = "claude-sonnet-4-6";
 const MODEL_FALLBACK = "claude-haiku-4-5-20251001";
@@ -278,39 +279,16 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
 
       case "web_search": {
         const query = String(input.query || "").trim();
-        const apiKey = process.env.BRAVE_SEARCH_API_KEY || process.env.SERPER_API_KEY || "";
-        if (!apiKey) return { error: "No web search API key configured (set BRAVE_SEARCH_API_KEY or SERPER_API_KEY)" };
-        // Try Brave Search first, fall back to Serper
-        if (process.env.BRAVE_SEARCH_API_KEY) {
-          const resp = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=8&result_filter=web`, {
-            headers: { "Accept": "application/json", "X-Subscription-Token": process.env.BRAVE_SEARCH_API_KEY },
-          });
-          if (!resp.ok) return { error: `Brave search ${resp.status}` };
-          const data: any = await resp.json();
-          return {
-            query,
-            results: (data.web?.results || []).slice(0, 8).map((r: any) => ({
-              title: r.title,
-              url: r.url,
-              snippet: r.description,
-            })),
-          };
-        }
-        // Serper fallback
-        const resp = await fetch("https://google.serper.dev/search", {
-          method: "POST",
-          headers: { "X-API-KEY": process.env.SERPER_API_KEY!, "Content-Type": "application/json" },
-          body: JSON.stringify({ q: query, num: 8 }),
+        if (!isPerplexityConfigured()) return { error: "Perplexity not configured (set PERPLEXITY_API_KEY)" };
+        const r = await askPerplexity(query, {
+          systemPrompt: "You are a UK commercial property research assistant. Return factual, concise information with sources. Focus on ownership, planning, tenants, agents, sale/let history, news.",
+          maxTokens: 800,
+          temperature: 0.1,
         });
-        if (!resp.ok) return { error: `Serper search ${resp.status}` };
-        const data: any = await resp.json();
         return {
           query,
-          results: (data.organic || []).slice(0, 8).map((r: any) => ({
-            title: r.title,
-            url: r.link,
-            snippet: r.snippet,
-          })),
+          answer: r.answer,
+          citations: r.citations.map((c) => ({ url: c.url, title: c.title })),
         };
       }
 
