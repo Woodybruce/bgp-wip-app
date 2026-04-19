@@ -104,6 +104,23 @@ const INVESTIGATOR_TOOLS: any[] = [
       required: ["query"],
     },
   },
+  {
+    name: "property_data_lookup",
+    description: "Fetch detailed property data for a postcode: planning applications (last 10 years), EPC/energy efficiency, floor areas, flood risk, listed buildings, conservation area, demographics, commercial rents, sold prices. Call this for any postcode where you want planning history or detailed property intelligence.",
+    input_schema: {
+      type: "object",
+      properties: {
+        postcode: { type: "string", description: "UK postcode, e.g. SW1Y 4DG" },
+        address: { type: "string", description: "Full address for context" },
+        layers: {
+          type: "array",
+          items: { type: "string", enum: ["core", "planning", "market", "area"] },
+          description: "Which data layers to fetch. core=titles+planning_apps, planning=designations+heritage, market=rents+yields+demand, area=demographics+crime+schools. Default: [\"core\",\"planning\"]",
+        },
+      },
+      required: ["postcode"],
+    },
+  },
 ];
 
 // ---------- Tool executor ----------
@@ -437,6 +454,41 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
         return out;
       }
 
+      case "property_data_lookup": {
+        const { performPropertyLookup } = await import("./property-lookup");
+        const layers = Array.isArray(input.layers) && input.layers.length > 0 ? input.layers : ["core", "planning"];
+        const result = await performPropertyLookup({
+          address: input.address,
+          postcode: input.postcode,
+          layers,
+          propertyDataLayers: layers,
+        });
+        const pd = result.propertyDataCoUk || {};
+        const planAppsRaw = pd["planning-applications"]?.data;
+        const planApps = Array.isArray(planAppsRaw) ? planAppsRaw : (planAppsRaw?.planning_applications || []);
+        const epc = pd["energy-efficiency"]?.data;
+        const floorAreas = pd["floor-areas"]?.data;
+        const floodRisk = pd["flood-risk"]?.data;
+        const listedBuildings = pd["listed-buildings"]?.data;
+        const conservationArea = pd["conservation-area"]?.data;
+        const rentsCommercial = pd["rents-commercial"]?.data;
+        return {
+          postcode: input.postcode,
+          planningApplications: planApps.slice(0, 20).map((p: any) => ({
+            reference: p.application_reference || p.reference,
+            description: (p.development || p.description || "").slice(0, 200),
+            status: p.decision || p.status,
+            date: p.decision_date || p.date_received || p.date,
+          })),
+          epc: epc ? { rating: epc.current_energy_rating, type: epc.property_type } : null,
+          floorAreasSqm: floorAreas?.total_floor_area || null,
+          floodRisk: floodRisk?.flood_risk_band || null,
+          listedBuilding: listedBuildings?.[0]?.grade || null,
+          conservationArea: conservationArea?.area_name || null,
+          commercialRent: rentsCommercial ? { avgPsf: rentsCommercial.average_rent, range: `£${rentsCommercial.min_rent}–£${rentsCommercial.max_rent} psf` } : null,
+        };
+      }
+
       default:
         return { error: `Unknown tool: ${toolName}` };
     }
@@ -499,35 +551,33 @@ export async function runInvestigativeStage1(opts: {
   const started = Date.now();
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-  const systemPrompt = `You are BGP's senior property investigator. Given an address, you gather everything we know about the property by orchestrating calls to the available tools.
+  const systemPrompt = `You are BGP's senior property investigator. Given a UK commercial property address you gather comprehensive intelligence by orchestrating calls to the available tools.
 
 APPROACH — follow this sequence:
-1. The CRM, Land Registry and VOA data has already been fetched and is shown in your context below — DO NOT call those tools again, use the data you have.
-2. Look up Companies House for any owner or tenant name found in the Land Registry / CRM data
-3. Search the web for the address — find news, planning applications, agent listings, past sales
-4. Search SharePoint for the property address and any owner/tenant name found
-5. Search the knowledge base for the address
-6. Return the JSON with everything you know
+1. CRM, Land Registry and VOA data is pre-fetched and shown in your context — DO NOT call those tools again.
+2. Call property_data_lookup to get planning history, EPC, floor areas and any available detailed PropertyData layers.
+3. Look up Companies House for the owner and any tenant name found in the pre-fetched data.
+4. Search the web (Perplexity) for the address: current tenants, recent sales/lettings, news, planning decisions, agent listings.
+5. Search SharePoint for this property address and the owner/tenant names.
+6. Search the knowledge base for the address.
+7. Return the JSON below with everything you found.
 
-DO NOT call search_emails, read_email, or extract_attachment — email search is disabled for this run.
-
-FINAL OUTPUT: When you've gathered enough, return STRICT JSON only (no prose, no markdown fences) matching this schema:
+FINAL OUTPUT: return STRICT JSON only (no prose, no markdown fences):
 {
   "ownership": { "owner": "...", "ownerCompanyNumber": "...", "titleNumber": "...", "pricePaid": "£31m", "dateOfPurchase": "Nov 2013", "refurbCost": "£60m" },
   "tenancy": { "tenant": "...", "tenantCompanyNumber": "...", "leaseStatus": "...", "mainOccupiers": [], "passingRent": "£2.57m pa" },
-  "property": { "sizeSqft": "31384", "listedStatus": "Grade II", "currentUse": "...", "heritageNotes": "..." },
-  "keyEmails": [{ "msgId": "...", "mailboxEmail": "...", "subject": "...", "from": "...", "date": "...", "preview": "...", "hasAttachments": true, "webLink": null, "why": "brief reason this is relevant" }],
-  "keyDocs": [{ "name": "...", "source": "email|sharepoint|knowledge_base", "excerpt": "...", "webUrl": "..." }],
-  "brochures": [{ "name": "...", "source": "email|sharepoint", "ref": "msgId or path", "date": "...", "webUrl": "..." }],
+  "property": { "sizeSqft": "31384", "listedStatus": "Grade II", "currentUse": "...", "heritageNotes": "...", "planningHistory": "brief summary of key planning decisions" },
+  "keyDocs": [{ "name": "...", "source": "sharepoint|knowledge_base", "excerpt": "...", "webUrl": "..." }],
   "sharepointMatches": [{ "name": "...", "path": "...", "webUrl": "...", "type": "folder|file" }],
   "rates": { "totalRV": 450000, "assessmentCount": 5, "entries": [] },
   "crmMatches": { "properties": [], "deals": [], "companies": [] },
+  "webFindings": "2-3 sentence summary of what Perplexity web search found",
   "aiBriefing": { "headline": "1-sentence top-line", "bullets": ["..."], "keyQuestions": ["..."] },
   "nextSteps": ["specific follow-ups for the analyst"],
   "confidence": "high|medium|low"
 }
 
-Omit fields you have no data for. Keep keyEmails to max 15, brochures to max 4 (genuinely this-building only), sharepointMatches to max 15.`;
+Omit fields you have no data for. Keep sharepointMatches to max 15.`;
 
   // Use caller-supplied pre-fetch if available, otherwise run it ourselves.
   let prefetch: Array<{ tool: string; result: any }> = opts.externalPrefetch || [];
@@ -552,7 +602,12 @@ Omit fields you have no data for. Keep keyEmails to max 15, brochures to max 4 (
 
   const userPrompt = `Investigate: ${opts.address}${opts.postcode ? `, ${opts.postcode}` : ""}${prefetchSummary}
 
-Use the pre-fetched data above as breadcrumbs. Now search emails using the street NAME word and postcode. Read interesting emails, extract brochures, look up Companies House for any owner/tenant found. When done, return the JSON.`;
+Use the pre-fetched data above as your starting point. Now:
+1. Call property_data_lookup for planning history, EPC, floor areas
+2. Look up Companies House for the owner (and tenant if identified)
+3. Search the web for this address
+4. Search SharePoint and the knowledge base
+Then return the JSON.`;
 
   const messages: any[] = [{ role: "user", content: userPrompt }];
   const toolTrace: Array<{ tool: string; input: any; summary: string }> = [];

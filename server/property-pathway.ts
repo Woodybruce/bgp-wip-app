@@ -434,7 +434,7 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
       assessmentCount: voaPF.count,
       entries: voaPF.entries || [],
     } : undefined,
-    summary: `Searching emails for ${run.address}…`,
+    summary: `Investigating ${run.address}…`,
     _partial: true,
   };
   const freshRun = await getRun(runId);
@@ -1817,25 +1817,64 @@ async function runStage2(runId: string, _req: Request): Promise<void> {
 async function runStage3(runId: string, _req: Request): Promise<void> {
   const run = await getRun(runId);
   if (!run) throw new Error("Run not found");
+  await setStageStatus(runId, "stage3", "running");
   const results = run.stageResults as StageResults;
 
-  const lines: string[] = [];
-  lines.push(`**Initial Findings for ${run.address}**`);
-  if (results.stage1?.initialOwnership) {
-    const o = results.stage1.initialOwnership;
-    lines.push(`- Owner: ${o.proprietorName || "unknown"} (title ${o.titleNumber}${o.pricePaid ? `, paid £${o.pricePaid.toLocaleString()} ${o.dateOfPurchase || ""}` : ""})`);
+  // Build a data digest for Claude to summarise
+  const s1 = results.stage1 || {};
+  const s2 = results.stage2 || {};
+  const mi = (results as any).marketIntel;
+
+  const digest: Record<string, any> = { address: run.address };
+  if (s1.initialOwnership) digest.ownership = s1.initialOwnership;
+  if (s1.aiFacts) digest.aiFacts = s1.aiFacts;
+  if (s1.tenant) digest.tenant = s1.tenant;
+  if (s1.rates) digest.rates = { totalRV: s1.rates.totalRateableValue, assessments: s1.rates.assessmentCount, entries: (s1.rates.entries || []).slice(0, 5) };
+  if (s1.crmHits) digest.crmHits = { properties: s1.crmHits.properties?.length || 0, deals: s1.crmHits.deals?.length || 0 };
+  if (s1.emailHits?.length) digest.emailCount = s1.emailHits.length;
+  if (s1.sharepointHits?.length) digest.sharepointFiles = s1.sharepointHits.length;
+  if (s1.aiBriefing) digest.investigatorBriefing = s1.aiBriefing;
+  if ((s1 as any).webFindings) digest.webFindings = (s1 as any).webFindings;
+  if (s2.company) digest.tenantProfile = { name: s2.company.name, industry: s2.company.industry, conceptPitch: s2.company.conceptPitch, storeCount: s2.company.storeCount, rolloutStatus: s2.company.rolloutStatus, backers: s2.company.backers };
+  if (mi) digest.marketIntel = { leasingHistory: mi.leasingHistory?.slice(0, 5), marketContext: mi.marketContext };
+
+  let summary = "";
+  let recommendProceed = true;
+
+  try {
+    const prompt = `You are a senior BGP property analyst writing a gate-review summary before committing the team to full due diligence.
+
+Property: ${run.address}
+
+Gathered intelligence:
+${JSON.stringify(digest, null, 2)}
+
+Write a concise markdown summary (max 400 words) covering:
+1. **Ownership** — who owns it, when they bought it, price paid if known
+2. **Occupancy** — current tenant(s), use class, lease status, passing rent
+3. **Rates** — total rateable value, key tenants by rates
+4. **What we found** — CRM records, SharePoint files, web intelligence, market context
+5. **Key questions / risks** — what we don't know yet
+6. **Recommendation** — one sentence: proceed to full diligence or flag a reason to pause
+
+End with a line: RECOMMEND: PROCEED or RECOMMEND: PAUSE (with brief reason if pausing).`;
+
+    const resp = await callClaude({ prompt, maxTokens: 800, temperature: 0.2 });
+    summary = typeof resp === "string" ? resp : resp?.content?.[0]?.text || resp?.text || JSON.stringify(resp);
+    recommendProceed = !summary.includes("RECOMMEND: PAUSE");
+  } catch (err: any) {
+    console.error("[pathway stage3] Claude summary failed:", err?.message);
+    // Fallback to simple text
+    const lines = [`**Initial Findings for ${run.address}**`];
+    if (s1.initialOwnership) lines.push(`- Owner: ${s1.initialOwnership.proprietorName || "unknown"}`);
+    if (s1.tenant) lines.push(`- Tenant: ${s1.tenant.name}`);
+    if (s1.rates) lines.push(`- Total rateable value: £${(s1.rates.totalRateableValue || 0).toLocaleString()}`);
+    lines.push("", "Ready to run full Property Intelligence?");
+    summary = lines.join("\n");
   }
-  if (results.stage1?.tenant) lines.push(`- Tenant: ${results.stage1.tenant.name}`);
-  if (results.stage1?.crmHits?.properties?.length) lines.push(`- CRM matches: ${results.stage1.crmHits.properties.length} property record(s)`);
-  if (results.stage1?.emailHits?.length) lines.push(`- Emails in mailbox: ${results.stage1.emailHits.length}`);
-  if (results.stage2?.enrichedFields && Object.keys(results.stage2.enrichedFields).length) {
-    lines.push(`- Brand enrichment: ${Object.keys(results.stage2.enrichedFields).join(", ")}`);
-  }
-  lines.push("");
-  lines.push("Ready to run full Property Intelligence (title registers, planning applications, floor plans, proprietor KYC)?");
 
   await setStageStatus(runId, "stage3", "completed", {
-    stage3: { summary: lines.join("\n"), recommendProceed: true },
+    stage3: { summary, recommendProceed },
   });
 }
 
