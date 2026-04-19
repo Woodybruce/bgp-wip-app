@@ -692,9 +692,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                     </div>
                   ))
                 ) : (
-                  <p className="text-muted-foreground text-[11px] py-1 line-clamp-3">
-                    None matched. Check 📎 emails — brochure may need manual linking.
-                  </p>
+                  <p className="text-muted-foreground text-[11px] py-1 truncate">None found — check 📎 emails.</p>
                 )}
               </CardContent>
             </Card>
