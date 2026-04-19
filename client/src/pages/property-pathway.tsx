@@ -1026,52 +1026,69 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 </div>
               </div>
 
-              {/* 02 Companies House KYC */}
+              {/* 02 Companies House KYC — summary only; full report lives in Clouseau */}
               <div className="border rounded p-2.5 bg-muted/10">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">02 Companies House</p>
                 {s4.companyKyc && s4.companyKyc.length > 0 ? (
                   <div className="space-y-2 text-[11px]">
-                    {s4.companyKyc.map((c: any) => (
-                      <div key={c.companyNumber} className="border rounded p-1.5 bg-background">
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="font-medium truncate flex-1">{c.companyName}</span>
-                          <span className="text-[9px] uppercase text-muted-foreground ml-1 shrink-0">{c.role}</span>
+                    {s4.companyKyc.map((c: any) => {
+                      const riskColor =
+                        c.riskLevel === "critical" ? "bg-red-600 text-white" :
+                        c.riskLevel === "high" ? "bg-red-500 text-white" :
+                        c.riskLevel === "medium" ? "bg-amber-500 text-white" :
+                        c.riskLevel === "low" ? "bg-emerald-600 text-white" :
+                        "bg-muted text-muted-foreground";
+                      return (
+                        <div key={c.companyNumber} className="border rounded p-1.5 bg-background">
+                          <div className="flex items-center justify-between mb-1 gap-1">
+                            <span className="font-medium truncate flex-1">{c.companyName}</span>
+                            <span className="text-[9px] uppercase text-muted-foreground shrink-0">{c.role}</span>
+                          </div>
+                          {c.error ? (
+                            <p className="text-[10px] text-destructive">{c.error}</p>
+                          ) : (
+                            <>
+                              <div className="flex items-center gap-1 flex-wrap mb-1">
+                                {c.riskLevel && (
+                                  <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-medium ${riskColor}`}>
+                                    {c.riskLevel} {c.riskScore != null ? `(${c.riskScore})` : ""}
+                                  </span>
+                                )}
+                                {c.sanctionsMatch && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-600 text-white uppercase font-medium">Sanctions</span>
+                                )}
+                                {c.status && <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase">{c.status}</span>}
+                              </div>
+                              <p className="text-[10px] text-muted-foreground">
+                                {c.officerCount ?? 0} officers · {c.pscCount ?? 0} PSCs · {c.uboCount ?? 0} UBO chain · {c.filingCount ?? 0} filings
+                              </p>
+                              {c.flags && c.flags.length > 0 && (
+                                <details className="mt-1">
+                                  <summary className="cursor-pointer text-[10px] text-muted-foreground">{c.flags.length} risk flag{c.flags.length === 1 ? "" : "s"}</summary>
+                                  <ul className="mt-1 space-y-0.5 text-[10px] pl-2">
+                                    {c.flags.slice(0, 6).map((f: string, i: number) => (
+                                      <li key={i} className="text-muted-foreground">• {f}</li>
+                                    ))}
+                                  </ul>
+                                </details>
+                              )}
+                              {c.investigationId ? (
+                                <a
+                                  href={`/kyc-clouseau?investigation=${c.investigationId}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="mt-1 inline-flex items-center gap-1 text-[10px] text-primary hover:underline"
+                                >
+                                  View full Clouseau report <ExternalLink className="w-2.5 h-2.5" />
+                                </a>
+                              ) : (
+                                <p className="mt-1 text-[10px] text-muted-foreground italic">Saved to Clouseau history</p>
+                              )}
+                            </>
+                          )}
                         </div>
-                        {c.error ? (
-                          <p className="text-[10px] text-destructive">{c.error}</p>
-                        ) : (
-                          <>
-                            <p className="text-[10px] text-muted-foreground truncate">
-                              {c.profile?.status || "—"} · {c.officers?.length || 0} officers · {c.pscs?.length || 0} PSCs
-                            </p>
-                            {c.filings && c.filings.length > 0 && (
-                              <details className="mt-1">
-                                <summary className="cursor-pointer text-[10px] text-primary">Filings ({c.filings.length})</summary>
-                                <ul className="mt-1 space-y-0.5 max-h-40 overflow-y-auto">
-                                  {c.filings.map((f: any, i: number) => (
-                                    <li key={i} className="flex items-center justify-between gap-1 py-0.5 border-b last:border-b-0">
-                                      <span className="text-muted-foreground text-[10px] shrink-0 w-16">{f.date}</span>
-                                      <span className="flex-1 truncate text-[10px]">{f.description || f.type}</span>
-                                      {f.documentId && (
-                                        <a
-                                          href={`/api/companies-house/document/${encodeURIComponent(f.documentId)}?filename=${encodeURIComponent((c.companyName + "_" + f.type + "_" + f.date + ".pdf").replace(/\s+/g, "_"))}`}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          title="Open PDF"
-                                          className="text-primary hover:underline shrink-0"
-                                        >
-                                          <ExternalLink className="w-2.5 h-2.5" />
-                                        </a>
-                                      )}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </details>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="text-[10px] text-muted-foreground">No proprietor/tenant company number resolved at Stage 1.</p>

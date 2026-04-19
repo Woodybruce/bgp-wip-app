@@ -340,44 +340,60 @@ Format with clear headers and be specific. Reference actual names and data point
   }
 }
 
-router.post("/api/kyc-clouseau/investigate", requireAuth, async (req: Request, res: Response) => {
+/**
+ * Shared helper used by the /investigate route AND by Property Pathway's
+ * Stage 4 — runs a full company KYC, persists it to kyc_investigations so
+ * the same record appears in Clouseau's Investigation History regardless
+ * of where the investigation was kicked off from.
+ *
+ * Returns `{ result, investigationId }`. `investigationId` is the primary
+ * key in kyc_investigations (null if DB insert failed).
+ */
+export async function runCompanyInvestigation(opts: {
+  companyNumber?: string;
+  companyName?: string;
+  propertyContext?: any;
+  crmCompanyId?: string | null;
+  userId?: string | null;
+  skipAi?: boolean;
+}): Promise<{ result: InvestigationResult; investigationId: number | null }> {
+  const { companyNumber, companyName, propertyContext, crmCompanyId, userId = null, skipAi = false } = opts;
+
+  if (!companyNumber && !companyName) {
+    throw new Error("Provide companyNumber or companyName");
+  }
+
+  let targetNumber = companyNumber;
+  if (!targetNumber && companyName) {
+    const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(companyName)}&items_per_page=1`);
+    if (searchData.items?.length > 0) {
+      targetNumber = searchData.items[0].company_number;
+    } else {
+      throw new Error(`No company found matching "${companyName}"`);
+    }
+  }
+
+  console.log(`[kyc-clouseau] Starting investigation: ${targetNumber}`);
+
+  const companyData = await getCompanyData(targetNumber!);
+
+  let ownershipChain = null;
   try {
-    const { companyNumber, companyName, type = "company", propertyContext } = req.body;
+    ownershipChain = await discoverUltimateParent(targetNumber!);
+  } catch {}
 
-    if (!companyNumber && !companyName) {
-      return res.status(400).json({ error: "Provide companyNumber or companyName" });
-    }
+  const namesToScreen: string[] = [];
+  if (companyData.profile?.company_name) namesToScreen.push(companyData.profile.company_name);
+  const activeOfficers = (companyData.officers || []).filter((o: any) => !o.resigned_on);
+  activeOfficers.forEach((o: any) => { if (o.name) namesToScreen.push(o.name); });
+  const activePscs = (companyData.pscs || []).filter((p: any) => !p.ceased_on);
+  activePscs.forEach((p: any) => { if (p.name) namesToScreen.push(p.name); });
 
-    let targetNumber = companyNumber;
-    if (!targetNumber && companyName) {
-      const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(companyName)}&items_per_page=1`);
-      if (searchData.items?.length > 0) {
-        targetNumber = searchData.items[0].company_number;
-      } else {
-        return res.status(404).json({ error: `No company found matching "${companyName}"` });
-      }
-    }
+  const sanctionsResult = await screenSanctions(namesToScreen);
+  const risk = assessRisk(companyData, sanctionsResult);
 
-    console.log(`[kyc-clouseau] Starting investigation: ${targetNumber}`);
-
-    const companyData = await getCompanyData(targetNumber);
-
-    let ownershipChain = null;
-    try {
-      ownershipChain = await discoverUltimateParent(targetNumber);
-    } catch {}
-
-    const namesToScreen: string[] = [];
-    if (companyData.profile?.company_name) namesToScreen.push(companyData.profile.company_name);
-    const activeOfficers = (companyData.officers || []).filter((o: any) => !o.resigned_on);
-    activeOfficers.forEach((o: any) => { if (o.name) namesToScreen.push(o.name); });
-    const activePscs = (companyData.pscs || []).filter((p: any) => !p.ceased_on);
-    activePscs.forEach((p: any) => { if (p.name) namesToScreen.push(p.name); });
-
-    const sanctionsResult = await screenSanctions(namesToScreen);
-    const risk = assessRisk(companyData, sanctionsResult);
-
-    let aiAnalysis = "";
+  let aiAnalysis = "";
+  if (!skipAi) {
     try {
       const aiPromise = runAiAnalysis(companyData, risk.flags, ownershipChain, propertyContext);
       const timeoutPromise = new Promise<string>((_, reject) => setTimeout(() => reject(new Error("AI analysis timed out")), 90000));
@@ -385,78 +401,98 @@ router.post("/api/kyc-clouseau/investigate", requireAuth, async (req: Request, r
     } catch (aiErr: any) {
       aiAnalysis = `AI analysis unavailable (${aiErr.message}). Structured data and risk scoring are shown below.`;
     }
+  }
 
-    const result: InvestigationResult = {
-      subject: {
-        name: companyData.profile?.company_name || companyName || targetNumber,
-        companyNumber: targetNumber,
-        type: type as "company" | "individual",
-      },
-      companyProfile: companyData.profile,
-      officers: activeOfficers,
-      pscs: activePscs,
-      ownershipChain,
-      filingHistory: (companyData.filings || []).slice(0, 20),
-      insolvencyHistory: companyData.insolvency,
-      sanctionsScreening: sanctionsResult,
-      aiAnalysis,
-      riskScore: risk.score,
-      riskLevel: risk.level as any,
-      flags: risk.flags,
-      charges: companyData.charges || [],
-      propertyContext: propertyContext || null,
-      timestamp: new Date().toISOString(),
-    };
+  const result: InvestigationResult = {
+    subject: {
+      name: companyData.profile?.company_name || companyName || targetNumber!,
+      companyNumber: targetNumber,
+      type: "company",
+    },
+    companyProfile: companyData.profile,
+    officers: activeOfficers,
+    pscs: activePscs,
+    ownershipChain,
+    filingHistory: (companyData.filings || []).slice(0, 20),
+    insolvencyHistory: companyData.insolvency,
+    sanctionsScreening: sanctionsResult,
+    aiAnalysis,
+    riskScore: risk.score,
+    riskLevel: risk.level as any,
+    flags: risk.flags,
+    charges: companyData.charges || [],
+    propertyContext: propertyContext || null,
+    timestamp: new Date().toISOString(),
+  };
 
-    // PropertyData pipeline — fetch properties owned by this company
-    if (targetNumber && process.env.PROPERTYDATA_API_KEY) {
-      try {
-        const pdRes = await fetch(
-          `https://api.propertydata.co.uk/freeholds?company_number=${encodeURIComponent(targetNumber)}&key=${process.env.PROPERTYDATA_API_KEY}`
-        );
-        if (pdRes.ok) {
-          const pdData = await pdRes.json();
-          (result as any).propertiesOwned = pdData;
-        }
-      } catch (pdErr: any) {
-        console.warn("[kyc-clouseau] PropertyData fetch failed:", pdErr.message);
-      }
-    }
-
-    // Save to kyc_investigations
-    const userId = (req as any).user?.id || null;
-    const hasSanctionsMatch = sanctionsResult
-      ? sanctionsResult.some((s: any) => s.status === "strong_match" || s.status === "potential_match")
-      : false;
+  if (targetNumber && process.env.PROPERTYDATA_API_KEY) {
     try {
-      const insertResult = await pool.query(
-        `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, risk_level, risk_score, sanctions_match, result, conducted_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id`,
-        [
-          "company",
-          result.subject.name,
-          targetNumber,
-          req.body.crmCompanyId || null,
-          risk.level,
-          risk.score,
-          hasSanctionsMatch,
-          JSON.stringify(result),
-          userId,
-        ]
+      const pdRes = await fetch(
+        `https://api.propertydata.co.uk/freeholds?company_number=${encodeURIComponent(targetNumber)}&key=${process.env.PROPERTYDATA_API_KEY}`
       );
-      const investigationId = insertResult.rows[0]?.id;
-      if (investigationId) {
-        await logKycAudit(investigationId, "created", userId, `Company investigation: ${result.subject.name}`);
+      if (pdRes.ok) {
+        const pdData = await pdRes.json();
+        (result as any).propertiesOwned = pdData;
       }
-    } catch (dbErr: any) {
-      console.warn("[kyc-clouseau] Failed to save investigation:", dbErr.message);
+    } catch (pdErr: any) {
+      console.warn("[kyc-clouseau] PropertyData fetch failed:", pdErr.message);
     }
+  }
 
-    console.log(`[kyc-clouseau] Investigation complete: ${result.subject.name} — risk: ${risk.level} (${risk.score})`);
-    res.json(result);
+  const hasSanctionsMatch = sanctionsResult
+    ? sanctionsResult.some((s: any) => s.status === "strong_match" || s.status === "potential_match")
+    : false;
+
+  let investigationId: number | null = null;
+  try {
+    const insertResult = await pool.query(
+      `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, risk_level, risk_score, sanctions_match, result, conducted_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [
+        "company",
+        result.subject.name,
+        targetNumber,
+        crmCompanyId || null,
+        risk.level,
+        risk.score,
+        hasSanctionsMatch,
+        JSON.stringify(result),
+        userId,
+      ]
+    );
+    investigationId = insertResult.rows[0]?.id ?? null;
+    if (investigationId) {
+      await logKycAudit(investigationId, "created", userId, `Company investigation: ${result.subject.name}`);
+    }
+  } catch (dbErr: any) {
+    console.warn("[kyc-clouseau] Failed to save investigation:", dbErr.message);
+  }
+
+  console.log(`[kyc-clouseau] Investigation complete: ${result.subject.name} — risk: ${risk.level} (${risk.score})`);
+  return { result, investigationId };
+}
+
+router.post("/api/kyc-clouseau/investigate", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { companyNumber, companyName, propertyContext } = req.body;
+    const userId = (req as any).user?.id || null;
+    const { result, investigationId } = await runCompanyInvestigation({
+      companyNumber,
+      companyName,
+      propertyContext,
+      crmCompanyId: req.body.crmCompanyId || null,
+      userId,
+    });
+    res.json({ ...result, investigationId });
   } catch (err: any) {
     console.error("[kyc-clouseau] Investigation error:", err.message);
+    if (/No company found matching/i.test(err.message)) {
+      return res.status(404).json({ error: err.message });
+    }
+    if (/^Provide/i.test(err.message)) {
+      return res.status(400).json({ error: err.message });
+    }
     const userMessage = sanitizeErrorMessage(err.message, "Investigation failed");
     res.status(500).json({ error: userMessage });
   }

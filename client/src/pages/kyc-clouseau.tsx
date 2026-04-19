@@ -1017,19 +1017,43 @@ export default function KycClouseau() {
 
   // Auto-run when coming from a cross-link (Compliance Board → Investigate).
   // Reads ?run=<CHnumber>&name=<name> once per mount.
+  // Also reads ?investigation=<id> to re-open a persisted investigation
+  // (e.g. Property Pathway's Stage 4 links here with the investigationId
+  // it saved to kyc_investigations, so the full report opens in place).
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const run = params.get("run");
     const name = params.get("name");
-    if (run || name) {
+    const investigationId = params.get("investigation");
+
+    if (investigationId) {
+      (async () => {
+        try {
+          const res = await apiRequest("GET", `/api/kyc-clouseau/investigation/${encodeURIComponent(investigationId)}`);
+          const row = await res.json();
+          const payload = typeof row.result === "string" ? JSON.parse(row.result) : row.result;
+          if (payload) {
+            setInvestigation(payload);
+            setIndividualResult(null);
+            setSelectedOfficer(null);
+            setOfficerDeepDive(null);
+          }
+        } catch (err: any) {
+          toast({ title: "Could not open investigation", description: err?.message || "Unknown error", variant: "destructive" });
+        }
+      })();
+    } else if (run || name) {
       investigateMutation.mutate({
         companyNumber: run || undefined,
         companyName: name || undefined,
       } as any);
-      // Strip the run/name params so refresh doesn't fire again (keep tab)
+    }
+
+    if (run || name || investigationId) {
       params.delete("run");
       params.delete("name");
+      params.delete("investigation");
       const clean = params.toString();
       window.history.replaceState({}, "", `${window.location.pathname}${clean ? "?" + clean : ""}`);
     }

@@ -528,6 +528,21 @@ export function registerLandRegistryRoutes(app: Express) {
         return res.status(400).json({ error: "Provide address, postcode, or lat+lng" });
       }
 
+      // If the user typed the postcode inside the address field ("18-22 Haymarket,
+      // London SW1Y 4DG") pull it out so the downstream PropertyData calls,
+      // which all require a postcode, can still run.
+      if (!resolvedPostcode && resolvedAddress) {
+        const pcMatch = resolvedAddress.match(/\b([A-Z]{1,2}[0-9][A-Z0-9]?)\s*([0-9][A-Z]{2})\b/i);
+        if (pcMatch) {
+          resolvedPostcode = `${pcMatch[1]} ${pcMatch[2]}`.toUpperCase();
+          resolvedAddress = resolvedAddress.replace(pcMatch[0], "").replace(/,\s*$/, "").replace(/,\s*,/g, ",").trim();
+        }
+      }
+
+      if (!resolvedPostcode) {
+        return res.status(400).json({ error: "A postcode is required. Enter it in the postcode field or include it in the address (e.g. '18-22 Haymarket, London SW1Y 4DG')." });
+      }
+
       const cleanPc = resolvedPostcode.replace(/\s+/g, "");
 
       // Step 2: ask PropertyData to resolve the address (plus postcode) to

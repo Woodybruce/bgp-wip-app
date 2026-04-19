@@ -132,20 +132,27 @@ interface StageResults {
     titleRegisters?: Array<{ titleNumber: string; documentUrl?: string; source?: "infotrack" | "placeholder" }>;
     planningApplications?: Array<{ reference: string; description: string; status: string; date: string; decidedAt?: string; receivedAt?: string; documentUrl?: string }>;
     floorPlanUrls?: string[];
-    // Companies House KYC — one block per resolved proprietor/tenant company.
-    // Filing PDFs are NOT downloaded here; the UI streams them via the
-    // /api/companies-house/document/:id proxy route on click. When the user
-    // later materialises a folder tree, the SharePoint pipeline re-pulls
-    // these PDFs from the proxy route and drops them into the chosen folders.
+    // Companies House KYC — one summary block per resolved proprietor/tenant
+    // company. The full investigation (officers, PSCs, UBO chain, sanctions,
+    // AI analysis, filings) is written to `kyc_investigations` via
+    // runCompanyInvestigation(), and the board only keeps a lightweight
+    // summary pointing to that record. Click-through to the full report
+    // lives in the Clouseau page (/kyc-clouseau?investigation={id}).
     companyKyc?: Array<{
       companyNumber: string;
       companyName: string;
       role: "proprietor" | "tenant" | "parent" | "ubo";
-      profile?: { status?: string; incorporatedOn?: string; companyType?: string; registeredAddress?: string | null };
-      officers?: Array<{ name: string; role: string; appointedOn?: string; resignedOn?: string | null; nationality?: string }>;
-      pscs?: Array<{ name: string; kind?: string; nationality?: string; naturesOfControl?: string[] }>;
-      filings?: Array<{ date: string; category: string; type: string; description: string; documentId: string | null }>;
-      riskSummary?: { level: "low" | "medium" | "high"; notes: string[] } | null;
+      investigationId: number | null;
+      riskLevel?: "low" | "medium" | "high" | "critical";
+      riskScore?: number;
+      sanctionsMatch?: boolean;
+      flags?: string[];
+      officerCount?: number;
+      pscCount?: number;
+      uboCount?: number;
+      filingCount?: number;
+      status?: string;
+      incorporatedOn?: string;
       error?: string;
     }>;
     proprietorKyc?: any;
@@ -1989,59 +1996,50 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
       });
     }
 
-    const { getCompanyData } = await import("./kyc-clouseau");
+    // Run the SAME investigation pipeline Clouseau uses — full UBO chain,
+    // sanctions screening, AI risk, filing history — and let it persist to
+    // kyc_investigations. The pathway board stores only a lightweight
+    // summary (risk level + counts) with an investigationId the UI can
+    // link to for the full report. No parallel data; one source of truth.
+    const { runCompanyInvestigation } = await import("./kyc-clouseau");
+    const userId = (run as any).startedBy || null;
 
     const companyKycPromise = Promise.all(
       companyTargets.map(async (t) => {
         try {
-          const data = await getCompanyData(t.companyNumber);
-          const profile = data.profile || {};
-          const address = profile.registered_office_address
-            ? [profile.registered_office_address.address_line_1, profile.registered_office_address.address_line_2, profile.registered_office_address.locality, profile.registered_office_address.postal_code]
-                .filter(Boolean).join(", ")
-            : null;
+          const { result, investigationId } = await runCompanyInvestigation({
+            companyNumber: t.companyNumber,
+            companyName: t.companyName,
+            propertyContext: { address, postcode, source: "property-pathway", runId },
+            userId,
+            skipAi: true, // pathway runs multiple companies; skip heavy AI per company, Clouseau page will run AI on click
+          });
+          const uboCount = Array.isArray((result.ownershipChain as any)?.chain)
+            ? (result.ownershipChain as any).chain.length
+            : 0;
           return {
             companyNumber: t.companyNumber,
-            companyName: profile.company_name || t.companyName,
+            companyName: result.subject.name,
             role: t.role,
-            profile: {
-              status: profile.company_status,
-              incorporatedOn: profile.date_of_creation,
-              companyType: profile.type,
-              registeredAddress: address,
-            },
-            officers: (data.officers || []).slice(0, 40).map((o: any) => ({
-              name: o.name,
-              role: o.officer_role,
-              appointedOn: o.appointed_on,
-              resignedOn: o.resigned_on || null,
-              nationality: o.nationality,
-            })),
-            pscs: (data.pscs || []).slice(0, 20).map((p: any) => ({
-              name: p.name,
-              kind: p.kind,
-              nationality: p.nationality,
-              naturesOfControl: p.natures_of_control || [],
-            })),
-            filings: (data.filings || []).slice(0, 25).map((f: any) => {
-              const docMeta = f.links?.document_metadata;
-              const docId = docMeta ? String(docMeta).split("/").filter(Boolean).pop() || null : null;
-              return {
-                date: f.date,
-                category: f.category,
-                type: f.type,
-                description: f.description,
-                documentId: docId,
-              };
-            }),
-            riskSummary: null,
+            investigationId,
+            riskLevel: result.riskLevel,
+            riskScore: result.riskScore,
+            sanctionsMatch: (result.sanctionsScreening || []).some((s: any) => s.status === "strong_match" || s.status === "potential_match"),
+            flags: result.flags || [],
+            officerCount: (result.officers || []).length,
+            pscCount: (result.pscs || []).length,
+            uboCount,
+            filingCount: (result.filingHistory || []).length,
+            status: result.companyProfile?.company_status,
+            incorporatedOn: result.companyProfile?.date_of_creation,
           };
         } catch (err: any) {
-          console.error(`[pathway stage4] getCompanyData failed for ${t.companyNumber}:`, err?.message);
+          console.error(`[pathway stage4] runCompanyInvestigation failed for ${t.companyNumber}:`, err?.message);
           return {
             companyNumber: t.companyNumber,
             companyName: t.companyName,
             role: t.role,
+            investigationId: null,
             error: err?.message || "Companies House lookup failed",
           };
         }
