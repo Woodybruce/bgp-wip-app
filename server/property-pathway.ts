@@ -1896,7 +1896,7 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
   const postcode = run.postcode || "";
 
   try {
-    const lookup = await performPropertyLookup({ address, postcode, layers: ["core", "extended"], propertyDataLayers: ["core", "extended"] });
+    const lookup = await performPropertyLookup({ address, postcode, uprn: run.uprn || undefined, layers: ["core", "extended"], propertyDataLayers: ["core", "extended"] });
 
     const planningApplications = (lookup.planningData as any)?.applications?.slice(0, 25)?.map((a: any) => ({
       reference: a.reference || a.ref || "",
