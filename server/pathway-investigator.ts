@@ -438,67 +438,68 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
         if (!apiKey) return { error: "PropertyData API key not configured" };
         const pc = String(input.postcode || "").trim().replace(/\s+/g, "");
         if (!pc) return { error: "Postcode required" };
-        const propertyType = String(input.property_type || "retail");
         const sizeSqft = input.size_sqft ? Number(input.size_sqft) : null;
 
-        const endpoints: Array<{ key: string; params: Record<string, string> }> = [
-          { key: "rents-commercial", params: { postcode: pc, type: propertyType } },
-          { key: "valuation-commercial-rent", params: { postcode: pc, property_type: propertyType, ...(sizeSqft ? { size: String(sizeSqft) } : {}) } },
-          { key: "valuation-commercial-sale", params: { postcode: pc, property_type: propertyType, ...(sizeSqft ? { size: String(sizeSqft) } : {}) } },
-        ];
+        // Try preferred type first, fall back through office/retail/leisure/industrial until one returns data.
+        const preferred = String(input.property_type || "retail").toLowerCase();
+        const typeOrder = [preferred, "office", "retail", "leisure", "industrial"].filter((t, i, a) => a.indexOf(t) === i);
+        const triedLog: string[] = [];
 
-        const results: Record<string, any> = {};
-        await Promise.all(endpoints.map(async (ep) => {
+        async function fetchOne(key: string, params: Record<string, string>): Promise<any> {
           try {
-            const qs = new URLSearchParams({ key: apiKey, ...ep.params });
-            const r = await fetch(`https://api.propertydata.co.uk/${ep.key}?${qs}`, { signal: AbortSignal.timeout(15000) });
-            if (!r.ok) { results[ep.key] = null; return; }
+            const qs = new URLSearchParams({ key: apiKey!, ...params });
+            const r = await fetch(`https://api.propertydata.co.uk/${key}?${qs}`, { signal: AbortSignal.timeout(15000) });
+            if (!r.ok) return null;
             const d = await r.json() as any;
-            results[ep.key] = d.status === "error" ? null : d.data;
-          } catch { results[ep.key] = null; }
-        }));
-
-        const rc = results["rents-commercial"] || {};
-        const vcr = results["valuation-commercial-rent"] || {};
-        const vcs = results["valuation-commercial-sale"] || {};
-
-        const marketRent = {
-          averagePerSqft: rc.average_rent ?? null,
-          minPerSqft: rc.min_rent ?? null,
-          maxPerSqft: rc.max_rent ?? null,
-          sampleSize: rc.points_analysed ?? rc.sample_size ?? null,
-        };
-        const estimatedRent = {
-          perSqft: vcr.result_per_sqf ?? vcr.result_psf ?? null,
-          annualLow: vcr["70pc_range"]?.[0] ?? vcr.low ?? null,
-          annualHigh: vcr["70pc_range"]?.[1] ?? vcr.high ?? null,
-          annual: vcr.result ?? null,
-        };
-        const estimatedCapitalValue = {
-          perSqft: vcs.result_per_sqf ?? vcs.result_psf ?? null,
-          low: vcs["70pc_range"]?.[0] ?? vcs.low ?? null,
-          high: vcs["70pc_range"]?.[1] ?? vcs.high ?? null,
-          estimate: vcs.result ?? null,
-        };
-
-        const anyData =
-          marketRent.averagePerSqft != null ||
-          estimatedRent.annual != null || estimatedRent.perSqft != null ||
-          estimatedCapitalValue.estimate != null || estimatedCapitalValue.perSqft != null;
-
-        console.log(`[valuation_lookup] pc=${pc} type=${propertyType} rc=${!!results["rents-commercial"]} vcr=${!!results["valuation-commercial-rent"]} vcs=${!!results["valuation-commercial-sale"]} anyData=${anyData}`);
-
-        if (!anyData) {
-          return { error: `PropertyData returned no valuation data for ${pc} (${propertyType}) — likely no commercial comparables for this postcode.` };
+            return d.status === "error" ? null : d.data;
+          } catch { return null; }
         }
 
-        return {
-          postcode: pc,
-          propertyType,
-          marketRent,
-          estimatedRent,
-          estimatedCapitalValue,
-        };
+        for (const propertyType of typeOrder) {
+          const [rcData, vcrData, vcsData] = await Promise.all([
+            fetchOne("rents-commercial", { postcode: pc, type: propertyType }),
+            fetchOne("valuation-commercial-rent", { postcode: pc, property_type: propertyType, ...(sizeSqft ? { size: String(sizeSqft) } : {}) }),
+            fetchOne("valuation-commercial-sale", { postcode: pc, property_type: propertyType, ...(sizeSqft ? { size: String(sizeSqft) } : {}) }),
+          ]);
+
+          const rc = rcData || {};
+          const vcr = vcrData || {};
+          const vcs = vcsData || {};
+
+          const marketRent = {
+            averagePerSqft: rc.average_rent ?? null,
+            minPerSqft: rc.min_rent ?? null,
+            maxPerSqft: rc.max_rent ?? null,
+            sampleSize: rc.points_analysed ?? rc.sample_size ?? null,
+          };
+          const estimatedRent = {
+            perSqft: vcr.result_per_sqf ?? vcr.result_psf ?? null,
+            annualLow: vcr["70pc_range"]?.[0] ?? vcr.low ?? null,
+            annualHigh: vcr["70pc_range"]?.[1] ?? vcr.high ?? null,
+            annual: vcr.result ?? null,
+          };
+          const estimatedCapitalValue = {
+            perSqft: vcs.result_per_sqf ?? vcs.result_psf ?? null,
+            low: vcs["70pc_range"]?.[0] ?? vcs.low ?? null,
+            high: vcs["70pc_range"]?.[1] ?? vcs.high ?? null,
+            estimate: vcs.result ?? null,
+          };
+
+          const anyData =
+            marketRent.averagePerSqft != null ||
+            estimatedRent.annual != null || estimatedRent.perSqft != null ||
+            estimatedCapitalValue.estimate != null || estimatedCapitalValue.perSqft != null;
+
+          triedLog.push(`${propertyType}:rc=${!!rcData}/vcr=${!!vcrData}/vcs=${!!vcsData}${anyData ? "*HIT" : ""}`);
+
+          if (anyData) {
+            console.log(`[valuation_lookup] pc=${pc} ${triedLog.join(" ")}`);
+            return { postcode: pc, propertyType, marketRent, estimatedRent, estimatedCapitalValue };
+          }
+        }
+
+        console.log(`[valuation_lookup] pc=${pc} ${triedLog.join(" ")} → no data for any type`);
+        return { error: `PropertyData returned no valuation data for ${pc} across ${typeOrder.join("/")} — possibly no commercial comparables or API key issue.` };
       }
 
       case "companies_house_lookup": {
