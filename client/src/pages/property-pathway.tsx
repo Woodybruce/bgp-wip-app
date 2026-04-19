@@ -676,7 +676,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Brochures ({s1.brochureFiles?.length || 0})</CardTitle>
               </CardHeader>
-              <CardContent className="text-[11px] space-y-0.5 pb-2">
+              <CardContent className="text-[11px] space-y-0.5 max-h-56 overflow-y-auto pb-2">
                 {s1.brochureFiles && s1.brochureFiles.length > 0 ? (
                   s1.brochureFiles.map((b: any, i: number) => (
                     <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
@@ -692,8 +692,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                     </div>
                   ))
                 ) : (
-                  <p className="text-muted-foreground text-[11px] py-1">
-                    No brochure identified for this specific building yet. Check emails tagged 📎 — a brochure email may exist but needs manual matching.
+                  <p className="text-muted-foreground text-[11px] py-1 line-clamp-3">
+                    None matched. Check 📎 emails — brochure may need manual linking.
                   </p>
                 )}
               </CardContent>
