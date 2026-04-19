@@ -83,6 +83,19 @@ const INVESTIGATOR_TOOLS: any[] = [
     },
   },
   {
+    name: "valuation_lookup",
+    description: "Look up PropertyData commercial valuation estimates for a postcode — market rent £/sq ft (rents-commercial), estimated ERV (valuation-commercial-rent), and estimated capital value (valuation-commercial-sale). Use for area benchmarks alongside VOA rateable values.",
+    input_schema: {
+      type: "object",
+      properties: {
+        postcode: { type: "string" },
+        property_type: { type: "string", description: "retail | office | industrial | leisure — refines valuation estimates. Default: retail." },
+        size_sqft: { type: "number", description: "Approximate floor area in sq ft — sharpens valuation estimate." },
+      },
+      required: ["postcode"],
+    },
+  },
+  {
     name: "companies_house_lookup",
     description: "Look up a UK company by name or Companies House number. Returns registered address, directors, filing history, accounts.",
     input_schema: {
@@ -418,6 +431,59 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
         };
       }
 
+      case "valuation_lookup": {
+        const apiKey = process.env.PROPERTYDATA_API_KEY;
+        if (!apiKey) return { error: "PropertyData API key not configured" };
+        const pc = String(input.postcode || "").trim().replace(/\s+/g, "");
+        if (!pc) return { error: "Postcode required" };
+        const propertyType = String(input.property_type || "retail");
+        const sizeSqft = input.size_sqft ? Number(input.size_sqft) : null;
+
+        const endpoints: Array<{ key: string; params: Record<string, string> }> = [
+          { key: "rents-commercial", params: { postcode: pc, type: propertyType } },
+          { key: "valuation-commercial-rent", params: { postcode: pc, property_type: propertyType, ...(sizeSqft ? { size: String(sizeSqft) } : {}) } },
+          { key: "valuation-commercial-sale", params: { postcode: pc, property_type: propertyType, ...(sizeSqft ? { size: String(sizeSqft) } : {}) } },
+        ];
+
+        const results: Record<string, any> = {};
+        await Promise.all(endpoints.map(async (ep) => {
+          try {
+            const qs = new URLSearchParams({ key: apiKey, ...ep.params });
+            const r = await fetch(`https://api.propertydata.co.uk/${ep.key}?${qs}`, { signal: AbortSignal.timeout(15000) });
+            if (!r.ok) { results[ep.key] = null; return; }
+            const d = await r.json() as any;
+            results[ep.key] = d.status === "error" ? null : d.data;
+          } catch { results[ep.key] = null; }
+        }));
+
+        const rc = results["rents-commercial"] || {};
+        const vcr = results["valuation-commercial-rent"] || {};
+        const vcs = results["valuation-commercial-sale"] || {};
+
+        return {
+          postcode: pc,
+          propertyType,
+          marketRent: {
+            averagePerSqft: rc.average_rent ?? null,
+            minPerSqft: rc.min_rent ?? null,
+            maxPerSqft: rc.max_rent ?? null,
+            sampleSize: rc.points_analysed ?? rc.sample_size ?? null,
+          },
+          estimatedRent: {
+            perSqft: vcr.result_per_sqf ?? vcr.result_psf ?? null,
+            annualLow: vcr["70pc_range"]?.[0] ?? vcr.low ?? null,
+            annualHigh: vcr["70pc_range"]?.[1] ?? vcr.high ?? null,
+            annual: vcr.result ?? null,
+          },
+          estimatedCapitalValue: {
+            perSqft: vcs.result_per_sqf ?? vcs.result_psf ?? null,
+            low: vcs["70pc_range"]?.[0] ?? vcs.low ?? null,
+            high: vcs["70pc_range"]?.[1] ?? vcs.high ?? null,
+            estimate: vcs.result ?? null,
+          },
+        };
+      }
+
       case "companies_house_lookup": {
         const apiKey = process.env.COMPANIES_HOUSE_API_KEY;
         if (!apiKey) return { error: "Companies House API key not configured" };
@@ -572,6 +638,7 @@ FINAL OUTPUT: return STRICT JSON only (no prose, no markdown fences):
   "keyDocs": [{ "name": "...", "source": "sharepoint|knowledge_base", "excerpt": "...", "webUrl": "..." }],
   "sharepointMatches": [{ "name": "...", "path": "...", "webUrl": "...", "type": "folder|file" }],
   "rates": { "totalRV": 450000, "assessmentCount": 5, "entries": [] },
+  "valuation": { "marketRentPerSqft": 250, "estimatedErvAnnual": 4000000, "estimatedCapitalValue": 70000000, "estimatedCapValuePerSqft": 2200 },
   "crmMatches": { "properties": [], "deals": [], "companies": [] },
   "webFindings": "2-3 sentence summary of what Perplexity web search found",
   "aiBriefing": { "headline": "1-sentence top-line", "bullets": ["..."], "keyQuestions": ["..."] },
@@ -620,6 +687,7 @@ ${noPostcodeInstructions}
 Your investigation steps:
 ${hasLandReg ? "✓ Land Registry already fetched above" : "→ Call land_registry_lookup to get official title numbers and ownership"}
 ${hasVoa ? "✓ VOA rates already fetched above" : "→ Call voa_rates_lookup for business rates"}
+→ Call valuation_lookup for market rent £/sq ft, estimated ERV and estimated capital value
 ${hasCrm ? "✓ CRM already searched above" : "→ Call crm_lookup"}
 → Call property_data_lookup for planning history, EPC, floor areas
 → Look up Companies House for the owner and tenant

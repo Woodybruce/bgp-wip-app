@@ -549,6 +549,50 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                   )}
                 </div>
 
+                {/* Area valuation (PropertyData) */}
+                {s1.valuation && (
+                  <div className="border rounded p-2 bg-muted/20">
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Area Valuation (PropertyData{s1.valuation.propertyType ? ` · ${s1.valuation.propertyType}` : ""})</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                      {s1.valuation.marketRentPerSqft != null && (
+                        <div className="col-span-2 min-w-0">
+                          <span className="text-muted-foreground">Market rent:</span>{" "}
+                          <span className="font-medium">£{Number(s1.valuation.marketRentPerSqft).toLocaleString()}/sq ft</span>
+                          {s1.valuation.marketRentMinPerSqft != null && s1.valuation.marketRentMaxPerSqft != null && (
+                            <span className="text-muted-foreground"> (range £{Number(s1.valuation.marketRentMinPerSqft).toLocaleString()}–£{Number(s1.valuation.marketRentMaxPerSqft).toLocaleString()})</span>
+                          )}
+                        </div>
+                      )}
+                      {s1.valuation.estimatedErvAnnual != null && (
+                        <div className="min-w-0">
+                          <span className="text-muted-foreground">Est ERV:</span>{" "}
+                          <span className="font-medium">£{Number(s1.valuation.estimatedErvAnnual).toLocaleString()} pa</span>
+                        </div>
+                      )}
+                      {s1.valuation.estimatedErvPerSqft != null && (
+                        <div className="min-w-0">
+                          <span className="text-muted-foreground">Est ERV/sqft:</span>{" "}
+                          <span className="font-medium">£{Number(s1.valuation.estimatedErvPerSqft).toLocaleString()}</span>
+                        </div>
+                      )}
+                      {s1.valuation.estimatedCapitalValue != null && (
+                        <div className="min-w-0">
+                          <span className="text-muted-foreground">Est capital value:</span>{" "}
+                          <span className="font-medium">£{Number(s1.valuation.estimatedCapitalValue).toLocaleString()}</span>
+                        </div>
+                      )}
+                      {s1.valuation.estimatedCapValuePerSqft != null && (
+                        <div className="min-w-0">
+                          <span className="text-muted-foreground">£/sqft capital:</span>{" "}
+                          <span className="font-medium">£{Number(s1.valuation.estimatedCapValuePerSqft).toLocaleString()}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* Compact pipeline counts */}
                 <div className="grid grid-cols-6 gap-1.5">
                   <CountBlock label="Emails" value={s1.emailHits?.length || 0} />

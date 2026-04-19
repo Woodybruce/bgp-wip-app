@@ -416,6 +416,10 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
       ? executeInvestigatorTool("voa_rates_lookup", { postcode: run.postcode, street: streetName }, req)
           .then((r) => prefetch.push({ tool: "voa_rates_lookup", result: r })).catch(() => {})
       : Promise.resolve(),
+    run.postcode
+      ? executeInvestigatorTool("valuation_lookup", { postcode: run.postcode, property_type: "retail" }, req)
+          .then((r) => prefetch.push({ tool: "valuation_lookup", result: r })).catch(() => {})
+      : Promise.resolve(),
   ]);
   if (uprn) {
     prefetch.push({ tool: "uprn_resolved", result: { uprn, formattedAddress: runAny.formattedAddress, lat: runAny.lat, lng: runAny.lng } });
@@ -541,6 +545,21 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
       assessmentCount: result.rates.assessmentCount,
       entries: result.rates.entries || [],
     } : undefined,
+    valuation: (() => {
+      const pfVal = prefetch.find((p) => p.tool === "valuation_lookup")?.result;
+      const fromPf = pfVal && !pfVal.error ? {
+        marketRentPerSqft: pfVal.marketRent?.averagePerSqft ?? null,
+        marketRentMinPerSqft: pfVal.marketRent?.minPerSqft ?? null,
+        marketRentMaxPerSqft: pfVal.marketRent?.maxPerSqft ?? null,
+        estimatedErvAnnual: pfVal.estimatedRent?.annual ?? null,
+        estimatedErvPerSqft: pfVal.estimatedRent?.perSqft ?? null,
+        estimatedCapitalValue: pfVal.estimatedCapitalValue?.estimate ?? null,
+        estimatedCapValuePerSqft: pfVal.estimatedCapitalValue?.perSqft ?? null,
+        propertyType: pfVal.propertyType ?? null,
+      } : null;
+      const fromClaude = (result as any).valuation || null;
+      return fromPf || fromClaude || undefined;
+    })(),
     summary: result.aiBriefing?.headline || `Investigation complete for ${run.address}.`,
     toolTrace: result.toolTrace,
   };
