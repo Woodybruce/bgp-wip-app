@@ -398,12 +398,56 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   if (!run) throw new Error("Run not found");
   await setStageStatus(runId, "stage1", "running");
 
-  const { runInvestigativeStage1 } = await import("./pathway-investigator");
+  const { runInvestigativeStage1, executeInvestigatorTool } = await import("./pathway-investigator");
+
+  // Phase 1: Run deterministic APIs immediately (~5-10s) and save partial results
+  // so the user sees ownership/rates/CRM data while the Claude email loop runs.
+  const prefetch: Array<{ tool: string; result: any }> = [];
+  await Promise.all([
+    executeInvestigatorTool("crm_lookup", { query: run.address.split(",")[0].trim(), type: "all" }, req)
+      .then((r) => prefetch.push({ tool: "crm_lookup", result: r })).catch(() => {}),
+    run.postcode
+      ? executeInvestigatorTool("land_registry_lookup", { address: run.address, postcode: run.postcode }, req)
+          .then((r) => prefetch.push({ tool: "land_registry_lookup", result: r })).catch(() => {})
+      : Promise.resolve(),
+    run.postcode
+      ? executeInvestigatorTool("voa_rates_lookup", { postcode: run.postcode }, req)
+          .then((r) => prefetch.push({ tool: "voa_rates_lookup", result: r })).catch(() => {})
+      : Promise.resolve(),
+  ]);
+  const crmPF = prefetch.find((p) => p.tool === "crm_lookup")?.result;
+  const landRegPF = prefetch.find((p) => p.tool === "land_registry_lookup")?.result;
+  const voaPF = prefetch.find((p) => p.tool === "voa_rates_lookup")?.result;
+  const partialPayload: any = {
+    emailHits: [], sharepointHits: [], brochureFiles: [],
+    tenancy: { status: "unknown", units: [] }, engagements: [], pricePaidHistory: [], comps: [],
+    crmHits: { properties: crmPF?.properties || [], deals: crmPF?.deals || [], companies: crmPF?.companies || [] },
+    deals: crmPF?.deals || [],
+    initialOwnership: landRegPF?.freeholds?.[0] ? {
+      titleNumber: landRegPF.freeholds[0].titleNumber || "unknown",
+      proprietorName: landRegPF.freeholds[0].proprietor,
+      proprietorCompanyNumber: null,
+      dateOfPurchase: landRegPF.freeholds[0].dateOfPurchase,
+    } : null,
+    rates: voaPF?.count > 0 ? {
+      totalRateableValue: voaPF.totalRateableValue,
+      assessmentCount: voaPF.count,
+      entries: voaPF.entries || [],
+    } : undefined,
+    summary: `Searching emails for ${run.address}…`,
+    _partial: true,
+  };
+  const freshRun = await getRun(runId);
+  await updateRun(runId, { stageResults: { ...(freshRun?.stageResults as any || {}), stage1: partialPayload } });
+  console.log(`[pathway stage1 autonomous] Partial results saved — landReg=${!!landRegPF?.freeholds?.length}, voa=${voaPF?.count || 0}, crm deals=${crmPF?.deals?.length || 0}`);
+
+  // Phase 2: Claude email + SharePoint investigation (~60-150s)
   const started = Date.now();
   const result = await runInvestigativeStage1({
     address: run.address,
     postcode: run.postcode,
     req,
+    externalPrefetch: prefetch,
   });
 
   // Google Street View + Maps link
@@ -484,6 +528,18 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     summary: result.aiBriefing?.headline || `Investigation complete for ${run.address}.`,
     toolTrace: result.toolTrace,
   };
+
+  // Fall back to prefetch data if Claude didn't extract ownership/rates
+  if (!stage1Payload.initialOwnership && partialPayload.initialOwnership) {
+    stage1Payload.initialOwnership = partialPayload.initialOwnership;
+  }
+  if (!stage1Payload.rates && partialPayload.rates) {
+    stage1Payload.rates = partialPayload.rates;
+  }
+  if ((!stage1Payload.crmHits?.deals?.length) && crmPF?.deals?.length) {
+    stage1Payload.crmHits = partialPayload.crmHits;
+    stage1Payload.deals = partialPayload.deals;
+  }
 
   console.log(`[pathway stage1 autonomous] Completed in ${((Date.now() - started) / 1000).toFixed(1)}s — ${stage1Payload.emailHits.length} emails, ${stage1Payload.brochureFiles.length} brochures, ${stage1Payload.sharepointHits.length} sharepoint`);
 

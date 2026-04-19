@@ -133,7 +133,7 @@ const INVESTIGATOR_TOOLS: any[] = [
 
 // ---------- Tool executor ----------
 // Routes each tool call to the appropriate existing service function.
-async function executeInvestigatorTool(toolName: string, input: any, req: Request): Promise<any> {
+export async function executeInvestigatorTool(toolName: string, input: any, req: Request): Promise<any> {
   try {
     switch (toolName) {
       case "search_emails": {
@@ -504,6 +504,7 @@ export async function runInvestigativeStage1(opts: {
   address: string;
   postcode: string | null;
   req: Request;
+  externalPrefetch?: Array<{ tool: string; result: any }>; // caller can supply pre-fetched data to skip the internal pre-fetch
 }): Promise<InvestigativeStage1Result> {
   const started = Date.now();
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -511,15 +512,13 @@ export async function runInvestigativeStage1(opts: {
   const systemPrompt = `You are BGP's senior property investigator. Given an address, you gather everything we know about the property by orchestrating calls to the available tools.
 
 APPROACH — follow this sequence:
-1. IMMEDIATELY call crm_lookup (type=all) — we may already have the property, deals and company on file
-2. IMMEDIATELY call land_registry — gets owner/title/price paid without needing any emails
-3. IMMEDIATELY call voa_rates — gets rateable value from the postcode
-4. Then search emails: use the street NAME word only (e.g. 'Haymarket' not '18-22 Haymarket') plus the postcode as a separate query
-5. Collect BREADCRUMBS from early findings: owner name, tenant name, Companies House numbers, agent names
-6. Re-search emails using those breadcrumbs — find emails that reference the owner or tenant but not the address directly
-7. Read the most interesting emails in full (read_email) and extract brochure attachments (extract_attachment)
-8. Look up Companies House for owner + tenant
-9. Search SharePoint / knowledge base
+1. The CRM, Land Registry and VOA data has already been fetched and is shown in your context below — DO NOT call those tools again, use the data you have.
+2. Search emails: use the street NAME word only (e.g. 'Haymarket' not '18-22 Haymarket') plus the postcode as a separate query
+3. Collect BREADCRUMBS from early findings: owner name, tenant name, Companies House numbers, agent names
+4. Re-search emails using those breadcrumbs — find emails that reference the owner or tenant but not the address directly
+5. Read the most interesting emails in full (read_email) and extract brochure attachments (extract_attachment)
+6. Look up Companies House for owner + tenant
+7. Search SharePoint / knowledge base
 
 SEARCH STRATEGY: For search_emails, use the street/building NAME word only — e.g. 'Haymarket' not '18-22 Haymarket'. Pass postcodes without quotes e.g. SW1Y 4DG.
 EMAIL SELECTION for keyEmails: Include emails that plausibly relate to THIS building. Most emails won't include the exact house number in the subject — so include any email where the street name or postcode appears UNLESS the subject clearly identifies a DIFFERENT specific address (e.g. "Re: 45 Haymarket" when you're investigating 18-22). When unsure, include with why="may relate — confirm house number". Aim for 10-15 emails.
@@ -542,21 +541,22 @@ FINAL OUTPUT: When you've gathered enough, return STRICT JSON only (no prose, no
 
 Omit fields you have no data for. Keep keyEmails to max 15, brochures to max 4 (genuinely this-building only), sharepointMatches to max 15.`;
 
-  // Pre-fetch CRM, Land Registry and VOA before the Claude loop so Claude always
-  // gets this context regardless of what tool order it chooses.
-  const prefetch: Array<{ tool: string; result: any }> = [];
-  await Promise.all([
-    executeInvestigatorTool("crm_lookup", { query: opts.address.split(",")[0].trim(), type: "all" }, opts.req)
-      .then((r) => prefetch.push({ tool: "crm_lookup", result: r })).catch(() => {}),
-    opts.postcode
-      ? executeInvestigatorTool("land_registry_lookup", { address: opts.address, postcode: opts.postcode }, opts.req)
-          .then((r) => prefetch.push({ tool: "land_registry_lookup", result: r })).catch(() => {})
-      : Promise.resolve(),
-    opts.postcode
-      ? executeInvestigatorTool("voa_rates_lookup", { postcode: opts.postcode }, opts.req)
-          .then((r) => prefetch.push({ tool: "voa_rates_lookup", result: r })).catch(() => {})
-      : Promise.resolve(),
-  ]);
+  // Use caller-supplied pre-fetch if available, otherwise run it ourselves.
+  let prefetch: Array<{ tool: string; result: any }> = opts.externalPrefetch || [];
+  if (prefetch.length === 0) {
+    await Promise.all([
+      executeInvestigatorTool("crm_lookup", { query: opts.address.split(",")[0].trim(), type: "all" }, opts.req)
+        .then((r) => prefetch.push({ tool: "crm_lookup", result: r })).catch(() => {}),
+      opts.postcode
+        ? executeInvestigatorTool("land_registry_lookup", { address: opts.address, postcode: opts.postcode }, opts.req)
+            .then((r) => prefetch.push({ tool: "land_registry_lookup", result: r })).catch(() => {})
+        : Promise.resolve(),
+      opts.postcode
+        ? executeInvestigatorTool("voa_rates_lookup", { postcode: opts.postcode }, opts.req)
+            .then((r) => prefetch.push({ tool: "voa_rates_lookup", result: r })).catch(() => {})
+        : Promise.resolve(),
+    ]);
+  }
   console.log(`[investigator] prefetch: ${prefetch.map((p) => `${p.tool}=${JSON.stringify(p.result).slice(0, 120)}`).join(" | ")}`);
   const prefetchSummary = prefetch.length
     ? `\n\nPre-fetched context (already done):\n${prefetch.map((p) => `${p.tool}: ${JSON.stringify(p.result).slice(0, 800)}`).join("\n")}`
