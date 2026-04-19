@@ -553,14 +553,13 @@ export async function runInvestigativeStage1(opts: {
 
   const systemPrompt = `You are BGP's senior property investigator. Given a UK commercial property address you gather comprehensive intelligence by orchestrating calls to the available tools.
 
-APPROACH — follow this sequence:
-1. CRM, Land Registry and VOA data is pre-fetched and shown in your context — DO NOT call those tools again.
-2. Call property_data_lookup to get planning history, EPC, floor areas and any available detailed PropertyData layers.
-3. Look up Companies House for the owner and any tenant name found in the pre-fetched data.
-4. Search the web (Perplexity) for the address: current tenants, recent sales/lettings, news, planning decisions, agent listings.
-5. Search SharePoint for this property address and the owner/tenant names.
-6. Search the knowledge base for the address.
-7. Return the JSON below with everything you found.
+APPROACH — follow the step-by-step instructions in the user message. Key rules:
+- If pre-fetched data is shown for a tool, DO NOT call that tool again — use what you have.
+- If no pre-fetched data is shown for land_registry, voa_rates, or crm — YOU MUST call those tools.
+- Always call property_data_lookup for planning history and EPC data.
+- Always look up Companies House for any owner/tenant you identify.
+- Always search the web, SharePoint, and knowledge base.
+- The official Land Registry title number (from land_registry_lookup or property_data_lookup) is the authoritative source — do not guess or use web-sourced title numbers as confirmed.
 
 FINAL OUTPUT: return STRICT JSON only (no prose, no markdown fences):
 {
@@ -596,18 +595,34 @@ Omit fields you have no data for. Keep sharepointMatches to max 15.`;
     ]);
   }
   console.log(`[investigator] prefetch: ${prefetch.map((p) => `${p.tool}=${JSON.stringify(p.result).slice(0, 120)}`).join(" | ")}`);
+
+  const hasLandReg = prefetch.some((p) => p.tool === "land_registry_lookup" && !p.result?.error);
+  const hasVoa = prefetch.some((p) => p.tool === "voa_rates_lookup" && (p.result?.count ?? 0) > 0);
+  const hasCrm = prefetch.some((p) => p.tool === "crm_lookup");
+  const hasPostcode = !!(opts.postcode);
+
   const prefetchSummary = prefetch.length
-    ? `\n\nPre-fetched context (already done):\n${prefetch.map((p) => `${p.tool}: ${JSON.stringify(p.result).slice(0, 800)}`).join("\n")}`
+    ? `\n\nPre-fetched context (already done — DO NOT repeat these tool calls):\n${prefetch.map((p) => `${p.tool}: ${JSON.stringify(p.result).slice(0, 800)}`).join("\n")}`
     : "";
 
-  const userPrompt = `Investigate: ${opts.address}${opts.postcode ? `, ${opts.postcode}` : ""}${prefetchSummary}
+  const noPostcodeInstructions = !hasPostcode ? `
+IMPORTANT: No postcode was provided. Your first step MUST be:
+1. Call web_search with query "${opts.address} postcode UK" to find the correct postcode
+2. Once you have the postcode, call land_registry_lookup and property_data_lookup with it
+3. Then call voa_rates_lookup with the postcode
+Do NOT skip these — the official title number, ownership, and rates data depend on them.` : "";
 
-Use the pre-fetched data above as your starting point. Now:
-1. Call property_data_lookup for planning history, EPC, floor areas
-2. Look up Companies House for the owner (and tenant if identified)
-3. Search the web for this address
-4. Search SharePoint and the knowledge base
-Then return the JSON.`;
+  const userPrompt = `Investigate: ${opts.address}${opts.postcode ? `, ${opts.postcode}` : ""}${prefetchSummary}
+${noPostcodeInstructions}
+Your investigation steps:
+${hasLandReg ? "✓ Land Registry already fetched above" : "→ Call land_registry_lookup to get official title numbers and ownership"}
+${hasVoa ? "✓ VOA rates already fetched above" : "→ Call voa_rates_lookup for business rates"}
+${hasCrm ? "✓ CRM already searched above" : "→ Call crm_lookup"}
+→ Call property_data_lookup for planning history, EPC, floor areas
+→ Look up Companies House for the owner and tenant
+→ Search the web for this address (tenants, sales, news, planning decisions)
+→ Search SharePoint and knowledge base
+→ Return the JSON.`;
 
   const messages: any[] = [{ role: "user", content: userPrompt }];
   const toolTrace: Array<{ tool: string; input: any; summary: string }> = [];
