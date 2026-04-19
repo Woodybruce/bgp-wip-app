@@ -208,8 +208,24 @@ async function executeInvestigatorTool(toolName: string, input: any, req: Reques
           await Promise.all(jobs.slice(i, i + CONC).map((j) => j()));
         }
         results.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-        console.log(`[investigator] search_emails q=${JSON.stringify(graphQuery)} → ${results.length} results, ${searchErrors} errors`);
-        return { query: input.query, count: results.length, results: results.slice(0, 50), searchErrors: searchErrors > 0 ? searchErrors : undefined };
+
+        // Filter to emails where the query term appears in subject or preview.
+        // Graph $search matches body/attachment content too — across 30 mailboxes
+        // that produces hundreds of false positives (signatures, footers, unrelated
+        // attachments). We only want emails where the term is prominent.
+        const queryTokens = raw.toLowerCase().replace(/\s+/g, " ").split(" ").filter(Boolean);
+        const postcodeCompact = raw.toLowerCase().replace(/\s+/g, "");
+        const subjectPreviewFiltered = results.filter((msg) => {
+          const hay = `${String(msg.subject || "").toLowerCase()} ${String(msg.preview || "").toLowerCase()}`;
+          const hayCompact = hay.replace(/\s+/g, "");
+          return hayCompact.includes(postcodeCompact) || queryTokens.every((t) => hay.includes(t));
+        });
+
+        // If the filter eliminates everything (e.g. company name not in subject),
+        // fall back to unfiltered so Claude still gets signal.
+        const finalResults = subjectPreviewFiltered.length > 0 ? subjectPreviewFiltered : results;
+        console.log(`[investigator] search_emails q=${JSON.stringify(graphQuery)} → ${results.length} raw, ${finalResults.length} after subject/preview filter, ${searchErrors} errors`);
+        return { query: input.query, count: finalResults.length, results: finalResults.slice(0, 50), searchErrors: searchErrors > 0 ? searchErrors : undefined };
       }
 
       case "read_email": {
