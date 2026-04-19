@@ -410,7 +410,7 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
           .then((r) => prefetch.push({ tool: "land_registry_lookup", result: r })).catch(() => {})
       : Promise.resolve(),
     run.postcode
-      ? executeInvestigatorTool("voa_rates_lookup", { postcode: run.postcode }, req)
+      ? executeInvestigatorTool("voa_rates_lookup", { postcode: run.postcode, street: run.address.split(",")[0].replace(/^\d[\d\s\-–]+/, "").trim() }, req)
           .then((r) => prefetch.push({ tool: "voa_rates_lookup", result: r })).catch(() => {})
       : Promise.resolve(),
   ]);

@@ -72,11 +72,12 @@ const INVESTIGATOR_TOOLS: any[] = [
   },
   {
     name: "voa_rates_lookup",
-    description: "Look up VOA business rates assessments for a postcode. Returns list of entries with firmName, rateableValue, description (use class), assessment reference.",
+    description: "Look up VOA business rates assessments for a postcode. Pass the street name to filter to the specific building — otherwise all units in the postcode are returned. Returns list of entries with firmName, rateableValue, description (use class).",
     input_schema: {
       type: "object",
       properties: {
         postcode: { type: "string" },
+        street: { type: "string", description: "Street name to filter results, e.g. 'Haymarket'. Omit to return all units in the postcode." },
       },
       required: ["postcode"],
     },
@@ -386,10 +387,11 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
 
       case "voa_rates_lookup": {
         const pc = String(input.postcode || "").trim();
+        const street = input.street ? String(input.street).trim() : undefined;
         const { voaSqliteAvailable, lookupVoaByPostcode } = await import("./voa-sqlite");
         let rows: any[] = [];
         if (voaSqliteAvailable()) {
-          rows = lookupVoaByPostcode(pc, undefined, 30);
+          rows = lookupVoaByPostcode(pc, street, 30);
         } else {
           const normalisedPc = pc.replace(/\s+/g, "").toUpperCase();
           const res = await pool.query(
