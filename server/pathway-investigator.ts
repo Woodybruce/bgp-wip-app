@@ -24,40 +24,14 @@ const MAX_ITERATIONS = 12; // plenty for multi-pass investigation, caps cost
 // A curated subset of ChatBGP's tools tuned for property investigation.
 const INVESTIGATOR_TOOLS: any[] = [
   {
-    name: "search_emails",
-    description: "Search emails across every BGP team mailbox AND the shared inbox. Returns up to 25 matches per query. Pass different keywords to cast different nets (address, postcode, tenant name, agent name, owner company, Companies House number). Call multiple times with different queries to do a thorough investigation.",
+    name: "web_search",
+    description: "Search the web for public information about a property, company or person. Use for: news coverage, planning applications, agent listings, company profiles, sale/let history, press releases.",
     input_schema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Search keyword. IMPORTANT: For an address use just the street/building NAME word, not the number — e.g. Haymarket (not 18-22 Haymarket), Regent (not 120 Regent Street). For a postcode pass it without quotes e.g. SW1Y 4DG. Never wrap values in quotes — the tool handles quoting. Examples: Haymarket, SW1Y 4DG, Amsprop, Goldenberg, 02801817." },
-        top: { type: "number", description: "Max results per mailbox (default 15, max 25)" },
+        query: { type: "string", description: "Search query, e.g. '18-22 Haymarket London sale' or 'Amsprop Holdings Companies House'" },
       },
       required: ["query"],
-    },
-  },
-  {
-    name: "read_email",
-    description: "Read the full content of a specific email including body text and attachment filenames. Use the msgId and mailboxEmail from search_emails results.",
-    input_schema: {
-      type: "object",
-      properties: {
-        msgId: { type: "string", description: "Graph message ID from search_emails" },
-        mailboxEmail: { type: "string", description: "Mailbox email the message lives in" },
-      },
-      required: ["msgId", "mailboxEmail"],
-    },
-  },
-  {
-    name: "extract_attachment",
-    description: "Download and extract text content from a PDF/Word/Excel attachment on an email. Returns text content (first 10,000 chars) plus metadata. Use for brochures, accounts, leases, etc.",
-    input_schema: {
-      type: "object",
-      properties: {
-        msgId: { type: "string" },
-        mailboxEmail: { type: "string" },
-        attachmentId: { type: "string" },
-      },
-      required: ["msgId", "mailboxEmail", "attachmentId"],
     },
   },
   {
@@ -302,6 +276,44 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
         };
       }
 
+      case "web_search": {
+        const query = String(input.query || "").trim();
+        const apiKey = process.env.BRAVE_SEARCH_API_KEY || process.env.SERPER_API_KEY || "";
+        if (!apiKey) return { error: "No web search API key configured (set BRAVE_SEARCH_API_KEY or SERPER_API_KEY)" };
+        // Try Brave Search first, fall back to Serper
+        if (process.env.BRAVE_SEARCH_API_KEY) {
+          const resp = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=8&result_filter=web`, {
+            headers: { "Accept": "application/json", "X-Subscription-Token": process.env.BRAVE_SEARCH_API_KEY },
+          });
+          if (!resp.ok) return { error: `Brave search ${resp.status}` };
+          const data: any = await resp.json();
+          return {
+            query,
+            results: (data.web?.results || []).slice(0, 8).map((r: any) => ({
+              title: r.title,
+              url: r.url,
+              snippet: r.description,
+            })),
+          };
+        }
+        // Serper fallback
+        const resp = await fetch("https://google.serper.dev/search", {
+          method: "POST",
+          headers: { "X-API-KEY": process.env.SERPER_API_KEY!, "Content-Type": "application/json" },
+          body: JSON.stringify({ q: query, num: 8 }),
+        });
+        if (!resp.ok) return { error: `Serper search ${resp.status}` };
+        const data: any = await resp.json();
+        return {
+          query,
+          results: (data.organic || []).slice(0, 8).map((r: any) => ({
+            title: r.title,
+            url: r.link,
+            snippet: r.snippet,
+          })),
+        };
+      }
+
       case "knowledge_base_search": {
         const q = input.query;
         const limit = Math.min(input.limit || 10, 25);
@@ -513,15 +525,13 @@ export async function runInvestigativeStage1(opts: {
 
 APPROACH — follow this sequence:
 1. The CRM, Land Registry and VOA data has already been fetched and is shown in your context below — DO NOT call those tools again, use the data you have.
-2. Search emails: use the street NAME word only (e.g. 'Haymarket' not '18-22 Haymarket') plus the postcode as a separate query
-3. Collect BREADCRUMBS from early findings: owner name, tenant name, Companies House numbers, agent names
-4. Re-search emails using those breadcrumbs — find emails that reference the owner or tenant but not the address directly
-5. Read the most interesting emails in full (read_email) and extract brochure attachments (extract_attachment)
-6. Look up Companies House for owner + tenant
-7. Search SharePoint / knowledge base
+2. Look up Companies House for any owner or tenant name found in the Land Registry / CRM data
+3. Search the web for the address — find news, planning applications, agent listings, past sales
+4. Search SharePoint for the property address and any owner/tenant name found
+5. Search the knowledge base for the address
+6. Return the JSON with everything you know
 
-SEARCH STRATEGY: For search_emails, use the street/building NAME word only — e.g. 'Haymarket' not '18-22 Haymarket'. Pass postcodes without quotes e.g. SW1Y 4DG.
-EMAIL SELECTION for keyEmails: Include emails that plausibly relate to THIS building. Most emails won't include the exact house number in the subject — so include any email where the street name or postcode appears UNLESS the subject clearly identifies a DIFFERENT specific address (e.g. "Re: 45 Haymarket" when you're investigating 18-22). When unsure, include with why="may relate — confirm house number". Aim for 10-15 emails.
+DO NOT call search_emails, read_email, or extract_attachment — email search is disabled for this run.
 
 FINAL OUTPUT: When you've gathered enough, return STRICT JSON only (no prose, no markdown fences) matching this schema:
 {
