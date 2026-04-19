@@ -227,7 +227,7 @@ async function executeInvestigatorTool(toolName: string, input: any, req: Reques
         // If the filter eliminates everything (e.g. company name not in subject),
         // fall back to unfiltered so Claude still gets signal.
         const finalResults = subjectPreviewFiltered.length > 0 ? subjectPreviewFiltered : results;
-        console.log(`[investigator] search_emails q=${JSON.stringify(graphQuery)} → ${results.length} raw, ${finalResults.length} after subject/preview filter, ${searchErrors} errors`);
+        console.log(`[investigator] search_emails q=${JSON.stringify(graphQuery)} → ${results.length} raw, ${subjectPreviewFiltered.length} subj/preview, ${finalResults.length} returned, ${searchErrors} errors | sample subjects: ${finalResults.slice(0, 5).map((m: any) => JSON.stringify((m.subject || "").slice(0, 60))).join(", ")}`);
         return { query: input.query, count: finalResults.length, results: finalResults.slice(0, 50), searchErrors: searchErrors > 0 ? searchErrors : undefined };
       }
 
@@ -600,6 +600,7 @@ Use the pre-fetched data above as breadcrumbs. Now search emails using the stree
     if (toolUses.length === 0) {
       // Final answer — parse JSON
       const txt = textBlocks.map((b: any) => b.text).join("\n");
+      console.log(`[investigator] Final response (iter ${i}): ${txt.slice(0, 500)}`);
       const match = txt.match(/\{[\s\S]*\}/);
       if (!match) {
         console.warn(`[investigator] No JSON in final response (iter ${i}): ${txt.slice(0, 300)}`);
