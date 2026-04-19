@@ -851,25 +851,6 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </Card>
             )}
 
-            {/* VOA Rates — per-assessment list (useful for multi-let buildings) */}
-            {s1.rates?.entries && s1.rates.entries.length > 0 && (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> Rates ({s1.rates.entries.length})</CardTitle>
-                </CardHeader>
-                <CardContent className="text-[11px] space-y-0.5 pb-2">
-                  {s1.rates.entries.slice(0, 12).map((e: any, i: number) => (
-                    <div key={i} className="flex items-start gap-1 py-0.5 border-b last:border-b-0">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{e.firmName || e.description || "—"}</p>
-                        <p className="truncate text-muted-foreground text-[10px]">{e.description || ""}</p>
-                      </div>
-                      <span className="text-muted-foreground text-[10px] shrink-0">{e.rateableValue ? `£${e.rateableValue.toLocaleString()}` : "—"}</span>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
           </div>
 
           {/* Emails — full list at bottom, scrollable so all hits fit.
