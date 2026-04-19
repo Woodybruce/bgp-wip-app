@@ -515,7 +515,7 @@ APPROACH — follow this sequence:
 9. Search SharePoint / knowledge base
 
 SEARCH STRATEGY: For search_emails, use the street/building NAME word only — e.g. 'Haymarket' not '18-22 Haymarket'. Pass postcodes without quotes e.g. SW1Y 4DG.
-EMAIL SELECTION: Include ALL emails where the street name or postcode appears in the subject or preview — do NOT discard emails just because you cannot confirm the exact house number. The analyst will review them. Aim for 10-20 keyEmails, erring on the side of inclusion rather than exclusion.
+EMAIL SELECTION for keyEmails: Include emails that plausibly relate to THIS building. Most emails won't include the exact house number in the subject — so include any email where the street name or postcode appears UNLESS the subject clearly identifies a DIFFERENT specific address (e.g. "Re: 45 Haymarket" when you're investigating 18-22). When unsure, include with why="may relate — confirm house number". Aim for 10-15 emails.
 
 FINAL OUTPUT: When you've gathered enough, return STRICT JSON only (no prose, no markdown fences) matching this schema:
 {

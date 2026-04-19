@@ -14,21 +14,14 @@ import * as path from "path";
 
 const DEFAULT_SOURCES = [
   { name: "Property Week", url: "https://www.propertyweek.com", feedUrl: "https://www.propertyweek.com/rss", type: "rss", category: "Property" },
-  { name: "React News", url: "https://reactnews.com", feedUrl: "https://reactnews.com/feed/", type: "rss", category: "Property" },
-  { name: "EG / CoStar", url: "https://www.costar.co.uk", feedUrl: "https://www.costar.co.uk/rss", type: "rss", category: "Property" },
-  { name: "Property Reporter", url: "https://www.propertyreporter.co.uk", feedUrl: "https://www.propertyreporter.co.uk/feed", type: "rss", category: "Property" },
   { name: "Commercial News Media", url: "https://www.commercialnewsmedia.com", feedUrl: "https://www.commercialnewsmedia.com/feed", type: "rss", category: "Property" },
   { name: "Propel Hospitality", url: "https://www.propelhospitality.com", feedUrl: "https://www.propelhospitality.com/rss", type: "rss", category: "Hospitality" },
   { name: "Business of Fashion", url: "https://www.businessoffashion.com", feedUrl: "https://www.businessoffashion.com/feed", type: "rss", category: "Retail" },
   { name: "Retail Gazette", url: "https://www.retailgazette.co.uk", feedUrl: "https://www.retailgazette.co.uk/feed/", type: "rss", category: "Retail" },
   { name: "City AM Property", url: "https://www.cityam.com/category/property/", feedUrl: "https://www.cityam.com/category/property/feed/", type: "rss", category: "Property" },
   { name: "London Property News", url: "https://www.londonpropertynews.co.uk", feedUrl: "https://www.londonpropertynews.co.uk/feed/", type: "rss", category: "Property" },
-  { name: "Estates Gazette", url: "https://www.egi.co.uk", feedUrl: "https://www.egi.co.uk/news/feed/", type: "rss", category: "Property" },
   { name: "Property Investor Today", url: "https://www.propertyinvestortoday.co.uk", feedUrl: "https://www.propertyinvestortoday.co.uk/rss.xml", type: "rss", category: "Investment" },
-  { name: "Bisnow London", url: "https://www.bisnow.com/london", feedUrl: "https://www.bisnow.com/feed/london", type: "rss", category: "Property" },
-  { name: "Planning Resource", url: "https://www.planningresource.co.uk", feedUrl: "https://www.planningresource.co.uk/rss", type: "rss", category: "Planning" },
   { name: "Drapers", url: "https://www.drapersonline.com", feedUrl: "https://www.drapersonline.com/rss", type: "rss", category: "Retail" },
-  { name: "The Caterer", url: "https://www.thecaterer.com", feedUrl: "https://www.thecaterer.com/rss", type: "rss", category: "Hospitality" },
 ];
 
 const TEAM_PROFILES: Record<string, { focus: string; keywords: string[] }> = {
