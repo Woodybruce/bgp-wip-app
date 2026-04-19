@@ -127,9 +127,27 @@ interface StageResults {
     recommendProceed: boolean;
   };
   stage4?: {
-    titleRegisters?: Array<{ titleNumber: string; documentUrl?: string }>;
-    planningApplications?: Array<{ reference: string; description: string; status: string; date: string }>;
+    // Virtual document tree — materialised into SharePoint only when the user
+    // clicks "Set up folder tree" on the final stage.
+    titleRegisters?: Array<{ titleNumber: string; documentUrl?: string; source?: "infotrack" | "placeholder" }>;
+    planningApplications?: Array<{ reference: string; description: string; status: string; date: string; decidedAt?: string; receivedAt?: string; documentUrl?: string }>;
     floorPlanUrls?: string[];
+    // Companies House KYC — one block per resolved proprietor/tenant company.
+    // Filing PDFs are NOT downloaded here; the UI streams them via the
+    // /api/companies-house/document/:id proxy route on click. When the user
+    // later materialises a folder tree, the SharePoint pipeline re-pulls
+    // these PDFs from the proxy route and drops them into the chosen folders.
+    companyKyc?: Array<{
+      companyNumber: string;
+      companyName: string;
+      role: "proprietor" | "tenant" | "parent" | "ubo";
+      profile?: { status?: string; incorporatedOn?: string; companyType?: string; registeredAddress?: string | null };
+      officers?: Array<{ name: string; role: string; appointedOn?: string; resignedOn?: string | null; nationality?: string }>;
+      pscs?: Array<{ name: string; kind?: string; nationality?: string; naturesOfControl?: string[] }>;
+      filings?: Array<{ date: string; category: string; type: string; description: string; documentId: string | null }>;
+      riskSummary?: { level: "low" | "medium" | "high"; notes: string[] } | null;
+      error?: string;
+    }>;
     proprietorKyc?: any;
   };
   stage5?: {
@@ -1941,26 +1959,122 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
   const postcode = run.postcode || "";
 
   try {
-    const lookup = await performPropertyLookup({ address, postcode, uprn: run.uprn || undefined, layers: ["core", "extended"], propertyDataLayers: ["core", "extended"] });
+    // Run property lookup (planning history) and Companies House KYC in parallel.
+    const lookupPromise = performPropertyLookup({
+      address,
+      postcode,
+      uprn: run.uprn || undefined,
+      layers: ["core", "extended"],
+      propertyDataLayers: ["core", "extended"],
+    });
 
-    const planningApplications = (lookup.planningData as any)?.applications?.slice(0, 25)?.map((a: any) => ({
+    // Pull resolved company numbers from Stage 1 payload.
+    const stage1 = (run as any).stageResults?.stage1 || {};
+    const companyTargets: Array<{ companyNumber: string; companyName: string; role: "proprietor" | "tenant" }> = [];
+
+    const propCo = stage1.initialOwnership?.proprietorCompanyNumber;
+    if (propCo) {
+      companyTargets.push({
+        companyNumber: String(propCo).trim(),
+        companyName: stage1.initialOwnership?.proprietorName || "Proprietor",
+        role: "proprietor",
+      });
+    }
+    const tenantCo = stage1.tenant?.companyNumber;
+    if (tenantCo && tenantCo !== propCo) {
+      companyTargets.push({
+        companyNumber: String(tenantCo).trim(),
+        companyName: stage1.tenant?.name || "Tenant",
+        role: "tenant",
+      });
+    }
+
+    const { getCompanyData } = await import("./kyc-clouseau");
+
+    const companyKycPromise = Promise.all(
+      companyTargets.map(async (t) => {
+        try {
+          const data = await getCompanyData(t.companyNumber);
+          const profile = data.profile || {};
+          const address = profile.registered_office_address
+            ? [profile.registered_office_address.address_line_1, profile.registered_office_address.address_line_2, profile.registered_office_address.locality, profile.registered_office_address.postal_code]
+                .filter(Boolean).join(", ")
+            : null;
+          return {
+            companyNumber: t.companyNumber,
+            companyName: profile.company_name || t.companyName,
+            role: t.role,
+            profile: {
+              status: profile.company_status,
+              incorporatedOn: profile.date_of_creation,
+              companyType: profile.type,
+              registeredAddress: address,
+            },
+            officers: (data.officers || []).slice(0, 40).map((o: any) => ({
+              name: o.name,
+              role: o.officer_role,
+              appointedOn: o.appointed_on,
+              resignedOn: o.resigned_on || null,
+              nationality: o.nationality,
+            })),
+            pscs: (data.pscs || []).slice(0, 20).map((p: any) => ({
+              name: p.name,
+              kind: p.kind,
+              nationality: p.nationality,
+              naturesOfControl: p.natures_of_control || [],
+            })),
+            filings: (data.filings || []).slice(0, 25).map((f: any) => {
+              const docMeta = f.links?.document_metadata;
+              const docId = docMeta ? String(docMeta).split("/").filter(Boolean).pop() || null : null;
+              return {
+                date: f.date,
+                category: f.category,
+                type: f.type,
+                description: f.description,
+                documentId: docId,
+              };
+            }),
+            riskSummary: null,
+          };
+        } catch (err: any) {
+          console.error(`[pathway stage4] getCompanyData failed for ${t.companyNumber}:`, err?.message);
+          return {
+            companyNumber: t.companyNumber,
+            companyName: t.companyName,
+            role: t.role,
+            error: err?.message || "Companies House lookup failed",
+          };
+        }
+      })
+    );
+
+    const [lookup, companyKyc] = await Promise.all([lookupPromise, companyKycPromise]);
+
+    const rawApps = (lookup.planningData as any)?.applications || [];
+    const planningApplications = rawApps.slice(0, 50).map((a: any) => ({
       reference: a.reference || a.ref || "",
       description: a.description || a.proposal || "",
       status: a.status || a.decision || "",
-      date: a.date || a.decision_date || "",
-    })) || [];
+      date: a.date || a.decision_date || a.decidedAt || a.receivedAt || "",
+      decidedAt: a.decidedAt || a.decision_date || null,
+      receivedAt: a.receivedAt || a.received_date || null,
+      documentUrl: a.documentUrl || a.url || null,
+    }));
 
-    // Floor plan hints: planning apps often expose document URLs
     const floorPlanUrls: string[] = [];
-    for (const app of (lookup.planningData as any)?.applications?.slice(0, 10) || []) {
-      if (app.url) floorPlanUrls.push(app.url);
+    for (const app of rawApps.slice(0, 15)) {
+      const u = app.url || app.documentUrl;
+      if (u) floorPlanUrls.push(u);
     }
+
+    console.log(`[pathway stage4] runId=${runId} planning=${planningApplications.length} companyKyc=${companyKyc.length} (${companyKyc.filter((c: any) => !c.error).length} resolved)`);
 
     await setStageStatus(runId, "stage4", "completed", {
       stage4: {
-        titleRegisters: [],
+        titleRegisters: [], // InfoTrack-sourced later
         planningApplications,
         floorPlanUrls,
+        companyKyc,
         proprietorKyc: null,
       },
     });

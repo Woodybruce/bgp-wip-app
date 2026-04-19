@@ -294,18 +294,61 @@ router.get("/api/companies-house/pscs/:number", requireAuth, async (req, res) =>
 
 router.get("/api/companies-house/filing-history/:number", requireAuth, async (req, res) => {
   try {
-    const data = await chFetch(`/company/${encodeURIComponent(req.params.number)}/filing-history?items_per_page=10`);
+    const items = Math.min(Number(req.query.items) || 25, 100);
+    const data = await chFetch(`/company/${encodeURIComponent(req.params.number)}/filing-history?items_per_page=${items}`);
     const filings = (data.items || []).map((f: any) => ({
       date: f.date,
       category: f.category,
       type: f.type,
       description: f.description,
       descriptionValues: f.description_values,
+      // Pull the document_metadata id (last path segment) so the client can
+      // stream the PDF via our proxy route below. CH returns a full URL like
+      // https://frontend-doc-api.../document/zABCdef123 — we only need "zABCdef123".
+      documentId: (() => {
+        const m = f.links?.document_metadata;
+        if (!m) return null;
+        const parts = String(m).split("/").filter(Boolean);
+        return parts[parts.length - 1] || null;
+      })(),
     }));
     res.json({ filings, totalCount: data.total_count || 0 });
   } catch (err: any) {
     console.error("[companies-house] filing-history error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Proxy route: stream a filing document PDF from Companies House.
+// Free API — just requires the CH key + document metadata ID (pulled from
+// filing-history above). We first GET /document/{id} to resolve the actual
+// PDF URL, then stream that back to the client. Adds 24h cache headers since
+// filed documents are immutable once accepted.
+router.get("/api/companies-house/document/:id", requireAuth, async (req, res) => {
+  try {
+    if (!CH_API_KEY) return res.status(503).json({ error: "Companies House API key not configured" });
+    const id = req.params.id;
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) return res.status(400).json({ error: "Invalid document id" });
+
+    const auth = `Basic ${Buffer.from(CH_API_KEY + ":").toString("base64")}`;
+    // CH document API lives on a different subdomain from the main API.
+    const docRes = await fetch(`https://document-api.company-information.service.gov.uk/document/${encodeURIComponent(id)}/content`, {
+      headers: { Authorization: auth, Accept: "application/pdf" },
+      redirect: "follow",
+    });
+    if (!docRes.ok) {
+      const text = await docRes.text().catch(() => "");
+      return res.status(docRes.status).json({ error: `Companies House document fetch failed: ${docRes.status}`, details: text.slice(0, 200) });
+    }
+    const filename = req.query.filename ? String(req.query.filename).replace(/[^A-Za-z0-9._-]/g, "_") : `${id}.pdf`;
+    res.setHeader("Content-Type", docRes.headers.get("content-type") || "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    const buf = Buffer.from(await docRes.arrayBuffer());
+    res.end(buf);
+  } catch (err: any) {
+    console.error("[companies-house] document proxy error:", err?.message || err);
+    res.status(500).json({ error: err?.message || "Document fetch failed" });
   }
 });
 

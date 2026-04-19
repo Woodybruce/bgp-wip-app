@@ -991,30 +991,138 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
         </Card>
       ) : null}
 
-      {/* Stage 4 — Property Intelligence */}
+      {/* Stage 4 — Property Intelligence: virtual document board */}
       {s4 && (
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> Property Intelligence</CardTitle>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Building2 className="w-4 h-4" /> Property Intelligence
+              <span className="text-[10px] text-muted-foreground font-normal ml-2">Virtual — materialise to SharePoint at Investigation Board</span>
+            </CardTitle>
           </CardHeader>
-          <CardContent className="text-sm space-y-2">
-            <div className="grid grid-cols-2 gap-3">
-              <InfoBlock label="Planning applications" value={`${s4.planningApplications?.length || 0}`} />
-              <InfoBlock label="Floor plan candidates" value={`${s4.floorPlanUrls?.length || 0}`} />
-            </div>
-            {s4.planningApplications && s4.planningApplications.length > 0 && (
-              <details className="text-xs">
-                <summary className="cursor-pointer text-muted-foreground">Planning applications</summary>
-                <ul className="mt-2 space-y-1">
-                  {s4.planningApplications.slice(0, 10).map((p: any, i: number) => (
-                    <li key={i} className="border-l-2 border-muted pl-2">
-                      <span className="font-medium">{p.reference}</span>
-                      <span className="text-muted-foreground"> — {p.description} ({p.status})</span>
-                    </li>
+          <CardContent className="text-sm space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+              {/* 01 Ownership — InfoTrack placeholder slots */}
+              <div className="border rounded p-2.5 bg-muted/10">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">01 Ownership</p>
+                <div className="space-y-1 text-[11px]">
+                  {[
+                    { label: "Title Register (OC1)", kind: "OC1" },
+                    { label: "Title Plan (OC2)", kind: "OC2" },
+                    { label: "Filed Leases", kind: "LEASES" },
+                  ].map((slot) => (
+                    <div key={slot.kind} className="flex items-center justify-between py-1 border-b last:border-b-0">
+                      <span className="text-muted-foreground truncate">{slot.label}</span>
+                      <button
+                        type="button"
+                        disabled
+                        title="InfoTrack credentials required"
+                        className="text-[10px] px-1.5 py-0.5 rounded border bg-muted/20 text-muted-foreground cursor-not-allowed"
+                      >
+                        Order
+                      </button>
+                    </div>
                   ))}
-                </ul>
-              </details>
-            )}
+                </div>
+              </div>
+
+              {/* 02 Companies House KYC */}
+              <div className="border rounded p-2.5 bg-muted/10">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">02 Companies House</p>
+                {s4.companyKyc && s4.companyKyc.length > 0 ? (
+                  <div className="space-y-2 text-[11px]">
+                    {s4.companyKyc.map((c: any) => (
+                      <div key={c.companyNumber} className="border rounded p-1.5 bg-background">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-medium truncate flex-1">{c.companyName}</span>
+                          <span className="text-[9px] uppercase text-muted-foreground ml-1 shrink-0">{c.role}</span>
+                        </div>
+                        {c.error ? (
+                          <p className="text-[10px] text-destructive">{c.error}</p>
+                        ) : (
+                          <>
+                            <p className="text-[10px] text-muted-foreground truncate">
+                              {c.profile?.status || "—"} · {c.officers?.length || 0} officers · {c.pscs?.length || 0} PSCs
+                            </p>
+                            {c.filings && c.filings.length > 0 && (
+                              <details className="mt-1">
+                                <summary className="cursor-pointer text-[10px] text-primary">Filings ({c.filings.length})</summary>
+                                <ul className="mt-1 space-y-0.5 max-h-40 overflow-y-auto">
+                                  {c.filings.map((f: any, i: number) => (
+                                    <li key={i} className="flex items-center justify-between gap-1 py-0.5 border-b last:border-b-0">
+                                      <span className="text-muted-foreground text-[10px] shrink-0 w-16">{f.date}</span>
+                                      <span className="flex-1 truncate text-[10px]">{f.description || f.type}</span>
+                                      {f.documentId && (
+                                        <a
+                                          href={`/api/companies-house/document/${encodeURIComponent(f.documentId)}?filename=${encodeURIComponent((c.companyName + "_" + f.type + "_" + f.date + ".pdf").replace(/\s+/g, "_"))}`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          title="Open PDF"
+                                          className="text-primary hover:underline shrink-0"
+                                        >
+                                          <ExternalLink className="w-2.5 h-2.5" />
+                                        </a>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </details>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground">No proprietor/tenant company number resolved at Stage 1.</p>
+                )}
+              </div>
+
+              {/* 03 Planning */}
+              <div className="border rounded p-2.5 bg-muted/10">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">03 Planning (20y)</p>
+                {s4.planningApplications && s4.planningApplications.length > 0 ? (
+                  <div className="space-y-0.5 text-[11px] max-h-56 overflow-y-auto">
+                    {s4.planningApplications.slice(0, 30).map((p: any, i: number) => {
+                      const body = (
+                        <>
+                          <span className="text-[10px] text-muted-foreground shrink-0 w-20">{p.decidedAt || p.receivedAt || p.date || ""}</span>
+                          <span className="flex-1 min-w-0">
+                            <span className="font-medium">{p.reference}</span>
+                            {p.description && <span className="text-muted-foreground"> — {p.description}</span>}
+                          </span>
+                          {p.documentUrl && <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground" />}
+                        </>
+                      );
+                      return p.documentUrl ? (
+                        <a key={i} href={p.documentUrl} target="_blank" rel="noreferrer" className="flex items-start gap-1 py-0.5 border-b last:border-b-0 hover:bg-muted/30">{body}</a>
+                      ) : (
+                        <div key={i} className="flex items-start gap-1 py-0.5 border-b last:border-b-0">{body}</div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground">No planning applications found within 500m over the last 20 years.</p>
+                )}
+              </div>
+
+              {/* 04 Floor Plans */}
+              <div className="border rounded p-2.5 bg-muted/10">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">04 Floor Plans</p>
+                {s4.floorPlanUrls && s4.floorPlanUrls.length > 0 ? (
+                  <div className="space-y-0.5 text-[11px] max-h-56 overflow-y-auto">
+                    {s4.floorPlanUrls.slice(0, 15).map((u: string, i: number) => (
+                      <a key={i} href={u} target="_blank" rel="noreferrer" className="flex items-center gap-1 py-0.5 border-b last:border-b-0 hover:bg-muted/30">
+                        <span className="flex-1 truncate text-primary hover:underline">{u.replace(/^https?:\/\//, "").slice(0, 50)}</span>
+                        <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground" />
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground">No floor-plan document URLs surfaced from planning portals.</p>
+                )}
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
