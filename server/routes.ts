@@ -173,10 +173,14 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       tools: groupTools.length > 0 ? groupTools : undefined,
     };
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("AI response timed out")), TIMEOUT_MS)
-    );
-    let claudeResponse = await Promise.race([callClaude(completionOptions), timeoutPromise]) as any;
+    const withTimeout = <T>(p: Promise<T>): Promise<T> => {
+      let timer: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("AI response timed out")), TIMEOUT_MS);
+      });
+      return Promise.race([p, timeoutPromise]).finally(() => { if (timer) clearTimeout(timer); }) as Promise<T>;
+    };
+    let claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
     let currentMessage = claudeResponse.choices?.[0]?.message;
     let loopCount = 0;
     const maxLoops = 5;
@@ -185,7 +189,17 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       loopCount++;
       const toolCall = currentMessage.tool_calls[0];
       const fnName = toolCall.function.name;
-      const fnArgs = JSON.parse(toolCall.function.arguments || "{}");
+      let fnArgs: any;
+      try {
+        fnArgs = JSON.parse(toolCall.function.arguments || "{}");
+      } catch (parseErr: any) {
+        console.error("[ai-group] Bad tool args JSON:", parseErr?.message);
+        completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
+        completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "Invalid JSON in tool arguments" }) });
+        claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
+        currentMessage = claudeResponse.choices?.[0]?.message;
+        continue;
+      }
 
       try {
         const result = await chatbgp.handleCrmToolCall(fnName, fnArgs, req, completionOptions, currentMessage, toolCall);
@@ -209,13 +223,13 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
 
         completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
         completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "Tool not handled" }) });
-        claudeResponse = await Promise.race([callClaude(completionOptions), timeoutPromise]) as any;
+        claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
         currentMessage = claudeResponse.choices?.[0]?.message;
       } catch (toolErr: any) {
         console.error("[ai-group] Tool call error:", toolErr?.message);
         completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
         completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: toolErr?.message || "Tool execution failed" }) });
-        claudeResponse = await Promise.race([callClaude(completionOptions), timeoutPromise]) as any;
+        claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
         currentMessage = claudeResponse.choices?.[0]?.message;
       }
     }
@@ -378,21 +392,35 @@ export async function registerRoutes(
       if (blockedPatterns.some(p => p.test(hostname))) {
         return res.status(400).json({ message: "URL not allowed" });
       }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-      const resp = await fetch(url, {
-        signal: controller.signal,
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; BGPDashboard/1.0)" },
-        redirect: "follow",
-      });
-      clearTimeout(timeout);
-      const finalUrl = resp.url || url;
-      try {
-        const finalHostname = new URL(finalUrl).hostname.toLowerCase();
-        if (blockedPatterns.some(p => p.test(finalHostname))) {
+      let currentUrl = url;
+      let resp!: Awaited<ReturnType<typeof fetch>>;
+      let redirects = 0;
+      while (true) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        try {
+          resp = await fetch(currentUrl, {
+            signal: controller.signal,
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; BGPDashboard/1.0)" },
+            redirect: "manual",
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
+        if (resp.status < 300 || resp.status >= 400) break;
+        const location = resp.headers.get("location");
+        if (!location) break;
+        if (++redirects > 5) return res.status(502).json({ message: "Too many redirects" });
+        let next: URL;
+        try { next = new URL(location, currentUrl); } catch { return res.status(400).json({ message: "Invalid redirect" }); }
+        if (next.protocol !== "http:" && next.protocol !== "https:") {
           return res.status(400).json({ message: "URL not allowed" });
         }
-      } catch {}
+        if (blockedPatterns.some(p => p.test(next.hostname.toLowerCase()))) {
+          return res.status(400).json({ message: "URL not allowed" });
+        }
+        currentUrl = next.toString();
+      }
       if (!resp.ok) return res.status(502).json({ message: `Failed to fetch image: ${resp.status}` });
       const contentType = resp.headers.get("content-type") || "image/png";
       if (!contentType.startsWith("image/")) return res.status(400).json({ message: "URL is not an image" });

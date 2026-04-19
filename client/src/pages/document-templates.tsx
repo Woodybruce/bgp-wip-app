@@ -3481,7 +3481,10 @@ function DesignTemplateView({
             <div className="flex gap-2">
               <Button variant="outline" onClick={onCancel} data-testid="button-cancel-design">Cancel</Button>
               <Button
-                onClick={async () => { setSaving(true); await onSave(design); setSaving(false); }}
+                onClick={async () => {
+                  setSaving(true);
+                  try { await onSave(design); } finally { setSaving(false); }
+                }}
                 disabled={saving}
                 data-testid="button-save-design"
               >
