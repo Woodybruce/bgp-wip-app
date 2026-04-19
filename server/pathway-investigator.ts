@@ -378,26 +378,33 @@ async function executeInvestigatorTool(toolName: string, input: any, req: Reques
       }
 
       case "voa_rates_lookup": {
-        const normalisedPc = String(input.postcode || "").replace(/\s+/g, "").toUpperCase();
-        const formattedPc = normalisedPc.length > 3 ? `${normalisedPc.slice(0, -3)} ${normalisedPc.slice(-3)}` : normalisedPc;
-        const res = await pool.query(
-          `SELECT firm_name, number_or_name, street, town, postcode, description_text, rateable_value, effective_date
-             FROM voa_ratings
-            WHERE UPPER(REPLACE(postcode, ' ', '')) = $1
-            ORDER BY rateable_value DESC NULLS LAST
-            LIMIT 30`,
-          [normalisedPc]
-        );
+        const pc = String(input.postcode || "").trim();
+        const { voaSqliteAvailable, lookupVoaByPostcode } = await import("./voa-sqlite");
+        let rows: any[] = [];
+        if (voaSqliteAvailable()) {
+          rows = lookupVoaByPostcode(pc, undefined, 30);
+        } else {
+          const normalisedPc = pc.replace(/\s+/g, "").toUpperCase();
+          const res = await pool.query(
+            `SELECT firm_name AS "firmName", description_text AS description, rateable_value AS "rateableValue", effective_date AS "effectiveDate"
+               FROM voa_ratings WHERE UPPER(REPLACE(postcode, ' ', '')) = $1
+               ORDER BY rateable_value DESC NULLS LAST LIMIT 30`,
+            [normalisedPc]
+          );
+          rows = res.rows;
+        }
+        const normPc = pc.replace(/\s+/g, "").toUpperCase();
+        const formattedPc = normPc.length > 3 ? `${normPc.slice(0, -3)} ${normPc.slice(-3)}` : normPc;
         return {
           postcode: formattedPc,
-          count: res.rows.length,
-          totalRateableValue: res.rows.reduce((s: number, r: any) => s + (Number(r.rateable_value) || 0), 0),
-          entries: res.rows.map((r: any) => ({
-            firmName: r.firm_name,
-            address: [r.number_or_name, r.street, r.town].filter(Boolean).join(", "),
-            description: r.description_text,
-            rateableValue: r.rateable_value != null ? Number(r.rateable_value) : null,
-            effectiveDate: r.effective_date,
+          count: rows.length,
+          totalRateableValue: rows.reduce((s: number, r: any) => s + (Number(r.rateableValue ?? r.rateable_value) || 0), 0),
+          entries: rows.map((r: any) => ({
+            firmName: r.firmName ?? r.firm_name,
+            address: [r.numberOrName ?? r.number_or_name, r.street, r.town].filter(Boolean).join(", "),
+            description: r.description ?? r.description_text,
+            rateableValue: r.rateableValue != null ? Number(r.rateableValue) : (r.rateable_value != null ? Number(r.rateable_value) : null),
+            effectiveDate: r.effectiveDate ?? r.effective_date,
           })),
         };
       }
@@ -550,6 +557,7 @@ Omit fields you have no data for. Keep keyEmails to max 15, brochures to max 4 (
           .then((r) => prefetch.push({ tool: "voa_rates_lookup", result: r })).catch(() => {})
       : Promise.resolve(),
   ]);
+  console.log(`[investigator] prefetch: ${prefetch.map((p) => `${p.tool}=${JSON.stringify(p.result).slice(0, 120)}`).join(" | ")}`);
   const prefetchSummary = prefetch.length
     ? `\n\nPre-fetched context (already done):\n${prefetch.map((p) => `${p.tool}: ${JSON.stringify(p.result).slice(0, 800)}`).join("\n")}`
     : "";
