@@ -376,13 +376,12 @@ function derivedTenantForFilter(run: any, aiFacts: any, tenancy: any): string | 
 
 async function runStage1(runId: string, req: Request): Promise<void> {
   try {
-    // Feature flag — autonomous investigator vs classic pipeline.
-    // Set USE_AUTONOMOUS_STAGE1=1 to use the Claude-driven multi-pass investigator
-    // that iterates tools like ChatBGP does (search → read → re-search → extract).
-    if (process.env.USE_AUTONOMOUS_STAGE1 === "1") {
-      await runStage1Autonomous(runId, req);
-    } else {
+    // Autonomous investigator is the default path.
+    // Set USE_AUTONOMOUS_STAGE1=0 to fall back to the classic deterministic pipeline.
+    if (process.env.USE_AUTONOMOUS_STAGE1 === "0") {
       await runStage1Inner(runId, req);
+    } else {
+      await runStage1Autonomous(runId, req);
     }
   } catch (err: any) {
     const reason = err?.message || String(err);
@@ -1859,8 +1858,8 @@ Write a concise markdown summary (max 400 words) covering:
 
 End with a line: RECOMMEND: PROCEED or RECOMMEND: PAUSE (with brief reason if pausing).`;
 
-    const resp = await callClaude({ prompt, maxTokens: 800, temperature: 0.2 });
-    summary = typeof resp === "string" ? resp : resp?.content?.[0]?.text || resp?.text || JSON.stringify(resp);
+    const resp = await callClaude({ messages: [{ role: "user", content: prompt }], max_completion_tokens: 800, temperature: 0.2 });
+    summary = resp?.choices?.[0]?.message?.content || "";
     recommendProceed = !summary.includes("RECOMMEND: PAUSE");
   } catch (err: any) {
     console.error("[pathway stage3] Claude summary failed:", err?.message);
