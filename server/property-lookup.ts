@@ -372,9 +372,9 @@ async function lookupPlanningData(postcode: string): Promise<any> {
 
 async function lookupPlanningApplications(lat: number, lng: number): Promise<any[]> {
   try {
-    const tenYearsAgo = new Date();
-    tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
-    const fromDate = tenYearsAgo.toISOString().split("T")[0]; // YYYY-MM-DD
+    const twentyYearsAgo = new Date();
+    twentyYearsAgo.setFullYear(twentyYearsAgo.getFullYear() - 20);
+    const fromDate = twentyYearsAgo.toISOString().split("T")[0]; // YYYY-MM-DD
 
     // Query planning.data.gov.uk for planning applications within ~500m radius
     const url = `https://www.planning.data.gov.uk/entity.json?dataset=planning-application&longitude=${lng}&latitude=${lat}&geometry_relation=intersects&limit=100&entry_date_after=${fromDate}`;
@@ -434,7 +434,7 @@ async function lookupTflNearby(postcode: string): Promise<any> {
 const PROPERTYDATA_CORE_ENDPOINTS = [
   { key: "freeholds" },
   { key: "leaseholds" },
-  { key: "planning-applications", extra: { max_age: "3650" } },
+  { key: "planning-applications", extra: { max_age: "7300" } },
 ];
 
 const PROPERTYDATA_MARKET_ENDPOINTS = [
