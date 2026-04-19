@@ -169,7 +169,10 @@ async function executeInvestigatorTool(toolName: string, input: any, req: Reques
         // Rule: wrap in quotes only if the query is a postcode or multi-word name
         // (not a house-number prefix like "18-22 ...").
         // Strip any outer quotes Claude may have already added to avoid double-quoting.
-        const raw = String(input.query || "").trim().replace(/^"+|"+$/g, "");
+        // Also strip leading house numbers: "18-22 Haymarket" → "Haymarket"
+        // (KQL treats "-" as NOT and digits at position 0 are invalid identifiers)
+        const rawInput = String(input.query || "").trim().replace(/^"+|"+$/g, "");
+        const raw = rawInput.replace(/^\d[\d\-–]*\s+/, "").trim() || rawInput;
         const looksLikePostcode = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i.test(raw);
         const hasSpace = raw.includes(" ");
         const graphQuery = (looksLikePostcode || (hasSpace && !/^\d/.test(raw)))
@@ -532,12 +535,35 @@ FINAL OUTPUT: When you've gathered enough, return STRICT JSON only (no prose, no
 
 Omit fields you have no data for. Keep keyEmails to max 15, brochures to max 4 (genuinely this-building only), sharepointMatches to max 15.`;
 
-  const userPrompt = `Investigate: ${opts.address}${opts.postcode ? `, ${opts.postcode}` : ""}
+  // Pre-fetch CRM, Land Registry and VOA before the Claude loop so Claude always
+  // gets this context regardless of what tool order it chooses.
+  const prefetch: Array<{ tool: string; result: any }> = [];
+  await Promise.all([
+    executeInvestigatorTool("crm_lookup", { query: opts.address.split(",")[0].trim(), type: "all" }, opts.req)
+      .then((r) => prefetch.push({ tool: "crm_lookup", result: r })).catch(() => {}),
+    opts.postcode
+      ? executeInvestigatorTool("land_registry_lookup", { address: opts.address, postcode: opts.postcode }, opts.req)
+          .then((r) => prefetch.push({ tool: "land_registry_lookup", result: r })).catch(() => {})
+      : Promise.resolve(),
+    opts.postcode
+      ? executeInvestigatorTool("voa_rates_lookup", { postcode: opts.postcode }, opts.req)
+          .then((r) => prefetch.push({ tool: "voa_rates_lookup", result: r })).catch(() => {})
+      : Promise.resolve(),
+  ]);
+  const prefetchSummary = prefetch.length
+    ? `\n\nPre-fetched context (already done):\n${prefetch.map((p) => `${p.tool}: ${JSON.stringify(p.result).slice(0, 800)}`).join("\n")}`
+    : "";
 
-Start by calling crm_lookup, land_registry, and voa_rates immediately — these give ownership and rates data without needing emails. Then search emails using the street name word and postcode. Iterate — use breadcrumbs to search further. When done, return the JSON.`;
+  const userPrompt = `Investigate: ${opts.address}${opts.postcode ? `, ${opts.postcode}` : ""}${prefetchSummary}
+
+Use the pre-fetched data above as breadcrumbs. Now search emails using the street NAME word and postcode. Read interesting emails, extract brochures, look up Companies House for any owner/tenant found. When done, return the JSON.`;
 
   const messages: any[] = [{ role: "user", content: userPrompt }];
   const toolTrace: Array<{ tool: string; input: any; summary: string }> = [];
+  // Add pre-fetched calls to the trace so they appear in the UI
+  for (const p of prefetch) {
+    toolTrace.push({ tool: p.tool, input: {}, summary: JSON.stringify(p.result).slice(0, 120) });
+  }
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     let response: any;
