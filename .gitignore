@@ -22,3 +22,4 @@ attached_assets/
 # deployed to Railway volume — never committed).
 data/
 .voa-cache/
+.claude/
