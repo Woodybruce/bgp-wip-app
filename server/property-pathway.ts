@@ -526,7 +526,14 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
       sizeSqft: result.property?.sizeSqft,
       mainTenants: result.tenancy?.mainOccupiers || (result.tenancy?.tenant ? [result.tenancy.tenant] : []),
       leaseStatus: result.tenancy?.leaseStatus,
-      listedStatus: result.property?.listedStatus,
+      listedStatus: result.property?.listedStatus
+        ? (() => {
+            const v = String(result.property.listedStatus).trim();
+            // Only accept short, badge-worthy values (e.g. "Grade II", "Not listed")
+            if (v.length > 40 || /not confirmed|property_data_lookup|returned null|to be verified/i.test(v)) return undefined;
+            return v;
+          })()
+        : undefined,
     },
     propertyImage,
     rates: result.rates ? {
