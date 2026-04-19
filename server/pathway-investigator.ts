@@ -573,6 +573,12 @@ Use the pre-fetched data above as breadcrumbs. Now search emails using the stree
     toolTrace.push({ tool: p.tool, input: {}, summary: JSON.stringify(p.result).slice(0, 120) });
   }
 
+  // Accumulate every email returned by search_emails across all iterations.
+  // If Claude returns empty keyEmails in its final JSON (over-filtering), we
+  // fall back to this pool so the user always sees what was found.
+  const emailPool: any[] = [];
+  const emailPoolSeen = new Set<string>();
+
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     let response: any;
     try {
@@ -600,7 +606,7 @@ Use the pre-fetched data above as breadcrumbs. Now search emails using the stree
     if (toolUses.length === 0) {
       // Final answer — parse JSON
       const txt = textBlocks.map((b: any) => b.text).join("\n");
-      console.log(`[investigator] Final response (iter ${i}): ${txt.slice(0, 500)}`);
+      console.log(`[investigator] Final response (iter ${i}): ${txt.slice(0, 600)}`);
       const match = txt.match(/\{[\s\S]*\}/);
       if (!match) {
         console.warn(`[investigator] No JSON in final response (iter ${i}): ${txt.slice(0, 300)}`);
@@ -613,8 +619,16 @@ Use the pre-fetched data above as breadcrumbs. Now search emails using the stree
         console.warn(`[investigator] JSON.parse failed: ${parseErr?.message} — returning empty`);
         return { toolTrace, confidence: "low" as const };
       }
+
+      // If Claude returned no keyEmails but we accumulated emails from search_emails,
+      // use the pool directly — Claude over-filtered.
+      if ((!result.keyEmails || result.keyEmails.length === 0) && emailPool.length > 0) {
+        console.warn(`[investigator] Claude returned 0 keyEmails but pool has ${emailPool.length} — using pool directly`);
+        result.keyEmails = emailPool.slice(0, 15).map((e) => ({ ...e, why: "Found in email search" }));
+      }
+      console.log(`[investigator] Done in ${((Date.now() - started) / 1000).toFixed(1)}s — ${result.keyEmails?.length || 0} emails, ${i + 1} Claude calls`);
+
       result.toolTrace = toolTrace;
-      console.log(`[investigator] Done in ${((Date.now() - started) / 1000).toFixed(1)}s (${i + 1} Claude calls, ${toolTrace.length} tool uses)`);
       return result;
     }
 
@@ -622,25 +636,42 @@ Use the pre-fetched data above as breadcrumbs. Now search emails using the stree
     messages.push({ role: "assistant", content: response.content });
     const toolResults = await Promise.all(
       toolUses.map(async (tu: any) => {
-        const result = await executeInvestigatorTool(tu.name, tu.input, opts.req);
+        const toolResult = await executeInvestigatorTool(tu.name, tu.input, opts.req);
+
+        // Accumulate emails from every search_emails call
+        if (tu.name === "search_emails" && Array.isArray(toolResult?.results)) {
+          for (const e of toolResult.results) {
+            const key = e.msgId || e.internetMessageId;
+            if (key && !emailPoolSeen.has(key)) {
+              emailPoolSeen.add(key);
+              emailPool.push(e);
+            }
+          }
+        }
+
         const summary = (() => {
-          if (result?.error) return `error: ${result.error}`;
-          if (result?.results) return `${result.results.length || result.count || 0} results`;
-          if (result?.entries) return `${result.entries.length} entries`;
-          if (result?.count != null) return `${result.count} items`;
+          if (toolResult?.error) return `error: ${toolResult.error}`;
+          if (toolResult?.results) return `${toolResult.results.length || toolResult.count || 0} results`;
+          if (toolResult?.entries) return `${toolResult.entries.length} entries`;
+          if (toolResult?.count != null) return `${toolResult.count} items`;
           return "ok";
         })();
         toolTrace.push({ tool: tu.name, input: tu.input, summary });
         return {
           type: "tool_result",
           tool_use_id: tu.id,
-          content: JSON.stringify(result).slice(0, 30000),
+          content: JSON.stringify(toolResult).slice(0, 30000),
         };
       })
     );
     messages.push({ role: "user", content: toolResults });
   }
 
-  console.warn(`[investigator] Hit max iterations (${MAX_ITERATIONS}) — returning partial result`);
-  return { toolTrace, confidence: "low" as const };
+  // Hit max iterations — return whatever emails we accumulated
+  console.warn(`[investigator] Hit max iterations (${MAX_ITERATIONS}) — pool has ${emailPool.length} emails`);
+  return {
+    toolTrace,
+    confidence: "low" as const,
+    keyEmails: emailPool.slice(0, 15).map((e) => ({ ...e, why: "Found in email search" })),
+  };
 }
