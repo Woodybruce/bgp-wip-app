@@ -488,11 +488,11 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                     <div className="border rounded p-2 bg-muted/20">
                       <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Ownership</p>
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-                        <div><span className="text-muted-foreground">Owner:</span> {ownerEl}{ownerCoNumber ? <span className="text-muted-foreground text-[10px] ml-0.5">(Co# {ownerCoNumber})</span> : null}</div>
-                        <div><span className="text-muted-foreground">Title:</span> {titleEl}</div>
-                        <div><span className="text-muted-foreground">Paid:</span> <span className="font-medium">{paid || "—"}</span></div>
-                        <div><span className="text-muted-foreground">Date:</span> <span className="font-medium">{date || "—"}</span></div>
-                        {s1.aiFacts?.refurbCost && <div className="col-span-2"><span className="text-muted-foreground">Refurb spend:</span> <span className="font-medium">{s1.aiFacts.refurbCost}</span></div>}
+                        <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Owner:</span> {ownerEl}{ownerCoNumber ? <span className="text-muted-foreground text-[10px] ml-0.5">(Co# {ownerCoNumber})</span> : null}</div>
+                        <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Title:</span> <span className="break-words">{titleEl}</span></div>
+                        <div className="min-w-0"><span className="text-muted-foreground">Paid:</span> <span className="font-medium break-words">{paid || "—"}</span></div>
+                        <div className="min-w-0"><span className="text-muted-foreground">Date:</span> <span className="font-medium">{date || "—"}</span></div>
+                        {s1.aiFacts?.refurbCost && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Refurb spend:</span> <span className="font-medium break-words">{s1.aiFacts.refurbCost}</span></div>}
                       </div>
                     </div>
                   );
@@ -518,11 +518,11 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                     <div className="border rounded p-2 bg-muted/20">
                       <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Tenancy</p>
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-                        <div><span className="text-muted-foreground">Tenant:</span> {tenantEl}</div>
-                        {tenant?.companyNumber && <div><span className="text-muted-foreground">Co#:</span> <span className="font-medium">{tenant.companyNumber}</span></div>}
-                        {s1.aiFacts?.leaseStatus && <div className="col-span-2"><span className="text-muted-foreground">Status:</span> <span className="font-medium">{s1.aiFacts.leaseStatus}</span></div>}
+                        <div className="min-w-0"><span className="text-muted-foreground">Tenant:</span> {tenantEl}</div>
+                        {tenant?.companyNumber && <div className="min-w-0"><span className="text-muted-foreground">Co#:</span> <span className="font-medium">{tenant.companyNumber}</span></div>}
+                        {s1.aiFacts?.leaseStatus && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Status:</span> <span className="font-medium break-words">{s1.aiFacts.leaseStatus}</span></div>}
                         {s1.aiFacts?.mainTenants && s1.aiFacts.mainTenants.length > 1 && (
-                          <div className="col-span-2"><span className="text-muted-foreground">Other occupiers:</span> <span className="font-medium">{s1.aiFacts.mainTenants.slice(1).join(", ")}</span></div>
+                          <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Other occupiers:</span> <span className="font-medium break-words">{s1.aiFacts.mainTenants.slice(1).join(", ")}</span></div>
                         )}
                       </div>
                     </div>
@@ -674,17 +674,48 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </Card>
             )}
 
-            {/* Investment comps */}
-            {s1.comps && s1.comps.length > 0 && (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> Comps ({s1.comps.length})</CardTitle>
-                </CardHeader>
-                <CardContent className="text-[11px] space-y-0.5 pb-2">
-                  {s1.comps.slice(0, 10).map((c: any, i: number) => (
+            {/* Investment comps — always show */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> Comps ({s1.comps?.length || 0})</CardTitle>
+              </CardHeader>
+              <CardContent className="text-[11px] space-y-0.5 max-h-56 overflow-y-auto pb-2">
+                {s1.comps && s1.comps.length > 0 ? (
+                  s1.comps.slice(0, 10).map((c: any, i: number) => (
                     <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
                       <span className="truncate flex-1">{c.address}</span>
                       <span className="text-muted-foreground text-[10px] shrink-0">{c.price ? `£${(c.price / 1e6).toFixed(1)}m` : "—"}{c.yield ? ` ${(c.yield * 100).toFixed(1)}%` : ""}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-muted-foreground text-[11px] py-1">No investment comparables found for this postcode yet.</p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Business rates entries */}
+            {s1.rates && s1.rates.entries && s1.rates.entries.length > 0 && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <span>Rates ({s1.rates.entries.length})</span>
+                    {run.postcode && (
+                      <a href={`https://www.tax.service.gov.uk/business-rates-find/search?postcode=${encodeURIComponent(run.postcode)}`} target="_blank" rel="noreferrer" className="ml-auto text-[10px] text-primary hover:underline inline-flex items-center gap-0.5 font-normal">
+                        gov.uk <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    )}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="text-[11px] space-y-0.5 max-h-56 overflow-y-auto pb-2">
+                  {s1.rates.entries.slice(0, 30).map((r: any, i: number) => (
+                    <div key={i} className="flex items-start gap-1 py-0.5 border-b last:border-b-0">
+                      <div className="min-w-0 flex-1">
+                        <span className="truncate block">{r.firmName || r.address || "—"}</span>
+                        {r.description && <span className="text-muted-foreground text-[10px]">{r.description}</span>}
+                      </div>
+                      <span className="text-muted-foreground text-[10px] shrink-0 text-right">
+                        {r.rateableValue != null ? `£${Number(r.rateableValue).toLocaleString()}` : "—"}
+                      </span>
                     </div>
                   ))}
                 </CardContent>
