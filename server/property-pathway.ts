@@ -2050,22 +2050,40 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
 
     const [lookup, companyKyc] = await Promise.all([lookupPromise, companyKycPromise]);
 
-    const rawApps = (lookup.planningData as any)?.applications || [];
-    const planningApplications = rawApps.slice(0, 50).map((a: any) => ({
-      reference: a.reference || a.ref || "",
-      description: a.description || a.proposal || "",
-      status: a.status || a.decision || "",
-      date: a.date || a.decision_date || a.decidedAt || a.receivedAt || "",
-      decidedAt: a.decidedAt || a.decision_date || null,
-      receivedAt: a.receivedAt || a.received_date || null,
-      documentUrl: a.documentUrl || a.url || null,
-    }));
+    // Planning comes from TWO sources: planning.data.gov.uk (radius search) and
+    // PropertyData's /planning-applications (postcode-scoped). Merge both, dedupe
+    // by reference. Field names differ between sources so handle both shapes.
+    const govApps = (lookup.planningData as any)?.planningApplications || [];
+    const pdApps = (lookup.propertyDataCoUk as any)?.["planning-applications"]?.data || [];
+    const pdAppsArr = Array.isArray(pdApps) ? pdApps : (pdApps?.planning_applications || []);
+
+    const normalise = (a: any) => ({
+      reference: a.reference || a.ref || a.application_number || "",
+      description: a.description || a.proposal || a.development_description || "",
+      status: a.status || a.decision || a.application_status || "",
+      date: a.decidedAt || a.decided_at || a.decision_date || a.receivedAt || a.received_at || a.date || "",
+      decidedAt: a.decidedAt || a.decided_at || a.decision_date || null,
+      receivedAt: a.receivedAt || a.received_at || a.received_date || null,
+      documentUrl: a.documentUrl || a.document_url || a.url || null,
+    });
+
+    const seen = new Set<string>();
+    const merged: any[] = [];
+    for (const a of [...govApps, ...pdAppsArr].map(normalise)) {
+      const key = a.reference || `${a.date}|${a.description.slice(0, 60)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (a.reference || a.description) merged.push(a);
+    }
+    merged.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    const planningApplications = merged.slice(0, 100);
 
     const floorPlanUrls: string[] = [];
-    for (const app of rawApps.slice(0, 15)) {
-      const u = app.url || app.documentUrl;
-      if (u) floorPlanUrls.push(u);
+    for (const app of planningApplications.slice(0, 30)) {
+      if (app.documentUrl) floorPlanUrls.push(app.documentUrl);
     }
+
+    console.log(`[pathway stage4] planning: gov=${govApps.length} pd=${pdAppsArr.length} merged=${planningApplications.length}`);
 
     console.log(`[pathway stage4] runId=${runId} planning=${planningApplications.length} companyKyc=${companyKyc.length} (${companyKyc.filter((c: any) => !c.error).length} resolved)`);
 
