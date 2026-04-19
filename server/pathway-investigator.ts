@@ -462,27 +462,42 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
         const vcr = results["valuation-commercial-rent"] || {};
         const vcs = results["valuation-commercial-sale"] || {};
 
+        const marketRent = {
+          averagePerSqft: rc.average_rent ?? null,
+          minPerSqft: rc.min_rent ?? null,
+          maxPerSqft: rc.max_rent ?? null,
+          sampleSize: rc.points_analysed ?? rc.sample_size ?? null,
+        };
+        const estimatedRent = {
+          perSqft: vcr.result_per_sqf ?? vcr.result_psf ?? null,
+          annualLow: vcr["70pc_range"]?.[0] ?? vcr.low ?? null,
+          annualHigh: vcr["70pc_range"]?.[1] ?? vcr.high ?? null,
+          annual: vcr.result ?? null,
+        };
+        const estimatedCapitalValue = {
+          perSqft: vcs.result_per_sqf ?? vcs.result_psf ?? null,
+          low: vcs["70pc_range"]?.[0] ?? vcs.low ?? null,
+          high: vcs["70pc_range"]?.[1] ?? vcs.high ?? null,
+          estimate: vcs.result ?? null,
+        };
+
+        const anyData =
+          marketRent.averagePerSqft != null ||
+          estimatedRent.annual != null || estimatedRent.perSqft != null ||
+          estimatedCapitalValue.estimate != null || estimatedCapitalValue.perSqft != null;
+
+        console.log(`[valuation_lookup] pc=${pc} type=${propertyType} rc=${!!results["rents-commercial"]} vcr=${!!results["valuation-commercial-rent"]} vcs=${!!results["valuation-commercial-sale"]} anyData=${anyData}`);
+
+        if (!anyData) {
+          return { error: `PropertyData returned no valuation data for ${pc} (${propertyType}) — likely no commercial comparables for this postcode.` };
+        }
+
         return {
           postcode: pc,
           propertyType,
-          marketRent: {
-            averagePerSqft: rc.average_rent ?? null,
-            minPerSqft: rc.min_rent ?? null,
-            maxPerSqft: rc.max_rent ?? null,
-            sampleSize: rc.points_analysed ?? rc.sample_size ?? null,
-          },
-          estimatedRent: {
-            perSqft: vcr.result_per_sqf ?? vcr.result_psf ?? null,
-            annualLow: vcr["70pc_range"]?.[0] ?? vcr.low ?? null,
-            annualHigh: vcr["70pc_range"]?.[1] ?? vcr.high ?? null,
-            annual: vcr.result ?? null,
-          },
-          estimatedCapitalValue: {
-            perSqft: vcs.result_per_sqf ?? vcs.result_psf ?? null,
-            low: vcs["70pc_range"]?.[0] ?? vcs.low ?? null,
-            high: vcs["70pc_range"]?.[1] ?? vcs.high ?? null,
-            estimate: vcs.result ?? null,
-          },
+          marketRent,
+          estimatedRent,
+          estimatedCapitalValue,
         };
       }
 

@@ -550,7 +550,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 </div>
 
                 {/* Area valuation (PropertyData) */}
-                {s1.valuation && (
+                {s1.valuation && (s1.valuation.marketRentPerSqft != null || s1.valuation.estimatedErvAnnual != null || s1.valuation.estimatedCapitalValue != null || s1.valuation.estimatedErvPerSqft != null || s1.valuation.estimatedCapValuePerSqft != null) && (
                   <div className="border rounded p-2 bg-muted/20">
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Area Valuation (PropertyData{s1.valuation.propertyType ? ` · ${s1.valuation.propertyType}` : ""})</p>
@@ -593,15 +593,6 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                   </div>
                 )}
 
-                {/* Compact pipeline counts */}
-                <div className="grid grid-cols-6 gap-1.5">
-                  <CountBlock label="Emails" value={s1.emailHits?.length || 0} />
-                  <CountBlock label="SP" value={s1.sharepointHits?.length || 0} />
-                  <CountBlock label="Deals" value={s1.deals?.length || 0} />
-                  <CountBlock label="Brochures" value={s1.brochureFiles?.length || 0} />
-                  <CountBlock label="Comps" value={s1.comps?.length || 0} />
-                  <CountBlock label="Rates" value={s1.rates?.assessmentCount || 0} />
-                </div>
               </CardContent>
             </Card>
 
