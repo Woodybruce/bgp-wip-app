@@ -751,17 +751,32 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 max-h-56 overflow-y-auto pb-2">
-                  {s1.rates.entries.slice(0, 30).map((r: any, i: number) => (
-                    <div key={i} className="flex items-start gap-1 py-0.5 border-b last:border-b-0">
-                      <div className="min-w-0 flex-1">
-                        <span className="truncate block">{r.firmName || r.address || "—"}</span>
-                        {r.description && <span className="text-muted-foreground text-[10px]">{r.description}</span>}
+                  {s1.rates.entries.slice(0, 30).map((r: any, i: number) => {
+                    const voaUrl = r.uarn
+                      ? `https://www.tax.service.gov.uk/business-rates-find/valuations/${encodeURIComponent(r.uarn)}`
+                      : (run.postcode ? `https://www.tax.service.gov.uk/business-rates-find/search?postcode=${encodeURIComponent(run.postcode)}` : null);
+                    const Body = (
+                      <>
+                        <div className="min-w-0 flex-1">
+                          <span className="truncate block">{r.firmName || r.address || "—"}</span>
+                          {r.description && <span className="text-muted-foreground text-[10px]">{r.description}</span>}
+                        </div>
+                        <span className="text-muted-foreground text-[10px] shrink-0 text-right">
+                          {r.rateableValue != null ? `£${Number(r.rateableValue).toLocaleString()}` : "—"}
+                        </span>
+                        {voaUrl && <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground" />}
+                      </>
+                    );
+                    return voaUrl ? (
+                      <a key={i} href={voaUrl} target="_blank" rel="noreferrer" className="flex items-start gap-1 py-0.5 border-b last:border-b-0 hover:bg-muted/50 cursor-pointer">
+                        {Body}
+                      </a>
+                    ) : (
+                      <div key={i} className="flex items-start gap-1 py-0.5 border-b last:border-b-0">
+                        {Body}
                       </div>
-                      <span className="text-muted-foreground text-[10px] shrink-0 text-right">
-                        {r.rateableValue != null ? `£${Number(r.rateableValue).toLocaleString()}` : "—"}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </CardContent>
               </Card>
             )}

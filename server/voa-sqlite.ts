@@ -100,6 +100,8 @@ export interface VoaLookupRow {
   description: string | null;
   rateableValue: number | null;
   effectiveDate: string | null;
+  uarn: string | null;
+  baRef: string | null;
 }
 
 /**
@@ -114,7 +116,7 @@ export function lookupVoaByPostcode(postcode: string, street?: string, limit = 3
   const norm = normalisePostcode(postcode);
   if (!norm) return [];
   let sql = `
-    SELECT firm_name, number_or_name, street, town, postcode, description_text, rateable_value, effective_date
+    SELECT firm_name, number_or_name, street, town, postcode, description_text, rateable_value, effective_date, uarn, ba_ref
       FROM voa_ratings
      WHERE postcode_norm = ?
   `;
@@ -134,6 +136,8 @@ export function lookupVoaByPostcode(postcode: string, street?: string, limit = 3
       description: r.description_text || null,
       rateableValue: r.rateable_value != null ? Number(r.rateable_value) : null,
       effectiveDate: r.effective_date || null,
+      uarn: r.uarn || null,
+      baRef: r.ba_ref || null,
     }));
   } catch (err: any) {
     console.error("[voa-sqlite] lookupVoaByPostcode error:", err?.message || err);

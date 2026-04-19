@@ -423,10 +423,12 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
           totalRateableValue: rows.reduce((s: number, r: any) => s + (Number(r.rateableValue ?? r.rateable_value) || 0), 0),
           entries: rows.map((r: any) => ({
             firmName: r.firmName ?? r.firm_name,
-            address: [r.numberOrName ?? r.number_or_name, r.street, r.town].filter(Boolean).join(", "),
+            address: r.address ?? [r.numberOrName ?? r.number_or_name, r.street, r.town].filter(Boolean).join(", "),
             description: r.description ?? r.description_text,
             rateableValue: r.rateableValue != null ? Number(r.rateableValue) : (r.rateable_value != null ? Number(r.rateable_value) : null),
             effectiveDate: r.effectiveDate ?? r.effective_date,
+            uarn: r.uarn ?? null,
+            baRef: r.baRef ?? r.ba_ref ?? null,
           })),
         };
       }
