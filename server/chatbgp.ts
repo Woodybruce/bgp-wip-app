@@ -13,6 +13,7 @@ import mammoth from "mammoth";
 import { getValidMsToken } from "./microsoft";
 import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
 import { escapeLike } from "./utils/escape-like";
+import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
 const CHATBGP_MODEL = "claude-opus-4-6";        // Main chat: Opus for intelligence
 const CHATBGP_OPUS_MODEL = "claude-opus-4-6";   // Same
@@ -4927,41 +4928,10 @@ async function executeCrmToolRaw(
   if (fnName === "web_search") {
     const searchQuery = fnArgs.query as string;
     try {
-      const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
-      const searchRes = await fetch(searchUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        },
-        signal: AbortSignal.timeout(15000),
-      });
-      const html = await searchRes.text();
-      const results: Array<{ title: string; url: string; snippet: string }> = [];
-      const resultBlocks = html.split(/class="result\s/);
-      for (let i = 1; i < resultBlocks.length && results.length < 8; i++) {
-        const block = resultBlocks[i];
-        const titleMatch = block.match(/class="result__a"[^>]*>([^<]+)</);
-        const urlMatch = block.match(/class="result__url"[^>]*href="([^"]*)"/) || block.match(/href="\/\/duckduckgo\.com\/l\/\?uddg=([^&"]+)/);
-        const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\//);
-        if (titleMatch && urlMatch) {
-          let resultUrl = urlMatch[1];
-          if (resultUrl.startsWith("//duckduckgo.com/l/?uddg=")) {
-            resultUrl = decodeURIComponent(resultUrl.replace("//duckduckgo.com/l/?uddg=", ""));
-          } else if (!resultUrl.startsWith("http")) {
-            resultUrl = decodeURIComponent(resultUrl.trim());
-            if (!resultUrl.startsWith("http")) resultUrl = "https://" + resultUrl;
-          }
-          results.push({
-            title: titleMatch[1].trim(),
-            url: resultUrl,
-            snippet: (snippetMatch?.[1] || "").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').trim(),
-          });
-        }
-      }
-      if (results.length === 0) {
-        return { data: { results: [], message: "No results found. Try a different search query." } };
-      }
-      console.log(`[ChatBGP] Web search for "${searchQuery}" returned ${results.length} results`);
-      return { data: { results, query: searchQuery, resultCount: results.length } };
+      if (!isPerplexityConfigured()) return { data: { error: "Web search not configured (PERPLEXITY_API_KEY missing)" } };
+      const r = await askPerplexity(searchQuery, { maxTokens: 800, temperature: 0.1 });
+      console.log(`[ChatBGP] Web search for "${searchQuery}" via Perplexity — ${r.citations.length} citations`);
+      return { data: { answer: r.answer, citations: r.citations, query: searchQuery } };
     } catch (err: any) {
       console.error("[chatbgp] Web search error:", err?.message);
       return { data: { error: `Web search failed: ${err?.message}` } };
@@ -7917,41 +7887,13 @@ export async function handleCrmToolCall(
   if (fnName === "web_search") {
     const searchQuery = fnArgs.query as string;
     try {
-      const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
-      const searchRes = await fetch(searchUrl, {
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
-        signal: AbortSignal.timeout(15000),
-      });
-      const html = await searchRes.text();
-      const results: Array<{ title: string; url: string; snippet: string }> = [];
-      const resultBlocks = html.split(/class="result\s/);
-      for (let i = 1; i < resultBlocks.length && results.length < 8; i++) {
-        const block = resultBlocks[i];
-        const titleMatch = block.match(/class="result__a"[^>]*>([^<]+)</);
-        const urlMatch = block.match(/class="result__url"[^>]*href="([^"]*)"/) || block.match(/href="\/\/duckduckgo\.com\/l\/\?uddg=([^&"]+)/);
-        const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\//);
-        if (titleMatch && urlMatch) {
-          let resultUrl = urlMatch[1];
-          if (resultUrl.startsWith("//duckduckgo.com/l/?uddg=")) {
-            resultUrl = decodeURIComponent(resultUrl.replace("//duckduckgo.com/l/?uddg=", ""));
-          } else if (!resultUrl.startsWith("http")) {
-            resultUrl = decodeURIComponent(resultUrl.trim());
-            if (!resultUrl.startsWith("http")) resultUrl = "https://" + resultUrl;
-          }
-          results.push({
-            title: titleMatch[1].trim(),
-            url: resultUrl,
-            snippet: (snippetMatch?.[1] || "").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').trim(),
-          });
-        }
-      }
-      console.log(`[ChatBGP] Web search for "${searchQuery}" returned ${results.length} results`);
-      if (results.length === 0) {
-        return { handled: true, response: { reply: `I searched the web for "${searchQuery}" but couldn't find relevant results. Let me try a different approach.` } };
-      }
-      const formatted = results.map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.snippet}`).join("\n\n");
-      const reply = await summaryHelper({ success: true, query: searchQuery, resultCount: results.length, results });
-      return { handled: true, response: { reply: reply || `Found ${results.length} results for "${searchQuery}":\n\n${formatted}` } };
+      if (!isPerplexityConfigured()) return { handled: true, response: { reply: "Web search is not configured (PERPLEXITY_API_KEY missing)." } };
+      const r = await askPerplexity(searchQuery, { maxTokens: 800, temperature: 0.1 });
+      console.log(`[ChatBGP] Web search for "${searchQuery}" via Perplexity — ${r.citations.length} citations`);
+      const citationList = r.citations.length > 0
+        ? "\n\nSources: " + r.citations.map(c => c.title ? `[${c.title}](${c.url})` : c.url).join(" · ")
+        : "";
+      return { handled: true, response: { reply: r.answer + citationList } };
     } catch (err: any) {
       return { handled: true, response: { reply: `Sorry, the web search failed: ${err.message}` } };
     }

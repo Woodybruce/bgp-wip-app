@@ -23,6 +23,7 @@ import sharp from "sharp";
 import path from "path";
 import fs from "fs/promises";
 import crypto from "crypto";
+import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -50,7 +51,19 @@ type EnrichableField = (typeof ENRICHABLE_FIELDS)[number];
 
 const ROLLOUT_VALUES = ["scaling", "stable", "contracting", "entering_uk", "rumoured"];
 
-function buildPrompt(company: any): string {
+async function fetchBrandWebContext(name: string, domain: string | null): Promise<string> {
+  if (!isPerplexityConfigured()) return "";
+  try {
+    const query = `${name} UK retail brand: store count, expansion plans, investors, concept, industry sector${domain ? ` site:${domain} OR` : ""}`;
+    const r = await askPerplexity(query, { maxTokens: 400, temperature: 0.1 });
+    const citations = r.citations.map(c => c.url).join(", ");
+    return `\nLive web research (Perplexity, ${new Date().toISOString().slice(0, 10)}):\n${r.answer}${citations ? `\nSources: ${citations}` : ""}`;
+  } catch {
+    return "";
+  }
+}
+
+function buildPrompt(company: any, webContext: string): string {
   return `You are enriching a UK retail-property CRM record for the brand/company below.
 
 Return a JSON object that best describes this company's current public profile for a commercial property agent. Fields to fill (any you cannot determine with reasonable confidence → null, do not guess):
@@ -73,7 +86,7 @@ Known facts (do not contradict):
 - Companies House: ${company.companies_house_number || "unknown"}
 - Existing concept pitch: ${company.concept_pitch || "(none)"}
 - Existing store count: ${company.store_count ?? "(none)"}
-
+${webContext}
 Output JSON only. No prose, no code fences.`;
 }
 
@@ -90,7 +103,8 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
 
   const aiFields: Record<string, string> = c.ai_generated_fields || {};
 
-  const prompt = buildPrompt(c);
+  const webContext = await fetchBrandWebContext(c.name, c.domain || c.domain_url || null);
+  const prompt = buildPrompt(c, webContext);
   let aiOut: any = null;
   const modelsToTry = [MODEL_PRIMARY, MODEL_FALLBACK_1, MODEL_FALLBACK_2];
   let lastErr: any = null;
