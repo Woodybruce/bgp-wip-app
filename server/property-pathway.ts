@@ -400,7 +400,22 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   const { runInvestigativeStage1, executeInvestigatorTool } = await import("./pathway-investigator");
   const runAny = run as any;
   const uprn: string | null = runAny.uprn || null;
-  const streetName = run.address.split(",")[0].replace(/^\d[\d\s\-–]+/, "").trim();
+  // Extract street name by finding the first address token that contains letters
+  // (handles "18, 22 Haymarket, London SW1Y 4DG, UK" where comma splits the number range)
+  const streetName = (() => {
+    const parts = run.address.split(",").map((s) => s.trim()).filter(Boolean);
+    for (const p of parts) {
+      // strip leading number/range like "18", "1-5", "18-22"
+      const cleaned = p.replace(/^[\d\s\-–&]+/, "").trim();
+      // needs at least 3 letters to be a street name (skip postcodes, countries)
+      if (cleaned.length >= 3 && /[a-zA-Z]{3,}/.test(cleaned) && !/^(london|uk|united kingdom|england)$/i.test(cleaned) && !/^[a-z]{1,2}\d/i.test(cleaned)) {
+        // Drop trailing descriptors like "Street", "Road", "Lane" — keep just the name word
+        return cleaned.replace(/\s+(street|road|rd|lane|ln|avenue|ave|place|pl|square|sq|mews|terrace|gardens|hill|way)$/i, "").trim();
+      }
+    }
+    return "";
+  })();
+  console.log(`[pathway stage1] streetName="${streetName}" from address="${run.address}"`);
 
   // Phase 1: Run deterministic APIs immediately (~5-10s) and save partial results
   // so the user sees ownership/rates/CRM data while the Claude email loop runs.
