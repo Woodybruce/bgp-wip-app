@@ -4137,6 +4137,28 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
+  // Proxy planning PDFs through ScraperAPI. Idox (Westminster especially)
+  // can block direct browser downloads by IP, referer or session — and the
+  // raw URL often returns an HTML viewer rather than the PDF bytes. Running
+  // the download through our residential-proxy path gets the actual PDF back
+  // to the user's browser reliably.
+  app.get("/api/planning-docs/download", requireAuth, async (req: Request, res: Response) => {
+    const url = String(req.query.url || "");
+    if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: "invalid url" });
+    try {
+      const { downloadPlanningPdf } = await import("./planning-docs");
+      const buf = await downloadPlanningPdf(url);
+      if (!buf) return res.status(502).json({ error: "Upstream fetch failed — the LPA portal rejected the download or returned a non-PDF." });
+      const filename = (url.split("/").pop() || "plan.pdf").split("?")[0].replace(/[^a-zA-Z0-9._-]/g, "_");
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${filename.endsWith(".pdf") ? filename : filename + ".pdf"}"`);
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      res.send(buf);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   // ============================================================================
   // MARKET INTEL — on-demand web crawl for comps, availability, leasing history
   // ============================================================================

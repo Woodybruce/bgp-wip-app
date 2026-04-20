@@ -1593,6 +1593,15 @@ function PlanningCard({ apps }: { apps: any[] }) {
   );
 }
 
+// Route planning PDF downloads through our server so ScraperAPI can pull the
+// file via a UK residential IP — Idox (Westminster and similar) blocks direct
+// browser fetches via referer/IP checks and the raw URL often returns an HTML
+// viewer rather than the PDF bytes.
+function planningPdfProxy(rawUrl: string): string {
+  if (!rawUrl) return rawUrl;
+  return `/api/planning-docs/download?url=${encodeURIComponent(rawUrl)}`;
+}
+
 function classifyDocType(text: string): { label: string; tone: string } {
   const t = (text || "").toLowerCase();
   if (/floor\s*plan|ground\s*floor|first\s*floor|second\s*floor|basement\s*plan/.test(t)) return { label: "Floor Plan", tone: "bg-sky-100 text-sky-800" };
@@ -1694,7 +1703,7 @@ function PlanningDocsCard({
                 {app.docs.slice(0, 40).map((d, di) => (
                   <a
                     key={di}
-                    href={d.url}
+                    href={planningPdfProxy(d.url)}
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-start gap-1.5 py-1 px-2 hover:bg-muted/30 text-[11px]"
@@ -1838,7 +1847,7 @@ function PlanningDocsDialog({
                 {app.docs.map((d, di) => (
                   <a
                     key={di}
-                    href={d.url}
+                    href={planningPdfProxy(d.url)}
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-start gap-2 py-1.5 px-3 hover:bg-muted/30 text-[12px]"
