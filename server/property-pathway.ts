@@ -504,6 +504,90 @@ function derivedTenantForFilter(run: any, aiFacts: any, tenancy: any): string | 
   return null;
 }
 
+// Build CRM-derived seed data for the baseline email sweep. If the address
+// matches a CRM deal, we pull counterparty/agent names (which the property
+// address often doesn't appear alongside in email threads — e.g. "Dover
+// Street Market", "Amsprop", "Goldenberg" for 18-22 Haymarket) and the
+// mailboxes of internal agents assigned to that deal (so the sweep searches
+// Jack/Nick/Tracey first when they own the deal).
+async function buildCrmSweepSeed(crmPF: any): Promise<{ extraTerms: string[]; priorityMailboxes: string[] }> {
+  const extraTerms = new Set<string>();
+  const priorityMailboxes = new Set<string>();
+  try {
+    const dealHits: Array<{ id: string; name: string }> = Array.isArray(crmPF?.deals) ? crmPF.deals : [];
+    // 1. Deal name tokens — usually contain building name / counterparty.
+    for (const d of dealHits) {
+      if (d?.name && typeof d.name === "string" && d.name.length >= 4) extraTerms.add(d.name.trim());
+    }
+    // 2. Company hits from the address-name crm_lookup.
+    const companyHits: Array<{ id: string; name: string }> = Array.isArray(crmPF?.companies) ? crmPF.companies : [];
+    for (const c of companyHits) {
+      if (c?.name && typeof c.name === "string" && c.name.length >= 4) extraTerms.add(c.name.trim());
+    }
+    // 3. For each matched deal, pull vendor/purchaser/landlord/tenant
+    //    company + client contact names, and the internal_agent emails.
+    if (dealHits.length > 0) {
+      const { crmDeals, crmCompanies, crmContacts } = await import("@shared/schema");
+      const { inArray } = await import("drizzle-orm");
+      const dealRows = await db.select({
+        id: crmDeals.id,
+        vendorId: crmDeals.vendorId,
+        purchaserId: crmDeals.purchaserId,
+        landlordId: crmDeals.landlordId,
+        tenantId: crmDeals.tenantId,
+        vendorAgentId: crmDeals.vendorAgentId,
+        acquisitionAgentId: crmDeals.acquisitionAgentId,
+        purchaserAgentId: crmDeals.purchaserAgentId,
+        leasingAgentId: crmDeals.leasingAgentId,
+        clientContactId: crmDeals.clientContactId,
+        internalAgent: crmDeals.internalAgent,
+      }).from(crmDeals).where(inArray(crmDeals.id, dealHits.map((d) => d.id))).limit(20);
+
+      const companyIds = new Set<string>();
+      const contactIds = new Set<string>();
+      const agentNames = new Set<string>();
+      for (const d of dealRows) {
+        for (const cid of [d.vendorId, d.purchaserId, d.landlordId, d.tenantId, d.vendorAgentId, d.acquisitionAgentId, d.purchaserAgentId, d.leasingAgentId]) {
+          if (cid) companyIds.add(cid);
+        }
+        if (d.clientContactId) contactIds.add(d.clientContactId);
+        for (const ag of d.internalAgent || []) {
+          if (ag) agentNames.add(String(ag).trim());
+        }
+      }
+
+      if (companyIds.size > 0) {
+        const rows = await db.select({ name: crmCompanies.name }).from(crmCompanies).where(inArray(crmCompanies.id, [...companyIds])).limit(40);
+        for (const r of rows) if (r.name && r.name.length >= 4) extraTerms.add(r.name.trim());
+      }
+      if (contactIds.size > 0) {
+        const rows = await db.select({ name: crmContacts.name }).from(crmContacts).where(inArray(crmContacts.id, [...contactIds])).limit(20);
+        for (const r of rows) if (r.name && r.name.length >= 4) extraTerms.add(r.name.trim());
+      }
+
+      // 4. Internal agents → priority mailboxes. internalAgent stores display
+      //    names (e.g. "Jack Barratt"); resolve to bgp email addresses.
+      if (agentNames.size > 0) {
+        const active = await db.select({ email: users.email, username: users.username, name: users.name })
+          .from(users).where(eq(users.isActive, true));
+        for (const u of active) {
+          const nm = (u.name || "").trim().toLowerCase();
+          if (!nm) continue;
+          for (const an of agentNames) {
+            if (an.toLowerCase() === nm || nm.startsWith(an.toLowerCase()) || an.toLowerCase().startsWith(nm)) {
+              const mb = u.email || u.username;
+              if (mb && /@brucegillinghampollard\.com$/i.test(mb)) priorityMailboxes.add(mb);
+            }
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[pathway baseline-email] CRM seed build failed: ${err?.message}`);
+  }
+  return { extraTerms: [...extraTerms], priorityMailboxes: [...priorityMailboxes] };
+}
+
 // Deterministic email sweep — runs alongside the Claude investigator so that
 // even if Claude picks weak search terms, the core emails (address word,
 // postcode, owner name, tenant name) are always pulled. Same Graph $search
@@ -513,9 +597,19 @@ async function runBaselineEmailSweep(opts: {
   postcode: string;
   ownerName?: string;
   tenantName?: string;
+  // Extra distinctive terms from CRM — deal name tokens, vendor/purchaser/
+  // landlord/tenant company names, internal deal code. These catch the
+  // "Dover Street Market" / "Goldenberg" / "Amsprop" type emails that
+  // never mention the postal address.
+  extraTerms?: string[];
+  // Mailboxes to fan out to FIRST (before the rest). Usually the team
+  // members assigned as internal agents on a linked CRM deal — e.g. Jack,
+  // Nick, Tracey. Ensures the goldmine inbox gets searched even when the
+  // 30-mailbox fan-out runs long.
+  priorityMailboxes?: string[];
   req: Request;
 }): Promise<any[]> {
-  const { address, postcode, ownerName, tenantName, req } = opts;
+  const { address, postcode, ownerName, tenantName, extraTerms, priorityMailboxes, req } = opts;
   const results: any[] = [];
 
   // Build term list. Prefer single-word distinctive terms (Graph $search
@@ -544,14 +638,35 @@ async function runBaselineEmailSweep(opts: {
     if (first.length >= 4) terms.add(`"${first}"`);
   }
 
+  // CRM-derived terms (deal name, vendor/purchaser/tenant/landlord names,
+  // internal deal code). Quote multi-word; strip corporate suffixes.
+  const GENERIC_DEAL_TOKENS = new Set(["acquisition", "disposal", "sale", "letting", "lease", "investment", "retail", "office", "industrial", "haymarket", "street", "road", "square", "london", "the", "and"]);
+  for (const raw of extraTerms || []) {
+    if (!raw) continue;
+    const cleaned = String(raw)
+      .replace(/\s+(ltd|limited|llp|plc|partnership)\b.*$/i, "")
+      .replace(/[()]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (cleaned.length < 4) continue;
+    // Multi-word → exact phrase. Single word → drop if it's a generic term
+    // we already cover via address/postcode (e.g. "Haymarket").
+    if (/\s/.test(cleaned)) {
+      terms.add(`"${cleaned}"`);
+    } else if (!GENERIC_DEAL_TOKENS.has(cleaned.toLowerCase())) {
+      terms.add(`"${cleaned}"`);
+    }
+  }
+
   if (terms.size === 0) return [];
 
   const { graphRequest } = await import("./shared-mailbox");
   const { getValidMsToken } = await import("./microsoft");
   const delegatedToken = await getValidMsToken(req).catch(() => null);
 
-  const mailboxes: Array<{ email: string; owner: string }> = [
-    { email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox" },
+  const prioritySet = new Set((priorityMailboxes || []).map((m) => m.toLowerCase()));
+  const mailboxes: Array<{ email: string; owner: string; priority: boolean }> = [
+    { email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox", priority: false },
   ];
   try {
     const active = await db.select({ username: users.username, email: users.email, name: users.name })
@@ -559,10 +674,13 @@ async function runBaselineEmailSweep(opts: {
     for (const u of active) {
       const mb = u.email || u.username;
       if (mb && /@brucegillinghampollard\.com$/i.test(mb) && mb.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
-        mailboxes.push({ email: mb, owner: u.name || mb });
+        mailboxes.push({ email: mb, owner: u.name || mb, priority: prioritySet.has(mb.toLowerCase()) });
       }
     }
   } catch {}
+  // Sort: priority mailboxes first, so in a bounded-time run their jobs
+  // actually execute before the 30-mailbox fan-out exhausts its budget.
+  mailboxes.sort((a, b) => (b.priority ? 1 : 0) - (a.priority ? 1 : 0));
 
   const seen = new Set<string>();
   const addrWord = words[0] || "";
@@ -637,7 +755,7 @@ async function runBaselineEmailSweep(opts: {
   }
 
   results.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
-  console.log(`[pathway baseline-email] address="${address}" terms=[${[...terms].join(", ")}] mailboxes=${mailboxes.length} → ${results.length} hits`);
+  console.log(`[pathway baseline-email] address="${address}" terms=[${[...terms].join(", ")}] mailboxes=${mailboxes.length} (priority=${prioritySet.size}) → ${results.length} hits`);
   return results.slice(0, 80);
 }
 
@@ -1018,11 +1136,14 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   // core hits (address word + postcode + owner + tenant) even if Claude's
   // search_emails calls were light. Merges into emailHits, dedupes.
   try {
+    const { extraTerms, priorityMailboxes } = await buildCrmSweepSeed(crmPF);
     const baseline = await runBaselineEmailSweep({
       address: run.address,
       postcode: run.postcode || "",
       ownerName: stage1Payload.initialOwnership?.proprietorName || stage1Payload.aiFacts?.owner,
       tenantName: stage1Payload.tenant?.name || stage1Payload.aiFacts?.mainTenants?.[0],
+      extraTerms,
+      priorityMailboxes,
       req,
     });
     if (baseline.length > 0) {
