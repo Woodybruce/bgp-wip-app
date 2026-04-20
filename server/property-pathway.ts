@@ -412,6 +412,42 @@ ${rawData.slice(0, 14000)}`,
 // STAGE 1 — Initial Search
 // ============================================================================
 
+// Build Claude-style quoted street-number phrases from a (possibly Google-
+// geocoded) address. For "18, 22 Haymarket, London SW1Y 4DG, UK" returns
+// ['"22 Haymarket"', '"18 Haymarket"', '"18-22 Haymarket"'] — the exact kind
+// of multi-word phrase Graph `$search` matches against full body, and the
+// kind Claude picks instinctively in ChatBGP when it runs search_emails.
+function buildAddressPhrases(address: string): string[] {
+  if (!address) return [];
+  const cleaned = address
+    .replace(/\b[a-z]{1,2}\d[a-z\d]?\s*\d[a-z]{2}\b/gi, "")
+    .replace(/,\s*UK\b/i, "").replace(/,\s*united\s*kingdom\b/i, "")
+    .replace(/,\s*london\b/i, "").replace(/,\s*england\b/i, "")
+    .trim().replace(/,\s*$/, "");
+  const parts = cleaned.split(",").map((s) => s.trim()).filter(Boolean);
+  if (parts.length === 0) return [];
+  const streetPart = parts[parts.length - 1];
+  const m = streetPart.match(/^([\d\-–]+[a-z]?)\s+(.+)$/i);
+  if (!m) return streetPart ? [`"${streetPart}"`] : [];
+  const street = m[2].trim().replace(/\s+/g, " ");
+  if (!street || street.length < 3) return [];
+  const nums: string[] = [];
+  for (const piece of m[1].split(/[-–]/).map((s) => s.trim()).filter(Boolean)) nums.push(piece);
+  for (let i = parts.length - 2; i >= 0; i--) {
+    const p = parts[i];
+    if (/^\d+[a-z]?$/i.test(p)) nums.push(p);
+    else break;
+  }
+  const unique = Array.from(new Set(nums.map((n) => n.toLowerCase())));
+  const phrases: string[] = [];
+  for (const n of unique) phrases.push(`"${n} ${street}"`);
+  if (unique.length >= 2) {
+    const ints = unique.map((n) => parseInt(n, 10)).filter((n) => !Number.isNaN(n)).sort((a, b) => a - b);
+    if (ints.length >= 2) phrases.push(`"${ints[0]}-${ints[ints.length - 1]} ${street}"`);
+  }
+  return phrases;
+}
+
 // Helper: best-effort tenant name from whatever data has been collected so far
 function derivedTenantForFilter(run: any, aiFacts: any, tenancy: any): string | null {
   const existing = run?.stageResults?.stage1?.tenant?.name;
@@ -447,6 +483,9 @@ async function runBaselineEmailSweep(opts: {
   const STOP = new Set(["street", "road", "avenue", "lane", "place", "square", "house", "building", "floor", "suite", "unit", "the", "and", "london"]);
   const words = (addrWithoutPostcode.toLowerCase().match(/[a-z]+/g) || []).filter((w) => w.length >= 4 && !STOP.has(w));
   if (words.length > 0) terms.add(words[0]); // most distinctive
+
+  // Claude-style quoted street-number phrases ("22 Haymarket", "18-22 Haymarket")
+  for (const phrase of buildAddressPhrases(address)) terms.add(phrase);
 
   if (postcode) terms.add(`"${postcode}"`); // quoted postcode = exact
   if (ownerName) {
@@ -488,7 +527,19 @@ async function runBaselineEmailSweep(opts: {
     const hay = `${String(msg.subject || "").toLowerCase()} ${String(msg.bodyPreview || "").toLowerCase()}`;
     const hayCompact = hay.replace(/\s+/g, "");
     const termLc = matchedTerm.replace(/^"+|"+$/g, "").toLowerCase();
-    const passes = hay.includes(termLc) || (pcCompact && hayCompact.includes(pcCompact)) || (addrWord && hay.includes(addrWord));
+    // Trust quoted multi-word phrases (e.g. "22 Haymarket", "Dover Street Market")
+    // — Graph $search already matched them against full body, and restricting
+    // to subject+preview drops real hits where the address lives below the
+    // 255-char preview. Still drop newsletter senders.
+    const isQuotedPhrase = /^"[^"]+"$/.test(matchedTerm) && termLc.includes(" ");
+    const fromAddr = String(msg.from?.emailAddress?.address || "").toLowerCase();
+    const fromName = String(msg.from?.emailAddress?.name || "").toLowerCase();
+    const NEWSLETTER = ["propel", "bigpropfirst", "costar", "estatesgazette", "egi", "react news", "propertyweek", "bisnow", "mailchimp", "mailerlite", "substack", "newsletter", "no-reply", "noreply", "do-not-reply"];
+    if (NEWSLETTER.some((n) => fromAddr.includes(n) || fromName.includes(n))) return;
+    const passes = isQuotedPhrase
+      || hay.includes(termLc)
+      || (pcCompact && hayCompact.includes(pcCompact))
+      || (addrWord && hay.includes(addrWord));
     if (!passes) return;
     seen.add(key);
     results.push({
@@ -1269,6 +1320,9 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     // Primary phrase: most distinctive word (often the street/building name).
     // Single-word queries work reliably with $search.
     if (distinctiveWords.length > 0) searchPhrases.push(distinctiveWords[0]);
+    // Claude-style quoted street-number phrases — these match full body in
+    // Graph $search and pull the high-quality thread hits ChatBGP finds.
+    for (const phrase of buildAddressPhrases(address)) searchPhrases.push(phrase);
     // Also try the postcode as a separate query (most specific signal)
     if (postcode) searchPhrases.push(`"${postcode}"`);
     // Fallback
@@ -1292,7 +1346,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
       "mailerlite", "substack", "newsletter", "no-reply", "noreply", "do-not-reply",
       "firmdale", "fallow",
     ];
-    const mentionsAddress = (msg: any) => {
+    const mentionsAddress = (msg: any, trustedPhrase: boolean) => {
       const subject = String(msg.subject || "").toLowerCase();
       const preview = String(msg.bodyPreview || "").toLowerCase();
       const fromAddr = String(msg.from?.emailAddress?.address || "").toLowerCase();
@@ -1316,9 +1370,14 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
         if (fromAddr.includes(n) || fromName.includes(n)) return false;
       }
 
-      // 3) Postcode in subject/preview → keep (strong signal)
+      // 3) Trusted phrase match (Graph already matched a quoted multi-word
+      //    phrase like "22 Haymarket" against full body — don't re-filter it
+      //    against the 255-char bodyPreview or we drop real thread hits).
+      if (trustedPhrase) return true;
+
+      // 4) Postcode in subject/preview → keep (strong signal)
       if (postcodeLc && hayNoSpaces.includes(postcodeLc)) return true;
-      // 4) Address word in subject/preview → keep
+      // 5) Address word in subject/preview → keep
       if (addressWords.some((w) => hay.includes(w))) return true;
 
       // Otherwise, Graph matched on body/attachment content — too noisy at 30-mailbox scale.
@@ -1328,14 +1387,14 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     const seen = new Set<string>();
     let totalReturnedFromGraph = 0;
 
-    const pushMsg = (msg: any, ownerLabel: string, mailboxEmail?: string) => {
+    const pushMsg = (msg: any, ownerLabel: string, mailboxEmail?: string, trustedPhrase = false) => {
       // Dedupe by internetMessageId (same message across mailboxes) AND also
       // by subject+sender (catches newsletters sent as separate messages to
       // each mailbox, which have different internetMessageIds)
       const primaryKey = msg.internetMessageId || msg.id;
       const subjFromKey = `${String(msg.subject || "").trim().toLowerCase()}|${String(msg.from?.emailAddress?.address || "").trim().toLowerCase()}`;
       if (seen.has(primaryKey) || seen.has(subjFromKey)) return;
-      if (!mentionsAddress(msg)) return;
+      if (!mentionsAddress(msg, trustedPhrase)) return;
       seen.add(primaryKey);
       seen.add(subjFromKey);
       emailHits.push({
@@ -1353,6 +1412,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     // PRIMARY: current user's OWN inbox via delegated token (always works)
     if (delegatedToken) {
       for (const phrase of searchPhrases) {
+        const isQuotedPhrase = /^"[^"]+"$/.test(phrase) && phrase.includes(" ");
         try {
           const url = `https://graph.microsoft.com/v1.0/me/messages?$search=${encodeURIComponent(phrase)}&$top=25&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`;
           const resp = await fetch(url, { headers: { Authorization: `Bearer ${delegatedToken}`, "Content-Type": "application/json" } });
@@ -1363,7 +1423,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
           const data: any = await resp.json();
           const messages = data?.value || [];
           totalReturnedFromGraph += messages.length;
-          for (const msg of messages) pushMsg(msg, "My inbox");
+          for (const msg of messages) pushMsg(msg, "My inbox", undefined, isQuotedPhrase);
         } catch (err: any) {
           console.warn(`[pathway stage1] /me/messages search error (${phrase}):`, err?.message);
         }
@@ -1380,6 +1440,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     const allJobs: Array<() => Promise<void>> = [];
     for (const mb of mailboxes) {
       for (const phrase of searchPhrases) {
+        const isQuotedPhrase = /^"[^"]+"$/.test(phrase) && phrase.includes(" ");
         allJobs.push(async () => {
           try {
             const searchRes: any = await graphRequest(
@@ -1389,7 +1450,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
             successfulMailboxes.add(mb.email);
             const messages = searchRes?.value || [];
             totalReturnedFromGraph += messages.length;
-            for (const msg of messages) pushMsg(msg, mb.owner, mb.email);
+            for (const msg of messages) pushMsg(msg, mb.owner, mb.email, isQuotedPhrase);
           } catch (err: any) {
             if (!errorsByMailbox[mb.email]) {
               errorsByMailbox[mb.email] = String(err?.message || err).slice(0, 200);
