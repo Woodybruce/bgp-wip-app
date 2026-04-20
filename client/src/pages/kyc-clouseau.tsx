@@ -1689,6 +1689,23 @@ export default function KycClouseau() {
 
               <SourcesStrip result={investigation} />
 
+              {investigation.propertyContext?.source === "property-pathway" && investigation.propertyContext?.runId && (
+                <div className="border rounded-md bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800 px-3 py-2 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm text-blue-900 dark:text-blue-100">
+                    <Landmark className="h-4 w-4 shrink-0" />
+                    <span>
+                      Linked to Property Pathway run for <span className="font-medium">{investigation.propertyContext.propertyAddress || investigation.propertyContext.address || "property"}</span>
+                    </span>
+                  </div>
+                  <a
+                    href={`/property-pathway?runId=${investigation.propertyContext.runId}`}
+                    className="text-xs text-blue-700 dark:text-blue-300 hover:underline flex items-center gap-1 shrink-0"
+                  >
+                    Open pathway board <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              )}
+
               {investigation.companyProfile?.company_number && (
                 <CrmMatchStrip
                   companyNumber={investigation.companyProfile.company_number}
