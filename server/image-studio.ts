@@ -490,7 +490,7 @@ async function streetViewBuffer(args: { lat?: number; lng?: number; address?: st
   }
 }
 
-async function placeDetailsPhotos(placeId: string, apiKey: string, max = 4): Promise<string[]> {
+async function placeDetailsPhotos(placeId: string, apiKey: string, max = 15): Promise<string[]> {
   try {
     const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=photos&key=${apiKey}`;
     const r = await fetch(url);
@@ -514,9 +514,12 @@ async function placePhotoBuffer(photoReference: string, apiKey: string): Promise
   }
 }
 
-async function findPlaceByText(query: string, apiKey: string): Promise<{ placeId: string; name: string; lat: number; lng: number } | null> {
+async function findPlaceByText(query: string, apiKey: string, bias?: { lat: number; lng: number; radiusM?: number }): Promise<{ placeId: string; name: string; lat: number; lng: number } | null> {
   try {
-    const url = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=geometry,place_id,name&locationbias=circle:50000@51.5074,-0.1278&key=${apiKey}`;
+    const locationBias = bias
+      ? `circle:${bias.radiusM ?? 300}@${bias.lat},${bias.lng}`
+      : `circle:50000@51.5074,-0.1278`;
+    const url = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=geometry,place_id,name&locationbias=${locationBias}&key=${apiKey}`;
     const r = await fetch(url);
     if (!r.ok) return null;
     const data: any = await r.json();
@@ -630,21 +633,26 @@ export async function sweepStage8ImagesForRun(args: {
   }
 
   if (geo?.placeId) {
-    const refs = await placeDetailsPhotos(geo.placeId, apiKey, 4);
+    const refs = await placeDetailsPhotos(geo.placeId, apiKey, 15);
+    let idx = 0;
     for (const ref of refs) {
+      idx++;
       const buf = await placePhotoBuffer(ref, apiKey);
       if (!buf) continue;
       try {
         const stored = await storeImageFromBuffer({
           buffer: buf,
-          fileName: `Place photo — ${args.address}`,
+          fileName: `Place photo ${idx} — ${args.address}`,
           category: "Places",
-          tags: ["Google Places", "Building", "pathway"],
-          description: `Google Places photo of ${args.address} (auto — pathway Stage 8).`,
+          // Google building photos are overwhelmingly interior. Tag them that
+          // way so Why Buy / Image Studio filters can favour exteriors
+          // (Street View) when an exterior is needed.
+          tags: ["Google Places", "Building", "Interior-likely", "pathway"],
+          description: `Google Places photo ${idx} of ${args.address} (auto — pathway Stage 8).`,
           source: "places",
           propertyId: args.propertyId,
           address: args.address,
-          filenameHint: args.address,
+          filenameHint: `${args.address}-place-${idx}`,
         });
         buildingImages.push(stored.id);
       } catch {}
@@ -676,26 +684,56 @@ export async function sweepStage8ImagesForRun(args: {
       console.warn(`[pathway sweep] Clearbit ${tenant} failed:`, err?.message);
     }
 
-    // Places findplace → photos (grab up to 2 shop-front photos)
+    // Places findplace → photos + shopfront Street View. Bias the search
+    // to the subject building so we resolve the correct branch (e.g. the
+    // Haymarket Pret, not a Pret 5 miles away).
     try {
-      const place = await findPlaceByText(`${tenant} London`, apiKey);
+      const bias = geo ? { lat: geo.lat, lng: geo.lng, radiusM: 250 } : undefined;
+      const place = await findPlaceByText(`${tenant}`, apiKey, bias)
+        || await findPlaceByText(`${tenant} ${args.address}`, apiKey, bias)
+        || await findPlaceByText(`${tenant} London`, apiKey);
       if (place?.placeId) {
-        const refs = await placeDetailsPhotos(place.placeId, apiKey, 2);
+        // Up to 4 Places photos (was 2) — actual store shots.
+        const refs = await placeDetailsPhotos(place.placeId, apiKey, 4);
+        let idx = 0;
         for (const ref of refs) {
+          idx++;
           const buf = await placePhotoBuffer(ref, apiKey);
           if (!buf) continue;
           const stored = await storeImageFromBuffer({
             buffer: buf,
-            fileName: `${tenant} — Store photo`,
+            fileName: `${tenant} — Store photo ${idx}`,
             category: "Places",
-            tags: ["Google Places", "Tenant", tenant, "pathway"],
+            tags: ["Google Places", "Tenant", "Brand", tenant, `brand:${tenant}`, "pathway"],
             description: `Google Places photo of ${place.name} (tenant: ${tenant}) — pathway Stage 8.`,
             source: "places",
             propertyId: args.propertyId,
             brandName: tenant,
-            filenameHint: tenant,
+            filenameHint: `${tenant}-place-${idx}`,
           });
           tenantImages.push(stored.id);
+        }
+        // Guaranteed shopfront exterior via Street View at the tenant's own
+        // coord. Pull two headings so one reads well even if facing away.
+        if (place.lat && place.lng) {
+          for (const heading of [0, 180]) {
+            const svBuf = await streetViewBuffer({ lat: place.lat, lng: place.lng, heading, apiKey });
+            if (!svBuf) continue;
+            try {
+              const stored = await storeImageFromBuffer({
+                buffer: svBuf,
+                fileName: `${tenant} — Shopfront ${heading}°`,
+                category: "Street Views",
+                tags: ["Street View", "Tenant", "Brand", "Exterior", "Shopfront", tenant, `brand:${tenant}`, "pathway"],
+                description: `Street View shopfront of ${place.name} (tenant: ${tenant}) at ${heading}° — pathway Stage 8.`,
+                source: "streetview",
+                propertyId: args.propertyId,
+                brandName: tenant,
+                filenameHint: `${tenant}-shopfront-${heading}`,
+              });
+              tenantImages.push(stored.id);
+            } catch {}
+          }
         }
       }
     } catch (err: any) {
