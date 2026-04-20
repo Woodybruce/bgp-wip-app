@@ -1608,6 +1608,7 @@ function PlanningDocsCard({
   }>;
   legacyUrls: string[];
 }) {
+  const [showDialog, setShowDialog] = useState(false);
   const scrapedRefs = new Set(planningDocs.map((p) => p.ref));
   const totalPdfs = planningDocs.reduce((acc, p) => acc + p.docs.length, 0);
 
@@ -1621,6 +1622,11 @@ function PlanningDocsCard({
           04 Planning Documents
           {totalPdfs > 0 ? ` · ${totalPdfs} PDFs across ${planningDocs.length} apps` : ""}
         </p>
+        {(totalPdfs > 0 || unscraped.length > 0) && (
+          <button type="button" onClick={() => setShowDialog(true)} className="text-[10px] text-primary hover:underline inline-flex items-center gap-1">
+            <Maximize2 className="w-2.5 h-2.5" /> Expand
+          </button>
+        )}
       </div>
 
       {planningDocs.length > 0 ? (
@@ -1728,7 +1734,123 @@ function PlanningDocsCard({
       ) : (
         <p className="text-[10px] text-muted-foreground">No planning document links surfaced. If a planning application exists, check the LPA portal directly.</p>
       )}
+      <PlanningDocsDialog
+        planningDocs={planningDocs}
+        unscraped={unscraped}
+        legacyUrls={legacyUrls}
+        open={showDialog}
+        onClose={() => setShowDialog(false)}
+      />
     </div>
+  );
+}
+
+function PlanningDocsDialog({
+  planningDocs,
+  unscraped,
+  legacyUrls,
+  open,
+  onClose,
+}: {
+  planningDocs: Array<{
+    ref: string;
+    lpa: string;
+    appDate: string;
+    description: string;
+    docsUrl: string;
+    docs: Array<{ url: string; date: string; description: string; type: string; drawingNumber?: string; category: string; label: string }>;
+  }>;
+  unscraped: any[];
+  legacyUrls: string[];
+  open: boolean;
+  onClose: () => void;
+}) {
+  const totalPdfs = planningDocs.reduce((acc, p) => acc + p.docs.length, 0);
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-5xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle>
+            Planning documents ({totalPdfs} PDFs across {planningDocs.length} apps)
+          </DialogTitle>
+        </DialogHeader>
+        <div className="overflow-y-auto -mx-6 px-6 space-y-3">
+          {planningDocs.map((app, ai) => (
+            <div key={ai} className="border rounded bg-background">
+              <div className="flex items-start gap-2 px-3 py-2 border-b bg-muted/30">
+                <span className="text-[11px] text-muted-foreground shrink-0 w-20 mt-0.5">{app.appDate ? app.appDate.slice(0, 10) : ""}</span>
+                {app.lpa && <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0 mt-0.5" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
+                <span className="flex-1 min-w-0">
+                  <a href={app.docsUrl} target="_blank" rel="noreferrer" className="font-medium break-all text-primary hover:underline text-[12px]">{app.ref}</a>
+                  {app.description && <span className="block text-muted-foreground text-[11px]">{app.description}</span>}
+                </span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 shrink-0 mt-0.5">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="divide-y">
+                {app.docs.map((d, di) => (
+                  <a
+                    key={di}
+                    href={d.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-start gap-2 py-1.5 px-3 hover:bg-muted/30 text-[12px]"
+                    title={d.description}
+                  >
+                    <span className="text-[11px] text-muted-foreground shrink-0 w-20 mt-0.5">{d.date ? d.date.slice(0, 10) : ""}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide shrink-0 mt-0.5 ${docCategoryTone(d.category)}`}>{d.label}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block">{d.description}</span>
+                      {d.drawingNumber && <span className="block text-muted-foreground text-[11px]">Drawing {d.drawingNumber}</span>}
+                    </span>
+                    <Download className="w-3.5 h-3.5 shrink-0 text-muted-foreground mt-0.5" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {unscraped.length > 0 && (
+            <div className="border rounded bg-background">
+              <p className="px-3 py-2 text-[11px] text-muted-foreground uppercase tracking-wide border-b">
+                Other applications · docs tab only ({unscraped.length})
+              </p>
+              <div className="divide-y">
+                {unscraped.map((p: any, i: number) => (
+                  <a
+                    key={i}
+                    href={p.documentUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-start gap-2 py-1.5 px-3 hover:bg-muted/30 text-[12px]"
+                  >
+                    <span className="text-[11px] text-muted-foreground shrink-0 w-20 mt-0.5">{(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10)}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="font-medium break-all text-primary">{p.reference}</span>
+                      {p.description && <span className="block text-muted-foreground text-[11px]">{p.description}</span>}
+                    </span>
+                    <ExternalLink className="w-3 h-3 shrink-0 text-muted-foreground mt-0.5" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {legacyUrls.length > 0 && (
+            <div className="border rounded bg-background">
+              <p className="px-3 py-2 text-[11px] text-muted-foreground uppercase tracking-wide border-b">Legacy doc URLs</p>
+              <div className="divide-y">
+                {legacyUrls.map((u, i) => (
+                  <a key={i} href={u} target="_blank" rel="noreferrer" className="flex items-center gap-2 py-1.5 px-3 hover:bg-muted/30 text-[11px] text-muted-foreground">
+                    <ExternalLink className="w-3 h-3 shrink-0" />
+                    <span className="truncate">{u}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
