@@ -2915,20 +2915,54 @@ export async function createPathwayModelRun(args: {
   const { db } = await import("./db");
   const { excelModelRuns, excelModelRunVersions, excelTemplates } = await import("@shared/schema");
   const { eq } = await import("drizzle-orm");
+  const { saveFileFromDisk } = await import("./file-storage");
 
-  // 1. Ensure singleton pathway template exists
+  // 1. Ensure singleton pathway template exists — with a real blank workbook on
+  //    disk + in file_storage so clicking the template in Model Studio doesn't
+  //    404. Heal old rows that were created with the "(generated-per-run)"
+  //    placeholder by back-filling a blank workbook too.
   const PATHWAY_TEMPLATE_NAME = "BGP Pathway Investment Model";
+  const TEMPLATES_DIR = path.join(process.cwd(), "uploads", "templates");
+  if (!fs.existsSync(TEMPLATES_DIR)) fs.mkdirSync(TEMPLATES_DIR, { recursive: true });
+
+  async function ensureBlankTemplateFile(): Promise<string> {
+    const tplFileName = `bgp-pathway-template.xlsx`;
+    const tplFilePath = path.join(TEMPLATES_DIR, tplFileName);
+    if (!fs.existsSync(tplFilePath)) {
+      const blankBuf = await buildInvestmentModel({ modelName: "BGP Pathway Investment Model", assumptions: {} });
+      fs.writeFileSync(tplFilePath, blankBuf);
+    }
+    try {
+      await saveFileFromDisk(
+        `templates/${tplFileName}`,
+        tplFilePath,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        tplFileName,
+      );
+    } catch (err: any) {
+      console.warn("[createPathwayModelRun] failed to persist template to file_storage:", err?.message);
+    }
+    return tplFilePath;
+  }
+
   let [tpl] = await db.select().from(excelTemplates).where(eq(excelTemplates.name, PATHWAY_TEMPLATE_NAME)).limit(1);
   if (!tpl) {
+    const tplFilePath = await ensureBlankTemplateFile();
     [tpl] = await db.insert(excelTemplates).values({
       name: PATHWAY_TEMPLATE_NAME,
       description: "Auto-generated branded investment model for Property Pathway runs. Seeded from the agreed business plan.",
-      filePath: "(generated-per-run)",
+      filePath: tplFilePath,
       originalFileName: "bgp-pathway-model.xlsx",
       inputMapping: "{}",
       outputMapping: "{}",
       version: 1,
     }).returning();
+  } else if (!tpl.filePath || tpl.filePath === "(generated-per-run)" || !fs.existsSync(tpl.filePath)) {
+    const tplFilePath = await ensureBlankTemplateFile();
+    [tpl] = await db.update(excelTemplates)
+      .set({ filePath: tplFilePath })
+      .where(eq(excelTemplates.id, tpl.id))
+      .returning();
   }
 
   // 2. Map business plan → excel-builder assumptions
@@ -2967,6 +3001,18 @@ export async function createPathwayModelRun(args: {
   const fileName = `pathway-${args.runId.slice(0, 8)}-${Date.now()}-${safeAddress}.xlsx`;
   const filePath = path.join(RUNS_DIR, fileName);
   fs.writeFileSync(filePath, buffer);
+  // Persist to file_storage (Postgres) so the workbook survives Railway
+  // container restarts — without this, ensureRunFile can't find it.
+  try {
+    await saveFileFromDisk(
+      `runs/${fileName}`,
+      filePath,
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      fileName,
+    );
+  } catch (err: any) {
+    console.warn("[createPathwayModelRun] failed to persist run to file_storage:", err?.message);
+  }
 
   // 5. Insert model run row
   const [run] = await db.insert(excelModelRuns).values({
@@ -3013,9 +3059,10 @@ export async function createPathwayModelRun(args: {
     console.warn("[createPathwayModelRun] failed to back-link pathway:", err?.message);
   }
 
-  // Workbook URL — points at Model Studio so the user can open and discuss it.
-  // The add-in reads the same run by id and continues the ChatBGP thread.
-  const workbookUrl = `/models?runId=${run.id}`;
+  // Workbook URL — direct download endpoint so clicking "Open in Excel"
+  // actually opens the xlsx in Excel (desktop or Online), rather than dumping
+  // the user on the Model Studio landing page.
+  const workbookUrl = `/api/models/runs/${run.id}/download`;
 
   return {
     modelRunId: run.id,
