@@ -2395,8 +2395,6 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
     }
   };
 
-  if (!open) return null;
-
   const unseenCount = notifications?.unseenCount || 0;
   const threadMembers = activeThread?.members || [];
   const threadCreatorId = activeThread?.createdBy || currentUser?.id || "";
@@ -2409,9 +2407,13 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
         ? (activeThread.title || "Chat")
         : (isActiveThreadAi ? "ChatBGP" : "Chat");
 
+  // Keep the panel mounted when closed so the conversation (messages,
+  // activeThreadId, input, attachments) survives minimising. Hide via
+  // `hidden` so layout collapses and nothing in the closed panel receives
+  // focus / drag events.
   return (
     <div
-      className="h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:z-auto shrink-0 border-l bg-background flex flex-col"
+      className={`h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
       data-testid="chat-panel"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
