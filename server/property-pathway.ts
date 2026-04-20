@@ -141,7 +141,7 @@ interface StageResults {
     // Virtual document tree — materialised into SharePoint only when the user
     // clicks "Set up folder tree" on the final stage.
     titleRegisters?: Array<{ titleNumber: string; documentUrl?: string; source?: "infotrack" | "placeholder" }>;
-    planningApplications?: Array<{ reference: string; description: string; status: string; date: string; decidedAt?: string; receivedAt?: string; documentUrl?: string }>;
+    planningApplications?: Array<{ reference: string; description: string; status: string; date: string; decidedAt?: string; receivedAt?: string; documentUrl?: string; matchTier?: "strict" | "street" | "area" }>;
     planningDocs?: Array<{
       ref: string;
       lpa: string;
@@ -2748,19 +2748,15 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
     }
     merged.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 
-    // Filter to THIS building only. Postcode + 300m radius captured applications
-    // for every neighbouring building on the street — useless noise for a DD
-    // pack. We want "what's been applied for at 18-22 Haymarket", not "what's
-    // been applied for on Haymarket". Strategy: extract the building
-    // number/range and street name from the pathway address, then require each
-    // planning result to reference either the number(s) or a building name we
-    // can pull from the address.
-    const filteredForBuilding = (() => {
+    // Tier applications by proximity to the subject building. Same
+    // exact→cluster→wider pattern as comps: prefer strict (this building),
+    // widen to same-street if thin, fall back to full radius if still thin.
+    // Each app carries a `matchTier` label so the UI can badge them.
+    //   strict → this building (number range + street, or building name)
+    //   street → same street, different numbers
+    //   area   → postcode + 300m radius (the PlanIt/Idox default)
+    const { strict, street: streetApps, area, parseLog } = (() => {
       const addr = (address || "").trim();
-      if (!addr) return merged;
-      // "18-22 Haymarket" → rangeStart=18 rangeEnd=22
-      // "10 Haymarket" → rangeStart=rangeEnd=10
-      // "Kings House, Haymarket" → no range, match by building name
       const rangeMatch = addr.match(/^\s*(\d+)\s*(?:-|to|–|—)\s*(\d+)/i);
       const singleMatch = addr.match(/^\s*(\d+)[A-Za-z]?\b/);
       const nameMatch = addr.match(/^([A-Za-z][A-Za-z'&\s]+?(?:House|Court|Building|Chambers|Tower|Place|Centre|Plaza|Mansions|Works|Studios|Wharf|Mews|Hall))\b/i);
@@ -2778,37 +2774,56 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
         numbers = [parseInt(singleMatch[1], 10)].filter((n) => !Number.isNaN(n));
       }
       const buildingName = nameMatch?.[1]?.trim().toLowerCase();
-      const street = streetMatch?.[1]?.trim().toLowerCase();
+      const streetName = streetMatch?.[1]?.trim().toLowerCase();
+      const parseLog = `numbers=[${numbers.join(",")}] street="${streetName || ""}" name="${buildingName || ""}"`;
 
-      // If we couldn't parse anything useful, return all (same behaviour as before).
-      if (numbers.length === 0 && !buildingName) return merged;
+      // Couldn't parse anything — treat everything as area-level.
+      if (numbers.length === 0 && !buildingName) {
+        return { strict: [] as any[], street: [] as any[], area: merged.map((a: any) => ({ ...a, matchTier: "area" })), parseLog };
+      }
 
-      const matches = merged.filter((a: any) => {
+      const strict: any[] = [];
+      const street: any[] = [];
+      const area: any[] = [];
+      for (const a of merged) {
         const hay = `${a.address || ""} ${a.description || ""}`.toLowerCase();
-        if (!hay.trim()) return false;
-
-        // Number match: one of our numbers appears with a word boundary AND the street is nearby.
+        if (!hay.trim()) { area.push({ ...a, matchTier: "area" }); continue; }
+        const nameHit = !!(buildingName && hay.includes(buildingName));
+        const streetHit = !!(streetName && hay.includes(streetName));
+        let numberHit = false;
         if (numbers.length > 0) {
-          const streetOk = !street || hay.includes(street);
           for (const n of numbers) {
             const re = new RegExp(`(^|[^\\d])${n}(?:\\s*(?:-|to|–|—)\\s*\\d+)?\\b`);
-            if (re.test(hay) && streetOk) return true;
+            if (re.test(hay)) { numberHit = true; break; }
           }
         }
-        // Building name match (case-insensitive substring).
-        if (buildingName && hay.includes(buildingName)) return true;
-        return false;
-      });
-
-      // If the filter nuked everything, fall back to unfiltered so we don't
-      // silently drop to zero — the user would rather see radius results than
-      // an empty list when our parser misses.
-      return matches.length > 0 ? matches : merged;
+        if (nameHit || (numberHit && (streetHit || !streetName))) {
+          strict.push({ ...a, matchTier: "strict" });
+        } else if (streetHit) {
+          street.push({ ...a, matchTier: "street" });
+        } else {
+          area.push({ ...a, matchTier: "area" });
+        }
+      }
+      return { strict, street, area, parseLog };
     })();
 
-    const planningApplications = filteredForBuilding.slice(0, 100);
+    // Progressive widening: prefer strict, fill with street then area if thin.
+    // Target ~12+ results so the board has something to say when the building
+    // itself is quiet. Always keep all strict hits even if the total is big —
+    // those are the ones that actually describe the subject property.
+    const TARGET = 12;
+    const planningApplications: any[] = [...strict];
+    if (planningApplications.length < TARGET) {
+      planningApplications.push(...streetApps.slice(0, TARGET - planningApplications.length));
+    }
+    if (planningApplications.length < TARGET) {
+      planningApplications.push(...area.slice(0, TARGET - planningApplications.length));
+    }
+    // Cap at 100 but preserve order (strict first, then street, then area).
+    planningApplications.splice(100);
 
-    console.log(`[pathway stage4] planning: idox=${idoxApps.length} planit=${planitApps.length} gov=${govApps.length} pd=${pdAppsArr.length} merged=${merged.length} filtered=${planningApplications.length}`);
+    console.log(`[pathway stage4] planning: idox=${idoxApps.length} planit=${planitApps.length} gov=${govApps.length} pd=${pdAppsArr.length} merged=${merged.length} strict=${strict.length} street=${streetApps.length} area=${area.length} shown=${planningApplications.length} (${parseLog})`);
 
     // Pull the full PDF list off each application's Idox documents tab, via
     // ScraperAPI so Westminster's Railway IP block doesn't matter. Cap at 10
