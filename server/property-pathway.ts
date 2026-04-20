@@ -2547,7 +2547,7 @@ End with a line: RECOMMEND: PROCEED or RECOMMEND: PAUSE (with brief reason if pa
 // STAGE 4 — Property Intelligence
 // ============================================================================
 
-async function runStage4(runId: string, _req: Request): Promise<void> {
+async function runStage4(runId: string, req: Request): Promise<void> {
   const run = await getRun(runId);
   if (!run) throw new Error("Run not found");
   await setStageStatus(runId, "stage4", "running");
@@ -2926,6 +2926,55 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
       console.warn(`[pathway stage4] planning docs scrape failed: ${err?.message}`);
     }
 
+    // Auto-download top-priority drawings (proposed/existing floor plans,
+    // elevations, sections, site plans) from the 3 most-recent apps into
+    // the pathway SharePoint folder. Capped at 15 PDFs per run so
+    // ScraperAPI spend stays predictable (~15 credits).
+    try {
+      const { downloadPlanningPdf, pickDrawingsToDownload } = await import("./planning-docs");
+      const spRoot = run.sharepointFolderPath || (run.stageResults as StageResults)?.stage1?.folderTree?.root;
+      if (spRoot && planningDocs.length) {
+        const drawingsFolder = `${spRoot.replace(/^BGP share drive\//, "")}/05 Planning/Drawings`;
+        const shortlist = pickDrawingsToDownload(
+          planningDocs.slice(0, 3).map(a => ({ ref: a.ref, docs: a.docs })),
+          { maxPerApp: 6, totalCap: 15 },
+        );
+        console.log(`[pathway stage4] auto-download drawings: ${shortlist.length} shortlisted`);
+
+        let downloaded = 0;
+        for (const item of shortlist) {
+          const buf = await downloadPlanningPdf(item.doc.url);
+          if (!buf) continue;
+          const safeRef = item.ref.replace(/[^a-zA-Z0-9/-]/g, "_");
+          const labelPart = item.doc.label.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-").slice(0, 40);
+          const drawPart = (item.doc.drawingNumber || "").replace(/[^a-zA-Z0-9-]/g, "").slice(0, 20);
+          const filename = `${safeRef}__${drawPart || labelPart || "drawing"}.pdf`.replace(/\/+/g, "-");
+          try {
+            const up = await Promise.race([
+              executeUploadFileToSharePoint(
+                { folderPath: drawingsFolder, filename, content: buf, contentType: "application/pdf" },
+                req,
+              ),
+              new Promise<any>((_, reject) => setTimeout(() => reject(new Error("SP upload timeout")), 60_000)),
+            ]);
+            const webUrl = up?.file?.webUrl;
+            if (webUrl) {
+              item.doc.downloadedUrl = webUrl;
+              item.doc.downloadedName = filename;
+              downloaded++;
+            }
+          } catch (err: any) {
+            console.warn(`[pathway stage4] drawing upload failed ${filename}:`, err?.message);
+          }
+        }
+        console.log(`[pathway stage4] auto-download drawings: uploaded=${downloaded}/${shortlist.length}`);
+      } else if (!spRoot) {
+        console.log("[pathway stage4] auto-download drawings skipped — no SharePoint folder on run");
+      }
+    } catch (err: any) {
+      console.warn(`[pathway stage4] drawings auto-download failed: ${err?.message}`);
+    }
+
     // Legacy: keep floorPlanUrls populated (links to application summary pages)
     // for back-compat with any UI that still reads it.
     const floorPlanUrls: string[] = [];
@@ -2951,7 +3000,7 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
     // search terms. These catch emails that never mention the street/postcode
     // (e.g. "Re: 03292489 accounts", "Sugar disposal", "Daulan – LN59572").
     // Additive — merges into stage1.emailHits, doesn't replace existing hits.
-    runInformedEmailSearchPostStage4(runId, _req).catch((err: any) => {
+    runInformedEmailSearchPostStage4(runId, req).catch((err: any) => {
       console.warn(`[pathway informed-email] background task failed: ${err?.message}`);
     });
   } catch (err: any) {

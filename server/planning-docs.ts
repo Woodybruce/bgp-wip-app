@@ -37,6 +37,8 @@ export interface PlanningDoc {
   drawingNumber?: string;
   category: string;       // machine: "floor_plan_proposed" | "elevation" | ...
   label: string;          // human-readable badge text
+  downloadedUrl?: string; // SharePoint webUrl once auto-downloaded into the pathway folder
+  downloadedName?: string;
 }
 
 // In-process cache — Idox docs for a decided application are effectively
@@ -309,4 +311,72 @@ export const DOC_PRIORITY: Record<string, number> = {
 
 export function sortDocsByPriority(docs: PlanningDoc[]): PlanningDoc[] {
   return [...docs].sort((a, b) => (DOC_PRIORITY[b.category] || 0) - (DOC_PRIORITY[a.category] || 0));
+}
+
+/**
+ * Download a single planning-application PDF via ScraperAPI.
+ * Idox instances block Railway IPs directly, so we proxy every request.
+ * Returns the PDF bytes or null on failure (never throws — callers batch
+ * these and shouldn't blow up on one bad URL).
+ */
+export async function downloadPlanningPdf(url: string): Promise<Buffer | null> {
+  const apiKey = process.env.SCRAPERAPI_KEY;
+  if (!apiKey) return null;
+  try {
+    const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=false`;
+    const res = await fetch(proxied, { signal: AbortSignal.timeout(60000) });
+    if (!res.ok) {
+      console.warn(`[planning-docs] download ${res.status} for ${url}`);
+      return null;
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    // Idox sometimes returns a login/error HTML page with 200. Filter on
+    // PDF magic bytes ("%PDF") — we never want to upload an HTML error.
+    if (buf.length < 1024 || buf.slice(0, 4).toString("latin1") !== "%PDF") {
+      console.warn(`[planning-docs] download ${url} returned non-PDF (${buf.length}B)`);
+      return null;
+    }
+    return buf;
+  } catch (err: any) {
+    console.warn(`[planning-docs] download failed ${url}: ${err?.message}`);
+    return null;
+  }
+}
+
+/**
+ * Shortlist the highest-value drawings across recent applications.
+ * Picks proposed floor plans + elevations first, then existing, then
+ * sections — up to `maxPerApp` per app and `totalCap` overall.
+ */
+export function pickDrawingsToDownload(
+  apps: Array<{ ref: string; docs: PlanningDoc[] }>,
+  opts: { maxPerApp?: number; totalCap?: number } = {},
+): Array<{ ref: string; doc: PlanningDoc }> {
+  const maxPerApp = opts.maxPerApp ?? 6;
+  const totalCap = opts.totalCap ?? 15;
+  const drawingCats = new Set([
+    "floor_plan_proposed", "floor_plan_existing", "floor_plan",
+    "elevation_proposed", "elevation_existing", "elevation",
+    "section_proposed", "section_existing", "section",
+    "site_plan",
+  ]);
+  const out: Array<{ ref: string; doc: PlanningDoc }> = [];
+  for (const app of apps) {
+    const sorted = sortDocsByPriority(app.docs).filter(d => drawingCats.has(d.category));
+    // Dedupe by base drawing number within an app — the latest revision
+    // wins (we already took the most-recent-first ordering from parse step).
+    const seen = new Set<string>();
+    let added = 0;
+    for (const d of sorted) {
+      const base = (d.drawingNumber || d.description).replace(/\s*\(?\s*(rev|r)\s*[a-z0-9]+\)?\s*$/i, "").toLowerCase().trim();
+      if (seen.has(base)) continue;
+      seen.add(base);
+      out.push({ ref: app.ref, doc: d });
+      added++;
+      if (added >= maxPerApp) break;
+      if (out.length >= totalCap) break;
+    }
+    if (out.length >= totalCap) break;
+  }
+  return out;
 }
