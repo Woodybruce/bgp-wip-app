@@ -550,29 +550,65 @@ async function fetchStage1Comps(postcode: string): Promise<any[]> {
   const comps: any[] = [];
   try {
     const outward = postcode ? postcode.toUpperCase().replace(/\s+/g, "").slice(0, -3) : "";
-    const CENTRAL_LONDON_OUTWARDS = ["W1", "W2", "SW1", "SW3", "SW7", "WC1", "WC2", "EC1", "EC2", "EC3", "EC4", "NW1", "SE1"];
-    const { pool } = await import("./db");
 
+    // Submarket clusters — SW1Y (St James's) and W1J (Mayfair) swap comps
+    // freely, so a Haymarket retail search should pull Bond Street evidence.
+    // These sit between "exact outward" and "all central London" so we widen
+    // progressively rather than jumping from SW1Y → London.
+    const WEST_END = ["W1", "SW1", "WC1", "WC2"];
+    const CITY_FRINGE = ["EC1", "EC2", "EC3", "EC4", "E1"];
+    const SOUTH_BANK = ["SE1", "SE11", "SE16"];
+    const CENTRAL_LONDON = ["W1", "W2", "SW1", "SW3", "SW5", "SW6", "SW7", "WC1", "WC2", "EC1", "EC2", "EC3", "EC4", "NW1", "SE1"];
+
+    const pickCluster = (o: string): string[] => {
+      if (!o) return CENTRAL_LONDON;
+      if (WEST_END.some((c) => o.startsWith(c))) return WEST_END;
+      if (CITY_FRINGE.some((c) => o.startsWith(c))) return CITY_FRINGE;
+      if (SOUTH_BANK.some((c) => o.startsWith(c))) return SOUTH_BANK;
+      return CENTRAL_LONDON;
+    };
+    const cluster = pickCluster(outward);
+
+    const { pool } = await import("./db");
+    const tierLog = { inv: { exact: 0, cluster: 0, central: 0 }, let: { exact: 0, cluster: 0, central: 0 } };
+
+    // Investment sales — tier up: exact outward → submarket cluster → central London.
+    // Stop widening once we have 8+ comps (enough evidence for the board).
     try {
-      const primary = outward ? await pool.query(
-        `SELECT address, price, cap_rate, transaction_date, subtype
-           FROM investment_comps
-          WHERE UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $1
-          ORDER BY transaction_date DESC NULLS LAST
-          LIMIT 15`,
-        [`${outward}%`]
-      ) : { rows: [] };
-      let invRows = primary.rows;
-      if (invRows.length === 0) {
-        const fallback = await pool.query(
+      const runInvQuery = async (outwards: string[]) => {
+        if (outwards.length === 0) return { rows: [] as any[] };
+        return await pool.query(
           `SELECT address, price, cap_rate, transaction_date, subtype
              FROM investment_comps
-            WHERE (${CENTRAL_LONDON_OUTWARDS.map((_, i) => `UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $${i + 1}`).join(" OR ")})
+            WHERE (${outwards.map((_, i) => `UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $${i + 1}`).join(" OR ")})
             ORDER BY transaction_date DESC NULLS LAST
             LIMIT 15`,
-          CENTRAL_LONDON_OUTWARDS.map(c => `${c}%`)
+          outwards.map((c) => `${c}%`)
         );
-        invRows = fallback.rows;
+      };
+      let invRows: any[] = [];
+      if (outward) {
+        const exact = await runInvQuery([outward]);
+        invRows = exact.rows;
+        tierLog.inv.exact = invRows.length;
+      }
+      if (invRows.length < 8) {
+        const seen = new Set(invRows.map((r) => (r.address || "").trim().toLowerCase()));
+        const clu = await runInvQuery(cluster);
+        tierLog.inv.cluster = clu.rows.length;
+        for (const r of clu.rows) {
+          if (!seen.has((r.address || "").trim().toLowerCase())) invRows.push(r);
+          if (invRows.length >= 15) break;
+        }
+      }
+      if (invRows.length < 8) {
+        const seen = new Set(invRows.map((r) => (r.address || "").trim().toLowerCase()));
+        const cen = await runInvQuery(CENTRAL_LONDON);
+        tierLog.inv.central = cen.rows.length;
+        for (const r of cen.rows) {
+          if (!seen.has((r.address || "").trim().toLowerCase())) invRows.push(r);
+          if (invRows.length >= 15) break;
+        }
       }
       for (const r of invRows) {
         comps.push({
@@ -588,19 +624,49 @@ async function fetchStage1Comps(postcode: string): Promise<any[]> {
       console.error("[pathway comps] investment_comps query error:", err?.message);
     }
 
+    // Retail letting comps from crm_comps — postcode lives in the JSONB
+    // address, so we regex the cast text. Anchor to word boundaries so "W1"
+    // matches "W1J 7LA" but NOT "EW1" or "SW10".
     try {
-      const letRes = await pool.query(
-        `SELECT address, tenant, landlord, area_sqft, headline_rent, zone_a_rate, completion_date, comp_type, deal_type
-           FROM crm_comps
-          WHERE (
-            (address::text) ~* $1
-            OR EXISTS (SELECT 1 FROM unnest($2::text[]) pc WHERE (address::text) ~* pc)
-          )
-          ORDER BY completion_date DESC NULLS LAST
-          LIMIT 15`,
-        [outward || "SW1|W1|WC", CENTRAL_LONDON_OUTWARDS]
-      );
-      for (const r of letRes.rows) {
+      const runLetQuery = async (outwards: string[]) => {
+        if (outwards.length === 0) return { rows: [] as any[] };
+        const pattern = `(^|[^A-Z0-9])(${outwards.join("|")})([^A-Z0-9]|$)`;
+        return await pool.query(
+          `SELECT address, tenant, landlord, area_sqft, headline_rent, zone_a_rate, completion_date, comp_type, deal_type
+             FROM crm_comps
+            WHERE (address::text) ~* $1
+            ORDER BY completion_date DESC NULLS LAST
+            LIMIT 15`,
+          [pattern]
+        );
+      };
+      let letRows: any[] = [];
+      if (outward) {
+        const exact = await runLetQuery([outward]);
+        letRows = exact.rows;
+        tierLog.let.exact = letRows.length;
+      }
+      if (letRows.length < 8) {
+        const seen = new Set(letRows.map((r) => `${r.tenant}|${r.completion_date}`));
+        const clu = await runLetQuery(cluster);
+        tierLog.let.cluster = clu.rows.length;
+        for (const r of clu.rows) {
+          const k = `${r.tenant}|${r.completion_date}`;
+          if (!seen.has(k)) { letRows.push(r); seen.add(k); }
+          if (letRows.length >= 15) break;
+        }
+      }
+      if (letRows.length < 8) {
+        const seen = new Set(letRows.map((r) => `${r.tenant}|${r.completion_date}`));
+        const cen = await runLetQuery(CENTRAL_LONDON);
+        tierLog.let.central = cen.rows.length;
+        for (const r of cen.rows) {
+          const k = `${r.tenant}|${r.completion_date}`;
+          if (!seen.has(k)) { letRows.push(r); seen.add(k); }
+          if (letRows.length >= 15) break;
+        }
+      }
+      for (const r of letRows) {
         const addrText = typeof r.address === "object"
           ? [r.address?.line1, r.address?.postcode].filter(Boolean).join(", ")
           : String(r.address || "");
@@ -617,6 +683,8 @@ async function fetchStage1Comps(postcode: string): Promise<any[]> {
     } catch (err: any) {
       console.error("[pathway comps] crm_comps query error:", err?.message);
     }
+
+    console.log(`[pathway comps] outward=${outward} cluster=[${cluster.join(",")}] inv=${tierLog.inv.exact}+${tierLog.inv.cluster}+${tierLog.inv.central} let=${tierLog.let.exact}+${tierLog.let.cluster}+${tierLog.let.central} total=${comps.length}`);
   } catch (err: any) {
     console.error("[pathway comps] block error:", err?.message);
   }
