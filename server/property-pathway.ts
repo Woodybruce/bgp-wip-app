@@ -2319,13 +2319,25 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
       console.log(`[pathway stage4] PropertyData /planning-applications → 0 apps (status=${status || "?"}, top-level keys=[${topKeys}], data keys=[${dataKeys}])`);
     }
 
+    // Idox direct scrape + PlanIt aggregator in parallel. PlanIt covers
+    // Westminster (blocked at TCP level from Railway egress) and acts as a
+    // safety net for any LPA where the direct scrape fails.
     let idoxApps: any[] = [];
-    try {
-      const { fetchIdoxPlanning } = await import("./idox-planning");
-      idoxApps = await fetchIdoxPlanning(postcode, address, { maxAgeYears: 20 });
-    } catch (err: any) {
-      console.warn("[pathway stage4] Idox scrape skipped:", err?.message);
-    }
+    let planitApps: any[] = [];
+    const [idoxResult, planitResult] = await Promise.allSettled([
+      (async () => {
+        const { fetchIdoxPlanning } = await import("./idox-planning");
+        return fetchIdoxPlanning(postcode, address, { maxAgeYears: 20 });
+      })(),
+      (async () => {
+        const { fetchPlanitPlanning } = await import("./planit-planning");
+        return fetchPlanitPlanning(postcode, address, { maxAgeYears: 20 });
+      })(),
+    ]);
+    if (idoxResult.status === "fulfilled") idoxApps = idoxResult.value;
+    else console.warn("[pathway stage4] Idox scrape skipped:", idoxResult.reason?.message);
+    if (planitResult.status === "fulfilled") planitApps = planitResult.value;
+    else console.warn("[pathway stage4] PlanIt skipped:", planitResult.reason?.message);
 
     const normalise = (a: any) => ({
       reference: a.reference || a.ref || a.application_number || "",
@@ -2342,22 +2354,83 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
 
     const seen = new Set<string>();
     const merged: any[] = [];
-    // Idox first so its authoritative records win on dedupe.
-    for (const a of [...idoxApps, ...govApps, ...pdAppsArr].map(normalise)) {
+    // Idox (direct) first so its authoritative records win on dedupe.
+    // PlanIt is Idox data via an aggregator — same quality, useful when
+    // the direct scrape is blocked (e.g. Westminster from Railway).
+    for (const a of [...idoxApps, ...planitApps, ...govApps, ...pdAppsArr].map(normalise)) {
       const key = (a.reference || "").toUpperCase().replace(/\s+/g, "") || `${a.date}|${a.description.slice(0, 60)}`;
       if (seen.has(key)) continue;
       seen.add(key);
       if (a.reference || a.description) merged.push(a);
     }
     merged.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-    const planningApplications = merged.slice(0, 100);
+
+    // Filter to THIS building only. Postcode + 300m radius captured applications
+    // for every neighbouring building on the street — useless noise for a DD
+    // pack. We want "what's been applied for at 18-22 Haymarket", not "what's
+    // been applied for on Haymarket". Strategy: extract the building
+    // number/range and street name from the pathway address, then require each
+    // planning result to reference either the number(s) or a building name we
+    // can pull from the address.
+    const filteredForBuilding = (() => {
+      const addr = (address || "").trim();
+      if (!addr) return merged;
+      // "18-22 Haymarket" → rangeStart=18 rangeEnd=22
+      // "10 Haymarket" → rangeStart=rangeEnd=10
+      // "Kings House, Haymarket" → no range, match by building name
+      const rangeMatch = addr.match(/^\s*(\d+)\s*(?:-|to|–|—)\s*(\d+)/i);
+      const singleMatch = addr.match(/^\s*(\d+)[A-Za-z]?\b/);
+      const nameMatch = addr.match(/^([A-Za-z][A-Za-z'&\s]+?(?:House|Court|Building|Chambers|Tower|Place|Centre|Plaza|Mansions|Works|Studios|Wharf|Mews|Hall))\b/i);
+      const streetMatch = addr.match(/\d[\s-]*\d*\s+([A-Z][A-Za-z'&\s]+?)(?:,|\s+London|\s+SW|\s+W\d|\s+WC|\s+EC|\s+NW|\s+N\d|\s+E\d|\s+SE|$)/);
+
+      let numbers: number[] = [];
+      if (rangeMatch) {
+        const a = parseInt(rangeMatch[1], 10);
+        const b = parseInt(rangeMatch[2], 10);
+        if (!Number.isNaN(a) && !Number.isNaN(b)) {
+          const lo = Math.min(a, b), hi = Math.max(a, b);
+          for (let n = lo; n <= hi; n++) numbers.push(n);
+        }
+      } else if (singleMatch) {
+        numbers = [parseInt(singleMatch[1], 10)].filter((n) => !Number.isNaN(n));
+      }
+      const buildingName = nameMatch?.[1]?.trim().toLowerCase();
+      const street = streetMatch?.[1]?.trim().toLowerCase();
+
+      // If we couldn't parse anything useful, return all (same behaviour as before).
+      if (numbers.length === 0 && !buildingName) return merged;
+
+      const matches = merged.filter((a: any) => {
+        const hay = `${a.address || ""} ${a.description || ""}`.toLowerCase();
+        if (!hay.trim()) return false;
+
+        // Number match: one of our numbers appears with a word boundary AND the street is nearby.
+        if (numbers.length > 0) {
+          const streetOk = !street || hay.includes(street);
+          for (const n of numbers) {
+            const re = new RegExp(`(^|[^\\d])${n}(?:\\s*(?:-|to|–|—)\\s*\\d+)?\\b`);
+            if (re.test(hay) && streetOk) return true;
+          }
+        }
+        // Building name match (case-insensitive substring).
+        if (buildingName && hay.includes(buildingName)) return true;
+        return false;
+      });
+
+      // If the filter nuked everything, fall back to unfiltered so we don't
+      // silently drop to zero — the user would rather see radius results than
+      // an empty list when our parser misses.
+      return matches.length > 0 ? matches : merged;
+    })();
+
+    const planningApplications = filteredForBuilding.slice(0, 100);
 
     const floorPlanUrls: string[] = [];
     for (const app of planningApplications.slice(0, 30)) {
       if (app.documentUrl) floorPlanUrls.push(app.documentUrl);
     }
 
-    console.log(`[pathway stage4] planning: idox=${idoxApps.length} gov=${govApps.length} pd=${pdAppsArr.length} merged=${planningApplications.length}`);
+    console.log(`[pathway stage4] planning: idox=${idoxApps.length} planit=${planitApps.length} gov=${govApps.length} pd=${pdAppsArr.length} merged=${merged.length} filtered=${planningApplications.length}`);
 
     console.log(`[pathway stage4] runId=${runId} planning=${planningApplications.length} companyKyc=${companyKyc.length} (${companyKyc.filter((c: any) => !c.error).length} resolved)`);
 
