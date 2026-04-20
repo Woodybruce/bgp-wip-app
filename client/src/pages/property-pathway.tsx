@@ -1045,6 +1045,17 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
             <CardTitle className="text-base flex items-center gap-2">
               <Building2 className="w-4 h-4" /> Property Intelligence
               <span className="text-[10px] text-muted-foreground font-normal ml-2">Virtual — materialise to SharePoint at Investigation Board</span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto h-7 text-[11px]"
+                onClick={() => onAdvance(4)}
+                disabled={advancing}
+                title="Re-run Stage 4 — re-resolves Companies House + planning + floor plans from Stage 1 data"
+              >
+                {advancing ? <Clock className="w-3 h-3 mr-1 animate-spin" /> : <Search className="w-3 h-3 mr-1" />}
+                Re-run
+              </Button>
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm space-y-3">
