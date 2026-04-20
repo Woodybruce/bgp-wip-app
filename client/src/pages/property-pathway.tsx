@@ -965,6 +965,10 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </Card>
             )}
 
+            {/* PropertyData market tone — retail/office quoting rents, resi
+                rent + sold psf. Aggregate figures, not individual comps. */}
+            {s1.pdMarket && <PropertyDataMarketCard tone={s1.pdMarket} />}
+
             {/* Tenancy units */}
             {s1.tenancy?.units && s1.tenancy.units.length > 0 && (
               <Card>
@@ -1590,6 +1594,67 @@ function PlanningCard({ apps }: { apps: any[] }) {
       )}
       <PlanningDialog apps={apps} open={showDialog} onClose={() => setShowDialog(false)} />
     </div>
+  );
+}
+
+function fmtGBP(v?: number): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  if (Math.abs(v) >= 1_000_000) return `£${(v / 1_000_000).toFixed(1)}m`;
+  if (Math.abs(v) >= 1_000) return `£${(v / 1_000).toFixed(0)}k`;
+  return `£${Math.round(v)}`;
+}
+
+function fmtPsf(v?: number): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return `£${v.toFixed(v < 10 ? 2 : 0)}/sqft`;
+}
+
+function PropertyDataMarketCard({ tone }: { tone: any }) {
+  const commercial = tone?.commercial || {};
+  const residential = tone?.residential || {};
+  const rows: Array<{ label: string; postcode?: string; samples?: number; psf?: number; total?: number; size?: number; tone: string }> = [];
+  const add = (label: string, t: any, tag: string) => {
+    if (!t) return;
+    rows.push({
+      label,
+      postcode: t.postcodeUsed,
+      samples: t.pointsAnalysed,
+      psf: t.avgQuotingRentPerSqft ?? t.avgRentPerSqft ?? t.avgPricePerSqft,
+      total: t.avgQuotingRent ?? t.avgRent ?? t.avgPrice,
+      size: t.avgSize,
+      tone: tag,
+    });
+  };
+  add("Retail quoting rent", commercial.retail, "bg-sky-100 text-sky-800");
+  add("Office quoting rent", commercial.offices, "bg-indigo-100 text-indigo-800");
+  add("Restaurant quoting rent", commercial.restaurants, "bg-amber-100 text-amber-800");
+  add("Residential asking rent", residential.rents, "bg-emerald-100 text-emerald-800");
+  add("Residential sold £/sqft", residential.sold, "bg-slate-100 text-slate-700");
+
+  if (rows.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Building2 className="w-4 h-4" /> Market tone
+          <Badge variant="outline" className="text-[10px] py-0">PropertyData</Badge>
+        </CardTitle>
+        <p className="text-[10px] text-muted-foreground">Aggregate quoting rents and £/sqft for this postcode sector — not individual deal comps.</p>
+      </CardHeader>
+      <CardContent className="text-[11px] space-y-1 pb-2">
+        {rows.map((r, i) => (
+          <div key={i} className="flex items-center gap-1.5 py-1 border-b last:border-b-0">
+            <span className={`text-[9px] px-1 py-px rounded uppercase shrink-0 ${r.tone}`}>{r.label.split(" ")[0]}</span>
+            <span className="flex-1 min-w-0 truncate" title={r.label}>{r.label}</span>
+            {r.psf != null && <span className="font-medium shrink-0">{fmtPsf(r.psf)}</span>}
+            {r.total != null && <span className="text-muted-foreground text-[10px] shrink-0">{fmtGBP(r.total)}</span>}
+            {r.samples != null && <span className="text-muted-foreground text-[10px] shrink-0">n={r.samples}</span>}
+            {r.postcode && <span className="text-muted-foreground text-[10px] shrink-0 uppercase">{r.postcode}</span>}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
 

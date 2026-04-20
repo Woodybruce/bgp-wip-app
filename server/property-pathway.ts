@@ -133,6 +133,11 @@ interface StageResults {
       }>;
       voaSearchUrl?: string;
     };
+    // PropertyData market tone — aggregate quoting rent / sold £ psf figures
+    // for retail, offices, residential in this postcode sector. Not individual
+    // transaction comps (PropertyData doesn't expose those for commercial) but
+    // anchors the business plan with a defensible market-tone number.
+    pdMarket?: import("./propertydata-market").PropertyDataMarketTone;
   };
   stage2?: {
     companyId?: string;
@@ -1741,6 +1746,21 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     }
   }
 
+  // 1c-4b. PropertyData market-tone — retail/offices quoting rents + resi
+  // rent & sold £/sqft for this sector. These are aggregate tone figures,
+  // not per-deal comps — surfaced separately on the board so they don't
+  // pollute the true-comp tables, but useful as a market anchor.
+  let pdMarket: NonNullable<StageResults["stage1"]>["pdMarket"] = undefined;
+  if (postcode) {
+    try {
+      const { fetchPropertyDataMarketTone } = await import("./propertydata-market");
+      const tone = await fetchPropertyDataMarketTone(postcode);
+      if (tone) pdMarket = tone;
+    } catch (err: any) {
+      console.error("[pathway stage1] propertydata market-tone error:", err?.message);
+    }
+  }
+
   // 1c-5. Comps — both investment (sales) AND letting from CRM. Always include
   // a central-London baseline so the board has something to anchor to even when
   // no comps exist in the exact outward code (e.g. SW1Y has few RCA rows).
@@ -2510,6 +2530,7 @@ Return STRICT JSON only, no prose, no code fences:
       propertyImage,
       rates,
       tenant: derivedTenant,
+      pdMarket,
     },
     // Market intel crawled in parallel during Stage 1 — stored at run level
     // so ChatBGP and later stages can see lease comps / availability / market
