@@ -1329,7 +1329,7 @@ function BusinessPlanCard({ runId, stage6, onReload }: { runId: string; stage6: 
 
   const openChat = () => {
     const prefill = `Let's finalise the business plan for pathway run ${runId}. Call get_property_pathway, walk me through the Stage 6 draft, and we'll refine it together. Use update_business_plan whenever we agree on a change — don't call agree_business_plan until I explicitly say "agree".`;
-    navigate(`/chat?message=${encodeURIComponent(prefill)}`);
+    navigate(`/chatbgp?message=${encodeURIComponent(prefill)}`);
   };
 
   return (
