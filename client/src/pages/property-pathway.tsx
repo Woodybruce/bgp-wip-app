@@ -1009,12 +1009,20 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                   <CardTitle className="text-base flex items-center gap-2"><MapPin className="w-4 h-4" /> Units ({s1.tenancy.units.length}) <Badge variant="outline" className="text-[10px] py-0">{s1.tenancy.status}</Badge></CardTitle>
                 </CardHeader>
                 <CardContent className="text-[11px] space-y-0.5 pb-2">
-                  {s1.tenancy.units.slice(0, 10).map((u: any) => (
-                    <div key={u.id} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
-                      <span className="truncate flex-1">{u.unitName}{u.floor ? ` · ${u.floor}` : ""}</span>
-                      {u.sqft && <span className="text-muted-foreground text-[10px] shrink-0">{Math.round(u.sqft / 1000)}k sf</span>}
+                  {s1.tenancy.units.slice(0, 20).map((u: any) => (
+                    <div key={u.id} className="flex items-center gap-2 py-0.5 border-b last:border-b-0">
+                      <span className="truncate flex-1">
+                        <span className="font-medium">{u.unitName}</span>
+                        {u.floor ? <span className="text-muted-foreground"> · {u.floor}</span> : null}
+                        {u.tenantName ? <span className="text-muted-foreground"> — {u.tenantName}</span> : null}
+                      </span>
+                      {u.sqft ? <span className="text-muted-foreground text-[10px] shrink-0">{u.sqft >= 1000 ? `${Math.round(u.sqft / 1000)}k sf` : `${Math.round(u.sqft)} sf`}</span> : null}
+                      {u.passingRentPa ? <span className="text-muted-foreground text-[10px] shrink-0">£{Math.round(u.passingRentPa / 1000)}k pa</span> : null}
                     </div>
                   ))}
+                  {s1.tenancy.units.length > 20 && (
+                    <p className="text-muted-foreground text-[10px] pt-1">+ {s1.tenancy.units.length - 20} more</p>
+                  )}
                 </CardContent>
               </Card>
             )}

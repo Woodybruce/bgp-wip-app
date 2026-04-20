@@ -80,7 +80,7 @@ interface StageResults {
     brochureFiles?: Array<{ source: "email" | "sharepoint" | "sharepoint-uploaded"; name: string; ref: string; date?: string; webUrl?: string; sizeMB?: number }>;
     crmHits?: { properties: any[]; deals: any[]; companies: any[] };
     deals?: Array<{ id: string; name: string; stage?: string; status?: string; dealType?: string; team?: string[]; rentPa?: number; fee?: number; createdAt?: string }>;
-    tenancy?: { occupier?: string; units?: Array<{ id: string; unitName: string; floor?: string; sqft?: number; askingRent?: number; marketingStatus?: string; useClass?: string }>; status?: "vacant" | "let" | "mixed" | "unknown" };
+    tenancy?: { occupier?: string; units?: Array<{ id: string; unitName: string; floor?: string; sqft?: number; askingRent?: number; marketingStatus?: string; useClass?: string; tenantName?: string; passingRentPa?: number; leaseStart?: string; leaseExpiry?: string; source?: "crm" | "sharepoint" | "email" | "ai" }>; status?: "vacant" | "let" | "mixed" | "unknown" };
     engagements?: Array<{ source: "unit_viewing" | "investment_viewing" | "interaction"; contact?: string; company?: string; date?: string; outcome?: string; notes?: string; unitName?: string }>;
     pricePaidHistory?: Array<{ address?: string; price?: number; date?: string; type?: string }>;
     comps?: Array<{
@@ -1282,6 +1282,44 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     console.warn(`[pathway stage1 autonomous] baseline email sweep failed: ${err?.message}`);
   }
 
+  // Tenancy extraction: if the SharePoint sweep returned any tenancy
+  // schedule / rent roll files, download and parse them so we surface
+  // every occupier instead of just the anchor the email extractor found.
+  try {
+    const { extractTenancyUnitsFromSharePointHits } = await import("./pathway-tenancy-extractor");
+    const extracted = await extractTenancyUnitsFromSharePointHits(stage1Payload.sharepointHits || [], req);
+    if (extracted.length > 0) {
+      const existing = stage1Payload.tenancy?.units || [];
+      const existingKeys = new Set(existing.map((u: any) => `${(u.unitName || "").toLowerCase()}|${(u.tenantName || "").toLowerCase()}`));
+      const merged = [...existing];
+      for (const u of extracted) {
+        const key = `${(u.unitName || "").toLowerCase()}|${(u.tenantName || "").toLowerCase()}`;
+        if (existingKeys.has(key)) continue;
+        existingKeys.add(key);
+        merged.push({
+          id: `sp-${merged.length}`,
+          unitName: u.unitName,
+          floor: u.floor,
+          sqft: u.sqft,
+          tenantName: u.tenantName,
+          passingRentPa: u.passingRentPa,
+          useClass: u.useClass,
+          marketingStatus: u.marketingStatus,
+          leaseStart: u.leaseStart,
+          leaseExpiry: u.leaseExpiry,
+          source: "sharepoint",
+        });
+      }
+      const vacantCount = merged.filter((u: any) => /vacant/i.test(u.marketingStatus || "")).length;
+      const status: "vacant" | "let" | "mixed" | "unknown" =
+        merged.length === 0 ? "unknown" : vacantCount === merged.length ? "vacant" : vacantCount === 0 ? "let" : "mixed";
+      stage1Payload.tenancy = { ...(stage1Payload.tenancy || {}), status, units: merged };
+      console.log(`[pathway stage1 autonomous] SharePoint tenancy extractor merged ${extracted.length} units (total ${merged.length})`);
+    }
+  } catch (err: any) {
+    console.warn(`[pathway stage1 autonomous] tenancy extractor failed: ${err?.message}`);
+  }
+
   console.log(`[pathway stage1 autonomous] Completed in ${((Date.now() - started) / 1000).toFixed(1)}s — ${stage1Payload.emailHits.length} emails, ${stage1Payload.brochureFiles.length} brochures, ${stage1Payload.sharepointHits.length} sharepoint`);
 
   await setStageStatus(runId, "stage1", "completed", { stage1: stage1Payload });
@@ -2192,6 +2230,43 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     }
   } catch (err: any) {
     console.error("[pathway stage1] SharePoint search setup error:", err?.message);
+  }
+
+  // Tenancy extraction: parse any tenancy-schedule / rent-roll XLSX files
+  // found in the SharePoint sweep and merge into the tenancy.units list.
+  try {
+    const { extractTenancyUnitsFromSharePointHits } = await import("./pathway-tenancy-extractor");
+    const extracted = await extractTenancyUnitsFromSharePointHits(sharepointHits, req);
+    if (extracted.length > 0) {
+      const existing = tenancy?.units || [];
+      const existingKeys = new Set(existing.map((u: any) => `${(u.unitName || "").toLowerCase()}|${(u.tenantName || "").toLowerCase()}`));
+      const merged = [...existing];
+      for (const u of extracted) {
+        const key = `${(u.unitName || "").toLowerCase()}|${(u.tenantName || "").toLowerCase()}`;
+        if (existingKeys.has(key)) continue;
+        existingKeys.add(key);
+        merged.push({
+          id: `sp-${merged.length}`,
+          unitName: u.unitName,
+          floor: u.floor,
+          sqft: u.sqft,
+          tenantName: u.tenantName,
+          passingRentPa: u.passingRentPa,
+          useClass: u.useClass,
+          marketingStatus: u.marketingStatus,
+          leaseStart: u.leaseStart,
+          leaseExpiry: u.leaseExpiry,
+          source: "sharepoint" as const,
+        });
+      }
+      const vacantCount = merged.filter((u: any) => /vacant/i.test(u.marketingStatus || "")).length;
+      const status: "vacant" | "let" | "mixed" | "unknown" =
+        merged.length === 0 ? "unknown" : vacantCount === merged.length ? "vacant" : vacantCount === 0 ? "let" : "mixed";
+      tenancy = { ...(tenancy || {}), status, units: merged };
+      console.log(`[pathway stage1] SharePoint tenancy extractor merged ${extracted.length} units (total ${merged.length})`);
+    }
+  } catch (err: any) {
+    console.warn(`[pathway stage1] tenancy extractor failed: ${err?.message}`);
   }
 
   const summary = [
