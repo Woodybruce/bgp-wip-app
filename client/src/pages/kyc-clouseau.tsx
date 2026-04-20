@@ -894,6 +894,24 @@ export default function KycClouseau() {
     return () => { cancelled = true; clearTimeout(t); };
   }, [aiPollingId]);
 
+  // Re-run the AI narrative for a saved company investigation whose original
+  // synchronous call timed out. Keeps structured data; only replaces aiAnalysis.
+  const regenerateAiMutation = useMutation({
+    mutationFn: async (investigationId: number) => {
+      const res = await apiRequest("POST", `/api/kyc-clouseau/investigation/${investigationId}/regenerate-ai`);
+      return res.json();
+    },
+    onSuccess: (data, investigationId) => {
+      setInvestigation((prev) => prev ? ({ ...prev, aiStatus: "pending", aiAnalysis: "" } as any) : prev);
+      setAiPollingId(investigationId);
+      toast({ title: "Regenerating AI analysis", description: "This usually takes 30-90 seconds. It will appear here automatically." });
+    },
+    onError: (err) => {
+      const message = extractErrorMessage(err, "Could not queue AI regeneration.");
+      toast({ title: "Regenerate failed", description: message, variant: "destructive" });
+    },
+  });
+
   function extractErrorMessage(err: unknown, fallback: string): string {
     if (err instanceof Error) {
       const msg = err.message || fallback;
@@ -1042,10 +1060,14 @@ export default function KycClouseau() {
           const row = await res.json();
           const payload = typeof row.result === "string" ? JSON.parse(row.result) : row.result;
           if (payload) {
+            if (row.id && !payload.investigationId) payload.investigationId = row.id;
             setInvestigation(payload);
             setIndividualResult(null);
             setSelectedOfficer(null);
             setOfficerDeepDive(null);
+            if (payload.aiStatus === "pending" && payload.investigationId) {
+              setAiPollingId(payload.investigationId);
+            }
           }
         } catch (err: any) {
           toast({ title: "Could not open investigation", description: err?.message || "Unknown error", variant: "destructive" });
@@ -1436,15 +1458,20 @@ export default function KycClouseau() {
 
             <RecentInvestigations
               onSelect={(inv) => {
+                // RecentInvestigations passes `_investigationId` — normalise to
+                // `investigationId` so the Regenerate-AI button can find it.
+                const normalised: any = inv && !inv.investigationId && (inv as any)._investigationId
+                  ? { ...inv, investigationId: (inv as any)._investigationId }
+                  : inv;
                 // Route reopened results to the right view state
-                if (inv?.subject?.type === "property_intelligence" || inv?.subject_type === "property_intelligence") {
-                  setInvestigation(inv);
+                if (normalised?.subject?.type === "property_intelligence" || normalised?.subject_type === "property_intelligence") {
+                  setInvestigation(normalised);
                   setIndividualResult(null);
-                } else if (inv?.subject?.type === "individual" || inv?.subject_type === "individual") {
-                  setIndividualResult(inv);
+                } else if (normalised?.subject?.type === "individual" || normalised?.subject_type === "individual") {
+                  setIndividualResult(normalised);
                   setInvestigation(null);
                 } else {
-                  setInvestigation(inv);
+                  setInvestigation(normalised);
                   setIndividualResult(null);
                 }
                 setSelectedOfficer(null);
@@ -1866,16 +1893,44 @@ export default function KycClouseau() {
                   )}
                   <Card>
                     <CardContent className="pt-6">
-                      {investigation.aiAnalysis ? (
-                        <MarkdownContent content={investigation.aiAnalysis} />
-                      ) : (investigation as any).aiStatus === "pending" || aiPollingId ? (
-                        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          <span>AI analysis running in the background — raw intelligence is ready below, narrative will appear here when complete.</span>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">No AI analysis available</p>
-                      )}
+                      {(() => {
+                        const invId = (investigation as any).investigationId || (investigation as any)._investigationId;
+                        const narrative = investigation.aiAnalysis || "";
+                        const timedOut = /AI analysis (unavailable|timed out)/i.test(narrative);
+                        const isPending = (investigation as any).aiStatus === "pending" || aiPollingId;
+                        if (isPending) {
+                          return (
+                            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span>AI analysis running in the background — raw intelligence is ready below, narrative will appear here when complete.</span>
+                            </div>
+                          );
+                        }
+                        if (narrative && !timedOut) {
+                          return <MarkdownContent content={narrative} />;
+                        }
+                        return (
+                          <div className="space-y-3">
+                            {narrative && <MarkdownContent content={narrative} />}
+                            {!narrative && <p className="text-sm text-muted-foreground">No AI analysis available.</p>}
+                            {invId && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => regenerateAiMutation.mutate(Number(invId))}
+                                disabled={regenerateAiMutation.isPending}
+                                data-testid="btn-regenerate-ai"
+                              >
+                                {regenerateAiMutation.isPending ? (
+                                  <><Loader2 className="h-3 w-3 animate-spin mr-2" /> Queuing…</>
+                                ) : (
+                                  <>Regenerate AI analysis</>
+                                )}
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </CardContent>
                   </Card>
                 </TabsContent>

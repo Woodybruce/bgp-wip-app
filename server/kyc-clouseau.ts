@@ -596,7 +596,10 @@ export async function runCompanyInvestigation(opts: {
       const accountsTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 45000));
       accountsAnalysis = await Promise.race([accountsPromise, accountsTimeout]);
       const aiPromise = runAiAnalysis(companyData, risk.flags, ownershipChain, propertyContext, accountsAnalysis?.summary);
-      const timeoutPromise = new Promise<string>((_, reject) => setTimeout(() => reject(new Error("AI analysis timed out")), 90000));
+      // Complex UBO walks (multi-level ownership chains + accounts summary) can run
+      // close to or past 90s on Anthropic's side. 180s matches the background-AI
+      // pathway at runPropertyIntelligenceAi().
+      const timeoutPromise = new Promise<string>((_, reject) => setTimeout(() => reject(new Error("AI analysis timed out after 180s")), 180000));
       aiAnalysis = await Promise.race([aiPromise, timeoutPromise]);
     } catch (aiErr: any) {
       aiAnalysis = `AI analysis unavailable (${aiErr.message}). Structured data and risk scoring are shown below.`;
@@ -884,6 +887,75 @@ router.get("/api/kyc-clouseau/investigation/:id", requireAuth, async (req: Reque
   } catch (err: any) {
     console.error("[kyc-clouseau] Investigation fetch error:", err.message);
     res.status(500).json({ error: "Failed to fetch investigation" });
+  }
+});
+
+// Re-runs just the AI narrative for a saved company investigation. Used when the
+// original synchronous AI call timed out (complex UBO walks can run long) — the
+// structured data and risk score stay intact; we only regenerate aiAnalysis.
+router.post("/api/kyc-clouseau/investigation/:id/regenerate-ai", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const row = await pool.query(
+      `SELECT * FROM kyc_investigations WHERE id = $1`,
+      [id]
+    );
+    if (row.rows.length === 0) return res.status(404).json({ error: "Investigation not found" });
+
+    const inv = row.rows[0];
+    if (inv.subject_type !== "company") {
+      return res.status(400).json({ error: "Regenerate is only supported for company investigations" });
+    }
+    const existing = inv.result || {};
+    const companyNumber = inv.company_number || existing?.subject?.companyNumber;
+    if (!companyNumber) return res.status(400).json({ error: "No company number on this investigation" });
+
+    // Mark pending so the client UI can show a spinner while the rerun runs.
+    await pool.query(
+      `UPDATE kyc_investigations SET result = jsonb_set(COALESCE(result, '{}'::jsonb), '{aiStatus}', '"pending"'::jsonb) WHERE id = $1`,
+      [id]
+    );
+    res.json({ ok: true, investigationId: Number(id), aiStatus: "pending" });
+
+    // Fire-and-forget re-run. Pulls fresh CH data (so the rerun also catches
+    // officer/PSC changes) and replaces aiAnalysis on the stored row.
+    (async () => {
+      try {
+        const companyData = await getCompanyData(companyNumber);
+        let ownershipChain: any = null;
+        try { ownershipChain = await discoverUltimateParent(companyNumber); } catch {}
+        const risk = assessRisk(companyData, existing?.sanctionsScreening || { matches: [], screened: [] });
+        const accountsSummary = existing?.accountsAnalysis?.summary;
+        const propertyContext = existing?.propertyContext || null;
+        const aiPromise = runAiAnalysis(companyData, risk.flags, ownershipChain, propertyContext, accountsSummary);
+        const timeoutPromise = new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error("AI analysis timed out after 180s")), 180000)
+        );
+        let aiAnalysis = "";
+        let aiStatus: "complete" | "failed" = "complete";
+        try {
+          aiAnalysis = await Promise.race([aiPromise, timeoutPromise]);
+        } catch (aiErr: any) {
+          aiAnalysis = `AI analysis unavailable (${aiErr?.message || "unknown error"}). Structured data and risk scoring are shown below.`;
+          aiStatus = "failed";
+        }
+        const merged = { ...existing, aiAnalysis, aiStatus };
+        await pool.query(
+          `UPDATE kyc_investigations SET result = $1 WHERE id = $2`,
+          [JSON.stringify(merged), id]
+        );
+        console.log(`[kyc-clouseau] Regenerate AI ${aiStatus} for investigation ${id}`);
+      } catch (err: any) {
+        console.warn(`[kyc-clouseau] Regenerate AI crashed for ${id}:`, err?.message);
+        try {
+          const failed = { ...existing, aiAnalysis: `AI analysis unavailable (${err?.message || "unknown error"}). Structured data and risk scoring are shown below.`, aiStatus: "failed" };
+          await pool.query(`UPDATE kyc_investigations SET result = $1 WHERE id = $2`, [JSON.stringify(failed), id]);
+        } catch {}
+      }
+    })();
+  } catch (err: any) {
+    console.error("[kyc-clouseau] Regenerate AI error:", err.message);
+    res.status(500).json({ error: "Failed to queue AI regeneration" });
   }
 });
 
