@@ -146,7 +146,10 @@ export default function PropertyPathway() {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         credentials: "include",
-        body: JSON.stringify(stage ? { stage } : {}),
+        // Always async: Railway's HTTP edge timeout is 45s; stages 2/4/6/7 can
+        // take 2-3 minutes (Claude analysis + Companies House + Idox scrape +
+        // accounts PDF). Server returns 202 immediately and the client polls.
+        body: JSON.stringify({ ...(stage ? { stage } : {}), async: true }),
       });
       if (!res.ok) {
         let errMsg = "";
