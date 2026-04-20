@@ -37,6 +37,7 @@ import {
   UserSearch,
   ListChecks,
   CalendarClock,
+  ExternalLink,
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
@@ -51,6 +52,12 @@ interface InvestigationResult {
   insolvencyHistory?: any[];
   sanctionsScreening?: any[];
   aiAnalysis?: string;
+  accountsAnalysis?: {
+    filingDate: string;
+    description: string;
+    documentId: string;
+    summary: string;
+  } | null;
   riskScore?: number;
   riskLevel?: string;
   flags?: string[];
@@ -1815,7 +1822,31 @@ export default function KycClouseau() {
                   <TabsTrigger value="filings" data-testid="tab-filings">Filings</TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="analysis" className="mt-4">
+                <TabsContent value="analysis" className="mt-4 space-y-4">
+                  {investigation.accountsAnalysis?.summary && (
+                    <Card className="border-emerald-200 bg-emerald-50/40">
+                      <CardHeader className="pb-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <FileText className="h-4 w-4 text-emerald-700" />
+                            Latest statutory accounts — {investigation.accountsAnalysis.description}
+                            <span className="text-xs font-normal text-muted-foreground">({investigation.accountsAnalysis.filingDate})</span>
+                          </CardTitle>
+                          <a
+                            href={`/api/companies-house/document/${investigation.accountsAnalysis.documentId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-primary hover:underline flex items-center gap-1"
+                          >
+                            Open PDF <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <MarkdownContent content={investigation.accountsAnalysis.summary} />
+                      </CardContent>
+                    </Card>
+                  )}
                   <Card>
                     <CardContent className="pt-6">
                       {investigation.aiAnalysis ? (

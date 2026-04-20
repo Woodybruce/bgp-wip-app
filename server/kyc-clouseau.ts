@@ -67,6 +67,12 @@ interface InvestigationResult {
   insolvencyHistory?: any[];
   sanctionsScreening?: any;
   aiAnalysis?: string;
+  accountsAnalysis?: {
+    filingDate: string;
+    description: string;
+    documentId: string;
+    summary: string;
+  } | null;
   riskScore?: number;
   riskLevel?: "low" | "medium" | "high" | "critical";
   flags?: string[];
@@ -293,7 +299,104 @@ export function assessRisk(data: any, sanctionsResult: any): { score: number; le
   return { score: Math.min(score, 100), level, flags };
 }
 
-async function runAiAnalysis(data: any, riskFlags: string[], ownershipChain: any, propertyContext?: any): Promise<string> {
+/**
+ * Find the most recent "accounts" filing that has a downloadable document,
+ * fetch the PDF via the CH document-api, extract text, and return a digest
+ * for AI summarisation. Returns null if no accounts doc is available
+ * (e.g. scanned-only PDF with no text layer, or filing has no document_metadata).
+ */
+async function fetchLatestAccountsText(filings: any[]): Promise<{
+  date: string;
+  description: string;
+  documentId: string;
+  text: string;
+} | null> {
+  const apiKey = process.env.COMPANIES_HOUSE_API_KEY;
+  if (!apiKey) return null;
+
+  const accountsFilings = (filings || [])
+    .filter((f: any) => f.category === "accounts" && f.links?.document_metadata)
+    .sort((a: any, b: any) => (b.date || "").localeCompare(a.date || ""));
+
+  for (const f of accountsFilings.slice(0, 3)) {
+    try {
+      const metaUrl: string = f.links.document_metadata;
+      const documentId = metaUrl.split("/").filter(Boolean).pop();
+      if (!documentId) continue;
+      const auth = `Basic ${Buffer.from(apiKey + ":").toString("base64")}`;
+      const docRes = await fetch(
+        `https://document-api.company-information.service.gov.uk/document/${encodeURIComponent(documentId)}/content`,
+        { headers: { Authorization: auth, Accept: "application/pdf" }, redirect: "follow" },
+      );
+      if (!docRes.ok) continue;
+      const buf = Buffer.from(await docRes.arrayBuffer());
+      const pdfModule: any = await import("pdf-parse");
+      const PDFParse = pdfModule.PDFParse || pdfModule.default || pdfModule;
+      let text = "";
+      try {
+        const parser = new PDFParse(new Uint8Array(buf));
+        const data = await parser.getText();
+        text = typeof data === "string" ? data : (data as any)?.text || "";
+        try { parser.destroy?.(); } catch {}
+      } catch {
+        const parsed = await (pdfModule.default || pdfModule)(buf);
+        text = parsed?.text || "";
+      }
+      if (text && text.trim().length > 200) {
+        return {
+          date: f.date,
+          description: f.description || f.type || "Accounts",
+          documentId,
+          text: text.slice(0, 40000),
+        };
+      }
+    } catch (err: any) {
+      console.warn(`[kyc-clouseau] accounts fetch failed for filing ${f.date}:`, err?.message);
+    }
+  }
+  return null;
+}
+
+async function summariseAccounts(companyName: string, accounts: { date: string; description: string; text: string }): Promise<string> {
+  try {
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const anthropic = new Anthropic({
+      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+      ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+        ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
+        : {}),
+    });
+    const prompt = `You are a financial analyst reviewing UK Companies House statutory accounts for ${companyName}. The document below was filed on ${accounts.date} (${accounts.description}). Extract the key financial indicators and assess covenant strength as a tenant or counterparty.
+
+Return a concise markdown section with these parts — use actual figures wherever present, and say "not disclosed" rather than guessing:
+
+**Period covered:** e.g. year ended 31 Dec 2024
+**Size regime:** micro-entity / small / medium / full
+**P&L highlights:** turnover, operating profit/(loss), profit before tax, comparison with prior year
+**Balance sheet:** net assets / (liabilities), cash, debtors, creditors falling due within 1y, long-term creditors
+**Liquidity:** current ratio if computable; working capital position
+**Going concern:** any going-concern notes, qualifications, or auditor concerns
+**Trend:** one sentence on direction of travel vs prior year
+**Covenant verdict:** a single-sentence judgement — e.g. "Strong covenant — well-capitalised with growing profitability", or "Weak covenant — loss-making and running down reserves"
+
+Keep it under 250 words. Do not invent numbers. If the accounts are micro-entity with minimal disclosure, say so explicitly.
+
+ACCOUNTS TEXT:
+${accounts.text}`;
+
+    const res = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1500,
+      messages: [{ role: "user", content: prompt }],
+    });
+    return res.content[0].type === "text" ? res.content[0].text : "";
+  } catch (err: any) {
+    console.error("[kyc-clouseau] accounts summarise error:", err?.message);
+    return "";
+  }
+}
+
+async function runAiAnalysis(data: any, riskFlags: string[], ownershipChain: any, propertyContext?: any, accountsSummary?: string): Promise<string> {
   try {
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const anthropic = new Anthropic({
@@ -366,7 +469,10 @@ ${riskFlags.map(f => `- ${f}`).join("\n") || "None identified"}
 
 RECENT FILINGS (last 10):
 ${(data.filings || []).slice(0, 10).map((f: any) => `- ${f.date}: ${f.description || f.type}`).join("\n") || "None"}
-${propertyContext ? `
+${accountsSummary ? `
+LATEST STATUTORY ACCOUNTS (parsed from the filed PDF — use these actual figures in the FINANCIAL HEALTH INDICATORS section, don't just infer from filing status):
+${accountsSummary}
+` : ""}${propertyContext ? `
 PROPERTY ACQUISITION CONTEXT:
 This investigation originates from a Land Registry search. The user is exploring whether to acquire a property and needs to identify the best person to contact about purchasing it.
 - Property address: ${propertyContext.propertyAddress || "Unknown"}
@@ -460,15 +566,47 @@ export async function runCompanyInvestigation(opts: {
   const sanctionsResult = await screenSanctions(namesToScreen);
   const risk = assessRisk(companyData, sanctionsResult);
 
+  // Download & summarise the latest statutory accounts PDF in parallel with AI analysis.
+  // Scanned-only accounts (no text layer) return null and we degrade gracefully.
+  let accountsAnalysis: InvestigationResult["accountsAnalysis"] = null;
+  const accountsPromise = (async () => {
+    try {
+      const accounts = await fetchLatestAccountsText(companyData.filings || []);
+      if (!accounts) return null;
+      const subjectName = companyData.profile?.company_name || companyName || targetNumber!;
+      const summary = await summariseAccounts(subjectName, accounts);
+      if (!summary) return null;
+      console.log(`[kyc-clouseau] accounts summarised for ${targetNumber} (${accounts.date})`);
+      return {
+        filingDate: accounts.date,
+        description: accounts.description,
+        documentId: accounts.documentId,
+        summary,
+      };
+    } catch (err: any) {
+      console.warn(`[kyc-clouseau] accounts pipeline failed for ${targetNumber}:`, err?.message);
+      return null;
+    }
+  })();
+
   let aiAnalysis = "";
   if (!skipAi) {
     try {
-      const aiPromise = runAiAnalysis(companyData, risk.flags, ownershipChain, propertyContext);
+      // Wait for accounts first (capped) so the main analysis can fold in real figures.
+      const accountsTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 45000));
+      accountsAnalysis = await Promise.race([accountsPromise, accountsTimeout]);
+      const aiPromise = runAiAnalysis(companyData, risk.flags, ownershipChain, propertyContext, accountsAnalysis?.summary);
       const timeoutPromise = new Promise<string>((_, reject) => setTimeout(() => reject(new Error("AI analysis timed out")), 90000));
       aiAnalysis = await Promise.race([aiPromise, timeoutPromise]);
     } catch (aiErr: any) {
       aiAnalysis = `AI analysis unavailable (${aiErr.message}). Structured data and risk scoring are shown below.`;
     }
+  } else {
+    // Still resolve accounts even when skipping AI narrative so the summary is persisted.
+    accountsAnalysis = await Promise.race([
+      accountsPromise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 30000)),
+    ]);
   }
 
   const result: InvestigationResult = {
@@ -485,6 +623,7 @@ export async function runCompanyInvestigation(opts: {
     insolvencyHistory: companyData.insolvency,
     sanctionsScreening: sanctionsResult,
     aiAnalysis,
+    accountsAnalysis,
     riskScore: risk.score,
     riskLevel: risk.level as any,
     flags: risk.flags,
