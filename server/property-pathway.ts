@@ -136,6 +136,10 @@ interface StageResults {
   stage2?: {
     companyId?: string;
     enrichedFields?: Record<string, any>;
+    // Who to approach to buy this building. First pass built from Stage 1
+    // data (emails + LR ownership + CRM). Stage 5 refreshes it once CH
+    // officers from Stage 4 KYC are available. See server/pathway-contacts.ts.
+    buildingContacts?: import("./pathway-contacts").BuildingContacts;
     company?: {
       id: string;
       name: string;
@@ -2388,14 +2392,29 @@ async function runStage2(runId: string, _req: Request): Promise<void> {
   const results = run.stageResults as StageResults;
   const tenantName = results.stage1?.tenant?.name;
 
+  await setStageStatus(runId, "stage2", "running");
+
+  // Building contacts — runs even when there's no tenant (investment-only
+  // buildings, vacant properties). Failure here never blocks the stage.
+  let buildingContacts: import("./pathway-contacts").BuildingContacts | undefined;
+  try {
+    const { buildBuildingContacts } = await import("./pathway-contacts");
+    buildingContacts = await buildBuildingContacts({
+      emailHits: results.stage1?.emailHits || [],
+      ownership: results.stage1?.initialOwnership || null,
+      stage: "stage2",
+    });
+    console.log(`[pathway stage2] contacts: agents=${buildingContacts.agents.length} landlord=${buildingContacts.landlord.length} assetMgr=${buildingContacts.assetManager.length} (from ${buildingContacts.sources.emailsAnalysed} emails)`);
+  } catch (err: any) {
+    console.warn("[pathway stage2] building contacts extraction failed:", err?.message);
+  }
+
   if (!tenantName) {
     await setStageStatus(runId, "stage2", "skipped", {
-      stage2: { skipped: true, reason: "No tenant identified in Stage 1" },
+      stage2: { skipped: true, reason: "No tenant identified in Stage 1", buildingContacts },
     });
     return;
   }
-
-  await setStageStatus(runId, "stage2", "running");
 
   try {
     // Find or create company
@@ -2429,6 +2448,7 @@ async function runStage2(runId: string, _req: Request): Promise<void> {
       stage2: {
         companyId: company.id,
         enrichedFields,
+        buildingContacts,
         company: enrichedCompany
           ? {
               id: enrichedCompany.id,
@@ -3145,6 +3165,56 @@ async function runInformedEmailSearchPostStage4(runId: string, req: Request): Pr
 // ============================================================================
 
 async function runStage5(runId: string, _req: Request): Promise<void> {
+  const run = await getRun(runId);
+  if (!run) throw new Error("Run not found");
+  const results = run.stageResults as StageResults;
+
+  // Refresh building contacts with the fuller picture — by Stage 5 we have
+  // Stage 4 CH officers cached in kyc_investigations, plus any new CRM hits
+  // the user's added during review. Overwrites stage2.buildingContacts in
+  // place so the UI just reads the latest.
+  try {
+    const { buildBuildingContacts } = await import("./pathway-contacts");
+    // Pull officers from the proprietor's KYC record if Stage 4 ran one
+    const proprietorKyc = (results.stage4?.companyKyc || []).find((c: any) => c.role === "proprietor");
+    let existingOfficers: Array<{ name: string; officerRole?: string; appointedOn?: string; resignedOn?: string }> = [];
+    if (proprietorKyc?.investigationId) {
+      try {
+        const { kycInvestigations } = await import("@shared/schema");
+        const rows = await db
+          .select()
+          .from(kycInvestigations)
+          .where(eq(kycInvestigations.id, proprietorKyc.investigationId))
+          .limit(1);
+        const result = (rows[0] as any)?.result || {};
+        const officers = result.officers || result.profileData?.officers || [];
+        if (Array.isArray(officers)) {
+          existingOfficers = officers.map((o: any) => ({
+            name: o.name,
+            officerRole: o.officer_role || o.officerRole || o.role,
+            appointedOn: o.appointed_on || o.appointedOn,
+            resignedOn: o.resigned_on || o.resignedOn,
+          }));
+        }
+      } catch (err: any) {
+        console.warn("[pathway stage5] KYC officers lookup failed:", err?.message);
+      }
+    }
+    const refreshed = await buildBuildingContacts({
+      emailHits: results.stage1?.emailHits || [],
+      ownership: results.stage1?.initialOwnership || null,
+      existingOfficers,
+      stage: "stage5",
+    });
+    const stage2 = (results.stage2 || {}) as any;
+    await setStageStatus(runId, "stage2", results.stage2?.skipped ? "skipped" : "completed", {
+      stage2: { ...stage2, buildingContacts: refreshed },
+    });
+    console.log(`[pathway stage5] contacts refreshed: agents=${refreshed.agents.length} landlord=${refreshed.landlord.length} assetMgr=${refreshed.assetManager.length}`);
+  } catch (err: any) {
+    console.warn("[pathway stage5] contacts refresh failed:", err?.message);
+  }
+
   await setStageStatus(runId, "stage5", "completed", {
     stage5: { ready: true, boardUrl: `/property-intelligence?tab=board&runId=${runId}` },
   });
