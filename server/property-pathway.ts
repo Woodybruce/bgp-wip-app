@@ -2349,10 +2349,219 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
         proprietorKyc: null,
       },
     });
+
+    // Informed email sweep — run AFTER Stage 4 so we can use Clouseau's full
+    // investigation (officers, PSCs, UBOs, title numbers, company number) as
+    // search terms. These catch emails that never mention the street/postcode
+    // (e.g. "Re: 03292489 accounts", "Sugar disposal", "Daulan – LN59572").
+    // Additive — merges into stage1.emailHits, doesn't replace existing hits.
+    runInformedEmailSearchPostStage4(runId, _req).catch((err: any) => {
+      console.warn(`[pathway informed-email] background task failed: ${err?.message}`);
+    });
   } catch (err: any) {
     console.error("[pathway stage4] failed:", err?.message);
     await setStageStatus(runId, "stage4", "failed");
   }
+}
+
+// ----------------------------------------------------------------------------
+// Informed email sweep — runs after Stage 4 completes.
+// Uses company numbers, officer / PSC / UBO surnames, and title numbers from
+// Clouseau's stored investigations to search the full BGP mailbox set with
+// high-signal terms. Merges new hits into stage1.emailHits so the UI picks
+// them up on its next poll.
+// ----------------------------------------------------------------------------
+async function runInformedEmailSearchPostStage4(runId: string, req: Request): Promise<void> {
+  const run = await getRun(runId);
+  if (!run) return;
+  const results = run.stageResults as StageResults;
+  const s1 = results.stage1 || {};
+  const s4 = results.stage4 || {};
+
+  const terms = new Set<string>();
+  const addTerm = (raw: string | null | undefined) => {
+    if (!raw) return;
+    const t = String(raw).trim();
+    if (t.length >= 4 && !/^\d{1,3}$/.test(t)) terms.add(t);
+  };
+  const addSurname = (raw: string | null | undefined) => {
+    if (!raw) return;
+    // "SUGAR, Daniel Alan" → "SUGAR"; "Daniel Sugar" → "Sugar"
+    const first = String(raw).split(",")[0]?.trim() || "";
+    const surname = first.includes(",") ? first : first.split(/\s+/).pop() || "";
+    if (surname && surname.length >= 4) addTerm(surname);
+  };
+
+  const invIds = (s4.companyKyc || [])
+    .map((c: any) => c.investigationId)
+    .filter((id: any) => Number.isFinite(id)) as number[];
+
+  const { pool } = await import("./db");
+  for (const invId of invIds) {
+    try {
+      const row = await pool.query(`SELECT result FROM kyc_investigations WHERE id = $1`, [invId]);
+      const raw = row.rows[0]?.result;
+      if (!raw) continue;
+      const r = typeof raw === "string" ? JSON.parse(raw) : raw;
+      // Company name — first clause before comma/semicolon
+      const companyName = String(r?.subject?.name || "").split(/[,;—]/)[0]?.trim();
+      if (companyName) addTerm(companyName);
+      // Company number (very high signal)
+      if (r?.subject?.companyNumber) addTerm(r.subject.companyNumber);
+      // Active officers — surname only
+      for (const o of (r?.officers || []).filter((o: any) => !o.resigned_on).slice(0, 8)) {
+        addSurname(o?.name);
+      }
+      // Active PSCs
+      for (const p of (r?.pscs || []).filter((p: any) => !p.ceased_on).slice(0, 8)) {
+        addSurname(p?.name);
+      }
+      // UBOs from the ownership chain
+      for (const u of (r?.ownershipChain?.ubos || []).slice(0, 8)) {
+        addSurname(u?.name);
+      }
+      // Charge-holders (lenders)
+      for (const c of (r?.charges || []).slice(0, 8)) {
+        for (const p of (c?.persons_entitled || [])) {
+          const lender = String(p?.name || "").split(/[,(]/)[0]?.trim();
+          if (lender) addTerm(lender);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[pathway informed-email] fetch inv ${invId} failed: ${err?.message}`);
+    }
+  }
+
+  // Title numbers from Stage 1 Land Registry
+  if ((s1 as any)?.initialOwnership?.titleNumber) addTerm((s1 as any).initialOwnership.titleNumber);
+  // Title numbers from freeholds/leaseholds data if present
+  const lrFree = (s1 as any)?.rawFreeholds || [];
+  for (const f of lrFree.slice(0, 10)) if (f?.title_number) addTerm(f.title_number);
+
+  // Skip terms already covered by Stage 1's primary search — those were already scanned.
+  const primaryToken = (run.address?.split(",")[0] || "").trim().toLowerCase().split(/\s+/)[0];
+  for (const t of [...terms]) {
+    if (t.toLowerCase() === primaryToken) terms.delete(t);
+  }
+
+  if (terms.size === 0) {
+    console.log(`[pathway informed-email] runId=${runId} no usable terms — skipping`);
+    return;
+  }
+  console.log(`[pathway informed-email] runId=${runId} terms=[${[...terms].map((t) => JSON.stringify(t)).join(", ")}]`);
+
+  // Build mailbox list (shared + every active BGP user)
+  const mailboxes: Array<{ email: string; owner: string }> = [
+    { email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox" },
+  ];
+  try {
+    const activeUsers = await db
+      .select({ username: users.username, email: users.email, name: users.name })
+      .from(users)
+      .where(eq(users.isActive, true));
+    for (const u of activeUsers) {
+      const mb = u.email || u.username;
+      if (mb && /@brucegillinghampollard\.com$/i.test(mb) && mb.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
+        mailboxes.push({ email: mb, owner: u.name || mb });
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[pathway informed-email] team mailbox list error: ${err?.message}`);
+  }
+
+  const { graphRequest } = await import("./shared-mailbox");
+  const { getValidMsToken } = await import("./microsoft");
+  const delegatedToken = await getValidMsToken(req).catch(() => null);
+
+  // Seed dedupe set from existing emailHits so we only add genuinely new rows
+  const existing: any[] = (s1 as any).emailHits || [];
+  const seen = new Set<string>();
+  for (const e of existing) {
+    if (e?.msgId) seen.add(String(e.msgId));
+    const subj = String(e?.subject || "").trim().toLowerCase();
+    const from = String(e?.from || "").trim().toLowerCase();
+    if (subj || from) seen.add(`${subj}|${from}`);
+  }
+
+  const added: any[] = [];
+  const pushMsg = (msg: any, ownerLabel: string, mailboxEmail: string | undefined, matchedTerm: string) => {
+    const primary = String(msg.internetMessageId || msg.id || "");
+    const subjFromKey = `${String(msg.subject || "").trim().toLowerCase()}|${String(msg.from?.emailAddress?.address || "").trim().toLowerCase()}`;
+    if (seen.has(primary) || seen.has(subjFromKey)) return;
+    seen.add(primary);
+    seen.add(subjFromKey);
+    added.push({
+      subject: msg.subject ? `${msg.subject} · via ${ownerLabel}` : `(no subject) · via ${ownerLabel}`,
+      from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "unknown",
+      date: msg.receivedDateTime,
+      msgId: msg.id,
+      mailboxEmail,
+      preview: (msg.bodyPreview || "").slice(0, 200),
+      hasAttachments: !!msg.hasAttachments,
+      webLink: msg.webLink || null,
+      matchedTerm,
+    });
+  };
+
+  // Build jobs: every (mailbox × term) pair, app-only via graphRequest.
+  // Keep terms quoted so Graph does phrase match — at this point the terms
+  // are distinctive enough (Co#, surnames) that exact match is what we want.
+  const CONC = 6;
+  const jobs: Array<() => Promise<void>> = [];
+  for (const mb of mailboxes) {
+    for (const term of terms) {
+      jobs.push(async () => {
+        try {
+          const q = `"${term}"`;
+          const res: any = await graphRequest(
+            `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(q)}&$top=10&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
+            { headers: { "X-AnchorMailbox": mb.email } }
+          );
+          for (const msg of (res?.value || [])) pushMsg(msg, mb.owner, mb.email, term);
+        } catch {}
+      });
+    }
+  }
+  // Also delegated /me if we have a user token
+  if (delegatedToken) {
+    for (const term of terms) {
+      jobs.push(async () => {
+        try {
+          const q = `"${term}"`;
+          const resp = await fetch(
+            `https://graph.microsoft.com/v1.0/me/messages?$search=${encodeURIComponent(q)}&$top=10&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
+            { headers: { Authorization: `Bearer ${delegatedToken}`, "Content-Type": "application/json" } }
+          );
+          if (!resp.ok) return;
+          const data: any = await resp.json();
+          for (const msg of (data?.value || [])) pushMsg(msg, "My inbox", undefined, term);
+        } catch {}
+      });
+    }
+  }
+
+  for (let i = 0; i < jobs.length; i += CONC) {
+    await Promise.all(jobs.slice(i, i + CONC).map((j) => j()));
+  }
+
+  if (added.length === 0) {
+    console.log(`[pathway informed-email] runId=${runId} no new emails (${existing.length} existing, ${mailboxes.length} mailboxes × ${terms.size} terms)`);
+    return;
+  }
+
+  // Merge into stage1.emailHits and persist. Re-read the run so we don't
+  // clobber a concurrent update.
+  const fresh = await getRun(runId);
+  const freshResults = (fresh?.stageResults as any) || {};
+  const freshS1 = freshResults.stage1 || {};
+  const merged = [...(freshS1.emailHits || []), ...added]
+    .sort((a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
+    .slice(0, 200);
+  freshS1.emailHits = merged;
+  freshS1.informedEmailCount = added.length;
+  freshResults.stage1 = freshS1;
+  await updateRun(runId, { stageResults: freshResults });
+  console.log(`[pathway informed-email] runId=${runId} +${added.length} emails (${existing.length} → ${merged.length}) across ${mailboxes.length} mailboxes × ${terms.size} terms`);
 }
 
 // ============================================================================
