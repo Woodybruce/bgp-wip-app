@@ -459,8 +459,34 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
 
                 {/* Ownership — clickable links */}
                 {(() => {
-                  const ownerName = s1.initialOwnership?.proprietorName || s1.aiFacts?.owner;
-                  const titleNum = s1.initialOwnership?.titleNumber;
+                  // Stage 1's autonomous AI sometimes stuffs a full paragraph into
+                  // proprietorName/titleNumber ("Gainesville Partnership LLP (title
+                  // NGL939200); previously Amsprop Estates Ltd..."). Pull the bare
+                  // company name / title ref out for the link; render the rest as
+                  // a separate commentary line so it stays visible but doesn't
+                  // break CH search or the Land Registry deep-link.
+                  const cleanName = (raw?: string | null): string => {
+                    if (!raw) return "";
+                    let s = String(raw).trim();
+                    s = s.split(/\s*[;—]\s*|\s*\.\s+(?=[A-Z])|\n/)[0];
+                    s = s.replace(/\s*\([^)]*\)\s*$/g, "").trim();
+                    s = s.replace(/[.\s)]+$/, "").trim();
+                    if (s.length > 120) s = s.slice(0, 120).trim();
+                    return s;
+                  };
+                  const cleanTitle = (raw?: string | null): string => {
+                    if (!raw) return "";
+                    const m = String(raw).match(/\b([A-Z]{1,3}\d{3,7})\b/);
+                    return m ? m[1] : String(raw).trim().split(/[\s(,;]/)[0];
+                  };
+
+                  const rawOwnerName = s1.initialOwnership?.proprietorName || s1.aiFacts?.owner;
+                  const rawTitleNum = s1.initialOwnership?.titleNumber;
+                  const ownerName = cleanName(rawOwnerName);
+                  const ownerCommentary = rawOwnerName && rawOwnerName !== ownerName ? String(rawOwnerName).trim() : null;
+                  const titleNum = cleanTitle(rawTitleNum);
+                  const titleCommentary = rawTitleNum && rawTitleNum !== titleNum ? String(rawTitleNum).trim() : null;
+
                   const paid = s1.initialOwnership?.pricePaid ? `£${(s1.initialOwnership.pricePaid / 1e6).toFixed(1)}m` : s1.aiFacts?.purchasePrice;
                   const date = s1.initialOwnership?.dateOfPurchase || s1.aiFacts?.purchaseDate;
                   const ownerCompanyId = s1.initialOwnership?.proprietorCompanyId;
@@ -493,7 +519,9 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                       <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Ownership</p>
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
                         <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Owner:</span> {ownerEl}{ownerCoNumber ? <span className="text-muted-foreground text-[10px] ml-0.5">(Co# {ownerCoNumber})</span> : null}</div>
+                        {ownerCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{ownerCommentary}</div>}
                         <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Title:</span> <span className="break-words">{titleEl}</span></div>
+                        {titleCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{titleCommentary}</div>}
                         <div className="min-w-0"><span className="text-muted-foreground">Paid:</span> <span className="font-medium break-words">{paid || "—"}</span></div>
                         <div className="min-w-0"><span className="text-muted-foreground">Date:</span> <span className="font-medium">{date || "—"}</span></div>
                         {s1.aiFacts?.refurbCost && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Refurb spend:</span> <span className="font-medium break-words">{s1.aiFacts.refurbCost}</span></div>}
@@ -508,14 +536,27 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                   const hasLeaseData = tenant || s1.aiFacts?.leaseStatus || (s1.aiFacts?.mainTenants && s1.aiFacts.mainTenants.length > 0);
                   if (!hasLeaseData) return null;
 
+                  const cleanName = (raw?: string | null): string => {
+                    if (!raw) return "";
+                    let s = String(raw).trim();
+                    s = s.split(/\s*[;—]\s*|\s*\.\s+(?=[A-Z])|\n/)[0];
+                    s = s.replace(/\s*\([^)]*\)\s*$/g, "").trim();
+                    s = s.replace(/[.\s)]+$/, "").trim();
+                    if (s.length > 120) s = s.slice(0, 120).trim();
+                    return s;
+                  };
+                  const rawTenantName = tenant?.name || (s1.aiFacts?.mainTenants?.[0]) || "";
+                  const tenantName = cleanName(rawTenantName);
+                  const tenantCommentary = rawTenantName && rawTenantName !== tenantName ? String(rawTenantName).trim() : null;
+
                   // Tenant link logic
-                  let tenantEl: any = tenant?.name || (s1.aiFacts?.mainTenants?.[0]) || "—";
-                  if (tenant?.name && tenant.companyId) {
-                    tenantEl = <Link href={`/companies/${tenant.companyId}`}><span className="text-primary hover:underline cursor-pointer font-medium">{tenant.name}</span></Link>;
-                  } else if (tenant?.name && tenant.companyNumber) {
-                    tenantEl = <a href={`https://find-and-update.company-information.service.gov.uk/company/${tenant.companyNumber}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{tenant.name}<ExternalLink className="w-2.5 h-2.5" /></a>;
-                  } else if (tenant?.name) {
-                    tenantEl = <a href={`https://find-and-update.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(tenant.name)}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{tenant.name}<ExternalLink className="w-2.5 h-2.5" /></a>;
+                  let tenantEl: any = tenantName || "—";
+                  if (tenantName && tenant?.companyId) {
+                    tenantEl = <Link href={`/companies/${tenant.companyId}`}><span className="text-primary hover:underline cursor-pointer font-medium">{tenantName}</span></Link>;
+                  } else if (tenantName && tenant?.companyNumber) {
+                    tenantEl = <a href={`https://find-and-update.company-information.service.gov.uk/company/${tenant.companyNumber}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{tenantName}<ExternalLink className="w-2.5 h-2.5" /></a>;
+                  } else if (tenantName) {
+                    tenantEl = <a href={`https://find-and-update.company-information.service.gov.uk/search/companies?q=${encodeURIComponent(tenantName)}`} target="_blank" rel="noreferrer" className="text-primary hover:underline font-medium inline-flex items-center gap-0.5">{tenantName}<ExternalLink className="w-2.5 h-2.5" /></a>;
                   }
 
                   return (
@@ -524,6 +565,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
                         <div className="min-w-0"><span className="text-muted-foreground">Tenant:</span> {tenantEl}</div>
                         {tenant?.companyNumber && <div className="min-w-0"><span className="text-muted-foreground">Co#:</span> <span className="font-medium">{tenant.companyNumber}</span></div>}
+                        {tenantCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{tenantCommentary}</div>}
                         {s1.aiFacts?.leaseStatus && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Status:</span> <span className="font-medium break-words">{s1.aiFacts.leaseStatus}</span></div>}
                         {s1.aiFacts?.mainTenants && s1.aiFacts.mainTenants.length > 1 && (
                           <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Other occupiers:</span> <span className="font-medium break-words">{s1.aiFacts.mainTenants.slice(1).join(", ")}</span></div>
