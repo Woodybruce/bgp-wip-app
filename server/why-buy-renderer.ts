@@ -164,21 +164,39 @@ export async function renderWhyBuy(args: { runId: string; req?: Request }): Prom
   }
 
   function drawFooter(pageNum: number, totalPages: number) {
-    const y = pageH - 35;
-    doc.font("Body").fontSize(7).fillColor(BGP_MUTED)
-      .text("Bruce Gillingham Pollard — Private & Confidential", leftM, y, { width: usableW * 0.6 })
-      .text(`Page ${pageNum} of ${totalPages}`, leftM, y, { width: usableW, align: "right" });
+    // Temporarily drop the bottom margin so pdfkit doesn't auto-paginate the
+    // footer into a fresh blank page. Without this, each footer text call at
+    // y = pageH - 35 (past the 50pt margin) spawns a new page — which is why
+    // early revisions emitted 10+ phantom pages after the content.
+    const savedBottom = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
+    const y = pageH - 30;
+    doc.font("Body").fontSize(7).fillColor(BGP_MUTED);
+    doc.text("Bruce Gillingham Pollard — Private & Confidential", leftM, y, {
+      width: usableW * 0.6,
+      lineBreak: false,
+    });
+    doc.text(`Page ${pageNum} of ${totalPages}`, leftM, y, {
+      width: usableW,
+      align: "right",
+      lineBreak: false,
+    });
+    doc.page.margins.bottom = savedBottom;
   }
 
   function kpiCard(x: number, y: number, w: number, h: number, label: string, value: string, sub?: string) {
     doc.roundedRect(x, y, w, h, 4).fillColor(BGP_WARM_GREY).fill();
     doc.font("Body").fontSize(7).fillColor(BGP_COOL_GREY)
-      .text(label.toUpperCase(), x + 10, y + 10, { width: w - 20, characterSpacing: 0.5 });
-    doc.font("Body-Bold").fontSize(14).fillColor(BGP_SLATE)
-      .text(value, x + 10, y + 24, { width: w - 20 });
+      .text(label.toUpperCase(), x + 10, y + 10, { width: w - 20, characterSpacing: 0.5, lineBreak: false });
+    // Value — single line, ellipsised. Never wraps.
+    doc.font("Body-Bold").fontSize(13).fillColor(BGP_SLATE)
+      .text(truncate(value || "—", 26), x + 10, y + 24, { width: w - 20, lineBreak: false, ellipsis: true });
     if (sub) {
+      // Sub — two short lines max; kpiCard sub fields regularly get fed long
+      // analyst prose ("Title NGL… additional freehold titles on postcode…")
+      // which previously spilled across the card and overlapped the value.
       doc.font("Body").fontSize(7).fillColor(BGP_COOL_GREY)
-        .text(sub, x + 10, y + h - 16, { width: w - 20 });
+        .text(truncate(sub, 60), x + 10, y + 42, { width: w - 20, height: h - 46, lineBreak: true, ellipsis: true });
     }
   }
 
