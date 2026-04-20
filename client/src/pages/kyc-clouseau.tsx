@@ -39,6 +39,7 @@ import {
   CalendarClock,
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
+import { AddressAutocomplete } from "@/components/address-autocomplete";
 
 interface InvestigationResult {
   subject: { name: string; companyNumber?: string; type: string };
@@ -1208,16 +1209,26 @@ export default function KycClouseau() {
             )}
             {searchMode === "property" && (
               <div className="space-y-2">
-                <Input
-                  data-testid="input-property-address"
-                  placeholder="Property address..."
-                  value={propertyAddressInput}
-                  onChange={(e) => setPropertyAddressInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && propertyResolveMutation.mutate({ address: propertyAddressInput, postcode: propertyPostcodeInput })}
+                <AddressAutocomplete
+                  value={propertyAddressInput ? { formatted: propertyAddressInput, placeId: "", postcode: propertyPostcodeInput } : null}
+                  onChange={(addr) => {
+                    if (!addr) {
+                      setPropertyAddressInput("");
+                      setPropertyPostcodeInput("");
+                      return;
+                    }
+                    setPropertyAddressInput(addr.formatted);
+                    setPropertyPostcodeInput(addr.postcode || "");
+                    // Auto-fire lookup once Google/server has given us both pieces
+                    if (addr.postcode) {
+                      propertyResolveMutation.mutate({ address: addr.formatted, postcode: addr.postcode });
+                    }
+                  }}
+                  placeholder="Start typing an address (e.g. 18-22 Haymarket)..."
                 />
                 <Input
                   data-testid="input-property-postcode"
-                  placeholder="Postcode (e.g. W1K 6WA)"
+                  placeholder="Postcode (override if needed)"
                   value={propertyPostcodeInput}
                   onChange={(e) => setPropertyPostcodeInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && propertyResolveMutation.mutate({ address: propertyAddressInput, postcode: propertyPostcodeInput })}
@@ -1236,7 +1247,7 @@ export default function KycClouseau() {
                   Look up Property
                 </Button>
                 <p className="text-[10px] text-muted-foreground">
-                  Resolves via Land Registry → proprietor → full intelligence.
+                  Google Places → Land Registry → proprietor → full intelligence. Postcode auto-fills on select.
                 </p>
               </div>
             )}
