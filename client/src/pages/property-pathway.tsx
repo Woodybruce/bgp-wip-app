@@ -485,6 +485,15 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                     const m = String(raw).match(/\b([A-Z]{1,3}\d{3,7})\b/);
                     return m ? m[1] : String(raw).trim().split(/[\s(,;]/)[0];
                   };
+                  // Same defensive parse for Companies House numbers — the
+                  // investigator sometimes jams multiple proprietors into
+                  // one field ("OC407278 (X); 01690503 (Y)"), which broke
+                  // the CH deep link. Take the first valid CH number.
+                  const cleanCoNumber = (raw?: string | null): string => {
+                    if (!raw) return "";
+                    const m = String(raw).match(/\b([A-Z]{0,3}\d{6,8})\b/);
+                    return m ? m[1] : "";
+                  };
 
                   const rawOwnerName = s1.initialOwnership?.proprietorName || s1.aiFacts?.owner;
                   const rawTitleNum = s1.initialOwnership?.titleNumber;
@@ -496,7 +505,9 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                   const paid = s1.initialOwnership?.pricePaid ? `£${(s1.initialOwnership.pricePaid / 1e6).toFixed(1)}m` : s1.aiFacts?.purchasePrice;
                   const date = s1.initialOwnership?.dateOfPurchase || s1.aiFacts?.purchaseDate;
                   const ownerCompanyId = s1.initialOwnership?.proprietorCompanyId;
-                  const ownerCoNumber = s1.initialOwnership?.proprietorCompanyNumber || s1.aiFacts?.ownerCompanyNumber;
+                  const rawOwnerCoNumber = s1.initialOwnership?.proprietorCompanyNumber || s1.aiFacts?.ownerCompanyNumber;
+                  const ownerCoNumber = cleanCoNumber(rawOwnerCoNumber);
+                  const ownerCoCommentary = rawOwnerCoNumber && rawOwnerCoNumber !== ownerCoNumber ? String(rawOwnerCoNumber).trim() : null;
 
                   if (!ownerName && !titleNum && !paid && !date) {
                     return <p className="text-[11px] text-muted-foreground">Owner not resolved. Advance to Stage 4 for deeper lookups.</p>;
@@ -526,6 +537,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
                         <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Owner:</span> {ownerEl}{ownerCoNumber ? <span className="text-muted-foreground text-[10px] ml-0.5">(Co# {ownerCoNumber})</span> : null}</div>
                         {ownerCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{ownerCommentary}</div>}
+                        {ownerCoCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">Other proprietors noted: {ownerCoCommentary}</div>}
                         <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Title:</span> <span className="break-words">{titleEl}</span></div>
                         {titleCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{titleCommentary}</div>}
                         <div className="min-w-0"><span className="text-muted-foreground">Paid:</span> <span className="font-medium break-words">{paid || "—"}</span></div>
