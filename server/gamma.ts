@@ -22,7 +22,15 @@ export interface GammaGenerateArgs {
   additionalInstructions?: string;      // brand/tone steer
   imageOptions?: {
     source?: "aiGenerated" | "pictographic" | "unsplash" | "noImages";
-    model?: "flux-fast-1.1" | "flux-pro-1.1" | "imagen-3-fast" | "imagen-3" | "ideogram-v2" | string;
+    // See error response for the canonical list. Defaults used: imagen-3-pro.
+    imageModel?:
+      | "dall-e-3"
+      | "imagen-3-flash" | "imagen-3-pro"
+      | "imagen-4-pro" | "imagen-4-ultra"
+      | "ideogram-v3" | "ideogram-v3-turbo" | "ideogram-v3-quality" | "ideogram-v3-flash"
+      | "flux-1-pro" | "flux-1-quick" | "flux-1-ultra"
+      | "flux-kontext-pro" | "flux-kontext-max" | "flux-kontext-fast"
+      | "leonardo-phoenix" | string;
   };
   cardOptions?: {
     dimensions?: "default" | "fluid" | "a4" | "letter" | "16x9" | "4x3";
