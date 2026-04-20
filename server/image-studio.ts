@@ -325,7 +325,7 @@ async function requireAdmin(req: Request, res: Response, next: Function) {
 
 /**
  * Capture a Google Street View image for an address and save to image_studio_images.
- * Exposed for the property-pathway orchestrator (Stage 6).
+ * Exposed for the property-pathway orchestrator (Stage 8 — Studio Time).
  */
 export async function captureStreetViewForAddress(args: { address: string; propertyId?: string | null; heading?: number; pitch?: number; fov?: number }): Promise<{ id: string; localPath: string }> {
   const apiKey = process.env.GOOGLE_API_KEY;
@@ -353,7 +353,7 @@ export async function captureStreetViewForAddress(args: { address: string; prope
     fileName: `Street View — ${args.address}`,
     category: "Street Views",
     tags: ["Street View", "Google", "Exterior", "pathway"],
-    description: `Google Street View capture of ${args.address} (auto — property pathway Stage 6)`,
+    description: `Google Street View capture of ${args.address} (auto — property pathway Stage 8)`,
     source: "streetview",
     propertyId: args.propertyId || undefined,
     address: args.address,
@@ -366,6 +366,456 @@ export async function captureStreetViewForAddress(args: { address: string; prope
   }).returning();
 
   return { id: inserted.id, localPath: filePath };
+}
+
+// ─── Stage 8 bulk image sweep ─────────────────────────────────────────────
+// Runs after the business plan and Excel model are agreed. Sweeps every
+// source we have — Street View (4 headings + ±offsets along the street),
+// Google Places photos, Clearbit logos for tenants — and files the results
+// into three named collections on the run: Building / Tenants / Area.
+//
+// Nothing here is expensive enough to gate on — API keys burn a few hundred
+// quota points per run, not dollars. No image generation (Flux/DALL-E) is
+// triggered; we only harvest real photography.
+
+type StoredImage = { id: string; localPath: string };
+
+async function storeImageFromBuffer(args: {
+  buffer: Buffer;
+  fileName: string;
+  category: string;
+  tags: string[];
+  description: string;
+  source: string;
+  propertyId?: string | null;
+  address?: string;
+  brandName?: string;
+  mimeType?: string;
+  filenameHint?: string;
+}): Promise<StoredImage> {
+  const ext = (args.mimeType || "image/jpeg").includes("png") ? ".png" : ".jpg";
+  const safeHint = (args.filenameHint || args.fileName).replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60);
+  const filename = `${args.source}-${safeHint}-${crypto.randomUUID().slice(0, 8)}${ext}`;
+  const filePath = path.join(IMAGE_DIR, filename);
+  await persistImage(filePath, args.buffer, args.mimeType || "image/jpeg", args.fileName);
+  const { thumbnail, width, height } = await generateThumbnail(args.buffer);
+  const [inserted] = await db.insert(imageStudioImages).values({
+    fileName: args.fileName,
+    category: args.category,
+    tags: args.tags,
+    description: args.description,
+    source: args.source,
+    propertyId: args.propertyId || undefined,
+    address: args.address,
+    brandName: args.brandName,
+    mimeType: args.mimeType || "image/jpeg",
+    fileSize: args.buffer.length,
+    width,
+    height,
+    thumbnailData: thumbnail,
+    localPath: filePath,
+  }).returning();
+  return { id: inserted.id, localPath: filePath };
+}
+
+async function ensureRunCollection(args: {
+  runId: string;
+  address: string;
+  bucket: "Building" | "Tenants" | "Area";
+  userId?: string;
+}): Promise<string> {
+  const name = `Pathway · ${args.address} · ${args.bucket}`;
+  const existing = await db.select().from(imageStudioCollections)
+    .where(eq(imageStudioCollections.name, name)).limit(1);
+  if (existing[0]?.id) return existing[0].id;
+  const [created] = await db.insert(imageStudioCollections).values({
+    name,
+    description: `Auto-created for property pathway run ${args.runId} (${args.bucket})`,
+    createdBy: args.userId || undefined,
+  }).returning();
+  return created.id;
+}
+
+async function addImagesToCollection(collectionId: string, imageIds: string[]): Promise<number> {
+  let added = 0;
+  for (const imageId of imageIds) {
+    try {
+      const r = await pool.query(
+        `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT (collection_id, image_id) DO NOTHING`,
+        [collectionId, imageId],
+      );
+      if ((r.rowCount ?? 0) > 0) added++;
+    } catch {}
+  }
+  return added;
+}
+
+async function geocodeAddress(address: string, apiKey: string): Promise<{ lat: number; lng: number; placeId?: string } | null> {
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(address)}&inputtype=textquery&fields=geometry,place_id,formatted_address&locationbias=circle:50000@51.5074,-0.1278&key=${apiKey}`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const data: any = await r.json();
+    const c = data?.candidates?.[0];
+    if (!c?.geometry?.location) return null;
+    return { lat: c.geometry.location.lat, lng: c.geometry.location.lng, placeId: c.place_id };
+  } catch {
+    return null;
+  }
+}
+
+async function streetViewBuffer(args: { lat?: number; lng?: number; address?: string; heading: number; pitch?: number; apiKey: string }): Promise<Buffer | null> {
+  const params = new URLSearchParams({
+    size: "1200x800",
+    heading: String(args.heading),
+    pitch: String(args.pitch ?? 0),
+    fov: "90",
+    key: args.apiKey,
+  });
+  if (args.lat != null && args.lng != null) {
+    params.set("location", `${args.lat},${args.lng}`);
+  } else if (args.address) {
+    params.set("location", args.address);
+  } else return null;
+  try {
+    const r = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params}`);
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    // Google returns a tiny generic "Sorry, we have no imagery here" for blind
+    // locations (~2-6KB). Filter those.
+    if (buf.length < 7000) return null;
+    return buf;
+  } catch {
+    return null;
+  }
+}
+
+async function placeDetailsPhotos(placeId: string, apiKey: string, max = 4): Promise<string[]> {
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=photos&key=${apiKey}`;
+    const r = await fetch(url);
+    if (!r.ok) return [];
+    const data: any = await r.json();
+    const refs: string[] = (data?.result?.photos || []).map((p: any) => p.photo_reference).filter(Boolean);
+    return refs.slice(0, max);
+  } catch {
+    return [];
+  }
+}
+
+async function placePhotoBuffer(photoReference: string, apiKey: string): Promise<Buffer | null> {
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=1200&photo_reference=${photoReference}&key=${apiKey}`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return Buffer.from(await r.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+async function findPlaceByText(query: string, apiKey: string): Promise<{ placeId: string; name: string; lat: number; lng: number } | null> {
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=geometry,place_id,name&locationbias=circle:50000@51.5074,-0.1278&key=${apiKey}`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const data: any = await r.json();
+    const c = data?.candidates?.[0];
+    if (!c?.place_id) return null;
+    return {
+      placeId: c.place_id,
+      name: c.name || query,
+      lat: c.geometry?.location?.lat || 0,
+      lng: c.geometry?.location?.lng || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function nearbyPlaces(lat: number, lng: number, apiKey: string, radius = 80, limit = 6): Promise<Array<{ placeId: string; name: string; lat: number; lng: number; types: string[] }>> {
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=${radius}&key=${apiKey}`;
+    const r = await fetch(url);
+    if (!r.ok) return [];
+    const data: any = await r.json();
+    const results = (data?.results || []) as any[];
+    return results.slice(0, limit).map((p: any) => ({
+      placeId: p.place_id,
+      name: p.name,
+      lat: p.geometry?.location?.lat || 0,
+      lng: p.geometry?.location?.lng || 0,
+      types: p.types || [],
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function clearbitLogoBuffer(companyName: string): Promise<{ buffer: Buffer; domain: string } | null> {
+  try {
+    const sugResp = await fetch(`https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(companyName)}`);
+    if (!sugResp.ok) return null;
+    const suggestions: any[] = await sugResp.json().catch(() => []);
+    const domain = suggestions?.[0]?.domain;
+    if (!domain) return null;
+    const logoResp = await fetch(`https://logo.clearbit.com/${domain}?size=512`);
+    if (!logoResp.ok) return null;
+    const buf = Buffer.from(await logoResp.arrayBuffer());
+    if (buf.length < 400) return null;
+    return { buffer: buf, domain };
+  } catch {
+    return null;
+  }
+}
+
+export async function sweepStage8ImagesForRun(args: {
+  runId: string;
+  address: string;
+  postcode?: string;
+  propertyId?: string | null;
+  tenantNames?: string[];
+  userId?: string;
+  brochurePdfs?: Array<{ name: string; buffer: Buffer; webUrl?: string }>;
+}): Promise<{
+  buildingCollectionId?: string;
+  tenantsCollectionId?: string;
+  areaCollectionId?: string;
+  imagesAdded: number;
+  streetViewImageId?: string;
+  collections: Array<{ id: string; name: string; bucket: "building" | "tenants" | "area"; imageCount: number }>;
+}> {
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (!apiKey) {
+    console.warn("[pathway sweep] GOOGLE_API_KEY missing — Stage 8 image sweep skipped");
+    return { imagesAdded: 0, collections: [] };
+  }
+
+  await ensureTable().catch(() => {});
+
+  const [buildingId, tenantsId, areaId] = await Promise.all([
+    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Building", userId: args.userId }),
+    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Tenants", userId: args.userId }),
+    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Area", userId: args.userId }),
+  ]);
+
+  const buildingImages: string[] = [];
+  const tenantImages: string[] = [];
+  const areaImages: string[] = [];
+  let firstStreetViewImageId: string | undefined;
+
+  const geo = await geocodeAddress(args.address, apiKey);
+
+  // ─── Building: 4-heading street view + Places photos of the building ────
+  for (const heading of [0, 90, 180, 270]) {
+    const buf = await streetViewBuffer({ lat: geo?.lat, lng: geo?.lng, address: args.address, heading, apiKey });
+    if (!buf) continue;
+    try {
+      const stored = await storeImageFromBuffer({
+        buffer: buf,
+        fileName: `Street View ${heading}° — ${args.address}`,
+        category: "Street Views",
+        tags: ["Street View", "Building", "Exterior", "pathway", `heading-${heading}`],
+        description: `Google Street View of ${args.address} at ${heading}° heading (auto — pathway Stage 8).`,
+        source: "streetview",
+        propertyId: args.propertyId,
+        address: args.address,
+        filenameHint: `${args.address}-${heading}`,
+      });
+      buildingImages.push(stored.id);
+      if (!firstStreetViewImageId) firstStreetViewImageId = stored.id;
+    } catch (err: any) {
+      console.warn(`[pathway sweep] SV ${heading}° failed:`, err?.message);
+    }
+  }
+
+  if (geo?.placeId) {
+    const refs = await placeDetailsPhotos(geo.placeId, apiKey, 4);
+    for (const ref of refs) {
+      const buf = await placePhotoBuffer(ref, apiKey);
+      if (!buf) continue;
+      try {
+        const stored = await storeImageFromBuffer({
+          buffer: buf,
+          fileName: `Place photo — ${args.address}`,
+          category: "Places",
+          tags: ["Google Places", "Building", "pathway"],
+          description: `Google Places photo of ${args.address} (auto — pathway Stage 8).`,
+          source: "places",
+          propertyId: args.propertyId,
+          address: args.address,
+          filenameHint: args.address,
+        });
+        buildingImages.push(stored.id);
+      } catch {}
+    }
+  }
+
+  // ─── Tenants: Clearbit logos + Places photos of flagship stores ─────────
+  const uniqueTenants = Array.from(new Set((args.tenantNames || []).map(t => t.trim()).filter(t => t && t.length > 1)));
+  for (const tenant of uniqueTenants.slice(0, 6)) {
+    // Clearbit logo
+    try {
+      const logo = await clearbitLogoBuffer(tenant);
+      if (logo) {
+        const stored = await storeImageFromBuffer({
+          buffer: logo.buffer,
+          fileName: `${tenant} — Logo`,
+          category: "Brands",
+          tags: ["Logo", "Tenant", tenant, "pathway"],
+          description: `Clearbit logo for ${tenant} (${logo.domain}) — pathway Stage 8.`,
+          source: "clearbit",
+          propertyId: args.propertyId,
+          brandName: tenant,
+          mimeType: "image/png",
+          filenameHint: tenant,
+        });
+        tenantImages.push(stored.id);
+      }
+    } catch (err: any) {
+      console.warn(`[pathway sweep] Clearbit ${tenant} failed:`, err?.message);
+    }
+
+    // Places findplace → photos (grab up to 2 shop-front photos)
+    try {
+      const place = await findPlaceByText(`${tenant} London`, apiKey);
+      if (place?.placeId) {
+        const refs = await placeDetailsPhotos(place.placeId, apiKey, 2);
+        for (const ref of refs) {
+          const buf = await placePhotoBuffer(ref, apiKey);
+          if (!buf) continue;
+          const stored = await storeImageFromBuffer({
+            buffer: buf,
+            fileName: `${tenant} — Store photo`,
+            category: "Places",
+            tags: ["Google Places", "Tenant", tenant, "pathway"],
+            description: `Google Places photo of ${place.name} (tenant: ${tenant}) — pathway Stage 8.`,
+            source: "places",
+            propertyId: args.propertyId,
+            brandName: tenant,
+            filenameHint: tenant,
+          });
+          tenantImages.push(stored.id);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[pathway sweep] Places ${tenant} failed:`, err?.message);
+    }
+  }
+
+  // ─── Area: street view ± offsets along the street + nearby places ───────
+  if (geo) {
+    // 30m and 60m offsets in four cardinal directions
+    const M_IN_DEG_LAT = 1 / 111_000;
+    const M_IN_DEG_LNG = 1 / (111_000 * Math.cos((geo.lat * Math.PI) / 180));
+    const offsets: Array<{ dLat: number; dLng: number; heading: number; label: string }> = [
+      { dLat:  30 * M_IN_DEG_LAT, dLng: 0,                        heading: 180, label: "+30m N" },
+      { dLat: -30 * M_IN_DEG_LAT, dLng: 0,                        heading: 0,   label: "-30m S" },
+      { dLat: 0,                   dLng:  30 * M_IN_DEG_LNG,      heading: 270, label: "+30m E" },
+      { dLat: 0,                   dLng: -30 * M_IN_DEG_LNG,      heading: 90,  label: "-30m W" },
+    ];
+    for (const off of offsets) {
+      const buf = await streetViewBuffer({ lat: geo.lat + off.dLat, lng: geo.lng + off.dLng, heading: off.heading, apiKey });
+      if (!buf) continue;
+      try {
+        const stored = await storeImageFromBuffer({
+          buffer: buf,
+          fileName: `Area SV ${off.label} — ${args.address}`,
+          category: "Street Views",
+          tags: ["Street View", "Area", "Context", "pathway"],
+          description: `Street View ${off.label} from ${args.address} — pathway Stage 8.`,
+          source: "streetview",
+          propertyId: args.propertyId,
+          address: args.address,
+          filenameHint: `${args.address}-${off.label}`,
+        });
+        areaImages.push(stored.id);
+      } catch {}
+    }
+
+    const neighbours = await nearbyPlaces(geo.lat, geo.lng, apiKey, 80, 6);
+    for (const p of neighbours) {
+      // skip the building's own place_id
+      if (p.placeId === geo.placeId) continue;
+      const refs = await placeDetailsPhotos(p.placeId, apiKey, 1);
+      for (const ref of refs) {
+        const buf = await placePhotoBuffer(ref, apiKey);
+        if (!buf) continue;
+        try {
+          const stored = await storeImageFromBuffer({
+            buffer: buf,
+            fileName: `${p.name} — nearby`,
+            category: "Places",
+            tags: ["Google Places", "Area", "Neighbour", "pathway"],
+            description: `Nearby: ${p.name} (${p.types.slice(0, 3).join(", ")}) — pathway Stage 8.`,
+            source: "places",
+            propertyId: args.propertyId,
+            filenameHint: p.name,
+          });
+          areaImages.push(stored.id);
+        } catch {}
+      }
+    }
+  }
+
+  // ─── Brochures: extract embedded images from PDFs via poppler ───────────
+  if (args.brochurePdfs?.length) {
+    try {
+      const { extractImagesFromPdf } = await import("./pdf-image-extract");
+      for (const bro of args.brochurePdfs.slice(0, 6)) {
+        try {
+          const extracted = await extractImagesFromPdf({ pdfBuffer: bro.buffer, maxImages: 20, minBytes: 15_000 });
+          console.log(`[pathway sweep] brochure "${bro.name}" → ${extracted.length} images`);
+          for (const img of extracted) {
+            try {
+              const stored = await storeImageFromBuffer({
+                buffer: img.buffer,
+                fileName: `${bro.name} — ${img.filename}`,
+                category: "Brochures",
+                tags: ["Brochure", "PDF-extract", "Building", "pathway"],
+                description: `Extracted from brochure "${bro.name}"${bro.webUrl ? ` (${bro.webUrl})` : ""} — pathway Stage 8.`,
+                source: "brochure",
+                propertyId: args.propertyId,
+                address: args.address,
+                mimeType: img.mimeType,
+                filenameHint: `${bro.name}-${img.filename}`,
+              });
+              buildingImages.push(stored.id);
+            } catch (err: any) {
+              console.warn(`[pathway sweep] brochure store failed:`, err?.message);
+            }
+          }
+        } catch (err: any) {
+          console.warn(`[pathway sweep] brochure extract failed for "${bro.name}":`, err?.message);
+        }
+      }
+    } catch (err: any) {
+      console.warn("[pathway sweep] pdf-image-extract unavailable:", err?.message);
+    }
+  }
+
+  const [buildingAdded, tenantAdded, areaAdded] = await Promise.all([
+    addImagesToCollection(buildingId, buildingImages),
+    addImagesToCollection(tenantsId, tenantImages),
+    addImagesToCollection(areaId, areaImages),
+  ]);
+
+  const collections: Array<{ id: string; name: string; bucket: "building" | "tenants" | "area"; imageCount: number }> = [
+    { id: buildingId, name: `Pathway · ${args.address} · Building`, bucket: "building", imageCount: buildingImages.length },
+    { id: tenantsId,  name: `Pathway · ${args.address} · Tenants`,  bucket: "tenants",  imageCount: tenantImages.length },
+    { id: areaId,     name: `Pathway · ${args.address} · Area`,     bucket: "area",     imageCount: areaImages.length },
+  ];
+
+  console.log(`[pathway sweep] Stage 8 complete: Building ${buildingAdded}, Tenants ${tenantAdded}, Area ${areaAdded}`);
+
+  return {
+    buildingCollectionId: buildingId,
+    tenantsCollectionId: tenantsId,
+    areaCollectionId: areaId,
+    imagesAdded: buildingAdded + tenantAdded + areaAdded,
+    streetViewImageId: firstStreetViewImageId,
+    collections,
+  };
 }
 
 export function registerImageStudioRoutes(app: Express) {
