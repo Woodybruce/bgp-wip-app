@@ -1257,6 +1257,42 @@ export const insertInvestmentCompSchema = createInsertSchema(investmentComps).om
 export type InsertInvestmentComp = z.infer<typeof insertInvestmentCompSchema>;
 export type InvestmentComp = typeof investmentComps.$inferSelect;
 
+// Retail leasing comps — extracted from emails / brochures / manual entry.
+// Deliberately separate from the CRM so we can curate before flooding it.
+export const retailLeasingComps = pgTable("retail_leasing_comps", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  address: text("address").notNull(),
+  postcode: text("postcode"),
+  outwardCode: text("outward_code"),
+  submarket: text("submarket"),
+  tenant: text("tenant"),
+  landlord: text("landlord"),
+  useClass: text("use_class"),
+  sector: text("sector"),
+  rentPa: real("rent_pa"),
+  rentPsf: real("rent_psf"),
+  areaSqft: real("area_sqft"),
+  premium: real("premium"),
+  rentFreeMonths: real("rent_free_months"),
+  leaseDate: text("lease_date"),
+  termYears: real("term_years"),
+  breakYears: real("break_years"),
+  sourceType: text("source_type"),      // 'email' | 'brochure' | 'crm' | 'manual'
+  sourceId: text("source_id"),          // message id / file id
+  sourceRef: text("source_ref"),        // subject / filename
+  sourceDate: text("source_date"),
+  agent: text("agent"),
+  notes: text("notes"),
+  confidence: real("confidence"),
+  dedupeKey: text("dedupe_key").unique(),
+  createdAt: timestamp("created_at").defaultNow(),
+  createdBy: text("created_by"),
+});
+
+export const insertRetailLeasingCompSchema = createInsertSchema(retailLeasingComps).omit({ id: true, createdAt: true });
+export type InsertRetailLeasingComp = z.infer<typeof insertRetailLeasingCompSchema>;
+export type RetailLeasingComp = typeof retailLeasingComps.$inferSelect;
+
 export const xeroInvoices = pgTable("xero_invoices", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   dealId: varchar("deal_id").notNull(),

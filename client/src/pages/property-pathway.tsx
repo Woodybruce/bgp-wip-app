@@ -38,7 +38,7 @@ const STAGE_LABELS = [
   { n: 4, label: "Property Intelligence", icon: Building2 },
   { n: 5, label: "Investigation Board", icon: FolderOpen },
   { n: 6, label: "Business Plan", icon: Briefcase },
-  { n: 7, label: "Excel Model", icon: FileSpreadsheet },
+  { n: 7, label: "Model Studio", icon: FileSpreadsheet },
   { n: 8, label: "Studio Time", icon: ImageIcon },
   { n: 9, label: "Why Buy", icon: FileText },
 ];
@@ -429,7 +429,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 case 4: return "Purchase Property Intelligence";
                 case 5: return "Build Investigation Board";
                 case 6: return "Draft Business Plan";
-                case 7: return "Generate Excel Model";
+                case 7: return "Generate Model Studio";
                 case 8: return "Run Studio Time";
                 case 9: return "Generate Why Buy";
                 default: return `Run Stage ${nextStage}`;
@@ -969,6 +969,37 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 rent + sold psf. Aggregate figures, not individual comps. */}
             {s1.pdMarket && <PropertyDataMarketCard tone={s1.pdMarket} />}
 
+            {/* Retail leasing comps — Claude-extracted from emails, curated
+                store (separate from CRM). Keyed by postcode / outward code. */}
+            {s1.retailComps && s1.retailComps.length > 0 && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Building2 className="w-4 h-4" /> Retail leasing comps ({s1.retailComps.length})
+                    <Badge variant="outline" className="text-[10px] py-0">from emails</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="text-[11px] space-y-0.5 pb-2">
+                  {s1.retailComps.slice(0, 10).map((c: any) => (
+                    <div key={c.id} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
+                      <span className="truncate flex-1">
+                        {c.address}
+                        {c.tenant ? <span className="text-muted-foreground"> · {c.tenant}</span> : null}
+                      </span>
+                      <span className="text-muted-foreground text-[10px] shrink-0">
+                        {c.areaSqft ? `${Math.round(c.areaSqft).toLocaleString()} sf` : ""}
+                        {c.rentPsf ? ` · £${Math.round(c.rentPsf)}/sf` : c.rentPa ? ` · £${Math.round(c.rentPa / 1000)}k pa` : ""}
+                        {c.leaseDate ? ` · ${String(c.leaseDate).slice(0, 7)}` : ""}
+                      </span>
+                    </div>
+                  ))}
+                  {s1.retailComps.length > 10 && (
+                    <div className="text-[10px] text-muted-foreground pt-1">+ {s1.retailComps.length - 10} more</div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
             {/* Tenancy units */}
             {s1.tenancy?.units && s1.tenancy.units.length > 0 && (
               <Card>
@@ -1297,25 +1328,14 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
         <BusinessPlanCard runId={run.id} stage6={s6} onReload={onReload} />
       )}
 
-      {/* Stage 7 — Excel Model */}
+      {/* Stage 7 — Model Studio (Excel) */}
       {s7 && (
         <ExcelModelCard runId={run.id} stage7={s7} stage6={s6} onReload={onReload} />
       )}
 
-      {/* Stage 8 — Studios */}
+      {/* Stage 8 — Image Studio */}
       {s8 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2"><ImageIcon className="w-4 h-4" /> Studios</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm space-y-2">
-            <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-              <InfoBlock label="Street View" value={s8.streetViewImageId ? "Captured" : "—"} />
-              <InfoBlock label="Retail Context Plan" value={s8.retailContextImageId ? "Rendered" : "—"} />
-              <InfoBlock label="Additional images" value={Array.isArray(s8.additionalImageIds) ? String(s8.additionalImageIds.length) : "0"} />
-            </div>
-          </CardContent>
-        </Card>
+        <ImageStudioCard runId={run.id} stage8={s8} onReload={onReload} />
       )}
 
       {/* Stage 9 — Why Buy */}
@@ -1371,7 +1391,7 @@ function BusinessPlanCard({ runId, stage6, onReload }: { runId: string; stage6: 
         headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
       });
       if (!res.ok) throw new Error(await res.text());
-      toast({ title: "Business plan agreed", description: "Unlocked Stage 7 — Excel Model." });
+      toast({ title: "Business plan agreed", description: "Unlocked Stage 7 — Model Studio." });
       onReload();
     } catch (e: any) {
       toast({ title: "Couldn't agree plan", description: e?.message, variant: "destructive" });
@@ -1467,7 +1487,7 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
         <CardTitle className="text-base flex items-center gap-2">
-          <FileSpreadsheet className="w-4 h-4" /> Excel Model
+          <FileSpreadsheet className="w-4 h-4" /> Model Studio
           {modelAgreed && <Badge className="ml-1 bg-emerald-100 text-emerald-900">Agreed</Badge>}
         </CardTitle>
         <div className="flex items-center gap-2">
@@ -1488,7 +1508,7 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
           <p className="text-muted-foreground">Agree the business plan first — the model is generated from its targets.</p>
         )}
         {planAgreed && !stage7?.modelRunId && (
-          <p className="text-muted-foreground">Click "Generate Excel Model" above to build the workbook from the agreed plan.</p>
+          <p className="text-muted-foreground">Click "Generate Model Studio" above to build the workbook from the agreed plan.</p>
         )}
         {stage7?.modelRunId && (
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1607,6 +1627,92 @@ function fmtGBP(v?: number): string {
 function fmtPsf(v?: number): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return `£${v.toFixed(v < 10 ? 2 : 0)}/sqft`;
+}
+
+function ImageStudioCard({ runId, stage8, onReload }: { runId: string; stage8: any; onReload: () => void }) {
+  const { toast } = useToast();
+  const [retrying, setRetrying] = useState(false);
+  const thumbUrl = (imageId: string) =>
+    `/api/property-pathway/${runId}/image/${imageId}?thumb=1`;
+  const fullUrl = (imageId: string) =>
+    `/api/property-pathway/${runId}/image/${imageId}`;
+  const additional = Array.isArray(stage8?.additionalImageIds) ? stage8.additionalImageIds : [];
+  const collections = Array.isArray(stage8?.collections) ? stage8.collections : [];
+  const hasAny = stage8?.streetViewImageId || stage8?.retailContextImageId || additional.length > 0 || collections.some((c: any) => (c.imageCount || 0) > 0);
+
+  const retry = async () => {
+    setRetrying(true);
+    try {
+      const res = await fetch(`/api/property-pathway/${runId}/stage8/retry`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      toast({ title: "Re-running Image Studio", description: "Refresh in a moment to see the new output." });
+      setTimeout(onReload, 3000);
+    } catch (err: any) {
+      toast({ title: "Retry failed", description: err?.message || "Could not retry", variant: "destructive" });
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3 flex flex-row items-center justify-between">
+        <CardTitle className="text-base flex items-center gap-2">
+          <ImageIcon className="w-4 h-4" /> Image Studio
+        </CardTitle>
+        <div className="flex items-center gap-2">
+          <a href="/image-studio" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+            <ExternalLink className="w-3 h-3" /> Open Image Studio
+          </a>
+          <Button size="sm" variant="outline" onClick={retry} disabled={retrying} className="gap-1.5">
+            {retrying ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Re-run
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="text-sm space-y-3">
+        {!hasAny && (
+          <p className="text-muted-foreground text-xs">
+            No images captured yet. If you expected a retail context plan or street view, hit <b>Re-run</b> — the render may have been skipped on the first pass.
+          </p>
+        )}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {stage8?.streetViewImageId && (
+            <a href={fullUrl(stage8.streetViewImageId)} target="_blank" rel="noreferrer" className="block group">
+              <div className="aspect-[4/3] bg-muted rounded overflow-hidden border">
+                <img src={thumbUrl(stage8.streetViewImageId)} alt="Street View" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-1">Street View</div>
+            </a>
+          )}
+          {stage8?.retailContextImageId && (
+            <a href={fullUrl(stage8.retailContextImageId)} target="_blank" rel="noreferrer" className="block group">
+              <div className="aspect-[4/3] bg-muted rounded overflow-hidden border">
+                <img src={thumbUrl(stage8.retailContextImageId)} alt="Retail Context Plan" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-1">Retail Context Plan</div>
+            </a>
+          )}
+          {additional.slice(0, 6).map((id: string) => (
+            <a key={id} href={fullUrl(id)} target="_blank" rel="noreferrer" className="block group">
+              <div className="aspect-[4/3] bg-muted rounded overflow-hidden border">
+                <img src={thumbUrl(id)} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+              </div>
+            </a>
+          ))}
+        </div>
+        {collections.length > 0 && (
+          <div className="grid grid-cols-3 gap-2 text-[11px]">
+            {collections.map((c: any) => (
+              <div key={c.id} className="border rounded px-2 py-1 flex items-center justify-between">
+                <span className="truncate">{c.name}</span>
+                <Badge variant="outline" className="text-[10px] py-0 shrink-0">{c.imageCount || 0}</Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function PropertyDataMarketCard({ tone }: { tone: any }) {

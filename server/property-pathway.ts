@@ -11,8 +11,10 @@ import {
   investmentComps,
   unitViewings,
   users,
+  imageStudioImages,
   type PropertyPathwayRun,
 } from "@shared/schema";
+import fs from "fs";
 import { inArray } from "drizzle-orm";
 import { performPropertyLookup } from "./property-lookup";
 import { executeCreateSharePointFolder, executeUploadFileToSharePoint } from "./utils/sharepoint-operations";
@@ -138,6 +140,23 @@ interface StageResults {
     // transaction comps (PropertyData doesn't expose those for commercial) but
     // anchors the business plan with a defensible market-tone number.
     pdMarket?: import("./propertydata-market").PropertyDataMarketTone;
+    // Retail leasing comps extracted from Stage 1 emails by Claude Haiku.
+    // Stored in `retail_leasing_comps` (NOT the CRM) so Woody can curate.
+    // This field is the trimmed view shown on the Comps card.
+    retailComps?: Array<{
+      id: string;
+      address: string;
+      postcode?: string;
+      tenant?: string;
+      rentPa?: number;
+      rentPsf?: number;
+      areaSqft?: number;
+      leaseDate?: string;
+      termYears?: number;
+      sourceType?: string;
+      sourceRef?: string;
+      confidence?: number;
+    }>;
   };
   stage2?: {
     companyId?: string;
@@ -2509,7 +2528,49 @@ Return STRICT JSON only, no prose, no code fences:
     }
   }
 
-  console.log(`[pathway stage1] Completing after ${((Date.now() - stage1Start) / 1000).toFixed(1)}s — ${emailHits.length} emails, ${brochureFiles.length} brochures, ${sharepointHits.length} sharepoint, ${deals.length} deals, ${comps.length} comps, ${rates?.assessmentCount || 0} rates`);
+  // Extract retail leasing comps from the email sweep. Writes into the
+  // curated `retail_leasing_comps` table (separate from the CRM so Woody can
+  // review before promoting) and surfaces a trimmed list on this pathway.
+  let retailComps: NonNullable<StageResults["stage1"]>["retailComps"] = undefined;
+  try {
+    if (emailHits.length > 0 && process.env.ANTHROPIC_API_KEY) {
+      const { extractCompsFromEmails, upsertExtractedComps, findNearbyComps } =
+        await import("./retail-comps-extractor");
+      const extracted = await extractCompsFromEmails(
+        emailHits.map((e) => ({
+          subject: e.subject,
+          from: e.from,
+          date: e.date,
+          msgId: e.msgId,
+          preview: e.preview,
+        })),
+        { address, postcode },
+      );
+      const insertedCount = await upsertExtractedComps(extracted, {
+        submarket: postcode ? postcode.split(/\s+/)[0] : undefined,
+      });
+      console.log(`[pathway stage1] Retail comps extracted: ${extracted.length} from AI, ${insertedCount} new rows inserted`);
+      const nearby = postcode ? await findNearbyComps(postcode, 20) : [];
+      retailComps = nearby.map((r: any) => ({
+        id: r.id,
+        address: r.address,
+        postcode: r.postcode || undefined,
+        tenant: r.tenant || undefined,
+        rentPa: r.rent_pa ?? undefined,
+        rentPsf: r.rent_psf ?? undefined,
+        areaSqft: r.area_sqft ?? undefined,
+        leaseDate: r.lease_date || undefined,
+        termYears: r.term_years ?? undefined,
+        sourceType: r.source_type || undefined,
+        sourceRef: r.source_ref || undefined,
+        confidence: r.confidence ?? undefined,
+      }));
+    }
+  } catch (err: any) {
+    console.warn("[pathway stage1] retail comps extraction failed:", err?.message);
+  }
+
+  console.log(`[pathway stage1] Completing after ${((Date.now() - stage1Start) / 1000).toFixed(1)}s — ${emailHits.length} emails, ${brochureFiles.length} brochures, ${sharepointHits.length} sharepoint, ${deals.length} deals, ${comps.length} comps, ${retailComps?.length || 0} retail comps, ${rates?.assessmentCount || 0} rates`);
 
   await setStageStatus(runId, "stage1", "completed", {
     stage1: {
@@ -2531,6 +2592,7 @@ Return STRICT JSON only, no prose, no code fences:
       rates,
       tenant: derivedTenant,
       pdMarket,
+      retailComps,
     },
     // Market intel crawled in parallel during Stage 1 — stored at run level
     // so ChatBGP and later stages can see lease comps / availability / market
@@ -3762,6 +3824,16 @@ export async function runStage(runId: string, stageNumber: number, req: Request)
 // ============================================================================
 
 export function registerPropertyPathwayRoutes(app: Express) {
+  // Bootstrap the retail_leasing_comps table (curated store, separate from CRM).
+  (async () => {
+    try {
+      const { ensureRetailLeasingCompsTable } = await import("./retail-comps-extractor");
+      await ensureRetailLeasingCompsTable();
+    } catch (err: any) {
+      console.warn("[pathway] retail_leasing_comps bootstrap failed:", err?.message);
+    }
+  })();
+
   // Fetch a single email's full details + attachment list from any BGP mailbox.
   // Used by the pathway's in-app email viewer so users don't have to open Outlook.
   app.get("/api/pathway/email/:mailboxEmail/:msgId", requireAuth, async (req: Request, res: Response) => {
@@ -4158,6 +4230,40 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
+  // ─── Retail leasing comps (curated, separate from CRM) ──────────────────
+  // List comps, optionally filtered by postcode / outward code. Used by the
+  // Comps card on the pathway and by the admin review screen.
+  app.get("/api/retail-comps", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const postcode = String(req.query.postcode || "").trim();
+      const limit = Math.min(Number(req.query.limit) || 100, 500);
+      if (postcode) {
+        const { findNearbyComps } = await import("./retail-comps-extractor");
+        const rows = await findNearbyComps(postcode, limit);
+        return res.json(rows);
+      }
+      const { rows } = await pool.query(
+        `SELECT * FROM retail_leasing_comps
+           ORDER BY COALESCE(lease_date, source_date) DESC NULLS LAST, created_at DESC
+           LIMIT $1`,
+        [limit],
+      );
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Delete a curated retail comp (reviewer thinks it's bogus).
+  app.delete("/api/retail-comps/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await pool.query(`DELETE FROM retail_leasing_comps WHERE id = $1`, [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   // Proxy planning PDFs through ScraperAPI. Idox (Westminster especially)
   // can block direct browser downloads by IP, referer or session — and the
   // raw URL often returns an HTML viewer rather than the PDF bytes. Running
@@ -4183,6 +4289,83 @@ export function registerPropertyPathwayRoutes(app: Express) {
   // ============================================================================
   // MARKET INTEL — on-demand web crawl for comps, availability, leasing history
   // ============================================================================
+
+  // ─── Stage 8 image access (pathway-scoped, no admin required) ────────────
+  // The main /api/image-studio endpoints require admin. To surface Stage 8
+  // thumbnails + full images on the pathway board without giving every
+  // authenticated user admin, we expose them scoped to a specific runId —
+  // you can only fetch images that are actually referenced by that run.
+  app.get("/api/property-pathway/:runId/image/:imageId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const run = await getRun(String(req.params.runId));
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const stage8 = (run.stageResults as StageResults)?.stage8;
+      const allowedIds = new Set<string>([
+        stage8?.streetViewImageId,
+        stage8?.retailContextImageId,
+        ...(stage8?.additionalImageIds || []),
+      ].filter(Boolean) as string[]);
+      // Also allow any image currently sitting in this run's stage8 collections.
+      if (stage8?.collections?.length) {
+        const collIds = stage8.collections.map((c) => c.id);
+        const { rows } = await pool.query(
+          `SELECT image_id FROM image_studio_collection_images WHERE collection_id = ANY($1::varchar[])`,
+          [collIds],
+        );
+        for (const r of rows) allowedIds.add(r.image_id);
+      }
+      const imageId = String(req.params.imageId);
+      if (!allowedIds.has(imageId)) return res.status(403).json({ error: "Image not in this run" });
+
+      const [image] = await db
+        .select()
+        .from(imageStudioImages)
+        .where(eq(imageStudioImages.id, imageId));
+      if (!image) return res.status(404).json({ error: "Image not found" });
+
+      const thumbOnly = req.query.thumb === "1";
+      if (thumbOnly && image.thumbnailData) {
+        // Stored as either raw base64 or a full data URL; handle both.
+        const raw = String(image.thumbnailData);
+        const b64 = raw.startsWith("data:") ? raw.split(",")[1] : raw;
+        const buf = Buffer.from(b64, "base64");
+        res.setHeader("Content-Type", "image/jpeg");
+        res.setHeader("Cache-Control", "private, max-age=86400");
+        return res.send(buf);
+      }
+      if (image.localPath && fs.existsSync(image.localPath)) {
+        res.setHeader("Content-Type", image.mimeType || "image/png");
+        res.setHeader("Cache-Control", "private, max-age=86400");
+        return res.sendFile(image.localPath);
+      }
+      // Fall back to the thumbnail if the full file has been evicted.
+      if (image.thumbnailData) {
+        const raw = String(image.thumbnailData);
+        const b64 = raw.startsWith("data:") ? raw.split(",")[1] : raw;
+        const buf = Buffer.from(b64, "base64");
+        res.setHeader("Content-Type", "image/jpeg");
+        return res.send(buf);
+      }
+      return res.status(404).json({ error: "Image file missing on disk" });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Manual re-render / re-sweep of Stage 8 (when it returned empty). Useful
+  // while iterating and after config changes (GOOGLE_API_KEY rotation etc).
+  app.post("/api/property-pathway/:runId/stage8/retry", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const run = await getRun(String(req.params.runId));
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      runStage(run.id, 8, req).catch((err: any) => {
+        console.error(`[pathway stage8 retry] error:`, err?.message);
+      });
+      res.status(202).json({ success: true, async: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
 
   app.post("/api/property-pathway/:runId/market-intel", requireAuth, async (req: Request, res: Response) => {
     try {
