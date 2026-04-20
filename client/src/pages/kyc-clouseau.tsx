@@ -2071,13 +2071,28 @@ export default function KycClouseau() {
                   <Card>
                     <CardContent className="pt-6">
                       <div className="space-y-2">
-                        {investigation.filingHistory?.map((filing, i) => (
-                          <div key={i} className="flex items-center gap-3 text-sm py-1.5 border-b last:border-0">
-                            <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                            <span className="text-xs text-muted-foreground flex-shrink-0 w-20">{filing.date}</span>
-                            <span className="flex-1 truncate">{filing.description || filing.type}</span>
-                          </div>
-                        ))}
+                        {investigation.filingHistory?.map((filing: any, i: number) => {
+                          const docMeta = filing.links?.document_metadata || filing.documentMetadata;
+                          const docId = typeof docMeta === "string" ? docMeta.split("/").filter(Boolean).pop() : null;
+                          return (
+                            <div key={i} className="flex items-center gap-3 text-sm py-1.5 border-b last:border-0">
+                              <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                              <span className="text-xs text-muted-foreground flex-shrink-0 w-20">{filing.date}</span>
+                              <span className="flex-1 truncate">{filing.description || filing.type}</span>
+                              {docId && (
+                                <a
+                                  href={`/api/companies-house/document/${docId}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-primary hover:underline flex-shrink-0"
+                                  title="Download filing PDF from Companies House"
+                                >
+                                  PDF
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })}
                         {(!investigation.filingHistory || investigation.filingHistory.length === 0) && (
                           <p className="text-sm text-muted-foreground">No recent filings</p>
                         )}

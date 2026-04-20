@@ -154,6 +154,7 @@ interface StageResults {
       companyName: string;
       role: "proprietor" | "tenant" | "parent" | "ubo";
       investigationId: number | null;
+      reusedFromClouseau?: boolean;
       riskLevel?: "low" | "medium" | "high" | "critical";
       riskScore?: number;
       sanctionsMatch?: boolean;
@@ -2066,53 +2067,80 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
       });
     }
 
-    // Run the SAME investigation pipeline Clouseau uses — full UBO chain,
-    // sanctions screening, AI risk, filing history — and let it persist to
-    // kyc_investigations. The pathway board stores only a lightweight
-    // summary (risk level + counts) with an investigationId the UI can
-    // link to for the full report. No parallel data; one source of truth.
+    // Reuse-first: if Clouseau already has a recent investigation for this
+    // company, read it from kyc_investigations and surface the existing
+    // record — including the AI narrative and UBO walk — instead of
+    // running a parallel stripped-down investigation. Only run a fresh
+    // one if no record exists within the reuse window.
     const { runCompanyInvestigation } = await import("./kyc-clouseau");
+    const { pool: _pool } = await import("./db");
     const userId = (run as any).startedBy || null;
+    const REUSE_WINDOW_DAYS = 30;
+
+    const summariseInvestigation = (t: { companyNumber: string; companyName: string; role: "proprietor" | "tenant" }, payload: any, investigationId: number | null, reused: boolean) => {
+      const uboCount = Array.isArray(payload?.ownershipChain?.chain) ? payload.ownershipChain.chain.length : 0;
+      const screening = payload?.sanctionsScreening || [];
+      return {
+        companyNumber: t.companyNumber,
+        companyName: payload?.subject?.name || t.companyName,
+        role: t.role,
+        investigationId,
+        reusedFromClouseau: reused,
+        riskLevel: payload?.riskLevel,
+        riskScore: payload?.riskScore,
+        sanctionsMatch: screening.some((s: any) => s.hasSanctions ?? (s.status !== "clear")),
+        pepMatch: screening.some((s: any) => s.hasPep),
+        adverseMediaMatch: screening.some((s: any) => s.hasAdverse),
+        flags: payload?.flags || [],
+        officerCount: (payload?.officers || []).length,
+        pscCount: (payload?.pscs || []).length,
+        uboCount,
+        filingCount: (payload?.filingHistory || []).length,
+        status: payload?.companyProfile?.company_status,
+        incorporatedOn: payload?.companyProfile?.date_of_creation,
+      };
+    };
 
     const companyKycPromise = Promise.all(
       companyTargets.map(async (t) => {
         try {
+          // Check for an existing Clouseau record first.
+          const existing = await _pool.query(
+            `SELECT id, result, conducted_at
+               FROM kyc_investigations
+              WHERE company_number = $1
+                AND conducted_at > NOW() - ($2 || ' days')::interval
+              ORDER BY conducted_at DESC
+              LIMIT 1`,
+            [t.companyNumber, REUSE_WINDOW_DAYS]
+          );
+
+          if (existing.rows.length > 0) {
+            const row = existing.rows[0];
+            const payload = typeof row.result === "string" ? JSON.parse(row.result) : row.result;
+            console.log(`[pathway stage4] Reusing Clouseau investigation ${row.id} for ${t.companyNumber} (${Math.round((Date.now() - new Date(row.conducted_at).getTime()) / 86400000)}d old)`);
+            return summariseInvestigation(t, payload, row.id, true);
+          }
+
+          // No recent record — run a fresh, full-fidelity Clouseau investigation
+          // (AI narrative included) so the saved record is identical to one
+          // produced by the /kyc-clouseau page. Stage 4 only keeps a summary;
+          // the full report is reachable via /kyc-clouseau?investigation={id}.
           const { result, investigationId } = await runCompanyInvestigation({
             companyNumber: t.companyNumber,
             companyName: t.companyName,
             propertyContext: { address, postcode, source: "property-pathway", runId },
             userId,
-            skipAi: true, // pathway runs multiple companies; skip heavy AI per company, Clouseau page will run AI on click
           });
-          const uboCount = Array.isArray((result.ownershipChain as any)?.chain)
-            ? (result.ownershipChain as any).chain.length
-            : 0;
-          const screening = result.sanctionsScreening || [];
-          return {
-            companyNumber: t.companyNumber,
-            companyName: result.subject.name,
-            role: t.role,
-            investigationId,
-            riskLevel: result.riskLevel,
-            riskScore: result.riskScore,
-            sanctionsMatch: screening.some((s: any) => s.hasSanctions),
-            pepMatch: screening.some((s: any) => s.hasPep),
-            adverseMediaMatch: screening.some((s: any) => s.hasAdverse),
-            flags: result.flags || [],
-            officerCount: (result.officers || []).length,
-            pscCount: (result.pscs || []).length,
-            uboCount,
-            filingCount: (result.filingHistory || []).length,
-            status: result.companyProfile?.company_status,
-            incorporatedOn: result.companyProfile?.date_of_creation,
-          };
+          return summariseInvestigation(t, result, investigationId, false);
         } catch (err: any) {
-          console.error(`[pathway stage4] runCompanyInvestigation failed for ${t.companyNumber}:`, err?.message);
+          console.error(`[pathway stage4] investigation failed for ${t.companyNumber}:`, err?.message);
           return {
             companyNumber: t.companyNumber,
             companyName: t.companyName,
             role: t.role,
             investigationId: null,
+            reusedFromClouseau: false,
             error: err?.message || "Companies House lookup failed",
           };
         }

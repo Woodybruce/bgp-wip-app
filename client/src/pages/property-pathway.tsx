@@ -1111,6 +1111,9 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-600 text-white uppercase font-medium" title="Adverse media hit (ComplyAdvantage)">Adverse media</span>
                                 )}
                                 {c.status && <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase">{c.status}</span>}
+                                {c.reusedFromClouseau && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 uppercase font-medium" title="Reused from a recent Clouseau investigation (within 30 days)">Cached · Clouseau</span>
+                                )}
                               </div>
                               <p className="text-[10px] text-muted-foreground">
                                 {c.officerCount ?? 0} officers · {c.pscCount ?? 0} PSCs · {c.uboCount ?? 0} UBO chain · {c.filingCount ?? 0} filings
