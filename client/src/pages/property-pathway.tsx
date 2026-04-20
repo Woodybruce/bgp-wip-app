@@ -342,6 +342,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
   const s4 = run.stageResults?.stage4;
   const s6 = run.stageResults?.stage6;
   const s7 = run.stageResults?.stage7;
+  const mi = run.stageResults?.marketIntel;
   const s2Status = run.stageStatus?.stage2;
   const nextStage = Math.min(run.currentStage, 7);
   const [tenantInput, setTenantInput] = useState("");
@@ -707,24 +708,70 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </Card>
             )}
 
-            {/* Investment comps — always show */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> Comps ({s1.comps?.length || 0})</CardTitle>
-              </CardHeader>
-              <CardContent className="text-[11px] space-y-0.5 max-h-56 overflow-y-auto pb-2">
-                {s1.comps && s1.comps.length > 0 ? (
-                  s1.comps.slice(0, 10).map((c: any, i: number) => (
-                    <div key={i} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
-                      <span className="truncate flex-1">{c.address}</span>
-                      <span className="text-muted-foreground text-[10px] shrink-0">{c.price ? `£${(c.price / 1e6).toFixed(1)}m` : "—"}{c.yield ? ` ${(c.yield * 100).toFixed(1)}%` : ""}</span>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-muted-foreground text-[11px] py-1">No investment comparables found for this postcode yet.</p>
-                )}
-              </CardContent>
-            </Card>
+            {/* Comps — investment (sales) + retail letting from CRM + fresh lease crawl */}
+            {(() => {
+              const investmentComps = (s1.comps || []).filter((c: any) => c.kind === "investment" || (!c.kind && (c.price || c.yield)));
+              const lettingComps = (s1.comps || []).filter((c: any) => c.kind === "letting");
+              const crawledLeaseComps = mi?.comparables || [];
+              const total = investmentComps.length + lettingComps.length + crawledLeaseComps.length;
+              return (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Building2 className="w-4 h-4" /> Comps ({total})
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-[11px] space-y-0.5 max-h-56 overflow-y-auto pb-2">
+                    {investmentComps.length > 0 && (
+                      <>
+                        <p className="text-[9px] uppercase tracking-wide text-muted-foreground pt-0.5">Investment / sales ({investmentComps.length})</p>
+                        {investmentComps.slice(0, 10).map((c: any, i: number) => (
+                          <div key={`inv-${i}`} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
+                            <span className="truncate flex-1">{c.address}</span>
+                            <span className="text-muted-foreground text-[10px] shrink-0">{c.price ? `£${(c.price / 1e6).toFixed(1)}m` : "—"}{c.yield ? ` ${(c.yield * 100).toFixed(1)}%` : ""}</span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                    {lettingComps.length > 0 && (
+                      <>
+                        <p className="text-[9px] uppercase tracking-wide text-muted-foreground pt-1">Retail letting — CRM ({lettingComps.length})</p>
+                        {lettingComps.slice(0, 10).map((c: any, i: number) => (
+                          <div key={`crm-let-${i}`} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
+                            <span className="truncate flex-1">
+                              {c.tenant || "—"}
+                              {c.address ? <span className="text-muted-foreground"> · {c.address}</span> : null}
+                            </span>
+                            <span className="text-muted-foreground text-[10px] shrink-0">
+                              {c.rent || ""}{c.area ? ` · ${c.area}` : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                    {crawledLeaseComps.length > 0 && (
+                      <>
+                        <p className="text-[9px] uppercase tracking-wide text-muted-foreground pt-1">Lease — market intel ({crawledLeaseComps.length})</p>
+                        {crawledLeaseComps.slice(0, 10).map((c: any, i: number) => (
+                          <div key={`lease-${i}`} className="flex items-center gap-1 py-0.5 border-b last:border-b-0">
+                            <span className="truncate flex-1">
+                              {c.address || c.tenant || "—"}
+                              {c.tenant && c.address ? <span className="text-muted-foreground"> · {c.tenant}</span> : null}
+                            </span>
+                            <span className="text-muted-foreground text-[10px] shrink-0">
+                              {c.rent || ""}{c.area ? ` · ${c.area}` : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                    {total === 0 && (
+                      <p className="text-muted-foreground text-[11px] py-1">No investment or letting comparables found yet — market intel crawl may still be running.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })()}
 
             {/* Business rates entries */}
             {s1.rates && s1.rates.entries && s1.rates.entries.length > 0 && (

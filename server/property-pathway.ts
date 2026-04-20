@@ -61,7 +61,18 @@ interface StageResults {
     tenancy?: { occupier?: string; units?: Array<{ id: string; unitName: string; floor?: string; sqft?: number; askingRent?: number; marketingStatus?: string; useClass?: string }>; status?: "vacant" | "let" | "mixed" | "unknown" };
     engagements?: Array<{ source: "unit_viewing" | "investment_viewing" | "interaction"; contact?: string; company?: string; date?: string; outcome?: string; notes?: string; unitName?: string }>;
     pricePaidHistory?: Array<{ address?: string; price?: number; date?: string; type?: string }>;
-    comps?: Array<{ address: string; price?: number; yield?: number; date?: string; type?: string }>;
+    comps?: Array<{
+      address: string;
+      price?: number;
+      yield?: number;
+      date?: string;
+      type?: string;
+      // letting-comp fields (kind === "letting")
+      tenant?: string;
+      rent?: string;
+      area?: string;
+      kind?: "investment" | "letting";
+    }>;
     initialOwnership?: {
       titleNumber: string;
       proprietorName?: string;
@@ -1086,32 +1097,89 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     }
   }
 
-  // 1c-5. Investment comps nearby — share the same postcode outward code
+  // 1c-5. Comps — both investment (sales) AND letting from CRM. Always include
+  // a central-London baseline so the board has something to anchor to even when
+  // no comps exist in the exact outward code (e.g. SW1Y has few RCA rows).
+  //
+  // `kind` distinguishes: "investment" = sale transaction (price, yield),
+  //                       "letting"    = retail lease (rent, area, tenant).
+  // UI renders them in separate sub-sections under the one Comps card.
   const comps: NonNullable<StageResults["stage1"]>["comps"] = [];
   try {
     const outward = postcode ? postcode.toUpperCase().replace(/\s+/g, "").slice(0, -3) : "";
-    if (outward) {
-      const { pool } = await import("./db");
-      const res = await pool.query(
+    const CENTRAL_LONDON_OUTWARDS = ["W1", "W2", "SW1", "SW3", "SW7", "WC1", "WC2", "EC1", "EC2", "EC3", "EC4", "NW1", "SE1"];
+    const { pool } = await import("./db");
+
+    // Investment sales — exact outward first, then central-London fallback.
+    try {
+      const primary = outward ? await pool.query(
         `SELECT address, price, cap_rate, transaction_date, subtype
            FROM investment_comps
           WHERE UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $1
           ORDER BY transaction_date DESC NULLS LAST
           LIMIT 15`,
         [`${outward}%`]
-      );
-      for (const r of res.rows) {
+      ) : { rows: [] };
+      let invRows = primary.rows;
+      if (invRows.length === 0) {
+        const fallback = await pool.query(
+          `SELECT address, price, cap_rate, transaction_date, subtype
+             FROM investment_comps
+            WHERE (${CENTRAL_LONDON_OUTWARDS.map((_, i) => `UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $${i + 1}`).join(" OR ")})
+            ORDER BY transaction_date DESC NULLS LAST
+            LIMIT 15`,
+          CENTRAL_LONDON_OUTWARDS.map(c => `${c}%`)
+        );
+        invRows = fallback.rows;
+      }
+      for (const r of invRows) {
         comps.push({
           address: r.address,
           price: r.price ? Number(r.price) : undefined,
           yield: r.cap_rate ? Number(r.cap_rate) : undefined,
           date: r.transaction_date,
           type: r.subtype,
-        });
+          kind: "investment",
+        } as any);
       }
+    } catch (err: any) {
+      console.error("[pathway stage1] investment_comps query error:", err?.message);
+    }
+
+    // Retail letting comps from crm_comps — postcode lives inside the address
+    // JSONB, so we filter by group_name/comp_type as a proxy and rank by
+    // recency. Prefers same outward code via text LIKE on the JSONB.
+    try {
+      const letRes = await pool.query(
+        `SELECT address, tenant, landlord, area_sqft, headline_rent, zone_a_rate, completion_date, comp_type, deal_type
+           FROM crm_comps
+          WHERE (
+            (address::text) ~* $1
+            OR EXISTS (SELECT 1 FROM unnest($2::text[]) pc WHERE (address::text) ~* pc)
+          )
+          ORDER BY completion_date DESC NULLS LAST
+          LIMIT 15`,
+        [outward || "SW1|W1|WC", CENTRAL_LONDON_OUTWARDS]
+      );
+      for (const r of letRes.rows) {
+        const addrText = typeof r.address === "object"
+          ? [r.address?.line1, r.address?.postcode].filter(Boolean).join(", ")
+          : String(r.address || "");
+        comps.push({
+          address: addrText || r.tenant || "—",
+          tenant: r.tenant || undefined,
+          rent: r.headline_rent || r.zone_a_rate || undefined,
+          area: r.area_sqft || undefined,
+          date: r.completion_date || undefined,
+          type: r.comp_type || r.deal_type || undefined,
+          kind: "letting",
+        } as any);
+      }
+    } catch (err: any) {
+      console.error("[pathway stage1] crm_comps query error:", err?.message);
     }
   } catch (err: any) {
-    console.error("[pathway stage1] investment_comps query error:", err?.message);
+    console.error("[pathway stage1] comps block error:", err?.message);
   }
 
   // 1c-6. Identify likely brochure attachments from email hits — and actually
