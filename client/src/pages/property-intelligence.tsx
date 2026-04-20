@@ -315,7 +315,14 @@ export default function PropertyIntelligence() {
 
         <div className="flex-1 overflow-y-auto">
           <Suspense fallback={<TabLoader />}>
-            <TabsContent value="pathway" className="m-0">
+            {/* forceMount keeps Pathway alive when user flips to Map/Investigator
+                etc. so an in-flight background run keeps polling + state
+                survives. Radix toggles data-state; we hide with display:none. */}
+            <TabsContent
+              value="pathway"
+              forceMount
+              className="m-0 data-[state=inactive]:hidden"
+            >
               <PropertyPathway />
             </TabsContent>
             <TabsContent value="map" className="m-0 h-full">
