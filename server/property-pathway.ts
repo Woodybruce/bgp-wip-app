@@ -117,6 +117,7 @@ interface StageResults {
       mainTenants?: string[];
       leaseStatus?: string;
       listedStatus?: string;
+      passingRent?: string;
     };
     propertyImage?: { streetViewUrl?: string; googleMapsUrl?: string };
     rates?: {
@@ -1098,6 +1099,7 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
             return v;
           })()
         : undefined,
+      passingRent: result.tenancy?.passingRent,
     },
     propertyImage,
     rates: result.rates ? {
@@ -2138,7 +2140,8 @@ Return STRICT JSON only — no prose, no code fences:
     "sizeSqft": "Numeric sqft if mentioned — e.g. '36500'. Omit if not in data.",
     "mainTenants": ["Array of main tenants — e.g. ['Dover Street Market', 'Rose Bakery']. Empty array if none."],
     "leaseStatus": "Lease status summary — e.g. 'Let to Dover Street Market since March 2016'. Omit if not known.",
-    "listedStatus": "Listed building status if mentioned — e.g. 'Grade II listed'. Omit if not in data."
+    "listedStatus": "Listed building status if mentioned — e.g. 'Grade II listed'. Omit if not in data.",
+    "passingRent": "Current passing rent with period/rate if available — e.g. '£2,570,612 pa (£99.61/sq ft NIA)' or '£2.57m pa'. Omit if not in data."
   }
 }
 
@@ -2192,6 +2195,7 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
             mainTenants: Array.isArray(parsed.facts.mainTenants) ? parsed.facts.mainTenants.map((t: any) => String(t).slice(0, 100)).slice(0, 10) : [],
             leaseStatus: parsed.facts.leaseStatus ? String(parsed.facts.leaseStatus).slice(0, 300) : undefined,
             listedStatus: parsed.facts.listedStatus ? String(parsed.facts.listedStatus).slice(0, 100) : undefined,
+            passingRent: parsed.facts.passingRent ? String(parsed.facts.passingRent).slice(0, 120) : undefined,
           };
         }
       }
