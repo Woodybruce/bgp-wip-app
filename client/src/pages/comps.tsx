@@ -856,41 +856,58 @@ const ITZA_ZONES = [
 ] as const;
 
 const GIA_FLOORS = [
-  { key: "groundSales",     label: "Ground – Sales",       floor: "Ground",   weight: 1 },
-  { key: "groundAncillary", label: "Ground – Ancillary",   floor: "",         weight: 0.5 },
-  { key: "firstTrading",    label: "First – Trading",      floor: "First",    weight: 0.5 },
-  { key: "firstAncillary",  label: "First – Ancillary",    floor: "",         weight: 0.25 },
-  { key: "basTrading",      label: "Basement – Trading",   floor: "Basement", weight: 0.5 },
-  { key: "basAncillary",    label: "Basement – Ancillary", floor: "",         weight: 0.25 },
-  { key: "basVaults",       label: "Basement – Vaults",    floor: "",         weight: 0.125 },
+  { key: "groundSales",     label: "Ground – Sales",        floor: "Ground",   weight: 1 },
+  { key: "groundAncillary", label: "Ground – Ancillary",    floor: "",         weight: 0.5 },
+  { key: "firstTrading",    label: "First – Trading",       floor: "First",    weight: 0.5 },
+  { key: "firstAncillary",  label: "First – Ancillary",     floor: "",         weight: 0.25 },
+  { key: "secondTrading",   label: "Second – Trading",      floor: "Second",   weight: 0.25 },
+  { key: "secondAncillary", label: "Second – Ancillary",    floor: "",         weight: 0.15 },
+  { key: "basTrading",      label: "Basement – Trading",    floor: "Basement", weight: 0.5 },
+  { key: "basAncillary",    label: "Basement – Ancillary",  floor: "",         weight: 0.25 },
+  { key: "basVaults",       label: "Basement – Vaults",     floor: "",         weight: 0.125 },
+  { key: "terrace",         label: "Terrace / External",    floor: "Terrace",  weight: 0.15 },
 ] as const;
 
-function NetRentCalculator({ onClose }: { onClose: () => void }) {
+function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; prefillComp?: CrmComp }) {
   const [calcTab, setCalcTab] = useState<"ner" | "itza" | "gia">("ner");
 
   // ── NER state ────────────────────────────────────────────────────
-  const [headlineRent, setHeadlineRent] = useState("");
-  const [rentFreeMonths, setRentFreeMonths] = useState("");
-  const [fitoutContrib, setFitoutContrib] = useState("");
-  const [leaseTerm, setLeaseTerm] = useState("");
-  const [areaSqft, setAreaSqft] = useState("");
-  const [itzaAreaNer, setItzaAreaNer] = useState("");
+  const [nerAddress, setNerAddress] = useState(prefillComp ? (prefillComp.name || "") : "");
+  const [headlineRent, setHeadlineRent] = useState(prefillComp ? String(parseNum(prefillComp.headlineRent) || "") : "");
+  const [rentFreeMonths, setRentFreeMonths] = useState(prefillComp ? String(parseMonths(prefillComp.rentFreeMonths || prefillComp.rentFree) || "") : "");
+  // How many of the rent-free months to amortise as an incentive. Balance is treated
+  // as a genuine fit-out period (not netted against rent). Defaults to the full rent-free.
+  const [rfAmortisedMonths, setRfAmortisedMonths] = useState("");
+  const [fitoutContrib, setFitoutContrib] = useState(prefillComp ? String(parseNum(prefillComp.fitoutContribution) || "") : "");
+  const [leaseTerm, setLeaseTerm] = useState(prefillComp ? String(parseYears(prefillComp.term) || "") : "");
+  // Optional years-to-break. When set, incentives amortise over this rather than the full term.
+  const [yearsToBreak, setYearsToBreak] = useState(prefillComp ? String(parseYears(prefillComp.breakClause || "") || "") : "");
+  const [areaSqft, setAreaSqft] = useState(prefillComp ? String(parseNum(prefillComp.niaSqft || prefillComp.areaSqft) || "") : "");
+  const [itzaAreaNer, setItzaAreaNer] = useState(prefillComp ? String(parseNum(prefillComp.itzaSqft) || "") : "");
 
   const headline = parseFloat(headlineRent) || 0;
   const rf = parseFloat(rentFreeMonths) || 0;
+  const rfAmort = rfAmortisedMonths === "" ? rf : (parseFloat(rfAmortisedMonths) || 0);
   const fitout = parseFloat(fitoutContrib) || 0;
   const term = parseFloat(leaseTerm) || 0;
+  const ytb = parseFloat(yearsToBreak) || 0;
+  // Amortisation horizon: years-to-break if provided, else the full lease term.
+  const amortYears = ytb > 0 ? ytb : term;
   const area = parseFloat(areaSqft) || 0;
   const itzaNer = parseFloat(itzaAreaNer) || 0;
-  const totalRentFreeValue = (headline / 12) * rf;
+  const totalRentFreeValue = (headline / 12) * rfAmort;
   const totalIncentives = totalRentFreeValue + fitout;
-  const annualisedIncentive = term > 0 ? totalIncentives / term : 0;
+  const annualisedIncentive = amortYears > 0 ? totalIncentives / amortYears : 0;
   const netEffectiveRent = headline - annualisedIncentive;
   const netPsfNia = area > 0 ? netEffectiveRent / area : 0;
   const headlinePsfNia = area > 0 ? headline / area : 0;
   const headlineZoneA = itzaNer > 0 ? headline / itzaNer : 0;
   const netZoneA = itzaNer > 0 ? netEffectiveRent / itzaNer : 0;
-  const incentivePct = headline > 0 ? (totalIncentives / (headline * (term || 1))) * 100 : 0;
+  const incentivePct = headline > 0 && amortYears > 0 ? (totalIncentives / (headline * amortYears)) * 100 : 0;
+  // Tom's worked-example formulation: monthly rent × (months-to-break − amortised RF months)
+  // annualised back over years-to-break. Equivalent to the above when fitout=0.
+  const monthsToBreak = amortYears > 0 ? amortYears * 12 : 0;
+  const totalIncomeToBreak = headline > 0 && monthsToBreak > 0 ? (headline / 12) * (monthsToBreak - rfAmort) - fitout : 0;
 
   // ── ITZA state (A1 retail analysis) ─────────────────────────────
   const [itzaAddress, setItzaAddress] = useState("");
@@ -936,6 +953,9 @@ function NetRentCalculator({ onClose }: { onClose: () => void }) {
   });
   const [giaAdj1, setGiaAdj1] = useState("");
   const [giaAdj2, setGiaAdj2] = useState("");
+  // Service-charge allowance — percentage haircut applied after other ground-floor adjustments.
+  // Per Tom's Cardiff template, this is a named line (e.g. -5% where SC is materially above market).
+  const [giaScAllowance, setGiaScAllowance] = useState("");
   const [giaLease1, setGiaLease1] = useState("");
   const [giaLease2, setGiaLease2] = useState("");
 
@@ -948,9 +968,10 @@ function NetRentCalculator({ onClose }: { onClose: () => void }) {
   const giaSubTotal = giaFloorCalcs.reduce((s, f) => s + f.erv, 0);
   const giaA1pct = parseFloat(giaAdj1) || 0;
   const giaA2pct = parseFloat(giaAdj2) || 0;
+  const giaScPct = parseFloat(giaScAllowance) || 0;
   const giaL1pct = parseFloat(giaLease1) || 0;
   const giaL2pct = parseFloat(giaLease2) || 0;
-  const giaAfterAdj = giaSubTotal * (1 + giaA1pct / 100 + giaA2pct / 100);
+  const giaAfterAdj = giaSubTotal * (1 + giaA1pct / 100 + giaA2pct / 100 + giaScPct / 100);
   const giaTotal = giaAfterAdj * (1 + giaL1pct / 100 + giaL2pct / 100);
   const giaSay = Math.round(giaTotal / 1000) * 1000;
 
@@ -1003,6 +1024,14 @@ function NetRentCalculator({ onClose }: { onClose: () => void }) {
         { wch: 6 }, { wch: 12 }, { wch: 16 }, { wch: 12 },
       ];
       XLSX.utils.book_append_sheet(wb, ws, "Rent analysis");
+      appendBgpMeta(XLSX, wb, "itza", {
+        address: itzaAddress,
+        rate: itzaRateVal,
+        totalErv: itzaTotal,
+        say: itzaSay,
+        gia: itzaGIA,
+        itza: itzaITZA,
+      });
       XLSX.writeFile(wb, `ITZA_Analysis_${(itzaAddress || "BGP").replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`);
     });
   }
@@ -1010,13 +1039,18 @@ function NetRentCalculator({ onClose }: { onClose: () => void }) {
   function downloadGiaExcel() {
     import("xlsx").then(XLSX => {
       const wb = XLSX.utils.book_new();
-      const gsSales = parseFloat(giaAreas.groundSales) || 0;
-      const gsAnc   = parseFloat(giaAreas.groundAncillary) || 0;
-      const ftTrad  = parseFloat(giaAreas.firstTrading) || 0;
-      const ftAnc   = parseFloat(giaAreas.firstAncillary) || 0;
-      const bsTrad  = parseFloat(giaAreas.basTrading) || 0;
-      const bsAnc   = parseFloat(giaAreas.basAncillary) || 0;
-      const bsVault = parseFloat(giaAreas.basVaults) || 0;
+      const a = (k: string) => parseFloat(giaAreas[k]) || 0;
+      const gsSales = a("groundSales");
+      const gsAnc   = a("groundAncillary");
+      const ftTrad  = a("firstTrading");
+      const ftAnc   = a("firstAncillary");
+      const snTrad  = a("secondTrading");
+      const snAnc   = a("secondAncillary");
+      const bsTrad  = a("basTrading");
+      const bsAnc   = a("basAncillary");
+      const bsVault = a("basVaults");
+      const terrace = a("terrace");
+      const row = (area: number, weight: number) => area > 0 ? area * giaRateVal * weight : 0;
       const rows: any[][] = [
         ["Address", giaAddress || ""],
         [],
@@ -1024,20 +1058,26 @@ function NetRentCalculator({ onClose }: { onClose: () => void }) {
         [],
         ["Floor", "Description", "Area", null, "Rate (%)", "Rate", "ERV"],
         [],
-        ["Ground", "Sales",     gsSales || null, "@", 1,     giaRateVal * 1,     gsSales > 0 ? gsSales * giaRateVal : 0],
-        [null,     "Ancillary", gsAnc   || null, "@", 0.5,   giaRateVal * 0.5,   gsAnc   > 0 ? gsAnc * giaRateVal * 0.5 : 0],
-        [null, null, null, null, null, null, (gsSales * giaRateVal) + (gsAnc * giaRateVal * 0.5)],
+        ["Ground", "Sales",     gsSales || null, "@", 1,     giaRateVal,         row(gsSales, 1)],
+        [null,     "Ancillary", gsAnc   || null, "@", 0.5,   giaRateVal * 0.5,   row(gsAnc, 0.5)],
+        [null, null, null, null, null, null, row(gsSales, 1) + row(gsAnc, 0.5)],
         [],
         [null, "Adjustments (steps, prominence, configuration etc)", null, null, null, "%"],
         [null, null, null, null, null, giaA1pct ? giaA1pct / 100 : null, giaA1pct ? giaSubTotal * giaA1pct / 100 : null],
         [null, null, null, null, null, giaA2pct ? giaA2pct / 100 : null, giaA2pct ? giaSubTotal * giaA2pct / 100 : null],
+        [null, "Service Charge allowance (high SC)", null, null, null, giaScPct ? giaScPct / 100 : null, giaScPct ? giaSubTotal * giaScPct / 100 : null],
         [],
-        ["First",    "Trading",   ftTrad  || null, null, 0.5,   giaRateVal * 0.5,   ftTrad  > 0 ? ftTrad * giaRateVal * 0.5 : 0],
-        [null,       "Ancillary", ftAnc   || null, null, 0.25,  giaRateVal * 0.25,  ftAnc   > 0 ? ftAnc  * giaRateVal * 0.25 : 0],
+        ["First",    "Trading",   ftTrad  || null, "@", 0.5,   giaRateVal * 0.5,   row(ftTrad, 0.5)],
+        [null,       "Ancillary", ftAnc   || null, "@", 0.25,  giaRateVal * 0.25,  row(ftAnc, 0.25)],
         [],
-        ["Basement", "Trading",   bsTrad  || null, null, 0.5,   null, null],
-        [null,       "Ancillary", bsAnc   || null, null, 0.25,  giaRateVal * 0.25,  bsAnc   > 0 ? bsAnc  * giaRateVal * 0.25 : 0],
-        [null,       "Vaults",    bsVault || null, null, 0.125, giaRateVal * 0.125, bsVault > 0 ? bsVault * giaRateVal * 0.125 : 0],
+        ["Second",   "Trading",   snTrad  || null, "@", 0.25,  giaRateVal * 0.25,  row(snTrad, 0.25)],
+        [null,       "Ancillary", snAnc   || null, "@", 0.15,  giaRateVal * 0.15,  row(snAnc, 0.15)],
+        [],
+        ["Basement", "Trading",   bsTrad  || null, "@", 0.5,   giaRateVal * 0.5,   row(bsTrad, 0.5)],
+        [null,       "Ancillary", bsAnc   || null, "@", 0.25,  giaRateVal * 0.25,  row(bsAnc, 0.25)],
+        [null,       "Vaults",    bsVault || null, "@", 0.125, giaRateVal * 0.125, row(bsVault, 0.125)],
+        [],
+        ["Terrace",  "External",  terrace || null, "@", 0.15,  giaRateVal * 0.15,  row(terrace, 0.15)],
         [],
         [null, "GIA (net of stairs)", giaTotalArea || null],
         [],
@@ -1054,8 +1094,99 @@ function NetRentCalculator({ onClose }: { onClose: () => void }) {
         { wch: 10 }, { wch: 10 }, { wch: 12 },
       ];
       XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+      appendBgpMeta(XLSX, wb, "gia", {
+        address: giaAddress,
+        rate: giaRateVal,
+        totalErv: giaTotal,
+        say: giaSay,
+        gia: giaTotalArea,
+      });
       XLSX.writeFile(wb, `GIA_Analysis_${(giaAddress || "BGP").replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`);
     });
+  }
+
+  function downloadNerExcel() {
+    import("xlsx").then(XLSX => {
+      const wb = XLSX.utils.book_new();
+      const rows: any[][] = [
+        ["Net Effective Rent Analysis"],
+        ["Address", nerAddress || ""],
+        [],
+        ["Inputs"],
+        ["Headline rent (£ pa)",               headline || null],
+        ["Lease term (years)",                  term || null],
+        ["Years to break (override)",           ytb || null],
+        ["Rent free (months)",                  rf || null],
+        ["Rent free — amortised months",        rfAmort || null],
+        ["Rent free — non-amortised (fit-out)", Math.max(0, rf - rfAmort) || null],
+        ["Fit-out / capital contribution (£)",  fitout || null],
+        ["NIA area (sq ft)",                    area || null],
+        ["ITZA area (sq ft)",                   itzaNer || null],
+        [],
+        ["Amortisation horizon (years)",        amortYears || null],
+        ["Rent-free value (£)",                 totalRentFreeValue || null],
+        ["Total incentive value (£)",           totalIncentives || null],
+        ["Annualised incentive (£ pa)",         annualisedIncentive || null],
+        ["Incentive as % of amort term",        amortYears > 0 ? incentivePct / 100 : null],
+        [],
+        ["Results"],
+        ["Headline rent",                       headline || null],
+        ["Net effective rent (£ pa)",           netEffectiveRent || null],
+        ["Headline £ psf (NIA)",                area > 0 ? headlinePsfNia : null],
+        ["Net £ psf (NIA)",                     area > 0 ? netPsfNia : null],
+        ["Headline Zone A (£ psf ITZA)",        itzaNer > 0 ? headlineZoneA : null],
+        ["Net Zone A (£ psf ITZA)",             itzaNer > 0 ? netZoneA : null],
+        [],
+        ["Worked check (Tom's formulation)"],
+        ["Monthly rent × (months to break − amortised RF months)", totalIncomeToBreak || null],
+        ["÷ years to break = NER pa",            amortYears > 0 ? totalIncomeToBreak / amortYears : null],
+        [],
+        ["Method"],
+        ["NER = headline − (rent-free value + capital contribution) ÷ amortisation horizon."],
+        ["Amortisation horizon defaults to lease term; if a tenant break is entered, the horizon is the years-to-break."],
+        ["Rent-free can be split: amortised months count as incentive; any balance is treated as a genuine fit-out period and excluded."],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [{ wch: 50 }, { wch: 18 }];
+      XLSX.utils.book_append_sheet(wb, ws, "NER");
+      appendBgpMeta(XLSX, wb, "ner", {
+        address: nerAddress,
+        headlineRent: headline,
+        term,
+        yearsToBreak: ytb,
+        rentFreeMonths: rf,
+        rentFreeAmortised: rfAmort,
+        fitoutContribution: fitout,
+        netEffectiveRent,
+        rentPsfNia: area > 0 ? netPsfNia : 0,
+      });
+      XLSX.writeFile(wb, `NER_Analysis_${(nerAddress || "BGP").replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`);
+    });
+  }
+
+  /** Writes a hidden `_BGP_META` sheet with the comp id and headline results so the
+   * BGP Excel Add-in can round-trip updated values back to the CRM. */
+  function appendBgpMeta(XLSX: any, wb: any, kind: "ner" | "itza" | "gia", payload: Record<string, any>) {
+    const meta: any[][] = [
+      ["key", "value"],
+      ["bgpKind", kind],
+      ["bgpCompId", prefillComp?.id || ""],
+      ["bgpApiBase", typeof window !== "undefined" ? window.location.origin : ""],
+      ["generatedAt", new Date().toISOString()],
+      ...Object.entries(payload).map(([k, v]) => [k, v ?? ""]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(meta);
+    ws["!cols"] = [{ wch: 22 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, ws, "_BGP_META");
+    // Hide the metadata sheet so end-users don't see it by default.
+    if (wb.Workbook?.Sheets) {
+      const entry = wb.Workbook.Sheets.find((s: any) => s.name === "_BGP_META");
+      if (entry) entry.Hidden = 1;
+    } else {
+      wb.Workbook = wb.Workbook || {};
+      wb.Workbook.Sheets = wb.Workbook.Sheets || [];
+      wb.Workbook.Sheets.push({ name: "_BGP_META", Hidden: 1 });
+    }
   }
 
   return (
@@ -1070,17 +1201,29 @@ function NetRentCalculator({ onClose }: { onClose: () => void }) {
       <TabsContent value="ner">
         <div className="space-y-4" data-testid="net-rent-calculator">
           <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Address / Reference</label>
+              <Input value={nerAddress} onChange={e => setNerAddress(e.target.value)} placeholder="e.g. Franco Manca, Church St, Cardiff" className="h-9" />
+            </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Headline Rent (£ pa)</label>
-              <Input type="number" value={headlineRent} onChange={e => setHeadlineRent(e.target.value)} placeholder="250,000" className="h-9" data-testid="calc-headline-rent" />
+              <Input type="number" value={headlineRent} onChange={e => setHeadlineRent(e.target.value)} placeholder="92,500" className="h-9" data-testid="calc-headline-rent" />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Lease Term (years)</label>
-              <Input type="number" value={leaseTerm} onChange={e => setLeaseTerm(e.target.value)} placeholder="10" className="h-9" data-testid="calc-lease-term" />
+              <Input type="number" value={leaseTerm} onChange={e => setLeaseTerm(e.target.value)} placeholder="15" className="h-9" data-testid="calc-lease-term" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block" title="If set, incentives amortise over years-to-break rather than the full term">Years to break (optional)</label>
+              <Input type="number" value={yearsToBreak} onChange={e => setYearsToBreak(e.target.value)} placeholder="10" className="h-9" data-testid="calc-years-to-break" />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Rent Free (months)</label>
               <Input type="number" value={rentFreeMonths} onChange={e => setRentFreeMonths(e.target.value)} placeholder="12" className="h-9" data-testid="calc-rent-free" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block" title="Of the total rent-free, how many months are treated as an incentive. Balance is treated as a genuine fit-out period (not netted against rent). Defaults to the full rent-free.">RF months amortised (optional)</label>
+              <Input type="number" value={rfAmortisedMonths} onChange={e => setRfAmortisedMonths(e.target.value)} placeholder={rf ? String(rf) : "9"} className="h-9" data-testid="calc-rf-amortised" />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Fitout / Capital Contribution (£)</label>
@@ -1140,10 +1283,18 @@ function NetRentCalculator({ onClose }: { onClose: () => void }) {
                   </>
                 )}
               </div>
-              <div className="pt-2 border-t">
+              <div className="pt-2 border-t space-y-2">
                 <p className="text-[10px] text-muted-foreground">
-                  <span className="font-semibold">RICS Note:</span> Net effective rent calculated by straight-line amortisation of total incentives (rent free value + capital contribution) over the lease term. Zone A rates per RICS Code of Measuring Practice 6th Edition.
+                  <span className="font-semibold">Method:</span> NER = headline − (rent-free value + capital contribution) ÷ amortisation horizon.
+                  Amortisation horizon = <span className="font-semibold">{ytb > 0 ? `${ytb} yr (to break)` : `${term || "—"} yr (lease term)`}</span>.
+                  Rent-free amortised: <span className="font-semibold">{rfAmort}</span> of {rf} months{rf > rfAmort ? ` (${rf - rfAmort} mo treated as fit-out period, not netted)` : ""}.
                 </p>
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-muted-foreground">Zone A per RICS Code of Measuring Practice 6th Ed.</p>
+                  <Button variant="outline" size="sm" onClick={downloadNerExcel} className="h-7 text-xs gap-1.5" data-testid="ner-download-excel">
+                    <Download className="w-3 h-3" /> Download Excel
+                  </Button>
+                </div>
               </div>
             </div>
           )}
@@ -1386,7 +1537,7 @@ function NetRentCalculator({ onClose }: { onClose: () => void }) {
           {/* Adjustments */}
           <div>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Adjustments (steps, prominence, configuration etc)</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Adjustment 1 (%)</label>
                 <Input type="number" value={giaAdj1} onChange={e => setGiaAdj1(e.target.value)} placeholder="0" className="h-9" />
@@ -1394,6 +1545,10 @@ function NetRentCalculator({ onClose }: { onClose: () => void }) {
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Adjustment 2 (%)</label>
                 <Input type="number" value={giaAdj2} onChange={e => setGiaAdj2(e.target.value)} placeholder="0" className="h-9" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block" title="Haircut where service charge is materially above market — typically entered as a negative %">Service Charge allowance (%)</label>
+                <Input type="number" value={giaScAllowance} onChange={e => setGiaScAllowance(e.target.value)} placeholder="-5" className="h-9" />
               </div>
             </div>
           </div>
@@ -2349,6 +2504,9 @@ export default function Comps() {
                       <DropdownMenuContent align="start">
                         <DropdownMenuItem onClick={() => setSelectedComp(comp)}>
                           <Eye className="w-3.5 h-3.5 mr-2" /> View Details
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => { setCalcComp(comp); setCalcOpen(true); }}>
+                          <Calculator className="w-3.5 h-3.5 mr-2" /> Rent Analysis (NER / GIA / ITZA)
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => startPdfExport([comp])}>
                           <FileDown className="w-3.5 h-3.5 mr-2" /> Export PDF

@@ -5,24 +5,24 @@
  * Hammersmith & Fulham, Tower Hamlets, Lambeth) run the same Idox
  * Public Access product, so one parser covers all of them.
  *
- * We hit the "simple search" results page, which accepts a postcode
- * or address string and returns a list of applications. Results HTML
- * follows a stable `<li class="searchresult">` template across councils.
+ * Idox simple search is a two-step flow:
+ *   1. GET /online-applications/search.do?action=simple to receive
+ *      a JSESSIONID cookie and a _csrf token embedded in the form.
+ *   2. POST /online-applications/simpleSearchResults.do?action=firstPage
+ *      with the cookie + _csrf + searchCriteria.simpleSearchString.
  *
  * No auth, no keys — public site, but we keep the request volume low,
  * throttle between councils, and cache results for 12h.
  */
 
-// Postcode outward code → LPA host. Covers the central-London councils
-// most likely to appear in BGP's pipeline. Add more as we expand.
 const LPA_REGISTRY: Array<{ prefixes: string[]; name: string; host: string }> = [
   { prefixes: ["W1", "SW1", "WC1", "WC2", "NW1", "NW8"], name: "Westminster", host: "idoxpa.westminster.gov.uk" },
-  { prefixes: ["SW3", "SW5", "SW7", "SW10", "W8", "W10", "W11", "W14"], name: "Kensington & Chelsea", host: "www.rbkc.gov.uk" }, // K&C uses a slightly different Idox deployment; may need override
-  { prefixes: ["NW3", "NW5", "N6", "N7", "WC1", "WC2"], name: "Camden", host: "accountforms.camden.gov.uk" },
+  { prefixes: ["SW3", "SW5", "SW7", "SW10", "W8", "W10", "W11", "W14"], name: "Kensington & Chelsea", host: "www.rbkc.gov.uk" },
+  { prefixes: ["NW3", "NW5", "N6", "N7"], name: "Camden", host: "accountforms.camden.gov.uk" },
   { prefixes: ["N1", "EC1"], name: "Islington", host: "planning.islington.gov.uk" },
   { prefixes: ["E1", "E2", "E3", "E14"], name: "Tower Hamlets", host: "development.towerhamlets.gov.uk" },
   { prefixes: ["SE1", "SE11", "SW2", "SW4", "SW8", "SW9"], name: "Lambeth", host: "planning.lambeth.gov.uk" },
-  { prefixes: ["W6", "SW6", "W12", "W14"], name: "Hammersmith & Fulham", host: "public-access.lbhf.gov.uk" },
+  { prefixes: ["W6", "SW6", "W12"], name: "Hammersmith & Fulham", host: "public-access.lbhf.gov.uk" },
   { prefixes: ["E5", "E8", "E9", "N16"], name: "Hackney", host: "developmentandhousing.hackney.gov.uk" },
 ];
 
@@ -42,11 +42,9 @@ export interface IdoxPlanningApp {
 
 function resolveLpa(postcode: string): { name: string; host: string } | null {
   const pc = postcode.toUpperCase().replace(/\s+/g, "");
-  // Outward code = letters + digits up to the first digit-then-letter boundary (e.g. SW1Y, W1, EC1A)
   const m = pc.match(/^([A-Z]{1,2}\d{1,2}[A-Z]?)/);
   if (!m) return null;
   const outward = m[1];
-  // Try most-specific match first (e.g. SW1Y matches SW1, not SW), so sort by descending prefix length.
   const hit = LPA_REGISTRY
     .flatMap((lpa) => lpa.prefixes.map((p) => ({ ...lpa, prefix: p })))
     .filter((e) => outward.startsWith(e.prefix))
@@ -55,7 +53,6 @@ function resolveLpa(postcode: string): { name: string; host: string } | null {
 }
 
 function parseDate(raw: string): string {
-  // Idox dates: "Mon 01 Jan 2025" or "Fri 12 Dec 2024"
   const cleaned = raw.trim();
   if (!cleaned) return "";
   const d = new Date(cleaned);
@@ -64,55 +61,68 @@ function parseDate(raw: string): string {
 }
 
 function stripHtml(s: string): string {
-  return s.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  return s
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&middot;/g, "")
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractField(meta: string, labelRe: RegExp): string {
+  // Idox meta looks like: "Ref. No: 26/00766/ADV · Received: Mon 09 Feb 2026 · Decided: ..."
+  // Each label is followed by a value that runs until the next recognised label or end.
+  const m = meta.match(labelRe);
+  return m ? m[1].trim() : "";
 }
 
 function parseResultsHtml(html: string, host: string, lpaName: string): IdoxPlanningApp[] {
   const results: IdoxPlanningApp[] = [];
-  // Each result is an <li class="searchresult"> ... </li>
-  const itemRe = /<li\b[^>]*class="[^"]*searchresult[^"]*"[^>]*>([\s\S]*?)<\/li>/gi;
+  const itemRe = /<li\b[^>]*class="[^"]*\bsearchresult\b[^"]*"[^>]*>([\s\S]*?)<\/li>/gi;
   let m: RegExpExecArray | null;
   while ((m = itemRe.exec(html)) !== null) {
     const block = m[1];
-    const linkMatch = block.match(/<a[^>]+href="([^"]*applicationDetails\.do[^"]*)"[^>]*>([\s\S]*?)<\/a>/i);
-    const detailUrl = linkMatch ? `https://${host}${linkMatch[1].startsWith("/") ? "" : "/online-applications/"}${linkMatch[1].replace(/^\//, "")}` : "";
-    const title = linkMatch ? stripHtml(linkMatch[2]) : "";
 
-    // metaInfo / address paragraph has " | " separated fields. Idox varies:
-    // some use <p class="metaInfo">, some use <p class="address">.
-    const metaMatch = block.match(/<p\b[^>]*class="[^"]*(?:metaInfo|address)[^"]*"[^>]*>([\s\S]*?)<\/p>/i);
-    const meta = metaMatch ? stripHtml(metaMatch[1]) : "";
+    // Status from the badges block (modern Idox).
+    const statusMatch = block.match(/<div[^>]+class="[^"]*badge-status[^"]*"[^>]*>[\s\S]*?<div[^>]+class="[^"]*value[^"]*"[^>]*>([\s\S]*?)<\/div>/i);
+    const status = statusMatch ? stripHtml(statusMatch[1]) : "";
 
-    const refMatch = meta.match(/Ref(?:erence)?\.?\s*No\.?:?\s*([^|]+?)(?:\||$)/i) || title.match(/^([A-Z0-9/\\\-]+)\s*\|/);
-    const statusMatch = meta.match(/Status:?\s*([^|]+?)(?:\||$)/i);
-    const receivedMatch = meta.match(/(?:Received|Validated|Registered):?\s*([^|]+?)(?:\||$)/i);
-    const decidedMatch = meta.match(/(?:Decided|Decision\s+Date):?\s*([^|]+?)(?:\||$)/i);
-    const decisionMatch = meta.match(/Decision:?\s*([^|]+?)(?:\||$)/i);
-    const addressMatch = meta.match(/Address:?\s*([^|]+?)(?:\||$)/i);
+    // Description + detail link.
+    const linkMatch = block.match(/<a[^>]+href="([^"]*applicationDetails\.do[^"]*)"[^>]*class="[^"]*summaryLink[^"]*"[^>]*>([\s\S]*?)<\/a>/i);
+    const rawHref = linkMatch ? linkMatch[1].replace(/&amp;/g, "&") : "";
+    const detailUrl = rawHref
+      ? `https://${host}${rawHref.startsWith("/") ? "" : "/online-applications/"}${rawHref.replace(/^\//, "")}`
+      : "";
+    const description = linkMatch ? stripHtml(linkMatch[2]) : "";
 
-    const reference = (refMatch ? refMatch[1] : "").trim();
+    // Address
+    const addressMatch = block.match(/<p[^>]+class="[^"]*address[^"]*"[^>]*>([\s\S]*?)<\/p>/i);
+    const address = addressMatch ? stripHtml(addressMatch[1]) : "";
+
+    // Meta info block — Ref/Received/Decided etc.
+    const metaMatch = block.match(/<p[^>]+class="[^"]*metaInfo[^"]*"[^>]*>([\s\S]*?)<\/p>/i);
+    const metaRaw = metaMatch ? stripHtml(metaMatch[1]) : "";
+
+    const reference = extractField(metaRaw, /Ref(?:erence)?\.?\s*No\.?:?\s+([A-Z0-9/\-]+(?:\/[A-Z0-9]+)*)/i);
     if (!reference) continue;
 
-    // Description: second <p> inside the li, or everything after the pipe-separated title.
-    let description = "";
-    const descPara = block.match(/<p\b(?![^>]*class="[^"]*(?:metaInfo|address))[^>]*>([\s\S]*?)<\/p>/i);
-    if (descPara) description = stripHtml(descPara[1]);
-    if (!description && title.includes("|")) description = title.split("|").slice(1, -1).join("|").trim();
-    if (!description) description = title;
-
-    // Address: if meta didn't expose it, try the trailing title segment.
-    let address = addressMatch ? addressMatch[1].trim() : "";
-    if (!address && title.includes("|")) address = title.split("|").pop()?.trim() || "";
+    const received = extractField(metaRaw, /Received:?\s+([A-Za-z]{3}\s+\d{1,2}\s+[A-Za-z]+\s+\d{4})/i);
+    const validated = extractField(metaRaw, /Validated:?\s+([A-Za-z]{3}\s+\d{1,2}\s+[A-Za-z]+\s+\d{4})/i);
+    const decided = extractField(metaRaw, /(?:Decided|Decision\s+Date):?\s+([A-Za-z]{3}\s+\d{1,2}\s+[A-Za-z]+\s+\d{4})/i);
+    const decision = extractField(metaRaw, /Decision:?\s+([^·]+?)(?=\s+(?:Ref|Received|Validated|Decided|Appeal|Case)|$)/i);
 
     results.push({
       reference,
       address,
       description,
-      status: statusMatch ? statusMatch[1].trim() : "",
+      status,
       type: "",
-      receivedAt: parseDate(receivedMatch?.[1] || ""),
-      decidedAt: parseDate(decidedMatch?.[1] || ""),
-      decision: decisionMatch ? decisionMatch[1].trim() : "",
+      receivedAt: parseDate(received || validated),
+      decidedAt: parseDate(decided),
+      decision: decision.trim(),
       documentUrl: detailUrl,
       lpa: lpaName,
       source: "idox",
@@ -121,26 +131,56 @@ function parseResultsHtml(html: string, host: string, lpaName: string): IdoxPlan
   return results;
 }
 
-async function fetchIdoxPage(host: string, searchTerm: string, page: number): Promise<string> {
-  const params = new URLSearchParams({
-    action: page === 1 ? "firstPage" : "page",
-    "searchCriteria.simpleSearchString": searchTerm,
-    "searchCriteria.simpleSearch": "true",
-    "searchCriteria.resultsPerPage": "100",
-  });
-  if (page > 1) params.set("searchCriteria.page", String(page));
-  const url = `https://${host}/online-applications/simpleSearchResults.do?${params.toString()}`;
-  const resp = await fetch(url, {
+function parseCookies(setCookieHeader: string | null): string {
+  if (!setCookieHeader) return "";
+  // node-fetch combines multiple Set-Cookie headers with a comma, but commas also appear
+  // inside Expires dates. Split on the key=value boundary before each `; Path` reset.
+  const parts = setCookieHeader.split(/,(?=\s*[A-Za-z0-9_-]+=)/);
+  return parts
+    .map((p) => p.split(";")[0].trim())
+    .filter(Boolean)
+    .join("; ");
+}
+
+async function getCsrfAndCookie(host: string): Promise<{ csrf: string; cookie: string }> {
+  const resp = await fetch(`https://${host}/online-applications/search.do?action=simple`, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; BGPPlanningBot/1.0; +https://brucegillinghampollard.com)",
+      "User-Agent": "Mozilla/5.0 (compatible; BGPPlanningBot/1.0)",
       Accept: "text/html,application/xhtml+xml",
     },
     signal: AbortSignal.timeout(20000),
     redirect: "follow",
   });
-  if (!resp.ok) {
-    throw new Error(`Idox ${host} responded ${resp.status}`);
-  }
+  if (!resp.ok) throw new Error(`Idox ${host} landing ${resp.status}`);
+  const html = await resp.text();
+  const csrfMatch = html.match(/name="_csrf"\s+value="([^"]+)"/);
+  if (!csrfMatch) throw new Error(`Idox ${host}: no CSRF token on search page`);
+  const cookie = parseCookies(resp.headers.get("set-cookie"));
+  return { csrf: csrfMatch[1], cookie };
+}
+
+async function fetchIdoxResults(host: string, searchTerm: string): Promise<string> {
+  const { csrf, cookie } = await getCsrfAndCookie(host);
+  const body = new URLSearchParams({
+    _csrf: csrf,
+    searchType: "Application",
+    "searchCriteria.simpleSearchString": searchTerm,
+    "searchCriteria.simpleSearch": "true",
+  });
+  const resp = await fetch(`https://${host}/online-applications/simpleSearchResults.do?action=firstPage`, {
+    method: "POST",
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; BGPPlanningBot/1.0)",
+      Accept: "text/html,application/xhtml+xml",
+      "Content-Type": "application/x-www-form-urlencoded",
+      Cookie: cookie,
+      Referer: `https://${host}/online-applications/search.do?action=simple`,
+    },
+    body: body.toString(),
+    signal: AbortSignal.timeout(25000),
+    redirect: "follow",
+  });
+  if (!resp.ok) throw new Error(`Idox ${host} search POST ${resp.status}`);
   return await resp.text();
 }
 
@@ -150,7 +190,7 @@ const CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 export async function fetchIdoxPlanning(
   postcode: string,
   address?: string,
-  opts?: { maxPages?: number; maxAgeYears?: number },
+  opts?: { maxAgeYears?: number },
 ): Promise<IdoxPlanningApp[]> {
   const lpa = resolveLpa(postcode);
   if (!lpa) {
@@ -158,45 +198,50 @@ export async function fetchIdoxPlanning(
     return [];
   }
 
-  // Prefer the full address (narrower results) but fall back to postcode if needed.
-  const searchTerm = (address && address.trim().length > 0 ? address : postcode).trim();
-  const cacheKey = `${lpa.host}::${searchTerm.toUpperCase()}`;
+  // Try postcode first (widest net at the right building level), then address if nothing comes back.
+  const cleanPc = postcode.toUpperCase().replace(/\s+/g, " ").trim();
+  const attempts: string[] = [cleanPc];
+  if (address) {
+    // Extract the street+number portion (drop postcode/city noise that can confuse Idox simple search).
+    const streetGuess = address.replace(/,?\s*(london|greater london)\s*,?/i, ",").replace(/,?\s*[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2}\s*$/i, "").replace(/,\s*,/g, ",").replace(/,+$/, "").trim();
+    if (streetGuess && !attempts.includes(streetGuess)) attempts.push(streetGuess);
+  }
+
+  const cacheKey = `${lpa.host}::${attempts.join("|")}`;
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-    console.log(`[idox] cache hit: ${lpa.name} "${searchTerm}" (${cached.data.length})`);
+    console.log(`[idox] cache hit: ${lpa.name} ${attempts[0]} (${cached.data.length})`);
     return cached.data;
   }
 
-  const maxPages = opts?.maxPages ?? 3;
   const minDate = opts?.maxAgeYears
     ? new Date(Date.now() - opts.maxAgeYears * 365 * 24 * 3600 * 1000)
     : null;
 
-  let all: IdoxPlanningApp[] = [];
-  try {
-    for (let page = 1; page <= maxPages; page++) {
-      const html = await fetchIdoxPage(lpa.host, searchTerm, page);
+  let results: IdoxPlanningApp[] = [];
+  let lastError: string | null = null;
+  for (const term of attempts) {
+    try {
+      const html = await fetchIdoxResults(lpa.host, term);
       const parsed = parseResultsHtml(html, lpa.host, lpa.name);
-      if (parsed.length === 0) break;
-      all.push(...parsed);
-      // Stop paginating if the page wasn't full (i.e. last page).
-      if (parsed.length < 90) break;
-    }
-  } catch (err: any) {
-    console.error(`[idox] scrape failed for ${lpa.name} "${searchTerm}":`, err?.message);
-    // Fallback: if we searched by address and got nothing/errored, retry with postcode only.
-    if (address && searchTerm !== postcode) {
-      console.log(`[idox] retrying with postcode only: ${postcode}`);
-      try {
-        const html = await fetchIdoxPage(lpa.host, postcode, 1);
-        all = parseResultsHtml(html, lpa.host, lpa.name);
-      } catch {}
+      console.log(`[idox] ${lpa.name} "${term}" → ${parsed.length} applications`);
+      if (parsed.length > 0) {
+        results = parsed;
+        break;
+      }
+    } catch (err: any) {
+      lastError = err?.message;
+      console.warn(`[idox] ${lpa.name} search failed for "${term}":`, err?.message);
     }
   }
 
-  // Date filter.
+  if (results.length === 0 && lastError) {
+    // Leave no cache entry so we retry rather than caching an error.
+    return [];
+  }
+
   if (minDate) {
-    all = all.filter((a) => {
+    results = results.filter((a) => {
       const d = a.receivedAt || a.decidedAt;
       if (!d) return true;
       const t = new Date(d);
@@ -204,15 +249,14 @@ export async function fetchIdoxPlanning(
     });
   }
 
-  // Dedupe by reference (Idox sometimes returns duplicates across pages).
   const seen = new Set<string>();
-  const deduped = all.filter((a) => {
-    if (seen.has(a.reference)) return false;
-    seen.add(a.reference);
+  const deduped = results.filter((a) => {
+    const key = a.reference.toUpperCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 
-  console.log(`[idox] ${lpa.name} "${searchTerm}" → ${deduped.length} applications`);
   cache.set(cacheKey, { at: Date.now(), data: deduped });
   return deduped;
 }

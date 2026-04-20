@@ -2047,25 +2047,62 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
     });
 
     // Pull resolved company numbers from Stage 1 payload.
+    // Stage 1 scatters company numbers across several fields: initialOwnership
+    // (Land Registry/CRM), aiFacts (extracted by the AI from the briefing),
+    // and tenant (tenancy resolution). Check all of them; if still empty,
+    // fall back to a Companies House name search so we don't silently
+    // lose a proprietor the AI clearly identified.
     const stage1 = (run as any).stageResults?.stage1 || {};
     const companyTargets: Array<{ companyNumber: string; companyName: string; role: "proprietor" | "tenant" }> = [];
 
-    const propCo = stage1.initialOwnership?.proprietorCompanyNumber;
+    const propName = stage1.initialOwnership?.proprietorName || stage1.aiFacts?.owner || null;
+    const propCo = stage1.initialOwnership?.proprietorCompanyNumber
+      || stage1.aiFacts?.ownerCompanyNumber
+      || null;
     if (propCo) {
       companyTargets.push({
         companyNumber: String(propCo).trim(),
-        companyName: stage1.initialOwnership?.proprietorName || "Proprietor",
+        companyName: propName || "Proprietor",
         role: "proprietor",
       });
+    } else if (propName) {
+      try {
+        const { chFetch } = await import("./companies-house");
+        const search = await chFetch(`/search/companies?q=${encodeURIComponent(propName)}&items_per_page=1`);
+        const hit = search?.items?.[0];
+        if (hit?.company_number) {
+          console.log(`[pathway stage4] resolved proprietor "${propName}" → ${hit.company_number} via CH name search`);
+          companyTargets.push({ companyNumber: hit.company_number, companyName: hit.title || propName, role: "proprietor" });
+        }
+      } catch (e: any) {
+        console.warn(`[pathway stage4] proprietor name-search failed for "${propName}":`, e?.message);
+      }
     }
-    const tenantCo = stage1.tenant?.companyNumber;
-    if (tenantCo && tenantCo !== propCo) {
+
+    const tenantCo = stage1.tenant?.companyNumber || null;
+    const tenantName = stage1.tenant?.name || stage1.aiFacts?.mainTenants?.[0] || null;
+    const existingNumbers = new Set(companyTargets.map((c) => c.companyNumber));
+    if (tenantCo && !existingNumbers.has(String(tenantCo).trim())) {
       companyTargets.push({
         companyNumber: String(tenantCo).trim(),
-        companyName: stage1.tenant?.name || "Tenant",
+        companyName: tenantName || "Tenant",
         role: "tenant",
       });
+    } else if (!tenantCo && tenantName && tenantName !== propName) {
+      try {
+        const { chFetch } = await import("./companies-house");
+        const search = await chFetch(`/search/companies?q=${encodeURIComponent(tenantName)}&items_per_page=1`);
+        const hit = search?.items?.[0];
+        if (hit?.company_number && !existingNumbers.has(hit.company_number)) {
+          console.log(`[pathway stage4] resolved tenant "${tenantName}" → ${hit.company_number} via CH name search`);
+          companyTargets.push({ companyNumber: hit.company_number, companyName: hit.title || tenantName, role: "tenant" });
+        }
+      } catch (e: any) {
+        console.warn(`[pathway stage4] tenant name-search failed for "${tenantName}":`, e?.message);
+      }
     }
+
+    console.log(`[pathway stage4] companyTargets resolved: ${companyTargets.map((c) => `${c.role}=${c.companyNumber}(${c.companyName})`).join(", ") || "NONE"}`);
 
     // Reuse-first: if Clouseau already has a recent investigation for this
     // company, read it from kyc_investigations and surface the existing
@@ -2160,7 +2197,7 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
     let idoxApps: any[] = [];
     try {
       const { fetchIdoxPlanning } = await import("./idox-planning");
-      idoxApps = await fetchIdoxPlanning(postcode, address, { maxPages: 3, maxAgeYears: 20 });
+      idoxApps = await fetchIdoxPlanning(postcode, address, { maxAgeYears: 20 });
     } catch (err: any) {
       console.warn("[pathway stage4] Idox scrape skipped:", err?.message);
     }
