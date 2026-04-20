@@ -862,12 +862,20 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     tenancy: { status: "unknown", units: [] }, engagements: [], pricePaidHistory: [], comps: [],
     crmHits: { properties: crmPF?.properties || [], deals: crmPF?.deals || [], companies: crmPF?.companies || [] },
     deals: crmPF?.deals || [],
-    initialOwnership: landRegPF?.freeholds?.[0] ? {
-      titleNumber: landRegPF.freeholds[0].titleNumber || "unknown",
-      proprietorName: landRegPF.freeholds[0].proprietor,
-      proprietorCompanyNumber: null,
-      dateOfPurchase: landRegPF.freeholds[0].dateOfPurchase,
-    } : null,
+    initialOwnership: (() => {
+      const fhs = landRegPF?.freeholds || [];
+      // Prefer the first title with an actual proprietor name — postcode-
+      // wide LR lookups sometimes return a title with a blank proprietor
+      // in position 0, which would blank out the whole ownership card.
+      const best = fhs.find((f: any) => f?.proprietor?.trim()) || fhs[0];
+      if (!best) return null;
+      return {
+        titleNumber: best.titleNumber || "unknown",
+        proprietorName: best.proprietor,
+        proprietorCompanyNumber: null,
+        dateOfPurchase: best.dateOfPurchase,
+      };
+    })(),
     rates: voaPF?.count > 0 ? {
       totalRateableValue: voaPF.totalRateableValue,
       assessmentCount: voaPF.count,
@@ -1155,7 +1163,10 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     stage1FreeholdsData = freeholds;
     stage1LeaseholdsData = (lookup.propertyDataCoUk as any)?.leaseholds?.data || [];
     if (freeholds.length > 0) {
-      const best = freeholds[0];
+      // Prefer the first freehold with an actual proprietor name —
+      // postcode-wide LR queries can return a title with blank
+      // proprietor_name_1 first, which wipes the Ownership card.
+      const best = freeholds.find((f: any) => f?.proprietor_name_1?.trim()) || freeholds[0];
       initialOwnership = {
         titleNumber: best.title_number || best.title || initialOwnership?.titleNumber || "unknown",
         proprietorName: best.proprietor_name_1 || initialOwnership?.proprietorName,
