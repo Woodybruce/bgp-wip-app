@@ -62,6 +62,7 @@ export default function PropertyPathway() {
   const [advancing, setAdvancing] = useState(false);
   const [newAddress, setNewAddress] = useState("");
   const [newPostcode, setNewPostcode] = useState("");
+  const [creatingCrmProperty, setCreatingCrmProperty] = useState(false);
 
   const runIdFromUrl = (() => {
     try {
@@ -166,6 +167,43 @@ export default function PropertyPathway() {
       }
     } catch (err: any) {
       toast({ title: "Could not start", description: err.message, variant: "destructive" });
+    }
+  }
+
+  async function createCrmPropertyFromRun() {
+    if (!selectedRun) return;
+    setCreatingCrmProperty(true);
+    try {
+      // Use the first comma-segment as the display name, fall back to full address.
+      const name = (selectedRun.address.split(",")[0] || selectedRun.address).trim();
+      const createRes = await fetch("/api/crm/properties", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({
+          name,
+          address: selectedRun.address,
+          groupName: "Properties",
+        }),
+      });
+      if (!createRes.ok) throw new Error(await createRes.text());
+      const created = await createRes.json();
+
+      // Link the pathway run to the new CRM property so downstream stages
+      // (tenancy, valuations, business plan) pick it up.
+      await fetch(`/api/property-pathway/${selectedRun.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ propertyId: created.id }),
+      }).catch(() => {});
+
+      toast({ title: "CRM entry created", description: name });
+      await loadRun(selectedRun.id);
+    } catch (err: any) {
+      toast({ title: "Could not create CRM entry", description: err?.message || String(err), variant: "destructive" });
+    } finally {
+      setCreatingCrmProperty(false);
     }
   }
 
@@ -801,24 +839,42 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </CardContent>
             </Card>
 
-            {/* CRM properties */}
-            {s1.crmHits?.properties && s1.crmHits.properties.length > 0 && (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base flex items-center gap-2"><Building2 className="w-4 h-4" /> CRM ({s1.crmHits.properties.length})</CardTitle>
-                </CardHeader>
-                <CardContent className="text-[11px] space-y-0.5 pb-2">
-                  {s1.crmHits.properties.map((p: any) => (
+            {/* CRM properties — always render the card so users can create an
+                entry from the pathway when no existing property matches. */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Building2 className="w-4 h-4" /> CRM{s1.crmHits?.properties?.length ? ` (${s1.crmHits.properties.length})` : ""}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-[11px] space-y-0.5 pb-2">
+                {s1.crmHits?.properties?.length ? (
+                  s1.crmHits.properties.map((p: any) => (
                     <Link key={p.id} href={`/properties/${p.id}`}>
                       <div className="flex items-center gap-1 py-0.5 border-b last:border-b-0 hover:bg-muted/50 cursor-pointer">
                         <span className="text-primary truncate flex-1">{p.name}</span>
                         <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
                       </div>
                     </Link>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
+                  ))
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-muted-foreground">No matching CRM property.</p>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-[11px] gap-1"
+                      disabled={creatingCrmProperty}
+                      onClick={() => createCrmPropertyFromRun()}
+                      data-testid="button-create-crm-from-pathway"
+                    >
+                      {creatingCrmProperty ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                      Create CRM entry
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             {/* Comps — investment (sales) + retail letting from CRM + fresh lease crawl */}
             {(() => {
