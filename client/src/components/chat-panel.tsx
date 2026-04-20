@@ -54,6 +54,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import type { User as UserType } from "@shared/schema";
+import { useChatBGPState } from "@/contexts/chatbgp-context";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -1114,7 +1115,12 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
   const [panelProgressLabel, setPanelProgressLabel] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  // Share activeThreadId with the full-page /chatbgp view (same
+  // ChatBGPProvider context wraps both). Minimising the full page then
+  // leaves the same conversation loaded in the side panel.
+  const chatBgpCtx = useChatBGPState();
+  const activeThreadId = chatBgpCtx.activeThreadId;
+  const setActiveThreadId = chatBgpCtx.setActiveThreadId;
   const [view, setView] = useState<"chat" | "threads" | "new-group">("chat");
   const [showSidebar, setShowSidebar] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);

@@ -335,40 +335,44 @@ function AuthenticatedApp() {
 
   return (
     <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full">
-        <AppSidebar />
-        <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          <header className="flex items-center justify-between gap-2 p-2 border-b h-12 shrink-0">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger data-testid="button-sidebar-toggle" />
-              <GlobalSearch />
-            </div>
-            <div className="flex items-center gap-2">
-              <ColorSchemeSelector />
-              <NotificationCenter />
-              <button
-                data-testid="button-chat-toggle"
-                onClick={() => setChatOpen(prev => !prev)}
-                className="relative inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
-                title="Team Chat"
-              >
-                <MessageSquare className="h-4 w-4" />
-                {chatUnseenCount > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-medium">
-                    {chatUnseenCount > 99 ? "99+" : chatUnseenCount}
-                  </span>
-                )}
-              </button>
-            </div>
-          </header>
-          <div className="flex-1 overflow-y-auto min-h-0">
-            <ChatBGPProvider>
+      {/* ChatBGPProvider wraps BOTH the router and the chat panel so the
+          full-page /chatbgp view and the side panel share activeThreadId
+          — minimising the full page keeps the same conversation in the
+          side panel instead of dropping back to a fresh empty state. */}
+      <ChatBGPProvider>
+        <div className="flex h-screen w-full">
+          <AppSidebar />
+          <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+            <header className="flex items-center justify-between gap-2 p-2 border-b h-12 shrink-0">
+              <div className="flex items-center gap-2">
+                <SidebarTrigger data-testid="button-sidebar-toggle" />
+                <GlobalSearch />
+              </div>
+              <div className="flex items-center gap-2">
+                <ColorSchemeSelector />
+                <NotificationCenter />
+                <button
+                  data-testid="button-chat-toggle"
+                  onClick={() => setChatOpen(prev => !prev)}
+                  className="relative inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+                  title="Team Chat"
+                >
+                  <MessageSquare className="h-4 w-4" />
+                  {chatUnseenCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-medium">
+                      {chatUnseenCount > 99 ? "99+" : chatUnseenCount}
+                    </span>
+                  )}
+                </button>
+              </div>
+            </header>
+            <div className="flex-1 overflow-y-auto min-h-0">
               <Router />
-            </ChatBGPProvider>
+            </div>
           </div>
+          <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} />
         </div>
-        <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} />
-      </div>
+      </ChatBGPProvider>
       {isForceDesktop && (
         <button
           onClick={() => setForceDesktop(false)}
