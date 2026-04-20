@@ -78,6 +78,54 @@ export default function PropertyPathway() {
     if (runIdFromUrl) loadRun(runIdFromUrl);
   }, [runIdFromUrl]);
 
+  // Keep the run list fresh while any run has a stage in "running" state —
+  // lets the list page show live progress for background runs.
+  useEffect(() => {
+    const anyRunning = runs.some((r: any) =>
+      Object.values(r.stageStatus || {}).some((s) => s === "running"),
+    );
+    if (!anyRunning) return;
+    const id = setInterval(() => loadRuns(), 8000);
+    return () => clearInterval(id);
+  }, [runs]);
+
+  // Auto-poll whenever the selected run has a stage in "running" state — the
+  // server keeps running stages in the background even if the user navigates
+  // away, so on re-entry (or a refresh) we pick up progress without needing
+  // the user to manually re-click the advance button.
+  useEffect(() => {
+    if (!selectedRun?.id) return;
+    const anyRunning = Object.values((selectedRun as any).stageStatus || {}).some(
+      (s) => s === "running",
+    );
+    if (!anyRunning) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(`/api/property-pathway/${selectedRun.id}`, {
+          headers: getAuthHeaders(),
+          credentials: "include",
+        });
+        if (res.ok) {
+          const polled = await res.json();
+          if (!cancelled) setSelectedRun(polled);
+        }
+      } catch {}
+      if (!cancelled) {
+        const stillRunning = Object.values((selectedRun as any).stageStatus || {}).some(
+          (s) => s === "running",
+        );
+        if (stillRunning) loadRuns();
+      }
+    };
+    const id = setInterval(tick, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [selectedRun?.id, JSON.stringify((selectedRun as any)?.stageStatus || {})]);
+
   async function loadRuns() {
     setLoading(true);
     try {
