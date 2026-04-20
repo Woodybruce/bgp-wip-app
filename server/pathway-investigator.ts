@@ -405,6 +405,13 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
         let rows: any[] = [];
         if (voaSqliteAvailable()) {
           rows = lookupVoaByPostcode(pc, street, 30);
+          // Street filter can be too narrow for multi-unit schemes where the
+          // "street" in the address (e.g. "Islington Square") doesn't match
+          // the actual VOA street column ("Upper Street", "Esther Anne Place").
+          // Fall back to postcode-only so the user still sees rateable values.
+          if (rows.length === 0 && street) {
+            rows = lookupVoaByPostcode(pc, undefined, 30);
+          }
         } else {
           const normalisedPc = pc.replace(/\s+/g, "").toUpperCase();
           const res = await pool.query(
