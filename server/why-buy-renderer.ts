@@ -62,7 +62,9 @@ export async function renderWhyBuy(args: { runId: string; req?: Request }): Prom
   const stage1 = results.stage1 || {};
   const stage2 = results.stage2 || {};
   const stage4 = results.stage4 || {};
-  const stage6 = results.stage6 || {};
+  const stage6 = results.stage6 || {};        // Business Plan (agreed + draft)
+  const stage8 = results.stage8 || {};        // Studio Time (images)
+  const agreedPlan = stage6.agreed || stage6.draft || {};
 
   // Load tenant/brand company if linked
   let tenant: any = null;
@@ -71,32 +73,47 @@ export async function renderWhyBuy(args: { runId: string; req?: Request }): Prom
     tenant = c;
   }
 
-  // Load Street View + Retail Context Plan images
+  // Load Street View + Retail Context Plan images (now sourced from Stage 8)
   let streetViewPath: string | null = null;
   let retailContextPath: string | null = null;
-  if (stage6.streetViewImageId) {
-    const [img] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, stage6.streetViewImageId)).limit(1);
+  if (stage8.streetViewImageId) {
+    const [img] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, stage8.streetViewImageId)).limit(1);
     if (img?.localPath && fs.existsSync(img.localPath)) streetViewPath = img.localPath;
   }
-  if (stage6.retailContextImageId) {
-    const [img] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, stage6.retailContextImageId)).limit(1);
+  if (stage8.retailContextImageId) {
+    const [img] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, stage8.retailContextImageId)).limit(1);
     if (img?.localPath && fs.existsSync(img.localPath)) retailContextPath = img.localPath;
   }
 
-  // Load latest model outputs
+  // Load model outputs — prefer the LOCKED (agreed) version from stage7 if present,
+  // otherwise fall back to latest.
   let modelOutputs: Record<string, any> = {};
   let modelName: string | null = null;
-  if (run.modelRunId) {
-    const [modelRun] = await db.select().from(excelModelRuns).where(eq(excelModelRuns.id, run.modelRunId)).limit(1);
+  const agreedModelVersionId: string | undefined = results.stage7?.modelVersionId;
+  const modelRunId = run.modelRunId || results.stage7?.modelRunId;
+  if (modelRunId) {
+    const [modelRun] = await db.select().from(excelModelRuns).where(eq(excelModelRuns.id, modelRunId)).limit(1);
     if (modelRun) {
       modelName = modelRun.name;
-      const [latest] = await db
-        .select()
-        .from(excelModelRunVersions)
-        .where(eq(excelModelRunVersions.modelRunId, run.modelRunId))
-        .orderBy(desc(excelModelRunVersions.version))
-        .limit(1);
-      if (latest?.outputValues) modelOutputs = latest.outputValues as any;
+      let version: any = null;
+      if (agreedModelVersionId) {
+        const [v] = await db
+          .select()
+          .from(excelModelRunVersions)
+          .where(eq(excelModelRunVersions.id, agreedModelVersionId))
+          .limit(1);
+        version = v;
+      }
+      if (!version) {
+        const [latest] = await db
+          .select()
+          .from(excelModelRunVersions)
+          .where(eq(excelModelRunVersions.modelRunId, modelRunId))
+          .orderBy(desc(excelModelRunVersions.version))
+          .limit(1);
+        version = latest;
+      }
+      if (version?.outputValues) modelOutputs = version.outputValues as any;
       else if (modelRun.outputValues) {
         try { modelOutputs = JSON.parse(modelRun.outputValues); } catch {}
       }
@@ -258,7 +275,87 @@ export async function renderWhyBuy(args: { runId: string; req?: Request }): Prom
   }
 
   // ──────────────────────────────────────────────────────────
-  // PAGE 3 — Location & Retail Context
+  // PAGE 3 — Business Plan (agreed)
+  // ──────────────────────────────────────────────────────────
+  doc.addPage();
+  drawHeader();
+  y = 80;
+  doc.font("Body-Bold").fontSize(16).fillColor(BGP_SLATE).text("Business Plan", leftM, y);
+  y = doc.y + 4;
+
+  if (stage6.agreed) {
+    doc.font("Body").fontSize(8).fillColor(BGP_MUTED).text(
+      `Agreed${stage6.agreedAt ? ` on ${new Date(stage6.agreedAt).toLocaleDateString("en-GB")}` : ""}${stage6.agreedBy ? ` by ${stage6.agreedBy}` : ""}`,
+      leftM, y, { width: usableW }
+    );
+    y = doc.y + 10;
+  } else if (stage6.draft) {
+    doc.font("Body").fontSize(8).fillColor("#b45309").text("DRAFT — plan not yet agreed", leftM, y, { width: usableW });
+    y = doc.y + 10;
+  }
+
+  if (agreedPlan.strategy) {
+    doc.font("Body-Bold").fontSize(11).fillColor(BGP_SLATE).text("Strategy", leftM, y);
+    y = doc.y + 4;
+    doc.font("Body").fontSize(10).fillColor(BGP_SLATE).text(agreedPlan.strategy, leftM, y, { width: usableW, lineGap: 2 });
+    y = doc.y + 12;
+  }
+
+  if (stage6.summary && !agreedPlan.strategy) {
+    // Fallback — use Claude's conversational summary if no explicit strategy string
+    doc.font("Body").fontSize(10).fillColor(BGP_SLATE).text(stage6.summary, leftM, y, { width: usableW, lineGap: 2 });
+    y = doc.y + 12;
+  }
+
+  // Plan KPI strip — agreed targets
+  const planKpiY = y;
+  const planKpiW = (usableW - 24) / 3;
+  kpiCard(leftM, planKpiY, planKpiW, 56, "Target Price", fmtMoney(agreedPlan.targetPurchasePrice));
+  kpiCard(leftM + planKpiW + 12, planKpiY, planKpiW, 56, "Target NIY", fmtPct(agreedPlan.targetNIY));
+  kpiCard(leftM + (planKpiW + 12) * 2, planKpiY, planKpiW, 56, "Hold Period", agreedPlan.holdPeriodYrs ? `${agreedPlan.holdPeriodYrs} yrs` : "—");
+  y = planKpiY + 68;
+
+  const planKpiY2 = y;
+  kpiCard(leftM, planKpiY2, planKpiW, 56, "Exit Price", fmtMoney(agreedPlan.exitPrice));
+  kpiCard(leftM + planKpiW + 12, planKpiY2, planKpiW, 56, "Exit Yield", fmtPct(agreedPlan.exitYield));
+  kpiCard(leftM + (planKpiW + 12) * 2, planKpiY2, planKpiW, 56, "Target IRR", fmtPct(agreedPlan.targetIRR));
+  y = planKpiY2 + 72;
+
+  // Key moves
+  if (Array.isArray(agreedPlan.keyMoves) && agreedPlan.keyMoves.length > 0) {
+    doc.font("Body-Bold").fontSize(11).fillColor(BGP_SLATE).text("Key Moves", leftM, y);
+    y = doc.y + 6;
+    for (const move of agreedPlan.keyMoves) {
+      doc.font("Body").fontSize(9).fillColor(BGP_COOL_GREY).text(`  •  ${move}`, leftM, y, { width: usableW });
+      y = doc.y + 3;
+    }
+    y += 8;
+  }
+
+  // Capex callout
+  if (agreedPlan.capex?.amount || agreedPlan.capex?.scope) {
+    doc.font("Body-Bold").fontSize(11).fillColor(BGP_SLATE).text("Capex", leftM, y);
+    y = doc.y + 4;
+    const capexLine = [
+      agreedPlan.capex?.amount ? fmtMoney(agreedPlan.capex.amount) : null,
+      agreedPlan.capex?.scope || null,
+    ].filter(Boolean).join(" — ");
+    doc.font("Body").fontSize(9).fillColor(BGP_COOL_GREY).text(capexLine, leftM, y, { width: usableW });
+    y = doc.y + 10;
+  }
+
+  // Risks
+  if (Array.isArray(agreedPlan.risks) && agreedPlan.risks.length > 0) {
+    doc.font("Body-Bold").fontSize(11).fillColor(BGP_SLATE).text("Risks", leftM, y);
+    y = doc.y + 6;
+    for (const r of agreedPlan.risks) {
+      doc.font("Body").fontSize(9).fillColor(BGP_COOL_GREY).text(`  •  ${r}`, leftM, y, { width: usableW });
+      y = doc.y + 3;
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // PAGE 4 — Location & Retail Context
   // ──────────────────────────────────────────────────────────
   doc.addPage();
   drawHeader();
@@ -275,7 +372,7 @@ export async function renderWhyBuy(args: { runId: string; req?: Request }): Prom
       y = doc.y + 10;
     } catch { y += 10; }
   } else {
-    doc.font("Body").fontSize(10).fillColor(BGP_COOL_GREY).text("Retail context plan not yet rendered — run Stage 6.", leftM, y);
+    doc.font("Body").fontSize(10).fillColor(BGP_COOL_GREY).text("Retail context plan not yet rendered — run Stage 8 (Studio Time).", leftM, y);
     y += 20;
   }
 
@@ -288,32 +385,33 @@ export async function renderWhyBuy(args: { runId: string; req?: Request }): Prom
   }
 
   // ──────────────────────────────────────────────────────────
-  // PAGE 4 — Financials & Next Steps
+  // PAGE 5 — Financials, Comps & Next Steps
   // ──────────────────────────────────────────────────────────
   doc.addPage();
   drawHeader();
   y = 80;
-  doc.font("Body-Bold").fontSize(16).fillColor(BGP_SLATE).text("Financials & Next Steps", leftM, y);
-  y = doc.y + 12;
+  doc.font("Body-Bold").fontSize(16).fillColor(BGP_SLATE).text("Financials & Evidence", leftM, y);
+  y = doc.y + 4;
 
   if (modelName) {
-    doc.font("Body").fontSize(9).fillColor(BGP_COOL_GREY).text(`Live model: ${modelName}`, leftM, y);
+    const agreedBadge = agreedModelVersionId ? " — AGREED" : " — latest draft";
+    doc.font("Body").fontSize(8).fillColor(BGP_MUTED).text(`Model: ${modelName}${agreedBadge}`, leftM, y);
     y = doc.y + 10;
   }
 
-  // Financial KPIs from latest model version
+  // Financial KPIs from agreed (or latest) model version
   const fkpiY = y;
   const fkpiW = (usableW - 24) / 3;
-  const irr = modelOutputs["unleveredIRR"] ?? modelOutputs["Unlevered IRR"] ?? modelOutputs["irr"] ?? null;
-  const moic = modelOutputs["unleveredMOIC"] ?? modelOutputs["Unlevered MOIC"] ?? modelOutputs["moic"] ?? null;
-  const exit = modelOutputs["exitValue"] ?? modelOutputs["Exit Value"] ?? modelOutputs["gdv"] ?? null;
+  const irr = modelOutputs["unleveredIRR"] ?? modelOutputs["Unlevered IRR"] ?? modelOutputs["irr"] ?? agreedPlan.targetIRR ?? null;
+  const moic = modelOutputs["unleveredMOIC"] ?? modelOutputs["Unlevered MOIC"] ?? modelOutputs["moic"] ?? agreedPlan.targetMOIC ?? null;
+  const exit = modelOutputs["exitValue"] ?? modelOutputs["Exit Value"] ?? modelOutputs["gdv"] ?? agreedPlan.exitPrice ?? null;
   kpiCard(leftM, fkpiY, fkpiW, 60, "Unlevered IRR", fmtPct(irr));
   kpiCard(leftM + fkpiW + 12, fkpiY, fkpiW, 60, "Unlevered MOIC", moic ? `${Number(moic).toFixed(2)}x` : "—");
   kpiCard(leftM + (fkpiW + 12) * 2, fkpiY, fkpiW, 60, "Exit / GDV", fmtMoney(exit));
-  y = fkpiY + 76;
+  y = fkpiY + 72;
 
   // Additional outputs table
-  const extraOutputs = Object.entries(modelOutputs).filter(([k]) => !/IRR|MOIC|exitValue|Exit Value|gdv/i.test(k)).slice(0, 8);
+  const extraOutputs = Object.entries(modelOutputs).filter(([k]) => !/IRR|MOIC|exitValue|Exit Value|gdv/i.test(k)).slice(0, 6);
   if (extraOutputs.length) {
     doc.font("Body-Bold").fontSize(11).fillColor(BGP_SLATE).text("Key Model Outputs", leftM, y);
     y = doc.y + 6;
@@ -328,6 +426,44 @@ export async function renderWhyBuy(args: { runId: string; req?: Request }): Prom
     y += 10;
   }
 
+  // Market comparables table (from market intel + stage1 comps)
+  const comps: Array<{ address?: string; tenant?: string; rent?: string; area?: string; date?: string; source?: string }> =
+    (results.marketIntel?.comparables && Array.isArray(results.marketIntel.comparables)) ? results.marketIntel.comparables.slice(0, 6) : [];
+  if (comps.length) {
+    doc.font("Body-Bold").fontSize(11).fillColor(BGP_SLATE).text("Market Comparables", leftM, y);
+    y = doc.y + 6;
+
+    // Table header
+    const col = {
+      addr: leftM,
+      tenant: leftM + usableW * 0.32,
+      rent: leftM + usableW * 0.58,
+      area: leftM + usableW * 0.75,
+      date: leftM + usableW * 0.88,
+    };
+    doc.rect(leftM, y, usableW, 14).fillColor(BGP_WARM_GREY).fill();
+    doc.font("Body-Bold").fontSize(8).fillColor(BGP_SLATE)
+      .text("ADDRESS", col.addr + 4, y + 3, { width: usableW * 0.30 })
+      .text("TENANT", col.tenant + 4, y + 3, { width: usableW * 0.24 })
+      .text("RENT", col.rent + 4, y + 3, { width: usableW * 0.16 })
+      .text("AREA", col.area + 4, y + 3, { width: usableW * 0.12 })
+      .text("DATE", col.date + 4, y + 3, { width: usableW * 0.11 });
+    y += 14;
+
+    for (const c of comps) {
+      const rowH = 16;
+      doc.font("Body").fontSize(8).fillColor(BGP_SLATE);
+      doc.text(truncate(c.address || "—", 34), col.addr + 4, y + 4, { width: usableW * 0.30 });
+      doc.text(truncate(c.tenant || "—", 24), col.tenant + 4, y + 4, { width: usableW * 0.24 });
+      doc.text(c.rent || "—", col.rent + 4, y + 4, { width: usableW * 0.16 });
+      doc.text(c.area || "—", col.area + 4, y + 4, { width: usableW * 0.12 });
+      doc.text(c.date || "—", col.date + 4, y + 4, { width: usableW * 0.11 });
+      doc.moveTo(leftM, y + rowH).lineTo(leftM + usableW, y + rowH).strokeColor("#EEE").lineWidth(0.3).stroke();
+      y += rowH;
+    }
+    y += 10;
+  }
+
   doc.font("Body-Bold").fontSize(11).fillColor(BGP_SLATE).text("Next Steps", leftM, y);
   y = doc.y + 6;
   const nextSteps = [
@@ -335,7 +471,7 @@ export async function renderWhyBuy(args: { runId: string; req?: Request }): Prom
     "Commission building survey and measured survey",
     "Initiate KYC on seller entity",
     "Schedule viewing and tenant engagement",
-    "Refine model assumptions with latest market comps",
+    "Confirm funding structure and issue LOI",
   ];
   for (const step of nextSteps) {
     doc.font("Body").fontSize(9).fillColor(BGP_COOL_GREY).text(`  ☐  ${step}`, leftM, y, { width: usableW });

@@ -2872,3 +2872,128 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
 
   return { sheets };
 }
+
+// ─── Pathway Integration: build a branded model from an agreed business plan ──
+
+interface PathwayBusinessPlanShape {
+  strategy?: string;
+  holdPeriodYrs?: number;
+  targetPurchasePrice?: number;
+  targetNIY?: number;
+  exitPrice?: number;
+  exitYield?: number;
+  exitYear?: number;
+  capex?: { amount?: number; scope?: string };
+  leasing?: { vacantUnits?: string[]; targetRentPsf?: number; reversionNotes?: string };
+  equityCheck?: number;
+  targetIRR?: number;
+  targetMOIC?: number;
+  risks?: string[];
+  keyMoves?: string[];
+  notes?: string;
+}
+
+/**
+ * Create an Excel model run for a Property Pathway investigation, seeded from
+ * the agreed business plan. Returns identifiers the pathway orchestrator stores
+ * in stage7 so the UI can link the user into the model (Model Studio or the
+ * Excel add-in) to continue iterating before locking.
+ *
+ * Implementation notes:
+ * - We need a templateId because excel_model_runs.template_id is NOT NULL, so
+ *   we ensure a singleton "BGP Pathway Investment Model" template row exists
+ *   (the workbook itself is generated each time — not from a template file).
+ * - The initial workbook is saved as run version 1.
+ */
+export async function createPathwayModelRun(args: {
+  runId: string;
+  address: string;
+  plan: PathwayBusinessPlanShape;
+  propertyId?: string | null;
+}): Promise<{ modelRunId: string; modelVersionId: string; workbookUrl: string }>
+{
+  const { db } = await import("./db");
+  const { excelModelRuns, excelModelRunVersions, excelTemplates } = await import("@shared/schema");
+  const { eq } = await import("drizzle-orm");
+
+  // 1. Ensure singleton pathway template exists
+  const PATHWAY_TEMPLATE_NAME = "BGP Pathway Investment Model";
+  let [tpl] = await db.select().from(excelTemplates).where(eq(excelTemplates.name, PATHWAY_TEMPLATE_NAME)).limit(1);
+  if (!tpl) {
+    [tpl] = await db.insert(excelTemplates).values({
+      name: PATHWAY_TEMPLATE_NAME,
+      description: "Auto-generated branded investment model for Property Pathway runs. Seeded from the agreed business plan.",
+      filePath: "(generated-per-run)",
+      originalFileName: "bgp-pathway-model.xlsx",
+      inputMapping: "{}",
+      outputMapping: "{}",
+      version: 1,
+    }).returning();
+  }
+
+  // 2. Map business plan → excel-builder assumptions
+  const plan = args.plan || {};
+  const assumptions: Record<string, any> = {};
+  if (typeof plan.targetPurchasePrice === "number") assumptions.purchasePrice = plan.targetPurchasePrice;
+  if (typeof plan.holdPeriodYrs === "number") assumptions.holdPeriodYears = plan.holdPeriodYrs;
+  if (typeof plan.exitYield === "number") assumptions.exitCapRate = plan.exitYield;
+  if (plan.leasing && typeof plan.leasing.targetRentPsf === "number") assumptions.ervPerSqFt = plan.leasing.targetRentPsf;
+  // NIY isn't a direct input — we derive passing rent from price * NIY if we have both
+  if (typeof plan.targetPurchasePrice === "number" && typeof plan.targetNIY === "number") {
+    assumptions.currentRentPA = Math.round(plan.targetPurchasePrice * plan.targetNIY);
+  }
+
+  // 3. Build the workbook (branded, BGP palette + logo)
+  const modelName = `${args.address} — Pathway Model`;
+  const buffer = await buildInvestmentModel({ modelName, assumptions });
+
+  // 4. Write to disk — use the server's uploads/model-runs folder so existing
+  //    model-studio download + version endpoints can serve the file.
+  const RUNS_DIR = path.join(process.cwd(), "uploads", "runs");
+  if (!fs.existsSync(RUNS_DIR)) fs.mkdirSync(RUNS_DIR, { recursive: true });
+  const safeAddress = args.address.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "_").slice(0, 60) || "pathway";
+  const fileName = `pathway-${args.runId.slice(0, 8)}-${Date.now()}-${safeAddress}.xlsx`;
+  const filePath = path.join(RUNS_DIR, fileName);
+  fs.writeFileSync(filePath, buffer);
+
+  // 5. Insert model run row
+  const [run] = await db.insert(excelModelRuns).values({
+    templateId: tpl.id,
+    name: modelName,
+    inputValues: JSON.stringify({
+      pathwayRunId: args.runId,
+      plan: args.plan,
+      assumptions,
+    }),
+    outputValues: JSON.stringify({}),
+    generatedFilePath: filePath,
+    status: "draft",
+    propertyId: args.propertyId || undefined,
+  }).returning();
+
+  // 6. Insert version 1 row
+  const [version] = await db.insert(excelModelRunVersions).values({
+    modelRunId: run.id,
+    version: 1,
+    filePath,
+    inputValues: { pathwayRunId: args.runId, plan: args.plan, assumptions } as any,
+    outputValues: {} as any,
+    notes: "Initial version generated from agreed business plan",
+  }).returning();
+
+  // 7. Link back onto the pathway run (sets pathway.modelRunId too so existing UI works)
+  try {
+    const { propertyPathwayRuns } = await import("@shared/schema");
+    await db.update(propertyPathwayRuns)
+      .set({ modelRunId: run.id, updatedAt: new Date() })
+      .where(eq(propertyPathwayRuns.id, args.runId));
+  } catch (err: any) {
+    console.warn("[createPathwayModelRun] failed to back-link pathway:", err?.message);
+  }
+
+  // Workbook URL — points at Model Studio so the user can open and discuss it.
+  // The add-in reads the same run by id and continues the ChatBGP thread.
+  const workbookUrl = `/models?runId=${run.id}`;
+
+  return { modelRunId: run.id, modelVersionId: version.id, workbookUrl };
+}

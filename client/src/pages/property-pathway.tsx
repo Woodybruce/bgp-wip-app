@@ -10,7 +10,7 @@ import {
   Building2, FolderOpen, MapPin, ShieldCheck, Sparkles,
   FileText, Image as ImageIcon, ChevronRight, ChevronDown, ArrowRight,
   Check, Clock, AlertCircle, Plus, Search, Download, ExternalLink, Trash2,
-  Copy, Paperclip, Loader2, Maximize2,
+  Copy, Paperclip, Loader2, Maximize2, Briefcase, FileSpreadsheet, MessageSquare,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -37,8 +37,10 @@ const STAGE_LABELS = [
   { n: 3, label: "Review & Confirm", icon: Check },
   { n: 4, label: "Property Intelligence", icon: Building2 },
   { n: 5, label: "Investigation Board", icon: FolderOpen },
-  { n: 6, label: "Studio Time", icon: ImageIcon },
-  { n: 7, label: "Why Buy", icon: FileText },
+  { n: 6, label: "Business Plan", icon: Briefcase },
+  { n: 7, label: "Excel Model", icon: FileSpreadsheet },
+  { n: 8, label: "Studio Time", icon: ImageIcon },
+  { n: 9, label: "Why Buy", icon: FileText },
 ];
 
 function stageBadgeColor(status?: string) {
@@ -343,11 +345,13 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
   const s1 = run.stageResults?.stage1;
   const s2 = run.stageResults?.stage2;
   const s4 = run.stageResults?.stage4;
-  const s6 = run.stageResults?.stage6;
-  const s7 = run.stageResults?.stage7;
+  const s6 = run.stageResults?.stage6;   // Business Plan
+  const s7 = run.stageResults?.stage7;   // Excel Model
+  const s8 = run.stageResults?.stage8;   // Studio Time
+  const s9 = run.stageResults?.stage9;   // Why Buy
   const mi = run.stageResults?.marketIntel;
   const s2Status = run.stageStatus?.stage2;
-  const nextStage = Math.min(run.currentStage, 7);
+  const nextStage = Math.min(run.currentStage, 9);
   const [tenantInput, setTenantInput] = useState("");
   const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
 
@@ -367,7 +371,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           <Button variant="ghost" size="sm" onClick={onDelete} className="text-muted-foreground hover:text-destructive" title="Delete investigation">
             <Trash2 className="w-4 h-4" />
           </Button>
-          <Button onClick={() => onAdvance(nextStage)} disabled={advancing || run.currentStage > 7} className="gap-1.5">
+          <Button onClick={() => onAdvance(nextStage)} disabled={advancing || run.currentStage > 9} className="gap-1.5">
             {advancing ? <Clock className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
             {(() => {
               switch (nextStage) {
@@ -376,8 +380,10 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 case 3: return "Review & Confirm";
                 case 4: return "Purchase Property Intelligence";
                 case 5: return "Build Investigation Board";
-                case 6: return "Run Studio Time";
-                case 7: return "Generate Why Buy";
+                case 6: return "Draft Business Plan";
+                case 7: return "Generate Excel Model";
+                case 8: return "Run Studio Time";
+                case 9: return "Generate Why Buy";
                 default: return `Run Stage ${nextStage}`;
               }
             })()}
@@ -1221,40 +1227,216 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
         </Card>
       )}
 
-      {/* Stage 6 — Studios */}
+      {/* Stage 6 — Business Plan */}
       {s6 && (
+        <BusinessPlanCard runId={run.id} stage6={s6} onReload={onReload} />
+      )}
+
+      {/* Stage 7 — Excel Model */}
+      {s7 && (
+        <ExcelModelCard runId={run.id} stage7={s7} stage6={s6} onReload={onReload} />
+      )}
+
+      {/* Stage 8 — Studios */}
+      {s8 && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2"><ImageIcon className="w-4 h-4" /> Studios</CardTitle>
           </CardHeader>
           <CardContent className="text-sm space-y-2">
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-              <InfoBlock label="Street View" value={s6.streetViewImageId ? "Captured" : "—"} />
-              <InfoBlock label="Retail Context Plan" value={s6.retailContextImageId ? "Rendered" : "—"} />
-              <InfoBlock label="Model run" value={run.modelRunId ? "Linked" : "Not started"} />
+              <InfoBlock label="Street View" value={s8.streetViewImageId ? "Captured" : "—"} />
+              <InfoBlock label="Retail Context Plan" value={s8.retailContextImageId ? "Rendered" : "—"} />
+              <InfoBlock label="Additional images" value={Array.isArray(s8.additionalImageIds) ? String(s8.additionalImageIds.length) : "0"} />
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Stage 7 — Why Buy */}
-      {s7 && (
+      {/* Stage 9 — Why Buy */}
+      {s9 && (
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between">
             <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Why Buy</CardTitle>
-            {(s7.sharepointUrl || s7.documentUrl) && (
-              <a href={s7.sharepointUrl || s7.documentUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+            {(s9.sharepointUrl || s9.documentUrl) && (
+              <a href={s9.sharepointUrl || s9.documentUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
                 <Download className="w-3 h-3" /> Open Why Buy PDF
               </a>
             )}
           </CardHeader>
           <CardContent className="text-sm">
-            <p className="text-muted-foreground">4-page PE-style investment memo generated from pathway findings.</p>
+            <p className="text-muted-foreground">4-page PE-style investment memo generated from the agreed business plan + agreed Excel model.</p>
           </CardContent>
         </Card>
       )}
 
     </div>
+  );
+}
+
+function fmtMoney(n?: number): string {
+  if (n === undefined || n === null || !Number.isFinite(Number(n))) return "—";
+  const x = Number(n);
+  if (Math.abs(x) >= 1_000_000) return `£${(x / 1_000_000).toFixed(x >= 10_000_000 ? 0 : 2)}m`;
+  if (Math.abs(x) >= 1_000) return `£${Math.round(x / 1_000)}k`;
+  return `£${x.toLocaleString()}`;
+}
+
+function fmtPct(n?: number, digits = 2): string {
+  if (n === undefined || n === null || !Number.isFinite(Number(n))) return "—";
+  const x = Number(n);
+  const scaled = Math.abs(x) < 1 ? x * 100 : x;
+  return `${scaled.toFixed(digits)}%`;
+}
+
+function BusinessPlanCard({ runId, stage6, onReload }: { runId: string; stage6: any; onReload: () => void }) {
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const [agreeing, setAgreeing] = useState(false);
+  const agreed = stage6?.agreed;
+  const plan = agreed || stage6?.draft || {};
+  const summary: string = stage6?.summary || "";
+
+  async function agree() {
+    if (!confirm("Agree this business plan? It will lock the plan and unlock the Excel model stage.")) return;
+    setAgreeing(true);
+    try {
+      const res = await fetch(`/api/property-pathway/${runId}/business-plan/agree`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+      });
+      if (!res.ok) throw new Error(await res.text());
+      toast({ title: "Business plan agreed", description: "Unlocked Stage 7 — Excel Model." });
+      onReload();
+    } catch (e: any) {
+      toast({ title: "Couldn't agree plan", description: e?.message, variant: "destructive" });
+    } finally {
+      setAgreeing(false);
+    }
+  }
+
+  const openChat = () => {
+    const prefill = `Let's finalise the business plan for pathway run ${runId}. Call get_property_pathway, walk me through the Stage 6 draft, and we'll refine it together. Use update_business_plan whenever we agree on a change — don't call agree_business_plan until I explicitly say "agree".`;
+    navigate(`/chat?message=${encodeURIComponent(prefill)}`);
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3 flex flex-row items-center justify-between">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Briefcase className="w-4 h-4" /> Business Plan
+          {agreed && <Badge className="ml-1 bg-emerald-100 text-emerald-900">Agreed</Badge>}
+        </CardTitle>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={openChat} className="gap-1.5">
+            <MessageSquare className="w-3.5 h-3.5" /> Discuss in ChatBGP
+          </Button>
+          {!agreed && (
+            <Button size="sm" onClick={agree} disabled={agreeing || !stage6?.draft} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+              {agreeing ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Agree plan
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="text-sm space-y-3">
+        {summary && !agreed && (
+          <div className="rounded-lg bg-muted/40 border p-3 text-[13px] leading-relaxed whitespace-pre-wrap">{summary}</div>
+        )}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <InfoBlock label="Strategy" value={plan.strategy || "—"} />
+          <InfoBlock label="Hold (yrs)" value={plan.holdPeriodYrs ? String(plan.holdPeriodYrs) : "—"} />
+          <InfoBlock label="Target price" value={fmtMoney(plan.targetPurchasePrice)} />
+          <InfoBlock label="Target NIY" value={fmtPct(plan.targetNIY)} />
+          <InfoBlock label="Exit price" value={fmtMoney(plan.exitPrice)} />
+          <InfoBlock label="Exit yield" value={fmtPct(plan.exitYield)} />
+          <InfoBlock label="Target IRR" value={fmtPct(plan.targetIRR)} />
+          <InfoBlock label="Target MOIC" value={plan.targetMOIC ? `${Number(plan.targetMOIC).toFixed(2)}x` : "—"} />
+        </div>
+        {Array.isArray(plan.keyMoves) && plan.keyMoves.length > 0 && (
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Key moves</p>
+            <ul className="list-disc pl-5 text-[13px] space-y-0.5">
+              {plan.keyMoves.map((m: string, i: number) => <li key={i}>{m}</li>)}
+            </ul>
+          </div>
+        )}
+        {Array.isArray(plan.risks) && plan.risks.length > 0 && (
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground mb-1">Risks</p>
+            <ul className="list-disc pl-5 text-[13px] space-y-0.5 text-muted-foreground">
+              {plan.risks.map((r: string, i: number) => <li key={i}>{r}</li>)}
+            </ul>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; stage7: any; stage6: any; onReload: () => void }) {
+  const { toast } = useToast();
+  const [agreeing, setAgreeing] = useState(false);
+  const planAgreed = !!stage6?.agreed;
+  const modelAgreed = !!stage7?.agreed;
+
+  async function agree() {
+    if (!confirm("Agree this Excel model version? It will lock this version as the one Why Buy uses.")) return;
+    setAgreeing(true);
+    try {
+      const res = await fetch(`/api/property-pathway/${runId}/excel-model/agree`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ modelVersionId: stage7?.modelVersionId }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      toast({ title: "Model agreed", description: "Unlocked Stage 8 — Studio Time." });
+      onReload();
+    } catch (e: any) {
+      toast({ title: "Couldn't agree model", description: e?.message, variant: "destructive" });
+    } finally {
+      setAgreeing(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-3 flex flex-row items-center justify-between">
+        <CardTitle className="text-base flex items-center gap-2">
+          <FileSpreadsheet className="w-4 h-4" /> Excel Model
+          {modelAgreed && <Badge className="ml-1 bg-emerald-100 text-emerald-900">Agreed</Badge>}
+        </CardTitle>
+        <div className="flex items-center gap-2">
+          {stage7?.workbookUrl && (
+            <a href={stage7.workbookUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+              <ExternalLink className="w-3 h-3" /> Open in Excel
+            </a>
+          )}
+          {!modelAgreed && (
+            <Button size="sm" onClick={agree} disabled={agreeing || !stage7?.modelRunId} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+              {agreeing ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Agree model
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="text-sm">
+        {!planAgreed && (
+          <p className="text-muted-foreground">Agree the business plan first — the model is generated from its targets.</p>
+        )}
+        {planAgreed && !stage7?.modelRunId && (
+          <p className="text-muted-foreground">Click "Generate Excel Model" above to build the workbook from the agreed plan.</p>
+        )}
+        {stage7?.modelRunId && (
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+            <InfoBlock label="Model run" value={stage7.modelRunId} />
+            <InfoBlock label="Version" value={stage7.modelVersionId || "—"} />
+            <InfoBlock label="Status" value={modelAgreed ? "Agreed" : "Drafting in Excel"} />
+          </div>
+        )}
+        <p className="text-[11px] text-muted-foreground mt-3">
+          Continue the conversation inside Excel using the BGP add-in — Claude can amend assumptions in the workbook and you can push back until you agree.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

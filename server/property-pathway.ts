@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { eq, desc, and, or, ilike } from "drizzle-orm";
 import { requireAuth } from "./auth";
-import { db } from "./db";
+import { db, pool } from "./db";
 import {
   propertyPathwayRuns,
   crmProperties,
@@ -22,7 +22,7 @@ import { callClaude } from "./utils/anthropic-client";
 /**
  * Property Pathway Orchestrator
  *
- * Deterministic 7-stage state machine that drives a property investigation
+ * Deterministic 9-stage state machine that drives a property investigation
  * end-to-end. Each stage is a discrete function that reads current run state,
  * calls the relevant APIs, writes results back, and advances the stage.
  *
@@ -32,8 +32,10 @@ import { callClaude } from "./utils/anthropic-client";
  *   3. Detailed Search Summary — summarise, gate for user confirmation
  *   4. Property Intelligence — full titles, planning (floor plans), proprietor KYC
  *   5. Investigation Board — aggregate view ready
- *   6. Studio Time — Image Studio (street view, retail context plan) + Model Studio seed
- *   7. Why Buy — generate 4-page PE IM document
+ *   6. Business Plan — Claude drafts the plan from all prior stages, agreed via ChatBGP dialogue
+ *   7. Excel Model — generate from agreed plan, refined in the Excel add-in, agreed version locks
+ *   8. Studio Time — Image Studio (street view, retail context plan, brand/area imagery)
+ *   9. Why Buy — generate 4-page PE IM document from agreed plan + agreed model
  */
 
 const STANDARD_FOLDER_TREE = [
@@ -50,6 +52,24 @@ const STANDARD_FOLDER_TREE = [
 ];
 
 type StageStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+
+export interface BusinessPlan {
+  strategy?: string;                 // e.g. "core-plus refurb + re-let", "value-add AST conversion"
+  holdPeriodYrs?: number;
+  targetPurchasePrice?: number;
+  targetNIY?: number;                // as a decimal, e.g. 0.0525
+  exitPrice?: number;
+  exitYield?: number;
+  exitYear?: number;
+  capex?: { amount?: number; scope?: string };
+  leasing?: { vacantUnits?: string[]; targetRentPsf?: number; reversionNotes?: string };
+  equityCheck?: number;
+  targetIRR?: number;                // as decimal
+  targetMOIC?: number;
+  risks?: string[];
+  keyMoves?: string[];               // 3–5 bullet summary of the plan
+  notes?: string;
+}
 
 interface StageResults {
   stage1?: {
@@ -184,12 +204,33 @@ interface StageResults {
     boardUrl?: string;
   };
   stage6?: {
+    // Business Plan — Claude drafts from all prior stages, refined via ChatBGP dialogue, locked on agree.
+    draft?: BusinessPlan;
+    agreed?: BusinessPlan;
+    agreedAt?: string;
+    agreedBy?: string;
+    chatThreadId?: string;
+    summary?: string;              // narrative version Claude produced alongside the structured draft
+    revisions?: Array<{ at: string; source: "chat" | "ui"; patch: Partial<BusinessPlan>; note?: string }>;
+  };
+  stage7?: {
+    // Excel Model — generated from stage6.agreed, refined in the add-in, locked on agree.
     modelRunId?: string;
+    modelVersionId?: string;
+    workbookUrl?: string;
+    agreed?: boolean;
+    agreedAt?: string;
+    agreedBy?: string;
+  };
+  stage8?: {
+    // Studio Time — images collected only once plan + model are agreed.
     streetViewImageId?: string;
     retailContextImageId?: string;
     additionalImageIds?: string[];
+    collections?: Array<{ id: string; name: string; bucket: "building" | "tenants" | "area"; imageCount: number }>;
   };
-  stage7?: {
+  stage9?: {
+    // Why Buy — generated from stage6.agreed + stage7.modelVersionId.
     documentUrl?: string;
     sharepointUrl?: string;
     pdfPath?: string;
@@ -214,6 +255,8 @@ interface StageStatusMap {
   stage5?: StageStatus;
   stage6?: StageStatus;
   stage7?: StageStatus;
+  stage8?: StageStatus;
+  stage9?: StageStatus;
 }
 
 async function getRun(runId: string): Promise<PropertyPathwayRun | null> {
@@ -238,7 +281,7 @@ async function setStageStatus(runId: string, stage: keyof StageStatusMap, status
   const stageNumber = parseInt(stage.replace("stage", ""), 10);
   // A skipped stage shouldn't block later stages — advance past it like a completed stage.
   const shouldAdvance = (status === "completed" || status === "skipped") && stageNumber >= run.currentStage;
-  const newCurrentStage = shouldAdvance ? Math.min(7, stageNumber + 1) : run.currentStage;
+  const newCurrentStage = shouldAdvance ? Math.min(9, stageNumber + 1) : run.currentStage;
   return updateRun(runId, { stageStatus, stageResults, currentStage: newCurrentStage });
 }
 
@@ -3108,64 +3151,284 @@ async function runStage5(runId: string, _req: Request): Promise<void> {
 }
 
 // ============================================================================
-// STAGE 6 — Studio Time (images + model)
+// STAGE 6 — Business Plan
 // ============================================================================
+// Claude sweeps everything gathered in stages 1–5 and proposes a structured
+// business plan plus a conversational summary. The user (and ChatBGP) can
+// push back on any field via `update_business_plan`; once they click Agree,
+// `stage6.agreed` is locked and Stage 7 (Excel Model) can run.
 
-async function runStage6(runId: string, req: Request): Promise<void> {
+async function runStage6(runId: string, _req: Request): Promise<void> {
   const run = await getRun(runId);
   if (!run) throw new Error("Run not found");
   await setStageStatus(runId, "stage6", "running");
 
-  const patch: NonNullable<StageResults["stage6"]> = {};
-
-  // 6a. Street View capture
   try {
-    const svMod = await import("./image-studio").catch(() => null as any);
-    if (svMod?.captureStreetViewForAddress) {
-      const image = await svMod.captureStreetViewForAddress({ address: run.address, propertyId: run.propertyId });
-      patch.streetViewImageId = image.id;
-    }
+    const draft = await draftBusinessPlan(run);
+    const existing = (run.stageResults as StageResults)?.stage6 || {};
+    await setStageStatus(runId, "stage6", "completed", {
+      stage6: {
+        ...existing,
+        draft: draft.plan,
+        summary: draft.summary,
+      },
+    });
   } catch (err: any) {
-    console.warn("[pathway stage6] street view capture skipped:", err?.message);
+    console.error("[pathway stage6] draft failed:", err?.message);
+    await setStageStatus(runId, "stage6", "failed");
+  }
+}
+
+async function draftBusinessPlan(run: PropertyPathwayRun): Promise<{ plan: BusinessPlan; summary: string }> {
+  const sr = (run.stageResults as StageResults) || {};
+  const context = {
+    address: run.address,
+    postcode: run.postcode,
+    stage1: sr.stage1 ? {
+      owner: sr.stage1.initialOwnership?.proprietorName,
+      purchasePrice: sr.stage1.initialOwnership?.pricePaid,
+      purchaseDate: sr.stage1.initialOwnership?.dateOfPurchase,
+      tenancy: sr.stage1.tenancy,
+      comps: (sr.stage1.comps || []).slice(0, 12),
+      aiFacts: sr.stage1.aiFacts,
+      summary: sr.stage1.summary,
+    } : undefined,
+    stage2: sr.stage2 || undefined,
+    stage4: sr.stage4 ? { companyKyc: sr.stage4.companyKyc } : undefined,
+    marketIntel: sr.marketIntel ? {
+      marketContext: sr.marketIntel.marketContext,
+      keyFindings: sr.marketIntel.keyFindings,
+      leasingHistory: (sr.marketIntel.leasingHistory || []).slice(0, 8),
+      comparables: (sr.marketIntel.comparables || []).slice(0, 8),
+    } : undefined,
+  };
+
+  const resp = await callClaude({
+    model: "claude-opus-4-7",
+    messages: [{
+      role: "user",
+      content: `You are a senior director at BGP (Bruce Gillingham Pollard) sitting down with Woody to agree a business plan for a live investment opportunity. You have done a final sweep of everything the pathway has gathered. Propose a concrete, opinionated plan — don't hedge, don't list options. Pick a strategy.
+
+Return a JSON object with exactly this shape (no prose around it):
+{
+  "plan": {
+    "strategy": "string — one sentence naming the play (e.g. 'Buy vacant, refurb to A-grade, re-let at market to a covenant tenant, exit year 5')",
+    "holdPeriodYrs": number,
+    "targetPurchasePrice": number,
+    "targetNIY": number (decimal, e.g. 0.0525),
+    "exitPrice": number,
+    "exitYield": number (decimal),
+    "exitYear": number,
+    "capex": { "amount": number, "scope": "string — one line" },
+    "leasing": { "vacantUnits": ["..."], "targetRentPsf": number, "reversionNotes": "string" },
+    "equityCheck": number,
+    "targetIRR": number (decimal),
+    "targetMOIC": number,
+    "risks": ["3-5 concise risks"],
+    "keyMoves": ["3-5 concise bullets describing what we do, in order"]
+  },
+  "summary": "A 4-6 sentence plain-English pitch of the plan, as if you're standing in front of Woody. Lead with the strategy and the number that matters most. Finish with 'Agree, or tell me what to change.'"
+}
+
+Use only numbers you can ground in the context. Where you have to estimate (e.g. ERV, exit yield), say so in the summary. If key data is missing, still pick a plan — note the assumption in risks.
+
+Context:
+${JSON.stringify(context, null, 2).slice(0, 18000)}`,
+    }],
+    max_completion_tokens: 3000,
+    temperature: 0.2,
+  });
+
+  const raw = resp.choices[0]?.message?.content || "{}";
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  let parsed: any = {};
+  try {
+    parsed = start >= 0 && end > start ? JSON.parse(cleaned.slice(start, end + 1)) : {};
+  } catch (e: any) {
+    console.warn("[stage6] plan JSON parse failed:", e?.message);
   }
 
-  // 6b. Retail Context Plan (custom GOAD-style overlay)
+  return {
+    plan: (parsed.plan || {}) as BusinessPlan,
+    summary: typeof parsed.summary === "string" ? parsed.summary : "",
+  };
+}
+
+// ============================================================================
+// STAGE 7 — Excel Model
+// ============================================================================
+// Generate an Excel model pre-populated from stage6.agreed. The Excel add-in
+// then continues the ChatBGP conversation inside the workbook so Woody and
+// Claude can iterate on assumptions. On agree, the current version is locked.
+
+async function runStage7(runId: string, _req: Request): Promise<void> {
+  const run = await getRun(runId);
+  if (!run) throw new Error("Run not found");
+
+  const sr = (run.stageResults as StageResults) || {};
+  const agreed = sr.stage6?.agreed;
+  if (!agreed) {
+    throw new Error("Cannot generate Excel model — business plan has not been agreed yet. Agree Stage 6 first.");
+  }
+
+  await setStageStatus(runId, "stage7", "running");
+
+  try {
+    const patch: NonNullable<StageResults["stage7"]> = {};
+
+    // Seed an Excel model run tied to this pathway run. The actual workbook
+    // generation + add-in handoff is wired through /api/models — here we just
+    // record the link so the UI knows where to send the user.
+    try {
+      const eb = await import("./excel-builder").catch(() => null as any);
+      if (eb?.createPathwayModelRun) {
+        const seed = await eb.createPathwayModelRun({ runId, address: run.address, plan: agreed });
+        patch.modelRunId = seed.modelRunId;
+        patch.modelVersionId = seed.modelVersionId;
+        patch.workbookUrl = seed.workbookUrl;
+      }
+    } catch (err: any) {
+      console.warn("[pathway stage7] model seed skipped:", err?.message);
+    }
+
+    // Stage 7 does NOT auto-complete — it stays "running" until Woody clicks
+    // Agree on the model (setting stage7.agreed = true). That flips it to
+    // "completed" and unlocks Stage 8.
+    const existing = sr.stage7 || {};
+    await updateRun(runId, {
+      stageResults: { ...sr, stage7: { ...existing, ...patch } },
+      stageStatus: { ...(run.stageStatus as StageStatusMap), stage7: "running" },
+    });
+  } catch (err: any) {
+    console.error("[pathway stage7] failed:", err?.message);
+    await setStageStatus(runId, "stage7", "failed");
+  }
+}
+
+// ============================================================================
+// STAGE 8 — Studio Time (images)
+// ============================================================================
+
+async function runStage8(runId: string, req: Request): Promise<void> {
+  const run = await getRun(runId);
+  if (!run) throw new Error("Run not found");
+  await setStageStatus(runId, "stage8", "running");
+
+  const patch: NonNullable<StageResults["stage8"]> = {};
+  const sr = (run.stageResults || {}) as StageResults;
+
+  // Collect tenant names from every upstream stage Claude has touched.
+  const tenantNames: string[] = [];
+  const s1 = sr.stage1 || {};
+  if (s1.tenant?.name) tenantNames.push(s1.tenant.name);
+  if (s1.tenancy?.occupier) tenantNames.push(s1.tenancy.occupier);
+  for (const m of s1.aiFacts?.mainTenants || []) tenantNames.push(m);
+  const s2 = sr.stage2 || {};
+  if (s2.company?.name) tenantNames.push(s2.company.name);
+
+  // Download SharePoint brochures so the sweep can extract embedded images.
+  // Email-sourced brochures aren't downloaded here (attachment fetch is a
+  // separate Graph call we don't need for v1 — SharePoint covers most).
+  const brochurePdfs: Array<{ name: string; buffer: Buffer; webUrl?: string }> = [];
+  try {
+    const spBrochures = (s1.brochureFiles || [])
+      .filter(b => (b.source === "sharepoint" || b.source === "sharepoint-uploaded") && /\.pdf$/i.test(b.name))
+      .slice(0, 6);
+    if (spBrochures.length) {
+      const { getValidMsToken } = await import("./microsoft");
+      const token = await getValidMsToken(req).catch(() => null);
+      const { getSharePointDriveId } = await import("./utils/sharepoint-operations");
+      const driveId = token ? await getSharePointDriveId(token) : null;
+      if (token && driveId) {
+        for (const bro of spBrochures) {
+          try {
+            const resp = await fetch(
+              `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${bro.ref}/content`,
+              { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" },
+            );
+            if (!resp.ok) {
+              console.warn(`[pathway stage8] brochure download ${bro.name} failed: ${resp.status}`);
+              continue;
+            }
+            const buf = Buffer.from(await resp.arrayBuffer());
+            brochurePdfs.push({ name: bro.name, buffer: buf, webUrl: bro.webUrl });
+          } catch (err: any) {
+            console.warn(`[pathway stage8] brochure download error (${bro.name}):`, err?.message);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn("[pathway stage8] brochure prefetch skipped:", err?.message);
+  }
+
+  // 8a. Bulk image sweep — SV 4 headings + area offsets, Places photos,
+  // Clearbit logos, brochure-extracted images — filed into
+  // Building / Tenants / Area collections.
+  try {
+    const { sweepStage8ImagesForRun } = await import("./image-studio");
+    const sweep = await sweepStage8ImagesForRun({
+      runId,
+      address: run.address,
+      postcode: run.postcode || undefined,
+      propertyId: run.propertyId,
+      tenantNames,
+      userId: (run as any).startedBy || undefined,
+      brochurePdfs,
+    });
+    patch.streetViewImageId = sweep.streetViewImageId;
+    patch.collections = sweep.collections;
+  } catch (err: any) {
+    console.warn("[pathway stage8] image sweep failed:", err?.message);
+  }
+
+  // 8b. Retail Context Plan (custom GOAD-style overlay) — filed to the Area
+  // collection so it shows up alongside the other area imagery.
   try {
     const rcpMod = await import("./retail-context-plan").catch(() => null as any);
     if (rcpMod?.renderRetailContextPlan) {
       const image = await rcpMod.renderRetailContextPlan({ address: run.address, postcode: run.postcode || "", propertyId: run.propertyId });
       patch.retailContextImageId = image.id;
+      const areaCol = patch.collections?.find(c => c.bucket === "area");
+      if (areaCol?.id && image?.id) {
+        try {
+          await pool.query(
+            `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT (collection_id, image_id) DO NOTHING`,
+            [areaCol.id, image.id],
+          );
+          areaCol.imageCount = (areaCol.imageCount || 0) + 1;
+        } catch {}
+      }
     }
   } catch (err: any) {
-    console.warn("[pathway stage6] retail context plan skipped:", err?.message);
+    console.warn("[pathway stage8] retail context plan skipped:", err?.message);
   }
 
-  // 6c. Seed financial model — defer to /api/models API (stubbed here)
-  // Will be filled in by the Excel save-back step
-
-  await setStageStatus(runId, "stage6", "completed", { stage6: patch });
+  await setStageStatus(runId, "stage8", "completed", { stage8: patch });
 }
 
 // ============================================================================
-// STAGE 7 — Why Buy
+// STAGE 9 — Why Buy
 // ============================================================================
 
-async function runStage7(runId: string, req: Request): Promise<void> {
+async function runStage9(runId: string, req: Request): Promise<void> {
   const run = await getRun(runId);
   if (!run) throw new Error("Run not found");
-  await setStageStatus(runId, "stage7", "running");
+  await setStageStatus(runId, "stage9", "running");
 
   try {
     const wbMod = await import("./why-buy-renderer").catch(() => null as any);
     if (!wbMod?.renderWhyBuy) {
-      await setStageStatus(runId, "stage7", "failed", {
-        stage7: { documentUrl: undefined },
+      await setStageStatus(runId, "stage9", "failed", {
+        stage9: { documentUrl: undefined },
       });
       return;
     }
     const result = await wbMod.renderWhyBuy({ runId, req });
-    await setStageStatus(runId, "stage7", "completed", {
-      stage7: {
+    await setStageStatus(runId, "stage9", "completed", {
+      stage9: {
         documentUrl: result.documentUrl,
         sharepointUrl: result.sharepointUrl,
         pdfPath: result.pdfPath,
@@ -3173,8 +3436,8 @@ async function runStage7(runId: string, req: Request): Promise<void> {
     });
     await updateRun(runId, { whyBuyDocumentUrl: result.sharepointUrl || result.documentUrl, completedAt: new Date() });
   } catch (err: any) {
-    console.error("[pathway stage7] failed:", err?.message);
-    await setStageStatus(runId, "stage7", "failed");
+    console.error("[pathway stage9] failed:", err?.message);
+    await setStageStatus(runId, "stage9", "failed");
   }
 }
 
@@ -3188,8 +3451,10 @@ const STAGE_FUNCTIONS: Record<number, (runId: string, req: Request) => Promise<v
   3: runStage3,
   4: runStage4,
   5: runStage5,
-  6: runStage6,
-  7: runStage7,
+  6: runStage6,  // Business Plan
+  7: runStage7,  // Excel Model
+  8: runStage8,  // Studio Time
+  9: runStage9,  // Why Buy
 };
 
 export async function runStage(runId: string, stageNumber: number, req: Request): Promise<PropertyPathwayRun> {
@@ -3625,6 +3890,105 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
+
+  // Stage 6 — apply a patch to the draft business plan (from UI or from ChatBGP tools)
+  app.post("/api/property-pathway/:runId/business-plan/patch", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const runId = String(req.params.runId);
+      const { patch, source, note } = req.body || {};
+      if (!patch || typeof patch !== "object") return res.status(400).json({ error: "patch (object) required" });
+
+      const run = await getRun(runId);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+
+      const sr = (run.stageResults as StageResults) || {};
+      const stage6 = sr.stage6 || {};
+      const base = stage6.agreed ? { ...stage6.agreed } : { ...(stage6.draft || {}) };
+      const merged: BusinessPlan = { ...base, ...patch };
+      const revisions = [
+        ...(stage6.revisions || []),
+        { at: new Date().toISOString(), source: (source === "chat" ? "chat" : "ui") as "chat" | "ui", patch, note },
+      ].slice(-50);
+
+      // If already agreed, the patch bumps the agreed version. Otherwise it updates the draft.
+      const nextStage6 = stage6.agreed
+        ? { ...stage6, agreed: merged, revisions }
+        : { ...stage6, draft: merged, revisions };
+
+      const updated = await updateRun(runId, {
+        stageResults: { ...sr, stage6: nextStage6 },
+      });
+      res.json({ ok: true, stage6: (updated.stageResults as StageResults).stage6 });
+    } catch (err: any) {
+      console.error("[business-plan/patch] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Stage 6 — Agree the business plan (single-user gate). Locks stage6.agreed
+  // and moves currentStage to 7.
+  app.post("/api/property-pathway/:runId/business-plan/agree", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const runId = String(req.params.runId);
+      const run = await getRun(runId);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const sr = (run.stageResults as StageResults) || {};
+      const stage6 = sr.stage6 || {};
+      if (!stage6.draft) return res.status(400).json({ error: "No draft to agree. Run Stage 6 first." });
+
+      const agreed: BusinessPlan = { ...(stage6.draft) };
+      const user = (req as any).user;
+      const agreedBy = user?.username || user?.email || "unknown";
+      const nextStage6 = {
+        ...stage6,
+        agreed,
+        agreedAt: new Date().toISOString(),
+        agreedBy,
+      };
+      const nextStatus = { ...(run.stageStatus as StageStatusMap), stage6: "completed" as StageStatus };
+      await updateRun(runId, {
+        stageResults: { ...sr, stage6: nextStage6 },
+        stageStatus: nextStatus,
+        currentStage: Math.max(run.currentStage, 7),
+      });
+      res.json({ ok: true, stage6: nextStage6 });
+    } catch (err: any) {
+      console.error("[business-plan/agree] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Stage 7 — Agree the Excel model (locks model version, moves to Stage 8).
+  app.post("/api/property-pathway/:runId/excel-model/agree", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const runId = String(req.params.runId);
+      const { modelVersionId } = req.body || {};
+      const run = await getRun(runId);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const sr = (run.stageResults as StageResults) || {};
+      const stage7 = sr.stage7 || {};
+      if (!stage7.modelRunId && !modelVersionId) return res.status(400).json({ error: "No model to agree. Generate the Excel model first." });
+
+      const user = (req as any).user;
+      const nextStage7 = {
+        ...stage7,
+        modelVersionId: modelVersionId || stage7.modelVersionId,
+        agreed: true,
+        agreedAt: new Date().toISOString(),
+        agreedBy: user?.username || user?.email || "unknown",
+      };
+      const nextStatus = { ...(run.stageStatus as StageStatusMap), stage7: "completed" as StageStatus };
+      await updateRun(runId, {
+        stageResults: { ...sr, stage7: nextStage7 },
+        stageStatus: nextStatus,
+        currentStage: Math.max(run.currentStage, 8),
+      });
+      res.json({ ok: true, stage7: nextStage7 });
+    } catch (err: any) {
+      console.error("[excel-model/agree] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
 
   // Patch run (for manually setting tenant, propertyId, etc.)
   app.patch("/api/property-pathway/:runId", requireAuth, async (req: Request, res: Response) => {

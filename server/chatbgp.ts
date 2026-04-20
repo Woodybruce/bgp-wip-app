@@ -1978,12 +1978,47 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "advance_property_pathway",
-      description: "Run the next stage (or a specific stage) of a Property Pathway investigation. Stages: 1=Initial Search (email/SharePoint/CRM/LandReg/folder tree), 2=Brand Intelligence, 3=Review summary, 4=Property Intelligence (titles/planning/KYC), 5=Investigation Board ready, 6=Studios (Street View + Retail Context Plan + model seed), 7=Why Buy PDF. Always summarise what was found after each stage and ask the user before advancing.",
+      description: "Run the next stage (or a specific stage) of a Property Pathway investigation. Stages: 1=Initial Search (email/SharePoint/CRM/LandReg/folder tree), 2=Brand Intelligence, 3=Review summary, 4=Property Intelligence (titles/planning/KYC), 5=Investigation Board ready, 6=Business Plan (Claude drafts plan from all prior findings; user must agree before moving on), 7=Excel Model (generated from agreed plan; refined in Excel add-in; user must agree), 8=Studios (Street View + Retail Context Plan + area/brand imagery), 9=Why Buy PDF. Always summarise what was found after each stage and ask the user before advancing.",
       parameters: {
         type: "object",
         properties: {
           runId: { type: "string", description: "The pathway run id returned by start_property_pathway" },
-          stage: { type: "number", description: "Optional specific stage to run (1-7). Defaults to current stage." },
+          stage: { type: "number", description: "Optional specific stage to run (1-9). Defaults to current stage." },
+        },
+        required: ["runId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "update_business_plan",
+      description: "Patch one or more fields on the Stage 6 business plan draft for a Property Pathway run. Use this as you discuss the plan with the user — whenever they agree to a change (e.g. 'bump the target price to £14m', 'let's make it a 5-year hold not 7'), call this tool to persist the change. Then restate the full updated plan so they can confirm. Do NOT call agree_business_plan yourself — only the user agrees, via the UI or by an explicit 'agree' request.",
+      parameters: {
+        type: "object",
+        properties: {
+          runId: { type: "string", description: "The pathway run id" },
+          patch: {
+            type: "object",
+            description: "Partial BusinessPlan — any subset of: strategy, holdPeriodYrs, targetPurchasePrice, targetNIY (decimal), exitPrice, exitYield (decimal), exitYear, capex {amount, scope}, leasing {vacantUnits, targetRentPsf, reversionNotes}, equityCheck, targetIRR (decimal), targetMOIC, risks (string[]), keyMoves (string[]), notes",
+          },
+          note: { type: "string", description: "Optional short note on why this change was made (shown in the revision log)" },
+        },
+        required: ["runId", "patch"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "agree_business_plan",
+      description: "Lock the current Stage 6 business plan draft as agreed, which unlocks Stage 7 (Excel Model). ONLY call this when the user explicitly says 'agree', 'lock it', 'ship it', or similar — never proactively. Always summarise the plan first and get explicit user confirmation.",
+      parameters: {
+        type: "object",
+        properties: {
+          runId: { type: "string", description: "The pathway run id" },
         },
         required: ["runId"],
       },
@@ -9072,6 +9107,67 @@ export function setupChatBGPRoutes(app: Express) {
         return { data: run };
       } catch (err: any) {
         return { data: { error: `Failed to fetch pathway: ${err?.message}` } };
+      }
+    }
+
+    if (tcName === "update_business_plan") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        const runId = String(tcArgs.runId || "");
+        const patch = tcArgs.patch;
+        if (!runId || !patch || typeof patch !== "object") return { data: { error: "runId and patch (object) required" } };
+        const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
+        if (!run) return { data: { error: "Pathway run not found" } };
+        const sr: any = run.stageResults || {};
+        const stage6: any = sr.stage6 || {};
+        const base = stage6.agreed ? { ...stage6.agreed } : { ...(stage6.draft || {}) };
+        const merged = { ...base, ...patch };
+        const revisions = [
+          ...(stage6.revisions || []),
+          { at: new Date().toISOString(), source: "chat", patch, note: tcArgs.note },
+        ].slice(-50);
+        const nextStage6 = stage6.agreed
+          ? { ...stage6, agreed: merged, revisions }
+          : { ...stage6, draft: merged, revisions };
+        await db.update(propertyPathwayRuns).set({ stageResults: { ...sr, stage6: nextStage6 }, updatedAt: new Date() }).where(eq(propertyPathwayRuns.id, runId));
+        return { data: { ok: true, plan: merged, agreed: !!stage6.agreed } };
+      } catch (err: any) {
+        return { data: { error: `Failed to update business plan: ${err?.message}` } };
+      }
+    }
+
+    if (tcName === "agree_business_plan") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        const runId = String(tcArgs.runId || "");
+        if (!runId) return { data: { error: "runId required" } };
+        const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
+        if (!run) return { data: { error: "Pathway run not found" } };
+        const sr: any = run.stageResults || {};
+        const stage6: any = sr.stage6 || {};
+        if (!stage6.draft) return { data: { error: "No draft to agree — run Stage 6 first." } };
+        const agreed = { ...stage6.draft };
+        const user: any = (req as any).user;
+        const nextStage6 = {
+          ...stage6,
+          agreed,
+          agreedAt: new Date().toISOString(),
+          agreedBy: user?.username || user?.email || "chatbgp",
+        };
+        const nextStatus = { ...(run.stageStatus as any), stage6: "completed" };
+        await db.update(propertyPathwayRuns).set({
+          stageResults: { ...sr, stage6: nextStage6 },
+          stageStatus: nextStatus,
+          currentStage: Math.max(run.currentStage || 6, 7),
+          updatedAt: new Date(),
+        }).where(eq(propertyPathwayRuns.id, runId));
+        return { data: { ok: true, agreed, nextStage: 7 } };
+      } catch (err: any) {
+        return { data: { error: `Failed to agree plan: ${err?.message}` } };
       }
     }
 
