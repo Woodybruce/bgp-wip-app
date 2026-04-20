@@ -19,9 +19,6 @@
  *   │ Legend          · Scale · N ↑       │
  *   └──────────────────────────────────────┘
  */
-import { promises as fs } from "fs";
-import * as fsSync from "fs";
-import path from "path";
 import sharp from "sharp";
 import { CATEGORY_STYLES, PLAN_COLORS, shortUseLabel, type RetailCategory } from "./goad-taxonomy";
 import type { MappedUnit } from "./goad-plan-data";
@@ -76,7 +73,13 @@ interface Projector {
   mapHeight: number;
 }
 
-function makeProjector(bbox: { south: number; north: number; west: number; east: number }, mapWidth: number, mapHeight: number): Projector {
+function makeProjector(
+  bbox: { south: number; north: number; west: number; east: number },
+  mapWidth: number,
+  mapHeight: number,
+  mapX = 0,
+  mapY = 0,
+): Projector {
   const midLat = (bbox.south + bbox.north) / 2;
   const kLng = Math.cos((midLat * Math.PI) / 180);
   const dx = (bbox.east - bbox.west) * kLng;
@@ -87,8 +90,10 @@ function makeProjector(bbox: { south: number; north: number; west: number; east:
   const s = Math.min(sx, sy);
   const paneW = dx * s;
   const paneH = dy * s;
-  const offX = (mapWidth - paneW) / 2;
-  const offY = (mapHeight - paneH) / 2;
+  // Project directly into screen coordinates — avoids the clip-path + <g>
+  // transform combo that librsvg rasterises unreliably.
+  const offX = mapX + (mapWidth - paneW) / 2;
+  const offY = mapY + (mapHeight - paneH) / 2;
   return {
     mapWidth,
     mapHeight,
@@ -202,24 +207,12 @@ function convexHull(pts: Pt[]): Pt[] {
   return lower.concat(upper);
 }
 
-// ---------------------------------------------------------------------------
-// Font embedding — Tiempos Text (BGP body font)
-// ---------------------------------------------------------------------------
-
-let fontDataCache: string | null | undefined;
-
-function loadFontBase64(): string | null {
-  if (fontDataCache !== undefined) return fontDataCache || null;
-  try {
-    const fontPath = path.join(process.cwd(), "client", "public", "fonts", "tiempos-text-vf-roman.woff2");
-    const buf = fsSync.readFileSync(fontPath);
-    fontDataCache = buf.toString("base64");
-    return fontDataCache;
-  } catch {
-    fontDataCache = null;
-    return null;
-  }
-}
+// Fonts: librsvg (sharp's SVG backend) doesn't reliably parse WOFF2 variable
+// fonts from base64 @font-face — we were getting tofu for every glyph. Rely
+// on a clean system serif stack instead. Keeps the BGP "printed plan" feel
+// without breaking rendering. We can revisit with @resvg/resvg-js if we need
+// exact Tiempos later.
+const BASE_FONT = `Georgia, "Times New Roman", "Liberation Serif", serif`;
 
 // ---------------------------------------------------------------------------
 // Unit-to-building matching + rendering
@@ -296,7 +289,9 @@ export async function renderGoadPlan(args: RenderGoadPlanArgs): Promise<RenderGo
   const mapWidth = outWidth - padding * 2;
   const mapHeight = outHeight - titleH - legendH - padding * 2;
 
-  const projector = makeProjector(args.bbox, mapWidth, mapHeight);
+  const mapX = padding;
+  const mapY = titleH + padding;
+  const projector = makeProjector(args.bbox, mapWidth, mapHeight, mapX, mapY);
   const project = projector.project;
 
   // 1. Overpass.
@@ -378,42 +373,34 @@ function buildSvg(a: BuildSvgArgs): string {
   const mapX = padding;
   const mapY = titleH + padding;
 
-  const fontB64 = loadFontBase64();
-  const fontFace = fontB64
-    ? `@font-face { font-family: "Tiempos"; src: url("data:font/woff2;base64,${fontB64}") format("woff2"); font-weight: 400; font-style: normal; }`
-    : "";
-  const baseFont = fontB64 ? "Tiempos, Georgia, serif" : "Georgia, 'Times New Roman', serif";
-
   // Scale bar — 50m.
-  const { lat } = { lat: (args.bbox.south + args.bbox.north) / 2 };
-  const dy = a.projector.project(lat, 0).y - a.projector.project(lat + (50 / 111_320), 0).y;
-  const pxPer50m = Math.abs(dy);
+  const midLatForScale = (args.bbox.south + args.bbox.north) / 2;
+  const scaleDy = a.projector.project(midLatForScale, 0).y - a.projector.project(midLatForScale + (50 / 111_320), 0).y;
+  const pxPer50m = Math.abs(scaleDy);
 
   const parts: string[] = [];
   parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${outWidth}" height="${outHeight}" viewBox="0 0 ${outWidth} ${outHeight}">`);
-  parts.push(`<style>${fontFace}
-    .title { font-family: ${baseFont}; fill: ${PLAN_COLORS.ink}; }
-    .body { font-family: ${baseFont}; fill: ${PLAN_COLORS.ink}; }
-    .muted { font-family: ${baseFont}; fill: ${PLAN_COLORS.inkMuted}; }
-    .tenant { font-family: ${baseFont}; font-weight: 500; text-anchor: middle; dominant-baseline: central; }
-    .use { font-family: ${baseFont}; font-style: italic; text-anchor: middle; dominant-baseline: central; }
+  parts.push(`<style>
+    text { font-family: ${BASE_FONT}; }
+    .title { fill: ${PLAN_COLORS.ink}; }
+    .body { fill: ${PLAN_COLORS.ink}; }
+    .muted { fill: ${PLAN_COLORS.inkMuted}; }
+    .tenant { font-weight: 500; text-anchor: middle; dominant-baseline: central; }
+    .use { font-style: italic; text-anchor: middle; dominant-baseline: central; }
   </style>`);
 
   // Page bg
   parts.push(`<rect x="0" y="0" width="${outWidth}" height="${outHeight}" fill="${PLAN_COLORS.pageBg}"/>`);
 
   // Title block
-  parts.push(`<g>`);
   parts.push(`<text class="title" x="${padding}" y="38" font-size="26" font-weight="400">BGP Retail Context Plan</text>`);
   parts.push(`<text class="body" x="${padding}" y="66" font-size="18">${esc(args.addressLine)}</text>`);
   if (args.postcodeLine) parts.push(`<text class="muted" x="${padding}" y="84" font-size="13">${esc(args.postcodeLine)}</text>`);
   parts.push(`<line x1="${padding}" y1="${titleH - 2}" x2="${outWidth - padding}" y2="${titleH - 2}" stroke="${PLAN_COLORS.inkMuted}" stroke-width="0.5" opacity="0.4"/>`);
-  parts.push(`</g>`);
 
-  // Map group: clipped + translated
-  parts.push(`<defs><clipPath id="mapClip"><rect x="${mapX}" y="${mapY}" width="${mapWidth}" height="${mapHeight}"/></clipPath></defs>`);
-  parts.push(`<g clip-path="url(#mapClip)" transform="translate(${mapX}, ${mapY})">`);
-  parts.push(`<rect x="0" y="0" width="${mapWidth}" height="${mapHeight}" fill="${PLAN_COLORS.pageBg}"/>`);
+  // Map pane — everything projected directly into screen coords, no transform
+  // or clip-path (librsvg rasterises those unreliably).
+  parts.push(`<rect x="${mapX}" y="${mapY}" width="${mapWidth}" height="${mapHeight}" fill="${PLAN_COLORS.pageBg}"/>`);
 
   // Roads — drawn under buildings
   for (const r of a.roads) {
@@ -481,8 +468,6 @@ function buildSvg(a: BuildSvgArgs): string {
     parts.push(`<text class="tenant" font-size="12" fill="${PLAN_COLORS.subjectLine}">SUBJECT</text>`);
     parts.push(`</g>`);
   }
-
-  parts.push(`</g>`); // end map group
 
   // Map border
   parts.push(`<rect x="${mapX}" y="${mapY}" width="${mapWidth}" height="${mapHeight}" fill="none" stroke="${PLAN_COLORS.inkMuted}" stroke-width="0.6" opacity="0.4"/>`);

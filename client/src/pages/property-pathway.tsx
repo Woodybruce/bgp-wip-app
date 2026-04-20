@@ -1350,19 +1350,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
 
       {/* Stage 9 — Why Buy */}
       {s9 && (
-        <Card>
-          <CardHeader className="pb-3 flex flex-row items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Why Buy</CardTitle>
-            {(s9.sharepointUrl || s9.documentUrl) && (
-              <a href={s9.sharepointUrl || s9.documentUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-                <Download className="w-3 h-3" /> Open Why Buy PDF
-              </a>
-            )}
-          </CardHeader>
-          <CardContent className="text-sm">
-            <p className="text-muted-foreground">4-page PE-style investment memo generated from the agreed business plan + agreed Excel model.</p>
-          </CardContent>
-        </Card>
+        <WhyBuyCard runId={run.id} stage9={s9} onReload={onReload} />
       )}
 
     </div>
@@ -1715,6 +1703,82 @@ function fmtPsf(v?: number): string {
   return `£${v.toFixed(v < 10 ? 2 : 0)}/sqft`;
 }
 
+function WhyBuyCard({ runId, stage9, onReload }: { runId: string; stage9: any; onReload: () => void }) {
+  const { toast } = useToast();
+  const [gammaBusy, setGammaBusy] = useState(false);
+  const gamma = stage9?.gamma || {};
+  const gammaRunning = gamma.status === "running" || gammaBusy;
+
+  useEffect(() => {
+    if (gamma.status !== "running") return;
+    const t = setInterval(onReload, 5000);
+    return () => clearInterval(t);
+  }, [gamma.status, onReload]);
+
+  const generateGamma = async (exportAs: "pdf" | "pptx") => {
+    setGammaBusy(true);
+    try {
+      const res = await fetch(`/api/property-pathway/${runId}/why-buy-gamma/generate`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ exportAs }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      toast({ title: "Gamma started", description: `Generating ${exportAs.toUpperCase()} — watch the card for the link.` });
+      setTimeout(onReload, 2000);
+    } catch (err: any) {
+      toast({ title: "Gamma failed to start", description: err?.message || "Error", variant: "destructive" });
+    } finally {
+      setGammaBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3 flex flex-row items-center justify-between">
+        <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Why Buy</CardTitle>
+        <div className="flex items-center gap-2">
+          {(stage9?.sharepointUrl || stage9?.documentUrl) && (
+            <a href={stage9.sharepointUrl || stage9.documentUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+              <Download className="w-3 h-3" /> Open Why Buy PDF
+            </a>
+          )}
+          <Button size="sm" variant="outline" onClick={() => generateGamma("pdf")} disabled={gammaRunning} className="gap-1.5">
+            {gammaRunning ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Try Gamma (PDF)
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => generateGamma("pptx")} disabled={gammaRunning} className="gap-1.5">
+            {gammaRunning ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Try Gamma (PPTX)
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="text-sm space-y-2">
+        <p className="text-muted-foreground">4-page PE-style investment memo generated from the agreed business plan + agreed Excel model.</p>
+        {gamma.status === "running" && (
+          <p className="text-xs text-muted-foreground">Gamma generating {(gamma.exportAs || "pdf").toUpperCase()}… this usually takes ~60–90s.</p>
+        )}
+        {gamma.status === "failed" && (
+          <p className="text-xs text-destructive">Gamma failed: {gamma.error || "unknown error"}</p>
+        )}
+        {gamma.status === "completed" && (
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <span className="text-muted-foreground">Gamma {(gamma.exportAs || "pdf").toUpperCase()}:</span>
+            {(gamma.sharepointUrl || gamma.documentUrl) && (
+              <a href={gamma.sharepointUrl || gamma.documentUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
+                <Download className="w-3 h-3" /> Download
+              </a>
+            )}
+            {gamma.gammaUrl && (
+              <a href={gamma.gammaUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
+                <ExternalLink className="w-3 h-3" /> Edit in Gamma
+              </a>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ImageStudioCard({ runId, stage8, onReload }: { runId: string; stage8: any; onReload: () => void }) {
   const { toast } = useToast();
   const [retrying, setRetrying] = useState(false);
@@ -1747,7 +1811,12 @@ function ImageStudioCard({ runId, stage8, onReload }: { runId: string; stage8: a
           <ImageIcon className="w-4 h-4" /> Image Studio
         </CardTitle>
         <div className="flex items-center gap-2">
-          <a href="/image-studio" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
+          <a
+            href={collections[0]?.id ? `/image-studio?collection=${encodeURIComponent(collections[0].id)}` : "/image-studio"}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+          >
             <ExternalLink className="w-3 h-3" /> Open Image Studio
           </a>
           <Button size="sm" variant="outline" onClick={retry} disabled={retrying} className="gap-1.5">
@@ -1789,10 +1858,16 @@ function ImageStudioCard({ runId, stage8, onReload }: { runId: string; stage8: a
         {collections.length > 0 && (
           <div className="grid grid-cols-3 gap-2 text-[11px]">
             {collections.map((c: any) => (
-              <div key={c.id} className="border rounded px-2 py-1 flex items-center justify-between">
+              <a
+                key={c.id}
+                href={`/image-studio?collection=${encodeURIComponent(c.id)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="border rounded px-2 py-1 flex items-center justify-between hover:bg-accent hover:border-primary/40 transition-colors"
+              >
                 <span className="truncate">{c.name}</span>
                 <Badge variant="outline" className="text-[10px] py-0 shrink-0">{c.imageCount || 0}</Badge>
-              </div>
+              </a>
             ))}
           </div>
         )}

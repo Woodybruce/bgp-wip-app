@@ -4633,6 +4633,58 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
+  // Generate a Gamma-powered Why Buy (parallel to the pdfkit renderer).
+  // Returns 202 immediately; client polls the run record for stage9.gamma.* fields.
+  app.post("/api/property-pathway/:runId/why-buy-gamma/generate", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const run = await getRun(String(req.params.runId));
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      if (!process.env.GAMMA_API_KEY) return res.status(400).json({ error: "GAMMA_API_KEY not configured" });
+
+      const exportAs = (req.body?.exportAs === "pptx" ? "pptx" : "pdf") as "pdf" | "pptx";
+      const themeName: string | undefined = req.body?.themeName;
+
+      // Mark stage9.gamma as running
+      const sr = (run.stageResults as StageResults) || {};
+      const stage9 = { ...((sr as any).stage9 || {}) };
+      stage9.gamma = { status: "running", startedAt: new Date().toISOString(), exportAs };
+      await updateRun(run.id, { stageResults: { ...sr, stage9 } as any });
+
+      (async () => {
+        try {
+          const { renderWhyBuyGamma } = await import("./why-buy-gamma");
+          const result = await renderWhyBuyGamma({ runId: run.id, exportAs, themeName });
+          const latest = await getRun(run.id);
+          const lsr = (latest?.stageResults as any) || {};
+          const lstage9 = { ...(lsr.stage9 || {}) };
+          lstage9.gamma = {
+            status: "completed",
+            completedAt: new Date().toISOString(),
+            exportAs,
+            documentUrl: result.documentUrl,
+            sharepointUrl: result.sharepointUrl,
+            gammaUrl: result.gammaUrl,
+            generationId: result.generationId,
+            imageStudioId: result.imageStudioId,
+          };
+          await updateRun(run.id, { stageResults: { ...lsr, stage9: lstage9 } });
+        } catch (err: any) {
+          console.error("[why-buy-gamma] error:", err?.message);
+          const latest = await getRun(run.id);
+          const lsr = (latest?.stageResults as any) || {};
+          const lstage9 = { ...(lsr.stage9 || {}) };
+          lstage9.gamma = { status: "failed", error: err?.message || String(err), exportAs };
+          await updateRun(run.id, { stageResults: { ...lsr, stage9: lstage9 } });
+        }
+      })();
+
+      res.status(202).json({ success: true, async: true });
+    } catch (err: any) {
+      console.error("[why-buy-gamma route] error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to start Gamma render" });
+    }
+  });
+
   app.post("/api/property-pathway/:runId/market-intel", requireAuth, async (req: Request, res: Response) => {
     try {
       const run = await getRun(String(req.params.runId));

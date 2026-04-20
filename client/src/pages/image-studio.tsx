@@ -164,6 +164,7 @@ export default function ImageStudio() {
   const linkedProperty = queryParams.get("property") || "";
   const linkedAddress = queryParams.get("address") || "";
   const linkedPropertyId = queryParams.get("propertyId") || "";
+  const linkedCollectionId = queryParams.get("collection") || "";
 
   const [activeTab, setActiveTab] = useState("library");
   const [searchQuery, setSearchQuery] = useState("");
@@ -208,6 +209,14 @@ export default function ImageStudio() {
       setSearchQuery(linkedProperty);
     }
   }, [linkedAddress, linkedProperty]);
+
+  useEffect(() => {
+    if (linkedCollectionId) {
+      setActiveSection("library");
+      setCollectionsTab("collections");
+      setViewingCollectionId(linkedCollectionId);
+    }
+  }, [linkedCollectionId]);
   const [streetViewHeading, setStreetViewHeading] = useState(0);
   const [streetViewPitch, setStreetViewPitch] = useState(0);
   const [streetViewFov, setStreetViewFov] = useState(90);
