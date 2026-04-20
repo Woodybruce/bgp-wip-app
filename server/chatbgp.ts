@@ -352,7 +352,7 @@ function setCache<T>(key: string, data: T, ttlMs: number): void {
 async function runSearchEmailsTool(opts: { query: string; top: number; mailbox: string; req: any }):
   Promise<{ messages: any[]; scope: string } | { error: string }> {
   const { query, top, mailbox, req } = opts;
-  const mapMsg = (msg: any, via?: string) => ({
+  const mapMsg = (msg: any, via?: string, mailboxEmail?: string) => ({
     id: msg.id,
     subject: (msg.subject || "(No subject)") + (via ? ` · via ${via}` : ""),
     from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown",
@@ -363,6 +363,11 @@ async function runSearchEmailsTool(opts: { query: string; top: number; mailbox: 
     isRead: msg.isRead,
     hasAttachments: msg.hasAttachments,
     msgId: msg.id,
+    // CRITICAL: Graph message IDs are mailbox-scoped. To download attachments
+    // from a message found in another user's mailbox, we need the mailbox
+    // address to route via /users/{email}/messages/{id}/attachments with the
+    // app token. Surface it so the model knows to pass it through.
+    mailboxEmail: mailboxEmail || undefined,
   });
   const selectFields = "id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,conversationId";
 
@@ -404,7 +409,7 @@ async function runSearchEmailsTool(opts: { query: string; top: number; mailbox: 
           for (const msg of data?.value || []) {
             if (seen.has(msg.id)) continue;
             seen.add(msg.id);
-            collected.push(mapMsg(msg, mailbox === "all" ? mb.owner : undefined));
+            collected.push(mapMsg(msg, mailbox === "all" ? mb.owner : undefined, mb.email));
           }
         } catch (err: any) {
           errors.push(`${mb.email}: ${String(err?.message || err).slice(0, 120)}`);
@@ -2201,11 +2206,12 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "get_email_attachments",
-      description: "List the attachments on a specific email. Returns attachment names, IDs, content types, and sizes. Use this when the user asks about an attachment on an email — you'll need the msgId from the email context or search results.",
+      description: "List the attachments on a specific email. Returns attachment names, IDs, content types, and sizes. Use this when the user asks about an attachment on an email — you'll need the msgId from the email context or search results. If the email came from search_emails with a mailboxEmail (i.e. another user's mailbox), you MUST pass mailboxEmail too — Graph message IDs are mailbox-scoped and will return ErrorInvalidMailboxItemId otherwise.",
       parameters: {
         type: "object",
         properties: {
           messageId: { type: "string", description: "The Graph API message ID from the email context [msgId:...] tag or from search_emails results." },
+          mailboxEmail: { type: "string", description: "The owner of the mailbox the message lives in (e.g. 'ollie@brucegillinghampollard.com'). REQUIRED when the message was returned by search_emails with mailbox=<email> or mailbox=all — the search result's mailboxEmail field has this value. Omit only when the message is in the calling user's own inbox." },
         },
         required: ["messageId"],
       },
@@ -2216,12 +2222,13 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "download_email_attachment",
-      description: "Download and read the content of an email attachment. For text-based files (PDF, Word, Excel, CSV, text), returns the extracted text content so you can read and summarise it. For binary files, returns metadata and a download link. Use get_email_attachments first to get the attachment ID.",
+      description: "Download and read the content of an email attachment. For text-based files (PDF, Word, Excel, CSV, text), returns the extracted text content so you can read and summarise it. For binary files, returns metadata and a download link. Use get_email_attachments first to get the attachment ID. If the email is in another user's mailbox (came from search_emails with mailboxEmail), you MUST pass the same mailboxEmail here — the ID is mailbox-scoped.",
       parameters: {
         type: "object",
         properties: {
           messageId: { type: "string", description: "The Graph API message ID of the email containing the attachment." },
           attachmentId: { type: "string", description: "The attachment ID from get_email_attachments results." },
+          mailboxEmail: { type: "string", description: "The owner of the mailbox the message lives in. REQUIRED when the message was returned by search_emails with mailbox=<email> or mailbox=all. The search result's mailboxEmail field has this value." },
           action: { type: "string", enum: ["read", "save_to_sharepoint"], description: "What to do with the attachment. 'read' returns the content. 'save_to_sharepoint' saves it to SharePoint (requires folderPath)." },
           folderPath: { type: "string", description: "SharePoint folder path to save the attachment to (required when action is 'save_to_sharepoint'). e.g. 'Deals/Brixton Market'" },
         },
@@ -5421,9 +5428,24 @@ async function executeCrmToolRaw(
 
   if (fnName === "get_email_attachments") {
     try {
+      const msgId = encodeURIComponent(fnArgs.messageId);
+      const mailboxEmail: string | undefined = fnArgs.mailboxEmail;
+      // Cross-mailbox path: route via app token on /users/{email}/messages/...
+      // Graph message IDs are mailbox-scoped, so using /me here against an id
+      // from another user's mailbox returns ErrorInvalidMailboxItemId.
+      if (mailboxEmail) {
+        const { graphRequest } = await import("./shared-mailbox");
+        const data = await graphRequest(
+          `/users/${encodeURIComponent(mailboxEmail)}/messages/${msgId}/attachments?$select=id,name,contentType,size,isInline`,
+          { headers: { "X-AnchorMailbox": mailboxEmail } as any }
+        );
+        const attachments = (data?.value || [])
+          .filter((a: any) => !a.isInline && a["@odata.type"] !== "#microsoft.graph.itemAttachment")
+          .map((a: any) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size }));
+        return { data: { attachments, count: attachments.length, mailboxEmail } };
+      }
       const token = await getValidMsToken(req);
       if (!token) return { data: { error: "Not connected to Microsoft 365. Please sign in first." } };
-      const msgId = encodeURIComponent(fnArgs.messageId);
       const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
       const graphRes = await fetch(
         `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments?$select=id,name,contentType,size,isInline`,
@@ -5431,7 +5453,7 @@ async function executeCrmToolRaw(
       );
       if (!graphRes.ok) {
         const errText = await graphRes.text();
-        return { data: { error: `Failed to fetch attachments: ${graphRes.status} ${errText.slice(0, 200)}` } };
+        return { data: { error: `Failed to fetch attachments: ${graphRes.status} ${errText.slice(0, 200)}${errText.includes("ErrorInvalidMailboxItemId") ? " — this message is in another user's mailbox. Pass mailboxEmail (from the search_emails result)." : ""}` } };
       }
       const data = await graphRes.json();
       const attachments = (data.value || [])
@@ -5445,24 +5467,34 @@ async function executeCrmToolRaw(
 
   if (fnName === "download_email_attachment") {
     try {
-      const token = await getValidMsToken(req);
-      if (!token) return { data: { error: "Not connected to Microsoft 365. Please sign in first." } };
       const action = fnArgs.action || "read";
       if (action === "save_to_sharepoint" && !fnArgs.folderPath) {
         return { data: { error: "folderPath is required when action is 'save_to_sharepoint'." } };
       }
       const msgId = encodeURIComponent(fnArgs.messageId);
       const attId = encodeURIComponent(fnArgs.attachmentId);
-      const headers = { Authorization: `Bearer ${token}` };
-      const graphRes = await fetch(
-        `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments/${attId}`,
-        { headers }
-      );
-      if (!graphRes.ok) {
-        const errText = await graphRes.text();
-        return { data: { error: `Failed to download attachment: ${graphRes.status} ${errText.slice(0, 200)}` } };
+      const mailboxEmail: string | undefined = fnArgs.mailboxEmail;
+      let attachment: any;
+      if (mailboxEmail) {
+        const { graphRequest } = await import("./shared-mailbox");
+        attachment = await graphRequest(
+          `/users/${encodeURIComponent(mailboxEmail)}/messages/${msgId}/attachments/${attId}`,
+          { headers: { "X-AnchorMailbox": mailboxEmail } as any }
+        );
+      } else {
+        const token = await getValidMsToken(req);
+        if (!token) return { data: { error: "Not connected to Microsoft 365. Please sign in first." } };
+        const headers = { Authorization: `Bearer ${token}` };
+        const graphRes = await fetch(
+          `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments/${attId}`,
+          { headers }
+        );
+        if (!graphRes.ok) {
+          const errText = await graphRes.text();
+          return { data: { error: `Failed to download attachment: ${graphRes.status} ${errText.slice(0, 200)}${errText.includes("ErrorInvalidMailboxItemId") ? " — this message is in another user's mailbox. Pass mailboxEmail (from the search_emails result)." : ""}` } };
+        }
+        attachment = await graphRes.json();
       }
-      const attachment = await graphRes.json();
       if (!attachment.contentBytes) {
         return { data: { error: "This attachment type is not downloadable (no content bytes). It may be a linked item rather than a file." } };
       }
@@ -8439,22 +8471,37 @@ export async function handleCrmToolCall(
 
   if (fnName === "get_email_attachments") {
     try {
-      const token = await getValidMsToken(req);
-      if (!token) return { handled: true, response: { reply: "Not connected to Microsoft 365. Please sign in first." } };
       const msgId = encodeURIComponent(fnArgs.messageId);
-      const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-      const graphRes = await fetch(
-        `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments?$select=id,name,contentType,size,isInline`,
-        { headers }
-      );
-      if (!graphRes.ok) {
-        return { handled: true, response: { reply: `Failed to fetch attachments: ${graphRes.status}` } };
+      const mailboxEmail: string | undefined = fnArgs.mailboxEmail;
+      let attachments: any[];
+      if (mailboxEmail) {
+        const { graphRequest } = await import("./shared-mailbox");
+        const data = await graphRequest(
+          `/users/${encodeURIComponent(mailboxEmail)}/messages/${msgId}/attachments?$select=id,name,contentType,size,isInline`,
+          { headers: { "X-AnchorMailbox": mailboxEmail } as any }
+        );
+        attachments = (data?.value || [])
+          .filter((a: any) => !a.isInline && a["@odata.type"] !== "#microsoft.graph.itemAttachment")
+          .map((a: any) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size }));
+      } else {
+        const token = await getValidMsToken(req);
+        if (!token) return { handled: true, response: { reply: "Not connected to Microsoft 365. Please sign in first." } };
+        const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+        const graphRes = await fetch(
+          `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments?$select=id,name,contentType,size,isInline`,
+          { headers }
+        );
+        if (!graphRes.ok) {
+          const errText = await graphRes.text();
+          const hint = errText.includes("ErrorInvalidMailboxItemId") ? " — this message is in another user's mailbox. Pass mailboxEmail." : "";
+          return { handled: true, response: { reply: `Failed to fetch attachments: ${graphRes.status}${hint}` } };
+        }
+        const data = await graphRes.json();
+        attachments = (data.value || [])
+          .filter((a: any) => !a.isInline && a["@odata.type"] !== "#microsoft.graph.itemAttachment")
+          .map((a: any) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size }));
       }
-      const data = await graphRes.json();
-      const attachments = (data.value || [])
-        .filter((a: any) => !a.isInline && a["@odata.type"] !== "#microsoft.graph.itemAttachment")
-        .map((a: any) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size }));
-      const reply = await summaryHelper({ attachments, count: attachments.length });
+      const reply = await summaryHelper({ attachments, count: attachments.length, mailboxEmail });
       return { handled: true, response: { reply: reply || `Found ${attachments.length} attachment(s).` } };
     } catch (err: any) {
       return { handled: true, response: { reply: `Attachment list error: ${err?.message || "Unknown error"}` } };
@@ -8463,23 +8510,35 @@ export async function handleCrmToolCall(
 
   if (fnName === "download_email_attachment") {
     try {
-      const token = await getValidMsToken(req);
-      if (!token) return { handled: true, response: { reply: "Not connected to Microsoft 365. Please sign in first." } };
       const action = fnArgs.action || "read";
       if (action === "save_to_sharepoint" && !fnArgs.folderPath) {
         return { handled: true, response: { reply: "I need a SharePoint folder path to save the attachment. Could you tell me where you'd like it saved?" } };
       }
       const msgId = encodeURIComponent(fnArgs.messageId);
       const attId = encodeURIComponent(fnArgs.attachmentId);
-      const headers = { Authorization: `Bearer ${token}` };
-      const graphRes = await fetch(
-        `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments/${attId}`,
-        { headers }
-      );
-      if (!graphRes.ok) {
-        return { handled: true, response: { reply: `Failed to download attachment: ${graphRes.status}` } };
+      const mailboxEmail: string | undefined = fnArgs.mailboxEmail;
+      let attachment: any;
+      if (mailboxEmail) {
+        const { graphRequest } = await import("./shared-mailbox");
+        attachment = await graphRequest(
+          `/users/${encodeURIComponent(mailboxEmail)}/messages/${msgId}/attachments/${attId}`,
+          { headers: { "X-AnchorMailbox": mailboxEmail } as any }
+        );
+      } else {
+        const token = await getValidMsToken(req);
+        if (!token) return { handled: true, response: { reply: "Not connected to Microsoft 365. Please sign in first." } };
+        const headers = { Authorization: `Bearer ${token}` };
+        const graphRes = await fetch(
+          `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments/${attId}`,
+          { headers }
+        );
+        if (!graphRes.ok) {
+          const errText = await graphRes.text();
+          const hint = errText.includes("ErrorInvalidMailboxItemId") ? " — this message is in another user's mailbox. Pass mailboxEmail." : "";
+          return { handled: true, response: { reply: `Failed to download attachment: ${graphRes.status}${hint}` } };
+        }
+        attachment = await graphRes.json();
       }
-      const attachment = await graphRes.json();
       if (!attachment.contentBytes) {
         return { handled: true, response: { reply: "This attachment type is not downloadable — it may be a linked item rather than a file." } };
       }
