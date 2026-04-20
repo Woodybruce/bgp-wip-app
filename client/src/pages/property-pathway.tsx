@@ -1104,6 +1104,12 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                                 {c.sanctionsMatch && (
                                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-600 text-white uppercase font-medium">Sanctions</span>
                                 )}
+                                {c.pepMatch && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-purple-600 text-white uppercase font-medium" title="Politically-exposed person (ComplyAdvantage)">PEP</span>
+                                )}
+                                {c.adverseMediaMatch && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-600 text-white uppercase font-medium" title="Adverse media hit (ComplyAdvantage)">Adverse media</span>
+                                )}
                                 {c.status && <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground uppercase">{c.status}</span>}
                               </div>
                               <p className="text-[10px] text-muted-foreground">

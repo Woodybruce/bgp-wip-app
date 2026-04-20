@@ -107,24 +107,72 @@ export async function getCompanyData(companyNumber: string) {
 export async function screenSanctions(names: string[]) {
   try {
     const { screenName, loadSanctionsList } = await import("./sanctions-screening");
+    const { screenNames: caScreen, isComplyAdvantageConfigured } = await import("./comply-advantage");
     await loadSanctionsList();
+
+    // Run free lists (OFSI/OFAC) and ComplyAdvantage (sanctions + PEP +
+    // adverse media) in parallel. CA gives us the signals the free lists
+    // don't carry — PEPs and adverse media — which is where most of the
+    // real risk sits for West End trophy-asset proprietors.
+    const caConfigured = isComplyAdvantageConfigured();
+    const [freeByName, caResults] = await Promise.all([
+      Promise.resolve(names.map(n => ({ name: n, matches: screenName(n, 0.6) }))),
+      caConfigured ? caScreen(names.map(n => ({ name: n }))).catch((err: any) => {
+        console.warn("[kyc-clouseau] ComplyAdvantage screen failed, falling back to free lists only:", err?.message);
+        return [] as any[];
+      }) : Promise.resolve([] as any[]),
+    ]);
+
+    const caByName = new Map<string, any>();
+    for (const r of caResults) caByName.set(r.name, r);
+
     const results: any[] = [];
-    for (const name of names) {
-      const matches = screenName(name, 0.6);
-      if (matches.length > 0) {
-        results.push({
-          name,
-          status: matches[0].score >= 0.9 ? "strong_match" : "potential_match",
-          matches: matches.slice(0, 3).map(m => ({
-            sanctionedName: m.entry.name,
-            score: m.score,
-            regime: m.entry.regime,
-            designation: m.entry.designationType,
-          })),
+    for (const { name, matches: freeMatches } of freeByName) {
+      const ca = caByName.get(name);
+      const merged: any[] = [];
+
+      for (const m of freeMatches) {
+        merged.push({
+          matchType: "sanctions",
+          source: "free-list",
+          sanctionedName: m.entry.name,
+          score: m.score,
+          regime: m.entry.regime,
+          designation: m.entry.designationType,
         });
-      } else {
-        results.push({ name, status: "clear", matches: [] });
       }
+      for (const m of (ca?.matches || [])) {
+        merged.push({
+          matchType: m.matchType,
+          source: "complyadvantage",
+          sanctionedName: m.name,
+          listName: m.listName,
+          score: m.score,
+          details: m.details,
+        });
+      }
+
+      if (merged.length === 0) {
+        results.push({ name, status: "clear", matches: [] });
+        continue;
+      }
+      const topScore = Math.max(...merged.map(m => m.score || 0));
+      const hasSanctions = merged.some(m => m.matchType === "sanctions" || m.matchType === "warning");
+      const hasPep = merged.some(m => m.matchType === "pep");
+      const hasAdverse = merged.some(m => m.matchType === "adverse_media" || m.matchType === "adverse-media");
+      const status: "strong_match" | "potential_match" =
+        (hasSanctions && topScore >= 0.9) ? "strong_match" :
+        (hasPep && topScore >= 0.9) ? "strong_match" :
+        "potential_match";
+
+      results.push({
+        name,
+        status,
+        hasSanctions,
+        hasPep,
+        hasAdverse,
+        matches: merged.slice(0, 5),
+      });
     }
     return results;
   } catch (err: any) {
@@ -204,15 +252,35 @@ export function assessRisk(data: any, sanctionsResult: any): { score: number; le
   }
 
   if (sanctionsResult) {
-    const matches = sanctionsResult.filter((s: any) => s.status === "strong_match" || s.status === "potential_match");
-    if (matches.length > 0) {
-      const strongMatches = matches.filter((m: any) => m.status === "strong_match");
-      if (strongMatches.length > 0) {
-        flags.push(`🚨 SANCTIONS MATCH: ${strongMatches.length} strong match(es) found`);
-        score += 50;
-      } else {
-        flags.push(`⚠️ Potential sanctions match: ${matches.length} name(s) flagged`);
-        score += 25;
+    const hits = sanctionsResult.filter((s: any) => s.status === "strong_match" || s.status === "potential_match");
+    if (hits.length > 0) {
+      const sanctionsHits = hits.filter((h: any) => h.hasSanctions);
+      const pepHits = hits.filter((h: any) => h.hasPep);
+      const adverseHits = hits.filter((h: any) => h.hasAdverse);
+
+      if (sanctionsHits.length > 0) {
+        const strong = sanctionsHits.filter((h: any) => h.status === "strong_match");
+        if (strong.length > 0) {
+          flags.push(`🚨 SANCTIONS MATCH: ${strong.length} strong match(es)`);
+          score += 50;
+        } else {
+          flags.push(`⚠️ Potential sanctions match: ${sanctionsHits.length} name(s) flagged`);
+          score += 25;
+        }
+      }
+      if (pepHits.length > 0) {
+        const strongPep = pepHits.filter((h: any) => h.status === "strong_match");
+        if (strongPep.length > 0) {
+          flags.push(`🏛️ PEP MATCH: ${strongPep.length} politically-exposed person(s) (ComplyAdvantage)`);
+          score += 30;
+        } else {
+          flags.push(`⚠️ Potential PEP match: ${pepHits.length} name(s) (ComplyAdvantage)`);
+          score += 15;
+        }
+      }
+      if (adverseHits.length > 0) {
+        flags.push(`📰 Adverse media: ${adverseHits.length} name(s) flagged (ComplyAdvantage)`);
+        score += 15;
       }
     }
   }

@@ -157,6 +157,8 @@ interface StageResults {
       riskLevel?: "low" | "medium" | "high" | "critical";
       riskScore?: number;
       sanctionsMatch?: boolean;
+      pepMatch?: boolean;
+      adverseMediaMatch?: boolean;
       flags?: string[];
       officerCount?: number;
       pscCount?: number;
@@ -2085,6 +2087,7 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
           const uboCount = Array.isArray((result.ownershipChain as any)?.chain)
             ? (result.ownershipChain as any).chain.length
             : 0;
+          const screening = result.sanctionsScreening || [];
           return {
             companyNumber: t.companyNumber,
             companyName: result.subject.name,
@@ -2092,7 +2095,9 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
             investigationId,
             riskLevel: result.riskLevel,
             riskScore: result.riskScore,
-            sanctionsMatch: (result.sanctionsScreening || []).some((s: any) => s.status === "strong_match" || s.status === "potential_match"),
+            sanctionsMatch: screening.some((s: any) => s.hasSanctions),
+            pepMatch: screening.some((s: any) => s.hasPep),
+            adverseMediaMatch: screening.some((s: any) => s.hasAdverse),
             flags: result.flags || [],
             officerCount: (result.officers || []).length,
             pscCount: (result.pscs || []).length,
