@@ -2295,8 +2295,29 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
     // Idox Public Access portal (scraped — authoritative but slower).
     // Merge all three, dedupe by reference. Field names differ so handle each shape.
     const govApps = (lookup.planningData as any)?.planningApplications || [];
-    const pdApps = (lookup.propertyDataCoUk as any)?.["planning-applications"]?.data || [];
-    const pdAppsArr = Array.isArray(pdApps) ? pdApps : (pdApps?.planning_applications || []);
+    const pdRaw = (lookup.propertyDataCoUk as any)?.["planning-applications"];
+    // PropertyData's shape for /planning-applications isn't consistent across
+    // postcodes — sometimes {data: [...]}, sometimes {data: {planning_applications: [...]}},
+    // sometimes {data: {}} when nothing is found. Dig through everything the API
+    // might reasonably hand us and fall back to [] so bad shape != silent blank.
+    let pdAppsArr: any[] = [];
+    if (pdRaw) {
+      const d = pdRaw.data;
+      if (Array.isArray(d)) pdAppsArr = d;
+      else if (Array.isArray(d?.planning_applications)) pdAppsArr = d.planning_applications;
+      else if (Array.isArray(d?.applications)) pdAppsArr = d.applications;
+      else if (Array.isArray((pdRaw as any).planning_applications)) pdAppsArr = (pdRaw as any).planning_applications;
+    }
+    // Diagnostic: surface exactly what PropertyData handed us so we can tell
+    // "zero applications near this postcode" from "shape changed / our parser missed it".
+    if (!pdAppsArr.length) {
+      const status = pdRaw?.status;
+      const dataKeys = pdRaw?.data && typeof pdRaw.data === "object" && !Array.isArray(pdRaw.data)
+        ? Object.keys(pdRaw.data).slice(0, 10).join(",")
+        : "(none)";
+      const topKeys = pdRaw ? Object.keys(pdRaw).slice(0, 10).join(",") : "(null response)";
+      console.log(`[pathway stage4] PropertyData /planning-applications → 0 apps (status=${status || "?"}, top-level keys=[${topKeys}], data keys=[${dataKeys}])`);
+    }
 
     let idoxApps: any[] = [];
     try {
