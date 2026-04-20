@@ -44,13 +44,53 @@ export interface PlanningDoc {
 const docCache = new Map<string, { fetchedAt: number; docs: PlanningDoc[] }>();
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-function classifyDoc(desc: string, type: string): { category: string; label: string } {
+// Architect drawing-number conventions often encode existing/proposed as a
+// prefix or suffix (EX-100 / P-100 / 100(E) / 100 (P)). When a row's
+// description is ambiguous ("Ground Floor Plan" with no existing/proposed
+// qualifier), the drawing number is usually decisive.
+function drawingNumberIntent(dn: string | undefined): "existing" | "proposed" | null {
+  if (!dn) return null;
+  const s = dn.toUpperCase().trim();
+  // Prefix: EX-, E-, PR-, P-, PROP-
+  if (/^(?:EX|E)[-_ ]?\d/.test(s)) return "existing";
+  if (/^(?:PR|P|PROP)[-_ ]?\d/.test(s)) return "proposed";
+  // Mid-token: ...-EX-... or ...-P-...
+  if (/[-_ ](?:EX|EXIST|EXISTING)[-_ ]/.test(s)) return "existing";
+  if (/[-_ ](?:PR|PROP|PROPOSED)[-_ ]/.test(s)) return "proposed";
+  // Suffix markers: (E) / (P) / ends with EX / PR
+  if (/\(E\)|[-_ ]E$|[-_ ]EX$/.test(s)) return "existing";
+  if (/\(P\)|[-_ ]P$|[-_ ]PR$/.test(s)) return "proposed";
+  return null;
+}
+
+function classifyDoc(desc: string, type: string, drawingNumber?: string): { category: string; label: string } {
   const s = `${desc} ${type}`.toLowerCase();
   if (/existing\b[^,;]*\bfloor\s*plan|existing\s*ground\s*floor|existing\s*first\s*floor|existing\s*plans?\b/.test(s)) return { category: "floor_plan_existing", label: "Floor Plan (Existing)" };
   if (/proposed\b[^,;]*\bfloor\s*plan|proposed\s*ground\s*floor|proposed\s*first\s*floor|proposed\s*plans?\b/.test(s)) return { category: "floor_plan_proposed", label: "Floor Plan (Proposed)" };
-  if (/floor\s*plan|ground\s*floor|first\s*floor|second\s*floor|basement\s*plan|roof\s*plan/.test(s)) return { category: "floor_plan", label: "Floor Plan" };
-  if (/elevation/.test(s)) return { category: "elevation", label: "Elevation" };
-  if (/\bsection(s|al)?\b/.test(s) && !/section\s*\d+\s*(agreement|notice)|section\s*73/.test(s)) return { category: "section", label: "Section" };
+
+  // Promote ambiguous "Floor Plan" / "Elevation" based on drawing-number intent.
+  const isFloorPlan = /floor\s*plan|ground\s*floor|first\s*floor|second\s*floor|basement\s*plan|roof\s*plan/.test(s);
+  const isElevation = /elevation/.test(s);
+  const isSection = /\bsection(s|al)?\b/.test(s) && !/section\s*\d+\s*(agreement|notice)|section\s*73/.test(s);
+  if (isFloorPlan) {
+    const intent = drawingNumberIntent(drawingNumber);
+    if (intent === "existing") return { category: "floor_plan_existing", label: "Floor Plan (Existing)" };
+    if (intent === "proposed") return { category: "floor_plan_proposed", label: "Floor Plan (Proposed)" };
+    return { category: "floor_plan", label: "Floor Plan" };
+  }
+  if (isElevation) {
+    const intent = drawingNumberIntent(drawingNumber);
+    if (intent === "existing") return { category: "elevation_existing", label: "Elevation (Existing)" };
+    if (intent === "proposed") return { category: "elevation_proposed", label: "Elevation (Proposed)" };
+    return { category: "elevation", label: "Elevation" };
+  }
+  if (isSection) {
+    const intent = drawingNumberIntent(drawingNumber);
+    if (intent === "existing") return { category: "section_existing", label: "Section (Existing)" };
+    if (intent === "proposed") return { category: "section_proposed", label: "Section (Proposed)" };
+    return { category: "section", label: "Section" };
+  }
+
   if (/site\s*(plan|location)|location\s*plan|block\s*plan|boundary\s*plan/.test(s)) return { category: "site_plan", label: "Site Plan" };
   if (/decision\s*notice|decision\s*letter|decision\s*report/.test(s)) return { category: "decision", label: "Decision Notice" };
   if (/officer.?s?\s*report|delegated\s*report/.test(s)) return { category: "officer_report", label: "Officer Report" };
@@ -62,6 +102,60 @@ function classifyDoc(desc: string, type: string): { category: string; label: str
   if (/cil\b|community\s*infrastructure/.test(s)) return { category: "cil", label: "CIL" };
   if (/correspondence|letter|email/.test(s)) return { category: "correspondence", label: "Correspondence" };
   return { category: "other", label: type || "Document" };
+}
+
+// Split a drawing number into (base, revision) so we can dedupe multiple
+// revisions of the same drawing and keep only the latest. Architects encode
+// revisions as " Rev A", " Rev.04", "_P02", " P03", trailing single-letter,
+// etc. We're conservative — if we can't confidently extract a rev, we treat
+// the whole string as the base (no dedup).
+function parseRevision(dn: string | undefined): { base: string; rev: string } {
+  if (!dn) return { base: "", rev: "" };
+  const s = dn.trim();
+  const m1 = s.match(/^(.+?)\s*[- _]?rev(?:ision)?\.?\s*([A-Z0-9]+)\s*$/i);
+  if (m1) return { base: m1[1].trim(), rev: m1[2].toUpperCase() };
+  const m2 = s.match(/^(.+?)[-_ ]P(\d{1,3})\s*$/i);
+  if (m2) return { base: m2[1].trim(), rev: `P${m2[2].padStart(2, "0")}` };
+  const m3 = s.match(/^(.+\d)([A-Z])\s*$/);
+  if (m3) return { base: m3[1].trim(), rev: m3[2] };
+  return { base: s, rev: "" };
+}
+
+function revOrder(rev: string): number {
+  if (!rev) return -1;
+  const m = rev.match(/^P(\d+)$/i);
+  if (m) return 1000 + parseInt(m[1], 10);
+  if (/^[A-Z]$/.test(rev)) return rev.charCodeAt(0) - 64; // A=1, B=2...
+  const n = parseInt(rev, 10);
+  return isNaN(n) ? 0 : n;
+}
+
+// Drop superseded rows and fold multi-rev drawings down to the latest rev.
+// The Idox "type" column often flags this explicitly; fall back to
+// description scan for "superseded".
+function dedupeAndFilter(docs: PlanningDoc[]): PlanningDoc[] {
+  const live = docs.filter((d) => {
+    const hay = `${d.type} ${d.description}`.toLowerCase();
+    return !/superseded|withdrawn\s*drawing|not\s*for\s*construction/.test(hay);
+  });
+
+  const bestByBase = new Map<string, PlanningDoc>();
+  const keep: PlanningDoc[] = [];
+  for (const d of live) {
+    if (!d.drawingNumber) { keep.push(d); continue; }
+    const { base, rev } = parseRevision(d.drawingNumber);
+    if (!base || !rev) { keep.push(d); continue; }
+    const key = `${d.category}::${base.toLowerCase()}`;
+    const existing = bestByBase.get(key);
+    if (!existing) {
+      bestByBase.set(key, d);
+    } else {
+      const curRev = parseRevision(existing.drawingNumber).rev;
+      if (revOrder(rev) > revOrder(curRev)) bestByBase.set(key, d);
+    }
+  }
+  keep.push(...bestByBase.values());
+  return keep;
 }
 
 function stripHtml(s: string): string {
@@ -131,11 +225,11 @@ function parseIdoxDocsHtml(html: string, baseUrl: string): PlanningDoc[] {
 
     if (!description) continue;
 
-    const { category, label } = classifyDoc(description, type);
+    const { category, label } = classifyDoc(description, type, drawingNumber);
     docs.push({ url, date, description, type, drawingNumber, category, label });
   }
 
-  return docs;
+  return dedupeAndFilter(docs);
 }
 
 // The planning apps list gives us a URL pointing at the summary tab (activeTab=summary
@@ -194,7 +288,11 @@ export const DOC_PRIORITY: Record<string, number> = {
   floor_plan_proposed: 100,
   floor_plan_existing: 95,
   floor_plan: 90,
+  elevation_proposed: 85,
+  elevation_existing: 82,
   elevation: 80,
+  section_proposed: 75,
+  section_existing: 72,
   section: 70,
   site_plan: 60,
   decision: 50,

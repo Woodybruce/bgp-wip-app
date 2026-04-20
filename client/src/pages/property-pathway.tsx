@@ -1365,12 +1365,23 @@ function classifyDocType(text: string): { label: string; tone: string } {
 function docCategoryTone(category: string): string {
   switch (category) {
     case "floor_plan_proposed":
+      return "bg-sky-200 text-sky-900";
     case "floor_plan_existing":
+      return "bg-sky-50 text-sky-700";
     case "floor_plan":
       return "bg-sky-100 text-sky-800";
+    case "elevation_proposed":
+      return "bg-violet-200 text-violet-900";
+    case "elevation_existing":
+      return "bg-violet-50 text-violet-700";
     case "elevation":
-    case "section":
       return "bg-violet-100 text-violet-800";
+    case "section_proposed":
+      return "bg-fuchsia-200 text-fuchsia-900";
+    case "section_existing":
+      return "bg-fuchsia-50 text-fuchsia-700";
+    case "section":
+      return "bg-fuchsia-100 text-fuchsia-800";
     case "site_plan":
       return "bg-emerald-100 text-emerald-800";
     case "decision":

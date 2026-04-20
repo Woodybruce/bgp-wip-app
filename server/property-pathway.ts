@@ -943,9 +943,22 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     // "Haymarket" or "18 Haymarket House". Instead: pick the most distinctive
     // single word(s) from the address (e.g. "Haymarket"), plus the postcode.
     // Single words aren't treated as phrases, so they match case-insensitively.
-    const primaryAddressToken = (address.split(",")[0] || "").trim();
+    // Google's geocoded address is "18, 22 Haymarket, London SW1Y 4DG, UK".
+    // Splitting on the first comma gives "18" — no letters, no distinctive
+    // word to search. Strip postcode + ", UK" + ", London" instead and use
+    // everything before it as the source for distinctive words. Works for
+    // "18 22 Haymarket" AND "Kings House, High Street, Ruislip HA4 0RG".
+    const addrWithoutPostcode = address
+      .replace(/\b[a-z]{1,2}\d[a-z\d]?\s*\d[a-z]{2}\b/gi, "")
+      .replace(/,\s*UK\b/i, "")
+      .replace(/,\s*united\s*kingdom\b/i, "")
+      .replace(/,\s*london\b/i, "")
+      .replace(/,\s*england\b/i, "")
+      .trim()
+      .replace(/,\s*$/, "");
+    const primaryAddressToken = addrWithoutPostcode || (address.split(",")[0] || "").trim();
     // Pick distinctive words from the address — >=4 chars, skipping common road/type words and pure numbers.
-    const STOPWORDS = new Set(["street", "road", "avenue", "lane", "place", "square", "house", "building", "floor", "suite", "unit", "the", "and"]);
+    const STOPWORDS = new Set(["street", "road", "avenue", "lane", "place", "square", "house", "building", "floor", "suite", "unit", "the", "and", "london"]);
     const distinctiveWords = primaryAddressToken
       .toLowerCase()
       .match(/[a-z]+/g) // letters only — skips pure numbers like "18" and "22"
@@ -1091,7 +1104,7 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     if (Object.keys(errorsByMailbox).length > 0) {
       console.warn(`[pathway stage1] Mailboxes that errored:`, JSON.stringify(errorsByMailbox, null, 2));
     }
-    console.log(`[pathway stage1] Email search: delegated=${delegatedToken ? "yes" : "no"}, phrases=${searchPhrases.length}, mailboxes tried=${mailboxes.length}, mailboxes OK=${successfulMailboxes.size} -> ${totalReturnedFromGraph} raw hits, ${emailHits.length} kept after regex filter`);
+    console.log(`[pathway stage1] Email search: delegated=${delegatedToken ? "yes" : "no"}, phrases=[${searchPhrases.join(", ")}], addressWords=[${addressWords.join(",")}], mailboxes tried=${mailboxes.length}, mailboxes OK=${successfulMailboxes.size} -> ${totalReturnedFromGraph} raw hits, ${emailHits.length} kept after regex filter`);
     emailHits.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     // Cap at 120 — the regex filter is already tight, so this just protects
     // against pathological cases. Older relevant emails (2015, 2023) stay in.
