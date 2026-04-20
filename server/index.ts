@@ -1,5 +1,13 @@
 import express, { type Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
+import dns from "node:dns";
+
+// Railway's default DNS result order prefers IPv6, which silently
+// times out against several gov.uk edges (Idox Public Access, etc).
+// Force IPv4-first resolution before any outbound fetch runs.
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
 
 process.on("unhandledRejection", (reason, promise) => {
   console.error("[FATAL] Unhandled promise rejection:", reason);

@@ -727,9 +727,11 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   // source=pathway + the runId so we can link back from the LR page.
   try {
     const stage1UserId = (run as any).startedBy || null;
-    if (stage1UserId && (stage1FreeholdsData.length > 0 || stage1LeaseholdsData.length > 0 || initialOwnership)) {
+    const hasLrData = stage1FreeholdsData.length > 0 || stage1LeaseholdsData.length > 0 || !!initialOwnership;
+    console.log(`[pathway stage1] persist LR check: userId=${stage1UserId ? "set" : "NULL"} freeholds=${stage1FreeholdsData.length} leaseholds=${stage1LeaseholdsData.length} ownership=${initialOwnership ? "yes" : "no"}`);
+    if (stage1UserId && hasLrData) {
       const { persistLandRegistrySearch } = await import("./land-registry");
-      await persistLandRegistrySearch({
+      const saved = await persistLandRegistrySearch({
         userId: stage1UserId,
         address,
         postcode,
@@ -739,6 +741,9 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
         source: "pathway",
         pathwayRunId: runId,
       });
+      console.log(`[pathway stage1] persisted LR search id=${(saved as any)?.id || "?"} for runId=${runId}`);
+    } else if (hasLrData && !stage1UserId) {
+      console.warn(`[pathway stage1] SKIP persist: have LR data but run.startedBy is null for runId=${runId}`);
     }
   } catch (err: any) {
     console.warn("[pathway stage1] persistLandRegistrySearch failed:", err?.message);
@@ -2081,7 +2086,24 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
     const stage1 = (run as any).stageResults?.stage1 || {};
     const companyTargets: Array<{ companyNumber: string; companyName: string; role: "proprietor" | "tenant" }> = [];
 
-    const propName = stage1.initialOwnership?.proprietorName || stage1.aiFacts?.owner || null;
+    // Stage 1's autonomous AI sometimes returns a multi-sentence commentary
+    // in proprietorName/owner instead of a bare company name (e.g. "Amsprop
+    // Estates Limited (Lord Sugar / Daniel Sugar) — freehold. Land Registry
+    // also shows THE GAINESVILLE PARTNERSHIP LLP ..."). Pushing that down to
+    // Clouseau produces garbage display headers and poisons the 30-day reuse
+    // cache. Trim to the first clean clause so CH lookups and saved records
+    // stay sane.
+    const cleanCompanyName = (raw: string | null | undefined): string => {
+      if (!raw) return "";
+      let s = String(raw).trim();
+      s = s.split(/\s*[;—]\s*|\s*\.\s+(?=[A-Z])|\n/)[0];
+      s = s.replace(/\s*\([^)]*\)\s*$/g, "").trim();
+      s = s.replace(/[.\s)]+$/, "").trim();
+      if (s.length > 120) s = s.slice(0, 120).trim();
+      return s;
+    };
+
+    const propName = cleanCompanyName(stage1.initialOwnership?.proprietorName || stage1.aiFacts?.owner) || null;
     const propCo = stage1.initialOwnership?.proprietorCompanyNumber
       || stage1.aiFacts?.ownerCompanyNumber
       || null;
@@ -2106,7 +2128,7 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
     }
 
     const tenantCo = stage1.tenant?.companyNumber || null;
-    const tenantName = stage1.tenant?.name || stage1.aiFacts?.mainTenants?.[0] || null;
+    const tenantName = cleanCompanyName(stage1.tenant?.name || stage1.aiFacts?.mainTenants?.[0]) || null;
     const existingNumbers = new Set(companyTargets.map((c) => c.companyNumber));
     if (tenantCo && !existingNumbers.has(String(tenantCo).trim())) {
       companyTargets.push({
@@ -2181,8 +2203,22 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
           if (existing.rows.length > 0) {
             const row = existing.rows[0];
             const payload = typeof row.result === "string" ? JSON.parse(row.result) : row.result;
-            console.log(`[pathway stage4] Reusing Clouseau investigation ${row.id} for ${t.companyNumber} (${Math.round((Date.now() - new Date(row.conducted_at).getTime()) / 86400000)}d old)`);
-            return summariseInvestigation(t, payload, row.id, true);
+            // Reject poisoned cache entries produced by the earlier garbled-name
+            // bug: if the saved record has a commentary-style name (semicolons,
+            // em-dashes, or >80 chars) OR totally empty officer+PSC+filing data,
+            // run a fresh investigation instead of recycling the broken one.
+            const savedName: string = payload?.subject?.name || "";
+            const looksGarbled = /[;—]/.test(savedName) || savedName.length > 80;
+            const hasNoData =
+              (payload?.officers || []).length === 0 &&
+              (payload?.pscs || []).length === 0 &&
+              (payload?.filingHistory || []).length === 0;
+            if (looksGarbled || hasNoData) {
+              console.log(`[pathway stage4] Skipping poisoned cache ${row.id} for ${t.companyNumber} (garbled=${looksGarbled} empty=${hasNoData}) — will re-investigate`);
+            } else {
+              console.log(`[pathway stage4] Reusing Clouseau investigation ${row.id} for ${t.companyNumber} (${Math.round((Date.now() - new Date(row.conducted_at).getTime()) / 86400000)}d old)`);
+              return summariseInvestigation(t, payload, row.id, true);
+            }
           }
 
           // No recent record — run a fresh, full-fidelity Clouseau investigation

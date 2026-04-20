@@ -145,14 +145,29 @@ function parseCookies(setCookieHeader: string | null): string {
 const BROWSER_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
+// Railway's default DNS ordering prefers IPv6, which misroutes to several
+// gov.uk edges (UND_ERR_CONNECT_TIMEOUT to idoxpa.westminster.gov.uk:443).
+// Nudging DNS to IPv4-first at module load fixes it without needing a
+// dispatcher override (undici isn't a direct dep). Safe no-op elsewhere.
+try {
+  const dns = require("dns");
+  if (typeof dns.setDefaultResultOrder === "function") {
+    dns.setDefaultResultOrder("ipv4first");
+  }
+} catch {}
+
+async function idoxFetch(url: string, init: RequestInit): Promise<Response> {
+  return fetch(url, init);
+}
+
 async function getCsrfAndCookie(host: string): Promise<{ csrf: string; cookie: string }> {
-  const resp = await fetch(`https://${host}/online-applications/search.do?action=simple`, {
+  const resp = await idoxFetch(`https://${host}/online-applications/search.do?action=simple`, {
     headers: {
       "User-Agent": BROWSER_UA,
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "en-GB,en;q=0.9",
     },
-    signal: AbortSignal.timeout(20000),
+    signal: AbortSignal.timeout(30000),
     redirect: "follow",
   });
   if (!resp.ok) throw new Error(`Idox ${host} landing ${resp.status}`);
@@ -171,7 +186,7 @@ async function fetchIdoxResults(host: string, searchTerm: string): Promise<strin
     "searchCriteria.simpleSearchString": searchTerm,
     "searchCriteria.simpleSearch": "true",
   });
-  const resp = await fetch(`https://${host}/online-applications/simpleSearchResults.do?action=firstPage`, {
+  const resp = await idoxFetch(`https://${host}/online-applications/simpleSearchResults.do?action=firstPage`, {
     method: "POST",
     headers: {
       "User-Agent": BROWSER_UA,
@@ -183,7 +198,7 @@ async function fetchIdoxResults(host: string, searchTerm: string): Promise<strin
       Origin: `https://${host}`,
     },
     body: body.toString(),
-    signal: AbortSignal.timeout(25000),
+    signal: AbortSignal.timeout(30000),
     redirect: "follow",
   });
   if (!resp.ok) throw new Error(`Idox ${host} search POST ${resp.status}`);
