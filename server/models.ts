@@ -1283,13 +1283,15 @@ export function setupModelsRoutes(app: Express) {
       const run = await storage.getExcelModelRun(req.params.id as string);
       if (!run) return res.status(404).json({ message: "Run not found" });
       if (!run.generatedFilePath) return res.status(404).json({ message: "Generated file not found" });
-      await ensureRunFile(run.generatedFilePath);
-      if (!fs.existsSync(run.generatedFilePath)) {
-        return res.status(404).json({ message: "Generated file not found" });
-      }
-      const resolved = path.resolve(run.generatedFilePath);
+      // Rebuild the path inside the *current* RUNS_DIR so that stale absolute
+      // paths stored from a previous Railway container still resolve.
+      const resolved = path.resolve(path.join(RUNS_DIR, path.basename(run.generatedFilePath)));
       if (!resolved.startsWith(path.resolve(RUNS_DIR))) {
         return res.status(403).json({ message: "Access denied" });
+      }
+      await ensureRunFile(resolved);
+      if (!fs.existsSync(resolved)) {
+        return res.status(404).json({ message: "Generated file not found" });
       }
       const safeName = run.name.replace(/[^a-zA-Z0-9 _-]/g, "_");
       res.download(resolved, `${safeName}.xlsx`);
@@ -1524,12 +1526,12 @@ export function setupModelsRoutes(app: Express) {
         .where(and(eq(excelModelRunVersions.id, String(req.params.versionId)), eq(excelModelRunVersions.modelRunId, String(req.params.runId))))
         .limit(1);
       if (!version) return res.status(404).json({ message: "Version not found" });
-      await ensureRunFile(version.filePath);
-      if (!fs.existsSync(version.filePath)) return res.status(404).json({ message: "Version file missing" });
-      const resolved = path.resolve(version.filePath);
+      const resolved = path.resolve(path.join(RUNS_DIR, path.basename(version.filePath)));
       if (!resolved.startsWith(path.resolve(RUNS_DIR))) {
         return res.status(403).json({ message: "Access denied" });
       }
+      await ensureRunFile(resolved);
+      if (!fs.existsSync(resolved)) return res.status(404).json({ message: "Version file missing" });
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       res.setHeader("Content-Disposition", `attachment; filename="model-v${version.version}.xlsx"`);
       fs.createReadStream(resolved).pipe(res);

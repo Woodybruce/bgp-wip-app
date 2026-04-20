@@ -1582,7 +1582,7 @@ function PlanningCard({ apps }: { apps: any[] }) {
         )}
       </div>
       {apps.length > 0 ? (
-        <div className="max-h-56 overflow-y-auto">
+        <div className="max-h-[28rem] overflow-y-auto">
           {apps.slice(0, 30).map((p: any, i: number) => <PlanningRow key={i} p={p} />)}
         </div>
       ) : (
@@ -1682,14 +1682,13 @@ function PlanningDocsCard({
         <div className="space-y-2 max-h-[28rem] overflow-y-auto">
           {planningDocs.map((app, ai) => (
             <div key={ai} className="border rounded bg-background">
-              <div className="flex items-start gap-1.5 px-2 py-1.5 border-b bg-muted/30">
-                <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{app.appDate ? app.appDate.slice(0, 10) : ""}</span>
-                {app.lpa && <span className="text-[8px] px-1 py-px rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0 mt-px" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
-                <span className="flex-1 min-w-0">
-                  <a href={app.docsUrl} target="_blank" rel="noreferrer" className="font-medium break-all text-primary hover:underline text-[11px]">{app.ref}</a>
-                  {app.description && <span className="block text-muted-foreground text-[10px] truncate">{app.description}</span>}
-                </span>
-                <span className="text-[9px] px-1 py-px rounded bg-sky-100 text-sky-800 shrink-0 mt-px">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
+              {/* App-grouping header: one line to match the doc rows below.
+                  Full description + long refs are available via Expand. */}
+              <div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30 text-[11px]">
+                <span className="text-[10px] text-muted-foreground shrink-0 w-16">{app.appDate ? app.appDate.slice(0, 10) : ""}</span>
+                {app.lpa && <span className="text-[8px] px-1 py-px rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
+                <a href={app.docsUrl} target="_blank" rel="noreferrer" className="font-medium text-primary hover:underline truncate min-w-0 flex-1" title={app.ref + (app.description ? ` — ${app.description}` : "")}>{app.ref}</a>
+                <span className="text-[9px] px-1 py-px rounded bg-sky-100 text-sky-800 shrink-0">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
               </div>
               <div className="divide-y">
                 {app.docs.slice(0, 40).map((d, di) => (

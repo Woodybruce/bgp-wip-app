@@ -302,32 +302,36 @@ function AuthenticatedApp() {
 
   if (isChatBGP) {
     return (
-      <ChatBGPProvider>
-        <div className="h-screen w-screen max-w-[100vw] overflow-hidden flex flex-col">
-          <header className="flex items-center justify-between gap-2 px-3 py-2 border-b h-12 shrink-0">
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => navigate("/")}
-                className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
-                title="Back to Dashboard"
-                data-testid="button-chatbgp-back"
-              >
-                <ArrowLeft className="h-4 w-4" />
-              </button>
-              <img src={bgpLogoDark} alt="BGP" className="h-5 dark:hidden" />
-              <img src={bgpLogoLight} alt="BGP" className="h-5 hidden dark:block" />
-            </div>
-            <div className="flex items-center gap-2">
-              <ColorSchemeSelector />
-            </div>
-          </header>
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <Suspense fallback={<PageLoader />}>
-              <ChatBGP />
-            </Suspense>
+      <div className="h-screen w-screen max-w-[100vw] overflow-hidden flex flex-col">
+        <header className="flex items-center justify-between gap-2 px-3 py-2 border-b h-12 shrink-0">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                // Back to the last non-chat page so the in-progress board
+                // (pathway/CRM/whatever) stays mounted underneath. Falls back
+                // to dashboard only on a cold-open of /chatbgp.
+                if (window.history.length > 1) window.history.back();
+                else navigate("/");
+              }}
+              className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+              title="Back"
+              data-testid="button-chatbgp-back"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <img src={bgpLogoDark} alt="BGP" className="h-5 dark:hidden" />
+            <img src={bgpLogoLight} alt="BGP" className="h-5 hidden dark:block" />
           </div>
+          <div className="flex items-center gap-2">
+            <ColorSchemeSelector />
+          </div>
+        </header>
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <Suspense fallback={<PageLoader />}>
+            <ChatBGP />
+          </Suspense>
         </div>
-      </ChatBGPProvider>
+      </div>
     );
   }
 
@@ -335,12 +339,10 @@ function AuthenticatedApp() {
 
   return (
     <SidebarProvider style={style as React.CSSProperties}>
-      {/* ChatBGPProvider wraps BOTH the router and the chat panel so the
-          full-page /chatbgp view and the side panel share activeThreadId
-          — minimising the full page keeps the same conversation in the
-          side panel instead of dropping back to a fresh empty state. */}
-      <ChatBGPProvider>
-        <div className="flex h-screen w-full">
+      {/* ChatBGPProvider is hoisted to AppContent so the full-page /chatbgp
+          view and the side panel share the same messages / activeThreadId —
+          toggling between them keeps the conversation alive. */}
+      <div className="flex h-screen w-full">
           <AppSidebar />
           <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
             <header className="flex items-center justify-between gap-2 p-2 border-b h-12 shrink-0">
@@ -371,8 +373,7 @@ function AuthenticatedApp() {
             </div>
           </div>
           <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} />
-        </div>
-      </ChatBGPProvider>
+      </div>
       {isForceDesktop && (
         <button
           onClick={() => setForceDesktop(false)}
@@ -467,10 +468,10 @@ function AppContent() {
   }
 
   return (
-    <>
+    <ChatBGPProvider>
       <ConnectionStatus />
       <AuthenticatedApp />
-    </>
+    </ChatBGPProvider>
   );
 }
 
