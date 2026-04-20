@@ -698,9 +698,13 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   // Enrich with PropertyData lookup regardless, in case CRM is incomplete.
   // Also picks up VOA rateable-value entries for rates/business-rates surface.
   let voaEntries: Array<{ firmName?: string; address?: string; postcode?: string; description?: string; rateableValue?: number | null; effectiveDate?: string; }> = [];
+  let stage1FreeholdsData: any[] = [];
+  let stage1LeaseholdsData: any[] = [];
   try {
     const lookup = await performPropertyLookup({ address, postcode, layers: ["core"] });
     const freeholds = lookup.propertyDataCoUk?.freeholds?.data || [];
+    stage1FreeholdsData = freeholds;
+    stage1LeaseholdsData = (lookup.propertyDataCoUk as any)?.leaseholds?.data || [];
     if (freeholds.length > 0) {
       const best = freeholds[0];
       initialOwnership = {
@@ -716,6 +720,28 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     }
   } catch (err: any) {
     console.error("[pathway stage1] Land reg / VOA lookup error:", err?.message);
+  }
+
+  // Persist this Stage 1 LR snapshot to land_registry_searches so it shows up
+  // on the Land Registry board the same way a direct LR search would. Tagged
+  // source=pathway + the runId so we can link back from the LR page.
+  try {
+    const stage1UserId = (run as any).startedBy || null;
+    if (stage1UserId && (stage1FreeholdsData.length > 0 || stage1LeaseholdsData.length > 0 || initialOwnership)) {
+      const { persistLandRegistrySearch } = await import("./land-registry");
+      await persistLandRegistrySearch({
+        userId: stage1UserId,
+        address,
+        postcode,
+        freeholds: stage1FreeholdsData,
+        leaseholds: stage1LeaseholdsData,
+        ownership: initialOwnership ?? undefined,
+        source: "pathway",
+        pathwayRunId: runId,
+      });
+    }
+  } catch (err: any) {
+    console.warn("[pathway stage1] persistLandRegistrySearch failed:", err?.message);
   }
 
   // Rates fallback: if performPropertyLookup returned no VOA data but we have

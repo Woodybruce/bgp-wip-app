@@ -6,6 +6,100 @@ import { landRegistrySearches } from "@shared/schema";
 import { desc, eq, sql } from "drizzle-orm";
 import pLimit from "p-limit";
 
+/**
+ * Shared persistence helper for land_registry_searches — used by:
+ *  - the direct LR page POST /api/land-registry/searches
+ *  - Property Pathway Stage 1 (after its inline LR lookup)
+ *  - Clouseau /api/land-registry/resolve
+ *
+ * Dedupe rule: one row per (userId, normalised address+postcode). If a row
+ * already exists we update the snapshot in place rather than spawning a new
+ * row each time — same pattern as kyc_investigations.
+ */
+function normaliseKey(address: string, postcode?: string | null): string {
+  const a = (address || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const p = (postcode || "").toUpperCase().replace(/\s+/g, "").trim();
+  return `${a}::${p}`;
+}
+
+export interface PersistLandRegistrySearchInput {
+  userId: string;
+  address: string;
+  postcode?: string | null;
+  freeholds?: any[];
+  leaseholds?: any[];
+  intelligence?: any;
+  aiSummary?: any;
+  ownership?: any;
+  source?: string; // direct | pathway | clouseau
+  pathwayRunId?: string | null;
+}
+
+export async function persistLandRegistrySearch(input: PersistLandRegistrySearchInput) {
+  const {
+    userId,
+    address,
+    postcode,
+    freeholds,
+    leaseholds,
+    intelligence,
+    aiSummary,
+    ownership,
+    source,
+    pathwayRunId,
+  } = input;
+
+  if (!userId) throw new Error("userId required");
+  if (!address) throw new Error("address required");
+
+  const fhArr = Array.isArray(freeholds) ? freeholds : [];
+  const lhArr = Array.isArray(leaseholds) ? leaseholds : [];
+  const key = normaliseKey(address, postcode || null);
+
+  // Find existing row for this user with the same normalised address+postcode.
+  const existing = await db.select().from(landRegistrySearches)
+    .where(eq(landRegistrySearches.userId, userId));
+  const match = existing.find((r) => normaliseKey(r.address, r.postcode) === key);
+
+  if (match) {
+    const updates: Record<string, any> = {
+      freeholds: fhArr,
+      leaseholds: lhArr,
+      freeholdsCount: fhArr.length,
+      leaseholdsCount: lhArr.length,
+    };
+    if (intelligence !== undefined) updates.intelligence = intelligence;
+    if (aiSummary !== undefined) updates.aiSummary = aiSummary;
+    if (ownership !== undefined) updates.ownership = ownership;
+    // Source: keep existing unless caller explicitly upgrades it (don't downgrade
+    // a 'direct' row to 'pathway' silently — but do attach pathwayRunId if given).
+    if (source && match.source === "direct" && source !== "direct") updates.source = source;
+    if (pathwayRunId && !match.pathwayRunId) updates.pathwayRunId = pathwayRunId;
+
+    const [row] = await db.update(landRegistrySearches)
+      .set(updates)
+      .where(eq(landRegistrySearches.id, match.id))
+      .returning();
+    return row;
+  }
+
+  const [row] = await db.insert(landRegistrySearches).values({
+    userId,
+    address,
+    postcode: postcode || null,
+    freeholds: fhArr,
+    leaseholds: lhArr,
+    freeholdsCount: fhArr.length,
+    leaseholdsCount: lhArr.length,
+    intelligence: intelligence ?? null,
+    aiSummary: aiSummary ?? null,
+    ownership: ownership ?? null,
+    source: source || "direct",
+    pathwayRunId: pathwayRunId || null,
+  }).returning();
+  return row;
+}
+
 const LR_BASE = "https://landregistry.data.gov.uk/data";
 
 // In-memory cache for ownership intelligence results (24-hour TTL)
@@ -63,6 +157,8 @@ export function registerLandRegistryRoutes(app: Express) {
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS voa_rateable_value integer`).catch(() => {});
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS kyc_risk_level text`).catch(() => {});
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS kyc_investigation_id integer`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS source varchar DEFAULT 'direct'`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS pathway_run_id varchar`).catch(() => {});
 
   app.get("/api/land-registry/price-paid", requireAuth, async (req, res) => {
     try {
@@ -487,9 +583,9 @@ export function registerLandRegistryRoutes(app: Express) {
   // Ordnance Survey's UPRN (the unique id Land Registry titles are
   // actually anchored to) so the matched titles are exactly the property
   // the user picked.
-  app.post("/api/land-registry/resolve", requireAuth, async (req, res) => {
+  app.post("/api/land-registry/resolve", requireAuth, async (req: any, res) => {
     try {
-      const { address: inputAddress, postcode: inputPostcode, lat, lng } = req.body || {};
+      const { address: inputAddress, postcode: inputPostcode, lat, lng, source: callerSource, pathwayRunId: callerRunId } = req.body || {};
       const PD_KEY = process.env.PROPERTYDATA_API_KEY;
       if (!PD_KEY) return res.status(503).json({ error: "PropertyData API key not configured" });
 
@@ -625,6 +721,28 @@ export function registerLandRegistryRoutes(app: Express) {
           fallbackFreeholds = pickByStreet(((postcodeFreeholds as any)?.data || []));
           fallbackLeaseholds = pickByStreet(((postcodeLeaseholds as any)?.data || []));
         }
+      }
+
+      // Persist this resolve to the unified Land Registry history. The board
+      // shows entries from direct LR searches, Property Pathway Stage 1, and
+      // Clouseau property tab side-by-side, dedup'd by address+postcode.
+      try {
+        const userId = req.session?.userId || req.tokenUserId || null;
+        if (userId && resolvedAddress) {
+          const persistFh = matchedFreeholds.length > 0 ? matchedFreeholds : fallbackFreeholds;
+          const persistLh = matchedLeaseholds.length > 0 ? matchedLeaseholds : fallbackLeaseholds;
+          await persistLandRegistrySearch({
+            userId,
+            address: resolvedAddress,
+            postcode: resolvedPostcode,
+            freeholds: persistFh,
+            leaseholds: persistLh,
+            source: callerSource || "clouseau",
+            pathwayRunId: callerRunId || null,
+          });
+        }
+      } catch (persistErr: any) {
+        console.warn("[land-registry/resolve] persist failed:", persistErr?.message);
       }
 
       res.json({
@@ -1010,51 +1128,20 @@ Respond with ONLY a JSON object (no markdown, no backticks):
     try {
       const userId = req.session?.userId || req.tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { address, postcode, freeholds, leaseholds, intelligence, aiSummary, ownership } = req.body;
+      const { address, postcode, freeholds, leaseholds, intelligence, aiSummary, ownership, source, pathwayRunId } = req.body;
       if (!address) return res.status(400).json({ error: "Address required" });
-      // Deduplicate: if this user already has a search for the same postcode (or
-      // same normalised address when no postcode), update it instead of inserting.
-      const normaliseAddr = (s: string) => s.toLowerCase().replace(/[\s\-]+/g, "");
-      const existingRows = await db.select().from(landRegistrySearches)
-        .where(eq(landRegistrySearches.userId, userId));
-      const existing = existingRows.find(r =>
-        (postcode && r.postcode && r.postcode.replace(/\s/g, "").toLowerCase() === postcode.replace(/\s/g, "").toLowerCase()) ||
-        (!postcode && normaliseAddr(r.address) === normaliseAddr(address))
-      );
-
-      let row;
-      if (existing) {
-        const [updated] = await db.update(landRegistrySearches)
-          .set({
-            address,
-            postcode: postcode || existing.postcode,
-            freeholdsCount: Array.isArray(freeholds) ? freeholds.length : existing.freeholdsCount,
-            leaseholdsCount: Array.isArray(leaseholds) ? leaseholds.length : existing.leaseholdsCount,
-            freeholds: freeholds || existing.freeholds,
-            leaseholds: leaseholds || existing.leaseholds,
-            intelligence: intelligence || existing.intelligence,
-            aiSummary: aiSummary || existing.aiSummary,
-            ownership: ownership || existing.ownership,
-            createdAt: new Date(),
-          })
-          .where(eq(landRegistrySearches.id, existing.id))
-          .returning();
-        row = updated;
-      } else {
-        const [inserted] = await db.insert(landRegistrySearches).values({
-          userId,
-          address,
-          postcode: postcode || null,
-          freeholdsCount: Array.isArray(freeholds) ? freeholds.length : 0,
-          leaseholdsCount: Array.isArray(leaseholds) ? leaseholds.length : 0,
-          freeholds: freeholds || [],
-          leaseholds: leaseholds || [],
-          intelligence: intelligence || {},
-          aiSummary: aiSummary || null,
-          ownership: ownership || null,
-        }).returning();
-        row = inserted;
-      }
+      const row = await persistLandRegistrySearch({
+        userId,
+        address,
+        postcode,
+        freeholds,
+        leaseholds,
+        intelligence,
+        aiSummary,
+        ownership,
+        source,
+        pathwayRunId,
+      });
       res.json(row);
     } catch (e: any) {
       console.error("[land-registry-searches] Save error:", e);

@@ -1728,6 +1728,8 @@ export const landRegistrySearches = pgTable("land_registry_searches", {
   voaRateableValue: integer("voa_rateable_value"),
   kycRiskLevel: text("kyc_risk_level"),
   kycInvestigationId: integer("kyc_investigation_id"),
+  source: varchar("source").default("direct"), // direct | pathway | clouseau
+  pathwayRunId: varchar("pathway_run_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
