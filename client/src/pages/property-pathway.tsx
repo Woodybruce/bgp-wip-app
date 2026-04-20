@@ -1439,8 +1439,8 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
         )}
         {stage7?.modelRunId && (
           <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-            <InfoBlock label="Model run" value={stage7.modelRunId} />
-            <InfoBlock label="Version" value={stage7.modelVersionId || "—"} />
+            <InfoBlock label="Model run" value={stage7.modelRunName || stage7.modelRunId} />
+            <InfoBlock label="Version" value={stage7.modelVersionLabel || stage7.modelVersionId || "—"} />
             <InfoBlock label="Status" value={modelAgreed ? "Agreed" : "Drafting in Excel"} />
           </div>
         )}

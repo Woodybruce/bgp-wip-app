@@ -2910,7 +2910,7 @@ export async function createPathwayModelRun(args: {
   address: string;
   plan: PathwayBusinessPlanShape;
   propertyId?: string | null;
-}): Promise<{ modelRunId: string; modelVersionId: string; workbookUrl: string }>
+}): Promise<{ modelRunId: string; modelVersionId: string; workbookUrl: string; modelRunName: string; modelVersionLabel: string }>
 {
   const { db } = await import("./db");
   const { excelModelRuns, excelModelRunVersions, excelTemplates } = await import("@shared/schema");
@@ -2944,7 +2944,19 @@ export async function createPathwayModelRun(args: {
   }
 
   // 3. Build the workbook (branded, BGP palette + logo)
-  const modelName = `${args.address} — Pathway Model`;
+  //    Short-form the address for the model name — full Google-geocoded strings
+  //    ("18, 22 Haymarket, London SW1Y 4DG, UK") are too noisy for a card title.
+  //    Keep the first meaningful segment (building + street).
+  const shortAddress = (() => {
+    const cleaned = args.address
+      .replace(/,\s*UK\b/i, "")
+      .replace(/,\s*United Kingdom\b/i, "")
+      .replace(/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi, "")
+      .trim();
+    const head = cleaned.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 2).join(" ");
+    return head.replace(/\s+/g, " ").trim() || args.address;
+  })();
+  const modelName = `${shortAddress} · Pathway Model`;
   const buffer = await buildInvestmentModel({ modelName, assumptions });
 
   // 4. Write to disk — use the server's uploads/model-runs folder so existing
@@ -2971,14 +2983,24 @@ export async function createPathwayModelRun(args: {
     propertyId: args.propertyId || undefined,
   }).returning();
 
-  // 6. Insert version 1 row
+  // 6. Insert version 1 row. Version note summarises the key numbers so the
+  //    model history reads like "v1 · 20 Apr · £60m / 4.75% NIY / 15% IRR"
+  //    rather than an opaque UUID.
+  const versionDate = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const priceStr = typeof plan.targetPurchasePrice === "number"
+    ? `£${(plan.targetPurchasePrice / 1_000_000).toFixed(plan.targetPurchasePrice >= 10_000_000 ? 0 : 1)}m`
+    : null;
+  const niyStr = typeof plan.targetNIY === "number" ? `${(plan.targetNIY * 100).toFixed(2)}% NIY` : null;
+  const irrStr = typeof plan.targetIRR === "number" ? `${(plan.targetIRR * 100).toFixed(1)}% IRR` : null;
+  const versionBits = [`v1`, versionDate, priceStr, niyStr, irrStr].filter(Boolean);
+  const versionNote = versionBits.join(" · ");
   const [version] = await db.insert(excelModelRunVersions).values({
     modelRunId: run.id,
     version: 1,
     filePath,
     inputValues: { pathwayRunId: args.runId, plan: args.plan, assumptions } as any,
     outputValues: {} as any,
-    notes: "Initial version generated from agreed business plan",
+    notes: versionNote,
   }).returning();
 
   // 7. Link back onto the pathway run (sets pathway.modelRunId too so existing UI works)
@@ -2995,5 +3017,11 @@ export async function createPathwayModelRun(args: {
   // The add-in reads the same run by id and continues the ChatBGP thread.
   const workbookUrl = `/models?runId=${run.id}`;
 
-  return { modelRunId: run.id, modelVersionId: version.id, workbookUrl };
+  return {
+    modelRunId: run.id,
+    modelVersionId: version.id,
+    workbookUrl,
+    modelRunName: modelName,
+    modelVersionLabel: versionNote,
+  };
 }

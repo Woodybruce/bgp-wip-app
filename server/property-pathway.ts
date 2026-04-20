@@ -221,6 +221,10 @@ interface StageResults {
     // Excel Model — generated from stage6.agreed, refined in the add-in, locked on agree.
     modelRunId?: string;
     modelVersionId?: string;
+    // Human-readable labels surfaced on the pathway card instead of raw UUIDs.
+    // e.g. "18-22 Haymarket · Pathway Model" / "v1 · 20 Apr 2026 · £60m / 4.75% NIY".
+    modelRunName?: string;
+    modelVersionLabel?: string;
     workbookUrl?: string;
     agreed?: boolean;
     agreedAt?: string;
@@ -3547,6 +3551,8 @@ async function runStage7(runId: string, _req: Request): Promise<void> {
         const seed = await eb.createPathwayModelRun({ runId, address: run.address, plan: agreed });
         patch.modelRunId = seed.modelRunId;
         patch.modelVersionId = seed.modelVersionId;
+        patch.modelRunName = seed.modelRunName;
+        patch.modelVersionLabel = seed.modelVersionLabel;
         patch.workbookUrl = seed.workbookUrl;
       }
     } catch (err: any) {
