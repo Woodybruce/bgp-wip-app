@@ -421,6 +421,86 @@ function derivedTenantForFilter(run: any, aiFacts: any, tenancy: any): string | 
   return null;
 }
 
+// Shared: pull investment + letting comps for a given postcode. Used by both
+// the deterministic Inner path and the autonomous path so comps always show
+// up on the board regardless of which Stage 1 variant runs.
+async function fetchStage1Comps(postcode: string): Promise<any[]> {
+  const comps: any[] = [];
+  try {
+    const outward = postcode ? postcode.toUpperCase().replace(/\s+/g, "").slice(0, -3) : "";
+    const CENTRAL_LONDON_OUTWARDS = ["W1", "W2", "SW1", "SW3", "SW7", "WC1", "WC2", "EC1", "EC2", "EC3", "EC4", "NW1", "SE1"];
+    const { pool } = await import("./db");
+
+    try {
+      const primary = outward ? await pool.query(
+        `SELECT address, price, cap_rate, transaction_date, subtype
+           FROM investment_comps
+          WHERE UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $1
+          ORDER BY transaction_date DESC NULLS LAST
+          LIMIT 15`,
+        [`${outward}%`]
+      ) : { rows: [] };
+      let invRows = primary.rows;
+      if (invRows.length === 0) {
+        const fallback = await pool.query(
+          `SELECT address, price, cap_rate, transaction_date, subtype
+             FROM investment_comps
+            WHERE (${CENTRAL_LONDON_OUTWARDS.map((_, i) => `UPPER(REPLACE(COALESCE(postal_code, ''), ' ', '')) LIKE $${i + 1}`).join(" OR ")})
+            ORDER BY transaction_date DESC NULLS LAST
+            LIMIT 15`,
+          CENTRAL_LONDON_OUTWARDS.map(c => `${c}%`)
+        );
+        invRows = fallback.rows;
+      }
+      for (const r of invRows) {
+        comps.push({
+          address: r.address,
+          price: r.price ? Number(r.price) : undefined,
+          yield: r.cap_rate ? Number(r.cap_rate) : undefined,
+          date: r.transaction_date,
+          type: r.subtype,
+          kind: "investment",
+        });
+      }
+    } catch (err: any) {
+      console.error("[pathway comps] investment_comps query error:", err?.message);
+    }
+
+    try {
+      const letRes = await pool.query(
+        `SELECT address, tenant, landlord, area_sqft, headline_rent, zone_a_rate, completion_date, comp_type, deal_type
+           FROM crm_comps
+          WHERE (
+            (address::text) ~* $1
+            OR EXISTS (SELECT 1 FROM unnest($2::text[]) pc WHERE (address::text) ~* pc)
+          )
+          ORDER BY completion_date DESC NULLS LAST
+          LIMIT 15`,
+        [outward || "SW1|W1|WC", CENTRAL_LONDON_OUTWARDS]
+      );
+      for (const r of letRes.rows) {
+        const addrText = typeof r.address === "object"
+          ? [r.address?.line1, r.address?.postcode].filter(Boolean).join(", ")
+          : String(r.address || "");
+        comps.push({
+          address: addrText || r.tenant || "—",
+          tenant: r.tenant || undefined,
+          rent: r.headline_rent || r.zone_a_rate || undefined,
+          area: r.area_sqft || undefined,
+          date: r.completion_date || undefined,
+          type: r.comp_type || r.deal_type || undefined,
+          kind: "letting",
+        });
+      }
+    } catch (err: any) {
+      console.error("[pathway comps] crm_comps query error:", err?.message);
+    }
+  } catch (err: any) {
+    console.error("[pathway comps] block error:", err?.message);
+  }
+  return comps;
+}
+
 async function runStage1(runId: string, req: Request): Promise<void> {
   try {
     // Autonomous investigator is the default path.
@@ -558,7 +638,7 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     tenancy: { status: "unknown", units: [] },
     engagements: [],
     pricePaidHistory: [],
-    comps: [],
+    comps: await fetchStage1Comps(run.postcode || ""),
     brochureFiles: (result.brochures || []).map((b) => ({
       source: b.source === "sharepoint" ? "sharepoint" : "email",
       name: b.name,
