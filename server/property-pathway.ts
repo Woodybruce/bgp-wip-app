@@ -633,6 +633,48 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   console.log(`[pathway stage1 autonomous] Completed in ${((Date.now() - started) / 1000).toFixed(1)}s — ${stage1Payload.emailHits.length} emails, ${stage1Payload.brochureFiles.length} brochures, ${stage1Payload.sharepointHits.length} sharepoint`);
 
   await setStageStatus(runId, "stage1", "completed", { stage1: stage1Payload });
+
+  // Persist the Stage 1 LR snapshot to land_registry_searches so it shows up on
+  // the Land Registry board (same table the direct LR page writes to). Matches
+  // the runStage1Inner persist path — it was previously only wired there, which
+  // meant the default autonomous path never populated the LR history. Re-query
+  // PropertyData with layers: ["core"] so we persist the full raw rows the LR
+  // board renders (the investigator tool returns a trimmed shape for Claude).
+  try {
+    const stage1UserId = (run as any).startedBy || null;
+    const hasOwnership = !!stage1Payload.initialOwnership;
+    if (stage1UserId) {
+      const { performPropertyLookup } = await import("./property-lookup");
+      const lookup = await performPropertyLookup({
+        address: run.address,
+        postcode: run.postcode || "",
+        layers: ["core"],
+      }).catch(() => null);
+      const freeholds = lookup?.propertyDataCoUk?.freeholds?.data || [];
+      const leaseholds = (lookup?.propertyDataCoUk as any)?.leaseholds?.data || [];
+      const hasLrData = freeholds.length > 0 || leaseholds.length > 0 || hasOwnership;
+      console.log(`[pathway stage1 autonomous] persist LR check: userId=set freeholds=${freeholds.length} leaseholds=${leaseholds.length} ownership=${hasOwnership ? "yes" : "no"}`);
+      if (hasLrData) {
+        const { persistLandRegistrySearch } = await import("./land-registry");
+        const saved = await persistLandRegistrySearch({
+          userId: stage1UserId,
+          address: run.address,
+          postcode: run.postcode || "",
+          freeholds,
+          leaseholds,
+          ownership: stage1Payload.initialOwnership ?? undefined,
+          source: "pathway",
+          pathwayRunId: runId,
+        });
+        console.log(`[pathway stage1 autonomous] persisted LR search id=${(saved as any)?.id || "?"} for runId=${runId}`);
+      }
+    } else {
+      console.warn(`[pathway stage1 autonomous] SKIP persist: run.startedBy is null for runId=${runId}`);
+    }
+  } catch (err: any) {
+    console.warn("[pathway stage1 autonomous] persistLandRegistrySearch failed:", err?.message);
+  }
+
   if (result.sharepointMatches && result.sharepointMatches.length > 0) {
     // Try to find the canonical folder for this property
     const folderMatch = result.sharepointMatches.find((s) => s.type === "folder" && (s.path || "").includes("Investment"));
