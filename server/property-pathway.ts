@@ -3425,8 +3425,17 @@ async function runStage6(runId: string, _req: Request): Promise<void> {
       },
     });
   } catch (err: any) {
-    console.error("[pathway stage6] draft failed:", err?.message);
-    await setStageStatus(runId, "stage6", "failed");
+    const msg = err?.message || String(err);
+    const status = err?.status || err?.response?.status;
+    const body = err?.response?.data || err?.error || undefined;
+    console.error("[pathway stage6] draft failed:", { status, msg, body });
+    const existing = (run.stageResults as StageResults)?.stage6 || {};
+    await setStageStatus(runId, "stage6", "failed", {
+      stage6: {
+        ...existing,
+        summary: `Stage 6 failed: ${msg}${status ? ` (HTTP ${status})` : ""}`,
+      } as any,
+    }).catch(() => {});
   }
 }
 
@@ -3455,7 +3464,7 @@ async function draftBusinessPlan(run: PropertyPathwayRun): Promise<{ plan: Busin
   };
 
   const resp = await callClaude({
-    model: "claude-opus-4-7",
+    model: "claude-opus-4-6",
     messages: [{
       role: "user",
       content: `You are a senior director at BGP (Bruce Gillingham Pollard) sitting down with Woody to agree a business plan for a live investment opportunity. You have done a final sweep of everything the pathway has gathered. Propose a concrete, opinionated plan — don't hedge, don't list options. Pick a strategy.
