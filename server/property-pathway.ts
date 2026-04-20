@@ -421,6 +421,128 @@ function derivedTenantForFilter(run: any, aiFacts: any, tenancy: any): string | 
   return null;
 }
 
+// Deterministic email sweep — runs alongside the Claude investigator so that
+// even if Claude picks weak search terms, the core emails (address word,
+// postcode, owner name, tenant name) are always pulled. Same Graph $search
+// fan-out ChatBGP uses; caller merges the result into stage1.emailHits.
+async function runBaselineEmailSweep(opts: {
+  address: string;
+  postcode: string;
+  ownerName?: string;
+  tenantName?: string;
+  req: Request;
+}): Promise<any[]> {
+  const { address, postcode, ownerName, tenantName, req } = opts;
+  const results: any[] = [];
+
+  // Build term list. Prefer single-word distinctive terms (Graph $search
+  // without quotes matches anywhere and tokenises nicely).
+  const terms = new Set<string>();
+  // Address distinctive word — same parser as the Inner path.
+  const addrWithoutPostcode = address
+    .replace(/\b[a-z]{1,2}\d[a-z\d]?\s*\d[a-z]{2}\b/gi, "")
+    .replace(/,\s*UK\b/i, "").replace(/,\s*united\s*kingdom\b/i, "")
+    .replace(/,\s*london\b/i, "").replace(/,\s*england\b/i, "")
+    .trim().replace(/,\s*$/, "");
+  const STOP = new Set(["street", "road", "avenue", "lane", "place", "square", "house", "building", "floor", "suite", "unit", "the", "and", "london"]);
+  const words = (addrWithoutPostcode.toLowerCase().match(/[a-z]+/g) || []).filter((w) => w.length >= 4 && !STOP.has(w));
+  if (words.length > 0) terms.add(words[0]); // most distinctive
+
+  if (postcode) terms.add(`"${postcode}"`); // quoted postcode = exact
+  if (ownerName) {
+    const first = String(ownerName).split(/[,(]/)[0].trim().replace(/\s+(ltd|limited|llp|plc)\b.*$/i, "").trim();
+    if (first.length >= 4) terms.add(`"${first}"`);
+  }
+  if (tenantName) {
+    const first = String(tenantName).split(/[,(]/)[0].trim().replace(/\s+(ltd|limited|llp|plc)\b.*$/i, "").trim();
+    if (first.length >= 4) terms.add(`"${first}"`);
+  }
+
+  if (terms.size === 0) return [];
+
+  const { graphRequest } = await import("./shared-mailbox");
+  const { getValidMsToken } = await import("./microsoft");
+  const delegatedToken = await getValidMsToken(req).catch(() => null);
+
+  const mailboxes: Array<{ email: string; owner: string }> = [
+    { email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox" },
+  ];
+  try {
+    const active = await db.select({ username: users.username, email: users.email, name: users.name })
+      .from(users).where(eq(users.isActive, true));
+    for (const u of active) {
+      const mb = u.email || u.username;
+      if (mb && /@brucegillinghampollard\.com$/i.test(mb) && mb.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
+        mailboxes.push({ email: mb, owner: u.name || mb });
+      }
+    }
+  } catch {}
+
+  const seen = new Set<string>();
+  const addrWord = words[0] || "";
+  const pcCompact = (postcode || "").toLowerCase().replace(/\s+/g, "");
+  const pushMsg = (msg: any, ownerLabel: string, mbEmail: string | undefined, matchedTerm: string) => {
+    const key = msg.internetMessageId || msg.id;
+    if (!key || seen.has(key)) return;
+    // Subject/preview relevance filter — same spirit as Stage 1 Inner
+    const hay = `${String(msg.subject || "").toLowerCase()} ${String(msg.bodyPreview || "").toLowerCase()}`;
+    const hayCompact = hay.replace(/\s+/g, "");
+    const termLc = matchedTerm.replace(/^"+|"+$/g, "").toLowerCase();
+    const passes = hay.includes(termLc) || (pcCompact && hayCompact.includes(pcCompact)) || (addrWord && hay.includes(addrWord));
+    if (!passes) return;
+    seen.add(key);
+    results.push({
+      subject: msg.subject ? `${msg.subject} · via ${ownerLabel}` : `(no subject) · via ${ownerLabel}`,
+      from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "unknown",
+      date: msg.receivedDateTime,
+      msgId: msg.id,
+      mailboxEmail: mbEmail,
+      preview: (msg.bodyPreview || "").slice(0, 200),
+      hasAttachments: !!msg.hasAttachments,
+      webLink: msg.webLink || null,
+      matchedTerm,
+    });
+  };
+
+  const CONC = 6;
+  const jobs: Array<() => Promise<void>> = [];
+  for (const mb of mailboxes) {
+    for (const term of terms) {
+      jobs.push(async () => {
+        try {
+          const res: any = await graphRequest(
+            `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(term)}&$top=15&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
+            { headers: { "X-AnchorMailbox": mb.email } }
+          );
+          for (const msg of (res?.value || [])) pushMsg(msg, mb.owner, mb.email, term);
+        } catch {}
+      });
+    }
+  }
+  if (delegatedToken) {
+    for (const term of terms) {
+      jobs.push(async () => {
+        try {
+          const r = await fetch(
+            `https://graph.microsoft.com/v1.0/me/messages?$search=${encodeURIComponent(term)}&$top=15&$select=id,subject,from,receivedDateTime,bodyPreview,hasAttachments,internetMessageId,webLink`,
+            { headers: { Authorization: `Bearer ${delegatedToken}`, "Content-Type": "application/json" } }
+          );
+          if (!r.ok) return;
+          const data: any = await r.json();
+          for (const msg of (data?.value || [])) pushMsg(msg, "My inbox", undefined, term);
+        } catch {}
+      });
+    }
+  }
+  for (let i = 0; i < jobs.length; i += CONC) {
+    await Promise.all(jobs.slice(i, i + CONC).map((j) => j()));
+  }
+
+  results.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+  console.log(`[pathway baseline-email] address="${address}" terms=[${[...terms].join(", ")}] mailboxes=${mailboxes.length} → ${results.length} hits`);
+  return results.slice(0, 80);
+}
+
 // Shared: pull investment + letting comps for a given postcode. Used by both
 // the deterministic Inner path and the autonomous path so comps always show
 // up on the board regardless of which Stage 1 variant runs.
@@ -716,6 +838,37 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   if ((!stage1Payload.crmHits?.deals?.length) && crmPF?.deals?.length) {
     stage1Payload.crmHits = partialPayload.crmHits;
     stage1Payload.deals = partialPayload.deals;
+  }
+
+  // Baseline email sweep — deterministic belt-and-braces so we always get the
+  // core hits (address word + postcode + owner + tenant) even if Claude's
+  // search_emails calls were light. Merges into emailHits, dedupes.
+  try {
+    const baseline = await runBaselineEmailSweep({
+      address: run.address,
+      postcode: run.postcode || "",
+      ownerName: stage1Payload.initialOwnership?.proprietorName || stage1Payload.aiFacts?.owner,
+      tenantName: stage1Payload.tenant?.name || stage1Payload.aiFacts?.mainTenants?.[0],
+      req,
+    });
+    if (baseline.length > 0) {
+      const existingKeys = new Set<string>();
+      for (const e of stage1Payload.emailHits) {
+        if (e?.msgId) existingKeys.add(String(e.msgId));
+        existingKeys.add(`${String(e?.subject || "").trim().toLowerCase()}|${String(e?.from || "").trim().toLowerCase()}`);
+      }
+      const newHits = baseline.filter((e: any) => {
+        const k1 = String(e.msgId || "");
+        const k2 = `${String(e.subject || "").trim().toLowerCase()}|${String(e.from || "").trim().toLowerCase()}`;
+        return !existingKeys.has(k1) && !existingKeys.has(k2);
+      });
+      stage1Payload.emailHits = [...stage1Payload.emailHits, ...newHits]
+        .sort((a: any, b: any) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
+        .slice(0, 120);
+      console.log(`[pathway stage1 autonomous] Baseline sweep added ${newHits.length} emails (total ${stage1Payload.emailHits.length})`);
+    }
+  } catch (err: any) {
+    console.warn(`[pathway stage1 autonomous] baseline email sweep failed: ${err?.message}`);
   }
 
   console.log(`[pathway stage1 autonomous] Completed in ${((Date.now() - started) / 1000).toFixed(1)}s — ${stage1Payload.emailHits.length} emails, ${stage1Payload.brochureFiles.length} brochures, ${stage1Payload.sharepointHits.length} sharepoint`);
