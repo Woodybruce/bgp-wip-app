@@ -1157,11 +1157,16 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 {s4.planningApplications && s4.planningApplications.length > 0 ? (
                   <div className="space-y-0.5 text-[11px] max-h-56 overflow-y-auto">
                     {s4.planningApplications.slice(0, 30).map((p: any, i: number) => {
+                      const sourceBadge = p.source === "idox"
+                        ? <span className="text-[8px] px-1 py-px rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0" title={p.lpa ? `${p.lpa} LPA (official)` : "LPA Idox portal"}>{p.lpa ? p.lpa.split(/[ &]/)[0] : "LPA"}</span>
+                        : null;
                       const body = (
                         <>
                           <span className="text-[10px] text-muted-foreground shrink-0 w-20">{p.decidedAt || p.receivedAt || p.date || ""}</span>
+                          {sourceBadge}
                           <span className="flex-1 min-w-0">
                             <span className="font-medium">{p.reference}</span>
+                            {p.status && <span className="text-[10px] text-muted-foreground"> [{p.status}]</span>}
                             {p.description && <span className="text-muted-foreground"> — {p.description}</span>}
                           </span>
                           {p.documentUrl && <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground" />}

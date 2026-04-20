@@ -2149,27 +2149,40 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
 
     const [lookup, companyKyc] = await Promise.all([lookupPromise, companyKycPromise]);
 
-    // Planning comes from TWO sources: planning.data.gov.uk (radius search) and
-    // PropertyData's /planning-applications (postcode-scoped). Merge both, dedupe
-    // by reference. Field names differ between sources so handle both shapes.
+    // Planning comes from THREE sources: planning.data.gov.uk (radius search),
+    // PropertyData's /planning-applications (postcode-scoped), and the LPA's own
+    // Idox Public Access portal (scraped — authoritative but slower).
+    // Merge all three, dedupe by reference. Field names differ so handle each shape.
     const govApps = (lookup.planningData as any)?.planningApplications || [];
     const pdApps = (lookup.propertyDataCoUk as any)?.["planning-applications"]?.data || [];
     const pdAppsArr = Array.isArray(pdApps) ? pdApps : (pdApps?.planning_applications || []);
 
+    let idoxApps: any[] = [];
+    try {
+      const { fetchIdoxPlanning } = await import("./idox-planning");
+      idoxApps = await fetchIdoxPlanning(postcode, address, { maxPages: 3, maxAgeYears: 20 });
+    } catch (err: any) {
+      console.warn("[pathway stage4] Idox scrape skipped:", err?.message);
+    }
+
     const normalise = (a: any) => ({
       reference: a.reference || a.ref || a.application_number || "",
+      address: a.address || a.site_address || "",
       description: a.description || a.proposal || a.development_description || "",
       status: a.status || a.decision || a.application_status || "",
       date: a.decidedAt || a.decided_at || a.decision_date || a.receivedAt || a.received_at || a.date || "",
       decidedAt: a.decidedAt || a.decided_at || a.decision_date || null,
       receivedAt: a.receivedAt || a.received_at || a.received_date || null,
       documentUrl: a.documentUrl || a.document_url || a.url || null,
+      source: a.source || (a.reference ? "gov" : ""),
+      lpa: a.lpa || "",
     });
 
     const seen = new Set<string>();
     const merged: any[] = [];
-    for (const a of [...govApps, ...pdAppsArr].map(normalise)) {
-      const key = a.reference || `${a.date}|${a.description.slice(0, 60)}`;
+    // Idox first so its authoritative records win on dedupe.
+    for (const a of [...idoxApps, ...govApps, ...pdAppsArr].map(normalise)) {
+      const key = (a.reference || "").toUpperCase().replace(/\s+/g, "") || `${a.date}|${a.description.slice(0, 60)}`;
       if (seen.has(key)) continue;
       seen.add(key);
       if (a.reference || a.description) merged.push(a);
@@ -2182,7 +2195,7 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
       if (app.documentUrl) floorPlanUrls.push(app.documentUrl);
     }
 
-    console.log(`[pathway stage4] planning: gov=${govApps.length} pd=${pdAppsArr.length} merged=${planningApplications.length}`);
+    console.log(`[pathway stage4] planning: idox=${idoxApps.length} gov=${govApps.length} pd=${pdAppsArr.length} merged=${planningApplications.length}`);
 
     console.log(`[pathway stage4] runId=${runId} planning=${planningApplications.length} companyKyc=${companyKyc.length} (${companyKyc.filter((c: any) => !c.error).length} resolved)`);
 
