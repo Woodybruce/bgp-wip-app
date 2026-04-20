@@ -1024,6 +1024,9 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
         { wch: 6 }, { wch: 12 }, { wch: 16 }, { wch: 12 },
       ];
       XLSX.utils.book_append_sheet(wb, ws, "Rent analysis");
+      // TOTAL sits two rows above Say (end of the rows[] array above). With a single header
+      // row before the body (row 1) and the structure held stable, TOTAL and Say are the
+      // penultimate and last rows — their current cells are `Rent analysis!I25` and `I26`.
       appendBgpMeta(XLSX, wb, "itza", {
         address: itzaAddress,
         rate: itzaRateVal,
@@ -1031,6 +1034,12 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
         say: itzaSay,
         gia: itzaGIA,
         itza: itzaITZA,
+      }, {
+        // Point at cells the add-in will resolve on write-back so edits flow back to the CRM.
+        headlineRent: "'Rent analysis'!I25",
+        netEffectiveRent: "'Rent analysis'!I26",
+        zoneARate: "'Rent analysis'!I3",
+        itzaSqft: "'Rent analysis'!D10",
       });
       XLSX.writeFile(wb, `ITZA_Analysis_${(itzaAddress || "BGP").replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`);
     });
@@ -1094,12 +1103,19 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
         { wch: 10 }, { wch: 10 }, { wch: 12 },
       ];
       XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+      // Sheet1 layout: the last two content rows hold the Total ERV and Say figures.
+      // Column G carries the per-row ERV and the final total; the Say value is in column G too.
       appendBgpMeta(XLSX, wb, "gia", {
         address: giaAddress,
         rate: giaRateVal,
         totalErv: giaTotal,
         say: giaSay,
         gia: giaTotalArea,
+      }, {
+        headlineRent: `Sheet1!G${rows.length - 1}`,
+        netEffectiveRent: `Sheet1!G${rows.length}`,
+        overallRate: "Sheet1!H3",
+        giaSqft: `Sheet1!C${rows.findIndex(r => r[1] === "GIA (net of stairs)") + 1}`,
       });
       XLSX.writeFile(wb, `GIA_Analysis_${(giaAddress || "BGP").replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`);
     });
@@ -1149,6 +1165,8 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
       const ws = XLSX.utils.aoa_to_sheet(rows);
       ws["!cols"] = [{ wch: 50 }, { wch: 18 }];
       XLSX.utils.book_append_sheet(wb, ws, "NER");
+      // Row mapping is fixed: Results block lives rows 22-27 (1-indexed) in column B.
+      const idx = (label: string) => rows.findIndex(r => r[0] === label) + 1;
       appendBgpMeta(XLSX, wb, "ner", {
         address: nerAddress,
         headlineRent: headline,
@@ -1159,26 +1177,40 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
         fitoutContribution: fitout,
         netEffectiveRent,
         rentPsfNia: area > 0 ? netPsfNia : 0,
+      }, {
+        headlineRent: `NER!B${idx("Headline rent (£ pa)")}`,
+        term: `NER!B${idx("Lease term (years)")}`,
+        breakClause: `NER!B${idx("Years to break (override)")}`,
+        rentFreeMonths: `NER!B${idx("Rent free (months)")}`,
+        fitoutContribution: `NER!B${idx("Fit-out / capital contribution (£)")}`,
+        netEffectiveRent: `NER!B${idx("Net effective rent (£ pa)")}`,
       });
       XLSX.writeFile(wb, `NER_Analysis_${(nerAddress || "BGP").replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`);
     });
   }
 
-  /** Writes a hidden `_BGP_META` sheet with the comp id and headline results so the
-   * BGP Excel Add-in can round-trip updated values back to the CRM. */
-  function appendBgpMeta(XLSX: any, wb: any, kind: "ner" | "itza" | "gia", payload: Record<string, any>) {
+  /** Writes a hidden `_BGP_META` sheet with the comp id, snapshot results, and a writeback
+   * mapping so the BGP Excel Add-in can re-read the cells a user edits and push them back
+   * to `/api/crm/comps/:id`. */
+  function appendBgpMeta(
+    XLSX: any,
+    wb: any,
+    kind: "ner" | "itza" | "gia",
+    payload: Record<string, any>,
+    writeback: Record<string, string> = {},
+  ) {
     const meta: any[][] = [
       ["key", "value"],
       ["bgpKind", kind],
       ["bgpCompId", prefillComp?.id || ""],
       ["bgpApiBase", typeof window !== "undefined" ? window.location.origin : ""],
       ["generatedAt", new Date().toISOString()],
-      ...Object.entries(payload).map(([k, v]) => [k, v ?? ""]),
+      ...Object.entries(payload).map(([k, v]) => [`snapshot:${k}`, v ?? ""]),
+      ...Object.entries(writeback).map(([field, ref]) => [`writeback:${field}`, ref]),
     ];
     const ws = XLSX.utils.aoa_to_sheet(meta);
-    ws["!cols"] = [{ wch: 22 }, { wch: 40 }];
+    ws["!cols"] = [{ wch: 28 }, { wch: 40 }];
     XLSX.utils.book_append_sheet(wb, ws, "_BGP_META");
-    // Hide the metadata sheet so end-users don't see it by default.
     if (wb.Workbook?.Sheets) {
       const entry = wb.Workbook.Sheets.find((s: any) => s.name === "_BGP_META");
       if (entry) entry.Hidden = 1;
@@ -1772,6 +1804,7 @@ export default function Comps() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [createOpen, setCreateOpen] = useState(false);
   const [calcOpen, setCalcOpen] = useState(false);
+  const [calcComp, setCalcComp] = useState<CrmComp | null>(null);
   const [rpiOpen, setRpiOpen] = useState(false);
   const [confirmLead, setConfirmLead] = useState<CrmComp | null>(null);
   const [selectedComp, setSelectedComp] = useState<CrmComp | null>(null);
@@ -3415,15 +3448,15 @@ export default function Comps() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={calcOpen} onOpenChange={setCalcOpen}>
+      <Dialog open={calcOpen} onOpenChange={(v) => { setCalcOpen(v); if (!v) setCalcComp(null); }}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Calculator className="w-5 h-5" />
-              Net Effective Rent Calculator
+              Rent Analysis{calcComp ? ` — ${calcComp.name}` : ""}
             </DialogTitle>
           </DialogHeader>
-          <NetRentCalculator onClose={() => setCalcOpen(false)} />
+          <NetRentCalculator key={calcComp?.id || "blank"} onClose={() => setCalcOpen(false)} prefillComp={calcComp || undefined} />
           <div className="mt-3 p-3 bg-muted/30 rounded-lg">
             <p className="text-[10px] text-muted-foreground leading-relaxed">
               <span className="font-semibold">RICS Professional Statement:</span> Calculations follow the RICS Valuation Global Standards (Red Book) methodology. Zone A analysis per RICS Code of Measuring Practice 6th Edition — retail premises measured on ITZA basis with standard zone depth of 6.1m (20ft). GIA/NIA per RICS Property Measurement 2nd Edition (2018) aligned with IPMS.
