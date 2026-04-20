@@ -2910,6 +2910,8 @@ export async function createPathwayModelRun(args: {
   address: string;
   plan: PathwayBusinessPlanShape;
   propertyId?: string | null;
+  totalAreaSqFt?: number;
+  currentRentPA?: number;
 }): Promise<{ modelRunId: string; modelVersionId: string; workbookUrl: string; modelRunName: string; modelVersionLabel: string }>
 {
   const { db } = await import("./db");
@@ -2975,6 +2977,19 @@ export async function createPathwayModelRun(args: {
   // NIY isn't a direct input — we derive passing rent from price * NIY if we have both
   if (typeof plan.targetPurchasePrice === "number" && typeof plan.targetNIY === "number") {
     assumptions.currentRentPA = Math.round(plan.targetPurchasePrice * plan.targetNIY);
+  }
+  // Area + passing rent pulled from Stage 1 (tenancy units / aiFacts / VOA)
+  // when the plan doesn't carry them. Overrides the 5,000 sq ft default,
+  // which was sinking things like 18-22 Haymarket.
+  if (typeof args.totalAreaSqFt === "number" && args.totalAreaSqFt > 0) {
+    assumptions.totalAreaSqFt = Math.round(args.totalAreaSqFt);
+  }
+  if (
+    (assumptions.currentRentPA == null) &&
+    typeof args.currentRentPA === "number" &&
+    args.currentRentPA > 0
+  ) {
+    assumptions.currentRentPA = Math.round(args.currentRentPA);
   }
 
   // 3. Build the workbook (branded, BGP palette + logo)

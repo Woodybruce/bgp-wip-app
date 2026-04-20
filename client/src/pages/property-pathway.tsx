@@ -1461,8 +1461,41 @@ function BusinessPlanCard({ runId, stage6, onReload }: { runId: string; stage6: 
 function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; stage7: any; stage6: any; onReload: () => void }) {
   const { toast } = useToast();
   const [agreeing, setAgreeing] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [areaInput, setAreaInput] = useState<string>(
+    stage7?.overrideTotalAreaSqFt ? String(stage7.overrideTotalAreaSqFt) :
+    stage7?.totalAreaSqFt ? String(stage7.totalAreaSqFt) : "",
+  );
+  const [rentInput, setRentInput] = useState<string>(
+    stage7?.overrideCurrentRentPA ? String(stage7.overrideCurrentRentPA) :
+    stage7?.currentRentPA ? String(stage7.currentRentPA) : "",
+  );
   const planAgreed = !!stage6?.agreed;
   const modelAgreed = !!stage7?.agreed;
+
+  async function regenerate() {
+    const totalAreaSqFt = areaInput.trim() ? parseFloat(areaInput.replace(/[^0-9.]/g, "")) : null;
+    const currentRentPA = rentInput.trim() ? parseFloat(rentInput.replace(/[^0-9.]/g, "")) : null;
+    if (totalAreaSqFt !== null && (!Number.isFinite(totalAreaSqFt) || totalAreaSqFt <= 0)) {
+      toast({ title: "Invalid area", description: "Enter a positive number of sq ft", variant: "destructive" });
+      return;
+    }
+    setRegenerating(true);
+    try {
+      const res = await fetch(`/api/property-pathway/${runId}/stage7/override`, {
+        method: "POST",
+        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ totalAreaSqFt, currentRentPA, regenerate: true }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      toast({ title: "Regenerating model", description: "Using your overrides — refresh shortly." });
+      setTimeout(onReload, 2500);
+    } catch (e: any) {
+      toast({ title: "Couldn't regenerate", description: e?.message, variant: "destructive" });
+    } finally {
+      setRegenerating(false);
+    }
+  }
 
   async function agree() {
     if (!confirm("Agree this Excel model version? It will lock this version as the one Why Buy uses.")) return;
@@ -1517,6 +1550,49 @@ function ExcelModelCard({ runId, stage7, stage6, onReload }: { runId: string; st
             <InfoBlock label="Status" value={modelAgreed ? "Agreed" : "Drafting in Excel"} />
           </div>
         )}
+
+        {/* Area + passing rent — the two inputs that matter most. Show the
+            value the model was built with (and its source) so you can sanity-
+            check before agreeing. Override + regenerate if wrong. */}
+        {stage7?.modelRunId && !modelAgreed && (
+          <div className="mt-3 border rounded-lg p-3 bg-muted/30">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium">Area & passing rent</p>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded ${stage7.totalAreaSource === "default" ? "bg-amber-100 text-amber-900" : "bg-emerald-100 text-emerald-900"}`}>
+                Area source: {stage7.totalAreaSource || "default"}
+                {stage7.totalAreaSource === "default" && " — please override"}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-2">
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Total area (sq ft)</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={areaInput}
+                  onChange={(e) => setAreaInput(e.target.value)}
+                  placeholder={stage7.totalAreaSqFt ? String(stage7.totalAreaSqFt) : "e.g. 22000"}
+                  className="mt-0.5 w-full border rounded px-2 py-1 text-sm"
+                />
+              </label>
+              <label className="block">
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Passing rent (£/year)</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={rentInput}
+                  onChange={(e) => setRentInput(e.target.value)}
+                  placeholder={stage7.currentRentPA ? String(stage7.currentRentPA) : "e.g. 1200000"}
+                  className="mt-0.5 w-full border rounded px-2 py-1 text-sm"
+                />
+              </label>
+            </div>
+            <Button size="sm" variant="outline" onClick={regenerate} disabled={regenerating} className="gap-1.5">
+              {regenerating ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Regenerate model
+            </Button>
+          </div>
+        )}
+
         <p className="text-[11px] text-muted-foreground mt-3">
           Continue the conversation inside Excel using the BGP add-in — Claude can amend assumptions in the workbook and you can push back until you agree.
         </p>

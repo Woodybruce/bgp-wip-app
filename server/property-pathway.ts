@@ -254,6 +254,17 @@ interface StageResults {
     agreed?: boolean;
     agreedAt?: string;
     agreedBy?: string;
+    // The total area + passing rent the model was actually built with.
+    // Surfaced so the user can sanity-check before agreeing (Excel defaults
+    // to 5,000 sq ft / £500k if extraction misses).
+    totalAreaSqFt?: number;
+    totalAreaSource?: "tenancy" | "ai" | "manual" | "default";
+    currentRentPA?: number;
+    currentRentSource?: "tenancy" | "ai" | "plan" | "manual" | "default";
+    // Explicit user override — if set, runStage7 uses these instead of any
+    // derived values.
+    overrideTotalAreaSqFt?: number;
+    overrideCurrentRentPA?: number;
   };
   stage8?: {
     // Studio Time — images collected only once plan + model are agreed.
@@ -3635,7 +3646,75 @@ async function runStage7(runId: string, _req: Request): Promise<void> {
     try {
       const eb = await import("./excel-builder").catch(() => null as any);
       if (eb?.createPathwayModelRun) {
-        const seed = await eb.createPathwayModelRun({ runId, address: run.address, plan: agreed });
+        // Derive total area + passing rent from Stage 1 so the model isn't
+        // built off the 5,000 sq ft / £500k default. Priority order:
+        //   1. Sum of tenancy.units[].sqft (most precise)
+        //   2. Parsed aiFacts.sizeSqft ("31,384 sq ft" / "8500")
+        //   3. CRM property totalAreaSqft (if propertyId is linked)
+        const s1 = sr.stage1 || {};
+        const existingStage7 = sr.stage7 || {};
+        let totalAreaSqFt: number | undefined;
+        let totalAreaSource: "tenancy" | "ai" | "manual" | "default" = "default";
+        if (typeof existingStage7.overrideTotalAreaSqFt === "number" && existingStage7.overrideTotalAreaSqFt > 0) {
+          totalAreaSqFt = Math.round(existingStage7.overrideTotalAreaSqFt);
+          totalAreaSource = "manual";
+        }
+        if (!totalAreaSqFt) {
+          const unitSqfts = (s1.tenancy?.units || [])
+            .map((u: any) => Number(u.sqft))
+            .filter((n: number) => Number.isFinite(n) && n > 0);
+          if (unitSqfts.length) {
+            totalAreaSqFt = unitSqfts.reduce((a: number, b: number) => a + b, 0);
+            totalAreaSource = "tenancy";
+          }
+        }
+        if (!totalAreaSqFt && s1.aiFacts?.sizeSqft) {
+          const parsed = parseFloat(String(s1.aiFacts.sizeSqft).replace(/[^0-9.]/g, ""));
+          if (Number.isFinite(parsed) && parsed > 0) {
+            totalAreaSqFt = Math.round(parsed);
+            totalAreaSource = "ai";
+          }
+        }
+
+        let currentRentPA: number | undefined;
+        let currentRentSource: "tenancy" | "ai" | "plan" | "manual" | "default" = "default";
+        if (typeof existingStage7.overrideCurrentRentPA === "number" && existingStage7.overrideCurrentRentPA > 0) {
+          currentRentPA = Math.round(existingStage7.overrideCurrentRentPA);
+          currentRentSource = "manual";
+        }
+        if (!currentRentPA) {
+          const askingRents = (s1.tenancy?.units || [])
+            .map((u: any) => Number(u.askingRent))
+            .filter((n: number) => Number.isFinite(n) && n > 0);
+          if (askingRents.length) {
+            currentRentPA = askingRents.reduce((a: number, b: number) => a + b, 0);
+            currentRentSource = "tenancy";
+          }
+        }
+        if (!currentRentPA && s1.aiFacts?.passingRent) {
+          const parsed = parseFloat(String(s1.aiFacts.passingRent).replace(/[^0-9.]/g, ""));
+          if (Number.isFinite(parsed) && parsed > 0) {
+            currentRentPA = Math.round(parsed);
+            currentRentSource = "ai";
+          }
+        }
+        if (!currentRentPA && typeof agreed.targetPurchasePrice === "number" && typeof agreed.targetNIY === "number") {
+          currentRentPA = Math.round(agreed.targetPurchasePrice * agreed.targetNIY);
+          currentRentSource = "plan";
+        }
+
+        console.log(`[pathway stage7] derived totalAreaSqFt=${totalAreaSqFt || "(default)"} (source=${totalAreaSource}), currentRentPA=${currentRentPA || "(default)"} (source=${currentRentSource})`);
+        patch.totalAreaSqFt = totalAreaSqFt;
+        patch.totalAreaSource = totalAreaSource;
+        patch.currentRentPA = currentRentPA;
+        patch.currentRentSource = currentRentSource;
+        const seed = await eb.createPathwayModelRun({
+          runId,
+          address: run.address,
+          plan: agreed,
+          totalAreaSqFt,
+          currentRentPA,
+        });
         patch.modelRunId = seed.modelRunId;
         patch.modelVersionId = seed.modelVersionId;
         patch.modelRunName = seed.modelRunName;
@@ -4347,6 +4426,33 @@ export function registerPropertyPathwayRoutes(app: Express) {
         return res.send(buf);
       }
       return res.status(404).json({ error: "Image file missing on disk" });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Override area + passing rent for the Excel model and regenerate. The
+  // only two inputs that really matter for initial yield — we never want
+  // the model falling back to 5,000 sq ft / £500k silently.
+  app.post("/api/property-pathway/:runId/stage7/override", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const run = await getRun(String(req.params.runId));
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const { totalAreaSqFt, currentRentPA, regenerate } = req.body || {};
+      const sr = (run.stageResults as StageResults) || {};
+      const stage7 = { ...(sr.stage7 || {}) };
+      if (typeof totalAreaSqFt === "number" && totalAreaSqFt > 0) stage7.overrideTotalAreaSqFt = Math.round(totalAreaSqFt);
+      if (totalAreaSqFt === null) delete stage7.overrideTotalAreaSqFt;
+      if (typeof currentRentPA === "number" && currentRentPA > 0) stage7.overrideCurrentRentPA = Math.round(currentRentPA);
+      if (currentRentPA === null) delete stage7.overrideCurrentRentPA;
+      await updateRun(run.id, { stageResults: { ...sr, stage7 } });
+      if (regenerate) {
+        runStage(run.id, 7, req).catch((err: any) => {
+          console.error(`[pathway stage7 regenerate] error:`, err?.message);
+        });
+        return res.status(202).json({ success: true, async: true });
+      }
+      res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
     }
