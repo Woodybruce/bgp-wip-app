@@ -317,6 +317,68 @@ async function updateRun(runId: string, updates: Partial<PropertyPathwayRun>): P
   return updated;
 }
 
+/**
+ * Ensure the pathway run is linked to a CRM property. If the run already
+ * has a propertyId, returns that property. If Stage 1 found existing
+ * matches, links the first one. Otherwise auto-creates a new CRM property
+ * from the run's address and links it back onto the run.
+ *
+ * Returns the linked CRM property (or null if creation failed). Callers
+ * should push the returned record into crmHits.properties so Stage 1 UI
+ * shows it immediately, and rely on run.propertyId being set for
+ * downstream stages (tenancy, valuations, business plan).
+ */
+async function ensureCrmPropertyLink(
+  run: PropertyPathwayRun,
+  existingMatches: any[],
+): Promise<any | null> {
+  if (run.propertyId) {
+    const [existing] = await db
+      .select()
+      .from(crmProperties)
+      .where(eq(crmProperties.id, run.propertyId))
+      .limit(1);
+    if (existing) return existing;
+  }
+  if (existingMatches && existingMatches.length > 0) {
+    const first = existingMatches[0];
+    if (first?.id && first.id !== run.propertyId) {
+      try {
+        await updateRun(run.id, { propertyId: first.id });
+      } catch (err: any) {
+        console.warn(`[pathway stage1] Could not link run ${run.id} → CRM ${first.id}: ${err?.message}`);
+      }
+    }
+    return first;
+  }
+  const name = (run.address.split(",")[0] || run.address).trim();
+  try {
+    const [created] = await db
+      .insert(crmProperties)
+      .values({
+        name,
+        address: { formatted: run.address, postcode: run.postcode } as any,
+        postcode: run.postcode || null,
+        groupName: "Properties",
+        status: "Active",
+        notes: `Auto-created by Property Pathway on ${new Date().toISOString().slice(0, 10)} — review and enrich.`,
+      })
+      .returning();
+    if (created?.id) {
+      try {
+        await updateRun(run.id, { propertyId: created.id });
+      } catch (err: any) {
+        console.warn(`[pathway stage1] Auto-created CRM ${created.id} but failed to link run: ${err?.message}`);
+      }
+      console.log(`[pathway stage1] Auto-created CRM property ${created.id} (${name}) for run ${run.id}`);
+    }
+    return created || null;
+  } catch (err: any) {
+    console.error("[pathway stage1] Auto-create CRM property failed:", err?.message);
+    return null;
+  }
+}
+
 async function setStageStatus(runId: string, stage: keyof StageStatusMap, status: StageStatus, resultsPatch?: Partial<StageResults>): Promise<PropertyPathwayRun> {
   const run = await getRun(runId);
   if (!run) throw new Error(`Pathway run ${runId} not found`);
@@ -1015,6 +1077,19 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   const crmPF = prefetch.find((p) => p.tool === "crm_lookup")?.result;
   const landRegPF = prefetch.find((p) => p.tool === "land_registry_lookup")?.result;
   const voaPF = prefetch.find((p) => p.tool === "voa_rates_lookup")?.result;
+
+  // Guarantee the pathway run is linked to a CRM property — matches an
+  // existing entry if crm_lookup found one, otherwise auto-creates a stub
+  // so downstream stages (tenancy, valuations, business plan) always have
+  // somewhere to hang their results.
+  const linkedCrm = await ensureCrmPropertyLink(run, crmPF?.properties || []);
+  if (linkedCrm) {
+    const props = crmPF?.properties || [];
+    if (!props.find((p: any) => p?.id === linkedCrm.id)) {
+      props.unshift(linkedCrm);
+    }
+    if (crmPF) crmPF.properties = props;
+  }
   const partialPayload: any = {
     emailHits: [], sharepointHits: [], brochureFiles: [],
     tenancy: { status: "unknown", units: [] }, engagements: [], pricePaidHistory: [], comps: [],
@@ -1302,6 +1377,16 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     crmHits.properties = propertyMatches;
   } catch (err: any) {
     console.error("[pathway stage1] CRM search error:", err?.message);
+  }
+
+  // Auto-link or auto-create so the pathway always has a CRM anchor.
+  try {
+    const linkedCrm = await ensureCrmPropertyLink(run, crmHits.properties);
+    if (linkedCrm && !crmHits.properties.find((p: any) => p?.id === linkedCrm.id)) {
+      crmHits.properties.unshift(linkedCrm);
+    }
+  } catch (err: any) {
+    console.error("[pathway stage1] ensureCrmPropertyLink error:", err?.message);
   }
 
   // 1b. Ownership — prefer CRM data if we already have it, fall back to PropertyData freeholds lookup
