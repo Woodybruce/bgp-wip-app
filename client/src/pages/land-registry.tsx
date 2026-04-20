@@ -332,6 +332,32 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
       .finally(() => setSearchesLoading(false));
   }, []);
 
+  // Deep-link from Property Pathway's Title link:
+  // /property-intelligence?tab=land-registry&postcode=<pc> should auto-open
+  // the most recent saved search for that postcode (preferring source=pathway
+  // rows so clicking the Title number surfaces the Stage 1 results directly).
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedRef.current) return;
+    if (typeof window === "undefined") return;
+    if (savedSearches.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const pc = (params.get("postcode") || "").trim().toUpperCase().replace(/\s+/g, "");
+    if (!pc) return;
+    const match =
+      savedSearches.find(s => (s.postcode || "").toUpperCase().replace(/\s+/g, "") === pc && (s as any).source === "pathway")
+      || savedSearches.find(s => (s.postcode || "").toUpperCase().replace(/\s+/g, "") === pc);
+    if (match) {
+      autoOpenedRef.current = true;
+      loadSavedSearch(match);
+      params.delete("postcode");
+      const clean = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${clean ? "?" + clean : ""}`);
+    }
+    // loadSavedSearch identity is stable via useCallback; exclude from deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedSearches]);
+
   const saveSearch = useCallback(async (addr: string, pc: string, fh: any[], lh: any[], intel: Record<string, any>, summary: PropertySummaryData) => {
     try {
       const res = await fetch("/api/land-registry/searches", {

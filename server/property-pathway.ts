@@ -2753,6 +2753,22 @@ export function registerPropertyPathwayRoutes(app: Express) {
       if (!run) return res.status(404).json({ error: "Run not found" });
       const targetStage = stage ?? run.currentStage;
 
+      // Back-fill startedBy if null — older runs were created before startedBy
+      // was reliably set, and downstream writes (Stage 1 LR history, Stage 4
+      // Clouseau userId) silently skip without it. Grab the current session
+      // user on first advance and persist so every subsequent re-run sees it.
+      if (!(run as any).startedBy) {
+        const sessUser = (req as any).session?.userId || (req as any).tokenUserId || null;
+        if (sessUser) {
+          await db
+            .update(propertyPathwayRuns)
+            .set({ startedBy: sessUser })
+            .where(eq(propertyPathwayRuns.id, runId));
+          (run as any).startedBy = sessUser;
+          console.log(`[pathway advance] back-filled startedBy=${sessUser} on run ${runId}`);
+        }
+      }
+
       // Async mode: kick off stage in background, return immediately.
       // Client polls /api/property-pathway/:runId to watch for completion.
       // Avoids Railway's 45s edge timeout for heavy stages.
