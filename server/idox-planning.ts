@@ -142,11 +142,15 @@ function parseCookies(setCookieHeader: string | null): string {
     .join("; ");
 }
 
+const BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
 async function getCsrfAndCookie(host: string): Promise<{ csrf: string; cookie: string }> {
   const resp = await fetch(`https://${host}/online-applications/search.do?action=simple`, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; BGPPlanningBot/1.0)",
-      Accept: "text/html,application/xhtml+xml",
+      "User-Agent": BROWSER_UA,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-GB,en;q=0.9",
     },
     signal: AbortSignal.timeout(20000),
     redirect: "follow",
@@ -170,11 +174,13 @@ async function fetchIdoxResults(host: string, searchTerm: string): Promise<strin
   const resp = await fetch(`https://${host}/online-applications/simpleSearchResults.do?action=firstPage`, {
     method: "POST",
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; BGPPlanningBot/1.0)",
-      Accept: "text/html,application/xhtml+xml",
+      "User-Agent": BROWSER_UA,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-GB,en;q=0.9",
       "Content-Type": "application/x-www-form-urlencoded",
       Cookie: cookie,
       Referer: `https://${host}/online-applications/search.do?action=simple`,
+      Origin: `https://${host}`,
     },
     body: body.toString(),
     signal: AbortSignal.timeout(25000),
@@ -230,8 +236,15 @@ export async function fetchIdoxPlanning(
         break;
       }
     } catch (err: any) {
+      const causeCode = err?.cause?.code || err?.cause?.errno;
+      const causeMsg = err?.cause?.message;
       lastError = err?.message;
-      console.warn(`[idox] ${lpa.name} search failed for "${term}":`, err?.message);
+      console.warn(
+        `[idox] ${lpa.name} search failed for "${term}":`,
+        err?.message,
+        causeCode ? `cause=${causeCode}` : "",
+        causeMsg && causeMsg !== err?.message ? `(${causeMsg})` : "",
+      );
     }
   }
 

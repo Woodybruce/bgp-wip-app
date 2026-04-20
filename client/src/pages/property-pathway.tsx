@@ -1144,7 +1144,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                               )}
                               {c.investigationId ? (
                                 <a
-                                  href={`/kyc-clouseau?investigation=${c.investigationId}`}
+                                  href={`/property-intelligence?tab=investigator&investigation=${c.investigationId}`}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="mt-1 inline-flex items-center gap-1 text-[10px] text-primary hover:underline"
