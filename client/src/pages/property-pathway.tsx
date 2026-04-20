@@ -8,9 +8,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { getAuthHeaders } from "@/lib/queryClient";
 import {
   Building2, FolderOpen, MapPin, ShieldCheck, Sparkles,
-  FileText, Image as ImageIcon, ChevronRight, ArrowRight,
+  FileText, Image as ImageIcon, ChevronRight, ChevronDown, ArrowRight,
   Check, Clock, AlertCircle, Plus, Search, Download, ExternalLink, Trash2,
-  Copy, Paperclip, Loader2,
+  Copy, Paperclip, Loader2, Maximize2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -1208,54 +1208,14 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </div>
 
               {/* 03 Planning */}
-              <div className="border rounded p-2.5 bg-muted/10">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">03 Planning (20y)</p>
-                {s4.planningApplications && s4.planningApplications.length > 0 ? (
-                  <div className="space-y-0.5 text-[11px] max-h-56 overflow-y-auto">
-                    {s4.planningApplications.slice(0, 30).map((p: any, i: number) => {
-                      const sourceBadge = p.source === "idox"
-                        ? <span className="text-[8px] px-1 py-px rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0" title={p.lpa ? `${p.lpa} LPA (official)` : "LPA Idox portal"}>{p.lpa ? p.lpa.split(/[ &]/)[0] : "LPA"}</span>
-                        : null;
-                      const body = (
-                        <>
-                          <span className="text-[10px] text-muted-foreground shrink-0 w-20">{p.decidedAt || p.receivedAt || p.date || ""}</span>
-                          {sourceBadge}
-                          <span className="flex-1 min-w-0">
-                            <span className="font-medium">{p.reference}</span>
-                            {p.status && <span className="text-[10px] text-muted-foreground"> [{p.status}]</span>}
-                            {p.description && <span className="text-muted-foreground"> — {p.description}</span>}
-                          </span>
-                          {p.documentUrl && <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground" />}
-                        </>
-                      );
-                      return p.documentUrl ? (
-                        <a key={i} href={p.documentUrl} target="_blank" rel="noreferrer" className="flex items-start gap-1 py-0.5 border-b last:border-b-0 hover:bg-muted/30">{body}</a>
-                      ) : (
-                        <div key={i} className="flex items-start gap-1 py-0.5 border-b last:border-b-0">{body}</div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="text-[10px] text-muted-foreground">No planning applications found within 500m over the last 20 years.</p>
-                )}
-              </div>
+              <PlanningCard apps={s4.planningApplications || []} />
 
-              {/* 04 Floor Plans */}
-              <div className="border rounded p-2.5 bg-muted/10">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">04 Floor Plans</p>
-                {s4.floorPlanUrls && s4.floorPlanUrls.length > 0 ? (
-                  <div className="space-y-0.5 text-[11px] max-h-56 overflow-y-auto">
-                    {s4.floorPlanUrls.slice(0, 15).map((u: string, i: number) => (
-                      <a key={i} href={u} target="_blank" rel="noreferrer" className="flex items-center gap-1 py-0.5 border-b last:border-b-0 hover:bg-muted/30">
-                        <span className="flex-1 truncate text-primary hover:underline">{u.replace(/^https?:\/\//, "").slice(0, 50)}</span>
-                        <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground" />
-                      </a>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-[10px] text-muted-foreground">No floor-plan document URLs surfaced from planning portals.</p>
-                )}
-              </div>
+              {/* 04 Planning Documents (floor plans, drawings, decision notices — scraped PDFs per application) */}
+              <PlanningDocsCard
+                apps={s4.planningApplications || []}
+                planningDocs={s4.planningDocs || []}
+                legacyUrls={s4.floorPlanUrls || []}
+              />
             </div>
           </CardContent>
         </Card>
@@ -1313,6 +1273,301 @@ function CountBlock({ label, value }: { label: string; value: number }) {
       <p className="text-lg font-bold">{value}</p>
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
     </div>
+  );
+}
+
+function statusTone(status: string): string {
+  const s = (status || "").toLowerCase();
+  if (/permit|approv|grant|allowed/.test(s)) return "bg-emerald-100 text-emerald-800";
+  if (/refus|reject|dismiss|withdraw/.test(s)) return "bg-rose-100 text-rose-800";
+  if (/pend|register|valid|consult|under/.test(s)) return "bg-amber-100 text-amber-800";
+  return "bg-slate-100 text-slate-700";
+}
+
+function PlanningRow({ p }: { p: any }) {
+  const [expanded, setExpanded] = useState(false);
+  const dateStr = p.decidedAt || p.receivedAt || p.date || "";
+  const lpa = p.lpa ? p.lpa.split(/[ &]/)[0] : null;
+
+  return (
+    <div className="border-b last:border-b-0 text-[11px]">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-start gap-1.5 py-1 px-0.5 hover:bg-muted/30 text-left"
+      >
+        {expanded ? <ChevronDown className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground" />}
+        <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{dateStr ? dateStr.slice(0, 10) : ""}</span>
+        {lpa && <span className="text-[8px] px-1 py-px rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0 mt-px" title={p.lpa}>{lpa}</span>}
+        <span className="flex-1 min-w-0">
+          <span className="font-medium break-all">{p.reference}</span>
+          {p.status && <span className={`ml-1 text-[9px] px-1 py-px rounded uppercase tracking-wide ${statusTone(p.status)}`}>{p.status}</span>}
+          <span className="block text-muted-foreground truncate">{p.description || ""}</span>
+        </span>
+      </button>
+      {expanded && (
+        <div className="px-5 pb-2 pt-0.5 space-y-1 text-[10px] leading-relaxed">
+          {p.description && <p className="text-foreground/90">{p.description}</p>}
+          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-muted-foreground">
+            {p.type && <div><span className="uppercase tracking-wide text-[9px]">Type</span><br /><span className="text-foreground">{p.type}</span></div>}
+            {p.decision && <div><span className="uppercase tracking-wide text-[9px]">Decision</span><br /><span className="text-foreground">{p.decision}</span></div>}
+            {p.receivedAt && <div><span className="uppercase tracking-wide text-[9px]">Received</span><br /><span className="text-foreground">{String(p.receivedAt).slice(0, 10)}</span></div>}
+            {p.decidedAt && <div><span className="uppercase tracking-wide text-[9px]">Decided</span><br /><span className="text-foreground">{String(p.decidedAt).slice(0, 10)}</span></div>}
+            {p.address && <div className="col-span-2"><span className="uppercase tracking-wide text-[9px]">Site address</span><br /><span className="text-foreground">{p.address}</span></div>}
+          </div>
+          {p.documentUrl && (
+            <a href={p.documentUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+              View on LPA portal <ExternalLink className="w-2.5 h-2.5" />
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlanningCard({ apps }: { apps: any[] }) {
+  const [showDialog, setShowDialog] = useState(false);
+  return (
+    <div className="border rounded p-2.5 bg-muted/10">
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">03 Planning (20y){apps.length > 0 ? ` · ${apps.length}` : ""}</p>
+        {apps.length > 0 && (
+          <button type="button" onClick={() => setShowDialog(true)} className="text-[10px] text-primary hover:underline inline-flex items-center gap-1">
+            <Maximize2 className="w-2.5 h-2.5" /> Expand
+          </button>
+        )}
+      </div>
+      {apps.length > 0 ? (
+        <div className="max-h-56 overflow-y-auto">
+          {apps.slice(0, 30).map((p: any, i: number) => <PlanningRow key={i} p={p} />)}
+        </div>
+      ) : (
+        <p className="text-[10px] text-muted-foreground">No planning applications found for this building over the last 20 years.</p>
+      )}
+      <PlanningDialog apps={apps} open={showDialog} onClose={() => setShowDialog(false)} />
+    </div>
+  );
+}
+
+function classifyDocType(text: string): { label: string; tone: string } {
+  const t = (text || "").toLowerCase();
+  if (/floor\s*plan|ground\s*floor|first\s*floor|second\s*floor|basement\s*plan/.test(t)) return { label: "Floor Plan", tone: "bg-sky-100 text-sky-800" };
+  if (/elevation/.test(t)) return { label: "Elevation", tone: "bg-violet-100 text-violet-800" };
+  if (/section/.test(t) && !/section\s*\d+\s*(agreement|notice)/.test(t)) return { label: "Section", tone: "bg-violet-100 text-violet-800" };
+  if (/site\s*(plan|location)|location\s*plan|block\s*plan/.test(t)) return { label: "Site Plan", tone: "bg-emerald-100 text-emerald-800" };
+  if (/decision\s*notice|decision\s*letter/.test(t)) return { label: "Decision", tone: "bg-amber-100 text-amber-800" };
+  if (/design\s*and\s*access|d&a|heritage\s*statement|planning\s*statement/.test(t)) return { label: "Statement", tone: "bg-slate-100 text-slate-700" };
+  if (/application\s*form/.test(t)) return { label: "Form", tone: "bg-slate-100 text-slate-700" };
+  return { label: "Doc", tone: "bg-slate-100 text-slate-700" };
+}
+
+function docCategoryTone(category: string): string {
+  switch (category) {
+    case "floor_plan_proposed":
+    case "floor_plan_existing":
+    case "floor_plan":
+      return "bg-sky-100 text-sky-800";
+    case "elevation":
+    case "section":
+      return "bg-violet-100 text-violet-800";
+    case "site_plan":
+      return "bg-emerald-100 text-emerald-800";
+    case "decision":
+    case "officer_report":
+      return "bg-amber-100 text-amber-800";
+    case "das":
+    case "heritage":
+    case "planning_statement":
+      return "bg-indigo-100 text-indigo-800";
+    case "photo":
+      return "bg-pink-100 text-pink-800";
+    default:
+      return "bg-slate-100 text-slate-700";
+  }
+}
+
+function PlanningDocsCard({
+  apps,
+  planningDocs,
+  legacyUrls,
+}: {
+  apps: any[];
+  planningDocs: Array<{
+    ref: string;
+    lpa: string;
+    appDate: string;
+    description: string;
+    docsUrl: string;
+    docs: Array<{ url: string; date: string; description: string; type: string; drawingNumber?: string; category: string; label: string }>;
+  }>;
+  legacyUrls: string[];
+}) {
+  const scrapedRefs = new Set(planningDocs.map((p) => p.ref));
+  const totalPdfs = planningDocs.reduce((acc, p) => acc + p.docs.length, 0);
+
+  // Applications that weren't scraped (either >top-10, or scrape returned 0)
+  const unscraped = apps.filter((a: any) => a.documentUrl && !scrapedRefs.has(a.reference));
+
+  return (
+    <div className="border rounded p-2.5 bg-muted/10">
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          04 Planning Documents
+          {totalPdfs > 0 ? ` · ${totalPdfs} PDFs across ${planningDocs.length} apps` : ""}
+        </p>
+      </div>
+
+      {planningDocs.length > 0 ? (
+        <div className="space-y-2 max-h-[28rem] overflow-y-auto">
+          {planningDocs.map((app, ai) => (
+            <div key={ai} className="border rounded bg-background">
+              <div className="flex items-start gap-1.5 px-2 py-1.5 border-b bg-muted/30">
+                <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{app.appDate ? app.appDate.slice(0, 10) : ""}</span>
+                {app.lpa && <span className="text-[8px] px-1 py-px rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0 mt-px" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
+                <span className="flex-1 min-w-0">
+                  <a href={app.docsUrl} target="_blank" rel="noreferrer" className="font-medium break-all text-primary hover:underline text-[11px]">{app.ref}</a>
+                  {app.description && <span className="block text-muted-foreground text-[10px] truncate">{app.description}</span>}
+                </span>
+                <span className="text-[9px] px-1 py-px rounded bg-sky-100 text-sky-800 shrink-0 mt-px">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="divide-y">
+                {app.docs.slice(0, 40).map((d, di) => (
+                  <a
+                    key={di}
+                    href={d.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-start gap-1.5 py-1 px-2 hover:bg-muted/30 text-[11px]"
+                    title={d.description}
+                  >
+                    <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{d.date ? d.date.slice(0, 10) : ""}</span>
+                    <span className={`text-[9px] px-1 py-px rounded uppercase tracking-wide shrink-0 mt-px ${docCategoryTone(d.category)}`}>{d.label}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block truncate">{d.description}</span>
+                      {d.drawingNumber && <span className="block text-muted-foreground text-[10px] truncate">Drawing {d.drawingNumber}</span>}
+                    </span>
+                    <Download className="w-3 h-3 shrink-0 text-muted-foreground mt-px" />
+                  </a>
+                ))}
+                {app.docs.length > 40 && (
+                  <a href={app.docsUrl} target="_blank" rel="noreferrer" className="block px-2 py-1 text-[10px] text-muted-foreground hover:bg-muted/30">
+                    … {app.docs.length - 40} more — open full list on LPA portal
+                  </a>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {unscraped.length > 0 && (
+            <div className="border rounded bg-background">
+              <p className="px-2 py-1.5 text-[10px] text-muted-foreground uppercase tracking-wide border-b">
+                Other applications · docs tab only
+              </p>
+              <div className="divide-y">
+                {unscraped.slice(0, 20).map((p: any, i: number) => (
+                  <a
+                    key={i}
+                    href={p.documentUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-start gap-1.5 py-1 px-2 hover:bg-muted/30 text-[11px]"
+                  >
+                    <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10)}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="font-medium break-all text-primary">{p.reference}</span>
+                      {p.description && <span className="block text-muted-foreground text-[10px] truncate">{p.description}</span>}
+                    </span>
+                    <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground mt-px" />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : apps.length > 0 ? (
+        <>
+          <p className="text-[10px] text-muted-foreground mb-1">
+            PDF scraping didn't return anything — showing LPA documents-tab links instead.
+            {` `}Set <code className="text-[9px] bg-muted px-1 py-px rounded">SCRAPERAPI_KEY</code> on the server to pull individual PDFs.
+          </p>
+          <div className="space-y-0.5 text-[11px] max-h-56 overflow-y-auto">
+            {apps.filter((p: any) => p.documentUrl).slice(0, 30).map((p: any, i: number) => {
+              const cat = classifyDocType(`${p.type || ""} ${p.description || ""}`);
+              return (
+                <a
+                  key={i}
+                  href={p.documentUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-start gap-1.5 py-1 px-0.5 border-b last:border-b-0 hover:bg-muted/30"
+                >
+                  <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10)}</span>
+                  <span className={`text-[9px] px-1 py-px rounded uppercase tracking-wide shrink-0 mt-px ${cat.tone}`}>{cat.label}</span>
+                  <span className="flex-1 min-w-0">
+                    <span className="font-medium break-all text-primary">{p.reference}</span>
+                    {p.description && <span className="block text-muted-foreground text-[10px] truncate">{p.description}</span>}
+                  </span>
+                  <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground mt-px" />
+                </a>
+              );
+            })}
+            {legacyUrls.filter((u) => !apps.some((a: any) => a.documentUrl === u)).slice(0, 10).map((u, i) => (
+              <a key={`legacy-${i}`} href={u} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 py-1 px-0.5 border-b last:border-b-0 hover:bg-muted/30 text-[10px] text-muted-foreground">
+                <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                <span className="truncate">{u}</span>
+              </a>
+            ))}
+          </div>
+        </>
+      ) : (
+        <p className="text-[10px] text-muted-foreground">No planning document links surfaced. If a planning application exists, check the LPA portal directly.</p>
+      )}
+    </div>
+  );
+}
+
+function PlanningDialog({ apps, open, onClose }: { apps: any[]; open: boolean; onClose: () => void }) {
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Planning applications ({apps.length})</DialogTitle>
+        </DialogHeader>
+        <div className="overflow-y-auto -mx-6 px-6">
+          <table className="w-full text-[12px]">
+            <thead className="sticky top-0 bg-background border-b">
+              <tr className="text-left text-muted-foreground text-[10px] uppercase tracking-wide">
+                <th className="py-2 pr-2 w-20">Date</th>
+                <th className="py-2 pr-2 w-24">LPA</th>
+                <th className="py-2 pr-2 w-28">Reference</th>
+                <th className="py-2 pr-2 w-24">Status</th>
+                <th className="py-2 pr-2">Description</th>
+                <th className="py-2 pr-0 w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {apps.map((p, i) => (
+                <tr key={i} className="border-b last:border-b-0 align-top hover:bg-muted/20">
+                  <td className="py-2 pr-2 text-muted-foreground">{(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10)}</td>
+                  <td className="py-2 pr-2">{p.lpa || ""}</td>
+                  <td className="py-2 pr-2 font-medium break-all">{p.reference}</td>
+                  <td className="py-2 pr-2">{p.status && <span className={`text-[9px] px-1 py-px rounded uppercase tracking-wide ${statusTone(p.status)}`}>{p.status}</span>}</td>
+                  <td className="py-2 pr-2 text-foreground/90">{p.description}{p.type ? <span className="block text-muted-foreground text-[10px] mt-0.5">{p.type}</span> : null}</td>
+                  <td className="py-2 pr-0">
+                    {p.documentUrl && (
+                      <a href={p.documentUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center" title="View on LPA portal">
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

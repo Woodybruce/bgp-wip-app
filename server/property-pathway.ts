@@ -142,6 +142,14 @@ interface StageResults {
     // clicks "Set up folder tree" on the final stage.
     titleRegisters?: Array<{ titleNumber: string; documentUrl?: string; source?: "infotrack" | "placeholder" }>;
     planningApplications?: Array<{ reference: string; description: string; status: string; date: string; decidedAt?: string; receivedAt?: string; documentUrl?: string }>;
+    planningDocs?: Array<{
+      ref: string;
+      lpa: string;
+      appDate: string;
+      description: string;
+      docsUrl: string;
+      docs: Array<{ url: string; date: string; description: string; type: string; drawingNumber?: string; category: string; label: string }>;
+    }>;
     floorPlanUrls?: string[];
     // Companies House KYC — one summary block per resolved proprietor/tenant
     // company. The full investigation (officers, PSCs, UBO chain, sanctions,
@@ -2425,12 +2433,52 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
 
     const planningApplications = filteredForBuilding.slice(0, 100);
 
+    console.log(`[pathway stage4] planning: idox=${idoxApps.length} planit=${planitApps.length} gov=${govApps.length} pd=${pdAppsArr.length} merged=${merged.length} filtered=${planningApplications.length}`);
+
+    // Pull the full PDF list off each application's Idox documents tab, via
+    // ScraperAPI so Westminster's Railway IP block doesn't matter. Cap at 10
+    // apps (most-recent-first — they're already date-sorted) to keep credit
+    // spend predictable: ~10 ScraperAPI requests per pathway run.
+    const planningDocs: Array<{
+      ref: string;
+      lpa: string;
+      appDate: string;
+      description: string;
+      docsUrl: string;
+      docs: any[];
+    }> = [];
+    try {
+      const { fetchPlanningDocs, docsTabUrl, sortDocsByPriority } = await import("./planning-docs");
+      const toScrape = planningApplications.filter((a: any) => a.documentUrl).slice(0, 10);
+      const results = await Promise.allSettled(
+        toScrape.map(async (app: any) => {
+          const url = docsTabUrl(app.documentUrl);
+          const docs = await fetchPlanningDocs(url);
+          return {
+            ref: app.reference,
+            lpa: app.lpa || "",
+            appDate: app.decidedAt || app.receivedAt || app.date || "",
+            description: app.description || "",
+            docsUrl: url,
+            docs: sortDocsByPriority(docs),
+          };
+        }),
+      );
+      for (const r of results) {
+        if (r.status === "fulfilled" && r.value.docs.length > 0) planningDocs.push(r.value);
+      }
+      const totalDocs = planningDocs.reduce((acc, a) => acc + a.docs.length, 0);
+      console.log(`[pathway stage4] planning docs: scraped=${toScrape.length} with-docs=${planningDocs.length} total-pdfs=${totalDocs}`);
+    } catch (err: any) {
+      console.warn(`[pathway stage4] planning docs scrape failed: ${err?.message}`);
+    }
+
+    // Legacy: keep floorPlanUrls populated (links to application summary pages)
+    // for back-compat with any UI that still reads it.
     const floorPlanUrls: string[] = [];
     for (const app of planningApplications.slice(0, 30)) {
       if (app.documentUrl) floorPlanUrls.push(app.documentUrl);
     }
-
-    console.log(`[pathway stage4] planning: idox=${idoxApps.length} planit=${planitApps.length} gov=${govApps.length} pd=${pdAppsArr.length} merged=${merged.length} filtered=${planningApplications.length}`);
 
     console.log(`[pathway stage4] runId=${runId} planning=${planningApplications.length} companyKyc=${companyKyc.length} (${companyKyc.filter((c: any) => !c.error).length} resolved)`);
 
@@ -2438,6 +2486,7 @@ async function runStage4(runId: string, _req: Request): Promise<void> {
       stage4: {
         titleRegisters: [], // InfoTrack-sourced later
         planningApplications,
+        planningDocs,
         floorPlanUrls,
         companyKyc,
         proprietorKyc: null,
