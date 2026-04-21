@@ -3342,7 +3342,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         if (p.postcode) {
           setSelectedPostcode(p.postcode);
           setCurrentArea(p.name || p.address || p.postcode);
-          loadPropertyData(p.postcode, undefined, p.address || undefined);
+          loadPropertyData(p.postcode, undefined, p.address || undefined, { lat: p.latitude, lng: p.longitude });
         }
       });
       crmMarkersRef.current.addLayer(marker);
@@ -3439,7 +3439,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                               if (rgData.postcode) {
                                 setSelectedPostcode(rgData.postcode);
                                 setCurrentArea(rgData.displayAddr || rgData.postcode);
-                                loadPropertyData(rgData.postcode, undefined, rgData.displayAddr || undefined);
+                                loadPropertyData(rgData.postcode, undefined, rgData.displayAddr || undefined, { lat: center.lat, lng: center.lng });
                               }
                             } catch (err) {
                               console.error("[os-buildings] Reverse geocode error:", err);
@@ -3573,7 +3573,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     }
     const addressPart = result.label.split("—")[0]?.trim() || "";
     setSelectedPostcode(result.postcode);
-    loadPropertyData(result.postcode, undefined, addressPart || undefined);
+    loadPropertyData(result.postcode, undefined, addressPart || undefined, result.lat && result.lng ? { lat: result.lat, lng: result.lng } : null);
     setSearchResults([]);
     suppressSearchRef.current = true;
     setSearchQuery(result.label);
@@ -3998,7 +3998,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                         if (s.postcode) {
                           setSelectedPostcode(s.postcode);
                           setCurrentArea(s.address || s.postcode);
-                          loadPropertyData(s.postcode, undefined, s.address || undefined);
+                          loadPropertyData(s.postcode, undefined, s.address || undefined, coords?.lat && coords?.lng ? { lat: coords.lat, lng: coords.lng } : null);
                         }
                       }}
                       className="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors group/item"
