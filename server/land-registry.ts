@@ -743,23 +743,37 @@ export function registerLandRegistryRoutes(app: Express) {
         if (tail && tail !== resolvedAddress) cleanedAddressCandidates.unshift(tail);
       }
 
-      // Step 2a: ask OS AddressBase (via OS Places API) to resolve the full
-      // address to a UPRN. OS is HMLR's own address source and has
-      // dramatically better coverage of central-London commercial buildings
-      // than PropertyData's matcher — so we try it first.
+      // Step 2a: ask OS AddressBase for the UPRN. Prefer lat/lng nearest-point
+      // when we have them (e.g. from a map click) — it bypasses address-string
+      // parsing entirely and resolves commercial/mixed-use buildings
+      // accurately even when Google reverse-geocoded them under a business
+      // name like "Steak and Company - Piccadilly Circus, 18 Haymarket".
+      // Fall through to OS find-by-address if no coords.
       let matchedUprns: string[] = [];
       try {
-        const { osPlacesFind } = await import("./os-data");
-        const queries = [
-          [resolvedAddress, resolvedPostcode].filter(Boolean).join(", "),
-          ...cleanedAddressCandidates.map(c => [c, resolvedPostcode].filter(Boolean).join(", ")),
-        ].filter((q, i, arr) => q && arr.indexOf(q) === i);
-        for (const q of queries) {
-          const os = await osPlacesFind(q, 5);
-          const uprns = os.map(r => r.uprn).filter(Boolean) as string[];
-          if (uprns.length) {
-            matchedUprns = uprns.slice(0, 5);
-            break;
+        const { osPlacesNearest, osPlacesFind } = await import("./os-data");
+        if (typeof lat === "number" && typeof lng === "number") {
+          for (const radius of [20, 40, 80]) {
+            const nearest = await osPlacesNearest(lat, lng, radius);
+            const uprns = nearest.map(r => r.uprn).filter(Boolean) as string[];
+            if (uprns.length) {
+              matchedUprns = uprns.slice(0, 5);
+              break;
+            }
+          }
+        }
+        if (matchedUprns.length === 0) {
+          const queries = [
+            [resolvedAddress, resolvedPostcode].filter(Boolean).join(", "),
+            ...cleanedAddressCandidates.map(c => [c, resolvedPostcode].filter(Boolean).join(", ")),
+          ].filter((q, i, arr) => q && arr.indexOf(q) === i);
+          for (const q of queries) {
+            const os = await osPlacesFind(q, 5);
+            const uprns = os.map(r => r.uprn).filter(Boolean) as string[];
+            if (uprns.length) {
+              matchedUprns = uprns.slice(0, 5);
+              break;
+            }
           }
         }
       } catch (e: any) {

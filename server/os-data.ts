@@ -139,6 +139,33 @@ export async function osPlacesByPostcode(postcode: string, maxresults = 100): Pr
 }
 
 /**
+ * Lat/lng → closest DPA address(es). OS accepts a point as "lng,lat" in EPSG:4326
+ * and returns ranked matches within a radius. Perfect for resolving a map click
+ * to an authoritative UPRN without faffing with Google reverse-geocoded business
+ * names.
+ */
+export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 25): Promise<OsPlacesResult[]> {
+  if (!isOsConfigured()) return [];
+  if (!isFinite(lat) || !isFinite(lng)) return [];
+  const params = new URLSearchParams({
+    point: `${lng},${lat}`,
+    key: getOsKey(),
+    radius: String(radiusMeters),
+    srs: "WGS84",
+    dataset: "DPA",
+  });
+  const url = `${PLACES_BASE}/nearest?${params.toString()}`;
+  const resp = await fetch(url, { headers: { Accept: "application/json" } });
+  if (resp.status === 401 || resp.status === 404) return [];
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    throw new Error(`OS Places nearest error ${resp.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await resp.json();
+  return (data?.results || []).map(normaliseDpa);
+}
+
+/**
  * UPRN → canonical DPA address. Returns null if not found / not configured.
  */
 export async function osPlacesByUprn(uprn: string): Promise<OsPlacesResult | null> {

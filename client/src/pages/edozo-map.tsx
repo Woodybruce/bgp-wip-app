@@ -3602,7 +3602,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [activePdLayers, setActivePdLayers] = useState<string[]>(["core"]);
   const [loadingLayer, setLoadingLayer] = useState<string | null>(null);
 
-  const loadPropertyData = async (postcode: string, pdLayers?: string[], address?: string) => {
+  const loadPropertyData = async (postcode: string, pdLayers?: string[], address?: string, coords?: { lat: number; lng: number } | null) => {
     setLoadingData(true);
     setPropertyData(null);
     const layersParam = pdLayers || ["core"];
@@ -3622,12 +3622,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       if (postcode) pathwayParams.set("postcode", postcode);
       const [propResp, resolveResp, pathwayResp] = await Promise.all([
         fetch(url, { headers: authHeaders }),
-        address
+        (address || coords)
           ? fetch("/api/land-registry/resolve", {
               method: "POST",
               credentials: "include",
               headers: { "Content-Type": "application/json", ...authHeaders },
-              body: JSON.stringify({ address, postcode }),
+              body: JSON.stringify({ address, postcode, lat: coords?.lat, lng: coords?.lng }),
             }).catch(() => null)
           : Promise.resolve(null),
         (address || postcode)
@@ -3748,7 +3748,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
 
       setSelectedPostcode(postcode);
       setCurrentArea(displayAddr || postcode);
-      loadPropertyData(postcode, undefined, displayAddr || undefined);
+      loadPropertyData(postcode, undefined, displayAddr || undefined, { lat, lng });
     } catch (e) {
       console.error("Reverse geocode error:", e);
     }
