@@ -402,6 +402,7 @@ import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "
 import companiesHouseRouter from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
 import { registerRetailContextPlanRoutes } from "./retail-context-plan";
+import { registerMapLayerRoutes } from "./map-layers";
 import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
@@ -661,6 +662,7 @@ app.use("/api/branding/assets", express.static(
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
   registerRetailContextPlanRoutes(app);
+  registerMapLayerRoutes(app);
   app.use(leasingScheduleRouter);
   app.use(tenancyScheduleRouter);
   app.use(turnoverRouter);

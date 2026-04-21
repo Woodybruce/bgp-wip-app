@@ -60,6 +60,7 @@ import {
   Crown,
   Link2,
   Sparkles,
+  Download,
 } from "lucide-react";
 
 interface SearchResult {
@@ -3079,6 +3080,15 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const osLastBboxRef = useRef<{ buildings: string; uprns: string; sites: string }>({ buildings: "", uprns: "", sites: "" });
   const osDebounceRef = useRef<ReturnType<typeof setTimeout>>();
   const [mapZoom, setMapZoom] = useState(17);
+
+  // CRM data layers — Deals, Comps, Lease Events
+  const [showDeals, setShowDeals] = useState(false);
+  const [showComps, setShowComps] = useState(false);
+  const [showLeaseEvents, setShowLeaseEvents] = useState(false);
+  const dealsLayerRef = useRef<L.LayerGroup | null>(null);
+  const compsLayerRef = useRef<L.LayerGroup | null>(null);
+  const leaseEventsLayerRef = useRef<L.LayerGroup | null>(null);
+  const [mapPins, setMapPins] = useState<{ deals: any[]; comps: any[]; leaseEvents: any[] } | null>(null);
   const baseLayerRef = useRef<{ map: L.LayerGroup; sat: L.LayerGroup } | null>(null);
   const [baseLayer, setBaseLayer] = useState<"map" | "sat">("map");
 
@@ -3163,6 +3173,13 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     osBuildingLayerRef.current = L.layerGroup({ pane: "osPane" }).addTo(map);
     osUprnLayerRef.current = L.layerGroup({ pane: "osUprnPane" }).addTo(map);
     osSiteLayerRef.current = L.layerGroup({ pane: "osSitePane" }).addTo(map);
+
+    // CRM data layer groups (Deals / Comps / Lease Events)
+    const crmPane = map.createPane("crmPane");
+    crmPane.style.zIndex = "460";
+    dealsLayerRef.current = L.layerGroup();
+    compsLayerRef.current = L.layerGroup();
+    leaseEventsLayerRef.current = L.layerGroup();
 
     // Track zoom for OS layer visibility
     map.on("zoomend", () => {
@@ -3262,6 +3279,116 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       })
       .catch(() => {});
   }, []);
+
+  // Fetch CRM map pins (Deals, Comps, Lease Events) on mount
+  useEffect(() => {
+    const headers = { ...getAuthHeaders(), Authorization: `Bearer ${localStorage.getItem("bgp_token")}` };
+    fetch("/api/map/pins", { credentials: "include", headers })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setMapPins(data); })
+      .catch(() => {});
+  }, []);
+
+  // Render Deals layer
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = dealsLayerRef.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    if (!showDeals || !mapPins?.deals.length) {
+      if (map.hasLayer(layer)) map.removeLayer(layer);
+      return;
+    }
+    if (!map.hasLayer(layer)) layer.addTo(map);
+    for (const d of mapPins.deals) {
+      const marker = L.circleMarker([d.lat, d.lng], {
+        radius: 7, fillColor: "#f59e0b", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9, pane: "crmPane",
+      });
+      const statusColor = d.status === "Complete" || d.status === "Completed" ? "#10b981"
+        : d.status === "Live" || d.status === "Active" ? "#3b82f6"
+        : d.status === "SOLs" ? "#8b5cf6"
+        : "#f59e0b";
+      marker.bindPopup(`
+        <div style="min-width:180px;font-family:sans-serif;font-size:12px">
+          <p style="font-weight:700;margin:0 0 4px">${d.label}</p>
+          ${d.addressLabel && d.addressLabel !== d.label ? `<p style="color:#666;margin:0 0 4px;font-size:11px">${d.addressLabel}</p>` : ""}
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+            ${d.dealType ? `<span style="background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-size:10px">${d.dealType}</span>` : ""}
+            ${d.status ? `<span style="background:${statusColor}22;color:${statusColor};padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">${d.status}</span>` : ""}
+          </div>
+          ${d.pricing ? `<p style="margin:4px 0 0;font-size:11px;color:#333">£${Number(d.pricing).toLocaleString()}</p>` : ""}
+          ${d.areaSqft ? `<p style="margin:2px 0 0;font-size:11px;color:#666">${Number(d.areaSqft).toLocaleString()} sq ft</p>` : ""}
+        </div>
+      `, { maxWidth: 240 });
+      layer.addLayer(marker);
+    }
+  }, [showDeals, mapPins]);
+
+  // Render Comps layer
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = compsLayerRef.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    if (!showComps || !mapPins?.comps.length) {
+      if (map.hasLayer(layer)) map.removeLayer(layer);
+      return;
+    }
+    if (!map.hasLayer(layer)) layer.addTo(map);
+    for (const c of mapPins.comps) {
+      const marker = L.circleMarker([c.lat, c.lng], {
+        radius: 6, fillColor: "#8b5cf6", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.85, pane: "crmPane",
+      });
+      marker.bindPopup(`
+        <div style="min-width:180px;font-family:sans-serif;font-size:12px">
+          <p style="font-weight:700;margin:0 0 4px">${c.label || c.postcode || "Comp"}</p>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+            ${c.compType ? `<span style="background:#ede9fe;color:#5b21b6;padding:2px 6px;border-radius:4px;font-size:10px">${c.compType}</span>` : ""}
+            ${c.dealType ? `<span style="background:#f3f4f6;color:#374151;padding:2px 6px;border-radius:4px;font-size:10px">${c.dealType}</span>` : ""}
+          </div>
+          ${c.tenant ? `<p style="margin:4px 0 0;font-size:11px;color:#333"><strong>Tenant:</strong> ${c.tenant}</p>` : ""}
+          ${c.headlineRent ? `<p style="margin:2px 0 0;font-size:11px;color:#333"><strong>Rent:</strong> ${c.headlineRent}</p>` : ""}
+          ${c.areaSqft ? `<p style="margin:2px 0 0;font-size:11px;color:#666">${c.areaSqft} sq ft</p>` : ""}
+          ${c.completionDate ? `<p style="margin:2px 0 0;font-size:10px;color:#999">${c.completionDate}</p>` : ""}
+        </div>
+      `, { maxWidth: 240 });
+      layer.addLayer(marker);
+    }
+  }, [showComps, mapPins]);
+
+  // Render Lease Events layer
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = leaseEventsLayerRef.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    if (!showLeaseEvents || !mapPins?.leaseEvents.length) {
+      if (map.hasLayer(layer)) map.removeLayer(layer);
+      return;
+    }
+    if (!map.hasLayer(layer)) layer.addTo(map);
+    for (const e of mapPins.leaseEvents) {
+      const urgencyColor = e.eventDate
+        ? new Date(e.eventDate) < new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+          ? "#ef4444" : "#ec4899"
+        : "#ec4899";
+      const marker = L.circleMarker([e.lat, e.lng], {
+        radius: 6, fillColor: urgencyColor, color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9, pane: "crmPane",
+      });
+      const dateStr = e.eventDate ? new Date(e.eventDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+      marker.bindPopup(`
+        <div style="min-width:180px;font-family:sans-serif;font-size:12px">
+          <p style="font-weight:700;margin:0 0 4px">${e.eventType || "Lease Event"}</p>
+          ${e.label ? `<p style="color:#666;margin:0 0 4px;font-size:11px">${e.label}</p>` : ""}
+          ${e.tenant ? `<p style="margin:2px 0 0;font-size:11px;color:#333"><strong>Tenant:</strong> ${e.tenant}</p>` : ""}
+          ${dateStr ? `<p style="margin:2px 0 0;font-size:11px;color:#333"><strong>Date:</strong> ${dateStr}</p>` : ""}
+          ${e.currentRent ? `<p style="margin:2px 0 0;font-size:11px;color:#333"><strong>Rent:</strong> ${e.currentRent}</p>` : ""}
+          ${e.status ? `<span style="background:#fce7f3;color:#9d174d;padding:2px 6px;border-radius:4px;font-size:10px;margin-top:4px;display:inline-block">${e.status}</span>` : ""}
+        </div>
+      `, { maxWidth: 240 });
+      layer.addLayer(marker);
+    }
+  }, [showLeaseEvents, mapPins]);
 
   // Render search history pins on map
   useEffect(() => {
@@ -3968,6 +4095,48 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
                 <span className="text-[10px] text-gray-600">Acquired</span>
               </div>
               <span className="text-[9px] text-gray-400">via status</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                <span className="text-[10px] text-gray-600">
+                  Deals {mapPins?.deals.length ? <span className="text-gray-400">({mapPins.deals.length})</span> : null}
+                </span>
+              </div>
+              <Switch
+                checked={showDeals}
+                onCheckedChange={setShowDeals}
+                className="h-4 w-7"
+                data-testid="toggle-deals-layer"
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-violet-500" />
+                <span className="text-[10px] text-gray-600">
+                  Comps {mapPins?.comps.length ? <span className="text-gray-400">({mapPins.comps.length})</span> : null}
+                </span>
+              </div>
+              <Switch
+                checked={showComps}
+                onCheckedChange={setShowComps}
+                className="h-4 w-7"
+                data-testid="toggle-comps-layer"
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-pink-500" />
+                <span className="text-[10px] text-gray-600">
+                  Lease Events {mapPins?.leaseEvents.length ? <span className="text-gray-400">({mapPins.leaseEvents.length})</span> : null}
+                </span>
+              </div>
+              <Switch
+                checked={showLeaseEvents}
+                onCheckedChange={setShowLeaseEvents}
+                className="h-4 w-7"
+                data-testid="toggle-lease-events-layer"
+              />
             </div>
           </div>
         </div>
