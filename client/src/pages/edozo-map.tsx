@@ -2908,7 +2908,7 @@ function fitTextToBuilding(label: string, houseNum: string, isVacant: boolean, p
     return visibleLines.join("\n");
   };
 
-  for (const size of [9.5, 8, 7, 6]) {
+  for (const size of [11, 10, 9, 8, 7]) {
     const result = tryFit(size, displayText);
     if (result) {
       return { text: result, fontSize: size };
@@ -3199,13 +3199,39 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       for (const b of buildings) {
         const hasInfo = b.label || b.houseNum;
         const isUnit = b.isUnit;
+
+        // Goad-style categorical palette by use-class / label heuristics
+        const classify = (label: string): string => {
+          const l = (label || "").toLowerCase();
+          if (!l) return hasInfo ? "other" : "empty";
+          if (/(restaurant|cafe|café|bar|pub|kitchen|grill|sushi|pizza|burger|coffee|starbucks|pret|deli|chop|steak|dine)/.test(l)) return "fb";
+          if (/(bank|hsbc|barclays|natwest|lloyds|santander|metro|post office|bureau|exchange)/.test(l)) return "services";
+          if (/(hotel|hostel|inn|lodge|premier|travelodge|radisson|edwardian)/.test(l)) return "hotel";
+          if (/(theatre|cinema|odeon|vue|fountain|monument|gallery|museum|institute|embassy|church|palace|park|square)/.test(l)) return "civic";
+          if (/(vac|vacant|to let|available)/.test(l)) return "vacant";
+          return "retail";
+        };
+        const category = b.isVacant ? "vacant" : classify(b.label || "");
+        const catFill: Record<string, string> = {
+          retail:   "#fff4e0",  // warm cream
+          fb:       "#ffe8d4",  // peach
+          services: "#e8f0ff",  // pale blue
+          hotel:    "#f0e8ff",  // pale purple
+          civic:    "#e8f5e8",  // pale green
+          vacant:   "#e8e8e8",  // grey
+          empty:    "#f4f2eb",  // off-white
+          other:    "#fbf9f2",
+        };
+
         const polygon = L.polygon(b.latLngs, {
-          color: isUnit ? "#333" : "#222",
-          weight: isUnit ? 1.2 : 1,
-          fillColor: hasInfo ? "#faf8f0" : "#f0eee6",
-          fillOpacity: 0.95,
+          color: "#1a1a1a",
+          weight: isUnit ? 1.4 : 2.2,
+          fillColor: catFill[category] || catFill.other,
+          fillOpacity: 1,
           opacity: 1,
           pane: "buildingPane",
+          lineJoin: "miter",
+          lineCap: "butt",
         });
 
         const bbox = polygonBBoxPixels(b.latLngs, mapRef.current);
@@ -3910,25 +3936,28 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           background: transparent !important;
           border: none !important;
           box-shadow: none !important;
-          color: #111 !important;
-          font-size: 9px !important;
+          color: #0a0a0a !important;
+          font-size: 10px !important;
           font-weight: 700 !important;
           font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
           text-transform: uppercase !important;
-          letter-spacing: 0.1px !important;
+          letter-spacing: 0.3px !important;
           white-space: pre-line !important;
           padding: 0 !important;
           text-align: center !important;
-          line-height: 1.2 !important;
+          line-height: 1.15 !important;
           overflow: hidden !important;
+          text-shadow: 0 0 2px rgba(255,255,255,0.8), 0 0 2px rgba(255,255,255,0.8) !important;
         }
-        .edozo-fs-9\\.5 { font-size: 9.5px !important; }
-        .edozo-fs-8 { font-size: 8px !important; }
-        .edozo-fs-7 { font-size: 7px !important; }
-        .edozo-fs-6 { font-size: 6px !important; font-weight: 600 !important; }
+        .edozo-fs-11 { font-size: 11px !important; letter-spacing: 0.4px !important; }
+        .edozo-fs-10 { font-size: 10px !important; letter-spacing: 0.3px !important; }
+        .edozo-fs-9 { font-size: 9px !important; letter-spacing: 0.2px !important; }
+        .edozo-fs-8 { font-size: 8px !important; letter-spacing: 0.1px !important; }
+        .edozo-fs-7 { font-size: 7px !important; font-weight: 600 !important; letter-spacing: 0.05px !important; }
         .edozo-label-vacant {
-          color: #777 !important;
+          color: #555 !important;
           font-weight: 600 !important;
+          font-style: italic !important;
         }
         .edozo-label::before {
           display: none !important;
@@ -3943,8 +3972,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           font-size: 10px !important;
         }
         .leaflet-container {
-          background: #e8e6de !important;
+          background: #faf8f2 !important;
+          font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
         }
+        .leaflet-tile-container img { filter: grayscale(0.35) brightness(1.02); }
       `}</style>
 
       <div className="w-[220px] border-r bg-white flex flex-col z-[1001] relative shrink-0">
@@ -4008,153 +4039,36 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
 
         <div className="border-t" />
 
-        <div className="px-3 py-2.5">
-          <div className="flex items-center justify-between">
-            <p className="text-[11px] font-semibold text-gray-700">Edit data</p>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-gray-400">Save to my organisation</span>
-              <Switch
-                checked={saveToOrg}
-                onCheckedChange={setSaveToOrg}
-                className="h-4 w-7"
-                data-testid="save-org-toggle"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t" />
-
-        <div className="px-3 py-2.5">
-          <p className="text-[11px] font-semibold text-gray-700 mb-2">Tools</p>
-          <div className="flex flex-wrap gap-0.5">
-            {tools.map(({ key, icon: Icon, label }) => (
+        <div className="px-3 py-3">
+          <p className="text-[11px] font-semibold text-gray-700 mb-2.5">Map Layers</p>
+          <div className="space-y-2.5">
+            {[
+              { key: "search", label: "Search History", count: recentSearches.length, dot: "#ef4444", on: showSearchHistory, set: setShowSearchHistory },
+              { key: "crm",    label: "CRM Properties", count: crmProperties.length, dot: "#3b82f6", on: showCrmLayer, set: setShowCrmLayer },
+              { key: "deals",  label: "Deals",          count: mapPins?.deals.length ?? 0, dot: "#f59e0b", on: showDeals, set: setShowDeals },
+              { key: "comps",  label: "Comps",          count: mapPins?.comps.length ?? 0, dot: "#8b5cf6", on: showComps, set: setShowComps },
+              { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
+            ].map((row) => (
               <button
-                key={key}
-                onClick={() => setActiveTool(key)}
-                className={`w-[30px] h-[30px] rounded flex items-center justify-center transition-colors ${
-                  activeTool === key
-                    ? "bg-gray-200 text-gray-900"
-                    : "hover:bg-gray-100 text-gray-500"
+                key={row.key}
+                onClick={() => row.set(!row.on)}
+                className={`w-full flex items-center justify-between px-2 py-1.5 rounded border transition-colors ${
+                  row.on ? "bg-gray-900 border-gray-900 text-white" : "bg-white border-gray-200 text-gray-700 hover:border-gray-300"
                 }`}
-                title={label}
-                data-testid={`tool-${key}`}
+                data-testid={`layer-toggle-${row.key}`}
               >
-                <Icon className="w-3.5 h-3.5" />
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: row.dot }} />
+                  <span className="text-[11px] font-medium">{row.label}</span>
+                  {row.count > 0 && (
+                    <span className={`text-[9px] ${row.on ? "text-gray-300" : "text-gray-400"}`}>({row.count})</span>
+                  )}
+                </div>
+                <span className={`text-[9px] font-semibold ${row.on ? "text-white" : "text-gray-400"}`}>{row.on ? "ON" : "OFF"}</span>
               </button>
             ))}
           </div>
-          <div className="flex gap-0.5 mt-1">
-            <button className="w-[30px] h-[30px] rounded flex items-center justify-center hover:bg-gray-100 text-gray-500" title="Edit">
-              <Pencil className="w-3.5 h-3.5" />
-            </button>
-            <button className="w-[30px] h-[30px] rounded flex items-center justify-center hover:bg-gray-100 text-gray-500" title="Search">
-              <Search className="w-3.5 h-3.5" />
-            </button>
-          </div>
         </div>
-
-        <div className="border-t" />
-
-        <div className="px-3 py-2.5">
-          <p className="text-[11px] font-semibold text-gray-700 mb-1.5">Name your plan</p>
-          <Input
-            placeholder="Enter plan name..."
-            className="h-8 text-xs bg-white border-gray-300 rounded"
-            data-testid="plan-name-input"
-          />
-        </div>
-
-        <div className="border-t" />
-
-        <div className="px-3 py-2.5">
-          <Button variant="outline" size="sm" className="w-full h-8 text-xs font-medium" data-testid="create-plan-btn">
-            Create your plan
-          </Button>
-        </div>
-
-        <div className="border-t" />
-
-        <div className="px-3 py-2.5">
-          <p className="text-[11px] font-semibold text-gray-700 mb-2">Map Layers</p>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
-                <span className="text-[10px] text-gray-600">Search History</span>
-              </div>
-              <Switch
-                checked={showSearchHistory}
-                onCheckedChange={setShowSearchHistory}
-                className="h-4 w-7"
-                data-testid="toggle-search-history"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                <span className="text-[10px] text-gray-600">CRM Properties</span>
-              </div>
-              <Switch
-                checked={showCrmLayer}
-                onCheckedChange={setShowCrmLayer}
-                className="h-4 w-7"
-                data-testid="toggle-crm-layer"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                <span className="text-[10px] text-gray-600">Acquired</span>
-              </div>
-              <span className="text-[9px] text-gray-400">via status</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-                <span className="text-[10px] text-gray-600">
-                  Deals {mapPins?.deals.length ? <span className="text-gray-400">({mapPins.deals.length})</span> : null}
-                </span>
-              </div>
-              <Switch
-                checked={showDeals}
-                onCheckedChange={setShowDeals}
-                className="h-4 w-7"
-                data-testid="toggle-deals-layer"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-violet-500" />
-                <span className="text-[10px] text-gray-600">
-                  Comps {mapPins?.comps.length ? <span className="text-gray-400">({mapPins.comps.length})</span> : null}
-                </span>
-              </div>
-              <Switch
-                checked={showComps}
-                onCheckedChange={setShowComps}
-                className="h-4 w-7"
-                data-testid="toggle-comps-layer"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-pink-500" />
-                <span className="text-[10px] text-gray-600">
-                  Lease Events {mapPins?.leaseEvents.length ? <span className="text-gray-400">({mapPins.leaseEvents.length})</span> : null}
-                </span>
-              </div>
-              <Switch
-                checked={showLeaseEvents}
-                onCheckedChange={setShowLeaseEvents}
-                className="h-4 w-7"
-                data-testid="toggle-lease-events-layer"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t" />
 
         <ScrollArea className="flex-1">
           <div className="px-3 py-2.5">
@@ -4239,31 +4153,49 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           </button>
         </div>
 
-        {/* OS Data Layers floating control panel */}
-        <div className="absolute top-20 right-3 z-[1000] bg-white rounded-lg shadow-lg border p-3 space-y-2" data-testid="os-layer-panel">
-          <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Map Layers</p>
-          <label className="flex items-center gap-2 text-xs cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showOSBuildings}
-              onChange={() => setShowOSBuildings(!showOSBuildings)}
-              className="rounded"
-              data-testid="toggle-os-buildings"
-            />
-            <span>Building Footprints</span>
-            {mapZoom < 16 && showOSBuildings && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
-          </label>
-          <label className="flex items-center gap-2 text-xs cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showOSSites}
-              onChange={() => setShowOSSites(!showOSSites)}
-              className="rounded"
-              data-testid="toggle-os-sites"
-            />
-            <span>Named Sites</span>
-            {mapZoom < 14 && showOSSites && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
-          </label>
+        {/* Goad-style building key — floating panel top-right */}
+        <div className="absolute top-20 right-3 z-[1000] bg-white/95 backdrop-blur rounded-lg shadow-lg border border-gray-200 p-3 w-[200px]" data-testid="map-key-panel">
+          <p className="text-[10px] font-bold text-gray-800 uppercase tracking-wider mb-2">Building Key</p>
+          <div className="space-y-1.5">
+            {[
+              { c: "#fff4e0", l: "Retail" },
+              { c: "#ffe8d4", l: "Food & Drink" },
+              { c: "#e8f0ff", l: "Services" },
+              { c: "#f0e8ff", l: "Hotel" },
+              { c: "#e8f5e8", l: "Civic / Cultural" },
+              { c: "#e8e8e8", l: "Vacant" },
+            ].map((k) => (
+              <div key={k.l} className="flex items-center gap-2 text-[10px]">
+                <span className="w-4 h-3 border border-gray-900 rounded-sm shrink-0" style={{ background: k.c }} />
+                <span className="text-gray-700">{k.l}</span>
+              </div>
+            ))}
+          </div>
+          <div className="border-t mt-2.5 pt-2 space-y-1.5">
+            <p className="text-[10px] font-bold text-gray-800 uppercase tracking-wider mb-1">OS Data</p>
+            <label className="flex items-center gap-2 text-[10px] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showOSBuildings}
+                onChange={() => setShowOSBuildings(!showOSBuildings)}
+                className="rounded accent-gray-900"
+                data-testid="toggle-os-buildings"
+              />
+              <span className="text-gray-700">Building Footprints</span>
+              {mapZoom < 16 && showOSBuildings && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
+            </label>
+            <label className="flex items-center gap-2 text-[10px] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showOSSites}
+                onChange={() => setShowOSSites(!showOSSites)}
+                className="rounded accent-gray-900"
+                data-testid="toggle-os-sites"
+              />
+              <span className="text-gray-700">Named Sites</span>
+              {mapZoom < 14 && showOSSites && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
+            </label>
+          </div>
         </div>
 
         {(postcode || loadingData) && (
