@@ -280,58 +280,68 @@ export function registerMapLayerRoutes(app: Express) {
         .filter(Boolean);
 
       // 3. VOA rates — every rateable commercial unit with tenant (firm_name),
-      // description (SHOP/RESTAURANT/etc), and rateable value. Addresses
-      // aren't pre-geocoded so we geocode on-demand from the intel cache
-      // only — misses are background-filled so the next visit is complete.
-      // Use postcode prefix filter so we don't pull every VOA row in the UK.
-      const pcLat = (s + n) / 2;
-      const pcLng = (w + e) / 2;
+      // description (SHOP/RESTAURANT/etc), and rateable value. Filtered to
+      // postcodes in the visible bbox via reverse-geocode of the centre.
+      // Addresses geocoded on-demand from the intel cache only; misses
+      // background-filled so next visit is more complete.
       let voaLabels: any[] = [];
-      const voaNeedGeocode: Array<{ uarn: string; text: string }> = [];
+      const voaNeedGeocode: string[] = [];
       try {
-        const voaQ = await pool.query(`
-          SELECT uarn, firm_name, number_or_name, street, postcode, description_text, rateable_value
-          FROM voa_ratings
-          WHERE postcode IS NOT NULL
-            AND (street IS NOT NULL OR number_or_name IS NOT NULL OR firm_name IS NOT NULL)
-          ORDER BY id
-          LIMIT 2000
-        `);
-        const nearbyRows = voaQ.rows.filter((r: any) => {
-          if (!r.postcode) return false;
-          return true; // will filter by geocoded coords below
-        });
+        // Reverse-geocode bbox centre → postcode district for prefix filtering
+        const centreLat = (s + n) / 2;
+        const centreLng = (w + e) / 2;
+        const rgCacheKey = `rgpc:${centreLat.toFixed(3)},${centreLng.toFixed(3)}`;
+        const postcodeDistrict = await cached(rgCacheKey, async () => {
+          if (!GOOGLE_API_KEY) return null;
+          const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${centreLat},${centreLng}&key=${GOOGLE_API_KEY}&result_type=postal_code`;
+          const r = await fetch(url);
+          if (!r.ok) return null;
+          const d = await r.json() as any;
+          const pc = d.results?.[0]?.address_components?.find((c: any) => c.types?.includes("postal_code"))?.long_name;
+          if (!pc) return null;
+          // Extract outward code (everything before the last 3 chars) then sector
+          const clean = pc.replace(/\s+/g, "").toUpperCase();
+          return clean.slice(0, -3); // e.g. "SW1Y"
+        }, 24 * 30);
 
-        for (const r of nearbyRows) {
-          const addressText = [r.number_or_name, r.street, r.town, r.postcode].filter(Boolean).join(", ");
-          if (!addressText) continue;
-          const geoKey = geocodeKey(addressText);
-          const cached = await getCachedOnly<{ lat: number; lng: number }>(geoKey);
-          if (cached && Number.isFinite(cached.lat) && Number.isFinite(cached.lng)) {
-            // Filter by bbox
-            if (cached.lat >= s && cached.lat <= n && cached.lng >= w && cached.lng <= e) {
-              voaLabels.push({
-                lat: cached.lat,
-                lng: cached.lng,
-                label: (r.firm_name && r.firm_name.trim()) || r.description_text || "Commercial",
-                source: "voa" as const,
-                rateableValue: r.rateable_value,
-                descriptionText: r.description_text,
-                uarn: r.uarn,
-                address: addressText,
-              });
+        if (postcodeDistrict) {
+          // Query all VOA rows in this postcode outward code
+          const voaQ = await pool.query(`
+            SELECT uarn, firm_name, number_or_name, street, town, postcode, description_text, rateable_value
+            FROM voa_ratings
+            WHERE REPLACE(UPPER(postcode), ' ', '') LIKE $1
+              AND (firm_name IS NOT NULL OR description_text IS NOT NULL)
+            LIMIT 3000
+          `, [`${postcodeDistrict}%`]);
+
+          for (const r of voaQ.rows) {
+            const addressText = [r.number_or_name, r.street, r.town, r.postcode].filter(Boolean).join(", ");
+            if (!addressText) continue;
+            const geoKey = geocodeKey(addressText);
+            const hit = await getCachedOnly<{ lat: number; lng: number }>(geoKey);
+            if (hit && Number.isFinite(hit.lat) && Number.isFinite(hit.lng)) {
+              if (hit.lat >= s && hit.lat <= n && hit.lng >= w && hit.lng <= e) {
+                voaLabels.push({
+                  lat: hit.lat,
+                  lng: hit.lng,
+                  label: (r.firm_name && r.firm_name.trim()) || r.description_text || "Commercial",
+                  source: "voa" as const,
+                  rateableValue: r.rateable_value,
+                  descriptionText: r.description_text,
+                  uarn: r.uarn,
+                  address: addressText,
+                });
+              }
+            } else {
+              voaNeedGeocode.push(addressText);
             }
-          } else {
-            // Only queue for background geocode if the postcode is roughly in area
-            // (cheap pre-filter by postcode district)
-            voaNeedGeocode.push({ uarn: r.uarn, text: addressText });
           }
         }
       } catch (err: any) {
         console.warn("[map-layers/labels] VOA lookup error:", err?.message);
       }
-      // Background-geocode misses so next call returns more (cap 30/request)
-      backgroundGeocode(voaNeedGeocode.slice(0, 30).map(v => v.text));
+      // Background-geocode misses — higher cap since VOA is the big coverage win
+      backgroundGeocode(voaNeedGeocode.slice(0, 100));
 
       // 4. Google Places — current trading names. Cached aggressively per
       // ~110m grid square so a typical map pan reuses the same Places call.
