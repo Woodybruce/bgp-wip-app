@@ -34,6 +34,7 @@ import {
   MoreHorizontal, Ruler, Loader2, Newspaper, Sparkles,
   FileText, Upload, X, Paperclip, FileDown, Info, Presentation,
   TrendingUp, Inbox, ArrowRight, Eye, ExternalLink, Phone, Mail, User,
+  Bell,
 } from "lucide-react";
 import type { CrmComp } from "@shared/schema";
 import jsPDF from "jspdf";
@@ -41,6 +42,7 @@ import { Link } from "wouter";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
 import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import InvestmentCompsPage from "@/pages/investment-comps";
+import LeaseEventsPage from "@/pages/lease-events";
 
 interface CompFile {
   id: string;
@@ -2219,12 +2221,14 @@ export default function Comps() {
               <h1 className="text-2xl font-bold tracking-tight" data-testid="text-comps-title">
                 {activeTab === "investment" ? "Investment Comps"
                   : activeTab === "leads" ? "Comps Leads"
+                  : activeTab === "lease-events" ? "Lease Events"
                   : activeTab === "pdf-template" ? "PDF Template"
                   : "Leasing Comps"}
               </h1>
               <p className="text-sm text-muted-foreground">
                 {activeTab === "investment" ? "Capital markets comparable transactions"
                   : activeTab === "leads" ? "Unconfirmed comps extracted from news, emails & files"
+                  : activeTab === "lease-events" ? "Rent reviews, breaks & expiries — BD pipeline for lease advisory"
                   : activeTab === "pdf-template" ? "Customise the PDF export template"
                   : "Rent review evidence & comparable transactions"}
               </p>
@@ -2246,6 +2250,10 @@ export default function Comps() {
                     {leadComps.length}
                   </span>
                 )}
+              </TabsTrigger>
+              <TabsTrigger value="lease-events" data-testid="tab-comps-lease-events">
+                <Bell className="w-3.5 h-3.5 mr-1.5" />
+                Lease Events
               </TabsTrigger>
               <TabsTrigger value="pdf-template" data-testid="tab-comps-pdf-template">
                 <Presentation className="w-3.5 h-3.5 mr-1.5" />
@@ -2923,6 +2931,10 @@ export default function Comps() {
 
       <TabsContent value="investment" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden">
         <InvestmentCompsPage embedded />
+      </TabsContent>
+
+      <TabsContent value="lease-events" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden">
+        <LeaseEventsPage embedded />
       </TabsContent>
 
       <TabsContent value="leads" className="flex-1 overflow-auto mt-0 p-4">

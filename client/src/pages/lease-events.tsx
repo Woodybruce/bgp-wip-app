@@ -49,7 +49,7 @@ function urgencyFor(dateStr?: string | null): { label: string; cls: string; icon
   return { label: "Future", cls: "bg-slate-100 text-slate-600", icon: Calendar };
 }
 
-export default function LeaseEventsPage() {
+export default function LeaseEventsPage({ embedded }: { embedded?: boolean } = {}) {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -113,19 +113,28 @@ export default function LeaseEventsPage() {
   }, [events]);
 
   return (
-    <div className="p-4 sm:p-6 space-y-4 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Calendar className="w-6 h-6 text-primary" />
-            Lease Events
-          </h1>
-          <p className="text-sm text-muted-foreground">Rent reviews, breaks, expiries, renewal options — forward-looking BD pipeline for lease advisory</p>
+    <div className={embedded ? "p-4 space-y-4 h-full overflow-auto" : "p-4 sm:p-6 space-y-4 max-w-7xl mx-auto"}>
+      {!embedded && (
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+              <Calendar className="w-6 h-6 text-primary" />
+              Lease Events
+            </h1>
+            <p className="text-sm text-muted-foreground">Rent reviews, breaks, expiries, renewal options — forward-looking BD pipeline for lease advisory</p>
+          </div>
+          <Button onClick={() => setEditing({ eventType: "Rent Review", status: "Monitoring", sourceEvidence: "Manual" })}>
+            <Plus className="w-4 h-4 mr-1.5" /> Log event
+          </Button>
         </div>
-        <Button onClick={() => setEditing({ eventType: "Rent Review", status: "Monitoring", sourceEvidence: "Manual" })}>
-          <Plus className="w-4 h-4 mr-1.5" /> Log event
-        </Button>
-      </div>
+      )}
+      {embedded && (
+        <div className="flex justify-end">
+          <Button onClick={() => setEditing({ eventType: "Rent Review", status: "Monitoring", sourceEvidence: "Manual" })} size="sm">
+            <Plus className="w-4 h-4 mr-1.5" /> Log event
+          </Button>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card className="bg-red-50 dark:bg-red-950/30 border-red-200">
