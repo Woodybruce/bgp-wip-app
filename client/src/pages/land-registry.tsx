@@ -593,13 +593,24 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
   const purchaseDocuments = async (titleNumber: string, docType: "register" | "plan" | "both") => {
     setDocPurchasing(prev => ({ ...prev, [titleNumber + docType]: true }));
     try {
-      const data = await fetchPD("land-registry-documents", { title: titleNumber, documents: docType, extract_proprietor_data: "true" });
-      if (data.status === "success" || data.document_url) {
-        setDocResults(prev => ({ ...prev, [titleNumber + docType]: data }));
-        toast({ title: "Document purchased", description: `${docType === "both" ? "Title Register & Plan" : docType === "register" ? "Title Register" : "Title Plan"} ready for download` });
-      } else {
-        toast({ title: "Purchase failed", description: data.message || "Could not purchase document", variant: "destructive" });
+      const res = await fetch("/api/land-registry/purchase-title", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ title: titleNumber, documents: docType, extract_proprietor_data: true }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.success) {
+        toast({ title: "Purchase failed", description: body.error || `HTTP ${res.status}`, variant: "destructive" });
+        return;
       }
+      const data = body.data || {};
+      setDocResults(prev => ({ ...prev, [titleNumber + docType]: data }));
+      const label = docType === "both" ? "Title Register & Plan" : docType === "register" ? "Title Register" : "Title Plan";
+      toast({
+        title: body.cached ? `${label} (from BGP archive)` : `${label} purchased`,
+        description: body.cached ? `Previously bought ${new Date(body.purchasedAt).toLocaleDateString("en-GB")} — no new charge` : "Ready for download — saved to BGP archive",
+      });
     } catch (e: any) {
       toast({ title: "Purchase failed", description: e.message, variant: "destructive" });
     } finally { setDocPurchasing(prev => ({ ...prev, [titleNumber + docType]: false })); }

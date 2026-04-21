@@ -371,13 +371,17 @@ export function registerVoaRoutes(app: Express) {
       if (descriptionCode) conditions.push(eq(voaRatings.descriptionCode, String(descriptionCode)));
       if (postcode) conditions.push(ilike(voaRatings.postcode, `${String(postcode)}%`));
       if (search) {
-        const s = `%${String(search)}%`;
-        conditions.push(or(
-          ilike(voaRatings.firmName, s),
-          ilike(voaRatings.street, s),
-          ilike(voaRatings.postcode, s),
-          ilike(voaRatings.descriptionText, s),
-        ));
+        const normalised = String(search).trim().toLowerCase().replace(/\s*-\s*/g, "-").replace(/,/g, " ");
+        const tokens = normalised.split(/\s+/).filter(t => t.length >= 2);
+        for (const tok of tokens) {
+          const s = `%${tok}%`;
+          conditions.push(or(
+            ilike(voaRatings.firmName, s),
+            ilike(voaRatings.street, s),
+            ilike(voaRatings.postcode, s),
+            ilike(voaRatings.descriptionText, s),
+          ));
+        }
       }
       if (minRv) conditions.push(sql`${voaRatings.rateableValue} >= ${Number(minRv)}`);
       if (maxRv) conditions.push(sql`${voaRatings.rateableValue} <= ${Number(maxRv)}`);

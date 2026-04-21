@@ -75,6 +75,20 @@ import { pool } from "./db";
       expires_at TIMESTAMP NOT NULL
     )`,
     `CREATE INDEX IF NOT EXISTS idx_pi_cache_expires ON property_intelligence_cache(expires_at)`,
+    `CREATE TABLE IF NOT EXISTS land_registry_title_purchases (
+      id SERIAL PRIMARY KEY,
+      title_number TEXT NOT NULL,
+      documents TEXT NOT NULL,
+      register_url TEXT,
+      plan_url TEXT,
+      proprietor_data JSONB,
+      raw_response JSONB,
+      cost_gbp NUMERIC(10,2),
+      requested_by VARCHAR,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_lr_title_purchases_title_docs ON land_registry_title_purchases(title_number, documents)`,
+    `CREATE INDEX IF NOT EXISTS idx_lr_title_purchases_created ON land_registry_title_purchases(created_at DESC)`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS po_number TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP`,

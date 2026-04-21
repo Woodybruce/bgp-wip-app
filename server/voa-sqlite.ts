@@ -188,9 +188,21 @@ export function searchVoaRatings(f: VoaSearchFilters): { items: any[]; total: nu
   const where: string[] = [];
   const params: any[] = [];
   if (f.search?.trim()) {
-    const s = `%${f.search.trim().toLowerCase()}%`;
-    where.push(`(LOWER(firm_name) LIKE ? OR LOWER(street) LIKE ? OR LOWER(number_or_name) LIKE ? OR LOWER(town) LIKE ?)`);
-    params.push(s, s, s, s);
+    // Normalise "18 - 22 haymarket" → "18-22 haymarket", split into tokens, and
+    // require every token to match somewhere. This handles the fact that
+    // number_or_name ("18-22") and street ("HAYMARKET") are stored in separate
+    // columns — a single LIKE would miss it.
+    const normalised = f.search
+      .trim()
+      .toLowerCase()
+      .replace(/\s*-\s*/g, "-")
+      .replace(/,/g, " ");
+    const tokens = normalised.split(/\s+/).filter(t => t.length >= 2);
+    for (const tok of tokens) {
+      const p = `%${tok}%`;
+      where.push(`(LOWER(firm_name) LIKE ? OR LOWER(street) LIKE ? OR LOWER(number_or_name) LIKE ? OR LOWER(town) LIKE ? OR LOWER(postcode) LIKE ?)`);
+      params.push(p, p, p, p, p);
+    }
   }
   if (f.baCode?.trim()) {
     where.push("ba_code = ?");

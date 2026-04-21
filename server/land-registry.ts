@@ -583,6 +583,94 @@ export function registerLandRegistryRoutes(app: Express) {
   // Ordnance Survey's UPRN (the unique id Land Registry titles are
   // actually anchored to) so the matched titles are exactly the property
   // the user picked.
+  // Purchase HMLR title documents via PropertyData (Official Copy Register + Plan).
+  // Costs £3-£4 per title for documents, plus £1+VAT if proprietor data is extracted.
+  // Saves every purchase to `land_registry_title_purchases` and returns the cached
+  // copy on subsequent requests for the same (title, documents) pair so BGP doesn't
+  // pay twice for the same register.
+  app.post("/api/land-registry/purchase-title", requireAuth, async (req: any, res) => {
+    try {
+      const { title, documents = "both", extract_proprietor_data = true, force = false } = req.body || {};
+      if (!title || typeof title !== "string") return res.status(400).json({ error: "title (title number) required" });
+      const titleUpper = title.trim().toUpperCase();
+      const userId = req.session?.userId || req.tokenUserId || null;
+
+      if (!force) {
+        const existing = await pool.query(
+          `SELECT id, title_number, documents, register_url, plan_url, proprietor_data, raw_response, created_at
+             FROM land_registry_title_purchases
+            WHERE title_number = $1 AND documents = $2
+            ORDER BY created_at DESC LIMIT 1`,
+          [titleUpper, documents]
+        );
+        if (existing.rows.length) {
+          const row = existing.rows[0];
+          return res.json({
+            success: true,
+            cached: true,
+            purchasedAt: row.created_at,
+            data: row.raw_response ?? { document_url: row.register_url, plan_url: row.plan_url, proprietor: row.proprietor_data },
+          });
+        }
+      }
+
+      const PD_KEY = process.env.PROPERTYDATA_API_KEY;
+      if (!PD_KEY) return res.status(503).json({ error: "PropertyData API key not configured" });
+      const params = new URLSearchParams({ key: PD_KEY, title: titleUpper, documents });
+      if (extract_proprietor_data) params.set("extract_proprietor_data", "true");
+      const url = `https://api.propertydata.co.uk/land-registry-documents?${params.toString()}`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(60000) });
+      const body = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        return res.status(resp.status).json({ error: body?.message || `PropertyData returned ${resp.status}` });
+      }
+
+      const data = body?.data ?? body ?? {};
+      const registerUrl: string | null = data.document_url || data.register_url || data.register?.url || null;
+      const planUrl: string | null = data.plan_url || data.plan?.url || null;
+      const proprietorData = data.proprietor || data.extracted || null;
+
+      try {
+        await pool.query(
+          `INSERT INTO land_registry_title_purchases
+             (title_number, documents, register_url, plan_url, proprietor_data, raw_response, requested_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (title_number, documents) DO UPDATE SET
+             register_url = EXCLUDED.register_url,
+             plan_url = EXCLUDED.plan_url,
+             proprietor_data = EXCLUDED.proprietor_data,
+             raw_response = EXCLUDED.raw_response,
+             requested_by = EXCLUDED.requested_by,
+             created_at = NOW()`,
+          [titleUpper, documents, registerUrl, planUrl, proprietorData, data, userId]
+        );
+      } catch (persistErr: any) {
+        console.warn("[land-registry/purchase-title] persist failed:", persistErr?.message);
+      }
+
+      res.json({ success: true, cached: false, data });
+    } catch (err: any) {
+      console.error("[land-registry/purchase-title]", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // List previously-purchased titles so the Land Registry board can badge rows
+  // the firm already owns a copy of.
+  app.get("/api/land-registry/purchases", requireAuth, async (_req: any, res) => {
+    try {
+      const rows = await pool.query(
+        `SELECT title_number AS "titleNumber", documents, register_url AS "registerUrl", plan_url AS "planUrl",
+                proprietor_data AS "proprietorData", created_at AS "purchasedAt"
+           FROM land_registry_title_purchases
+          ORDER BY created_at DESC LIMIT 500`
+      );
+      res.json(rows.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   app.post("/api/land-registry/resolve", requireAuth, async (req: any, res) => {
     try {
       const { address: inputAddress, postcode: inputPostcode, lat, lng, source: callerSource, pathwayRunId: callerRunId } = req.body || {};
@@ -641,13 +729,28 @@ export function registerLandRegistryRoutes(app: Express) {
 
       const cleanPc = resolvedPostcode.replace(/\s+/g, "");
 
+      // Extract the first street-number-or-range from anywhere in the address
+      // ("Dover Street Market, 3rd floor, 18-22 Haymarket" → "18-22"). This is
+      // used both to narrow UPRN matching and as a fallback filter later.
+      const numberMatch = resolvedAddress.match(/\b(\d+[a-z]?(?:\s*-\s*\d+[a-z]?)?)\b/i);
+      const streetNumberRaw = numberMatch ? numberMatch[1].replace(/\s*-\s*/g, "-").toLowerCase() : null;
+      // Drop building-name prefix and floor clauses — PropertyData's address
+      // matcher does much better with "18-22 Haymarket" than with
+      // "Dover Street Market, 3rd floor, 18-22 Haymarket".
+      const cleanedAddressCandidates: string[] = [resolvedAddress];
+      if (numberMatch && numberMatch.index !== undefined && numberMatch.index > 0) {
+        const tail = resolvedAddress.slice(numberMatch.index).replace(/,\s*$/, "").trim();
+        if (tail && tail !== resolvedAddress) cleanedAddressCandidates.unshift(tail);
+      }
+
       // Step 2: ask PropertyData to resolve the address (plus postcode) to
-      // the exact UPRN(s). If this returns one or more UPRNs we have an
-      // exact match and can query /uprn-title for precision.
+      // the exact UPRN(s). Try the cleaned candidate first — falls back to the
+      // raw input if that misses.
       let matchedUprns: string[] = [];
-      if (resolvedAddress && cleanPc) {
+      for (const candidate of cleanedAddressCandidates) {
+        if (!candidate || !cleanPc) continue;
         try {
-          const umUrl = `https://api.propertydata.co.uk/address-match-uprn?key=${PD_KEY}&address=${encodeURIComponent(resolvedAddress)}&postcode=${encodeURIComponent(cleanPc)}`;
+          const umUrl = `https://api.propertydata.co.uk/address-match-uprn?key=${PD_KEY}&address=${encodeURIComponent(candidate)}&postcode=${encodeURIComponent(cleanPc)}`;
           const umResp = await fetch(umUrl, { signal: AbortSignal.timeout(8000) });
           if (umResp.ok) {
             const umData = await umResp.json() as any;
@@ -655,6 +758,7 @@ export function registerLandRegistryRoutes(app: Express) {
             if (Array.isArray(d?.uprns)) matchedUprns = d.uprns.map(String);
             else if (d?.uprn) matchedUprns = [String(d.uprn)];
             else if (Array.isArray(d)) matchedUprns = d.map((x: any) => String(x?.uprn || x)).filter(Boolean);
+            if (matchedUprns.length > 0) break;
           }
         } catch (e: any) {
           console.warn("[land-registry/resolve] address-match-uprn failed:", e?.message);
@@ -710,17 +814,18 @@ export function registerLandRegistryRoutes(app: Express) {
       // UPRN record for a quirky address.
       let fallbackFreeholds: any[] = [];
       let fallbackLeaseholds: any[] = [];
-      if (matchedFreeholds.length === 0 && matchedLeaseholds.length === 0 && resolvedAddress) {
-        const streetNumMatch = resolvedAddress.match(/^(\d+[a-z]?)\b/i);
-        const streetNum = streetNumMatch ? streetNumMatch[1].toLowerCase() : null;
-        if (streetNum) {
-          const pickByStreet = (rows: any[]) => rows.filter((r: any) => {
-            const props: string[] = Array.isArray(r.property) ? r.property : (r.property ? [r.property] : []);
-            return props.some((p: string) => p.toLowerCase().startsWith(streetNum + " ") || p.toLowerCase().startsWith(streetNum + ",") || p.toLowerCase().includes(" " + streetNum + " "));
-          });
-          fallbackFreeholds = pickByStreet(((postcodeFreeholds as any)?.data || []));
-          fallbackLeaseholds = pickByStreet(((postcodeLeaseholds as any)?.data || []));
-        }
+      if (matchedFreeholds.length === 0 && matchedLeaseholds.length === 0 && streetNumberRaw) {
+        // Break "18-22" into "18" and "22" so we match titles listing either number
+        // at the top of the range (LR often records just one number per title).
+        const numParts = streetNumberRaw.split("-").map(n => n.trim()).filter(Boolean);
+        const pickByStreet = (rows: any[]) => rows.filter((r: any) => {
+          const props: string[] = Array.isArray(r.property) ? r.property : (r.property ? [r.property] : []);
+          const joined = props.join(" | ").toLowerCase();
+          if (joined.includes(streetNumberRaw)) return true;
+          return numParts.some(n => joined.includes(n + " ") || joined.includes(n + ",") || joined.includes(n + "-"));
+        });
+        fallbackFreeholds = pickByStreet(((postcodeFreeholds as any)?.data || []));
+        fallbackLeaseholds = pickByStreet(((postcodeLeaseholds as any)?.data || []));
       }
 
       // Persist this resolve to the unified Land Registry history. The board
