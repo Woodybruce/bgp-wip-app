@@ -1684,6 +1684,63 @@ function PropertyPanel({
   const [fullTitleLoading, setFullTitleLoading] = useState(false);
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [savedSearchId, setSavedSearchId] = useState<number | null>(null);
+  // Per-title purchases — keyed by title number, stores either "loading" or
+  // the purchase record from /api/land-registry/purchase-title
+  const [titlePurchases, setTitlePurchases] = useState<Record<string, any>>({});
+
+  // Load already-purchased titles so we don't re-charge BGP for the same register
+  useEffect(() => {
+    fetch("/api/land-registry/purchases", {
+      credentials: "include",
+      headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: any[]) => {
+        if (!Array.isArray(rows)) return;
+        const map: Record<string, any> = {};
+        for (const row of rows) {
+          map[(row.title_number || row.titleNumber || "").toUpperCase()] = {
+            ...row,
+            cached: true,
+          };
+        }
+        setTitlePurchases(map);
+      })
+      .catch(() => {});
+  }, []);
+
+  const purchaseDocs = async (titleNumber: string, documents: "register" | "plan" | "both") => {
+    const key = titleNumber.toUpperCase();
+    setTitlePurchases((prev) => ({ ...prev, [key]: { loading: true, documents } }));
+    try {
+      const res = await fetch("/api/land-registry/purchase-title", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("bgp_token")}`,
+        },
+        body: JSON.stringify({ title: titleNumber, documents, extract_proprietor_data: true }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setTitlePurchases((prev) => ({ ...prev, [key]: { error: body.error || `Purchase failed (${res.status})` } }));
+        return;
+      }
+      const d = body.data || {};
+      setTitlePurchases((prev) => ({
+        ...prev,
+        [key]: {
+          register_url: d.document_url || d.register_url || d.register?.url || prev[key]?.register_url,
+          plan_url: d.plan_url || d.plan?.url || prev[key]?.plan_url,
+          proprietor_data: d.proprietor || d.extracted || prev[key]?.proprietor_data,
+          cached: body.cached,
+        },
+      }));
+    } catch (err: any) {
+      setTitlePurchases((prev) => ({ ...prev, [key]: { error: err?.message || "Network error" } }));
+    }
+  };
 
   // Auto-save this search when data first loads
   useEffect(() => {
@@ -1963,13 +2020,18 @@ function PropertyPanel({
                     )}
                     {sorted.slice(0, 8).map((t: any, i: number) => {
                       const isMatch = address ? titleMatchesAddress(t, address) : false;
+                      const tn = (t.title_number || "").toUpperCase();
+                      const purchase = tn ? titlePurchases[tn] : null;
+                      const proprietorFromBuy = purchase?.proprietor_data;
                       return (
                         <div key={i} className={`text-xs border rounded p-2 space-y-0.5 overflow-hidden ${isMatch ? "bg-indigo-50 border-indigo-200" : "bg-gray-50"}`}>
                           <div className="flex items-center gap-1.5 min-w-0">
                             <Badge variant="outline" className={`text-[9px] px-1 py-0 shrink-0 ${t._tenure === "Freehold" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : "border-blue-300 text-blue-700 bg-blue-50"}`}>
                               {t._tenure === "Freehold" ? "F" : "L"}
                             </Badge>
-                            <span className="font-medium truncate flex-1 min-w-0">{t.proprietor_name_1 || t.address || "Unknown"}</span>
+                            <span className="font-medium truncate flex-1 min-w-0">
+                              {t.proprietor_name_1 || proprietorFromBuy?.name_1 || proprietorFromBuy?.proprietor_name_1 || t.address || (purchase?.cached || purchase?.register_url ? "Owner — see register" : "Unknown")}
+                            </span>
                             {isMatch && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded font-medium shrink-0">MATCH</span>}
                             {t.proprietor_category && <span className="text-[9px] text-gray-400 shrink-0">{t.proprietor_category}</span>}
                           </div>
@@ -1977,6 +2039,37 @@ function PropertyPanel({
                           {t.proprietor_address && <p className="text-gray-400 text-[10px] truncate">{t.proprietor_address}</p>}
                           {t.plot_size && <p className="text-gray-400 text-[10px]">Plot: {t.plot_size} acres</p>}
                           {t.price_paid && <p className="text-gray-400 text-[10px]">Price: £{Number(t.price_paid).toLocaleString()}</p>}
+                          {tn && (
+                            <div className="flex items-center gap-1 pt-1.5 border-t border-gray-200/70 mt-1">
+                              {purchase?.loading ? (
+                                <span className="text-[10px] text-gray-500 flex items-center gap-1"><Loader2 className="w-2.5 h-2.5 animate-spin" /> Buying {purchase.documents}...</span>
+                              ) : purchase?.error ? (
+                                <span className="text-[10px] text-red-600">{purchase.error}</span>
+                              ) : (
+                                <>
+                                  {purchase?.register_url ? (
+                                    <a href={purchase.register_url} target="_blank" rel="noopener" className="text-[10px] bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 py-0.5 rounded hover:bg-emerald-100 inline-flex items-center gap-0.5">
+                                      <ExternalLink className="w-2.5 h-2.5" /> Register
+                                    </a>
+                                  ) : (
+                                    <button onClick={() => purchaseDocs(tn, "register")} className="text-[10px] bg-white border border-indigo-200 text-indigo-700 px-1.5 py-0.5 rounded hover:bg-indigo-50">
+                                      Buy Register £4
+                                    </button>
+                                  )}
+                                  {purchase?.plan_url ? (
+                                    <a href={purchase.plan_url} target="_blank" rel="noopener" className="text-[10px] bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 py-0.5 rounded hover:bg-emerald-100 inline-flex items-center gap-0.5">
+                                      <ExternalLink className="w-2.5 h-2.5" /> Plan
+                                    </a>
+                                  ) : (
+                                    <button onClick={() => purchaseDocs(tn, "plan")} className="text-[10px] bg-white border border-indigo-200 text-indigo-700 px-1.5 py-0.5 rounded hover:bg-indigo-50">
+                                      Buy Plan £3
+                                    </button>
+                                  )}
+                                  {purchase?.cached && <span className="text-[9px] text-gray-400 ml-auto">cached</span>}
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
