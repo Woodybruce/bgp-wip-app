@@ -93,7 +93,7 @@ const aiNav = [
   { title: "Document Studio", url: "/templates", icon: FileTextIcon },
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe, badge: "AI" },
-  { title: "Cann CAD", url: "/cad-measure", icon: Ruler },
+  { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
 ];
 
 const microsoftNav = [
@@ -391,7 +391,7 @@ const mobileOverlayItems = [
   { title: "News", url: "/news", icon: Newspaper },
   { title: "Leads", url: "/leads", icon: UserPlus },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe },
-  { title: "Cann CAD", url: "/cad-measure", icon: Ruler },
+  { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles },
   { title: "Office Add-ins", url: "/addins", icon: FileSpreadsheet },
