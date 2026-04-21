@@ -3195,6 +3195,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [mapPins, setMapPins] = useState<{ deals: any[]; comps: any[]; leaseEvents: any[] } | null>(null);
   const baseLayerRef = useRef<{ map: L.LayerGroup; sat: L.LayerGroup } | null>(null);
   const [baseLayer, setBaseLayer] = useState<"map" | "sat">("map");
+  const [exportingPlan, setExportingPlan] = useState(false);
 
   // Swap base layers atomically when the toggle changes.
   // Runs after the map init effect has populated baseLayerRef.
@@ -3334,10 +3335,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         });
 
         const bbox = polygonBBoxPixels(b.latLngs, mapRef.current);
-        // Below zoom 16 buildings are too small to read — skip labels entirely
+        // Below zoom 17 buildings are too small to read — skip labels entirely
         // instead of squeezing scruffy truncated text into tiny boxes.
         const zoom = mapRef.current.getZoom();
-        const fitted = zoom < 16 ? null : fitTextToBuilding(b.label, b.houseNum, b.isVacant, bbox.w, bbox.h);
+        const fitted = zoom < 17 ? null : fitTextToBuilding(b.label, b.houseNum, b.isVacant, bbox.w, bbox.h);
 
         if (fitted) {
           const cssClass = b.isVacant && !b.label
@@ -3408,6 +3409,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         if (crm) return { ...b, label: crm.label, _labelSource: "crm" };
         const comp = findClosest(labelsResp.comps || []);
         if (comp) return { ...b, label: comp.label, _labelSource: "comp" };
+        const voa = findClosest(labelsResp.voa || []);
+        if (voa) return { ...b, label: voa.label, _labelSource: "voa" };
         const google = findClosest(labelsResp.google || []);
         if (google) return { ...b, label: google.label, _labelSource: "google" };
         return b;
@@ -4068,6 +4071,49 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     }
   };
 
+  // Export the current map view as a BGP-branded PDF plan
+  const exportGoadPlanPdf = async () => {
+    const map = mapRef.current;
+    const container = mapContainerRef.current;
+    if (!map || !container) return;
+    setExportingPlan(true);
+    try {
+      const { toPng } = await import("html-to-image");
+      const { jsPDF } = await import("jspdf");
+      const dataUrl = await toPng(container, { cacheBust: true, pixelRatio: 2, backgroundColor: "#faf8f2" });
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a3" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+
+      pdf.setFillColor(26, 26, 26);
+      pdf.rect(0, 0, pageW, 14, "F");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(11);
+      pdf.setFont("helvetica", "bold");
+      pdf.text("BRUCE GILLINGHAM POLLARD", margin, 9);
+      pdf.setFontSize(9);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${currentArea || postcode || "London"}  ·  Intelligence Plan  ·  ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`, pageW - margin, 9, { align: "right" });
+
+      const imgW = pageW - margin * 2;
+      const imgH = pageH - 14 - margin * 2;
+      pdf.addImage(dataUrl, "PNG", margin, 14 + margin, imgW, imgH, undefined, "FAST");
+
+      pdf.setTextColor(80, 80, 80);
+      pdf.setFontSize(7);
+      pdf.text("Data: OS Zoomstack, OpenStreetMap, Valuation Office Agency, HM Land Registry, Google Places. BGP Intelligence Map.", margin, pageH - 4);
+
+      const filename = `BGP_Plan_${(currentArea || postcode || "map").replace(/[^a-zA-Z0-9]/g, "_")}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      pdf.save(filename);
+    } catch (err: any) {
+      console.error("[map] export PDF failed:", err);
+      toast({ title: "Export failed", description: err?.message || "Couldn't export the plan as a PDF.", variant: "destructive" });
+    } finally {
+      setExportingPlan(false);
+    }
+  };
+
   const tools = [
     { key: "select", icon: MousePointer, label: "Select" },
     { key: "polygon", icon: Hexagon, label: "Polygon" },
@@ -4284,21 +4330,33 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         <div ref={mapContainerRef} className="w-full h-full" data-testid="edozo-map" />
 
         {/* Map / Satellite base-layer pill toggle — top-right of the map */}
-        <div className="absolute top-3 right-3 z-[1000] bg-white rounded-full shadow-lg border border-border/60 flex p-0.5" data-testid="base-layer-toggle">
+        <div className="absolute top-3 right-3 z-[1000] flex items-center gap-2" data-testid="base-layer-toggle">
           <button
-            onClick={() => setBaseLayer("map")}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${baseLayer === "map" ? "bg-black text-white" : "text-gray-700 hover:bg-gray-50"}`}
-            data-testid="base-layer-map"
+            onClick={exportGoadPlanPdf}
+            disabled={exportingPlan}
+            className="bg-black text-white rounded-full shadow-lg px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 hover:bg-gray-800 disabled:opacity-60 disabled:cursor-wait"
+            data-testid="export-goad-plan"
+            title="Download the current map view as a BGP-branded PDF plan"
           >
-            Map
+            {exportingPlan ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+            {exportingPlan ? "Exporting..." : "Download Plan"}
           </button>
-          <button
-            onClick={() => setBaseLayer("sat")}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${baseLayer === "sat" ? "bg-black text-white" : "text-gray-700 hover:bg-gray-50"}`}
-            data-testid="base-layer-sat"
-          >
-            Satellite
-          </button>
+          <div className="bg-white rounded-full shadow-lg border border-border/60 flex p-0.5">
+            <button
+              onClick={() => setBaseLayer("map")}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${baseLayer === "map" ? "bg-black text-white" : "text-gray-700 hover:bg-gray-50"}`}
+              data-testid="base-layer-map"
+            >
+              Map
+            </button>
+            <button
+              onClick={() => setBaseLayer("sat")}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${baseLayer === "sat" ? "bg-black text-white" : "text-gray-700 hover:bg-gray-50"}`}
+              data-testid="base-layer-sat"
+            >
+              Satellite
+            </button>
+          </div>
         </div>
 
         {/* Goad-style building key — floating panel top-right */}
