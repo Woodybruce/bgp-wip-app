@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
+import { cached } from "./utils/intel-cache";
 
 function getOsKey(): string {
   // OS_PLACES_API_KEY is what Woody set on Railway for the Places product;
@@ -108,15 +109,18 @@ function normaliseDpa(r: any): OsPlacesResult {
  */
 export async function osPlacesFind(query: string, maxresults = 10): Promise<OsPlacesResult[]> {
   if (!isOsConfigured() || !query) return [];
-  const url = `${PLACES_BASE}/find?query=${encodeURIComponent(query)}&key=${getOsKey()}&maxresults=${maxresults}&dataset=DPA`;
-  const resp = await fetch(url, { headers: { Accept: "application/json" } });
-  if (resp.status === 401) return [];
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`OS Places find error ${resp.status}: ${text.slice(0, 200)}`);
-  }
-  const data = await resp.json();
-  return (data?.results || []).map(normaliseDpa);
+  const key = `os-find:${query.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120)}:${maxresults}`;
+  return cached(key, async () => {
+    const url = `${PLACES_BASE}/find?query=${encodeURIComponent(query)}&key=${getOsKey()}&maxresults=${maxresults}&dataset=DPA`;
+    const resp = await fetch(url, { headers: { Accept: "application/json" } });
+    if (resp.status === 401) return [] as OsPlacesResult[];
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`OS Places find error ${resp.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    return (data?.results || []).map(normaliseDpa) as OsPlacesResult[];
+  }, 24 * 7);
 }
 
 /**
@@ -125,17 +129,19 @@ export async function osPlacesFind(query: string, maxresults = 10): Promise<OsPl
  */
 export async function osPlacesByPostcode(postcode: string, maxresults = 100): Promise<OsPlacesResult[]> {
   if (!isOsConfigured() || !postcode) return [];
-  const clean = postcode.trim().toUpperCase();
-  const url = `${PLACES_BASE}/postcode?postcode=${encodeURIComponent(clean)}&key=${getOsKey()}&maxresults=${maxresults}&dataset=DPA`;
-  const resp = await fetch(url, { headers: { Accept: "application/json" } });
-  if (resp.status === 401) return [];
-  if (resp.status === 404) return []; // OS returns 404 for no-match postcode
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`OS Places postcode error ${resp.status}: ${text.slice(0, 200)}`);
-  }
-  const data = await resp.json();
-  return (data?.results || []).map(normaliseDpa);
+  const clean = postcode.trim().toUpperCase().replace(/\s+/g, "");
+  return cached(`os-pc:${clean}:${maxresults}`, async () => {
+    const url = `${PLACES_BASE}/postcode?postcode=${encodeURIComponent(clean)}&key=${getOsKey()}&maxresults=${maxresults}&dataset=DPA`;
+    const resp = await fetch(url, { headers: { Accept: "application/json" } });
+    if (resp.status === 401) return [] as OsPlacesResult[];
+    if (resp.status === 404) return [] as OsPlacesResult[];
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`OS Places postcode error ${resp.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    return (data?.results || []).map(normaliseDpa) as OsPlacesResult[];
+  }, 24 * 30);
 }
 
 /**
@@ -147,22 +153,26 @@ export async function osPlacesByPostcode(postcode: string, maxresults = 100): Pr
 export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 25): Promise<OsPlacesResult[]> {
   if (!isOsConfigured()) return [];
   if (!isFinite(lat) || !isFinite(lng)) return [];
-  const params = new URLSearchParams({
-    point: `${lng},${lat}`,
-    key: getOsKey(),
-    radius: String(radiusMeters),
-    srs: "WGS84",
-    dataset: "DPA",
-  });
-  const url = `${PLACES_BASE}/nearest?${params.toString()}`;
-  const resp = await fetch(url, { headers: { Accept: "application/json" } });
-  if (resp.status === 401 || resp.status === 404) return [];
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`OS Places nearest error ${resp.status}: ${text.slice(0, 200)}`);
-  }
-  const data = await resp.json();
-  return (data?.results || []).map(normaliseDpa);
+  // Round to ~11m precision to maximise cache hits for nearby clicks
+  const key = `os-nearest:${lat.toFixed(4)},${lng.toFixed(4)},${radiusMeters}`;
+  return cached(key, async () => {
+    const params = new URLSearchParams({
+      point: `${lng},${lat}`,
+      key: getOsKey(),
+      radius: String(radiusMeters),
+      srs: "WGS84",
+      dataset: "DPA",
+    });
+    const url = `${PLACES_BASE}/nearest?${params.toString()}`;
+    const resp = await fetch(url, { headers: { Accept: "application/json" } });
+    if (resp.status === 401 || resp.status === 404) return [] as OsPlacesResult[];
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`OS Places nearest error ${resp.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    return (data?.results || []).map(normaliseDpa) as OsPlacesResult[];
+  }, 24 * 30);
 }
 
 /**
@@ -170,16 +180,18 @@ export async function osPlacesNearest(lat: number, lng: number, radiusMeters = 2
  */
 export async function osPlacesByUprn(uprn: string): Promise<OsPlacesResult | null> {
   if (!isOsConfigured() || !uprn) return null;
-  const url = `${PLACES_BASE}/uprn?uprn=${encodeURIComponent(uprn)}&key=${getOsKey()}&dataset=DPA`;
-  const resp = await fetch(url, { headers: { Accept: "application/json" } });
-  if (resp.status === 401 || resp.status === 404) return null;
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    throw new Error(`OS Places UPRN error ${resp.status}: ${text.slice(0, 200)}`);
-  }
-  const data = await resp.json();
-  const first = (data?.results || [])[0];
-  return first ? normaliseDpa(first) : null;
+  return cached(`os-uprn:${uprn}`, async () => {
+    const url = `${PLACES_BASE}/uprn?uprn=${encodeURIComponent(uprn)}&key=${getOsKey()}&dataset=DPA`;
+    const resp = await fetch(url, { headers: { Accept: "application/json" } });
+    if (resp.status === 401 || resp.status === 404) return null;
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      throw new Error(`OS Places UPRN error ${resp.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    const first = (data?.results || [])[0];
+    return first ? normaliseDpa(first) as OsPlacesResult : null;
+  }, 24 * 30);
 }
 
 /**
