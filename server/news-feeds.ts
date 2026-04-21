@@ -337,7 +337,7 @@ async function extractCompsFromArticles(): Promise<{ extracted: number; created:
     const comps = parsed?.comps || [];
     extracted = comps.length;
     const articleRefs = leasingArticles.map(a => ({ url: a.url, title: a.title }));
-    created = await saveExtractedComps(comps, "News Feed", articleRefs);
+    created = await saveExtractedComps(comps, "News", articleRefs);
   } catch (err: any) {
     console.error("[Comp Extract] AI extraction error:", err?.message?.slice(0, 200));
   }
@@ -482,7 +482,7 @@ async function extractCompsFromEmails(): Promise<{ extracted: number; created: n
     const parsed = safeParseJSON(content);
     const comps = parsed?.comps || [];
     extracted = comps.length;
-    created = await saveExtractedComps(comps, "Team Email");
+    created = await saveExtractedComps(comps, "Email");
   } catch (err: any) {
     console.error("[Comp Extract] Email extraction error:", err?.message?.slice(0, 200));
   }
@@ -569,7 +569,7 @@ async function extractCompsFromSharePoint(): Promise<{ extracted: number; create
             const parsed = safeParseJSON(content);
             const comps = parsed?.comps || [];
             extracted += comps.length;
-            created += await saveExtractedComps(comps, "SharePoint File");
+            created += await saveExtractedComps(comps, "File");
           }
         } finally {
           try { fs.unlinkSync(tmpFile); } catch { }

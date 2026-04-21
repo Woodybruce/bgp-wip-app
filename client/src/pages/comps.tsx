@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
+import { SOURCE_TYPES, SOURCE_LIST, normaliseSource, type SourceType } from "@shared/source-types";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -2614,10 +2615,11 @@ export default function Comps() {
                     </div>
                     <div className="flex items-center gap-1 flex-wrap">
                       {comp.postcode && <span className="text-[10px] text-muted-foreground">{comp.postcode}</span>}
-                      {comp.sourceEvidence === "News Feed" && <span className="text-[9px] px-1 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">News</span>}
-                      {comp.sourceEvidence === "Team Email" && <span className="text-[9px] px-1 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">Email</span>}
-                      {comp.sourceEvidence === "SharePoint File" && <span className="text-[9px] px-1 rounded bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400">File</span>}
-                      {comp.sourceEvidence === "BGP Direct" && <span className="text-[9px] px-1 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">BGP</span>}
+                      {(() => {
+                        const src = normaliseSource(comp.sourceEvidence);
+                        if (!src) return null;
+                        return <span className={`text-[9px] px-1 rounded border ${SOURCE_TYPES[src].badgeClass}`} title={SOURCE_TYPES[src].description}>{SOURCE_TYPES[src].label}</span>;
+                      })()}
                       {comp.dealId && dealById.get(comp.dealId) && (
                         <span className="text-[9px] px-1 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 truncate max-w-[140px]" title={dealById.get(comp.dealId)?.name}>
                           {dealById.get(comp.dealId)?.name}
@@ -2779,16 +2781,9 @@ export default function Comps() {
                   <td className="px-2 py-1.5">
                     <div className="flex flex-col gap-0.5">
                       <InlineLabelSelect
-                        value={comp.sourceEvidence || ""}
-                        options={["BGP Direct", "News Feed", "Team Email", "SharePoint File", "Agent", "Other"]}
-                        colorMap={{
-                          "BGP Direct": "bg-green-600 text-white",
-                          "News Feed": "bg-amber-600 text-white",
-                          "Team Email": "bg-purple-600 text-white",
-                          "SharePoint File": "bg-cyan-600 text-white",
-                          "Agent": "bg-blue-600 text-white",
-                          "Other": "bg-gray-600 text-white",
-                        }}
+                        value={normaliseSource(comp.sourceEvidence) || comp.sourceEvidence || ""}
+                        options={SOURCE_LIST as unknown as string[]}
+                        colorMap={SOURCE_LIST.reduce<Record<string, string>>((m, k) => { m[k] = SOURCE_TYPES[k].badgeClass; return m; }, {})}
                         onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceEvidence", value: v })}
                       />
                       {(comp as any).sourceUrl && (

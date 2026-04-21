@@ -27,7 +27,9 @@ import { Button } from "@/components/ui/button";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { InlineText, InlineSelect } from "@/components/inline-edit";
+import { InlineText, InlineSelect, InlineLabelSelect } from "@/components/inline-edit";
+import { SOURCE_TYPES, SOURCE_LIST, normaliseSource } from "@shared/source-types";
+import { ExternalLink } from "lucide-react";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { Link } from "wouter";
@@ -383,10 +385,26 @@ export default function Leads() {
                           />
                         </TableCell>
                         <TableCell>
-                          <InlineText
-                            value={item.source}
-                            onSave={(v) => handleInlineSave(item.id, "source", v)}
-                          />
+                          <div className="flex flex-col gap-0.5">
+                            <InlineLabelSelect
+                              value={normaliseSource(item.source) || item.source || ""}
+                              options={SOURCE_LIST as unknown as string[]}
+                              colorMap={SOURCE_LIST.reduce<Record<string, string>>((m, k) => { m[k] = SOURCE_TYPES[k].badgeClass; return m; }, {})}
+                              onSave={(v) => handleInlineSave(item.id, "source", v)}
+                            />
+                            {(item as any).sourceUrl && (
+                              <a
+                                href={(item as any).sourceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10px] text-primary hover:underline flex items-center gap-0.5 truncate max-w-[140px]"
+                                title={(item as any).sourceTitle || (item as any).sourceUrl}
+                              >
+                                <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                                {(item as any).sourceTitle || "View source"}
+                              </a>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <InlineText
