@@ -2,6 +2,7 @@ import { db } from "./db";
 import { voaRatings } from "@shared/schema";
 import { ilike, or, and, sql } from "drizzle-orm";
 import { escapeLike } from "./utils/escape-like";
+import { cached } from "./utils/intel-cache";
 
 const LR_BASE = "https://landregistry.data.gov.uk/data";
 
@@ -34,17 +35,19 @@ function extractLabel(obj: any): string {
 }
 
 async function lookupPricePaid(postcode: string, street?: string): Promise<any[]> {
-  try {
-    const params = new URLSearchParams();
-    params.set("propertyAddress.postcode", postcode.toUpperCase());
-    if (street) params.set("propertyAddress.street", street.toUpperCase());
-    params.set("_pageSize", "20");
-    params.set("_sort", "-transactionDate");
+  const cacheKey = `ppi:${postcode.toUpperCase().replace(/\s/g, "")}:${(street || "").toUpperCase()}`;
+  return cached(cacheKey, async () => {
+    try {
+      const params = new URLSearchParams();
+      params.set("propertyAddress.postcode", postcode.toUpperCase());
+      if (street) params.set("propertyAddress.street", street.toUpperCase());
+      params.set("_pageSize", "20");
+      params.set("_sort", "-transactionDate");
 
-    const resp = await fetch(`${LR_BASE}/ppi/transaction-record.json?${params}`);
-    if (!resp.ok) return [];
-    const data = await resp.json();
-    const items = data.result?.items || [];
+      const resp = await fetch(`${LR_BASE}/ppi/transaction-record.json?${params}`);
+      if (!resp.ok) return [];
+      const data = await resp.json();
+      const items = data.result?.items || [];
 
     return items.map((item: any) => ({
       price: item.pricePaid,
@@ -55,15 +58,16 @@ async function lookupPricePaid(postcode: string, street?: string): Promise<any[]
         item.propertyAddress?.street ? extractLabel(item.propertyAddress.street) : "",
         item.propertyAddress?.town ? extractLabel(item.propertyAddress.town) : "",
       ].filter(Boolean).join(", "),
-      postcode: item.propertyAddress?.postcode || "",
-      propertyType: extractLabel(item.propertyType),
-      estateType: extractLabel(item.estateType),
-      newBuild: item.newBuild === true,
-    }));
-  } catch (e) {
-    console.error("[property-lookup] Price paid error:", e);
-    return [];
-  }
+        postcode: item.propertyAddress?.postcode || "",
+        propertyType: extractLabel(item.propertyType),
+        estateType: extractLabel(item.estateType),
+        newBuild: item.newBuild === true,
+      }));
+    } catch (e) {
+      console.error("[property-lookup] Price paid error:", e);
+      return [];
+    }
+  });
 }
 
 async function lookupVOA(postcode: string, street?: string): Promise<any[]> {
@@ -499,6 +503,8 @@ const PROPERTYDATA_LAYER_MAP: Record<PropertyDataLayer, Array<{ key: string; ext
 async function lookupPropertyDataCoUk(postcode: string, layers?: PropertyDataLayer[], uprn?: string): Promise<any> {
   const apiKey = process.env.PROPERTYDATA_API_KEY;
   if (!apiKey) return null;
+  const cacheKey = `pdata:${postcode.replace(/\s+/g, "").toUpperCase()}:${(layers || ["core"]).join(",")}:${uprn || ""}`;
+  return cached(cacheKey, async () => {
   try {
     const cleanPc = postcode.replace(/\s+/g, "");
     const activeLayers = layers || ["core"];
@@ -611,6 +617,7 @@ async function lookupPropertyDataCoUk(postcode: string, layers?: PropertyDataLay
   } catch {
     return null;
   }
+  });
 }
 
 export async function performPropertyLookup(params: {

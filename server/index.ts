@@ -68,6 +68,13 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS idx_lease_events_property ON lease_events(property_id)`,
     `CREATE INDEX IF NOT EXISTS idx_lease_events_date ON lease_events(event_date)`,
     `CREATE INDEX IF NOT EXISTS idx_lease_events_status ON lease_events(status)`,
+    `CREATE TABLE IF NOT EXISTS property_intelligence_cache (
+      cache_key TEXT PRIMARY KEY,
+      payload JSONB NOT NULL,
+      created_at TIMESTAMP DEFAULT now(),
+      expires_at TIMESTAMP NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_pi_cache_expires ON property_intelligence_cache(expires_at)`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS po_number TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP`,
@@ -726,6 +733,14 @@ app.use("/api/branding/assets", express.static(
             console.error("[lease-events] Failed to start monitoring:", e.message);
           }
         }, 90000);
+        setTimeout(async () => {
+          try {
+            const { startIntelCachePurge } = await import("./utils/intel-cache");
+            startIntelCachePurge();
+          } catch (e: any) {
+            console.error("[intel-cache] Failed to start:", e.message);
+          }
+        }, 120000);
         // VOA auto-import disabled — was OOM-killing the server. Admin can
         // run POST /api/voa/import manually (or hit GET /api/voa/status?import=1)
         // when the service has enough headroom, ideally from a one-off job.

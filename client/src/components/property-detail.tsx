@@ -1,6 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import PathwayIntelStrip from "@/components/pathway-intel-strip";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Users,
@@ -385,6 +386,12 @@ export function PropertyDetail({ id }: { id: string }) {
                 <PropertyTenancySchedule propertyId={property.id} />
               </CardContent>
             </Card>
+
+            <PathwayIntelStrip
+              propertyId={property.id}
+              address={typeof property.address === "string" ? property.address : (property.address as any)?.line1 || property.name}
+              postcode={(property as any).postcode || (property.address as any)?.postcode}
+            />
 
             <Property360Panel propertyId={property.id} />
 

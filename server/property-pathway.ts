@@ -4455,6 +4455,40 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
+  // Latest pathway run for a property id or address — used by property/deal detail
+  // pages to show an intelligence summary without re-running paid lookups.
+  app.get("/api/property-pathway/latest", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const propertyId = (req.query.propertyId as string) || "";
+      const address = ((req.query.address as string) || "").trim().toLowerCase();
+      const postcode = ((req.query.postcode as string) || "").toUpperCase().replace(/\s/g, "");
+      if (!propertyId && !address && !postcode) {
+        return res.status(400).json({ error: "propertyId, address or postcode required" });
+      }
+      const recent = await db
+        .select()
+        .from(propertyPathwayRuns)
+        .orderBy(desc(propertyPathwayRuns.updatedAt))
+        .limit(300);
+      const match = recent.find((r: any) => {
+        if (propertyId && r.propertyId === propertyId) return true;
+        if (postcode) {
+          const rp = (r.postcode || "").toUpperCase().replace(/\s/g, "");
+          if (rp && rp === postcode) return true;
+        }
+        if (address) {
+          const ra = (r.address || "").toLowerCase();
+          if (ra && (ra.includes(address) || address.includes(ra))) return true;
+        }
+        return false;
+      });
+      if (!match) return res.json(null);
+      res.json(match);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   // List recent pathway runs
   app.get("/api/property-pathway", requireAuth, async (_req: Request, res: Response) => {
     try {
