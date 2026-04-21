@@ -584,21 +584,29 @@ export default function CadMeasurePage() {
     setCurrentPoints([]);
   };
 
+  // Refs mirror the latest state so keyboard handlers don't see stale values
+  // when Ctrl+Z/Y fires rapidly (key auto-repeat) before React re-renders.
+  const measurementsRef = useRef(measurements);
+  const redoStackRef = useRef(redoStack);
+  const currentPointsRef = useRef(currentPoints);
+  useEffect(() => { measurementsRef.current = measurements; }, [measurements]);
+  useEffect(() => { redoStackRef.current = redoStack; }, [redoStack]);
+  useEffect(() => { currentPointsRef.current = currentPoints; }, [currentPoints]);
+
   const handleUndo = () => {
-    // If the user is mid-polygon (area tool), undo the last clicked point first
-    if (currentPoints.length > 0) {
+    if (currentPointsRef.current.length > 0) {
       setCurrentPoints(prev => prev.slice(0, -1));
       return;
     }
-    if (measurements.length === 0) return;
-    const last = measurements[measurements.length - 1];
+    if (measurementsRef.current.length === 0) return;
+    const last = measurementsRef.current[measurementsRef.current.length - 1];
     setMeasurements(prev => prev.slice(0, -1));
     setRedoStack(prev => [...prev, last]);
   };
 
   const handleRedo = () => {
-    if (redoStack.length === 0) return;
-    const next = redoStack[redoStack.length - 1];
+    if (redoStackRef.current.length === 0) return;
+    const next = redoStackRef.current[redoStackRef.current.length - 1];
     setRedoStack(prev => prev.slice(0, -1));
     setMeasurements(prev => [...prev, next]);
   };
@@ -622,7 +630,7 @@ export default function CadMeasurePage() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [measurements, redoStack, currentPoints]);
+  }, []);
 
   const totalArea = measurements
     .filter(m => m.type === "area")

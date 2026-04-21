@@ -118,20 +118,22 @@ export default function PropertyPathway() {
     let cancelled = false;
     const tick = async () => {
       if (cancelled) return;
+      let polled: any = null;
       try {
         const res = await fetch(`/api/property-pathway/${selectedRun.id}`, {
           headers: getAuthHeaders(),
           credentials: "include",
         });
         if (res.ok) {
-          const polled = await res.json();
+          polled = await res.json();
           if (!cancelled) setSelectedRun(polled);
         }
-      } catch {}
+      } catch (err: any) {
+        console.error("[pathway] polling error:", err?.message);
+      }
       if (!cancelled) {
-        const stillRunning = Object.values((selectedRun as any).stageStatus || {}).some(
-          (s) => s === "running",
-        );
+        const latestStatus = polled?.stageStatus || (selectedRun as any).stageStatus || {};
+        const stillRunning = Object.values(latestStatus).some((s) => s === "running");
         if (stillRunning) loadRuns();
       }
     };

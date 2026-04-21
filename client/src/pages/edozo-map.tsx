@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import {
   Search,
   X,
@@ -3045,6 +3046,7 @@ out body;>;out skel qt;`;
 }
 
 export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialSearch?: { address: string; postcode: string | null } | null; onSearchConsumed?: () => void } = {}) {
+  const { toast } = useToast();
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const buildingLayerRef = useRef<L.LayerGroup | null>(null);
@@ -3290,8 +3292,11 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     fetch("/api/map/pins", { credentials: "include", headers })
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) setMapPins(data); })
-      .catch(() => {});
-  }, []);
+      .catch(err => {
+        console.error("[map] failed to load CRM pins:", err?.message);
+        toast({ title: "Map layers unavailable", description: "Couldn't load Deals / Comps / Lease Events pins. Check your connection and try again.", variant: "destructive" });
+      });
+  }, [toast]);
 
   // Render Deals layer
   useEffect(() => {
@@ -3837,8 +3842,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         }
         setPropertyData(data);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Property lookup error:", e);
+      toast({ title: "Property lookup failed", description: e?.message || "Couldn't fetch property data. Try again.", variant: "destructive" });
     }
     setLoadingData(false);
   };

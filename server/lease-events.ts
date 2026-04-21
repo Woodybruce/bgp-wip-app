@@ -22,7 +22,7 @@ export function registerLeaseEventRoutes(app: Express) {
       if (eventType) { params.push(eventType); conditions.push(`event_type = $${params.length}`); }
       if (propertyId) { params.push(propertyId); conditions.push(`property_id = $${params.length}`); }
       if (withinMonths) {
-        const months = Number(withinMonths);
+        const months = Math.max(1, Math.min(60, parseInt(String(withinMonths), 10) || 0));
         if (months > 0) {
           conditions.push(`event_date IS NOT NULL AND event_date <= NOW() + INTERVAL '${months} months' AND event_date >= NOW() - INTERVAL '1 month'`);
         }
