@@ -779,6 +779,12 @@ function RawDataToggle({ data }: { data: any }) {
 }
 
 function titleMatchesAddress(title: any, searchAddr: string): boolean {
+  // New server-tagged matches beat the weak string-match heuristic. The
+  // /api/land-registry/resolve endpoint tags titles as "uprn" (exact),
+  // "street" (likely), or "postcode" (neighbour) — anything better than
+  // postcode is a true match to the subject.
+  if (title?._match === "uprn" || title?._match === "street") return true;
+  if (title?._match === "postcode") return false;
   if (!searchAddr) return false;
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, " ").replace(/\s+/g, " ").trim();
   const search = norm(searchAddr);
@@ -3551,11 +3557,55 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     try {
       let url = `/api/property-lookup?postcode=${encodeURIComponent(postcode)}&layers=core&propertyDataLayers=${layersParam.join(",")}`;
       if (address) url += `&address=${encodeURIComponent(address)}`;
-      const resp = await fetch(url, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
-      });
-      if (resp.ok) {
-        const data = await resp.json();
+      const authHeaders = { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` };
+
+      // Run the legacy property-lookup (for VOA, planning, prices, EPC etc.)
+      // AND the proper UPRN-first Land Registry resolver in parallel. The
+      // resolver correctly tags each title with "uprn" / "street" / "postcode"
+      // so the Ownership panel can show accurate matches instead of every
+      // title in the postcode.
+      const [propResp, resolveResp] = await Promise.all([
+        fetch(url, { headers: authHeaders }),
+        address
+          ? fetch("/api/land-registry/resolve", {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json", ...authHeaders },
+              body: JSON.stringify({ address, postcode }),
+            }).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+
+      if (propResp.ok) {
+        const data = await propResp.json();
+        // Overlay the tagged titles onto propertyDataCoUk so downstream rendering
+        // and counts use the filtered/tagged data.
+        if (resolveResp && resolveResp.ok) {
+          try {
+            const r = await resolveResp.json();
+            const taggedFreeholds = [
+              ...(r?.matched?.freeholds || []).map((f: any) => ({ ...f, _match: "uprn" as const })),
+              ...(r?.fallback?.freeholds || []).map((f: any) => ({ ...f, _match: "street" as const })),
+              ...(r?.context?.freeholds || []).map((f: any) => ({ ...f, _match: "postcode" as const })),
+            ];
+            const taggedLeaseholds = [
+              ...(r?.matched?.leaseholds || []).map((l: any) => ({ ...l, _match: "uprn" as const })),
+              ...(r?.fallback?.leaseholds || []).map((l: any) => ({ ...l, _match: "street" as const })),
+              ...(r?.context?.leaseholds || []).map((l: any) => ({ ...l, _match: "postcode" as const })),
+            ];
+            if (!data.propertyDataCoUk) data.propertyDataCoUk = {};
+            data.propertyDataCoUk["freeholds"] = { data: taggedFreeholds };
+            data.propertyDataCoUk["leaseholds"] = { data: taggedLeaseholds };
+            data._landRegistryResolve = {
+              matchedCount: (r?.matched?.freeholds?.length || 0) + (r?.matched?.leaseholds?.length || 0),
+              fallbackCount: (r?.fallback?.freeholds?.length || 0) + (r?.fallback?.leaseholds?.length || 0),
+              contextCount: (r?.context?.freeholds?.length || 0) + (r?.context?.leaseholds?.length || 0),
+              source: r?.source || null,
+            };
+          } catch (e) {
+            console.warn("[edozo-map] Land Registry resolve merge failed:", e);
+          }
+        }
         setPropertyData(data);
       }
     } catch (e) {
