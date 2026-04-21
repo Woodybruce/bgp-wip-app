@@ -3363,12 +3363,58 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       loadCounterRef.current += 1;
       const thisLoad = loadCounterRef.current;
 
-      const buildings = await fetchBuildings(map);
+      // Fetch buildings (OSM) and label overrides (CRM > Comps > Google) in parallel
+      const bboxParam = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+      const labelsPromise = fetch(`/api/map/labels?bbox=${bboxParam}`, {
+        credentials: "include",
+        headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+
+      const [buildings, labelsResp] = await Promise.all([
+        fetchBuildings(map),
+        labelsPromise,
+      ]);
 
       if (loadCounterRef.current !== thisLoad) return;
       if (buildings.length === 0 && buildingLayerRef.current && buildingLayerRef.current.getLayers().length > 0) return;
 
-      renderBuildings(buildings);
+      // Merge labels into buildings — CRM beats Comp beats Google. For each
+      // building, snap to the nearest label point within ~25m and override.
+      const overrideLabel = (b: any) => {
+        if (!labelsResp) return b;
+        const center = b.center || (b.latLngs?.[0] ? { lat: b.latLngs[0][0], lng: b.latLngs[0][1] } : null);
+        if (!center) return b;
+        const distM = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+          const R = 6371000;
+          const φ1 = (lat1 * Math.PI) / 180;
+          const φ2 = (lat2 * Math.PI) / 180;
+          const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+          const Δλ = ((lng2 - lng1) * Math.PI) / 180;
+          const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+          return 2 * R * Math.asin(Math.sqrt(a));
+        };
+        const findClosest = (pts: any[]) => {
+          let best: any = null;
+          let bestD = 25; // max metres
+          for (const p of pts) {
+            const d = distM(center.lat, center.lng, p.lat, p.lng);
+            if (d < bestD) { best = p; bestD = d; }
+          }
+          return best;
+        };
+        const crm = findClosest(labelsResp.crm || []);
+        if (crm) return { ...b, label: crm.label, _labelSource: "crm" };
+        const comp = findClosest(labelsResp.comps || []);
+        if (comp) return { ...b, label: comp.label, _labelSource: "comp" };
+        const google = findClosest(labelsResp.google || []);
+        if (google) return { ...b, label: google.label, _labelSource: "google" };
+        return b;
+      };
+
+      const enriched = buildings.map(overrideLabel);
+      renderBuildings(enriched);
     };
 
     const debouncedLoad = () => {

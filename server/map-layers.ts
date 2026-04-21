@@ -214,5 +214,133 @@ export function registerMapLayerRoutes(app: Express) {
     }
   });
 
+  // ─── Building label overrides ────────────────────────────────────────────────
+  // Returns the best-known label for each location in a bbox, drawn from three
+  // sources in priority order: 1) BGP CRM properties, 2) BGP comps, 3) Google
+  // Places (current trading names — fresher than OSM). Client matches each
+  // returned point to the nearest building polygon and overrides the OSM label.
+  app.get("/api/map/labels", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const bbox = String(req.query.bbox || "").trim();
+      if (!bbox) return res.status(400).json({ error: "bbox required (s,w,n,e)" });
+      const [s, w, n, e] = bbox.split(",").map(parseFloat);
+      if (![s, w, n, e].every(Number.isFinite)) return res.status(400).json({ error: "invalid bbox" });
+
+      // 1. CRM properties in bbox (highest priority — these are confirmed BGP relationships)
+      const crmRes = await pool.query(`
+        SELECT id, name, latitude, longitude, address, asset_class
+        FROM crm_properties
+        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+          AND latitude <> '' AND longitude <> ''
+          AND latitude::float BETWEEN $1 AND $2
+          AND longitude::float BETWEEN $3 AND $4
+        LIMIT 200
+      `, [s, n, w, e]);
+
+      const crmLabels = crmRes.rows
+        .map((r: any) => {
+          const lat = parseFloat(r.latitude);
+          const lng = parseFloat(r.longitude);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+          return {
+            lat, lng,
+            label: r.name,
+            source: "crm" as const,
+            assetClass: r.asset_class,
+            propertyId: r.id,
+          };
+        })
+        .filter(Boolean);
+
+      // 2. Comps in bbox via property join (only those with property coords here;
+      // free-floating comps without a property come through as map-pins instead)
+      const compRes = await pool.query(`
+        SELECT c.id, c.name, c.tenant, c.use_class, p.latitude, p.longitude
+        FROM crm_comps c
+        JOIN crm_properties p ON p.id = c.property_id
+        WHERE p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+          AND p.latitude::float BETWEEN $1 AND $2
+          AND p.longitude::float BETWEEN $3 AND $4
+        LIMIT 200
+      `, [s, n, w, e]);
+
+      const compLabels = compRes.rows
+        .map((r: any) => {
+          const lat = parseFloat(r.latitude);
+          const lng = parseFloat(r.longitude);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+          return {
+            lat, lng,
+            label: r.tenant || r.name,
+            source: "comp" as const,
+            useClass: r.use_class,
+            compId: r.id,
+          };
+        })
+        .filter(Boolean);
+
+      // 3. Google Places — current trading names. Cached aggressively per
+      // ~110m grid square so a typical map pan reuses the same Places call.
+      const cellSize = 0.001;          // ~110m
+      const sCell = Math.floor(s / cellSize) * cellSize;
+      const wCell = Math.floor(w / cellSize) * cellSize;
+      const nCell = Math.ceil(n / cellSize) * cellSize;
+      const eCell = Math.ceil(e / cellSize) * cellSize;
+      const placesLabels: any[] = [];
+
+      if (GOOGLE_API_KEY) {
+        const cellPromises: Promise<any[]>[] = [];
+        for (let lat = sCell; lat < nCell; lat += cellSize) {
+          for (let lng = wCell; lng < eCell; lng += cellSize) {
+            const cellLat = lat + cellSize / 2;
+            const cellLng = lng + cellSize / 2;
+            const key = `places:${cellLat.toFixed(4)},${cellLng.toFixed(4)}`;
+            cellPromises.push(cached(key, async () => {
+              const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${cellLat},${cellLng}&radius=80&key=${GOOGLE_API_KEY}`;
+              const r = await fetch(url);
+              if (!r.ok) return [] as any[];
+              const data = await r.json() as any;
+              return (data.results || [])
+                .filter((p: any) => p?.geometry?.location && p?.name)
+                .filter((p: any) => !(p.types || []).includes("locality"))
+                .map((p: any) => ({
+                  lat: p.geometry.location.lat,
+                  lng: p.geometry.location.lng,
+                  label: p.name,
+                  source: "google" as const,
+                  types: p.types,
+                  placeId: p.place_id,
+                }));
+            }, 24 * 30));
+          }
+        }
+        const settled = await Promise.allSettled(cellPromises);
+        for (const s of settled) {
+          if (s.status === "fulfilled") placesLabels.push(...s.value);
+        }
+      }
+
+      // Dedupe Google results by normalised name+location (Places sometimes
+      // returns the same business under multiple types).
+      const seen = new Set<string>();
+      const dedupedPlaces = placesLabels.filter((p) => {
+        const key = `${(p.label || "").toLowerCase()}|${p.lat.toFixed(5)}|${p.lng.toFixed(5)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      res.json({
+        crm: crmLabels,
+        comps: compLabels,
+        google: dedupedPlaces,
+        sources: { crm: crmLabels.length, comps: compLabels.length, google: dedupedPlaces.length },
+      });
+    } catch (err: any) {
+      console.error("[map-layers/labels] error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to load labels" });
+    }
+  });
+
   console.log("[map-layers] routes registered");
 }
