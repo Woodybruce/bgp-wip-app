@@ -2536,13 +2536,14 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "save_to_image_studio",
-      description: "Save an image to the BGP Image Studio library. Can save: (1) an AI-generated image from a previous generate_image call by providing the imageUrl, (2) a base64-encoded image directly, or (3) a SharePoint image by providing sharepointDriveId + sharepointItemId from a browse_sharepoint_folder result. Use when the user wants to save a generated image, upload an image to the studio, or import SharePoint images (e.g. team headshots, property photos) into the library.",
+      description: "Save an image to the BGP Image Studio library. Can save: (1) an AI-generated image from a previous generate_image call by providing the imageUrl, (2) a base64-encoded image directly, (3) a SharePoint image by providing sharepointDriveId + sharepointItemId, or (4) any public image URL via fetchUrl (e.g. company logos from Clearbit: 'https://logo.clearbit.com/pret.com'). Use when the user wants to save a generated image, upload an image, import SharePoint headshots/photos, or bulk-import company logos.",
       parameters: {
         type: "object",
         properties: {
           imageUrl: { type: "string", description: "URL of a previously generated image (from generate_image action), e.g. '/api/chat-media/xxx.png'" },
           base64Data: { type: "string", description: "Base64-encoded image data (alternative to imageUrl)" },
           mimeType: { type: "string", description: "MIME type if using base64Data, e.g. 'image/png', 'image/jpeg'" },
+          fetchUrl: { type: "string", description: "A public HTTPS image URL to fetch and save, e.g. 'https://logo.clearbit.com/savills.com' for company logos. Must be https://. Do not use for SharePoint — use sharepointDriveId+itemId for that." },
           sharepointDriveId: { type: "string", description: "SharePoint driveId of the image file (from a browse_sharepoint_folder result). Use together with sharepointItemId to import a SharePoint image directly." },
           sharepointItemId: { type: "string", description: "SharePoint itemId of the image file (from a browse_sharepoint_folder result). Use together with sharepointDriveId." },
           fileName: { type: "string", description: "Name for the image file, e.g. 'Oxford Street Retail View'" },
@@ -4708,13 +4709,41 @@ async function executeCrmToolRaw(
       const imageUrl = fnArgs.imageUrl as string;
       const base64Data = fnArgs.base64Data as string;
       const mimeType = String(fnArgs.mimeType || "image/png");
+      const fetchUrl = fnArgs.fetchUrl as string;
       const spDriveId = fnArgs.sharepointDriveId as string;
       const spItemId = fnArgs.sharepointItemId as string;
 
       let imageBuffer: Buffer;
       let ext = "png";
 
-      if (spDriveId && spItemId) {
+      if (fetchUrl) {
+        if (!fetchUrl.startsWith("https://")) {
+          return { data: { success: false, error: "fetchUrl must be an https:// URL." } };
+        }
+        try {
+          const u = new URL(fetchUrl);
+          const host = u.hostname.toLowerCase();
+          if (host === "localhost" || host === "127.0.0.1" || /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || host === "169.254.169.254") {
+            return { data: { success: false, error: "fetchUrl points to a private/internal address — not allowed." } };
+          }
+        } catch {
+          return { data: { success: false, error: "fetchUrl is not a valid URL." } };
+        }
+        const fetchRes = await fetch(fetchUrl, { redirect: "follow", signal: AbortSignal.timeout(15000) });
+        if (!fetchRes.ok) {
+          return { data: { success: false, error: `Fetch failed: HTTP ${fetchRes.status} from ${fetchUrl}` } };
+        }
+        const ctype = fetchRes.headers.get("content-type") || "";
+        if (!ctype.startsWith("image/")) {
+          return { data: { success: false, error: `URL did not return an image (content-type: ${ctype}). Check the URL is correct.` } };
+        }
+        const bytes = await fetchRes.arrayBuffer();
+        if (bytes.byteLength > 10 * 1024 * 1024) {
+          return { data: { success: false, error: "Image is larger than 10MB — too large to import." } };
+        }
+        imageBuffer = Buffer.from(bytes);
+        ext = ctype.includes("jpeg") || ctype.includes("jpg") ? "jpg" : ctype.includes("png") ? "png" : ctype.includes("webp") ? "webp" : ctype.includes("svg") ? "svg" : "jpg";
+      } else if (spDriveId && spItemId) {
         const token = await getValidMsToken(req);
         if (!token) {
           return { data: { success: false, error: "Not signed into Microsoft — cannot fetch SharePoint image." } };
