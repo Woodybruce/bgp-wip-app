@@ -270,7 +270,7 @@ export async function renderWhyBuyGamma(args: {
       "clean grid, muted palette (slate, warm grey, white). No emoji. No hype. " +
       "Confidential investment committee material.",
     cardOptions: { dimensions: "a4" },
-    imageOptions: { source: "aiGenerated", imageModel: "imagen-3-pro" },
+    imageOptions: { source: "aiGenerated" },
   });
 
   const done = await gammaWaitFor(generationId, { timeoutMs: 6 * 60 * 1000 });

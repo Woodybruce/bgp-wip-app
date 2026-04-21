@@ -61,7 +61,13 @@ export async function gammaGenerate(args: GammaGenerateArgs): Promise<{ generati
   if (args.themeName) body.themeName = args.themeName;
   if (args.textMode) body.textMode = args.textMode;
   if (args.additionalInstructions) body.additionalInstructions = args.additionalInstructions;
-  if (args.imageOptions) body.imageOptions = args.imageOptions;
+  if (args.imageOptions) {
+    // Gamma's Generate API rejects `imageModel` inside imageOptions ("property
+    // imageModel should not exist"). Strip it defensively so old callers don't
+    // break until they're updated.
+    const { imageModel: _drop, ...safe } = args.imageOptions as any;
+    if (Object.keys(safe).length) body.imageOptions = safe;
+  }
   if (args.cardOptions) body.cardOptions = args.cardOptions;
 
   const res = await fetch(`${GAMMA_BASE}/generations`, {
