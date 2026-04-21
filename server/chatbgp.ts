@@ -2563,6 +2563,26 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
+      name: "capture_pdf_pages",
+      description: "Render a PDF brochure into images and save each page to the Image Studio. Use when the user says 'take images of this brochure', 'capture the pages', 'save brochure images', or similar. Requires the SharePoint driveId and itemId from a browse_sharepoint_folder result. Works silently in the background — no viewer needed.",
+      parameters: {
+        type: "object",
+        properties: {
+          driveId: { type: "string", description: "SharePoint driveId of the PDF file" },
+          itemId: { type: "string", description: "SharePoint itemId of the PDF file" },
+          fileName: { type: "string", description: "Display name for the saved images, e.g. '18-22 Haymarket Brochure'" },
+          propertyName: { type: "string", description: "Property name for tagging, e.g. '18-22 Haymarket'" },
+          category: { type: "string", description: "Image Studio category. Default: Marketing", enum: ["Exteriors", "Interiors", "Floor Plans", "Properties", "Areas", "Marketing", "Brands", "Generated", "Other"] },
+          maxPages: { type: "number", description: "Maximum pages to capture (default: all). Use 1 for cover-only." },
+        },
+        required: ["driveId", "itemId", "fileName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "ingest_url",
       description: "Fetch and read content from an external URL — works with PDFs, research reports, and web pages. Use when the user shares a link and wants you to read, summarise, or add it to the news feed. Can also save the content as a news article.",
       parameters: {
@@ -4651,6 +4671,28 @@ async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] Image generation error:", err?.message);
       return { data: { success: false, error: `Image generation failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "capture_pdf_pages") {
+    try {
+      const { driveId, itemId, fileName, propertyName, category = "Marketing", maxPages } = fnArgs as any;
+      if (!driveId || !itemId) return { data: { success: false, error: "driveId and itemId are required — browse SharePoint first to find the PDF." } };
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const sessionCookie = req.headers.cookie || "";
+      const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol;
+      const host = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string);
+      const baseUrl = `${protocol}://${host}`;
+      const captureRes = await fetch(`${baseUrl}/api/image-studio/capture-pdf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: sessionCookie },
+        body: JSON.stringify({ driveId, itemId, fileName, propertyName, category, maxPages }),
+      });
+      const data = await captureRes.json() as any;
+      if (!captureRes.ok) return { data: { success: false, error: data.error || `Capture failed: ${captureRes.status}` } };
+      return { data: { success: true, pages: data.pages, message: `Captured ${data.pages} page${data.pages === 1 ? "" : "s"} from "${fileName}" and saved to Image Studio under ${category}.` } };
+    } catch (err: any) {
+      return { data: { success: false, error: `PDF capture error: ${err?.message}` } };
     }
   }
 

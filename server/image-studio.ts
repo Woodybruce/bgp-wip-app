@@ -1304,6 +1304,75 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
+  // Render a PDF (local path or SharePoint driveId+itemId) to images and save each page
+  app.post("/api/image-studio/capture-pdf", requireAuth, async (req: Request, res: Response) => {
+    const { driveId, itemId, localPath: localFilePath, fileName, category = "Marketing", propertyName, tags = [], maxPages } = req.body;
+    if (!driveId && !localFilePath) return res.status(400).json({ error: "driveId+itemId or localPath required" });
+    try {
+      let pdfBuffer: Buffer;
+      if (driveId && itemId) {
+        const { getValidMsToken } = await import("./microsoft");
+        const token = await getValidMsToken(req as any);
+        if (!token) return res.status(401).json({ error: "Not signed into Microsoft" });
+        const upstream = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/content`, {
+          headers: { Authorization: `Bearer ${token}` }, redirect: "follow",
+        });
+        if (!upstream.ok) return res.status(upstream.status).json({ error: `SharePoint fetch failed: ${upstream.status}` });
+        pdfBuffer = Buffer.from(await upstream.arrayBuffer());
+      } else {
+        if (!fs.existsSync(localFilePath)) return res.status(404).json({ error: "File not found" });
+        pdfBuffer = fs.readFileSync(localFilePath);
+      }
+
+      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs") as any;
+      const { createCanvas } = await import("canvas") as any;
+
+      class NodeCanvasFactory {
+        create(w: number, h: number) { const cv = createCanvas(w, h); return { canvas: cv, context: cv.getContext("2d") }; }
+        reset(ca: any, w: number, h: number) { ca.canvas.width = w; ca.canvas.height = h; }
+        destroy(ca: any) { ca.canvas.width = 0; ca.canvas.height = 0; }
+      }
+
+      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer), disableFontFace: true });
+      const pdfDoc = await loadingTask.promise;
+      const numPages = Math.min(pdfDoc.numPages, maxPages || 999);
+      const baseName = (fileName || "brochure").replace(/\.pdf$/i, "");
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const saved: { id: string; page: number; fileName: string }[] = [];
+      const pageTags = [...(Array.isArray(tags) ? tags : []), "brochure", "pdf-capture", ...(propertyName ? [propertyName] : [])];
+
+      for (let p = 1; p <= numPages; p++) {
+        const page = await pdfDoc.getPage(p);
+        const viewport = page.getViewport({ scale: 1.8 });
+        const factory = new NodeCanvasFactory();
+        const { canvas, context } = factory.create(viewport.width, viewport.height);
+        await page.render({ canvasContext: context, viewport, canvasFactory: factory }).promise;
+        const jpegBuf: Buffer = (canvas as any).toBuffer("image/jpeg", { quality: 0.88 });
+        const pageLabel = numPages > 1 ? ` p${p}` : "";
+        const imgFileName = `${baseName}${pageLabel}.jpg`;
+        const { thumbnail, width, height } = await generateThumbnail(jpegBuf);
+        const diskName = `${crypto.randomUUID()}.jpg`;
+        const diskPath = path.join(IMAGE_DIR, diskName);
+        await persistImage(diskPath, jpegBuf, "image/jpeg", imgFileName);
+        const [inserted] = await db.insert(imageStudioImages).values({
+          fileName: imgFileName, category, tags: pageTags,
+          description: propertyName ? `Page ${p} of ${baseName} — ${propertyName}` : `Page ${p} of ${baseName}`,
+          source: "chatbgp", area: null, address: null, brandName: null, propertyType: null,
+          mimeType: "image/jpeg", fileSize: jpegBuf.length, width, height,
+          thumbnailData: thumbnail, localPath: diskPath, uploadedBy: userId,
+        }).returning();
+        saved.push({ id: inserted.id, page: p, fileName: imgFileName });
+        factory.destroy({ canvas, context });
+      }
+
+      console.log(`[image-studio] capture-pdf: saved ${saved.length} pages from "${fileName}"`);
+      res.json({ success: true, pages: saved.length, images: saved });
+    } catch (e: any) {
+      console.error("[image-studio] capture-pdf error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // Save base64 image — used by PDF viewer page-capture and ChatBGP fetchUrl/SharePoint import
   app.post("/api/image-studio", requireAuth, async (req: Request, res: Response) => {
     try {
