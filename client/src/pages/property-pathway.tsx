@@ -70,6 +70,22 @@ export default function PropertyPathway() {
     } catch { return null; }
   })();
 
+  const prefilledFromUrl = (() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return {
+        address: params.get("address") || "",
+        postcode: params.get("postcode") || "",
+      };
+    } catch { return { address: "", postcode: "" }; }
+  })();
+
+  useEffect(() => {
+    if (prefilledFromUrl.address && !newAddress) setNewAddress(prefilledFromUrl.address);
+    if (prefilledFromUrl.postcode && !newPostcode) setNewPostcode(prefilledFromUrl.postcode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     loadRuns();
   }, []);

@@ -59,6 +59,7 @@ import {
   UserCheck,
   Crown,
   Link2,
+  Sparkles,
 } from "lucide-react";
 
 interface SearchResult {
@@ -1851,6 +1852,38 @@ function PropertyPanel({
         ) : data ? (
           (
             <div className="p-3 space-y-4">
+              {/* Pathway linkage strip — "gold" data if a run exists, or a prompt to launch one */}
+              {(data as any)._pathwayRun ? (
+                <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 rounded-lg p-2.5 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">Pathway intelligence</p>
+                      <p className="text-[10px] text-emerald-700 dark:text-emerald-400 truncate">
+                        Verified · {new Date((data as any)._pathwayRun.updatedAt).toLocaleDateString("en-GB")}
+                      </p>
+                    </div>
+                  </div>
+                  <a href={`/property-pathway?runId=${(data as any)._pathwayRun.id}`} className="text-[10px] text-emerald-700 dark:text-emerald-400 hover:underline shrink-0">Open full →</a>
+                </div>
+              ) : (address || postcode) ? (
+                <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 rounded-lg p-2.5 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-indigo-800 dark:text-indigo-300">No Pathway run yet</p>
+                      <p className="text-[10px] text-indigo-700 dark:text-indigo-400">Run for verified titles, planning, KYC &amp; business plan</p>
+                    </div>
+                  </div>
+                  <a
+                    href={`/property-pathway?address=${encodeURIComponent(address || "")}&postcode=${encodeURIComponent(postcode || "")}`}
+                    className="text-[10px] bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded shrink-0"
+                  >
+                    Run Pathway
+                  </a>
+                </div>
+              ) : null}
+
               {summaryStats && (
                 <div className="grid grid-cols-3 gap-2">
                   <div className="text-center p-2 bg-indigo-50 rounded border border-indigo-100">
@@ -2999,7 +3032,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
-  const [selectedPostcode, setSelectedPostcode] = useState("");
+  const [postcode, setSelectedPostcode] = useState("");
   const [propertyData, setPropertyData] = useState<PropertyData | null>(null);
   const [loadingData, setLoadingData] = useState(false);
   const [currentArea, setCurrentArea] = useState("Belgravia");
@@ -3559,12 +3592,15 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       if (address) url += `&address=${encodeURIComponent(address)}`;
       const authHeaders = { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` };
 
-      // Run the legacy property-lookup (for VOA, planning, prices, EPC etc.)
-      // AND the proper UPRN-first Land Registry resolver in parallel. The
-      // resolver correctly tags each title with "uprn" / "street" / "postcode"
-      // so the Ownership panel can show accurate matches instead of every
-      // title in the postcode.
-      const [propResp, resolveResp] = await Promise.all([
+      // Three-way parallel fetch. Priority order:
+      //   1. Stored Pathway run (gold — curated titles with verified proprietors)
+      //   2. Live Land Registry resolve (UPRN-first match, fallback to street/postcode)
+      //   3. Legacy property-lookup (still provides VOA, planning, prices, EPC)
+      // If a Pathway run exists, its title data overrides the raw resolve output.
+      const pathwayParams = new URLSearchParams();
+      if (address) pathwayParams.set("address", address);
+      if (postcode) pathwayParams.set("postcode", postcode);
+      const [propResp, resolveResp, pathwayResp] = await Promise.all([
         fetch(url, { headers: authHeaders }),
         address
           ? fetch("/api/land-registry/resolve", {
@@ -3574,13 +3610,52 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               body: JSON.stringify({ address, postcode }),
             }).catch(() => null)
           : Promise.resolve(null),
+        (address || postcode)
+          ? fetch(`/api/property-pathway/latest?${pathwayParams.toString()}`, { headers: authHeaders }).catch(() => null)
+          : Promise.resolve(null),
       ]);
 
       if (propResp.ok) {
         const data = await propResp.json();
-        // Overlay the tagged titles onto propertyDataCoUk so downstream rendering
-        // and counts use the filtered/tagged data.
-        if (resolveResp && resolveResp.ok) {
+
+        // Layer 1: stored Pathway run (highest fidelity — already AI-verified).
+        let pathwayRun: any = null;
+        if (pathwayResp && pathwayResp.ok) {
+          try { pathwayRun = await pathwayResp.json(); } catch {}
+        }
+        if (pathwayRun) {
+          data._pathwayRun = pathwayRun;
+          const stage4 = pathwayRun?.stageResults?.stage4 || {};
+          const stage1 = pathwayRun?.stageResults?.stage1 || {};
+          const pathwayTitles: any[] = [];
+          for (const t of (stage4.titleRegisters || [])) {
+            pathwayTitles.push({
+              title_number: t.titleNumber,
+              proprietor_name_1: t.proprietorName || stage1?.initialOwnership?.proprietorName,
+              property: t.address ? [t.address] : undefined,
+              _match: "uprn" as const,
+              _source: "pathway" as const,
+            });
+          }
+          if (stage1?.initialOwnership?.titleNumber && pathwayTitles.length === 0) {
+            pathwayTitles.push({
+              title_number: stage1.initialOwnership.titleNumber,
+              proprietor_name_1: stage1.initialOwnership.proprietorName,
+              property: stage1.initialOwnership.address ? [stage1.initialOwnership.address] : undefined,
+              _match: "uprn" as const,
+              _source: "pathway" as const,
+            });
+          }
+          if (pathwayTitles.length > 0) {
+            if (!data.propertyDataCoUk) data.propertyDataCoUk = {};
+            data.propertyDataCoUk["freeholds"] = { data: pathwayTitles };
+            data.propertyDataCoUk["leaseholds"] = data.propertyDataCoUk["leaseholds"] || { data: [] };
+          }
+        }
+
+        // Layer 2: live Land Registry resolve (only used if Pathway data didn't
+        // populate titles). Tags each row with uprn/street/postcode match quality.
+        if (!pathwayRun && resolveResp && resolveResp.ok) {
           try {
             const r = await resolveResp.json();
             const taggedFreeholds = [
@@ -3615,13 +3690,13 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   };
 
   const loadAdditionalLayer = async (layer: string) => {
-    if (!selectedPostcode || !propertyData) return;
+    if (!postcode || !propertyData) return;
     const newLayers = [...activePdLayers, layer];
     setActivePdLayers(newLayers);
     setLoadingLayer(layer);
     try {
       const extendedLayers = layer === "market" || layer === "area" || layer === "residential" ? "core,extended" : "core";
-      const url = `/api/property-lookup?postcode=${encodeURIComponent(selectedPostcode)}&layers=${extendedLayers}&propertyDataLayers=${newLayers.join(",")}`;
+      const url = `/api/property-lookup?postcode=${encodeURIComponent(postcode)}&layers=${extendedLayers}&propertyDataLayers=${newLayers.join(",")}`;
       const resp = await fetch(url, {
         headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
       });
@@ -3989,15 +4064,15 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           </label>
         </div>
 
-        {(selectedPostcode || loadingData) && (
+        {(postcode || loadingData) && (
           <PropertyPanel
-            postcode={selectedPostcode}
+            postcode={postcode}
             data={propertyData}
             loading={loadingData}
             activeLayers={activePdLayers}
             onLoadLayer={loadAdditionalLayer}
             loadingLayer={loadingLayer}
-            address={currentArea !== selectedPostcode ? currentArea : undefined}
+            address={currentArea !== postcode ? currentArea : undefined}
             onSearchSaved={(saved) => setRecentSearches(prev => [saved, ...prev.filter(s => s.id !== saved.id)])}
             onClose={() => {
               setSelectedPostcode("");
