@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import "leaflet.markercluster/dist/MarkerCluster.css";
+import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+import "leaflet.markercluster";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -3085,9 +3088,9 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [showDeals, setShowDeals] = useState(false);
   const [showComps, setShowComps] = useState(false);
   const [showLeaseEvents, setShowLeaseEvents] = useState(false);
-  const dealsLayerRef = useRef<L.LayerGroup | null>(null);
-  const compsLayerRef = useRef<L.LayerGroup | null>(null);
-  const leaseEventsLayerRef = useRef<L.LayerGroup | null>(null);
+  const dealsLayerRef = useRef<any>(null);
+  const compsLayerRef = useRef<any>(null);
+  const leaseEventsLayerRef = useRef<any>(null);
   const [mapPins, setMapPins] = useState<{ deals: any[]; comps: any[]; leaseEvents: any[] } | null>(null);
   const baseLayerRef = useRef<{ map: L.LayerGroup; sat: L.LayerGroup } | null>(null);
   const [baseLayer, setBaseLayer] = useState<"map" | "sat">("map");
@@ -3174,12 +3177,13 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     osUprnLayerRef.current = L.layerGroup({ pane: "osUprnPane" }).addTo(map);
     osSiteLayerRef.current = L.layerGroup({ pane: "osSitePane" }).addTo(map);
 
-    // CRM data layer groups (Deals / Comps / Lease Events)
+    // CRM data layer groups — clustered (Deals / Comps / Lease Events)
     const crmPane = map.createPane("crmPane");
     crmPane.style.zIndex = "460";
-    dealsLayerRef.current = L.layerGroup();
-    compsLayerRef.current = L.layerGroup();
-    leaseEventsLayerRef.current = L.layerGroup();
+    const clusterOpts = { maxClusterRadius: 40, disableClusteringAtZoom: 17 };
+    dealsLayerRef.current = (L as any).markerClusterGroup(clusterOpts);
+    compsLayerRef.current = (L as any).markerClusterGroup(clusterOpts);
+    leaseEventsLayerRef.current = (L as any).markerClusterGroup(clusterOpts);
 
     // Track zoom for OS layer visibility
     map.on("zoomend", () => {
@@ -3302,24 +3306,25 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     if (!map.hasLayer(layer)) layer.addTo(map);
     for (const d of mapPins.deals) {
       const marker = L.circleMarker([d.lat, d.lng], {
-        radius: 7, fillColor: "#f59e0b", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9, pane: "crmPane",
+        radius: 7, fillColor: "#f59e0b", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9,
       });
       const statusColor = d.status === "Complete" || d.status === "Completed" ? "#10b981"
         : d.status === "Live" || d.status === "Active" ? "#3b82f6"
         : d.status === "SOLs" ? "#8b5cf6"
         : "#f59e0b";
       marker.bindPopup(`
-        <div style="min-width:180px;font-family:sans-serif;font-size:12px">
+        <div style="min-width:190px;font-family:sans-serif;font-size:12px">
           <p style="font-weight:700;margin:0 0 4px">${d.label}</p>
           ${d.addressLabel && d.addressLabel !== d.label ? `<p style="color:#666;margin:0 0 4px;font-size:11px">${d.addressLabel}</p>` : ""}
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0">
             ${d.dealType ? `<span style="background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-size:10px">${d.dealType}</span>` : ""}
             ${d.status ? `<span style="background:${statusColor}22;color:${statusColor};padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">${d.status}</span>` : ""}
           </div>
-          ${d.pricing ? `<p style="margin:4px 0 0;font-size:11px;color:#333">£${Number(d.pricing).toLocaleString()}</p>` : ""}
-          ${d.areaSqft ? `<p style="margin:2px 0 0;font-size:11px;color:#666">${Number(d.areaSqft).toLocaleString()} sq ft</p>` : ""}
+          ${d.pricing ? `<p style="margin:2px 0;font-size:11px;color:#333">£${Number(d.pricing).toLocaleString()}</p>` : ""}
+          ${d.areaSqft ? `<p style="margin:2px 0;font-size:11px;color:#666">${Number(d.areaSqft).toLocaleString()} sq ft</p>` : ""}
+          <a href="/deals" style="display:inline-block;margin-top:8px;font-size:11px;color:#6366f1;text-decoration:none;border:1px solid #e0e7ff;padding:3px 8px;border-radius:4px">Open Deals →</a>
         </div>
-      `, { maxWidth: 240 });
+      `, { maxWidth: 260 });
       layer.addLayer(marker);
     }
   }, [showDeals, mapPins]);
@@ -3337,21 +3342,22 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     if (!map.hasLayer(layer)) layer.addTo(map);
     for (const c of mapPins.comps) {
       const marker = L.circleMarker([c.lat, c.lng], {
-        radius: 6, fillColor: "#8b5cf6", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.85, pane: "crmPane",
+        radius: 6, fillColor: "#8b5cf6", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.85,
       });
       marker.bindPopup(`
-        <div style="min-width:180px;font-family:sans-serif;font-size:12px">
+        <div style="min-width:190px;font-family:sans-serif;font-size:12px">
           <p style="font-weight:700;margin:0 0 4px">${c.label || c.postcode || "Comp"}</p>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0">
             ${c.compType ? `<span style="background:#ede9fe;color:#5b21b6;padding:2px 6px;border-radius:4px;font-size:10px">${c.compType}</span>` : ""}
             ${c.dealType ? `<span style="background:#f3f4f6;color:#374151;padding:2px 6px;border-radius:4px;font-size:10px">${c.dealType}</span>` : ""}
           </div>
-          ${c.tenant ? `<p style="margin:4px 0 0;font-size:11px;color:#333"><strong>Tenant:</strong> ${c.tenant}</p>` : ""}
-          ${c.headlineRent ? `<p style="margin:2px 0 0;font-size:11px;color:#333"><strong>Rent:</strong> ${c.headlineRent}</p>` : ""}
-          ${c.areaSqft ? `<p style="margin:2px 0 0;font-size:11px;color:#666">${c.areaSqft} sq ft</p>` : ""}
-          ${c.completionDate ? `<p style="margin:2px 0 0;font-size:10px;color:#999">${c.completionDate}</p>` : ""}
+          ${c.tenant ? `<p style="margin:2px 0;font-size:11px;color:#333"><strong>Tenant:</strong> ${c.tenant}</p>` : ""}
+          ${c.headlineRent ? `<p style="margin:2px 0;font-size:11px;color:#333"><strong>Rent:</strong> ${c.headlineRent}</p>` : ""}
+          ${c.areaSqft ? `<p style="margin:2px 0;font-size:11px;color:#666">${c.areaSqft} sq ft</p>` : ""}
+          ${c.completionDate ? `<p style="margin:2px 0;font-size:10px;color:#999">${c.completionDate}</p>` : ""}
+          <a href="/comps/${c.id}" style="display:inline-block;margin-top:8px;font-size:11px;color:#6366f1;text-decoration:none;border:1px solid #e0e7ff;padding:3px 8px;border-radius:4px">Open Comp →</a>
         </div>
-      `, { maxWidth: 240 });
+      `, { maxWidth: 260 });
       layer.addLayer(marker);
     }
   }, [showComps, mapPins]);
@@ -3373,19 +3379,20 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           ? "#ef4444" : "#ec4899"
         : "#ec4899";
       const marker = L.circleMarker([e.lat, e.lng], {
-        radius: 6, fillColor: urgencyColor, color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9, pane: "crmPane",
+        radius: 6, fillColor: urgencyColor, color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9,
       });
       const dateStr = e.eventDate ? new Date(e.eventDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
       marker.bindPopup(`
-        <div style="min-width:180px;font-family:sans-serif;font-size:12px">
+        <div style="min-width:190px;font-family:sans-serif;font-size:12px">
           <p style="font-weight:700;margin:0 0 4px">${e.eventType || "Lease Event"}</p>
           ${e.label ? `<p style="color:#666;margin:0 0 4px;font-size:11px">${e.label}</p>` : ""}
-          ${e.tenant ? `<p style="margin:2px 0 0;font-size:11px;color:#333"><strong>Tenant:</strong> ${e.tenant}</p>` : ""}
-          ${dateStr ? `<p style="margin:2px 0 0;font-size:11px;color:#333"><strong>Date:</strong> ${dateStr}</p>` : ""}
-          ${e.currentRent ? `<p style="margin:2px 0 0;font-size:11px;color:#333"><strong>Rent:</strong> ${e.currentRent}</p>` : ""}
-          ${e.status ? `<span style="background:#fce7f3;color:#9d174d;padding:2px 6px;border-radius:4px;font-size:10px;margin-top:4px;display:inline-block">${e.status}</span>` : ""}
+          ${e.tenant ? `<p style="margin:2px 0;font-size:11px;color:#333"><strong>Tenant:</strong> ${e.tenant}</p>` : ""}
+          ${dateStr ? `<p style="margin:2px 0;font-size:11px;color:#333"><strong>Date:</strong> ${dateStr}</p>` : ""}
+          ${e.currentRent ? `<p style="margin:2px 0;font-size:11px;color:#333"><strong>Rent:</strong> ${e.currentRent}</p>` : ""}
+          ${e.status ? `<span style="background:#fce7f3;color:#9d174d;padding:2px 6px;border-radius:4px;font-size:10px;display:inline-block;margin-top:2px">${e.status}</span>` : ""}
+          <a href="/lease-events" style="display:inline-block;margin-top:8px;font-size:11px;color:#6366f1;text-decoration:none;border:1px solid #e0e7ff;padding:3px 8px;border-radius:4px">Open Lease Events →</a>
         </div>
-      `, { maxWidth: 240 });
+      `, { maxWidth: 260 });
       layer.addLayer(marker);
     }
   }, [showLeaseEvents, mapPins]);

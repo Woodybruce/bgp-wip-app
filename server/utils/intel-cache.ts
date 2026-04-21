@@ -67,6 +67,18 @@ export async function cached<T>(
   return fresh;
 }
 
+// Read a cached value without triggering a fetch. Returns null on miss.
+export async function getCachedOnly<T>(key: string): Promise<T | null> {
+  try {
+    const hit = await pool.query(
+      `SELECT payload FROM property_intelligence_cache WHERE cache_key = $1 AND expires_at > NOW() LIMIT 1`,
+      [key]
+    );
+    if (hit.rows.length) return hit.rows[0].payload as T;
+  } catch {}
+  return null;
+}
+
 // Manually invalidate a single key (e.g. user requests a fresh pull).
 export async function invalidateIntelCache(keyPrefix: string): Promise<number> {
   try {

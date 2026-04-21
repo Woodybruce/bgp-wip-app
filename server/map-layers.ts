@@ -1,20 +1,25 @@
 // Map layer pins endpoint — returns geocoded markers for Deals, Comps, and
 // Lease Events so the Intelligence Map can render them as toggleable layers.
 //
-// Coords are resolved via crm_properties JOIN first (fast, free), then
-// Google Geocoding API for comps without a linked property (cached 30 days).
+// Fast path: resolves coords from crm_properties JOIN (zero extra API cost).
+// Slow path: geocodes postcode/address via Google — but only returns CACHED
+// geocodes in the response. Un-cached items are geocoded in the background
+// so they appear on the next request. Never blocks the HTTP response.
 
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
-import { cached } from "./utils/intel-cache";
+import { cached, getCachedOnly } from "./utils/intel-cache";
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 
+function geocodeKey(text: string) {
+  return `geocode:${text.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120)}`;
+}
+
 async function geocodeText(text: string): Promise<{ lat: number; lng: number } | null> {
   if (!GOOGLE_API_KEY || !text.trim()) return null;
-  const key = `geocode:${text.toLowerCase().trim().replace(/\s+/g, " ").slice(0, 120)}`;
-  return cached(key, async () => {
+  return cached(geocodeKey(text), async () => {
     const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(text)}&key=${GOOGLE_API_KEY}&region=uk&components=country:GB`;
     const res = await fetch(url);
     if (!res.ok) return null;
@@ -23,6 +28,12 @@ async function geocodeText(text: string): Promise<{ lat: number; lng: number } |
     if (loc?.lat && loc?.lng) return { lat: loc.lat as number, lng: loc.lng as number };
     return null;
   }, 24 * 30);
+}
+
+// Check cache only — never fires Google API. Returns null on miss.
+async function getCachedGeocode(text: string): Promise<{ lat: number; lng: number } | null> {
+  if (!text.trim()) return null;
+  return getCachedOnly<{ lat: number; lng: number }>(geocodeKey(text));
 }
 
 function addrFromJsonb(a: any): string {
@@ -37,10 +48,21 @@ function addrFromJsonb(a: any): string {
   );
 }
 
+// Fire-and-forget background geocoding so next request returns more pins.
+function backgroundGeocode(items: string[]) {
+  if (!GOOGLE_API_KEY) return;
+  setImmediate(async () => {
+    for (const text of items) {
+      try { await geocodeText(text); } catch {}
+    }
+  });
+}
+
 export function registerMapLayerRoutes(app: Express) {
   app.get("/api/map/pins", requireAuth, async (_req: Request, res: Response) => {
     try {
       // ── 1. Deals ─────────────────────────────────────────────────────────
+      // Primary: property JOIN. Fallback: geocode deal name (often an address).
       const dealsRes = await pool.query(`
         SELECT
           d.id, d.name, d.status, d.deal_type, d.pricing, d.total_area_sqft,
@@ -51,24 +73,31 @@ export function registerMapLayerRoutes(app: Express) {
           p.postcode  AS p_postcode
         FROM crm_deals d
         LEFT JOIN crm_properties p ON p.id = d.property_id
-        WHERE p.latitude  IS NOT NULL
-          AND p.longitude IS NOT NULL
-          AND p.latitude  <> ''
-          AND p.longitude <> ''
         ORDER BY d.created_at DESC
         LIMIT 500
       `);
 
-      const deals = dealsRes.rows
-        .map((r: any) => {
-          const lat = parseFloat(r.p_lat);
-          const lng = parseFloat(r.p_lng);
-          if (!isFinite(lat) || !isFinite(lng)) return null;
-          return {
+      const deals: any[] = [];
+      const dealsNeedGeocode: string[] = [];
+
+      for (const r of dealsRes.rows) {
+        let lat: number | null = null;
+        let lng: number | null = null;
+
+        if (r.p_lat && r.p_lng) {
+          lat = parseFloat(r.p_lat);
+          lng = parseFloat(r.p_lng);
+        } else if (r.name) {
+          const geo = await getCachedGeocode(r.name + ", UK");
+          if (geo) { lat = geo.lat; lng = geo.lng; }
+          else dealsNeedGeocode.push(r.name + ", UK");
+        }
+
+        if (lat !== null && lng !== null && isFinite(lat) && isFinite(lng)) {
+          deals.push({
             id: r.id,
-            type: "deal" as const,
-            lat,
-            lng,
+            type: "deal",
+            lat, lng,
             label: r.name,
             status: r.status,
             dealType: r.deal_type,
@@ -76,9 +105,10 @@ export function registerMapLayerRoutes(app: Express) {
             areaSqft: r.total_area_sqft,
             addressLabel: addrFromJsonb(r.p_address) || r.p_postcode || r.name,
             propertyId: r.property_id,
-          };
-        })
-        .filter(Boolean);
+          });
+        }
+      }
+      backgroundGeocode(dealsNeedGeocode.slice(0, 50));
 
       // ── 2. Comps ──────────────────────────────────────────────────────────
       const compsRes = await pool.query(`
@@ -90,34 +120,33 @@ export function registerMapLayerRoutes(app: Express) {
           p.longitude AS p_lng
         FROM crm_comps c
         LEFT JOIN crm_properties p ON p.id = c.property_id
-        WHERE c.postcode IS NOT NULL OR p.latitude IS NOT NULL
         ORDER BY c.created_at DESC
         LIMIT 500
       `);
 
-      const compsSettled = await Promise.allSettled(
-        compsRes.rows.map(async (r: any) => {
-          let lat: number | null = null;
-          let lng: number | null = null;
+      const comps: any[] = [];
+      const compsNeedGeocode: string[] = [];
 
-          if (r.p_lat && r.p_lng) {
-            lat = parseFloat(r.p_lat);
-            lng = parseFloat(r.p_lng);
-          } else if (r.postcode) {
-            const geo = await geocodeText(r.postcode + ", UK");
-            if (geo) { lat = geo.lat; lng = geo.lng; }
-          }
+      for (const r of compsRes.rows) {
+        let lat: number | null = null;
+        let lng: number | null = null;
 
-          if (lat === null || lng === null || !isFinite(lat) || !isFinite(lng)) return null;
+        if (r.p_lat && r.p_lng) {
+          lat = parseFloat(r.p_lat);
+          lng = parseFloat(r.p_lng);
+        } else if (r.postcode) {
+          const geo = await getCachedGeocode(r.postcode + ", UK");
+          if (geo) { lat = geo.lat; lng = geo.lng; }
+          else compsNeedGeocode.push(r.postcode + ", UK");
+        }
 
+        if (lat !== null && lng !== null && isFinite(lat) && isFinite(lng)) {
           const addrObj = r.address as any;
-          const addrStr = addrFromJsonb(addrObj) || r.postcode || r.name || "";
-          return {
+          comps.push({
             id: r.id,
-            type: "comp" as const,
-            lat,
-            lng,
-            label: addrStr,
+            type: "comp",
+            lat, lng,
+            label: addrFromJsonb(addrObj) || r.postcode || r.name || "",
             tenant: r.tenant,
             dealType: r.deal_type,
             compType: r.comp_type,
@@ -125,12 +154,10 @@ export function registerMapLayerRoutes(app: Express) {
             areaSqft: r.area_sqft,
             completionDate: r.completion_date,
             postcode: r.postcode,
-          };
-        })
-      );
-      const comps = compsSettled
-        .filter((s) => s.status === "fulfilled" && s.value !== null)
-        .map((s) => (s as PromiseFulfilledResult<any>).value);
+          });
+        }
+      }
+      backgroundGeocode(compsNeedGeocode.slice(0, 50));
 
       // ── 3. Lease Events ───────────────────────────────────────────────────
       const leaseRes = await pool.query(`
@@ -146,26 +173,27 @@ export function registerMapLayerRoutes(app: Express) {
         LIMIT 500
       `);
 
-      const leaseSettled = await Promise.allSettled(
-        leaseRes.rows.map(async (r: any) => {
-          let lat: number | null = null;
-          let lng: number | null = null;
+      const leaseEvents: any[] = [];
+      const leaseNeedGeocode: string[] = [];
 
-          if (r.p_lat && r.p_lng) {
-            lat = parseFloat(r.p_lat);
-            lng = parseFloat(r.p_lng);
-          } else if (r.address) {
-            const geo = await geocodeText(r.address);
-            if (geo) { lat = geo.lat; lng = geo.lng; }
-          }
+      for (const r of leaseRes.rows) {
+        let lat: number | null = null;
+        let lng: number | null = null;
 
-          if (lat === null || lng === null || !isFinite(lat) || !isFinite(lng)) return null;
+        if (r.p_lat && r.p_lng) {
+          lat = parseFloat(r.p_lat);
+          lng = parseFloat(r.p_lng);
+        } else if (r.address) {
+          const geo = await getCachedGeocode(r.address);
+          if (geo) { lat = geo.lat; lng = geo.lng; }
+          else leaseNeedGeocode.push(r.address);
+        }
 
-          return {
+        if (lat !== null && lng !== null && isFinite(lat) && isFinite(lng)) {
+          leaseEvents.push({
             id: r.id,
-            type: "lease_event" as const,
-            lat,
-            lng,
+            type: "lease_event",
+            lat, lng,
             label: r.address || "",
             tenant: r.tenant,
             eventType: r.event_type,
@@ -174,12 +202,10 @@ export function registerMapLayerRoutes(app: Express) {
             sqft: r.sqft,
             status: r.status,
             assignedTo: r.assigned_to,
-          };
-        })
-      );
-      const leaseEvents = leaseSettled
-        .filter((s) => s.status === "fulfilled" && s.value !== null)
-        .map((s) => (s as PromiseFulfilledResult<any>).value);
+          });
+        }
+      }
+      backgroundGeocode(leaseNeedGeocode.slice(0, 50));
 
       res.json({ deals, comps, leaseEvents });
     } catch (err: any) {
