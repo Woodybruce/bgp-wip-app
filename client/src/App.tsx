@@ -75,6 +75,7 @@ const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandsHub = lazy(() => import("@/pages/brands-hub"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
+const LeaseEvents = lazy(() => import("@/pages/lease-events"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
 const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
 const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
@@ -155,6 +156,7 @@ function Router() {
       <Route path="/leasing-schedule/:propertyId" component={LeasingSchedule} />
       <Route path="/tasks" component={TasksPage} />
       <Route path="/cad-measure" component={CadMeasure} />
+      <Route path="/lease-events" component={LeaseEvents} />
       {/* Property Intelligence Hub — unified investigation hub with 5 tabs.
           Legacy tool routes redirect here so old links keep working. */}
       <Route path="/property-intelligence" component={PropertyIntelligence} />

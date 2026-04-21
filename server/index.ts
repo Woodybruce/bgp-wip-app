@@ -38,6 +38,36 @@ import { pool } from "./db";
     `UPDATE crm_comps SET source_evidence = 'News' WHERE source_evidence = 'News Feed'`,
     `UPDATE crm_comps SET source_evidence = 'Email' WHERE source_evidence IN ('Team Email', 'team email')`,
     `UPDATE crm_comps SET source_evidence = 'File' WHERE source_evidence IN ('SharePoint File', 'sharepoint file')`,
+    `CREATE TABLE IF NOT EXISTS lease_events (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      property_id VARCHAR,
+      address TEXT,
+      tenant TEXT,
+      tenant_company_id VARCHAR,
+      unit_ref TEXT,
+      event_type TEXT NOT NULL,
+      event_date TIMESTAMP,
+      notice_date TIMESTAMP,
+      current_rent TEXT,
+      estimated_erv TEXT,
+      sqft TEXT,
+      source_evidence TEXT,
+      source_url TEXT,
+      source_title TEXT,
+      source_contact_id VARCHAR,
+      contact_id VARCHAR,
+      assigned_to TEXT,
+      status TEXT DEFAULT 'Monitoring',
+      notes TEXT,
+      deal_id VARCHAR,
+      comp_id VARCHAR,
+      created_by TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_lease_events_property ON lease_events(property_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_lease_events_date ON lease_events(event_date)`,
+    `CREATE INDEX IF NOT EXISTS idx_lease_events_status ON lease_events(status)`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS po_number TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP`,
@@ -688,6 +718,14 @@ app.use("/api/branding/assets", express.static(
           }
         }, 60000);
         setTimeout(() => startArchivist(), 300000);
+        setTimeout(async () => {
+          try {
+            const { startLeaseEventMonitoring } = await import("./lease-events");
+            startLeaseEventMonitoring();
+          } catch (e: any) {
+            console.error("[lease-events] Failed to start monitoring:", e.message);
+          }
+        }, 90000);
         // VOA auto-import disabled — was OOM-killing the server. Admin can
         // run POST /api/voa/import manually (or hit GET /api/voa/status?import=1)
         // when the service has enough headroom, ideally from a one-off job.

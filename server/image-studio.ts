@@ -1911,6 +1911,17 @@ export function registerImageStudioRoutes(app: Express) {
     try {
       const { base64Data, mimeType = "image/jpeg", fileName, category = "Marketing", description, area, address, brandName, propertyType, tags = [] } = req.body;
       if (!base64Data || !fileName) return res.status(400).json({ error: "base64Data and fileName required" });
+
+      // Skip if an image with this fileName already exists in this category — prevents duplicate saves
+      // when ChatBGP or any upstream caller re-invokes the tool.
+      const dupe = await pool.query(
+        `SELECT id FROM image_studio_images WHERE file_name = $1 AND category = $2 LIMIT 1`,
+        [fileName, category]
+      );
+      if (dupe.rows.length > 0) {
+        return res.json({ success: true, imageId: dupe.rows[0].id, fileName, category, deduped: true });
+      }
+
       const buffer = Buffer.from(base64Data, "base64");
       if (buffer.length > 20 * 1024 * 1024) return res.status(400).json({ error: "Image too large (max 20MB)" });
       const ext = mimeType.includes("png") ? ".png" : mimeType.includes("webp") ? ".webp" : ".jpg";
@@ -1940,6 +1951,29 @@ export function registerImageStudioRoutes(app: Express) {
       res.json({ success: true, imageId: inserted.id, fileName, category });
     } catch (e: any) {
       console.error("[image-studio] save error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Dedup Brands category — keeps the earliest row per (file_name, category) and removes the rest.
+  // Fixes the ~500 duplicate logos left behind when ChatBGP re-invoked save_to_image_studio per logo.
+  app.post("/api/image-studio/dedup-brands", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const result = await pool.query(`
+        WITH dupes AS (
+          SELECT id, file_name,
+            ROW_NUMBER() OVER (PARTITION BY LOWER(file_name), category ORDER BY created_at ASC, id ASC) AS rn
+          FROM image_studio_images
+          WHERE category = 'Brands'
+        )
+        DELETE FROM image_studio_images
+        WHERE id IN (SELECT id FROM dupes WHERE rn > 1)
+        RETURNING id
+      `);
+      console.log(`[image-studio] dedup-brands removed ${result.rowCount} duplicate rows`);
+      res.json({ success: true, removed: result.rowCount });
+    } catch (e: any) {
+      console.error("[image-studio] dedup-brands error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });

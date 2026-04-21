@@ -2931,6 +2931,33 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
+      name: "log_lease_event",
+      description: "Log an upcoming lease event (rent review, break, expiry, renewal option) to the Lease Events tracker. Use when the user mentions an upcoming lease event in conversation, or when you extract one from an email/brochure/WhatsApp. Lease advisory team uses this as their BD pipeline. Always set sourceEvidence to match where the info came from.",
+      parameters: {
+        type: "object",
+        properties: {
+          tenant: { type: "string", description: "Tenant company name" },
+          address: { type: "string", description: "Property address" },
+          unitRef: { type: "string", description: "Unit reference, e.g. 'Unit 2A' or floor number" },
+          eventType: { type: "string", enum: ["Rent Review", "Break Option", "Lease Expiry", "Renewal Option", "Service Charge", "Other"], description: "Type of lease event" },
+          eventDate: { type: "string", description: "Event date as ISO date string (YYYY-MM-DD)" },
+          noticeDate: { type: "string", description: "Notice date as ISO (for break options)" },
+          currentRent: { type: "string", description: "Current rent, e.g. '£125,000 pa'" },
+          estimatedErv: { type: "string", description: "Estimated rental value if known" },
+          sqft: { type: "string", description: "Unit size" },
+          sourceEvidence: { type: "string", enum: ["Email", "WhatsApp", "File", "Brochure", "News", "SharePoint", "Dropbox", "Manual", "ChatBGP", "BGP Direct"], description: "Where this information came from" },
+          sourceUrl: { type: "string", description: "Link back to the source (email URL, SharePoint link, etc.)" },
+          sourceTitle: { type: "string", description: "Short title for the source, e.g. 'Pete's email — 14 Apr'" },
+          notes: { type: "string", description: "Any context from the source" },
+        },
+        required: ["tenant", "eventType"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "query_wip",
       description: "Query the WIP (Work In Progress) pipeline data. Use when the user asks about pipeline value, deal counts, team performance, overdue deals, or wants a summary of current deals. Can filter by team, status, or deal type.",
       parameters: {
@@ -5236,6 +5263,35 @@ async function executeCrmToolRaw(
       return { data: { success: true, source: "TfL API", postcode, searchRadius: radius, stationCount: stations.length, stations } };
     } catch (err: any) {
       return { data: { error: `TfL API error: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "log_lease_event") {
+    try {
+      const { tenant, address, unitRef, eventType, eventDate, noticeDate, currentRent, estimatedErv, sqft, sourceEvidence, sourceUrl, sourceTitle, notes } = fnArgs as any;
+      if (!tenant || !eventType) return { data: { success: false, error: "tenant and eventType are required" } };
+      const userId = req.session?.userId || (req as any).tokenUserId || "chatbgp";
+      const { leaseEvents } = await import("@shared/schema");
+      const [row] = await db.insert(leaseEvents).values({
+        tenant,
+        address: address || null,
+        unitRef: unitRef || null,
+        eventType,
+        eventDate: eventDate ? new Date(eventDate) : null,
+        noticeDate: noticeDate ? new Date(noticeDate) : null,
+        currentRent: currentRent || null,
+        estimatedErv: estimatedErv || null,
+        sqft: sqft || null,
+        sourceEvidence: sourceEvidence || "ChatBGP",
+        sourceUrl: sourceUrl || null,
+        sourceTitle: sourceTitle || null,
+        notes: notes || null,
+        status: "Monitoring",
+        createdBy: userId,
+      }).returning();
+      return { data: { success: true, id: row.id, message: `Logged ${eventType} for ${tenant}${eventDate ? ` on ${new Date(eventDate).toLocaleDateString("en-GB")}` : ""}. Visible on the Lease Events board.` } };
+    } catch (err: any) {
+      return { data: { success: false, error: err?.message } };
     }
   }
 

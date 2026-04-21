@@ -963,6 +963,41 @@ export const insertCrmLeadSchema = createInsertSchema(crmLeads).omit({ id: true,
 export type InsertCrmLead = z.infer<typeof insertCrmLeadSchema>;
 export type CrmLead = typeof crmLeads.$inferSelect;
 
+// Lease events — forward-looking calendar of rent reviews, breaks, expiries, renewal options.
+// Fed by comps, deals, and AI-extracted signals from brochures / emails / WhatsApp. Lease advisory
+// team uses this for business-development chase-ups. Shares source-tracking columns with comps/leads.
+export const leaseEvents = pgTable("lease_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id"),
+  address: text("address"),
+  tenant: text("tenant"),
+  tenantCompanyId: varchar("tenant_company_id"),
+  unitRef: text("unit_ref"),
+  eventType: text("event_type").notNull(),
+  eventDate: timestamp("event_date"),
+  noticeDate: timestamp("notice_date"),
+  currentRent: text("current_rent"),
+  estimatedErv: text("estimated_erv"),
+  sqft: text("sqft"),
+  sourceEvidence: text("source_evidence"),
+  sourceUrl: text("source_url"),
+  sourceTitle: text("source_title"),
+  sourceContactId: varchar("source_contact_id"),
+  contactId: varchar("contact_id"),
+  assignedTo: text("assigned_to"),
+  status: text("status").default("Monitoring"),
+  notes: text("notes"),
+  dealId: varchar("deal_id"),
+  compId: varchar("comp_id"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertLeaseEventSchema = createInsertSchema(leaseEvents).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertLeaseEvent = z.infer<typeof insertLeaseEventSchema>;
+export type LeaseEvent = typeof leaseEvents.$inferSelect;
+
 export const crmPropertyAgents = pgTable("crm_property_agents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id").notNull(),

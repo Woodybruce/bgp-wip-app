@@ -85,6 +85,7 @@ const coreNavBase = [
   { title: "People Hub", url: "/contacts", icon: Users },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
   { title: "Comps", url: "/comps", icon: Scale },
+  { title: "Lease Events", url: "/lease-events", icon: Calendar },
 ];
 
 const aiNav = [
