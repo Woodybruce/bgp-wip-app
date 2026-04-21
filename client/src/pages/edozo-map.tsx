@@ -1918,14 +1918,15 @@ function PropertyPanel({
               {(() => {
                 const freeholdsRaw = data.propertyDataCoUk?.["freeholds"]?.data || [];
                 const leaseholdsRaw = data.propertyDataCoUk?.["leaseholds"]?.data || [];
-                // Hide rows with no identifying info — postcode-wide PropertyData
-                // responses return title numbers with no owner or address. They're
-                // noise; show them only when they actually have something useful.
-                const hasUsefulInfo = (t: any) =>
-                  t.proprietor_name_1 || t.proprietor_address || (Array.isArray(t.property) ? t.property.length > 0 : !!t.property) || t._match === "uprn" || t._match === "street";
-                const freeholds = freeholdsRaw.filter(hasUsefulInfo);
-                const leaseholds = leaseholdsRaw.filter(hasUsefulInfo);
-                const hiddenEmpty = (freeholdsRaw.length + leaseholdsRaw.length) - (freeholds.length + leaseholds.length);
+                // Show every title PropertyData returned, even if proprietor data
+                // is missing — the title number + tenure + address is still useful
+                // signal. Only drop completely empty rows (no title, no address).
+                const hasAnyInfo = (t: any) =>
+                  t.title_number || t.title || t.proprietor_name_1 || t.proprietor_address ||
+                  (Array.isArray(t.property) ? t.property.length > 0 : !!t.property);
+                const freeholds = freeholdsRaw.filter(hasAnyInfo);
+                const leaseholds = leaseholdsRaw.filter(hasAnyInfo);
+                const hiddenEmpty = 0;
                 const allTitles = [
                   ...freeholds.map((f: any) => ({ ...f, _tenure: "Freehold" })),
                   ...leaseholds.map((l: any) => ({ ...l, _tenure: "Leasehold" })),
@@ -1936,10 +1937,9 @@ function PropertyPanel({
                   return (
                     <DataSection title={`Ownership`} icon={Building2} color="text-indigo-600">
                       <p className="text-xs text-gray-600 mb-1.5">
-                        No verified ownership data yet for this address.
-                        {hiddenEmpty > 0 && <span className="text-gray-400"> {hiddenEmpty} title number{hiddenEmpty === 1 ? "" : "s"} registered at this postcode but without owner details.</span>}
+                        PropertyData returned no Land Registry titles for this postcode.
                       </p>
-                      <p className="text-[10px] text-gray-500">Run a Pathway investigation (top of panel) to purchase title registers and get verified proprietor + mortgage info.</p>
+                      <p className="text-[10px] text-gray-500">Run a Pathway investigation (top of panel) for a deeper search including title register purchases and KYC.</p>
                     </DataSection>
                   );
                 }
@@ -2915,11 +2915,17 @@ function fitTextToBuilding(label: string, houseNum: string, isVacant: boolean, p
     }
   }
 
-  const cw = charWidthAtSize(6);
-  const maxChars = Math.floor(padW / cw);
-  if (maxChars >= 2) {
-    const truncated = displayText.substring(0, maxChars);
-    return { text: truncated, fontSize: 6 };
+  // If the full tenant name + number won't fit cleanly at any size, try just
+  // the house number on its own (still cleaner than a truncated name that
+  // ends mid-word). If even that doesn't fit, drop the label entirely —
+  // that's how Goad plans look: empty box rather than scruffy truncation.
+  if (houseNum && houseNum !== displayText) {
+    for (const size of [11, 10, 9, 8, 7]) {
+      const result = tryFit(size, houseNum.toUpperCase());
+      if (result) {
+        return { text: result, fontSize: size };
+      }
+    }
   }
 
   return null;
@@ -3235,7 +3241,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         });
 
         const bbox = polygonBBoxPixels(b.latLngs, mapRef.current);
-        const fitted = fitTextToBuilding(b.label, b.houseNum, b.isVacant, bbox.w, bbox.h);
+        // Below zoom 16 buildings are too small to read — skip labels entirely
+        // instead of squeezing scruffy truncated text into tiny boxes.
+        const zoom = mapRef.current.getZoom();
+        const fitted = zoom < 16 ? null : fitTextToBuilding(b.label, b.houseNum, b.isVacant, bbox.w, bbox.h);
 
         if (fitted) {
           const cssClass = b.isVacant && !b.label
