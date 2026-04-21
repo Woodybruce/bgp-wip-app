@@ -1911,13 +1911,33 @@ function PropertyPanel({
               )}
 
               {(() => {
-                const freeholds = data.propertyDataCoUk?.["freeholds"]?.data || [];
-                const leaseholds = data.propertyDataCoUk?.["leaseholds"]?.data || [];
+                const freeholdsRaw = data.propertyDataCoUk?.["freeholds"]?.data || [];
+                const leaseholdsRaw = data.propertyDataCoUk?.["leaseholds"]?.data || [];
+                // Hide rows with no identifying info — postcode-wide PropertyData
+                // responses return title numbers with no owner or address. They're
+                // noise; show them only when they actually have something useful.
+                const hasUsefulInfo = (t: any) =>
+                  t.proprietor_name_1 || t.proprietor_address || (Array.isArray(t.property) ? t.property.length > 0 : !!t.property) || t._match === "uprn" || t._match === "street";
+                const freeholds = freeholdsRaw.filter(hasUsefulInfo);
+                const leaseholds = leaseholdsRaw.filter(hasUsefulInfo);
+                const hiddenEmpty = (freeholdsRaw.length + leaseholdsRaw.length) - (freeholds.length + leaseholds.length);
                 const allTitles = [
                   ...freeholds.map((f: any) => ({ ...f, _tenure: "Freehold" })),
                   ...leaseholds.map((l: any) => ({ ...l, _tenure: "Leasehold" })),
                 ];
-                if (allTitles.length === 0) return null;
+                if (allTitles.length === 0) {
+                  // Only show the empty-state if we actually queried (postcode present)
+                  if (!postcode) return null;
+                  return (
+                    <DataSection title={`Ownership`} icon={Building2} color="text-indigo-600">
+                      <p className="text-xs text-gray-600 mb-1.5">
+                        No verified ownership data yet for this address.
+                        {hiddenEmpty > 0 && <span className="text-gray-400"> {hiddenEmpty} title number{hiddenEmpty === 1 ? "" : "s"} registered at this postcode but without owner details.</span>}
+                      </p>
+                      <p className="text-[10px] text-gray-500">Run a Pathway investigation (top of panel) to purchase title registers and get verified proprietor + mortgage info.</p>
+                    </DataSection>
+                  );
+                }
                 const sorted = address
                   ? [...allTitles].sort((a, b) => {
                       const aM = titleMatchesAddress(a, address) ? 1 : 0;
@@ -1931,8 +1951,8 @@ function PropertyPanel({
                     {address && allTitles.length > 0 && (
                       <div className="text-[10px] text-gray-500 mb-1.5">
                         {matchCount > 0
-                          ? <><span className="font-medium text-indigo-600">{matchCount}</span> matching "{address}" · {allTitles.length - matchCount} other titles at this postcode</>
-                          : <>No exact matches for "{address}" — showing all {allTitles.length} titles at this postcode</>
+                          ? <><span className="font-medium text-indigo-600">{matchCount}</span> matching "{address}"{hiddenEmpty > 0 && <> · {hiddenEmpty} empty rows hidden</>}</>
+                          : <>No exact matches for "{address}" — showing all {allTitles.length} titles at this postcode{hiddenEmpty > 0 && <> · {hiddenEmpty} empty rows hidden</>}</>
                         }
                       </div>
                     )}
