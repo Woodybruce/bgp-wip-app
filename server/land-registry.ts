@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { requireAuth } from "./auth";
 import Anthropic from "@anthropic-ai/sdk";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { landRegistrySearches } from "@shared/schema";
 import { desc, eq, sql } from "drizzle-orm";
 import pLimit from "p-limit";
@@ -743,25 +743,48 @@ export function registerLandRegistryRoutes(app: Express) {
         if (tail && tail !== resolvedAddress) cleanedAddressCandidates.unshift(tail);
       }
 
-      // Step 2: ask PropertyData to resolve the address (plus postcode) to
-      // the exact UPRN(s). Try the cleaned candidate first — falls back to the
-      // raw input if that misses.
+      // Step 2a: ask OS AddressBase (via OS Places API) to resolve the full
+      // address to a UPRN. OS is HMLR's own address source and has
+      // dramatically better coverage of central-London commercial buildings
+      // than PropertyData's matcher — so we try it first.
       let matchedUprns: string[] = [];
-      for (const candidate of cleanedAddressCandidates) {
-        if (!candidate || !cleanPc) continue;
-        try {
-          const umUrl = `https://api.propertydata.co.uk/address-match-uprn?key=${PD_KEY}&address=${encodeURIComponent(candidate)}&postcode=${encodeURIComponent(cleanPc)}`;
-          const umResp = await fetch(umUrl, { signal: AbortSignal.timeout(8000) });
-          if (umResp.ok) {
-            const umData = await umResp.json() as any;
-            const d = umData?.data ?? umData;
-            if (Array.isArray(d?.uprns)) matchedUprns = d.uprns.map(String);
-            else if (d?.uprn) matchedUprns = [String(d.uprn)];
-            else if (Array.isArray(d)) matchedUprns = d.map((x: any) => String(x?.uprn || x)).filter(Boolean);
-            if (matchedUprns.length > 0) break;
+      try {
+        const { osPlacesFind } = await import("./os-data");
+        const queries = [
+          [resolvedAddress, resolvedPostcode].filter(Boolean).join(", "),
+          ...cleanedAddressCandidates.map(c => [c, resolvedPostcode].filter(Boolean).join(", ")),
+        ].filter((q, i, arr) => q && arr.indexOf(q) === i);
+        for (const q of queries) {
+          const os = await osPlacesFind(q, 5);
+          const uprns = os.map(r => r.uprn).filter(Boolean) as string[];
+          if (uprns.length) {
+            matchedUprns = uprns.slice(0, 5);
+            break;
           }
-        } catch (e: any) {
-          console.warn("[land-registry/resolve] address-match-uprn failed:", e?.message);
+        }
+      } catch (e: any) {
+        console.warn("[land-registry/resolve] OS Places lookup failed:", e?.message);
+      }
+
+      // Step 2b: fall back to PropertyData's address-match-uprn if OS didn't
+      // return a UPRN. Try the cleaned candidate first — raw input as backup.
+      if (matchedUprns.length === 0) {
+        for (const candidate of cleanedAddressCandidates) {
+          if (!candidate || !cleanPc) continue;
+          try {
+            const umUrl = `https://api.propertydata.co.uk/address-match-uprn?key=${PD_KEY}&address=${encodeURIComponent(candidate)}&postcode=${encodeURIComponent(cleanPc)}`;
+            const umResp = await fetch(umUrl, { signal: AbortSignal.timeout(8000) });
+            if (umResp.ok) {
+              const umData = await umResp.json() as any;
+              const d = umData?.data ?? umData;
+              if (Array.isArray(d?.uprns)) matchedUprns = d.uprns.map(String);
+              else if (d?.uprn) matchedUprns = [String(d.uprn)];
+              else if (Array.isArray(d)) matchedUprns = d.map((x: any) => String(x?.uprn || x)).filter(Boolean);
+              if (matchedUprns.length > 0) break;
+            }
+          } catch (e: any) {
+            console.warn("[land-registry/resolve] address-match-uprn failed:", e?.message);
+          }
         }
       }
 
