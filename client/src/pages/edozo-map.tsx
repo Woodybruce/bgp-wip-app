@@ -3193,6 +3193,10 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const compsLayerRef = useRef<any>(null);
   const leaseEventsLayerRef = useRef<any>(null);
   const [mapPins, setMapPins] = useState<{ deals: any[]; comps: any[]; leaseEvents: any[] } | null>(null);
+
+  // Land Registry title boundaries — always-on red-line layer
+  const titleBoundaryLayerRef = useRef<L.LayerGroup | null>(null);
+  const titleBoundaryBboxRef = useRef<string>("");
   const baseLayerRef = useRef<{ map: L.LayerGroup; sat: L.LayerGroup } | null>(null);
   const [baseLayer, setBaseLayer] = useState<"map" | "sat">("map");
   const [exportingPlan, setExportingPlan] = useState(false);
@@ -3278,6 +3282,12 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     osBuildingLayerRef.current = L.layerGroup({ pane: "osPane" }).addTo(map);
     osUprnLayerRef.current = L.layerGroup({ pane: "osUprnPane" }).addTo(map);
     osSiteLayerRef.current = L.layerGroup({ pane: "osSitePane" }).addTo(map);
+
+    // Land Registry title boundaries — always-on red-line layer. Sits above
+    // buildings so proprietor polygons are the most visible feature.
+    const titlePane = map.createPane("titlePane");
+    titlePane.style.zIndex = "455";
+    titleBoundaryLayerRef.current = L.layerGroup({ pane: "titlePane" }).addTo(map);
 
     // CRM data layer groups — clustered (Deals / Comps / Lease Events)
     const crmPane = map.createPane("crmPane");
@@ -3578,6 +3588,70 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       layer.addLayer(marker);
     }
   }, [showLeaseEvents, mapPins]);
+
+  // Land Registry title boundaries — always-on red-line layer.
+  // Fetches the polygons for the visible postcode district on each map move
+  // (cached 30d server-side), draws them as crisp red outlines. No toggle —
+  // these are the core of a property plan.
+  useEffect(() => {
+    if (!mapRef.current || !titleBoundaryLayerRef.current) return;
+    const map = mapRef.current;
+    const layer = titleBoundaryLayerRef.current;
+
+    const refresh = async () => {
+      const bounds = map.getBounds();
+      const bbox = `${bounds.getSouth().toFixed(4)},${bounds.getWest().toFixed(4)},${bounds.getNorth().toFixed(4)},${bounds.getEast().toFixed(4)}`;
+      if (bbox === titleBoundaryBboxRef.current) return;
+      titleBoundaryBboxRef.current = bbox;
+      try {
+        const res = await fetch(`/api/map/title-boundaries?bbox=${bbox}`, {
+          credentials: "include",
+          headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        layer.clearLayers();
+
+        const drawTitle = (t: any, tenure: "F" | "L") => {
+          const geo = t.polygons;
+          if (!geo) return;
+          const style = {
+            color: tenure === "F" ? "#dc2626" : "#2563eb",
+            weight: 1.4,
+            fillOpacity: 0,
+            opacity: 0.85,
+            dashArray: tenure === "F" ? undefined : "4,3",
+            pane: "titlePane",
+          };
+          try {
+            const geojson = L.geoJSON(geo, { style } as any);
+            geojson.bindTooltip(
+              `<div style="font-family:sans-serif;font-size:11px;max-width:240px">
+                 <strong>${t.proprietor || "Title " + (t.titleNumber || "")}</strong><br/>
+                 <span style="color:#666">${tenure === "F" ? "Freehold" : "Leasehold"}${t.titleNumber ? " · " + t.titleNumber : ""}</span>
+                 ${t.proprietorCategory ? `<br/><span style="color:#888;font-size:10px">${t.proprietorCategory}</span>` : ""}
+                 ${t.pricePaid ? `<br/><span style="color:#888;font-size:10px">£${Number(t.pricePaid).toLocaleString()}${t.dateOfPurchase ? " · " + t.dateOfPurchase : ""}</span>` : ""}
+               </div>`,
+              { sticky: true, direction: "top", opacity: 0.95 }
+            );
+            layer.addLayer(geojson);
+          } catch (err) {
+            // Malformed polygon — skip silently
+          }
+        };
+
+        for (const t of data.freeholds || []) drawTitle(t, "F");
+        for (const t of data.leaseholds || []) drawTitle(t, "L");
+      } catch (err) {
+        // Non-fatal — the layer just won't have new polygons
+      }
+    };
+
+    refresh();
+    const onMoveEnd = () => { setTimeout(refresh, 400); };
+    map.on("moveend", onMoveEnd);
+    return () => { map.off("moveend", onMoveEnd); };
+  }, []);
 
   // Render search history pins on map
   useEffect(() => {

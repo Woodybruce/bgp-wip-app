@@ -438,5 +438,78 @@ export function registerMapLayerRoutes(app: Express) {
     }
   });
 
+  // ─── Land Registry title boundaries — always-on red-line layer ───────────
+  // Returns freehold + leasehold title polygons for the postcode district
+  // containing the bbox centre. These are the "red lines" Goad users expect
+  // to see on every plan. PropertyData /freeholds returns a polygons field
+  // (GeoJSON MultiPolygon) for each title. Cached 30 days per postcode.
+  app.get("/api/map/title-boundaries", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const bbox = String(req.query.bbox || "").trim();
+      if (!bbox) return res.status(400).json({ error: "bbox required" });
+      const [s, w, n, e] = bbox.split(",").map(parseFloat);
+      if (![s, w, n, e].every(Number.isFinite)) return res.status(400).json({ error: "invalid bbox" });
+
+      const PD_KEY = process.env.PROPERTYDATA_API_KEY;
+      if (!PD_KEY) return res.json({ freeholds: [], leaseholds: [], postcode: null });
+
+      // Reverse-geocode bbox centre to postcode
+      const centreLat = (s + n) / 2;
+      const centreLng = (w + e) / 2;
+      const rgKey = `rgfull:${centreLat.toFixed(3)},${centreLng.toFixed(3)}`;
+      const postcode = await cached(rgKey, async () => {
+        if (!GOOGLE_API_KEY) return null;
+        const url = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${centreLat},${centreLng}&key=${GOOGLE_API_KEY}&result_type=postal_code`;
+        const r = await fetch(url);
+        if (!r.ok) return null;
+        const d = await r.json() as any;
+        const pc = d.results?.[0]?.address_components?.find((c: any) => c.types?.includes("postal_code"))?.long_name;
+        return pc ? pc.replace(/\s+/g, "").toUpperCase() : null;
+      }, 24 * 30);
+
+      if (!postcode) return res.json({ freeholds: [], leaseholds: [], postcode: null });
+
+      // Fetch freeholds + leaseholds for this postcode — cached 30 days
+      const [freeholds, leaseholds] = await Promise.all([
+        cached(`pd-fh:${postcode}`, async () => {
+          const url = `https://api.propertydata.co.uk/freeholds?key=${PD_KEY}&postcode=${encodeURIComponent(postcode)}`;
+          const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+          if (!r.ok) return null;
+          return await r.json();
+        }, 24 * 30),
+        cached(`pd-lh:${postcode}`, async () => {
+          const url = `https://api.propertydata.co.uk/leaseholds?key=${PD_KEY}&postcode=${encodeURIComponent(postcode)}`;
+          const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+          if (!r.ok) return null;
+          return await r.json();
+        }, 24 * 30),
+      ]);
+
+      const extract = (payload: any): any[] => {
+        const rows = payload?.data || payload?.freeholds?.data || payload?.leaseholds?.data || [];
+        return (Array.isArray(rows) ? rows : [])
+          .filter((r: any) => r.polygons || r.polygon || r.geometry)
+          .map((r: any) => ({
+            titleNumber: r.title_number || r.title,
+            proprietor: r.proprietor_name_1 || null,
+            proprietorCategory: r.proprietor_category || null,
+            pricePaid: r.price_paid || null,
+            dateOfPurchase: r.date_proprietor_added || null,
+            property: r.property || null,
+            polygons: r.polygons || r.polygon || r.geometry,
+          }));
+      };
+
+      res.json({
+        postcode,
+        freeholds: extract(freeholds),
+        leaseholds: extract(leaseholds),
+      });
+    } catch (err: any) {
+      console.error("[map-layers/title-boundaries] error:", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
   console.log("[map-layers] routes registered");
 }
