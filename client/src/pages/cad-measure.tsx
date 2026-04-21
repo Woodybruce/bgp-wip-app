@@ -161,6 +161,24 @@ export default function CadMeasurePage() {
   const [unitLabel, setUnitLabel] = useState("mm");
   const [mouseWorldPos, setMouseWorldPos] = useState<{ x: number; y: number } | null>(null);
   const [entityCount, setEntityCount] = useState(0);
+  const [shiftHeld, setShiftHeld] = useState(false);
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.key === "Shift") setShiftHeld(true); };
+    const up = (e: KeyboardEvent) => { if (e.key === "Shift") setShiftHeld(false); };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
+
+  const orthoSnap = useCallback((from: { x: number; y: number }, to: { x: number; y: number }) => {
+    const dx = Math.abs(to.x - from.x);
+    const dy = Math.abs(to.y - from.y);
+    return dx > dy ? { x: to.x, y: from.y } : { x: from.x, y: to.y };
+  }, []);
 
   // PDF state
   const [pdfImage, setPdfImage] = useState<HTMLCanvasElement | null>(null);
@@ -318,7 +336,9 @@ export default function CadMeasurePage() {
         else ctx.lineTo(p.sx, p.sy);
       }
       if (mouseWorldPos) {
-        const mp = toScreen(mouseWorldPos.x, mouseWorldPos.y);
+        const last = currentPoints[currentPoints.length - 1];
+        const mw = shiftHeld && last ? orthoSnap(last, mouseWorldPos) : mouseWorldPos;
+        const mp = toScreen(mw.x, mw.y);
         ctx.lineTo(mp.sx, mp.sy);
       }
       ctx.stroke();
@@ -341,7 +361,7 @@ export default function CadMeasurePage() {
         10, canvas.height - 26
       );
     }
-  }, [dxfData, pdfImage, pdfNumPages, isPdfMode, scale, offset, measurements, currentPoints, mouseWorldPos, activeTool, effectiveUnitScale, effectiveUnitLabel]);
+  }, [dxfData, pdfImage, pdfNumPages, isPdfMode, scale, offset, measurements, currentPoints, mouseWorldPos, activeTool, effectiveUnitScale, effectiveUnitLabel, shiftHeld, orthoSnap]);
 
   useEffect(() => { drawCanvas(); }, [drawCanvas]);
 
@@ -472,7 +492,9 @@ export default function CadMeasurePage() {
 
   const handleCanvasClick = (e: React.MouseEvent) => {
     if (!dxfData || activeTool === "pan") return;
-    const world = screenToWorld(e.clientX, e.clientY);
+    const raw = screenToWorld(e.clientX, e.clientY);
+    const prev = currentPoints[currentPoints.length - 1];
+    const world = e.shiftKey && prev ? orthoSnap(prev, raw) : raw;
 
     if (activeTool === "measure") {
       if (currentPoints.length === 0) {
@@ -806,6 +828,9 @@ export default function CadMeasurePage() {
                 )}
                 {activeTool === "calibrate" && (
                   <p>{currentPoints.length === 0 ? "Click one end of a known dimension" : "Click the other end"}</p>
+                )}
+                {(activeTool === "measure" || activeTool === "area" || activeTool === "calibrate") && currentPoints.length > 0 && (
+                  <p className="text-[10px] text-muted-foreground mt-1">Hold <kbd className="px-1 border rounded bg-muted">⇧ Shift</kbd> to lock horizontal/vertical</p>
                 )}
               </div>
             )}
