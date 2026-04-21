@@ -955,7 +955,7 @@ You are an active operational agent with full CRM read/write access, internet se
 
 ## HONESTY — never fabricate outcomes
 - Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
-- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, or \`export_to_excel\`. A made-up URL will 404 for the user.
+- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_designed_deck\`, or \`compile_brochure_from_pdfs\`. A made-up URL will 404 for the user.
 - If the user asks you to modify something and no suitable tool exists, SAY SO plainly ("I can't edit the PDF renderer from here — that needs a code change"). Offer the closest alternative rather than inventing fake fixes.
 - For template edits, always call \`update_document_template\` with the existing templateId (from the docTemplates list). Don't just describe what you would change — actually change it. After the tool returns, report what the tool confirmed.
 - For template deletions, call \`delete_document_template\` — never just say "removed it".
@@ -967,7 +967,10 @@ You are an active operational agent with full CRM read/write access, internet se
 - **KYC**: run_kyc_check for Companies House + sanctions + financial strength. deep_investigate for full D&B-style intelligence combining all sources.
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
-- **Documents**: generate_pdf, generate_word, generate_pptx, export_to_excel. All include BGP branding. Proactively export tables to Excel.
+- **Documents (plain text)**: generate_pdf (TEXT ONLY — no imagery, no design), generate_word, generate_pptx, export_to_excel. Use these ONLY for internal text reports.
+- **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use **generate_designed_deck** (Gamma — full visual design with imagery). NEVER use generate_pdf for these. Don't apologise afterwards about the PDF being "just text" — pick the right tool upfront.
+- **Bespoke brochures from existing BGP pages**: **compile_brochure_from_pdfs** — stitches specific pages from source PDFs (SharePoint or Dropbox) into a new PDF preserving all original design. Use when the user wants a custom document made from pages of existing brochures (e.g. "pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard"). Ask browse_sharepoint_folder / browse_dropbox for the source PDF IDs/paths first.
+- **Bulk file-move**: **copy_dropbox_to_sharepoint** — copies raw PDF binaries from Dropbox into a SharePoint folder. Use when the user says "pull these into a SharePoint folder". Do NOT claim SharePoint "glitched" if upload fails — report the exact error.
 - **Maps**: navigate_to "property-map" with lat/lng/zoom. Tell users to use built-in Radius/Distance buttons.
 - **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London Leasing, etc.
 - **deep_investigate**: If report.property.ambiguous === true, present options as numbered list and ask user to pick. Never guess.
@@ -2064,7 +2067,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "generate_pdf",
-      description: "Generate a professional PDF document from HTML content and save it as a downloadable file. Use this when the user asks for a PDF, report, or printable document. The HTML content will be converted to a clean, branded PDF with BGP header and page numbers. Returns a download link.",
+      description: "Generate a PLAIN-TEXT PDF report (no imagery, no visual design — headings, paragraphs, bullets only). Use ONLY for internal text summaries like meeting notes or data digests. DO NOT use for brochures, pitch decks, client-facing documents, placemaking materials, or anything the user describes as 'great-looking', 'designed', 'brochure', 'deck', 'pitch', or 'playbook' — for those use `generate_designed_deck` (Gamma, full visual design) or `compile_brochure_from_pdfs` (stitch real pages from existing BGP brochures).",
       parameters: {
         type: "object",
         properties: {
@@ -2787,6 +2790,85 @@ export async function getAvailableTools(): Promise<{
           maxPages: { type: "number", description: "Maximum pages to capture (default: all). Use 1 for cover-only." },
         },
         required: ["driveId", "itemId", "fileName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "generate_designed_deck",
+      description: "Generate a properly designed, visually polished deck, brochure, pitch document, or playbook using Gamma. Full visual design with photography, typography, and layout — NOT a text-only PDF. Use this whenever the user asks for a brochure, deck, pitch, presentation, playbook, placemaking document, or any client-facing visual output. Returns both a PDF and a PPTX. This is the ONLY tool for making good-looking client documents from scratch.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Document title (also used for the filename)." },
+          inputText: { type: "string", description: "The full content to build the deck from — Gamma turns this into a designed document. Write 500-3000 words of structured content with headings and bullet points. Be specific and substantive — Gamma uses this verbatim to design the pages." },
+          format: { type: "string", enum: ["presentation", "document", "social"], description: "'presentation' = slide deck (use for pitches/decks), 'document' = long-form brochure (use for playbooks/reports), 'social' = square social post. Default: 'document'." },
+          numCards: { type: "number", description: "Target number of pages/slides (default: let Gamma decide)." },
+          themeName: { type: "string", description: "Gamma theme name for visual style (optional — Gamma picks a good default)." },
+          exportAs: { type: "string", enum: ["pdf", "pptx"], description: "Output format. Default 'pdf'. Use 'pptx' if the user wants to edit in PowerPoint." },
+          additionalInstructions: { type: "string", description: "Style guidance for Gamma, e.g. 'Use a minimal design with lots of imagery. Tone: property investment, British, professional.'" },
+        },
+        required: ["title", "inputText"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "compile_brochure_from_pdfs",
+      description: "Stitch specific pages from existing PDF brochures into a single new PDF, preserving all original design, imagery, and typography. Use when the user wants a bespoke brochure made from real BGP brochure pages (e.g. 'take pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard'). The output is a properly designed document because the pages ARE properly designed — you're just assembling them. Source PDFs must be accessible via SharePoint or Dropbox.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Title for the new combined PDF (used for the filename)." },
+          sources: {
+            type: "array",
+            description: "Ordered list of source PDF slices. Each item contributes its specified pages to the final output, in the order given.",
+            items: {
+              type: "object",
+              properties: {
+                source: { type: "string", enum: ["sharepoint", "dropbox"], description: "Where the source PDF lives." },
+                sharepointDriveId: { type: "string", description: "SharePoint driveId (required if source=sharepoint)" },
+                sharepointItemId: { type: "string", description: "SharePoint itemId (required if source=sharepoint)" },
+                dropboxPath: { type: "string", description: "Dropbox file path or ID (required if source=dropbox)" },
+                pages: { type: "array", items: { type: "number" }, description: "1-indexed page numbers to include (e.g. [3,4,5,6,7,8,9,10,11,12]). Use ranges if needed." },
+                label: { type: "string", description: "Optional human label for this source (for logging/debug)." },
+              },
+              required: ["source", "pages"],
+            },
+          },
+        },
+        required: ["title", "sources"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "copy_dropbox_to_sharepoint",
+      description: "Copy one or more files from Dropbox into a SharePoint folder, preserving the binary file (not just text). Use when the user asks to 'pull files into a SharePoint folder', 'file these to SharePoint', or 'move these PDFs to a shared folder'. Creates the destination folder if it doesn't exist.",
+      parameters: {
+        type: "object",
+        properties: {
+          files: {
+            type: "array",
+            description: "List of Dropbox files to copy.",
+            items: {
+              type: "object",
+              properties: {
+                dropboxPath: { type: "string", description: "Dropbox file path (e.g. '/Brixton/Target Tenants/Prospectus/Brixton Master Plan.pdf')" },
+                renameTo: { type: "string", description: "Optional: rename the file on upload. Defaults to original filename." },
+              },
+              required: ["dropboxPath"],
+            },
+          },
+          destinationFolderPath: { type: "string", description: "SharePoint folder path (e.g. 'Investment/Islington Square/Placemaking References'). Folder is created if missing." },
+        },
+        required: ["files", "destinationFolderPath"],
       },
     },
   });
@@ -5374,6 +5456,39 @@ async function executeCrmToolRaw(
     } catch (pdfErr: any) {
       console.error("[chatbgp] PDF generation error:", pdfErr?.message);
       return { data: { error: `Failed to generate PDF: ${pdfErr?.message || "Unknown error"}` } };
+    }
+  }
+
+  if (fnName === "generate_designed_deck") {
+    try {
+      const { generateDesignedDeck } = await import("./chatbgp-design-tools");
+      const result = await generateDesignedDeck(fnArgs);
+      return { data: result };
+    } catch (err: any) {
+      console.error("[chatbgp] generate_designed_deck error:", err?.message);
+      return { data: { error: `Gamma deck generation failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "compile_brochure_from_pdfs") {
+    try {
+      const { compileBrochureFromPdfs } = await import("./chatbgp-design-tools");
+      const result = await compileBrochureFromPdfs(fnArgs, req);
+      return { data: result };
+    } catch (err: any) {
+      console.error("[chatbgp] compile_brochure_from_pdfs error:", err?.message);
+      return { data: { error: `Brochure compilation failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "copy_dropbox_to_sharepoint") {
+    try {
+      const { copyDropboxToSharepoint } = await import("./chatbgp-design-tools");
+      const result = await copyDropboxToSharepoint(fnArgs, req);
+      return { data: result };
+    } catch (err: any) {
+      console.error("[chatbgp] copy_dropbox_to_sharepoint error:", err?.message);
+      return { data: { error: `Dropbox→SharePoint copy failed: ${err?.message}` } };
     }
   }
 
