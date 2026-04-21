@@ -2637,77 +2637,79 @@ export async function getAvailableTools(): Promise<{
     },
   });
 
-  tools.push({
-    type: "function",
-    function: {
-      name: "edit_source_file",
-      description: "Edit or create a project source file. Use when the user asks to change the app — add features, fix bugs, change UI, modify backend logic. The change is applied immediately and the app restarts. All changes are logged for rollback. IMPORTANT: Read the file first before editing to understand the existing code.",
-      parameters: {
-        type: "object",
-        properties: {
-          filePath: { type: "string", description: "File path relative to project root, e.g. 'server/routes.ts'" },
-          action: { type: "string", enum: ["replace", "insert", "create", "append"], description: "replace: find and replace text. insert: insert text at a line number. create: create a new file. append: add text to end of file." },
-          searchText: { type: "string", description: "For 'replace' action: the exact text to find and replace. Must match the file content exactly." },
-          replaceText: { type: "string", description: "For 'replace' action: the new text to replace searchText with. For 'create'/'append': the full content to write." },
-          insertAtLine: { type: "number", description: "For 'insert' action: line number to insert before" },
-          insertText: { type: "string", description: "For 'insert' action: text to insert" },
-          content: { type: "string", description: "For 'create' action: full file content" },
-          description: { type: "string", description: "Brief description of what this change does, for the audit log" },
+  if (process.env.CHATBGP_ALLOW_CODE_EDITS === "true") {
+    tools.push({
+      type: "function",
+      function: {
+        name: "edit_source_file",
+        description: "Edit or create a project source file. Use when the user asks to change the app — add features, fix bugs, change UI, modify backend logic. The change is applied immediately and the app restarts. All changes are logged for rollback. IMPORTANT: Read the file first before editing to understand the existing code.",
+        parameters: {
+          type: "object",
+          properties: {
+            filePath: { type: "string", description: "File path relative to project root, e.g. 'server/routes.ts'" },
+            action: { type: "string", enum: ["replace", "insert", "create", "append"], description: "replace: find and replace text. insert: insert text at a line number. create: create a new file. append: add text to end of file." },
+            searchText: { type: "string", description: "For 'replace' action: the exact text to find and replace. Must match the file content exactly." },
+            replaceText: { type: "string", description: "For 'replace' action: the new text to replace searchText with. For 'create'/'append': the full content to write." },
+            insertAtLine: { type: "number", description: "For 'insert' action: line number to insert before" },
+            insertText: { type: "string", description: "For 'insert' action: text to insert" },
+            content: { type: "string", description: "For 'create' action: full file content" },
+            description: { type: "string", description: "Brief description of what this change does, for the audit log" },
+          },
+          required: ["filePath", "action", "description"],
         },
-        required: ["filePath", "action", "description"],
       },
-    },
-  });
+    });
 
-  tools.push({
-    type: "function",
-    function: {
-      name: "run_shell_command",
-      description: "Execute a shell command on the server. Use for database migrations (ALTER TABLE), installing packages (npm install), checking logs, or running scripts. Dangerous commands (rm -rf, git push --force, DROP DATABASE) are blocked. Output is captured and logged.",
-      parameters: {
-        type: "object",
-        properties: {
-          command: { type: "string", description: "The shell command to run. e.g. 'npm install lodash', 'psql $DATABASE_URL -c \"ALTER TABLE crm_contacts ADD COLUMN linkedin TEXT\"'" },
-          description: { type: "string", description: "Brief description of what this command does, for the audit log" },
+    tools.push({
+      type: "function",
+      function: {
+        name: "run_shell_command",
+        description: "Execute a shell command on the server. Use for database migrations (ALTER TABLE), installing packages (npm install), checking logs, or running scripts. Dangerous commands (rm -rf, git push --force, DROP DATABASE) are blocked. Output is captured and logged.",
+        parameters: {
+          type: "object",
+          properties: {
+            command: { type: "string", description: "The shell command to run. e.g. 'npm install lodash', 'psql $DATABASE_URL -c \"ALTER TABLE crm_contacts ADD COLUMN linkedin TEXT\"'" },
+            description: { type: "string", description: "Brief description of what this command does, for the audit log" },
+          },
+          required: ["command", "description"],
         },
-        required: ["command", "description"],
       },
-    },
-  });
+    });
 
-  tools.push({
-    type: "function",
-    function: {
-      name: "add_database_column",
-      description: "Add a new column to an existing database table. A safe, targeted tool for extending the CRM schema. The column will automatically appear in search results and API responses. Use when the user says 'add a field for X' or 'I need to track Y on deals/contacts/properties'.",
-      parameters: {
-        type: "object",
-        properties: {
-          tableName: { type: "string", enum: ["crm_deals", "crm_contacts", "crm_companies", "crm_properties", "investment_tracker", "available_units", "requirements", "crm_comps", "investment_comps", "crm_leads", "diary_entries"], description: "Database table to add the column to" },
-          columnName: { type: "string", description: "Column name in snake_case, e.g. 'linkedin_url', 'floor_area', 'aml_status'" },
-          columnType: { type: "string", enum: ["TEXT", "INTEGER", "REAL", "BOOLEAN", "TIMESTAMP", "JSONB"], description: "Data type for the column" },
-          defaultValue: { type: "string", description: "Optional default value. Use 'NULL' for nullable, or a specific value like 'true', '0', 'active'" },
-          description: { type: "string", description: "What this field is for — will be logged in the audit trail" },
+    tools.push({
+      type: "function",
+      function: {
+        name: "add_database_column",
+        description: "Add a new column to an existing database table. A safe, targeted tool for extending the CRM schema. The column will automatically appear in search results and API responses. Use when the user says 'add a field for X' or 'I need to track Y on deals/contacts/properties'.",
+        parameters: {
+          type: "object",
+          properties: {
+            tableName: { type: "string", enum: ["crm_deals", "crm_contacts", "crm_companies", "crm_properties", "investment_tracker", "available_units", "requirements", "crm_comps", "investment_comps", "crm_leads", "diary_entries"], description: "Database table to add the column to" },
+            columnName: { type: "string", description: "Column name in snake_case, e.g. 'linkedin_url', 'floor_area', 'aml_status'" },
+            columnType: { type: "string", enum: ["TEXT", "INTEGER", "REAL", "BOOLEAN", "TIMESTAMP", "JSONB"], description: "Data type for the column" },
+            defaultValue: { type: "string", description: "Optional default value. Use 'NULL' for nullable, or a specific value like 'true', '0', 'active'" },
+            description: { type: "string", description: "What this field is for — will be logged in the audit trail" },
+          },
+          required: ["tableName", "columnName", "columnType", "description"],
         },
-        required: ["tableName", "columnName", "columnType", "description"],
       },
-    },
-  });
+    });
 
-  tools.push({
-    type: "function",
-    function: {
-      name: "restart_application",
-      description: "Restart the BGP application after making code changes. Use after editing source files to apply the changes. The app typically restarts automatically, but use this if it doesn't or if the user reports issues.",
-      parameters: {
-        type: "object",
-        properties: {
-          reason: { type: "string", description: "Why the restart is needed" },
+    tools.push({
+      type: "function",
+      function: {
+        name: "restart_application",
+        description: "Restart the BGP application after making code changes. Use after editing source files to apply the changes. The app typically restarts automatically, but use this if it doesn't or if the user reports issues.",
+        parameters: {
+          type: "object",
+          properties: {
+            reason: { type: "string", description: "Why the restart is needed" },
+          },
+          required: ["reason"],
         },
-        required: ["reason"],
       },
-    },
-  });
+    });
+  }
 
   tools.push({
     type: "function",
@@ -2745,13 +2747,16 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "save_to_image_studio",
-      description: "Save an image to the BGP Image Studio library. Can save: (1) an AI-generated image from a previous generate_image call by providing the imageUrl, or (2) a base64-encoded image directly. Use when the user wants to save a generated image, upload an image to the studio, or add an image to the library. The image will appear in the Image Studio with all metadata.",
+      description: "Save an image to the BGP Image Studio library. Can save: (1) an AI-generated image from a previous generate_image call by providing the imageUrl, (2) a base64-encoded image directly, (3) a SharePoint image by providing sharepointDriveId + sharepointItemId, or (4) any public image URL via fetchUrl (e.g. company logos from Clearbit: 'https://logo.clearbit.com/pret.com'). Use when the user wants to save a generated image, upload an image, import SharePoint headshots/photos, or bulk-import company logos.",
       parameters: {
         type: "object",
         properties: {
           imageUrl: { type: "string", description: "URL of a previously generated image (from generate_image action), e.g. '/api/chat-media/xxx.png'" },
           base64Data: { type: "string", description: "Base64-encoded image data (alternative to imageUrl)" },
           mimeType: { type: "string", description: "MIME type if using base64Data, e.g. 'image/png', 'image/jpeg'" },
+          fetchUrl: { type: "string", description: "A public HTTPS image URL to fetch and save, e.g. 'https://logo.clearbit.com/savills.com' for company logos. Must be https://. Do not use for SharePoint — use sharepointDriveId+itemId for that." },
+          sharepointDriveId: { type: "string", description: "SharePoint driveId of the image file (from a browse_sharepoint_folder result). Use together with sharepointItemId to import a SharePoint image directly." },
+          sharepointItemId: { type: "string", description: "SharePoint itemId of the image file (from a browse_sharepoint_folder result). Use together with sharepointDriveId." },
           fileName: { type: "string", description: "Name for the image file, e.g. 'Oxford Street Retail View'" },
           category: { type: "string", description: "Category: Exteriors, Interiors, Floor Plans, Properties, Areas, Marketing, Brands, Generated, Other", enum: ["Exteriors", "Interiors", "Floor Plans", "Properties", "Areas", "Marketing", "Brands", "Generated", "Other"] },
           description: { type: "string", description: "Optional description of the image" },
@@ -2762,6 +2767,26 @@ export async function getAvailableTools(): Promise<{
           tags: { type: "array", items: { type: "string" }, description: "Optional tags for the image" },
         },
         required: ["fileName", "category"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "capture_pdf_pages",
+      description: "Render a PDF brochure into images and save each page to the Image Studio. Use when the user says 'take images of this brochure', 'capture the pages', 'save brochure images', or similar. Requires the SharePoint driveId and itemId from a browse_sharepoint_folder result. Works silently in the background — no viewer needed.",
+      parameters: {
+        type: "object",
+        properties: {
+          driveId: { type: "string", description: "SharePoint driveId of the PDF file" },
+          itemId: { type: "string", description: "SharePoint itemId of the PDF file" },
+          fileName: { type: "string", description: "Display name for the saved images, e.g. '18-22 Haymarket Brochure'" },
+          propertyName: { type: "string", description: "Property name for tagging, e.g. '18-22 Haymarket'" },
+          category: { type: "string", description: "Image Studio category. Default: Marketing", enum: ["Exteriors", "Interiors", "Floor Plans", "Properties", "Areas", "Marketing", "Brands", "Generated", "Other"] },
+          maxPages: { type: "number", description: "Maximum pages to capture (default: all). Use 1 for cover-only." },
+        },
+        required: ["driveId", "itemId", "fileName"],
       },
     },
   });
@@ -4663,6 +4688,9 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "edit_source_file") {
+    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
+      return { data: { success: false, error: "Code editing is disabled. Ask Woody to make the change via terminal Claude Code, or enable CHATBGP_ALLOW_CODE_EDITS=true in Railway." } };
+    }
     const fs = await import("fs");
     const path = await import("path");
     const projectRoot = process.cwd();
@@ -4717,6 +4745,9 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "run_shell_command") {
+    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
+      return { data: { success: false, error: "Shell access is disabled. Ask Woody to run the command manually, or enable CHATBGP_ALLOW_CODE_EDITS=true in Railway." } };
+    }
     const { execSync } = await import("child_process");
     const command = fnArgs.command as string;
     const description = fnArgs.description || "Shell command via ChatBGP";
@@ -4760,6 +4791,9 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "add_database_column") {
+    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
+      return { data: { success: false, error: "Schema changes are disabled. Ask Woody to run the migration, or enable CHATBGP_ALLOW_CODE_EDITS=true in Railway." } };
+    }
     const tableName = fnArgs.tableName as string;
     const columnName = (fnArgs.columnName as string).replace(/[^a-z0-9_]/gi, "");
     const columnType = fnArgs.columnType as string;
@@ -4793,6 +4827,9 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "restart_application") {
+    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
+      return { data: { success: false, error: "Application restart is disabled. Ask Woody to redeploy via Railway." } };
+    }
     const { execSync } = await import("child_process");
     try {
       execSync("kill -USR2 1 2>/dev/null || true", { timeout: 5000 });
@@ -4845,6 +4882,28 @@ async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] Image generation error:", err?.message);
       return { data: { success: false, error: `Image generation failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "capture_pdf_pages") {
+    try {
+      const { driveId, itemId, fileName, propertyName, category = "Marketing", maxPages } = fnArgs as any;
+      if (!driveId || !itemId) return { data: { success: false, error: "driveId and itemId are required — browse SharePoint first to find the PDF." } };
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const sessionCookie = req.headers.cookie || "";
+      const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol;
+      const host = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string);
+      const baseUrl = `${protocol}://${host}`;
+      const captureRes = await fetch(`${baseUrl}/api/image-studio/capture-pdf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: sessionCookie },
+        body: JSON.stringify({ driveId, itemId, fileName, propertyName, category, maxPages }),
+      });
+      const data = await captureRes.json() as any;
+      if (!captureRes.ok) return { data: { success: false, error: data.error || `Capture failed: ${captureRes.status}` } };
+      return { data: { success: true, pages: data.pages, message: `Captured ${data.pages} page${data.pages === 1 ? "" : "s"} from "${fileName}" and saved to Image Studio under ${category}.` } };
+    } catch (err: any) {
+      return { data: { success: false, error: `PDF capture error: ${err?.message}` } };
     }
   }
 
@@ -4903,13 +4962,56 @@ async function executeCrmToolRaw(
       const imageUrl = fnArgs.imageUrl as string;
       const base64Data = fnArgs.base64Data as string;
       const mimeType = String(fnArgs.mimeType || "image/png");
+      const fetchUrl = fnArgs.fetchUrl as string;
+      const spDriveId = fnArgs.sharepointDriveId as string;
+      const spItemId = fnArgs.sharepointItemId as string;
 
       let imageBuffer: Buffer;
       let ext = "png";
 
-      if (imageUrl) {
-        const fsModule = await import("fs");
-        const pathModule = await import("path");
+      if (fetchUrl) {
+        if (!fetchUrl.startsWith("https://")) {
+          return { data: { success: false, error: "fetchUrl must be an https:// URL." } };
+        }
+        try {
+          const u = new URL(fetchUrl);
+          const host = u.hostname.toLowerCase();
+          if (host === "localhost" || host === "127.0.0.1" || /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || host === "169.254.169.254") {
+            return { data: { success: false, error: "fetchUrl points to a private/internal address — not allowed." } };
+          }
+        } catch {
+          return { data: { success: false, error: "fetchUrl is not a valid URL." } };
+        }
+        const fetchRes = await fetch(fetchUrl, { redirect: "follow", signal: AbortSignal.timeout(15000) });
+        if (!fetchRes.ok) {
+          return { data: { success: false, error: `Fetch failed: HTTP ${fetchRes.status} from ${fetchUrl}` } };
+        }
+        const ctype = fetchRes.headers.get("content-type") || "";
+        if (!ctype.startsWith("image/")) {
+          return { data: { success: false, error: `URL did not return an image (content-type: ${ctype}). Check the URL is correct.` } };
+        }
+        const bytes = await fetchRes.arrayBuffer();
+        if (bytes.byteLength > 10 * 1024 * 1024) {
+          return { data: { success: false, error: "Image is larger than 10MB — too large to import." } };
+        }
+        imageBuffer = Buffer.from(bytes);
+        ext = ctype.includes("jpeg") || ctype.includes("jpg") ? "jpg" : ctype.includes("png") ? "png" : ctype.includes("webp") ? "webp" : ctype.includes("svg") ? "svg" : "jpg";
+      } else if (spDriveId && spItemId) {
+        const token = await getValidMsToken(req);
+        if (!token) {
+          return { data: { success: false, error: "Not signed into Microsoft — cannot fetch SharePoint image." } };
+        }
+        const contentRes = await fetch(
+          `https://graph.microsoft.com/v1.0/drives/${spDriveId}/items/${spItemId}/content`,
+          { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" }
+        );
+        if (!contentRes.ok) {
+          return { data: { success: false, error: `SharePoint fetch failed: HTTP ${contentRes.status}` } };
+        }
+        imageBuffer = Buffer.from(await contentRes.arrayBuffer());
+        const ctype = contentRes.headers.get("content-type") || "";
+        ext = ctype.includes("jpeg") || ctype.includes("jpg") ? "jpg" : ctype.includes("png") ? "png" : ctype.includes("webp") ? "webp" : "jpg";
+      } else if (imageUrl) {
         if (imageUrl.startsWith("/api/chat-media/")) {
           const mediaName = imageUrl.replace("/api/chat-media/", "");
           const { getFile } = await import("./file-storage");
@@ -4926,7 +5028,7 @@ async function executeCrmToolRaw(
         imageBuffer = Buffer.from(base64Data, "base64");
         ext = mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "png";
       } else {
-        return { data: { success: false, error: "Provide either imageUrl (from generate_image) or base64Data." } };
+        return { data: { success: false, error: "Provide imageUrl (from generate_image), base64Data, or sharepointDriveId+sharepointItemId." } };
       }
 
       const fsModule = await import("fs");

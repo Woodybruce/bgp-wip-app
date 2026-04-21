@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Link } from "wouter";
 import type { CrmProperty } from "@shared/schema";
+import PDFViewer from "@/components/pdf-viewer";
 import {
   Search, FileText, Download, Eye, ArrowLeft,
   File, Image, FileSpreadsheet, X,
@@ -42,6 +43,7 @@ function formatSize(bytes: number | null) {
 
 export default function MarketingFilesPage() {
   const [search, setSearch] = useState("");
+  const [pdfViewer, setPdfViewer] = useState<{ url: string; fileName: string; propertyName?: string } | null>(null);
 
   const { data: allFiles = [], isLoading } = useQuery<MarketingFileRow[]>({
     queryKey: ["/api/available-units/all-files"],
@@ -133,11 +135,20 @@ export default function MarketingFilesPage() {
                 {group.propertyName}
               </p>
               <div className="space-y-1.5">
-                {group.files.map(f => (
+                {group.files.map(f => {
+                  const isPdf = f.mimeType?.includes("pdf") || f.fileName?.toLowerCase().endsWith(".pdf");
+                  const openViewer = () => {
+                    if (isPdf) {
+                      setPdfViewer({ url: `${f.filePath}?view=1`, fileName: f.fileName, propertyName: group.propertyName });
+                    } else {
+                      window.open(`${f.filePath}?view=1`, "_blank");
+                    }
+                  };
+                  return (
                   <Card
                     key={f.id}
                     className="cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => window.open(`${f.filePath}?view=1`, "_blank")}
+                    onClick={openViewer}
                     data-testid={`marketing-file-${f.id}`}
                   >
                     <CardContent className="flex items-center gap-3 p-3">
@@ -157,8 +168,8 @@ export default function MarketingFilesPage() {
                           variant="ghost"
                           size="sm"
                           className="h-8 w-8 p-0"
-                          onClick={(e) => { e.stopPropagation(); window.open(`${f.filePath}?view=1`, "_blank"); }}
-                          title="View"
+                          onClick={(e) => { e.stopPropagation(); openViewer(); }}
+                          title={isPdf ? "View PDF" : "View"}
                           data-testid={`button-view-${f.id}`}
                         >
                           <Eye className="w-4 h-4" />
@@ -176,11 +187,22 @@ export default function MarketingFilesPage() {
                       </div>
                     </CardContent>
                   </Card>
-                ))}
+                  );
+                })}
               </div>
             </div>
           ))}
         </div>
+      )}
+
+      {pdfViewer && (
+        <PDFViewer
+          url={pdfViewer.url}
+          fileName={pdfViewer.fileName}
+          propertyName={pdfViewer.propertyName}
+          open={!!pdfViewer}
+          onClose={() => setPdfViewer(null)}
+        />
       )}
     </div>
   );
