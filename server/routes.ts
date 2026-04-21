@@ -2164,6 +2164,37 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     } catch (err: any) { console.error("[routes] WIP file download error:", err?.message); res.status(500).end(); }
   });
 
+  // PDF proxy — streams a SharePoint file to the browser so pdfjs can render it cross-origin
+  app.get("/api/pdf-proxy", requireAuth, async (req, res) => {
+    const driveId = req.query.driveId as string;
+    const itemId = req.query.itemId as string;
+    const shareUrl = req.query.shareUrl as string;
+    if (!driveId && !shareUrl) return res.status(400).json({ message: "driveId+itemId or shareUrl required" });
+    try {
+      const { getValidMsToken } = await import("./microsoft");
+      const token = await getValidMsToken(req as any);
+      if (!token) return res.status(401).json({ message: "Not signed into Microsoft" });
+      let graphUrl: string;
+      if (driveId && itemId) {
+        graphUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/content`;
+      } else {
+        const b64 = Buffer.from(shareUrl).toString("base64url");
+        graphUrl = `https://graph.microsoft.com/v1.0/shares/u!${b64}/driveItem/content`;
+      }
+      const upstream = await fetch(graphUrl, { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" });
+      if (!upstream.ok) return res.status(upstream.status).json({ message: `SharePoint returned ${upstream.status}` });
+      const ctype = upstream.headers.get("content-type") || "application/pdf";
+      res.setHeader("Content-Type", ctype);
+      res.setHeader("Content-Disposition", "inline");
+      res.setHeader("Cache-Control", "private, max-age=300");
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.send(buf);
+    } catch (err: any) {
+      console.error("[pdf-proxy]", err?.message);
+      res.status(500).json({ message: err?.message });
+    }
+  });
+
   // Investment Tracker routes
   app.get("/api/investment-tracker", requireAuth, async (req, res) => {
     try {

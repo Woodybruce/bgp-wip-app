@@ -1304,6 +1304,44 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
+  // Save base64 image — used by PDF viewer page-capture and ChatBGP fetchUrl/SharePoint import
+  app.post("/api/image-studio", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { base64Data, mimeType = "image/jpeg", fileName, category = "Marketing", description, area, address, brandName, propertyType, tags = [] } = req.body;
+      if (!base64Data || !fileName) return res.status(400).json({ error: "base64Data and fileName required" });
+      const buffer = Buffer.from(base64Data, "base64");
+      if (buffer.length > 20 * 1024 * 1024) return res.status(400).json({ error: "Image too large (max 20MB)" });
+      const ext = mimeType.includes("png") ? ".png" : mimeType.includes("webp") ? ".webp" : ".jpg";
+      const filename = `${crypto.randomUUID()}${ext}`;
+      const filePath = path.join(IMAGE_DIR, filename);
+      await persistImage(filePath, buffer, mimeType, fileName);
+      const { thumbnail, width, height } = await generateThumbnail(buffer);
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const [inserted] = await db.insert(imageStudioImages).values({
+        fileName,
+        category,
+        tags: Array.isArray(tags) ? tags : [],
+        description: description || null,
+        source: "chatbgp",
+        area: area || null,
+        address: address || null,
+        brandName: brandName || null,
+        propertyType: propertyType || null,
+        mimeType,
+        fileSize: buffer.length,
+        width,
+        height,
+        thumbnailData: thumbnail,
+        localPath: filePath,
+        uploadedBy: userId,
+      }).returning();
+      res.json({ success: true, imageId: inserted.id, fileName, category });
+    } catch (e: any) {
+      console.error("[image-studio] save error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   console.log("[image-studio] Image Studio routes registered");
 }
 
