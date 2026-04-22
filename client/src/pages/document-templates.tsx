@@ -4806,83 +4806,92 @@ function LegalDDTab() {
                 </Card>
               )}
 
-              {ddReconciliation?.portfolio && (ddReconciliation.portfolio.propertyCount > 0) && (
+              {ddReconciliation?.portfolio && ((ddReconciliation.portfolio.propertyCount || 0) > 0) && (() => {
+                // Defensive destructure — a malformed server response
+                // should not crash the whole DD tab. Every field has a
+                // sensible default so React never sees undefined + math.
+                const p = ddReconciliation.portfolio || {};
+                const tenure = p.tenureCounts || { let: 0, managed: 0, tied: 0, freeOfTie: 0, unknown: 0 };
+                const status = p.tenantStatusCounts || { active: 0, dissolved: 0, liquidation: 0, unknown: 0 };
+                const fsa = p.fsaRatingCounts || {};
+                const propertyCount = p.propertyCount || 0;
+                return (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base flex items-center justify-between">
                       <span>Portfolio Summary</span>
-                      <Badge variant="outline" className="text-[10px]">{ddReconciliation.portfolio.propertyCount} propert{ddReconciliation.portfolio.propertyCount === 1 ? "y" : "ies"}</Badge>
+                      <Badge variant="outline" className="text-[10px]">{propertyCount} propert{propertyCount === 1 ? "y" : "ies"}</Badge>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                      {ddReconciliation.portfolio.totalPassingRentLeases > 0 && (
+                      {(p.totalPassingRentLeases || 0) > 0 && (
                         <div className="rounded-md border p-2.5">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Passing rent (leases)</p>
-                          <p className="text-sm font-semibold">£{Number(ddReconciliation.portfolio.totalPassingRentLeases).toLocaleString()}pa</p>
+                          <p className="text-sm font-semibold">£{Number(p.totalPassingRentLeases).toLocaleString()}pa</p>
                         </div>
                       )}
-                      {ddReconciliation.portfolio.totalPassingRentRentRoll > 0 && (
+                      {(p.totalPassingRentRentRoll || 0) > 0 && (
                         <div className="rounded-md border p-2.5">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Passing rent (rent roll)</p>
-                          <p className="text-sm font-semibold">£{Number(ddReconciliation.portfolio.totalPassingRentRentRoll).toLocaleString()}pa</p>
+                          <p className="text-sm font-semibold">£{Number(p.totalPassingRentRentRoll).toLocaleString()}pa</p>
                         </div>
                       )}
-                      {ddReconciliation.portfolio.totalRateableValue > 0 && (
+                      {(p.totalRateableValue || 0) > 0 && (
                         <div className="rounded-md border p-2.5">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total RV</p>
-                          <p className="text-sm font-semibold">£{Number(ddReconciliation.portfolio.totalRateableValue).toLocaleString()}</p>
-                          {ddReconciliation.portfolio.rentToRvRatio != null && (
-                            <p className="text-[10px] text-muted-foreground">Rent/RV: {ddReconciliation.portfolio.rentToRvRatio}×</p>
+                          <p className="text-sm font-semibold">£{Number(p.totalRateableValue).toLocaleString()}</p>
+                          {p.rentToRvRatio != null && (
+                            <p className="text-[10px] text-muted-foreground">Rent/RV: {p.rentToRvRatio}×</p>
                           )}
                         </div>
                       )}
-                      {ddReconciliation.portfolio.totalEbitdar > 0 && (
+                      {(p.totalEbitdar || 0) > 0 && (
                         <div className="rounded-md border p-2.5">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total EBITDAR (managed)</p>
-                          <p className="text-sm font-semibold">£{Number(ddReconciliation.portfolio.totalEbitdar).toLocaleString()}</p>
+                          <p className="text-sm font-semibold">£{Number(p.totalEbitdar).toLocaleString()}</p>
                         </div>
                       )}
-                      {ddReconciliation.portfolio.weightedWaultYears != null && (
+                      {p.weightedWaultYears != null && (
                         <div className="rounded-md border p-2.5">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Weighted WAULT</p>
-                          <p className="text-sm font-semibold">{ddReconciliation.portfolio.weightedWaultYears} years</p>
+                          <p className="text-sm font-semibold">{p.weightedWaultYears} years</p>
                         </div>
                       )}
-                      {ddReconciliation.portfolio.topTenant && (
+                      {p.topTenant && p.topTenant.name && (
                         <div className="rounded-md border p-2.5">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Top tenant</p>
-                          <p className="text-sm font-semibold truncate">{ddReconciliation.portfolio.topTenant.name}</p>
-                          <p className="text-[10px] text-muted-foreground">{ddReconciliation.portfolio.topTenant.sharePercent}% of income</p>
+                          <p className="text-sm font-semibold truncate">{p.topTenant.name}</p>
+                          <p className="text-[10px] text-muted-foreground">{p.topTenant.sharePercent || 0}% of income</p>
                         </div>
                       )}
-                      {(ddReconciliation.portfolio.tenureCounts.managed + ddReconciliation.portfolio.tenureCounts.tied + ddReconciliation.portfolio.tenureCounts.freeOfTie + ddReconciliation.portfolio.tenureCounts.let) > 0 && (
+                      {((tenure.managed || 0) + (tenure.tied || 0) + (tenure.freeOfTie || 0) + (tenure.let || 0)) > 0 && (
                         <div className="rounded-md border p-2.5 col-span-2">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Tenure split</p>
                           <div className="flex gap-2 flex-wrap mt-1">
-                            {ddReconciliation.portfolio.tenureCounts.let > 0 && <Badge variant="outline" className="text-[10px]">Let: {ddReconciliation.portfolio.tenureCounts.let}</Badge>}
-                            {ddReconciliation.portfolio.tenureCounts.managed > 0 && <Badge variant="outline" className="text-[10px]">Managed: {ddReconciliation.portfolio.tenureCounts.managed}</Badge>}
-                            {ddReconciliation.portfolio.tenureCounts.tied > 0 && <Badge variant="outline" className="text-[10px]">Tied: {ddReconciliation.portfolio.tenureCounts.tied}</Badge>}
-                            {ddReconciliation.portfolio.tenureCounts.freeOfTie > 0 && <Badge variant="outline" className="text-[10px]">Free-of-tie: {ddReconciliation.portfolio.tenureCounts.freeOfTie}</Badge>}
+                            {(tenure.let || 0) > 0 && <Badge variant="outline" className="text-[10px]">Let: {tenure.let}</Badge>}
+                            {(tenure.managed || 0) > 0 && <Badge variant="outline" className="text-[10px]">Managed: {tenure.managed}</Badge>}
+                            {(tenure.tied || 0) > 0 && <Badge variant="outline" className="text-[10px]">Tied: {tenure.tied}</Badge>}
+                            {(tenure.freeOfTie || 0) > 0 && <Badge variant="outline" className="text-[10px]">Free-of-tie: {tenure.freeOfTie}</Badge>}
                           </div>
                         </div>
                       )}
-                      {(ddReconciliation.portfolio.tenantStatusCounts.active + ddReconciliation.portfolio.tenantStatusCounts.dissolved + ddReconciliation.portfolio.tenantStatusCounts.liquidation) > 0 && (
+                      {((status.active || 0) + (status.dissolved || 0) + (status.liquidation || 0)) > 0 && (
                         <div className="rounded-md border p-2.5 col-span-2">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Tenant company status</p>
                           <div className="flex gap-2 flex-wrap mt-1">
-                            {ddReconciliation.portfolio.tenantStatusCounts.active > 0 && <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">{ddReconciliation.portfolio.tenantStatusCounts.active} active</Badge>}
-                            {ddReconciliation.portfolio.tenantStatusCounts.dissolved > 0 && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">{ddReconciliation.portfolio.tenantStatusCounts.dissolved} dissolved</Badge>}
-                            {ddReconciliation.portfolio.tenantStatusCounts.liquidation > 0 && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">{ddReconciliation.portfolio.tenantStatusCounts.liquidation} liquidation</Badge>}
+                            {(status.active || 0) > 0 && <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">{status.active} active</Badge>}
+                            {(status.dissolved || 0) > 0 && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">{status.dissolved} dissolved</Badge>}
+                            {(status.liquidation || 0) > 0 && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">{status.liquidation} liquidation</Badge>}
                           </div>
                         </div>
                       )}
-                      {Object.keys(ddReconciliation.portfolio.fsaRatingCounts).length > 0 && (
+                      {Object.keys(fsa).length > 0 && (
                         <div className="rounded-md border p-2.5 col-span-2">
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Food Hygiene Ratings</p>
                           <div className="flex gap-2 flex-wrap mt-1">
                             {["5","4","3","2","1","0"].map(k => {
-                              const n = ddReconciliation.portfolio.fsaRatingCounts[k];
+                              const n = fsa[k];
                               if (!n) return null;
                               const colour = k === "5" || k === "4" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                                 : k === "3" ? "bg-amber-50 text-amber-700 border-amber-200"
@@ -4895,7 +4904,8 @@ function LegalDDTab() {
                     </div>
                   </CardContent>
                 </Card>
-              )}
+                );
+              })()}
 
               {ddReconciliation?.flags && ddReconciliation.flags.length > 0 && (
                 <Card>
@@ -4918,7 +4928,7 @@ function LegalDDTab() {
                 </Card>
               )}
 
-              {ddAnalysisId && ddReconciliation?.portfolio?.propertyCount > 0 && (
+              {ddAnalysisId && (ddReconciliation?.portfolio?.propertyCount || 0) > 0 && (
                 <Card>
                   <CardHeader>
                     <CardTitle className="text-base">Push Findings Across the Platform</CardTitle>
