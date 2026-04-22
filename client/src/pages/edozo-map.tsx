@@ -2964,7 +2964,7 @@ function fitTextToBuilding(label: string, houseNum: string, isVacant: boolean, p
   const padW = pixelW * 0.8;
   const padH = pixelH * 0.75;
 
-  if (padW < 12 || padH < 8) return null;
+  if (padW < 20 || padH < 14) return null;
 
   let fontSize = 9.5;
 
@@ -3348,7 +3348,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         // Below zoom 17 buildings are too small to read — skip labels entirely
         // instead of squeezing scruffy truncated text into tiny boxes.
         const zoom = mapRef.current.getZoom();
-        const fitted = zoom < 17 ? null : fitTextToBuilding(b.label, b.houseNum, b.isVacant, bbox.w, bbox.h);
+        const fitted = zoom < 18 ? null : fitTextToBuilding(b.label, b.houseNum, b.isVacant, bbox.w, bbox.h);
 
         if (fitted) {
           const cssClass = b.isVacant && !b.label

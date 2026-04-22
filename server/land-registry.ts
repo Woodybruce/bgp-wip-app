@@ -677,7 +677,16 @@ export function registerLandRegistryRoutes(app: Express) {
       const PD_KEY = process.env.PROPERTYDATA_API_KEY;
       if (!PD_KEY) return res.status(503).json({ error: "PropertyData API key not configured" });
 
-      let resolvedAddress: string = typeof inputAddress === "string" ? inputAddress.trim() : "";
+      // Strip parenthetical annotations like "(formerly Thomas Exchange Global)"
+      // and "t/a ..." before sending to OS Places / PropertyData — these confuse
+      // every address matcher and are never part of the Land Registry record.
+      const stripAddressNoise = (s: string) =>
+        s.replace(/\s*\([^)]*\)/g, "")         // remove anything in (brackets)
+         .replace(/\bt\/a\b.*$/i, "")           // remove "t/a <trading name>" suffix
+         .replace(/\bformerly\b.*$/i, "")       // remove "formerly ..." clause
+         .replace(/,\s*,/g, ",").replace(/,\s*$/, "").trim();
+
+      let resolvedAddress: string = typeof inputAddress === "string" ? stripAddressNoise(inputAddress.trim()) : "";
       let resolvedPostcode: string = typeof inputPostcode === "string" ? inputPostcode.trim().toUpperCase() : "";
       let buildingName = "";
 
