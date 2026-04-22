@@ -864,8 +864,20 @@ export default function CadMeasurePage() {
             )}
             {isPdfMode && calibration === null && (
               <div className="absolute top-3 right-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-1.5 text-xs shadow-sm">
-                <span className="text-amber-800 dark:text-amber-400 font-medium">Not calibrated</span>
-                <span className="text-muted-foreground ml-2">Click <Scaling className="inline w-3 h-3 mx-0.5" /> Set Scale to calibrate</span>
+                {activeTool === "calibrate" ? (
+                  <>
+                    <span className="text-amber-800 dark:text-amber-400 font-medium">Calibrating</span>
+                    <span className="text-muted-foreground ml-2">
+                      {currentPoints.length === 0 && "Click the first point of a known dimension"}
+                      {currentPoints.length === 1 && "Now click the second point"}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-amber-800 dark:text-amber-400 font-medium">Not calibrated</span>
+                    <span className="text-muted-foreground ml-2">Click <Scaling className="inline w-3 h-3 mx-0.5" /> Set Scale in the toolbar</span>
+                  </>
+                )}
               </div>
             )}
           </div>
