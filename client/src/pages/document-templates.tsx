@@ -4103,9 +4103,10 @@ function SeverityBadge({ severity }: { severity: string }) {
   return <Badge className="bg-green-500 text-white border-0 text-[10px]" data-testid="badge-severity-green"><ShieldCheck className="w-3 h-3 mr-1" />Green</Badge>;
 }
 
-function RiskBadge({ risk }: { risk: string }) {
-  const classes = risk === "high" ? "bg-red-500/10 text-red-600 border-red-500/30" : risk === "medium" ? "bg-amber-500/10 text-amber-600 border-amber-500/30" : "bg-green-500/10 text-green-600 border-green-500/30";
-  return <Badge variant="outline" className={`${classes} text-xs`} data-testid="badge-risk">{risk.charAt(0).toUpperCase() + risk.slice(1)} Risk</Badge>;
+function RiskBadge({ risk }: { risk: string | null | undefined }) {
+  const safe = (risk || "medium").toString();
+  const classes = safe === "high" ? "bg-red-500/10 text-red-600 border-red-500/30" : safe === "medium" ? "bg-amber-500/10 text-amber-600 border-amber-500/30" : "bg-green-500/10 text-green-600 border-green-500/30";
+  return <Badge variant="outline" className={`${classes} text-xs`} data-testid="badge-risk">{safe.charAt(0).toUpperCase() + safe.slice(1)} Risk</Badge>;
 }
 
 function IssueCard({ issue, index }: { issue: LegalIssue; index: number }) {
@@ -4277,7 +4278,18 @@ function LegalDDTab() {
             toast({ title: "DD analysis failed", description: a.error_message || "Unknown error", variant: "destructive" });
             return;
           }
-          setDdResult(a.analysis || { overallSummary: a.overall_summary, overallRisk: a.overall_risk, redFlags: a.red_flags, amberFlags: a.amber_flags, greenFlags: a.green_flags });
+          setDdResult(a.analysis || {
+            dealName: a.deal_name || "",
+            overallSummary: a.overall_summary || "Analysis complete.",
+            overallRisk: (a.overall_risk as "high" | "medium" | "low") || "medium",
+            redFlags: a.red_flags || 0,
+            amberFlags: a.amber_flags || 0,
+            greenFlags: a.green_flags || 0,
+            fileAnalyses: [],
+            folderMapping: [],
+            keyRisks: [],
+            recommendations: [],
+          });
           setDdClassifiedFiles((data.files || []).map((f: any) => ({
             originalName: f.file_name,
             displayName: f.display_name,
