@@ -12,7 +12,7 @@ import { getCompanyLogoUrl } from "@/lib/company-logos";
 import {
   Store, TrendingUp, Flame, Star, Search, ChevronRight,
   MapPin, Maximize2, Zap, BarChart3, RefreshCw, Building2,
-  FileText, Trophy, Sparkles, Play, Pause,
+  FileText, Trophy, Sparkles, Play, Pause, Newspaper, ExternalLink,
   LayoutGrid, Crown, Shirt, Activity, ShoppingBag, Home as HomeIcon,
   Gift, Landmark, Briefcase, Utensils, Coffee, Wine, CakeSlice,
   UtensilsCrossed, Soup, Diamond, Car, Wifi, BookOpen, Smartphone,
@@ -95,7 +95,7 @@ function formatSize(min: number | null, max: number | null): string {
 }
 
 function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string | null; size?: number }) {
-  const url = getCompanyLogoUrl(name, domain);
+  const url = getCompanyLogoUrl(domain, name, size);
   const [err, setErr] = useState(false);
   if (!err && url) {
     return (
@@ -567,6 +567,18 @@ function BrandExplorer() {
     staleTime: 120_000,
   });
 
+  const { data: brandNews = [] } = useQuery<any[]>({
+    queryKey: ["/api/news-feed/articles", "brand-explorer"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/news-feed/articles?limit=40");
+      const all = await res.json();
+      return (all as any[])
+        .filter((a: any) => a.category === "Retail" || a.category === "Hospitality")
+        .slice(0, 12);
+    },
+    staleTime: 300_000,
+  });
+
   const setCat = (v: string | null) => {
     setActiveCat(v);
     try { if (v) localStorage.setItem("brand-explorer-cat", v); else localStorage.removeItem("brand-explorer-cat"); } catch {}
@@ -708,6 +720,54 @@ function BrandExplorer() {
           </div>
         )}
       </div>
+
+      {/* Brand news feed */}
+      {brandNews.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <Newspaper className="w-4 h-4 text-pink-500" />
+            <h3 className="text-sm font-semibold">Brand News</h3>
+            <Badge variant="secondary" className="text-[10px]">{brandNews.length}</Badge>
+            <Link href="/news" className="ml-auto">
+              <Button variant="ghost" size="sm" className="text-xs h-7">
+                Full feed <ChevronRight className="w-3 h-3 ml-0.5" />
+              </Button>
+            </Link>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
+            {brandNews.map((article: any) => (
+              <a
+                key={article.id}
+                href={article.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex gap-2.5 p-2.5 rounded-lg border bg-card hover:bg-muted/50 transition-colors group"
+              >
+                {article.imageUrl && (
+                  <img
+                    src={article.imageUrl}
+                    alt=""
+                    className="w-14 h-14 rounded object-cover shrink-0 border"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                  />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{article.title}</p>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    {article.sourceName && <span className="text-[10px] text-muted-foreground truncate">{article.sourceName}</span>}
+                    {article.publishedAt && (
+                      <span className="text-[10px] text-muted-foreground shrink-0">
+                        · {new Date(article.publishedAt).toLocaleDateString("en-GB")}
+                      </span>
+                    )}
+                    <ExternalLink className="w-2.5 h-2.5 text-muted-foreground ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </div>
+                </div>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
