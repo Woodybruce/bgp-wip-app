@@ -13,6 +13,7 @@ export function isOsConfigured(): boolean {
 }
 
 const WFS_BASE = "https://api.os.uk/features/v1/wfs";
+const NGD_BASE = "https://api.os.uk/features/ngd/ofa/v1";
 const PLACES_BASE = "https://api.os.uk/search/places/v1";
 
 // Simple in-memory cache: key -> { data, expires }
@@ -226,6 +227,81 @@ export function registerOSDataRoutes(app: Express): void {
       console.error("[os-data] buildings error:", err?.message);
       res.status(500).json({ error: err?.message || "Failed to fetch buildings" });
     }
+  });
+
+  // ─── MasterMap Buildings (Premium / NGD) ───────────────────────
+  // Tries the modern OS NGD Features API first (bld-fts-buildingpart-1 gives
+  // subdivided building parts, which is what we need to render Goad-style
+  // shop-by-shop footprints). Falls back to legacy OS Features WFS if NGD
+  // access isn't enabled on this key. Returns GeoJSON FeatureCollection or
+  // a detailed error so we can tell if the plan needs upgrading.
+  app.get("/api/os/mastermap-buildings", requireAuth, async (req: Request, res: Response) => {
+    const bbox = typeof req.query.bbox === "string" ? req.query.bbox : "";
+    if (!bbox) return res.status(400).json({ error: "bbox query parameter required (minLng,minLat,maxLng,maxLat)" });
+    const key = getOsKey();
+    if (!key) return res.status(503).json({ error: "OS_PLACES_API_KEY not configured" });
+
+    const cacheKey = getCacheKey("mm-buildings", bbox);
+    const hit = getFromCache(cacheKey);
+    if (hit) return res.json(hit);
+
+    // NGD expects bbox as minLng,minLat,maxLng,maxLat. Our map sends
+    // swLat,swLng,neLat,neLng — normalise.
+    const parts = bbox.split(",").map(parseFloat);
+    if (parts.length !== 4 || parts.some(isNaN)) {
+      return res.status(400).json({ error: "bbox must be 4 comma-separated numbers" });
+    }
+    const [swLat, swLng, neLat, neLng] = parts;
+    const ngdBbox = `${swLng},${swLat},${neLng},${neLat}`;
+
+    const attempts: Array<{ label: string; url: string }> = [
+      {
+        label: "ngd:bld-fts-buildingpart-1",
+        url: `${NGD_BASE}/collections/bld-fts-buildingpart-1/items?bbox=${ngdBbox}&bbox-crs=http://www.opengis.net/def/crs/EPSG/0/4326&crs=http://www.opengis.net/def/crs/EPSG/0/4326&limit=100&key=${encodeURIComponent(key)}`,
+      },
+      {
+        label: "ngd:bld-fts-building-1",
+        url: `${NGD_BASE}/collections/bld-fts-building-1/items?bbox=${ngdBbox}&bbox-crs=http://www.opengis.net/def/crs/EPSG/0/4326&crs=http://www.opengis.net/def/crs/EPSG/0/4326&limit=100&key=${encodeURIComponent(key)}`,
+      },
+      {
+        label: "wfs:Topography_TopographicArea",
+        url: `${WFS_BASE}?${new URLSearchParams({
+          service: "WFS",
+          version: "2.0.0",
+          request: "GetFeature",
+          typeNames: "Topography_TopographicArea",
+          outputFormat: "GeoJSON",
+          srsName: "urn:ogc:def:crs:EPSG::4326",
+          bbox: `${bbox},urn:ogc:def:crs:EPSG::4326`,
+          count: "500",
+          key,
+        }).toString()}`,
+      },
+    ];
+
+    const errors: Array<{ source: string; status: number; body: string }> = [];
+    for (const attempt of attempts) {
+      try {
+        const resp = await fetch(attempt.url, { headers: { Accept: "application/json" } });
+        if (resp.ok) {
+          const data = await resp.json();
+          const result = { source: attempt.label, featureCount: data?.features?.length ?? 0, data };
+          setCache(cacheKey, result);
+          return res.json(result);
+        }
+        const body = await resp.text().catch(() => "");
+        errors.push({ source: attempt.label, status: resp.status, body: body.slice(0, 300) });
+        console.warn(`[os-mastermap] ${attempt.label} failed ${resp.status}: ${body.slice(0, 200)}`);
+        // 401/403 on first attempt → try next, but 500s/404s mean broken — keep trying
+      } catch (err: any) {
+        errors.push({ source: attempt.label, status: 0, body: err?.message || "network error" });
+      }
+    }
+
+    res.status(502).json({
+      error: "No OS MasterMap / NGD endpoint succeeded with this key — Premium plan or Partner access likely required",
+      attempts: errors,
+    });
   });
 
   // ─── UPRNs ─────────────────────────────────────────────────────
