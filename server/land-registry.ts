@@ -813,13 +813,31 @@ export function registerLandRegistryRoutes(app: Express) {
 
       // Step 3: fetch exact titles via uprn-title (for each UPRN) AND the
       // wider postcode context in parallel so the MLRO sees both.
+      const pdErrors: Array<{ endpoint: string; status?: number; body?: string }> = [];
       const pdFetch = async (endpoint: string, params: Record<string, string>): Promise<any> => {
         const qs = new URLSearchParams({ key: PD_KEY, ...params }).toString();
         try {
           const r = await fetch(`https://api.propertydata.co.uk/${endpoint}?${qs}`, { signal: AbortSignal.timeout(15000) });
-          if (!r.ok) return null;
-          return await r.json();
-        } catch { return null; }
+          if (!r.ok) {
+            const body = await r.text().catch(() => "");
+            pdErrors.push({ endpoint, status: r.status, body: body.slice(0, 300) });
+            console.warn(`[land-registry/resolve] PropertyData ${endpoint} HTTP ${r.status}: ${body.slice(0, 200)}`);
+            return null;
+          }
+          const data = await r.json() as any;
+          // PropertyData returns HTTP 200 with { status: "error", message: "..." } for
+          // rate limits and plan-denied calls. Log those so we can tell the difference
+          // between "no titles at this postcode" and "API call failed silently".
+          if (data?.status === "error") {
+            pdErrors.push({ endpoint, status: 200, body: String(data.message || data.error || "status:error") });
+            console.warn(`[land-registry/resolve] PropertyData ${endpoint} returned status=error: ${data.message || data.error}`);
+          }
+          return data;
+        } catch (e: any) {
+          pdErrors.push({ endpoint, body: e?.message || "fetch threw" });
+          console.warn(`[land-registry/resolve] PropertyData ${endpoint} threw:`, e?.message);
+          return null;
+        }
       };
 
       const [uprnTitleResults, postcodeFreeholds, postcodeLeaseholds] = await Promise.all([
@@ -903,6 +921,7 @@ export function registerLandRegistryRoutes(app: Express) {
         lat: typeof lat === "number" ? lat : null,
         lng: typeof lng === "number" ? lng : null,
         uprns: matchedUprns,
+        pdErrors,
         matched: {
           freeholds: matchedFreeholds,
           leaseholds: matchedLeaseholds,

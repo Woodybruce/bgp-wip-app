@@ -1991,11 +1991,24 @@ function PropertyPanel({
                 if (allTitles.length === 0) {
                   // Only show the empty-state if we actually queried (postcode present)
                   if (!postcode) return null;
+                  const pdErrors = (data as any)?._landRegistryResolve?.pdErrors || (data as any)?.pdErrors || [];
+                  const hadError = Array.isArray(pdErrors) && pdErrors.length > 0;
                   return (
                     <DataSection title={`Ownership`} icon={Building2} color="text-indigo-600">
                       <p className="text-xs text-gray-600 mb-1.5">
-                        PropertyData returned no Land Registry titles for this postcode.
+                        {hadError
+                          ? "PropertyData could not return Land Registry titles for this postcode (API error — see below)."
+                          : "PropertyData returned no Land Registry titles for this postcode."}
                       </p>
+                      {hadError && (
+                        <div className="mb-1.5 space-y-0.5">
+                          {pdErrors.slice(0, 3).map((e: any, i: number) => (
+                            <p key={i} className="text-[10px] text-red-600 font-mono truncate">
+                              {e.endpoint} {e.status ? `HTTP ${e.status}` : ""} — {e.body || "unknown"}
+                            </p>
+                          ))}
+                        </div>
+                      )}
                       <p className="text-[10px] text-gray-500">Run a Pathway investigation (top of panel) for a deeper search including title register purchases and KYC.</p>
                     </DataSection>
                   );
@@ -4319,6 +4332,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               fallbackCount: (r?.fallback?.freeholds?.length || 0) + (r?.fallback?.leaseholds?.length || 0),
               contextCount: (r?.context?.freeholds?.length || 0) + (r?.context?.leaseholds?.length || 0),
               source: r?.source || null,
+              pdErrors: r?.pdErrors || [],
             };
           } catch (e) {
             console.warn("[edozo-map] Land Registry resolve merge failed:", e);
@@ -4447,8 +4461,13 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           padding: 0 !important;
           text-align: center !important;
           line-height: 1.15 !important;
-          overflow: hidden !important;
-          text-shadow: 0 0 2px rgba(255,255,255,0.8), 0 0 2px rgba(255,255,255,0.8) !important;
+          /* overflow: visible so CSS-rotated labels inside the tooltip
+             wrapper render past the non-rotated wrapper box; the polygon
+             OBB fit check already guarantees the text stays inside the
+             polygon. */
+          overflow: visible !important;
+          text-shadow: 0 0 2px rgba(255,255,255,0.9), 0 0 2px rgba(255,255,255,0.9), 0 0 3px rgba(255,255,255,0.7) !important;
+          pointer-events: none !important;
         }
         .edozo-fs-11 { font-size: 11px !important; letter-spacing: 0.4px !important; }
         .edozo-fs-10 { font-size: 10px !important; letter-spacing: 0.3px !important; }
