@@ -3,8 +3,11 @@ import { requireAuth } from "./auth";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import mammoth from "mammoth";
+import AdmZip from "adm-zip";
 import Anthropic from "@anthropic-ai/sdk";
+import { pool } from "./db";
 
 const UPLOADS_DIR = path.join(process.cwd(), "ChatBGP", "legal-dd");
 
@@ -12,10 +15,78 @@ if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
+// 500MB per file — a 300-pub data room routinely breaks 250MB. We still cap
+// it so a runaway upload can't exhaust disk, but the old 30MB limit was
+// rejecting every real data room.
 const upload = multer({
   dest: UPLOADS_DIR,
-  limits: { fileSize: 30 * 1024 * 1024 },
+  limits: { fileSize: 500 * 1024 * 1024 },
 });
+
+// Supported extensions the text extractor can actually read. Anything else
+// inside a ZIP is ignored (photos, movies, etc.) rather than being fed to
+// Claude as garbage.
+const TEXT_EXTRACTABLE = new Set([".pdf", ".docx", ".doc", ".xlsx", ".xls", ".txt", ".csv"]);
+
+// Expand any ZIP uploads into their contained files. Returns a flat list of
+// "effective" uploads — files on disk with their original archive-relative
+// name preserved so the Claude classifier can see folder structure (e.g.
+// "Legal/Leases/HSBC Lease.pdf" → classifier has useful context).
+interface EffectiveFile {
+  originalName: string;   // path-including name from archive, or plain name
+  displayName: string;    // just the filename for UI
+  path: string;           // disk path to read from
+  size: number;
+  sourceArchive?: string; // original ZIP filename if extracted from one
+  cleanup?: () => void;   // call to delete temp file after analysis
+}
+
+async function expandUploads(files: Express.Multer.File[]): Promise<EffectiveFile[]> {
+  const out: EffectiveFile[] = [];
+  for (const f of files) {
+    const ext = path.extname(f.originalname).toLowerCase();
+    if (ext !== ".zip") {
+      out.push({
+        originalName: f.originalname,
+        displayName: f.originalname,
+        path: f.path,
+        size: f.size,
+        cleanup: () => { try { fs.unlinkSync(f.path); } catch {} },
+      });
+      continue;
+    }
+
+    // ZIP — extract to a unique temp dir keyed to this upload.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dd-zip-"));
+    try {
+      const zip = new AdmZip(f.path);
+      for (const entry of zip.getEntries()) {
+        if (entry.isDirectory) continue;
+        const entryName = entry.entryName;
+        const entryExt = path.extname(entryName).toLowerCase();
+        if (!TEXT_EXTRACTABLE.has(entryExt)) continue;
+
+        // Write to disk flat — safeName avoids collisions across folders.
+        const safeName = entryName.replace(/[/\\]/g, "__");
+        const outPath = path.join(tmpDir, safeName);
+        fs.writeFileSync(outPath, entry.getData());
+        out.push({
+          originalName: entryName,
+          displayName: path.basename(entryName),
+          path: outPath,
+          size: entry.header.size,
+          sourceArchive: f.originalname,
+          cleanup: () => { try { fs.unlinkSync(outPath); } catch {} },
+        });
+      }
+    } catch (err: any) {
+      console.error(`[legal-dd] Failed to expand ZIP ${f.originalname}:`, err?.message);
+    } finally {
+      try { fs.unlinkSync(f.path); } catch {}
+    }
+  }
+  return out;
+}
 
 async function extractTextFromFile(filePath: string, originalName: string): Promise<string> {
   const ext = path.extname(originalName).toLowerCase();
@@ -105,6 +176,56 @@ interface DDAnalysis {
   folderMapping: { fileName: string; targetFolder: string }[];
   keyRisks: string[];
   recommendations: string[];
+}
+
+// Per-file classification. Runs Claude on just the filename + first chunk of
+// text, producing a cheap tag that downstream specialist analysers use to
+// decide whether to run rent-roll extraction, model auditing, lease term
+// extraction, premises-licence parsing, etc.
+interface FileClassification {
+  primaryType:
+    | "Lease" | "Licence" | "HoT" | "Title Register" | "Title Plan"
+    | "Conditional Contract" | "Option" | "Surrender" | "Side Letter"
+    | "Rent Roll" | "Financial Model" | "Management Accounts" | "Service Charge Budget" | "CapEx Schedule" | "Valuation"
+    | "IM" | "Marketing Particulars" | "Photos" | "Floorplans"
+    | "Premises Licence" | "Tied Lease" | "MRO Notice" | "Trade Accounts" | "BDM Report"
+    | "Other";
+  subType: string;
+  confidence: "high" | "medium" | "low";
+  propertyAddress?: string;
+  tenantName?: string;
+  landlordName?: string;
+  notes?: string;
+}
+
+const CLASSIFY_SYSTEM_PROMPT = `You are a document classifier for UK commercial property and pub deal data rooms. Given a filename and the first few thousand characters of a document, return a JSON object with this exact shape:
+{
+  "primaryType": "Lease|Licence|HoT|Title Register|Title Plan|Conditional Contract|Option|Surrender|Side Letter|Rent Roll|Financial Model|Management Accounts|Service Charge Budget|CapEx Schedule|Valuation|IM|Marketing Particulars|Photos|Floorplans|Premises Licence|Tied Lease|MRO Notice|Trade Accounts|BDM Report|Other",
+  "subType": "short descriptive label, e.g. 'Ground floor retail lease' or 'Pub P&L FY24'",
+  "confidence": "high|medium|low",
+  "propertyAddress": "extracted property address if present (optional)",
+  "tenantName": "tenant or operator name if identifiable (optional)",
+  "landlordName": "landlord or freeholder name if identifiable (optional)",
+  "notes": "one-line useful observation (optional)"
+}
+Context: this is a deal-data-room pipeline. Pubs can be let (investment), managed (operating), tied-tenancy or free-of-tie. Rent rolls and financial models typically arrive as .xlsx. Title registers are distinctive HMLR documents. Return ONLY valid JSON.`;
+
+async function classifyFile(anthropic: Anthropic, fileName: string, text: string): Promise<FileClassification> {
+  const snippet = (text || "").slice(0, 4000);
+  try {
+    const resp = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 512,
+      system: CLASSIFY_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: `Filename: ${fileName}\n\nFirst 4000 chars:\n${snippet}` }],
+    });
+    const raw = resp.content[0]?.type === "text" ? resp.content[0].text : "{}";
+    const cleaned = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    return JSON.parse(cleaned) as FileClassification;
+  } catch (err: any) {
+    console.warn(`[legal-dd] classification failed for ${fileName}:`, err?.message);
+    return { primaryType: "Other", subType: path.extname(fileName).replace(".", "") || "unknown", confidence: "low" };
+  }
 }
 
 const LEGAL_SYSTEM_PROMPT = `You are a senior UK commercial property lawyer and legal analyst for Bruce Gillingham Pollard (BGP), a commercial property consultancy in London specialising in Belgravia, Mayfair, and Chelsea.
@@ -245,55 +366,141 @@ export function registerLegalDDRoutes(app: Express) {
     }
   });
 
+  // Data-room ingest: accepts individual files and/or ZIPs, expands ZIPs,
+  // classifies each file, runs the overall DD analysis, persists results.
   app.post("/api/legal-dd/deal-dd", requireAuth, upload.array("files", 30), async (req: Request, res: Response) => {
-    const files = req.files as Express.Multer.File[];
-    const { dealName, team } = req.body;
+    const rawFiles = (req.files as Express.Multer.File[]) || [];
+    const { dealName, team, crmDealId } = req.body;
+    const userId = (req as any).session?.userId || (req as any).tokenUserId || null;
 
-    if (!files || files.length === 0) {
-      return res.status(400).json({ message: "No files uploaded" });
-    }
-    if (!dealName) {
-      return res.status(400).json({ message: "Deal name is required" });
-    }
+    if (rawFiles.length === 0) return res.status(400).json({ message: "No files uploaded" });
+    if (!dealName) return res.status(400).json({ message: "Deal name is required" });
 
+    let effective: EffectiveFile[] = [];
     try {
-      const anthropic = getAnthropicClient();
-      const fileTexts: { name: string; text: string }[] = [];
-
-      for (const file of files) {
-        try {
-          const text = await extractTextFromFile(file.path, file.originalname);
-          fileTexts.push({ name: file.originalname, text: text.slice(0, 15000) });
-        } catch {
-          fileTexts.push({ name: file.originalname, text: "[Could not extract text from this file]" });
-        }
+      effective = await expandUploads(rawFiles);
+      if (effective.length === 0) {
+        return res.status(400).json({ message: "No extractable files (PDF/DOCX/XLSX/TXT) found in upload" });
       }
 
-      const fileListPrompt = fileTexts.map((f, i) => `--- FILE ${i + 1}: ${f.name} ---\n${f.text}\n`).join("\n");
+      const anthropic = getAnthropicClient();
+
+      // 1. Extract text + classify every file individually. Classification is
+      //    a cheap one-shot pass that tags the file so specialist analysers
+      //    (Phase 2 — lease, rent-roll, model, premises-licence) can route
+      //    on it later.
+      const classified: Array<EffectiveFile & { text: string; classification: FileClassification }> = [];
+      for (const f of effective) {
+        let text = "";
+        try { text = await extractTextFromFile(f.path, f.originalName); }
+        catch { text = "[Could not extract text from this file]"; }
+        const classification = await classifyFile(anthropic, f.originalName, text);
+        classified.push({ ...f, text, classification });
+      }
+
+      // 2. Overall DD analysis — feeds Claude the classified inventory so it
+      //    produces a deal-level summary with reds/ambers/greens.
+      const fileListPrompt = classified.map((f, i) =>
+        `--- FILE ${i + 1}: ${f.originalName} [${f.classification.primaryType}] ---\n${f.text.slice(0, 12000)}\n`
+      ).join("\n");
 
       const response = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 8192,
         system: DD_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: `Deal: "${dealName}"\nTeam: ${team || "Investment"}\n\nData room documents:\n\n${fileListPrompt}`
-          }
-        ],
+        messages: [{
+          role: "user",
+          content: `Deal: "${dealName}"\nTeam: ${team || "Investment"}\n\nData room documents:\n\n${fileListPrompt}`
+        }],
       });
 
       const content = response.content[0]?.type === "text" ? response.content[0].text : "{}";
       const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
       const analysis = JSON.parse(cleaned) as DDAnalysis;
 
-      files.forEach(f => { try { fs.unlinkSync(f.path); } catch {} });
+      // 3. Persist — so a refresh doesn't throw away the result.
+      let analysisId: string | null = null;
+      if (userId) {
+        try {
+          const insert = await pool.query(
+            `INSERT INTO data_room_analyses (user_id, deal_name, team, crm_deal_id, file_count, red_flags, amber_flags, green_flags, overall_risk, overall_summary, analysis)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+            [userId, dealName, team || "Investment", crmDealId || null, classified.length,
+             analysis.redFlags || 0, analysis.amberFlags || 0, analysis.greenFlags || 0,
+             analysis.overallRisk || "medium", analysis.overallSummary || "", JSON.stringify(analysis)]
+          );
+          analysisId = insert.rows[0].id;
 
-      res.json({ analysis });
+          for (const f of classified) {
+            await pool.query(
+              `INSERT INTO data_room_files (analysis_id, user_id, archive_name, file_name, display_name, file_size, primary_type, sub_type, extracted_text, classification)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+              [analysisId, userId, f.sourceArchive || null, f.originalName, f.displayName, f.size,
+               f.classification.primaryType, f.classification.subType,
+               f.text.slice(0, 200000), JSON.stringify(f.classification)]
+            );
+          }
+        } catch (persistErr: any) {
+          console.error("[legal-dd] persist failed:", persistErr?.message);
+        }
+      }
+
+      res.json({
+        analysisId,
+        analysis,
+        files: classified.map(f => ({
+          originalName: f.originalName,
+          displayName: f.displayName,
+          size: f.size,
+          sourceArchive: f.sourceArchive,
+          classification: f.classification,
+        })),
+      });
     } catch (err: any) {
       console.error("Deal DD error:", err);
-      files.forEach(f => { try { fs.unlinkSync(f.path); } catch {} });
       res.status(500).json({ message: err.message || "Failed to process due diligence" });
+    } finally {
+      effective.forEach(f => f.cleanup?.());
+    }
+  });
+
+  // List past data-room analyses for this user (for the UI history/deal panel).
+  app.get("/api/legal-dd/analyses", requireAuth, async (req: any, res: Response) => {
+    const userId = req.session?.userId || req.tokenUserId;
+    if (!userId) return res.json({ analyses: [] });
+    try {
+      const r = await pool.query(
+        `SELECT id, deal_name, team, crm_deal_id, file_count, red_flags, amber_flags, green_flags, overall_risk, overall_summary, created_at
+         FROM data_room_analyses WHERE user_id = $1 ORDER BY created_at DESC LIMIT 100`,
+        [userId]
+      );
+      res.json({ analyses: r.rows });
+    } catch (err: any) {
+      console.error("[legal-dd] list analyses error:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to list analyses" });
+    }
+  });
+
+  // Full payload for a single analysis — reconstructed so a page refresh
+  // restores the exact DD view the user last saw.
+  app.get("/api/legal-dd/analyses/:id", requireAuth, async (req: any, res: Response) => {
+    const userId = req.session?.userId || req.tokenUserId;
+    if (!userId) return res.status(401).json({ message: "Not signed in" });
+    try {
+      const analysisRow = await pool.query(
+        `SELECT * FROM data_room_analyses WHERE id = $1 AND user_id = $2`,
+        [req.params.id, userId]
+      );
+      if (analysisRow.rows.length === 0) return res.status(404).json({ message: "Analysis not found" });
+      const filesRow = await pool.query(
+        `SELECT id, archive_name, file_name, display_name, file_size, primary_type, sub_type, classification, created_at
+         FROM data_room_files WHERE analysis_id = $1 ORDER BY created_at ASC`,
+        [req.params.id]
+      );
+      res.json({ analysis: analysisRow.rows[0], files: filesRow.rows });
+    } catch (err: any) {
+      console.error("[legal-dd] get analysis error:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to fetch analysis" });
     }
   });
 

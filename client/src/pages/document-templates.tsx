@@ -4144,6 +4144,8 @@ function LegalDDTab() {
   const [ddTeam, setDdTeam] = useState("Investment");
   const [legalResults, setLegalResults] = useState<LegalAnalysisResult[] | null>(null);
   const [ddResult, setDdResult] = useState<DDResult | null>(null);
+  const [ddClassifiedFiles, setDdClassifiedFiles] = useState<Array<{ originalName: string; displayName: string; size: number; sourceArchive?: string; classification: { primaryType: string; subType: string; confidence: string; propertyAddress?: string; tenantName?: string; landlordName?: string; notes?: string } }>>([]);
+  const [ddAnalysisId, setDdAnalysisId] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [projectCreated, setProjectCreated] = useState<string | null>(null);
@@ -4175,6 +4177,8 @@ function LegalDDTab() {
     if (ddFiles.length === 0 || !dealName.trim()) return;
     setAnalyzing(true);
     setDdResult(null);
+    setDdClassifiedFiles([]);
+    setDdAnalysisId(null);
     setProjectCreated(null);
     try {
       const formData = new FormData();
@@ -4185,7 +4189,16 @@ function LegalDDTab() {
       if (!res.ok) { let errMsg = "DD analysis failed"; try { const t = await res.text(); errMsg = JSON.parse(t).message || errMsg; } catch {} throw new Error(errMsg); }
       const data = await res.json();
       setDdResult(data.analysis);
-      toast({ title: "Due Diligence complete", description: `${data.analysis.fileAnalyses?.length || 0} files analysed` });
+      setDdClassifiedFiles(data.files || []);
+      setDdAnalysisId(data.analysisId || null);
+      const extractedCount = (data.files || []).length;
+      const zipCount = (data.files || []).filter((f: any) => f.sourceArchive).length;
+      toast({
+        title: "Due Diligence complete",
+        description: zipCount > 0
+          ? `${extractedCount} files analysed (${zipCount} from ZIP archive)`
+          : `${extractedCount} files analysed`,
+      });
     } catch (err: any) {
       toast({ title: "DD analysis failed", description: err.message, variant: "destructive" });
     } finally {
@@ -4437,7 +4450,7 @@ function LegalDDTab() {
               >
                 <UploadCloud className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
                 <p className="text-sm font-medium">Drop data room files here or click to browse</p>
-                <p className="text-xs text-muted-foreground mt-1">PDF, DOCX, DOC, TXT, XLSX — up to 30 files</p>
+                <p className="text-xs text-muted-foreground mt-1">PDF, DOCX, XLSX, TXT — or a whole .zip data room (up to 500MB each)</p>
                 <input
                   id="dd-files-input"
                   type="file"
@@ -4504,6 +4517,65 @@ function LegalDDTab() {
                   </CardContent>
                 </Card>
               </div>
+
+              {ddClassifiedFiles.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center justify-between">
+                      <span>Files in Data Room ({ddClassifiedFiles.length})</span>
+                      {ddClassifiedFiles.some(f => f.sourceArchive) && (
+                        <Badge variant="outline" className="text-[10px]">
+                          Expanded from {new Set(ddClassifiedFiles.map(f => f.sourceArchive).filter(Boolean)).size} ZIP archive(s)
+                        </Badge>
+                      )}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-1.5 max-h-[320px] overflow-y-auto">
+                    {ddClassifiedFiles.map((f, i) => {
+                      const cls = f.classification || {} as any;
+                      const typeColors: Record<string, string> = {
+                        "Lease": "bg-blue-50 text-blue-700 border-blue-200",
+                        "Licence": "bg-blue-50 text-blue-700 border-blue-200",
+                        "HoT": "bg-indigo-50 text-indigo-700 border-indigo-200",
+                        "Title Register": "bg-purple-50 text-purple-700 border-purple-200",
+                        "Title Plan": "bg-purple-50 text-purple-700 border-purple-200",
+                        "Rent Roll": "bg-emerald-50 text-emerald-700 border-emerald-200",
+                        "Financial Model": "bg-amber-50 text-amber-700 border-amber-200",
+                        "Management Accounts": "bg-amber-50 text-amber-700 border-amber-200",
+                        "Trade Accounts": "bg-amber-50 text-amber-700 border-amber-200",
+                        "Premises Licence": "bg-rose-50 text-rose-700 border-rose-200",
+                        "Tied Lease": "bg-rose-50 text-rose-700 border-rose-200",
+                        "MRO Notice": "bg-rose-50 text-rose-700 border-rose-200",
+                        "Valuation": "bg-cyan-50 text-cyan-700 border-cyan-200",
+                        "IM": "bg-slate-50 text-slate-700 border-slate-200",
+                        "Marketing Particulars": "bg-slate-50 text-slate-700 border-slate-200",
+                        "Other": "bg-gray-50 text-gray-600 border-gray-200",
+                      };
+                      const pill = typeColors[cls.primaryType] || typeColors.Other;
+                      return (
+                        <div key={i} className="flex items-start gap-2 p-2 rounded-md hover:bg-muted/40">
+                          <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium truncate">{f.displayName}</span>
+                              <Badge variant="outline" className={`text-[10px] ${pill}`}>{cls.primaryType || "Other"}</Badge>
+                              {cls.confidence === "low" && <Badge variant="outline" className="text-[10px] bg-gray-50 text-gray-500">low confidence</Badge>}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
+                              {cls.subType && <span>{cls.subType}</span>}
+                              {cls.propertyAddress && <span>• {cls.propertyAddress}</span>}
+                              {cls.tenantName && <span>• Tenant: {cls.tenantName}</span>}
+                              {cls.landlordName && <span>• LL: {cls.landlordName}</span>}
+                              {f.sourceArchive && <span className="text-muted-foreground/60">• from {f.sourceArchive}</span>}
+                            </div>
+                          </div>
+                          <span className="text-[10px] text-muted-foreground shrink-0">{(f.size / 1024).toFixed(0)} KB</span>
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              )}
 
               <Card>
                 <CardHeader>
