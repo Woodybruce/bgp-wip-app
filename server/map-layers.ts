@@ -70,10 +70,68 @@ export function registerMapLayerRoutes(app: Express) {
     if (!name) return res.status(400).json({ error: "name query parameter required" });
     try {
       const key = `centre-directory:${name.toLowerCase().slice(0, 120)}`;
+      // Known-centre directory URLs we can scrape directly — much more
+      // reliable than asking an LLM to find them. Add more as they're
+      // verified. Format is { name → [urls to try in order] }.
+      const CENTRE_URLS: Record<string, string[]> = {
+        "Cardinal Place, London": ["https://cardinalplace.co.uk/stores"],
+        "Nova Victoria, London": ["https://atvictorialondon.com/en/plan-your-visit/centre-map"],
+        "Westfield London, Shepherds Bush": ["https://uk.westfield.com/london/info/centre-map", "https://uk.westfield.com/london"],
+        "Westfield Stratford City": ["https://uk.westfield.com/stratfordcity/info/centre-map", "https://uk.westfield.com/stratfordcity"],
+        "Brent Cross Shopping Centre": ["https://www.brentcross.co.uk/stores"],
+        "Canary Wharf Shopping": ["https://canarywharf.com/shops-restaurants/"],
+        "One New Change, London": ["https://www.onenewchange.com/stores"],
+      };
+
       const result = await cached(key, async () => {
         const prompt = `List every tenant at the "${name}" shopping centre${address ? ` (${address})` : ""} in London. For each tenant give: name, unit number if known, category (retail/food/service), and floor level. Prefer the centre's own plan-your-visit or store-directory page. Return strict JSON like:
 {"centre":"${name}","tenants":[{"name":"","unit":"","category":"","floor":""}]}
 If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Return ONLY the JSON.`;
+
+        // Primary: ScraperAPI to fetch the centre's own website, then pass
+        // the HTML to Claude to parse tenants out. This is dramatically
+        // more reliable than Perplexity/web_search because it hits the
+        // authoritative source directly.
+        const scraperKey = process.env.SCRAPERAPI_KEY;
+        const urls = CENTRE_URLS[name];
+        const anthropicKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+        if (scraperKey && urls && urls.length > 0 && anthropicKey) {
+          for (const url of urls) {
+            try {
+              const proxied = `https://api.scraperapi.com/?api_key=${encodeURIComponent(scraperKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=true`;
+              const r = await fetch(proxied, { signal: AbortSignal.timeout(60000) });
+              if (!r.ok) continue;
+              const html = await r.text();
+              // Strip scripts / styles / excessive whitespace to keep the
+              // Claude prompt small.
+              const cleanText = html
+                .replace(/<script[\s\S]*?<\/script>/gi, "")
+                .replace(/<style[\s\S]*?<\/style>/gi, "")
+                .replace(/<!--[\s\S]*?-->/g, "")
+                .replace(/<[^>]+>/g, " ")
+                .replace(/\s+/g, " ")
+                .slice(0, 40000);
+              const Anthropic = (await import("@anthropic-ai/sdk")).default;
+              const client = new Anthropic({ apiKey: anthropicKey });
+              const resp = await client.messages.create({
+                model: "claude-haiku-4-5-20251001",
+                max_tokens: 4096,
+                system: "Extract the full tenant directory from the supplied shopping centre webpage text. Return ONLY JSON matching: {\"centre\":\"<name>\",\"tenants\":[{\"name\":\"\",\"unit\":\"\",\"category\":\"retail|food|service\",\"floor\":\"\"}]}. If no tenants found return {\"centre\":\"<name>\",\"tenants\":[]}.",
+                messages: [{ role: "user", content: `Centre: "${name}"\nSource URL: ${url}\n\nPage text:\n${cleanText}` }],
+              });
+              const raw = resp.content[0]?.type === "text" ? resp.content[0].text : "{}";
+              const clean = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+              const firstBrace = clean.indexOf("{");
+              const lastBrace = clean.lastIndexOf("}");
+              if (firstBrace >= 0 && lastBrace > firstBrace) {
+                const parsed = JSON.parse(clean.slice(firstBrace, lastBrace + 1));
+                if (parsed.tenants?.length > 0) return { ...parsed, source: `scraperapi:${url}` };
+              }
+            } catch (err: any) {
+              console.warn(`[map/centre-directory] ScraperAPI+Claude failed for ${url}:`, err?.message);
+            }
+          }
+        }
 
         // Primary: Anthropic web_search server tool (no extra API key needed
         // beyond the one already configured for ChatBGP). Fallback:
@@ -86,7 +144,6 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
           try { return JSON.parse(clean.slice(firstBrace, lastBrace + 1)); } catch { return null; }
         };
 
-        const anthropicKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
         if (anthropicKey) {
           try {
             const Anthropic = (await import("@anthropic-ai/sdk")).default;

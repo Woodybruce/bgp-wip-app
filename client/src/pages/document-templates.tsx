@@ -4253,6 +4253,58 @@ function LegalDDTab() {
     }, 4000);
   };
 
+  // Poll /api/legal-dd/analyses/:id every 3s until status leaves "processing".
+  // Big data rooms (300+ files) can take 10+ minutes of background work;
+  // the HTTP POST just returns 202 immediately, we poll for progress.
+  const pollAnalysisStatus = (analysisId: string) => {
+    let cycles = 0;
+    const timer = setInterval(async () => {
+      cycles++;
+      try {
+        const r = await fetch(`/api/legal-dd/analyses/${analysisId}`, {
+          headers: { ...getAuthHeaders() }, credentials: "include",
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        const a = data.analysis || {};
+        const pct = a.progress_total > 0 ? Math.round((a.progress_classified / a.progress_total) * 100) : 0;
+        setDdEnrichProgress({ total: a.progress_total || 0, done: a.progress_classified || 0, running: 0, errors: 0 });
+
+        if (a.status === "done" || a.status === "error") {
+          clearInterval(timer);
+          setAnalyzing(false);
+          if (a.status === "error") {
+            toast({ title: "DD analysis failed", description: a.error_message || "Unknown error", variant: "destructive" });
+            return;
+          }
+          setDdResult(a.analysis || { overallSummary: a.overall_summary, overallRisk: a.overall_risk, redFlags: a.red_flags, amberFlags: a.amber_flags, greenFlags: a.green_flags });
+          setDdClassifiedFiles((data.files || []).map((f: any) => ({
+            originalName: f.file_name,
+            displayName: f.display_name,
+            size: f.file_size || 0,
+            sourceArchive: f.archive_name || undefined,
+            classification: f.classification || { primaryType: f.primary_type || "Other", subType: f.sub_type || "", confidence: "low" },
+          })));
+          toast({
+            title: "Due Diligence complete",
+            description: `${data.files?.length || 0} files analysed. Starting enrichment...`,
+          });
+          // Kick off Push 2 enrichment.
+          try {
+            await fetch(`/api/legal-dd/enrich/${analysisId}`, {
+              method: "POST", headers: { ...getAuthHeaders() }, credentials: "include",
+            });
+            setDdEnrichProgress({ total: data.files?.length || 0, done: 0, running: 0, errors: 0 });
+            startEnrichmentPolling(analysisId);
+          } catch {}
+        }
+        // Safety: give up after 30 minutes (600 cycles × 3s)
+        if (cycles > 600) { clearInterval(timer); setAnalyzing(false); toast({ title: "DD analysis timed out", description: "Still processing — check back shortly.", variant: "destructive" }); }
+      } catch {}
+    }, 3000);
+    return timer;
+  };
+
   const handleDealDD = async () => {
     if (ddFiles.length === 0 || !dealName.trim()) return;
     setAnalyzing(true);
@@ -4272,31 +4324,25 @@ function LegalDDTab() {
       const res = await fetch("/api/legal-dd/deal-dd", { method: "POST", headers: { ...getAuthHeaders() }, body: formData, credentials: "include" });
       if (!res.ok) { let errMsg = "DD analysis failed"; try { const t = await res.text(); errMsg = JSON.parse(t).message || errMsg; } catch {} throw new Error(errMsg); }
       const data = await res.json();
-      setDdResult(data.analysis);
-      setDdClassifiedFiles(data.files || []);
-      setDdAnalysisId(data.analysisId || null);
-      const extractedCount = (data.files || []).length;
-      const zipCount = (data.files || []).filter((f: any) => f.sourceArchive).length;
-      toast({
-        title: "Due Diligence complete",
-        description: zipCount > 0
-          ? `${extractedCount} files analysed (${zipCount} from ZIP archive). Enrichment running...`
-          : `${extractedCount} files analysed. Enrichment running...`,
-      });
-      // Kick off Push 2 enrichment in the background and start polling for
-      // per-file specialist + CH/VOA/Land-Registry/FSA badges.
-      if (data.analysisId) {
-        try {
-          await fetch(`/api/legal-dd/enrich/${data.analysisId}`, {
-            method: "POST", headers: { ...getAuthHeaders() }, credentials: "include",
-          });
-          setDdEnrichProgress({ total: extractedCount, done: 0, running: 0, errors: 0 });
-          startEnrichmentPolling(data.analysisId);
-        } catch {}
+      // Server returns 202 { analysisId, status: "processing", total } —
+      // kick off polling for progress + completion.
+      if (data.analysisId && data.status === "processing") {
+        setDdAnalysisId(data.analysisId);
+        setDdEnrichProgress({ total: data.total || 0, done: 0, running: 0, errors: 0 });
+        toast({
+          title: "DD analysis started",
+          description: `Processing ${data.total || "your"} files in the background...`,
+        });
+        pollAnalysisStatus(data.analysisId);
+      } else {
+        // Backwards compat — direct result (shouldn't happen with new server).
+        setDdResult(data.analysis);
+        setDdClassifiedFiles(data.files || []);
+        setDdAnalysisId(data.analysisId || null);
+        setAnalyzing(false);
       }
     } catch (err: any) {
       toast({ title: "DD analysis failed", description: err.message, variant: "destructive" });
-    } finally {
       setAnalyzing(false);
     }
   };

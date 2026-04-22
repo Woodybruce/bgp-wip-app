@@ -228,6 +228,113 @@ async function classifyFile(anthropic: Anthropic, fileName: string, text: string
   }
 }
 
+// Background runner: extracts text, classifies every file in parallel
+// batches, runs the overall DD analysis, persists everything. The HTTP
+// handler returns 202 the moment this is kicked off — this function
+// updates data_room_analyses.progress_classified as it goes so the
+// client polling /analyses/:id sees a live progress counter.
+async function runDealDdInBackground(
+  analysisId: string,
+  userId: string,
+  dealName: string,
+  team: string,
+  effective: EffectiveFile[],
+): Promise<void> {
+  const anthropic = getAnthropicClient();
+  const classified: Array<EffectiveFile & { text: string; classification: FileClassification }> = new Array(effective.length);
+
+  // Batched parallel classification — much faster than sequential. Each
+  // worker picks the next file index from the queue until done. Concurrency
+  // 6 keeps us well under the Anthropic-per-account rate limit even on big
+  // data rooms.
+  let cursor = 0;
+  let processed = 0;
+  const concurrency = 6;
+  await Promise.all(Array.from({ length: concurrency }, async () => {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= effective.length) return;
+      const f = effective[idx];
+      let text = "";
+      try { text = await extractTextFromFile(f.path, f.originalName); }
+      catch { text = "[Could not extract text from this file]"; }
+      const classification = await classifyFile(anthropic, f.originalName, text);
+      classified[idx] = { ...f, text, classification };
+      processed++;
+      // Update progress counter every few files to avoid thrashing the DB.
+      if (processed % 5 === 0 || processed === effective.length) {
+        try {
+          await pool.query(
+            `UPDATE data_room_analyses SET progress_classified=$1 WHERE id=$2`,
+            [processed, analysisId]
+          );
+        } catch {}
+      }
+    }
+  }));
+
+  // Persist file rows as soon as classification is done — enrichment (Push 2)
+  // can then run on them even before the overall DD summary completes.
+  for (const f of classified) {
+    if (!f) continue;
+    try {
+      await pool.query(
+        `INSERT INTO data_room_files (analysis_id, user_id, archive_name, file_name, display_name, file_size, primary_type, sub_type, extracted_text, classification)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [analysisId, userId, f.sourceArchive || null, f.originalName, f.displayName, f.size,
+         f.classification.primaryType, f.classification.subType,
+         f.text.slice(0, 200000), JSON.stringify(f.classification)]
+      );
+    } catch (persistErr: any) {
+      console.warn(`[legal-dd] file persist failed for ${f.displayName}:`, persistErr?.message);
+    }
+  }
+
+  // Overall DD analysis — Claude Sonnet on the full classified inventory.
+  // For very large data rooms we cap the text per file to keep total prompt
+  // under ~150k tokens; Claude's context handles it comfortably.
+  const fileListPrompt = classified.filter(Boolean).map((f, i) =>
+    `--- FILE ${i + 1}: ${f.originalName} [${f.classification.primaryType}] ---\n${f.text.slice(0, classified.length > 50 ? 4000 : 12000)}\n`
+  ).join("\n");
+
+  try {
+    const resp = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 8192,
+      system: DD_SYSTEM_PROMPT,
+      messages: [{
+        role: "user",
+        content: `Deal: "${dealName}"\nTeam: ${team}\n\nData room documents:\n\n${fileListPrompt}`
+      }],
+    });
+    const raw = resp.content[0]?.type === "text" ? resp.content[0].text : "{}";
+    const cleaned = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    const parsed = firstBrace >= 0 && lastBrace > firstBrace ? JSON.parse(cleaned.slice(firstBrace, lastBrace + 1)) : {};
+    const analysis = parsed as DDAnalysis;
+
+    await pool.query(
+      `UPDATE data_room_analyses SET status='done', completed_at=now(),
+        red_flags=$1, amber_flags=$2, green_flags=$3, overall_risk=$4, overall_summary=$5, analysis=$6
+       WHERE id=$7`,
+      [analysis.redFlags || 0, analysis.amberFlags || 0, analysis.greenFlags || 0,
+       analysis.overallRisk || "medium", analysis.overallSummary || "", JSON.stringify(analysis), analysisId]
+    );
+  } catch (err: any) {
+    console.error(`[legal-dd] background DD Claude call failed for ${analysisId}:`, err?.message);
+    // Classification + file rows are still saved; mark the summary stage as
+    // errored but keep status='done' so the user can see classified files.
+    await pool.query(
+      `UPDATE data_room_analyses SET status='done', completed_at=now(), error_message=$1, overall_summary=$2
+       WHERE id=$3`,
+      [`DD summary failed: ${err?.message || "unknown"}`, "Classification complete, but DD summary generation failed. Files are still available for enrichment.", analysisId]
+    );
+  } finally {
+    effective.forEach(f => f.cleanup?.());
+  }
+}
+
 const LEGAL_SYSTEM_PROMPT = `You are a senior UK commercial property lawyer and legal analyst for Bruce Gillingham Pollard (BGP), a commercial property consultancy in London specialising in Belgravia, Mayfair, and Chelsea.
 
 Analyse the provided legal document and return a JSON object with this exact structure:
@@ -366,8 +473,11 @@ export function registerLegalDDRoutes(app: Express) {
     }
   });
 
-  // Data-room ingest: accepts individual files and/or ZIPs, expands ZIPs,
-  // classifies each file, runs the overall DD analysis, persists results.
+  // Data-room ingest: accepts individual files and/or ZIPs. Expansion +
+  // classification + DD analysis can take 5-10+ minutes for a 300-file
+  // data room — too long to hold an HTTP connection. We create the
+  // analysis record immediately, return 202 with the analysisId, then
+  // do all the work in the background. Client polls for progress.
   app.post("/api/legal-dd/deal-dd", requireAuth, upload.array("files", 30), async (req: Request, res: Response) => {
     const rawFiles = (req.files as Express.Multer.File[]) || [];
     const { dealName, team, crmDealId } = req.body;
@@ -375,92 +485,46 @@ export function registerLegalDDRoutes(app: Express) {
 
     if (rawFiles.length === 0) return res.status(400).json({ message: "No files uploaded" });
     if (!dealName) return res.status(400).json({ message: "Deal name is required" });
+    if (!userId) return res.status(401).json({ message: "Not signed in" });
 
-    let effective: EffectiveFile[] = [];
     try {
-      effective = await expandUploads(rawFiles);
+      const effective = await expandUploads(rawFiles);
       if (effective.length === 0) {
         return res.status(400).json({ message: "No extractable files (PDF/DOCX/XLSX/TXT) found in upload" });
       }
 
-      const anthropic = getAnthropicClient();
+      // 1. Create the pending analysis record immediately.
+      const insert = await pool.query(
+        `INSERT INTO data_room_analyses (user_id, deal_name, team, crm_deal_id, file_count, status, progress_classified, progress_total, overall_summary)
+         VALUES ($1,$2,$3,$4,$5,'processing',0,$6,$7) RETURNING id`,
+        [userId, dealName, team || "Investment", crmDealId || null, effective.length, effective.length, "Analysing data room..."]
+      );
+      const analysisId = insert.rows[0].id as string;
 
-      // 1. Extract text + classify every file individually. Classification is
-      //    a cheap one-shot pass that tags the file so specialist analysers
-      //    (Phase 2 — lease, rent-roll, model, premises-licence) can route
-      //    on it later.
-      const classified: Array<EffectiveFile & { text: string; classification: FileClassification }> = [];
-      for (const f of effective) {
-        let text = "";
-        try { text = await extractTextFromFile(f.path, f.originalName); }
-        catch { text = "[Could not extract text from this file]"; }
-        const classification = await classifyFile(anthropic, f.originalName, text);
-        classified.push({ ...f, text, classification });
-      }
-
-      // 2. Overall DD analysis — feeds Claude the classified inventory so it
-      //    produces a deal-level summary with reds/ambers/greens.
-      const fileListPrompt = classified.map((f, i) =>
-        `--- FILE ${i + 1}: ${f.originalName} [${f.classification.primaryType}] ---\n${f.text.slice(0, 12000)}\n`
-      ).join("\n");
-
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 8192,
-        system: DD_SYSTEM_PROMPT,
-        messages: [{
-          role: "user",
-          content: `Deal: "${dealName}"\nTeam: ${team || "Investment"}\n\nData room documents:\n\n${fileListPrompt}`
-        }],
-      });
-
-      const content = response.content[0]?.type === "text" ? response.content[0].text : "{}";
-      const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
-      const analysis = JSON.parse(cleaned) as DDAnalysis;
-
-      // 3. Persist — so a refresh doesn't throw away the result.
-      let analysisId: string | null = null;
-      if (userId) {
-        try {
-          const insert = await pool.query(
-            `INSERT INTO data_room_analyses (user_id, deal_name, team, crm_deal_id, file_count, red_flags, amber_flags, green_flags, overall_risk, overall_summary, analysis)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
-            [userId, dealName, team || "Investment", crmDealId || null, classified.length,
-             analysis.redFlags || 0, analysis.amberFlags || 0, analysis.greenFlags || 0,
-             analysis.overallRisk || "medium", analysis.overallSummary || "", JSON.stringify(analysis)]
-          );
-          analysisId = insert.rows[0].id;
-
-          for (const f of classified) {
-            await pool.query(
-              `INSERT INTO data_room_files (analysis_id, user_id, archive_name, file_name, display_name, file_size, primary_type, sub_type, extracted_text, classification)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-              [analysisId, userId, f.sourceArchive || null, f.originalName, f.displayName, f.size,
-               f.classification.primaryType, f.classification.subType,
-               f.text.slice(0, 200000), JSON.stringify(f.classification)]
-            );
-          }
-        } catch (persistErr: any) {
-          console.error("[legal-dd] persist failed:", persistErr?.message);
-        }
-      }
-
-      res.json({
+      // 2. Return 202 so the client can start polling immediately.
+      res.status(202).json({
         analysisId,
-        analysis,
-        files: classified.map(f => ({
-          originalName: f.originalName,
-          displayName: f.displayName,
-          size: f.size,
-          sourceArchive: f.sourceArchive,
-          classification: f.classification,
-        })),
+        status: "processing",
+        total: effective.length,
+        message: "Analysis running in background — poll /api/legal-dd/analyses/:id for progress",
       });
+
+      // 3. Kick off the actual work in the background. Any errors update
+      //    the analysis row to status=error so the client sees them.
+      setImmediate(() => runDealDdInBackground(analysisId, userId, dealName, team || "Investment", effective)
+        .catch(async (err: any) => {
+          console.error(`[legal-dd] background job ${analysisId} failed:`, err?.message);
+          try {
+            await pool.query(
+              `UPDATE data_room_analyses SET status='error', error_message=$1, completed_at=now() WHERE id=$2`,
+              [err?.message || "unknown error", analysisId]
+            );
+          } catch {}
+          effective.forEach(f => f.cleanup?.());
+        }));
     } catch (err: any) {
       console.error("Deal DD error:", err);
       res.status(500).json({ message: err.message || "Failed to process due diligence" });
-    } finally {
-      effective.forEach(f => f.cleanup?.());
     }
   });
 
