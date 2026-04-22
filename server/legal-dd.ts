@@ -560,6 +560,165 @@ export function registerLegalDDRoutes(app: Express) {
     }
   });
 
+  // Reconciliation + portfolio roll-up (Push 3). Computes cross-file
+  // checks (rent roll ↔ model ↔ leases, landlord-vs-title-proprietor,
+  // dissolved-tenant counts, rent-to-rates ratios) and the portfolio-
+  // level summary stats. Runs on demand against persisted Push 2
+  // enrichments, no re-analysis required.
+  app.get("/api/legal-dd/analyses/:id/reconciliation", requireAuth, async (req: any, res: Response) => {
+    const userId = req.session?.userId || req.tokenUserId;
+    if (!userId) return res.status(401).json({ message: "Not signed in" });
+    try {
+      const owns = await pool.query(
+        `SELECT id FROM data_room_analyses WHERE id = $1 AND user_id = $2`,
+        [req.params.id, userId]
+      );
+      if (owns.rows.length === 0) return res.status(404).json({ message: "Analysis not found" });
+      const { buildReconciliationReport } = await import("./data-room-reconcile");
+      const report = await buildReconciliationReport(req.params.id);
+      res.json(report);
+    } catch (err: any) {
+      console.error("[legal-dd] reconciliation error:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to build reconciliation" });
+    }
+  });
+
+  // Dispatch: push extracted lease events (break, expiry, rent review) into
+  // the Lease Events board so they appear on the same timeline as
+  // everything else the business tracks.
+  app.post("/api/legal-dd/analyses/:id/dispatch/lease-events", requireAuth, async (req: any, res: Response) => {
+    const userId = req.session?.userId || req.tokenUserId;
+    const userName = req.session?.userName || "Data Room";
+    if (!userId) return res.status(401).json({ message: "Not signed in" });
+    try {
+      const owns = await pool.query(
+        `SELECT deal_name, crm_deal_id FROM data_room_analyses WHERE id = $1 AND user_id = $2`,
+        [req.params.id, userId]
+      );
+      if (owns.rows.length === 0) return res.status(404).json({ message: "Analysis not found" });
+      const dealName = owns.rows[0].deal_name;
+      const crmDealId = owns.rows[0].crm_deal_id;
+
+      const files = await pool.query(
+        `SELECT id, display_name, primary_type, classification, enrichment FROM data_room_files WHERE analysis_id = $1`,
+        [req.params.id]
+      );
+      const eventsToInsert: Array<[string, string, string, string, string, string, string | null, string | null]> = [];
+      for (const f of files.rows) {
+        const spec = f.enrichment?.specialist;
+        if (!spec) continue;
+        const address = spec.demise || spec.property || spec.premisesAddress || f.classification?.propertyAddress;
+        const tenant = spec.tenant || f.classification?.tenantName || null;
+        const passingRent = spec.passingRent != null ? String(spec.passingRent) : null;
+        if (!address) continue;
+
+        // One row per date we extracted from the lease.
+        const push = (type: string, date: any) => {
+          if (!date) return;
+          const d = new Date(date);
+          if (isNaN(d.getTime())) return;
+          eventsToInsert.push([type, d.toISOString(), address, tenant || "", f.display_name, `Auto-extracted from data room: ${dealName}`, crmDealId, passingRent]);
+        };
+        if (Array.isArray(spec.breakDates)) spec.breakDates.forEach((d: any) => push("Break", d));
+        push("Expiry", spec.termEnd);
+        // rent review can be a frequency string ("5-yearly") or a date — only push if clearly a date.
+        if (typeof spec.rentReview === "string" && /\d{4}-\d{2}-\d{2}/.test(spec.rentReview)) {
+          push("Rent Review", spec.rentReview.match(/\d{4}-\d{2}-\d{2}/)?.[0]);
+        }
+      }
+
+      let inserted = 0;
+      for (const e of eventsToInsert) {
+        try {
+          await pool.query(
+            `INSERT INTO lease_events (event_type, event_date, address, tenant, source_title, source_evidence, deal_id, current_rent, created_by, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Monitoring')`,
+            [e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7], userName]
+          );
+          inserted++;
+        } catch (insertErr: any) {
+          console.warn(`[legal-dd] lease event insert failed:`, insertErr?.message);
+        }
+      }
+      res.json({ inserted, requested: eventsToInsert.length });
+    } catch (err: any) {
+      console.error("[legal-dd] dispatch lease-events error:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to dispatch lease events" });
+    }
+  });
+
+  // Dispatch: save extracted title numbers + proprietors into the Land
+  // Registry board so the DD findings persist alongside regular LR searches.
+  app.post("/api/legal-dd/analyses/:id/dispatch/land-registry", requireAuth, async (req: any, res: Response) => {
+    const userId = req.session?.userId || req.tokenUserId;
+    if (!userId) return res.status(401).json({ message: "Not signed in" });
+    try {
+      const owns = await pool.query(
+        `SELECT deal_name FROM data_room_analyses WHERE id = $1 AND user_id = $2`,
+        [req.params.id, userId]
+      );
+      if (owns.rows.length === 0) return res.status(404).json({ message: "Analysis not found" });
+      const dealName = owns.rows[0].deal_name;
+
+      const files = await pool.query(
+        `SELECT display_name, primary_type, classification, enrichment FROM data_room_files WHERE analysis_id = $1`,
+        [req.params.id]
+      );
+
+      let inserted = 0;
+      const seen = new Set<string>();
+      for (const f of files.rows) {
+        const spec = f.enrichment?.specialist;
+        const enr = f.enrichment?.enrichment;
+        const titleNumber = enr?.landRegistry?.title_number || spec?.titleNumber;
+        const address = spec?.demise || spec?.property || spec?.premisesAddress || f.classification?.propertyAddress;
+        if (!address) continue;
+        const dedupKey = `${address}|${titleNumber || ""}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
+
+        const postcode = (address.match(/\b([A-Z]{1,2}[0-9][A-Z0-9]?)\s*([0-9][A-Z]{2})\b/i) || [])[0] || null;
+        const freeholds = enr?.landRegistry?.tenure === "Freehold" ? [enr.landRegistry] : (spec?.tenure === "Freehold" ? [spec] : []);
+        const leaseholds = enr?.landRegistry?.tenure === "Leasehold" ? [enr.landRegistry] : [];
+        try {
+          await pool.query(
+            `INSERT INTO land_registry_searches (user_id, address, postcode, freeholds_count, leaseholds_count, freeholds, leaseholds, notes, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'From Data Room')`,
+            [userId, address, postcode ? postcode.toUpperCase() : null, freeholds.length, leaseholds.length,
+             JSON.stringify(freeholds), JSON.stringify(leaseholds),
+             `Auto-saved from data room DD: ${dealName} → ${f.display_name}`]
+          );
+          inserted++;
+        } catch (insertErr: any) {
+          console.warn(`[legal-dd] land-registry insert failed:`, insertErr?.message);
+        }
+      }
+      res.json({ inserted });
+    } catch (err: any) {
+      console.error("[legal-dd] dispatch land-registry error:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to dispatch to Land Registry board" });
+    }
+  });
+
+  // Dispatch: link this analysis to an existing CRM deal (sets crm_deal_id).
+  app.post("/api/legal-dd/analyses/:id/dispatch/crm-deal", requireAuth, async (req: any, res: Response) => {
+    const userId = req.session?.userId || req.tokenUserId;
+    if (!userId) return res.status(401).json({ message: "Not signed in" });
+    const { crmDealId } = req.body || {};
+    if (!crmDealId) return res.status(400).json({ message: "crmDealId required" });
+    try {
+      const r = await pool.query(
+        `UPDATE data_room_analyses SET crm_deal_id = $1 WHERE id = $2 AND user_id = $3 RETURNING id`,
+        [crmDealId, req.params.id, userId]
+      );
+      if (r.rows.length === 0) return res.status(404).json({ message: "Analysis not found" });
+      res.json({ linked: true, crmDealId });
+    } catch (err: any) {
+      console.error("[legal-dd] dispatch crm-deal error:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to link CRM deal" });
+    }
+  });
+
   app.post("/api/legal-dd/create-project", requireAuth, async (req: Request, res: Response) => {
     const { getValidMsToken } = await import("./microsoft");
     const token = await getValidMsToken(req);

@@ -52,6 +52,7 @@ import {
   LayoutTemplate,
   Image,
   RefreshCw,
+  Bell,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -4175,6 +4176,44 @@ function LegalDDTab() {
 
   const [ddEnrichProgress, setDdEnrichProgress] = useState<{ total: number; done: number; running: number; errors: number } | null>(null);
   const ddEnrichTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [ddReconciliation, setDdReconciliation] = useState<any | null>(null);
+  const [dispatching, setDispatching] = useState<string | null>(null);
+  const [dispatchResults, setDispatchResults] = useState<Record<string, string>>({});
+
+  const fetchReconciliation = async (analysisId: string) => {
+    try {
+      const r = await fetch(`/api/legal-dd/analyses/${analysisId}/reconciliation`, {
+        headers: { ...getAuthHeaders() },
+        credentials: "include",
+      });
+      if (!r.ok) return;
+      const data = await r.json();
+      setDdReconciliation(data);
+    } catch {}
+  };
+
+  const dispatchTo = async (target: "lease-events" | "land-registry", analysisId: string, label: string) => {
+    if (!analysisId) return;
+    setDispatching(target);
+    try {
+      const r = await fetch(`/api/legal-dd/analyses/${analysisId}/dispatch/${target}`, {
+        method: "POST",
+        headers: { ...getAuthHeaders() },
+        credentials: "include",
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.message || "Dispatch failed");
+      const summary = target === "lease-events"
+        ? `${data.inserted || 0} lease event(s) added`
+        : `${data.inserted || 0} title(s) saved to Land Registry board`;
+      setDispatchResults(prev => ({ ...prev, [target]: summary }));
+      toast({ title: `${label} dispatched`, description: summary });
+    } catch (err: any) {
+      toast({ title: `${label} failed`, description: err?.message, variant: "destructive" });
+    } finally {
+      setDispatching(null);
+    }
+  };
 
   // Poll enrichment progress every 4s. Stops when done === total or errors
   // remain static for 3 cycles.
@@ -4205,6 +4244,8 @@ function LegalDDTab() {
         });
         if (data.progress.done + data.progress.errors >= data.progress.total) {
           if (ddEnrichTimerRef.current) clearInterval(ddEnrichTimerRef.current);
+          // Enrichment complete — fetch reconciliation + portfolio roll-up.
+          fetchReconciliation(analysisId);
         }
         if (data.progress.done === lastDone) staleCount++; else { lastDone = data.progress.done; staleCount = 0; }
         if (staleCount > 30) { if (ddEnrichTimerRef.current) clearInterval(ddEnrichTimerRef.current); }
@@ -4219,6 +4260,8 @@ function LegalDDTab() {
     setDdClassifiedFiles([]);
     setDdAnalysisId(null);
     setDdEnrichProgress(null);
+    setDdReconciliation(null);
+    setDispatchResults({});
     setProjectCreated(null);
     if (ddEnrichTimerRef.current) { clearInterval(ddEnrichTimerRef.current); ddEnrichTimerRef.current = null; }
     try {
@@ -4682,6 +4725,192 @@ function LegalDDTab() {
                         </div>
                       );
                     })}
+                  </CardContent>
+                </Card>
+              )}
+
+              {ddReconciliation?.portfolio && (ddReconciliation.portfolio.propertyCount > 0) && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center justify-between">
+                      <span>Portfolio Summary</span>
+                      <Badge variant="outline" className="text-[10px]">{ddReconciliation.portfolio.propertyCount} propert{ddReconciliation.portfolio.propertyCount === 1 ? "y" : "ies"}</Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {ddReconciliation.portfolio.totalPassingRentLeases > 0 && (
+                        <div className="rounded-md border p-2.5">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Passing rent (leases)</p>
+                          <p className="text-sm font-semibold">£{Number(ddReconciliation.portfolio.totalPassingRentLeases).toLocaleString()}pa</p>
+                        </div>
+                      )}
+                      {ddReconciliation.portfolio.totalPassingRentRentRoll > 0 && (
+                        <div className="rounded-md border p-2.5">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Passing rent (rent roll)</p>
+                          <p className="text-sm font-semibold">£{Number(ddReconciliation.portfolio.totalPassingRentRentRoll).toLocaleString()}pa</p>
+                        </div>
+                      )}
+                      {ddReconciliation.portfolio.totalRateableValue > 0 && (
+                        <div className="rounded-md border p-2.5">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total RV</p>
+                          <p className="text-sm font-semibold">£{Number(ddReconciliation.portfolio.totalRateableValue).toLocaleString()}</p>
+                          {ddReconciliation.portfolio.rentToRvRatio != null && (
+                            <p className="text-[10px] text-muted-foreground">Rent/RV: {ddReconciliation.portfolio.rentToRvRatio}×</p>
+                          )}
+                        </div>
+                      )}
+                      {ddReconciliation.portfolio.totalEbitdar > 0 && (
+                        <div className="rounded-md border p-2.5">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total EBITDAR (managed)</p>
+                          <p className="text-sm font-semibold">£{Number(ddReconciliation.portfolio.totalEbitdar).toLocaleString()}</p>
+                        </div>
+                      )}
+                      {ddReconciliation.portfolio.weightedWaultYears != null && (
+                        <div className="rounded-md border p-2.5">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Weighted WAULT</p>
+                          <p className="text-sm font-semibold">{ddReconciliation.portfolio.weightedWaultYears} years</p>
+                        </div>
+                      )}
+                      {ddReconciliation.portfolio.topTenant && (
+                        <div className="rounded-md border p-2.5">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Top tenant</p>
+                          <p className="text-sm font-semibold truncate">{ddReconciliation.portfolio.topTenant.name}</p>
+                          <p className="text-[10px] text-muted-foreground">{ddReconciliation.portfolio.topTenant.sharePercent}% of income</p>
+                        </div>
+                      )}
+                      {(ddReconciliation.portfolio.tenureCounts.managed + ddReconciliation.portfolio.tenureCounts.tied + ddReconciliation.portfolio.tenureCounts.freeOfTie + ddReconciliation.portfolio.tenureCounts.let) > 0 && (
+                        <div className="rounded-md border p-2.5 col-span-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Tenure split</p>
+                          <div className="flex gap-2 flex-wrap mt-1">
+                            {ddReconciliation.portfolio.tenureCounts.let > 0 && <Badge variant="outline" className="text-[10px]">Let: {ddReconciliation.portfolio.tenureCounts.let}</Badge>}
+                            {ddReconciliation.portfolio.tenureCounts.managed > 0 && <Badge variant="outline" className="text-[10px]">Managed: {ddReconciliation.portfolio.tenureCounts.managed}</Badge>}
+                            {ddReconciliation.portfolio.tenureCounts.tied > 0 && <Badge variant="outline" className="text-[10px]">Tied: {ddReconciliation.portfolio.tenureCounts.tied}</Badge>}
+                            {ddReconciliation.portfolio.tenureCounts.freeOfTie > 0 && <Badge variant="outline" className="text-[10px]">Free-of-tie: {ddReconciliation.portfolio.tenureCounts.freeOfTie}</Badge>}
+                          </div>
+                        </div>
+                      )}
+                      {(ddReconciliation.portfolio.tenantStatusCounts.active + ddReconciliation.portfolio.tenantStatusCounts.dissolved + ddReconciliation.portfolio.tenantStatusCounts.liquidation) > 0 && (
+                        <div className="rounded-md border p-2.5 col-span-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Tenant company status</p>
+                          <div className="flex gap-2 flex-wrap mt-1">
+                            {ddReconciliation.portfolio.tenantStatusCounts.active > 0 && <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">{ddReconciliation.portfolio.tenantStatusCounts.active} active</Badge>}
+                            {ddReconciliation.portfolio.tenantStatusCounts.dissolved > 0 && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">{ddReconciliation.portfolio.tenantStatusCounts.dissolved} dissolved</Badge>}
+                            {ddReconciliation.portfolio.tenantStatusCounts.liquidation > 0 && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">{ddReconciliation.portfolio.tenantStatusCounts.liquidation} liquidation</Badge>}
+                          </div>
+                        </div>
+                      )}
+                      {Object.keys(ddReconciliation.portfolio.fsaRatingCounts).length > 0 && (
+                        <div className="rounded-md border p-2.5 col-span-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Food Hygiene Ratings</p>
+                          <div className="flex gap-2 flex-wrap mt-1">
+                            {["5","4","3","2","1","0"].map(k => {
+                              const n = ddReconciliation.portfolio.fsaRatingCounts[k];
+                              if (!n) return null;
+                              const colour = k === "5" || k === "4" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : k === "3" ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : "bg-red-50 text-red-700 border-red-200";
+                              return <Badge key={k} variant="outline" className={`text-[10px] ${colour}`}>{k}: {n}</Badge>;
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {ddReconciliation?.flags && ddReconciliation.flags.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Reconciliation & Cross-Checks</CardTitle>
+                    <CardDescription>Automatic validation across the rent roll, model, leases and Land Registry</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {ddReconciliation.flags.map((flag: any, i: number) => (
+                      <div key={i} className="flex items-start gap-2 p-2 rounded-md border">
+                        <SeverityBadge severity={flag.severity} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium">{flag.title}</p>
+                          <p className="text-[11px] text-muted-foreground">{flag.detail}</p>
+                        </div>
+                        <Badge variant="outline" className="text-[10px]">{flag.category}</Badge>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+
+              {ddAnalysisId && ddReconciliation?.portfolio?.propertyCount > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Push Findings Across the Platform</CardTitle>
+                    <CardDescription>Send the DD output to the boards the rest of the business uses</CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={dispatching === "lease-events"}
+                      onClick={() => dispatchTo("lease-events", ddAnalysisId, "Lease Events")}
+                    >
+                      {dispatching === "lease-events" ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <Bell className="w-3.5 h-3.5 mr-2" />}
+                      Push break/expiry/review dates to Lease Events
+                      {dispatchResults["lease-events"] && <span className="ml-2 text-[10px] text-emerald-600">· {dispatchResults["lease-events"]}</span>}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={dispatching === "land-registry"}
+                      onClick={() => dispatchTo("land-registry", ddAnalysisId, "Land Registry")}
+                    >
+                      {dispatching === "land-registry" ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <FileText className="w-3.5 h-3.5 mr-2" />}
+                      Save titles to Land Registry board
+                      {dispatchResults["land-registry"] && <span className="ml-2 text-[10px] text-emerald-600">· {dispatchResults["land-registry"]}</span>}
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              {ddReconciliation?.properties && ddReconciliation.properties.length > 10 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center justify-between">
+                      <span>Per-Property Drill-Down</span>
+                      <Badge variant="outline" className="text-[10px]">{ddReconciliation.properties.length} rows</Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="text-left py-1.5 px-2 font-medium">Property</th>
+                          <th className="text-left py-1.5 px-2 font-medium">Tenant</th>
+                          <th className="text-right py-1.5 px-2 font-medium">Rent</th>
+                          <th className="text-right py-1.5 px-2 font-medium">RV</th>
+                          <th className="text-left py-1.5 px-2 font-medium">Status</th>
+                          <th className="text-left py-1.5 px-2 font-medium">FHR</th>
+                          <th className="text-left py-1.5 px-2 font-medium">Title</th>
+                          <th className="text-left py-1.5 px-2 font-medium">Flags</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ddReconciliation.properties.map((p: any, i: number) => (
+                          <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                            <td className="py-1 px-2 truncate max-w-[220px]" title={p.address || p.fileName}>{p.address || p.fileName}</td>
+                            <td className="py-1 px-2 truncate max-w-[160px]">{p.tenant || "—"}</td>
+                            <td className="py-1 px-2 text-right">{p.passingRent ? `£${Number(p.passingRent).toLocaleString()}` : "—"}</td>
+                            <td className="py-1 px-2 text-right">{p.rateableValue ? `£${Number(p.rateableValue).toLocaleString()}` : "—"}</td>
+                            <td className="py-1 px-2">{p.tenantCompanyStatus ? <span className={p.tenantCompanyStatus === "active" ? "text-emerald-600" : "text-red-600"}>{p.tenantCompanyStatus}</span> : "—"}</td>
+                            <td className="py-1 px-2">{p.fsaRating || "—"}</td>
+                            <td className="py-1 px-2 font-mono text-[10px]">{p.titleNumber || "—"}</td>
+                            <td className="py-1 px-2">
+                              {p.landlordMismatch && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">LL mismatch</Badge>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </CardContent>
                 </Card>
               )}
