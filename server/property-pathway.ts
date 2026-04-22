@@ -4546,9 +4546,18 @@ export function registerPropertyPathwayRoutes(app: Express) {
     const url = String(req.query.url || "");
     if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: "invalid url" });
     try {
-      const { downloadPlanningPdf } = await import("./planning-docs");
+      const { downloadPlanningPdf, getPlanningDownloadLastError } = await import("./planning-docs");
       const buf = await downloadPlanningPdf(url);
-      if (!buf) return res.status(502).json({ error: "Upstream fetch failed — the LPA portal rejected the download or returned a non-PDF." });
+      if (!buf) {
+        const detail = getPlanningDownloadLastError();
+        return res.status(502).json({
+          error: "Could not download planning PDF from the LPA portal.",
+          detail,
+          tried: ["no-render", "render", "premium", "premium+render"],
+          sourceUrl: url,
+          hint: "Some LPAs block even residential proxies. Open the URL directly in the source tab — the doc often loads in a browser session that our proxies can't replicate.",
+        });
+      }
       const filename = (url.split("/").pop() || "plan.pdf").split("?")[0].replace(/[^a-zA-Z0-9._-]/g, "_");
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `inline; filename="${filename.endsWith(".pdf") ? filename : filename + ".pdf"}"`);

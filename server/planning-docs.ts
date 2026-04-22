@@ -315,32 +315,98 @@ export function sortDocsByPriority(docs: PlanningDoc[]): PlanningDoc[] {
 
 /**
  * Download a single planning-application PDF via ScraperAPI.
- * Idox instances block Railway IPs directly, so we proxy every request.
- * Returns the PDF bytes or null on failure (never throws — callers batch
- * these and shouldn't blow up on one bad URL).
+ * Idox instances block Railway IPs directly and often serve an HTML viewer
+ * page, a login wall, or an error page rather than the raw PDF bytes. We
+ * try four strategies in order, returning the first that yields PDF magic
+ * bytes. Writes a short `lastError` so callers can surface what happened.
+ *
+ * Returns the PDF bytes, or null with details written to result.lastError.
  */
+let lastDownloadError = "";
+export function getPlanningDownloadLastError(): string { return lastDownloadError; }
+
 export async function downloadPlanningPdf(url: string): Promise<Buffer | null> {
   const apiKey = process.env.SCRAPERAPI_KEY;
-  if (!apiKey) return null;
-  try {
-    const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=false`;
-    const res = await fetch(proxied, { signal: AbortSignal.timeout(60000) });
-    if (!res.ok) {
-      console.warn(`[planning-docs] download ${res.status} for ${url}`);
+  if (!apiKey) { lastDownloadError = "SCRAPERAPI_KEY not configured"; return null; }
+  lastDownloadError = "";
+
+  const isPdfBuffer = (buf: Buffer): boolean =>
+    buf.length >= 1024 && buf.slice(0, 4).toString("latin1") === "%PDF";
+
+  const tryFetch = async (label: string, scraperUrl: string): Promise<Buffer | null> => {
+    try {
+      const res = await fetch(scraperUrl, { signal: AbortSignal.timeout(90000), redirect: "follow" });
+      if (!res.ok) {
+        lastDownloadError = `${label} returned HTTP ${res.status}`;
+        console.warn(`[planning-docs] ${label} ${res.status} for ${url}`);
+        return null;
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (isPdfBuffer(buf)) return buf;
+      // If HTML, look for an embedded PDF URL (iframe, object, meta refresh,
+      // or window.location.href =) that we can retry on.
+      const head = buf.slice(0, 32768).toString("utf8");
+      const embedded = extractEmbeddedPdfUrl(head, url);
+      if (embedded && embedded !== url) {
+        console.log(`[planning-docs] ${label} returned HTML — retrying embedded URL ${embedded}`);
+        const retryUrl = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(embedded)}&country_code=uk&render=false`;
+        const retryRes = await fetch(retryUrl, { signal: AbortSignal.timeout(60000), redirect: "follow" });
+        if (retryRes.ok) {
+          const retryBuf = Buffer.from(await retryRes.arrayBuffer());
+          if (isPdfBuffer(retryBuf)) return retryBuf;
+        }
+      }
+      lastDownloadError = `${label} returned non-PDF (${buf.length}B, content looked like HTML)`;
+      console.warn(`[planning-docs] ${label} ${url} returned non-PDF (${buf.length}B)`);
+      return null;
+    } catch (err: any) {
+      lastDownloadError = `${label} threw: ${err?.message || "unknown"}`;
+      console.warn(`[planning-docs] ${label} failed ${url}: ${err?.message}`);
       return null;
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    // Idox sometimes returns a login/error HTML page with 200. Filter on
-    // PDF magic bytes ("%PDF") — we never want to upload an HTML error.
-    if (buf.length < 1024 || buf.slice(0, 4).toString("latin1") !== "%PDF") {
-      console.warn(`[planning-docs] download ${url} returned non-PDF (${buf.length}B)`);
-      return null;
+  };
+
+  // Strategy 1: cheapest — no JS rendering. Works for direct .pdf URLs.
+  const s1 = await tryFetch("no-render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=false`);
+  if (s1) return s1;
+
+  // Strategy 2: enable JS rendering. Some Idox endpoints fire a JS
+  // redirect from the viewer page to the actual PDF stream.
+  const s2 = await tryFetch("render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=true`);
+  if (s2) return s2;
+
+  // Strategy 3: premium proxy (residential IPs). Beats IP-block lists
+  // that the datacentre pool hits on stricter LPAs.
+  const s3 = await tryFetch("premium", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=false`);
+  if (s3) return s3;
+
+  // Strategy 4: premium + render. Last resort — slow but handles
+  // JS-gated + IP-gated Idox the same way a human browser does.
+  const s4 = await tryFetch("premium+render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=true`);
+  if (s4) return s4;
+
+  return null;
+}
+
+// Given an HTML head snippet and the original URL we were asked to fetch,
+// look for an embedded PDF URL (common Idox patterns). Resolved relative
+// to the original URL if relative.
+function extractEmbeddedPdfUrl(html: string, baseUrl: string): string | null {
+  const patterns = [
+    /<iframe[^>]+src=["']([^"']+\.pdf[^"']*)["']/i,
+    /<object[^>]+data=["']([^"']+\.pdf[^"']*)["']/i,
+    /<embed[^>]+src=["']([^"']+\.pdf[^"']*)["']/i,
+    /window\.location(?:\.href)?\s*=\s*["']([^"']+\.pdf[^"']*)["']/i,
+    /<meta[^>]+http-equiv=["']refresh["'][^>]+url=([^"'>\s]+\.pdf[^"'>\s]*)/i,
+    /href=["']([^"']+\/documents\.do\?[^"']+)["']/i,  // Idox doc proxy URL
+  ];
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m && m[1]) {
+      try { return new URL(m[1], baseUrl).toString(); } catch {}
     }
-    return buf;
-  } catch (err: any) {
-    console.warn(`[planning-docs] download failed ${url}: ${err?.message}`);
-    return null;
   }
+  return null;
 }
 
 /**
