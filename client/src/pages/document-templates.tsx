@@ -4630,6 +4630,37 @@ function LegalDDTab() {
             </CardContent>
           </Card>
 
+          {/* Visible background-processing card — shows from the moment the
+              POST returns 202 until the DD summary completes. Without this
+              the user sees the same form + same file list for 5-10 minutes
+              while classification runs and thinks nothing happened. */}
+          {analyzing && ddAnalysisId && !ddResult && (
+            <Card className="border-primary/40 bg-primary/5">
+              <CardContent className="p-6">
+                <div className="flex items-start gap-4">
+                  <Loader2 className="w-6 h-6 text-primary animate-spin shrink-0 mt-1" />
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-base font-semibold mb-1">Analysing data room in background</h3>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      {ddEnrichProgress && ddEnrichProgress.total > 0
+                        ? <>Classified <span className="font-semibold text-foreground">{ddEnrichProgress.done}</span> of <span className="font-semibold text-foreground">{ddEnrichProgress.total}</span> files. This runs server-side so you can close this tab and come back — results are saved.</>
+                        : <>Expanding ZIP and preparing files. This can take 5-10 minutes for large data rooms.</>}
+                    </p>
+                    {ddEnrichProgress && ddEnrichProgress.total > 0 && (
+                      <div className="h-2 bg-background rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-primary transition-all duration-500"
+                          style={{ width: `${Math.min(100, Math.round((ddEnrichProgress.done / ddEnrichProgress.total) * 100))}%` }}
+                        />
+                      </div>
+                    )}
+                    <p className="text-[11px] text-muted-foreground mt-2 font-mono truncate">Analysis ID: {ddAnalysisId}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {ddResult && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
