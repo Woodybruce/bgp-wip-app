@@ -624,6 +624,63 @@ export function registerLegalDDRoutes(app: Express) {
     }
   });
 
+  // Retry just the final Claude Sonnet DD-summary call on an existing
+  // analysis — useful when classification + enrichment succeeded but the
+  // summary stage errored (rate limit, timeout, etc). Reuses the
+  // extracted_text + classification already persisted on data_room_files,
+  // so there's no second classification pass.
+  app.post("/api/legal-dd/analyses/:id/retry-summary", requireAuth, async (req: any, res: Response) => {
+    const userId = req.session?.userId || req.tokenUserId;
+    if (!userId) return res.status(401).json({ message: "Not signed in" });
+    try {
+      const own = await pool.query(
+        `SELECT id, deal_name, team FROM data_room_analyses WHERE id = $1 AND user_id = $2`,
+        [req.params.id, userId]
+      );
+      if (own.rows.length === 0) return res.status(404).json({ message: "Analysis not found" });
+      const files = await pool.query(
+        `SELECT file_name, display_name, primary_type, extracted_text FROM data_room_files WHERE analysis_id = $1 ORDER BY created_at ASC`,
+        [req.params.id]
+      );
+      if (files.rows.length === 0) return res.status(400).json({ message: "No files to summarise" });
+
+      const anthropic = getAnthropicClient();
+      const perFile = files.rows.length > 50 ? 3500 : (files.rows.length > 20 ? 6000 : 12000);
+      const fileListPrompt = files.rows.map((f: any, i: number) =>
+        `--- FILE ${i + 1}: ${f.file_name} [${f.primary_type}] ---\n${(f.extracted_text || "").slice(0, perFile)}\n`
+      ).join("\n");
+
+      const resp = await anthropic.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 8192,
+        system: DD_SYSTEM_PROMPT,
+        messages: [{
+          role: "user",
+          content: `Deal: "${own.rows[0].deal_name}"\nTeam: ${own.rows[0].team || "Investment"}\n\nData room documents:\n\n${fileListPrompt}`
+        }],
+      });
+      const raw = resp.content[0]?.type === "text" ? resp.content[0].text : "{}";
+      const cleaned = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+      const firstBrace = cleaned.indexOf("{");
+      const lastBrace = cleaned.lastIndexOf("}");
+      const parsed = firstBrace >= 0 && lastBrace > firstBrace ? JSON.parse(cleaned.slice(firstBrace, lastBrace + 1)) : {};
+      const analysis = parsed as DDAnalysis;
+
+      await pool.query(
+        `UPDATE data_room_analyses SET
+           red_flags=$1, amber_flags=$2, green_flags=$3, overall_risk=$4,
+           overall_summary=$5, analysis=$6, error_message=NULL
+         WHERE id=$7`,
+        [analysis.redFlags || 0, analysis.amberFlags || 0, analysis.greenFlags || 0,
+         analysis.overallRisk || "medium", analysis.overallSummary || "", JSON.stringify(analysis), req.params.id]
+      );
+      res.json({ analysis });
+    } catch (err: any) {
+      console.error("[legal-dd] retry-summary failed:", err?.message);
+      res.status(500).json({ message: err?.message || "Retry failed" });
+    }
+  });
+
   // Reconciliation + portfolio roll-up (Push 3). Computes cross-file
   // checks (rent roll ↔ model ↔ leases, landlord-vs-title-proprietor,
   // dissolved-tenant counts, rent-to-rates ratios) and the portfolio-

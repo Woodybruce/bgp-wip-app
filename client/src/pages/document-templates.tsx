@@ -4176,6 +4176,7 @@ function LegalDDTab() {
   };
 
   const [ddEnrichProgress, setDdEnrichProgress] = useState<{ total: number; done: number; running: number; errors: number } | null>(null);
+  const [expandedDataRoomFile, setExpandedDataRoomFile] = useState<number | null>(null);
   const ddEnrichTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [ddReconciliation, setDdReconciliation] = useState<any | null>(null);
   const [dispatching, setDispatching] = useState<string | null>(null);
@@ -4749,14 +4750,20 @@ function LegalDDTab() {
                         "Other": "bg-gray-50 text-gray-600 border-gray-200",
                       };
                       const pill = typeColors[cls.primaryType] || typeColors.Other;
+                      const isExpanded = expandedDataRoomFile === i;
                       return (
-                        <div key={i} className="flex items-start gap-2 p-2 rounded-md hover:bg-muted/40">
+                        <div key={i} className="border rounded-md overflow-hidden">
+                        <div
+                          className="flex items-start gap-2 p-2 hover:bg-muted/40 cursor-pointer"
+                          onClick={() => setExpandedDataRoomFile(isExpanded ? null : i)}
+                        >
                           <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-sm font-medium truncate">{f.displayName}</span>
                               <Badge variant="outline" className={`text-[10px] ${pill}`}>{cls.primaryType || "Other"}</Badge>
                               {cls.confidence === "low" && <Badge variant="outline" className="text-[10px] bg-gray-50 text-gray-500">low confidence</Badge>}
+                              <span className="ml-auto text-muted-foreground text-xs">{isExpanded ? "−" : "+"}</span>
                             </div>
                             <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
                               {cls.subType && <span>{cls.subType}</span>}
@@ -4811,6 +4818,123 @@ function LegalDDTab() {
                             )}
                           </div>
                           <span className="text-[10px] text-muted-foreground shrink-0">{(f.size / 1024).toFixed(0)} KB</span>
+                        </div>
+
+                        {/* Expandable drill-down: full specialist + enrichment detail */}
+                        {isExpanded && (() => {
+                          const enr = (f as any).enrichment?.enrichment || {};
+                          const spec = (f as any).enrichment?.specialist || null;
+                          return (
+                            <div className="border-t bg-muted/20 p-3 space-y-3 text-xs">
+                              {!spec && !(f as any).enrichment && (
+                                <p className="text-muted-foreground italic">Enrichment hasn't run on this file yet — still processing.</p>
+                              )}
+
+                              {spec && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Extracted data</p>
+                                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                                    {Object.entries(spec).slice(0, 40).map(([k, v]) => {
+                                      if (v == null || v === "") return null;
+                                      const display = Array.isArray(v) ? (v.length === 0 ? "—" : v.length > 5 ? `${v.length} items` : v.map(x => typeof x === "object" ? JSON.stringify(x) : String(x)).join(", ")) : typeof v === "object" ? JSON.stringify(v).slice(0, 200) : String(v);
+                                      return (
+                                        <div key={k} className="flex gap-2 py-0.5 border-b border-muted/30 last:border-0">
+                                          <span className="text-muted-foreground w-1/3 shrink-0 capitalize">{k.replace(/([A-Z])/g, " $1").toLowerCase()}</span>
+                                          <span className="font-medium truncate" title={display}>{display}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  {Array.isArray((spec as any).flags) && (spec as any).flags.length > 0 && (
+                                    <div className="mt-2 space-y-1">
+                                      <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground">Flags</p>
+                                      {(spec as any).flags.map((fl: any, j: number) => (
+                                        <div key={j} className="flex items-start gap-2">
+                                          <SeverityBadge severity={fl.severity || "green"} />
+                                          <div className="flex-1">
+                                            <p className="font-medium">{fl.title}</p>
+                                            {fl.detail && <p className="text-muted-foreground">{fl.detail}</p>}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {(enr.tenant || enr.landlord) && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Companies House</p>
+                                  {["tenant", "landlord"].map((role) => {
+                                    const m = enr[role];
+                                    if (!m) return null;
+                                    return (
+                                      <div key={role} className="mb-2">
+                                        <p className="font-medium capitalize">{role}: {m.name} <span className="text-[10px] font-normal text-muted-foreground">· {m.number}</span></p>
+                                        <p className="text-[10px] text-muted-foreground">Status: <span className={m.status === "active" ? "text-emerald-700" : "text-red-600"}>{m.status}</span>{m.kind ? ` · ${m.kind}` : ""}{m.lastAccountsDate ? ` · Last accounts: ${m.lastAccountsDate}` : ""}</p>
+                                        {m.address && <p className="text-[10px] text-muted-foreground">{m.address}</p>}
+                                        {m.sicCodes?.length > 0 && <p className="text-[10px] text-muted-foreground">SIC: {m.sicCodes.join(", ")}</p>}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {enr.voa && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">VOA rateable value</p>
+                                  <p className="font-medium">{enr.voa.firm_name || "Unknown occupier"} — £{Number(enr.voa.rateable_value || 0).toLocaleString()}</p>
+                                  <p className="text-[10px] text-muted-foreground">{enr.voa.description}</p>
+                                  <p className="text-[10px] text-muted-foreground">{enr.voa.full_address}</p>
+                                </div>
+                              )}
+
+                              {enr.landRegistry && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Land Registry (PropertyData)</p>
+                                  {enr.landRegistry.title_number && <p className="font-medium">Title {enr.landRegistry.title_number} · {enr.landRegistry.tenure || "unknown tenure"}</p>}
+                                  {enr.landRegistry.proprietor_name_1 && <p className="text-[11px]">Proprietor: {enr.landRegistry.proprietor_name_1}</p>}
+                                  {enr.landRegistry.price_paid && <p className="text-[10px] text-muted-foreground">Price paid: £{Number(enr.landRegistry.price_paid).toLocaleString()}{enr.landRegistry.date_proprietor_added ? ` · ${enr.landRegistry.date_proprietor_added}` : ""}</p>}
+                                </div>
+                              )}
+
+                              {enr.fsaHygiene && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Food Hygiene Rating (FSA)</p>
+                                  <p className="font-medium">{enr.fsaHygiene.name} — rating {enr.fsaHygiene.rating}</p>
+                                  <p className="text-[10px] text-muted-foreground">{enr.fsaHygiene.businessType} · inspected {enr.fsaHygiene.ratingDate?.slice(0, 10)}</p>
+                                </div>
+                              )}
+
+                              {enr.partyWebSearch && Object.keys(enr.partyWebSearch).length > 0 && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Web intelligence on parties</p>
+                                  {Object.entries(enr.partyWebSearch).map(([partyName, result]: [string, any]) => (
+                                    <div key={partyName} className="mb-1.5">
+                                      <p className="font-medium">{partyName}</p>
+                                      <p className="text-[11px] text-muted-foreground">{result?.summary || "—"}</p>
+                                      {result?.citations?.length > 0 && (
+                                        <p className="text-[9px] text-muted-foreground/70 mt-0.5">
+                                          Sources: {result.citations.slice(0, 3).map((c: any, k: number) => (
+                                            <a key={k} href={typeof c === "string" ? c : c.url} target="_blank" rel="noopener" className="underline hover:text-foreground mr-1">[{k + 1}]</a>
+                                          ))}
+                                        </p>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {cls.notes && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Classifier note</p>
+                                  <p className="text-[11px] italic">{cls.notes}</p>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+
                         </div>
                       );
                     })}
@@ -5016,7 +5140,36 @@ function LegalDDTab() {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Executive Summary</CardTitle>
+                  <CardTitle className="text-base flex items-center justify-between">
+                    <span>Executive Summary</span>
+                    {ddResult.overallSummary?.includes("summary generation failed") && ddAnalysisId && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={dispatching === "retry-summary"}
+                        onClick={async () => {
+                          if (!ddAnalysisId) return;
+                          setDispatching("retry-summary");
+                          try {
+                            const r = await fetch(`/api/legal-dd/analyses/${ddAnalysisId}/retry-summary`, {
+                              method: "POST", headers: { ...getAuthHeaders() }, credentials: "include",
+                            });
+                            const d = await r.json();
+                            if (!r.ok) throw new Error(d.message || "Retry failed");
+                            setDdResult(d.analysis);
+                            toast({ title: "DD summary generated", description: `${d.analysis.redFlags || 0} red · ${d.analysis.amberFlags || 0} amber · ${d.analysis.greenFlags || 0} green` });
+                          } catch (err: any) {
+                            toast({ title: "Retry failed", description: err?.message, variant: "destructive" });
+                          } finally {
+                            setDispatching(null);
+                          }
+                        }}
+                      >
+                        {dispatching === "retry-summary" ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-2" />}
+                        Retry summary
+                      </Button>
+                    )}
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm leading-relaxed">{ddResult.overallSummary}</p>
