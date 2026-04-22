@@ -59,6 +59,40 @@ function backgroundGeocode(items: string[]) {
 }
 
 export function registerMapLayerRoutes(app: Express) {
+  // Shopping-centre directory research — fills the Goad gap where OSM + VOA
+  // can't subdivide the interior of a shopping centre into individual shop
+  // units. Takes a centre name, asks Perplexity (via askPerplexity wrapper)
+  // to scrape the centre's own plan-your-visit page, returns a tenant list.
+  // Cached 30 days — centre directories change slowly.
+  app.get("/api/map/centre-directory", requireAuth, async (req: Request, res: Response) => {
+    const name = typeof req.query.name === "string" ? req.query.name.trim() : "";
+    const address = typeof req.query.address === "string" ? req.query.address.trim() : "";
+    if (!name) return res.status(400).json({ error: "name query parameter required" });
+    try {
+      const key = `centre-directory:${name.toLowerCase().slice(0, 120)}`;
+      const result = await cached(key, async () => {
+        const { askPerplexity } = await import("./perplexity");
+        const prompt = `List every tenant at the "${name}" shopping centre${address ? ` (${address})` : ""} in London. For each tenant give: name, unit number if known, category (retail/food/service), and floor level. Prefer the centre's own plan-your-visit or store-directory page. Return strict JSON like:
+{"centre":"${name}","tenants":[{"name":"","unit":"","category":"","floor":""}]}
+If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Return ONLY the JSON.`;
+        const resp = await askPerplexity(prompt, { maxTokens: 2048 });
+        try {
+          const clean = (resp.answer || "").replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+          const firstBrace = clean.indexOf("{");
+          const lastBrace = clean.lastIndexOf("}");
+          if (firstBrace < 0 || lastBrace <= firstBrace) return { centre: name, tenants: [], citations: resp.citations };
+          return { ...JSON.parse(clean.slice(firstBrace, lastBrace + 1)), citations: resp.citations || [] };
+        } catch {
+          return { centre: name, tenants: [], citations: resp.citations || [] };
+        }
+      }, 24 * 30);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[map/centre-directory] error:", err?.message);
+      res.status(500).json({ error: err?.message || "Centre directory lookup failed" });
+    }
+  });
+
   app.get("/api/map/pins", requireAuth, async (_req: Request, res: Response) => {
     try {
       // ── 1. Deals ─────────────────────────────────────────────────────────

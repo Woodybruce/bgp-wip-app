@@ -2964,27 +2964,24 @@ function fitTextToBuilding(label: string, houseNum: string, isVacant: boolean, p
   const padW = pixelW * 0.8;
   const padH = pixelH * 0.75;
 
-  if (padW < 20 || padH < 14) return null;
-
-  let fontSize = 9.5;
+  if (padW < 26 || padH < 16) return null;
 
   const tryFit = (size: number, text: string): string | null => {
     const cw = charWidthAtSize(size);
     const lh = lineHeight(size);
     const maxCharsPerLine = Math.floor(padW / cw);
-    if (maxCharsPerLine < 2) return null;
+    if (maxCharsPerLine < 3) return null;
 
     const words = text.split(/\s+/);
     const lines: string[] = [];
     let currentLine = "";
 
     for (const word of words) {
-      if (word.length > maxCharsPerLine) {
-        if (currentLine) lines.push(currentLine);
-        lines.push(word.substring(0, maxCharsPerLine));
-        currentLine = "";
-        continue;
-      }
+      // Never truncate mid-word — that's the scruffy Goad-destroying
+      // behaviour. If a single word doesn't fit on a line, fail the
+      // fit and let the caller try a smaller font size (or drop the
+      // label entirely).
+      if (word.length > maxCharsPerLine) return null;
       if (currentLine && (currentLine.length + 1 + word.length) > maxCharsPerLine) {
         lines.push(currentLine);
         currentLine = word;
@@ -2995,10 +2992,9 @@ function fitTextToBuilding(label: string, houseNum: string, isVacant: boolean, p
     if (currentLine) lines.push(currentLine);
 
     const maxLines = Math.floor(padH / lh);
-    if (maxLines < 1) return null;
+    if (maxLines < 1 || lines.length > maxLines) return null;
 
-    const visibleLines = lines.slice(0, maxLines);
-    return visibleLines.join("\n");
+    return lines.join("\n");
   };
 
   for (const size of [11, 10, 9, 8, 7]) {
@@ -3463,13 +3459,63 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null);
 
-      const [buildings, labelsResp] = await Promise.all([
+      // Known London shopping centres — when the viewport overlaps one of
+      // these, fetch its interior tenant directory via Claude web search
+      // (cached 30 days server-side). Tenants merge into the labels pipeline
+      // below as another override source — ranked below CRM/Comps but
+      // above generic Google Places.
+      const KNOWN_CENTRES = [
+        { name: "Cardinal Place, London", lat: 51.4975, lng: -0.1370, radiusKm: 0.2 },
+        { name: "Nova Victoria, London", lat: 51.4965, lng: -0.1396, radiusKm: 0.2 },
+        { name: "Westfield London, Shepherds Bush", lat: 51.5074, lng: -0.2216, radiusKm: 0.4 },
+        { name: "Westfield Stratford City", lat: 51.5437, lng: -0.0063, radiusKm: 0.4 },
+        { name: "Brent Cross Shopping Centre", lat: 51.5768, lng: -0.2244, radiusKm: 0.4 },
+        { name: "Canary Wharf Shopping", lat: 51.5055, lng: -0.0206, radiusKm: 0.3 },
+        { name: "One New Change, London", lat: 51.5141, lng: -0.0961, radiusKm: 0.15 },
+      ];
+      const mapCentre = bounds.getCenter();
+      const centreHaversine = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+        const R = 6371; const φ1 = lat1*Math.PI/180; const φ2 = lat2*Math.PI/180;
+        const Δφ = (lat2-lat1)*Math.PI/180; const Δλ = (lng2-lng1)*Math.PI/180;
+        const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+        return 2*R*Math.asin(Math.sqrt(a));
+      };
+      const centresInView = KNOWN_CENTRES.filter(c => centreHaversine(mapCentre.lat, mapCentre.lng, c.lat, c.lng) < c.radiusKm + 0.3);
+      const centreDirectoriesPromise = Promise.all(centresInView.map(c =>
+        fetch(`/api/map/centre-directory?name=${encodeURIComponent(c.name)}`, {
+          credentials: "include",
+          headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+        }).then(r => r.ok ? r.json() : null).catch(() => null).then(d => d ? { ...d, _centreLat: c.lat, _centreLng: c.lng, _radiusKm: c.radiusKm } : null)
+      )).then(rs => rs.filter(Boolean));
+
+      const [buildings, labelsResp, centreDirectories] = await Promise.all([
         fetchBuildings(map),
         labelsPromise,
+        centreDirectoriesPromise,
       ]);
 
       if (loadCounterRef.current !== thisLoad) return;
       if (buildings.length === 0 && buildingLayerRef.current && buildingLayerRef.current.getLayers().length > 0) return;
+
+      // Flatten centre directory tenants into label points. We don't know
+      // each tenant's exact position inside the centre, so we space them
+      // evenly around the centre point — the label-snap finds the nearest
+      // polygon and adopts the tenant name. Good enough to put "Boots",
+      // "Pret", "Costa" etc. into Cardinal Place's subdivided NGD parts.
+      const centreLabels: Array<{ lat: number; lng: number; label: string }> = [];
+      for (const c of (centreDirectories || []) as any[]) {
+        const tenants: any[] = Array.isArray(c?.tenants) ? c.tenants : [];
+        if (!tenants.length) continue;
+        // Spread tenants in a ring inside the centre radius
+        const R = c._radiusKm * 0.6;
+        tenants.forEach((t, i) => {
+          if (!t?.name) return;
+          const angle = (2 * Math.PI * i) / Math.max(tenants.length, 1);
+          const dLat = (R / 111) * Math.cos(angle);
+          const dLng = (R / (111 * Math.cos(c._centreLat * Math.PI / 180))) * Math.sin(angle);
+          centreLabels.push({ lat: c._centreLat + dLat, lng: c._centreLng + dLng, label: t.unit ? `${t.unit} ${t.name}` : t.name });
+        });
+      }
 
       // Merge labels into buildings — CRM beats Comp beats Google. For each
       // building, snap to the nearest label point within ~25m and override.
@@ -3499,6 +3545,19 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         if (crm) return { ...b, label: crm.label, _labelSource: "crm" };
         const comp = findClosest(labelsResp.comps || []);
         if (comp) return { ...b, label: comp.label, _labelSource: "comp" };
+        // Shopping centre directory beats generic VOA/Google because it's
+        // the centre's own authoritative tenant list. Bigger match radius
+        // (40m) because the ring-spreading is approximate.
+        const centreFinder = (pts: any[]) => {
+          let best: any = null; let bestD = 40;
+          for (const p of pts) {
+            const d = distM(center.lat, center.lng, p.lat, p.lng);
+            if (d < bestD) { best = p; bestD = d; }
+          }
+          return best;
+        };
+        const centre = centreFinder(centreLabels);
+        if (centre) return { ...b, label: centre.label, _labelSource: "centre" };
         const voa = findClosest(labelsResp.voa || []);
         if (voa) return { ...b, label: voa.label, _labelSource: "voa" };
         const google = findClosest(labelsResp.google || []);
@@ -3507,6 +3566,30 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       };
 
       const enriched = buildings.map(overrideLabel);
+
+      // Deduplicate labels across NGD building-parts that share a TOID or
+      // that got matched to the same VOA/CRM/Comp/Google record. Without
+      // this, a single Boots shopfront made of five NGD parts gets
+      // "BOOTS OPTICIANS" printed five times, each overflowing its sliver.
+      // Keep the label on the largest polygon of each group; blank the
+      // others so their polygons render without text.
+      const groupBy = new Map<string, any[]>();
+      for (const b of enriched) {
+        if (!b.label) continue;
+        const key = `${(b.label || "").toLowerCase().trim()}|${b._toid || ""}`;
+        if (!groupBy.has(key)) groupBy.set(key, []);
+        groupBy.get(key)!.push(b);
+      }
+      for (const group of groupBy.values()) {
+        if (group.length <= 1) continue;
+        group.sort((a, b) => (b.areaSqM || 0) - (a.areaSqM || 0));
+        for (let i = 1; i < group.length; i++) {
+          group[i].label = "";
+          group[i].houseNum = "";
+          group[i]._dedupedFrom = group[0].label;
+        }
+      }
+
       renderBuildings(enriched);
     };
 
