@@ -171,6 +171,8 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS idx_data_room_analyses_user ON data_room_analyses(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_data_room_analyses_deal ON data_room_analyses(crm_deal_id) WHERE crm_deal_id IS NOT NULL`,
     `CREATE TABLE IF NOT EXISTS data_room_files (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), analysis_id VARCHAR NOT NULL, user_id VARCHAR NOT NULL, archive_name TEXT, file_name TEXT NOT NULL, display_name TEXT NOT NULL, file_size INTEGER, primary_type TEXT, sub_type TEXT, extracted_text TEXT, classification JSONB, enrichment JSONB, created_at TIMESTAMP DEFAULT now())`,
+    `ALTER TABLE data_room_files ADD COLUMN IF NOT EXISTS local_path TEXT`,
+    `ALTER TABLE data_room_files ADD COLUMN IF NOT EXISTS mime_type TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_data_room_files_analysis ON data_room_files(analysis_id)`,
     `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_status TEXT`,
     `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_approved_at TIMESTAMP`,

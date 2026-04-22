@@ -4146,7 +4146,7 @@ function LegalDDTab() {
   const [ddTeam, setDdTeam] = useState("Investment");
   const [legalResults, setLegalResults] = useState<LegalAnalysisResult[] | null>(null);
   const [ddResult, setDdResult] = useState<DDResult | null>(null);
-  const [ddClassifiedFiles, setDdClassifiedFiles] = useState<Array<{ originalName: string; displayName: string; size: number; sourceArchive?: string; classification: { primaryType: string; subType: string; confidence: string; propertyAddress?: string; tenantName?: string; landlordName?: string; notes?: string }; enrichment?: any }>>([]);
+  const [ddClassifiedFiles, setDdClassifiedFiles] = useState<Array<{ fileId?: string; originalName: string; displayName: string; size: number; sourceArchive?: string; mimeType?: string; classification: { primaryType: string; subType: string; confidence: string; propertyAddress?: string; tenantName?: string; landlordName?: string; notes?: string }; enrichment?: any }>>([]);
   const [ddAnalysisId, setDdAnalysisId] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -4236,10 +4236,12 @@ function LegalDDTab() {
         setDdClassifiedFiles(prev => {
           const byName = new Map(prev.map(p => [p.originalName, p] as const));
           return (data.files || []).map((f: any) => ({
+            fileId: f.id,
             originalName: f.file_name,
             displayName: f.display_name,
             size: f.file_size || 0,
             sourceArchive: f.archive_name || undefined,
+            mimeType: f.mime_type || undefined,
             classification: f.classification || byName.get(f.file_name)?.classification || { primaryType: f.primary_type || "Other", subType: f.sub_type || "", confidence: "low" },
             enrichment: f.enrichment || null,
           }));
@@ -4292,10 +4294,12 @@ function LegalDDTab() {
             recommendations: [],
           });
           setDdClassifiedFiles((data.files || []).map((f: any) => ({
+            fileId: f.id,
             originalName: f.file_name,
             displayName: f.display_name,
             size: f.file_size || 0,
             sourceArchive: f.archive_name || undefined,
+            mimeType: f.mime_type || undefined,
             classification: f.classification || { primaryType: f.primary_type || "Other", subType: f.sub_type || "", confidence: "low" },
           })));
           toast({
@@ -4763,7 +4767,20 @@ function LegalDDTab() {
                               <span className="text-sm font-medium truncate">{f.displayName}</span>
                               <Badge variant="outline" className={`text-[10px] ${pill}`}>{cls.primaryType || "Other"}</Badge>
                               {cls.confidence === "low" && <Badge variant="outline" className="text-[10px] bg-gray-50 text-gray-500">low confidence</Badge>}
-                              <span className="ml-auto text-muted-foreground text-xs">{isExpanded ? "−" : "+"}</span>
+                              <div className="ml-auto flex items-center gap-2">
+                                {f.fileId && (
+                                  <a
+                                    href={`/api/legal-dd/files/${f.fileId}/raw`}
+                                    target="_blank"
+                                    rel="noopener"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="text-[11px] text-primary hover:underline"
+                                  >
+                                    Open ↗
+                                  </a>
+                                )}
+                                <span className="text-muted-foreground text-xs">{isExpanded ? "−" : "+"}</span>
+                              </div>
                             </div>
                             <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
                               {cls.subType && <span>{cls.subType}</span>}

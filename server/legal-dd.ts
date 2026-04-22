@@ -37,27 +37,56 @@ interface EffectiveFile {
   displayName: string;    // just the filename for UI
   path: string;           // disk path to read from
   size: number;
+  mimeType?: string;
   sourceArchive?: string; // original ZIP filename if extracted from one
-  cleanup?: () => void;   // call to delete temp file after analysis
 }
 
-async function expandUploads(files: Express.Multer.File[]): Promise<EffectiveFile[]> {
+// Per-analysis persistent file folder. Files live here until an admin
+// cron clears them out (future work) — this is how the UI can later
+// serve the original PDF back to the user.
+const ANALYSES_DIR = path.join(process.cwd(), "ChatBGP", "legal-dd", "analyses");
+if (!fs.existsSync(ANALYSES_DIR)) fs.mkdirSync(ANALYSES_DIR, { recursive: true });
+
+function analysisDir(analysisId: string): string {
+  const dir = path.join(ANALYSES_DIR, analysisId);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function mimeFromExt(name: string): string {
+  const ext = path.extname(name).toLowerCase();
+  if (ext === ".pdf") return "application/pdf";
+  if (ext === ".docx") return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (ext === ".doc") return "application/msword";
+  if (ext === ".xlsx") return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (ext === ".xls") return "application/vnd.ms-excel";
+  if (ext === ".txt") return "text/plain";
+  if (ext === ".csv") return "text/csv";
+  return "application/octet-stream";
+}
+
+async function expandUploads(files: Express.Multer.File[], analysisId: string): Promise<EffectiveFile[]> {
   const out: EffectiveFile[] = [];
+  const dir = analysisDir(analysisId);
   for (const f of files) {
     const ext = path.extname(f.originalname).toLowerCase();
     if (ext !== ".zip") {
+      // Copy the multer temp file into the persistent folder.
+      const safeName = f.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const dest = path.join(dir, `${Date.now()}_${safeName}`);
+      fs.copyFileSync(f.path, dest);
+      try { fs.unlinkSync(f.path); } catch {}
       out.push({
         originalName: f.originalname,
         displayName: f.originalname,
-        path: f.path,
+        path: dest,
         size: f.size,
-        cleanup: () => { try { fs.unlinkSync(f.path); } catch {} },
+        mimeType: mimeFromExt(f.originalname),
       });
       continue;
     }
 
-    // ZIP — extract to a unique temp dir keyed to this upload.
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dd-zip-"));
+    // ZIP — extract every text-bearing entry to the persistent folder.
     try {
       const zip = new AdmZip(f.path);
       for (const entry of zip.getEntries()) {
@@ -66,17 +95,16 @@ async function expandUploads(files: Express.Multer.File[]): Promise<EffectiveFil
         const entryExt = path.extname(entryName).toLowerCase();
         if (!TEXT_EXTRACTABLE.has(entryExt)) continue;
 
-        // Write to disk flat — safeName avoids collisions across folders.
-        const safeName = entryName.replace(/[/\\]/g, "__");
-        const outPath = path.join(tmpDir, safeName);
+        const safeName = entryName.replace(/[/\\]/g, "__").replace(/[^a-zA-Z0-9._-]/g, "_");
+        const outPath = path.join(dir, `${Date.now()}_${safeName}`);
         fs.writeFileSync(outPath, entry.getData());
         out.push({
           originalName: entryName,
           displayName: path.basename(entryName),
           path: outPath,
           size: entry.header.size,
+          mimeType: mimeFromExt(entryName),
           sourceArchive: f.originalname,
-          cleanup: () => { try { fs.unlinkSync(outPath); } catch {} },
         });
       }
     } catch (err: any) {
@@ -279,11 +307,11 @@ async function runDealDdInBackground(
     if (!f) continue;
     try {
       await pool.query(
-        `INSERT INTO data_room_files (analysis_id, user_id, archive_name, file_name, display_name, file_size, primary_type, sub_type, extracted_text, classification)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        `INSERT INTO data_room_files (analysis_id, user_id, archive_name, file_name, display_name, file_size, primary_type, sub_type, extracted_text, classification, local_path, mime_type)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [analysisId, userId, f.sourceArchive || null, f.originalName, f.displayName, f.size,
          f.classification.primaryType, f.classification.subType,
-         f.text.slice(0, 200000), JSON.stringify(f.classification)]
+         f.text.slice(0, 200000), JSON.stringify(f.classification), f.path, f.mimeType || null]
       );
     } catch (persistErr: any) {
       console.warn(`[legal-dd] file persist failed for ${f.displayName}:`, persistErr?.message);
@@ -330,8 +358,6 @@ async function runDealDdInBackground(
        WHERE id=$3`,
       [`DD summary failed: ${err?.message || "unknown"}`, "Classification complete, but DD summary generation failed. Files are still available for enrichment.", analysisId]
     );
-  } finally {
-    effective.forEach(f => f.cleanup?.());
   }
 }
 
@@ -488,18 +514,25 @@ export function registerLegalDDRoutes(app: Express) {
     if (!userId) return res.status(401).json({ message: "Not signed in" });
 
     try {
-      const effective = await expandUploads(rawFiles);
+      // 1. Create the pending analysis record FIRST so we have an id to
+      //    key the persistent file folder against.
+      const insert = await pool.query(
+        `INSERT INTO data_room_analyses (user_id, deal_name, team, crm_deal_id, file_count, status, progress_classified, progress_total, overall_summary)
+         VALUES ($1,$2,$3,$4,0,'processing',0,0,$5) RETURNING id`,
+        [userId, dealName, team || "Investment", crmDealId || null, "Analysing data room..."]
+      );
+      const analysisId = insert.rows[0].id as string;
+
+      const effective = await expandUploads(rawFiles, analysisId);
       if (effective.length === 0) {
+        await pool.query(`UPDATE data_room_analyses SET status='error', error_message='No extractable files in upload', completed_at=now() WHERE id=$1`, [analysisId]);
         return res.status(400).json({ message: "No extractable files (PDF/DOCX/XLSX/TXT) found in upload" });
       }
 
-      // 1. Create the pending analysis record immediately.
-      const insert = await pool.query(
-        `INSERT INTO data_room_analyses (user_id, deal_name, team, crm_deal_id, file_count, status, progress_classified, progress_total, overall_summary)
-         VALUES ($1,$2,$3,$4,$5,'processing',0,$6,$7) RETURNING id`,
-        [userId, dealName, team || "Investment", crmDealId || null, effective.length, effective.length, "Analysing data room..."]
+      await pool.query(
+        `UPDATE data_room_analyses SET file_count=$1, progress_total=$2 WHERE id=$3`,
+        [effective.length, effective.length, analysisId]
       );
-      const analysisId = insert.rows[0].id as string;
 
       // 2. Return 202 so the client can start polling immediately.
       res.status(202).json({
@@ -520,7 +553,6 @@ export function registerLegalDDRoutes(app: Express) {
               [err?.message || "unknown error", analysisId]
             );
           } catch {}
-          effective.forEach(f => f.cleanup?.());
         }));
     } catch (err: any) {
       console.error("Deal DD error:", err);
@@ -557,7 +589,7 @@ export function registerLegalDDRoutes(app: Express) {
       );
       if (analysisRow.rows.length === 0) return res.status(404).json({ message: "Analysis not found" });
       const filesRow = await pool.query(
-        `SELECT id, archive_name, file_name, display_name, file_size, primary_type, sub_type, classification, created_at
+        `SELECT id, archive_name, file_name, display_name, file_size, primary_type, sub_type, classification, mime_type, created_at
          FROM data_room_files WHERE analysis_id = $1 ORDER BY created_at ASC`,
         [req.params.id]
       );
@@ -610,7 +642,7 @@ export function registerLegalDDRoutes(app: Express) {
       );
       if (owns.rows.length === 0) return res.status(404).json({ message: "Analysis not found" });
       const files = await pool.query(
-        `SELECT id, archive_name, file_name, display_name, file_size, primary_type, sub_type, classification, enrichment, created_at
+        `SELECT id, archive_name, file_name, display_name, file_size, primary_type, sub_type, classification, enrichment, mime_type, local_path, created_at
          FROM data_room_files WHERE analysis_id = $1 ORDER BY created_at ASC`,
         [req.params.id]
       );
@@ -621,6 +653,37 @@ export function registerLegalDDRoutes(app: Express) {
     } catch (err: any) {
       console.error("[legal-dd] files progress error:", err?.message);
       res.status(500).json({ message: err?.message || "Failed to load files" });
+    }
+  });
+
+  // Stream the original file bytes back to the browser so the user can
+  // open the raw PDF/DOCX/XLSX. Auth checked against analysis owner so
+  // another user can't pull someone else's data room. inline disposition
+  // means PDFs render in the browser tab; docx/xlsx prompt a download.
+  app.get("/api/legal-dd/files/:id/raw", requireAuth, async (req: any, res: Response) => {
+    const userId = req.session?.userId || req.tokenUserId;
+    if (!userId) return res.status(401).send("Not signed in");
+    try {
+      const r = await pool.query(
+        `SELECT f.local_path, f.mime_type, f.display_name, f.user_id
+         FROM data_room_files f
+         WHERE f.id = $1`,
+        [req.params.id]
+      );
+      if (r.rows.length === 0) return res.status(404).send("File not found");
+      const row = r.rows[0];
+      if (row.user_id !== userId) return res.status(403).send("Forbidden");
+      if (!row.local_path || !fs.existsSync(row.local_path)) {
+        return res.status(410).send("File no longer available on disk — re-upload the data room to restore it.");
+      }
+      const safeName = (row.display_name || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
+      res.setHeader("Content-Type", row.mime_type || "application/octet-stream");
+      res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      fs.createReadStream(row.local_path).pipe(res);
+    } catch (err: any) {
+      console.error("[legal-dd] file stream error:", err?.message);
+      res.status(500).send(err?.message || "Failed to stream file");
     }
   });
 
