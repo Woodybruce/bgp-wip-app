@@ -354,6 +354,39 @@ export function registerOSDataRoutes(app: Express): void {
     }
   });
 
+  // ─── Linked Identifiers (UPRN ↔ TOID ↔ title number) ──────────
+  // Any of uprn / toid / blpu can be passed as the identifier type. Returns
+  // the OS Linked Identifiers payload which lists every related identifier
+  // across the National Geographic Database. This is how we bridge a UPRN
+  // from OS Places to a TOID on an NGD building polygon, or a TOID to its
+  // Land Registry title number.
+  app.get("/api/os/linked/:idType/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const idType = String(req.params.idType || "");
+      const id = String(req.params.id || "");
+      if (!id || !idType) return res.status(400).json({ error: "idType and id required" });
+      const key = getOsKey();
+      if (!key) return res.status(503).json({ error: "OS_PLACES_API_KEY not configured" });
+
+      const cacheKey = `os-linked:${idType}:${id}`;
+      const hit = getFromCache(cacheKey);
+      if (hit) return res.json(hit);
+
+      const url = `https://api.os.uk/search/links/v1/identifiers/${encodeURIComponent(id)}?key=${encodeURIComponent(key)}`;
+      const resp = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "");
+        return res.status(resp.status).json({ error: `Linked Identifiers ${resp.status}: ${body.slice(0, 200)}` });
+      }
+      const data = await resp.json();
+      setCache(cacheKey, data);
+      res.json(data);
+    } catch (err: any) {
+      console.error("[os-data] linked identifiers error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to fetch linked identifiers" });
+    }
+  });
+
   // ─── OS Places free-text search (address autocomplete) ────────
   app.get("/api/os/places/search", requireAuth, async (req: Request, res: Response) => {
     try {

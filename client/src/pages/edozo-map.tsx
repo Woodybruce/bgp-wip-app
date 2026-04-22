@@ -3024,10 +3024,61 @@ function fitTextToBuilding(label: string, houseNum: string, isVacant: boolean, p
   return null;
 }
 
+// Fetch OS NGD building polygons via our server proxy. NGD gives subdivided
+// MasterMap-equivalent footprints — individual shop units inside shopping
+// centres, separate parts of office blocks, etc. — which is what makes a
+// Goad-style plan possible. Returns [] if the endpoint fails or the tier
+// doesn't cover it, in which case the caller falls back to OSM.
+async function fetchNgdBuildings(bounds: L.LatLngBounds): Promise<any[]> {
+  const bboxParam = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+  try {
+    const resp = await fetch(`/api/os/mastermap-buildings?bbox=${bboxParam}`, {
+      credentials: "include",
+      headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+    });
+    if (!resp.ok) return [];
+    const body = await resp.json();
+    const features: any[] = body?.data?.features || [];
+    const out: any[] = [];
+    for (const f of features) {
+      const g = f.geometry;
+      if (!g) continue;
+      // Normalise Polygon and MultiPolygon to arrays of rings
+      const polys: number[][][] = g.type === "MultiPolygon" ? g.coordinates.flat(1) : g.type === "Polygon" ? g.coordinates : [];
+      for (const ring of polys) {
+        if (!Array.isArray(ring) || ring.length < 3) continue;
+        const latLngs = ring.map((c: number[]) => [c[1], c[0]] as [number, number]);
+        const areaSqM = polygonAreaSqM(latLngs);
+        // NGD 'Sites' will be huge polygons — filter those out of the per-unit
+        // building layer so they don't blanket the map.
+        if (areaSqM > 20000) continue;
+        out.push({
+          latLngs,
+          label: "",
+          houseNum: "",
+          isVacant: false,
+          areaSqM,
+          isUnit: areaSqM < 500,
+          _toid: f.properties?.toid || null,
+          _osid: f.properties?.osid || null,
+          _source: "ngd",
+        });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 async function fetchBuildings(map: L.Map): Promise<any[]> {
   const bounds = map.getBounds();
   const zoom = map.getZoom();
   if (zoom < 16) return [];
+
+  // Prefer NGD polygons (subdivided, Goad-style). Fall back to OSM if NGD
+  // returns nothing. Overpass still runs in parallel to harvest POI labels.
+  const ngdPromise = fetchNgdBuildings(bounds);
 
   const s = bounds.getSouth();
   const w = bounds.getWest();
@@ -3137,10 +3188,39 @@ out body;>;out skel qt;`;
       }
     }
 
+    // Wait for NGD (fired in parallel at the top of the function). If NGD
+    // returned polygons, use those instead of OSM — NGD is subdivided and
+    // authoritative — but keep OSM's POIs to hydrate labels for each polygon.
+    const ngd = await ngdPromise;
+    if (ngd.length > 0) {
+      for (const nb of ngd) {
+        // Label / house-number fallback from OSM POIs inside this polygon.
+        let label = "";
+        let houseNum = "";
+        let isVacant = false;
+        for (const poi of poiNodes) {
+          if (pointInPolygon(poi.lat, poi.lng, nb.latLngs)) {
+            const info = getLabelFromTags(poi.tags);
+            if (info.label || info.houseNum) {
+              label = label || info.label;
+              houseNum = houseNum || info.houseNum;
+              isVacant = info.isVacant && !info.label;
+              if (label && houseNum) break;
+            }
+          }
+        }
+        nb.label = label;
+        nb.houseNum = houseNum;
+        nb.isVacant = isVacant;
+      }
+      return ngd;
+    }
+
     return buildings;
   } catch (err) {
     console.error("[edozo] Overpass error:", err);
-    return [];
+    // If Overpass failed, still try to return whatever NGD gave us
+    try { return await ngdPromise; } catch { return []; }
   }
 }
 
