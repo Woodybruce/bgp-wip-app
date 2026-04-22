@@ -504,6 +504,62 @@ export function registerLegalDDRoutes(app: Express) {
     }
   });
 
+  // Trigger Push 2 enrichment on a persisted analysis. Runs in the
+  // background (so a 300-file data room doesn't block the HTTP response)
+  // with concurrency 4 — see data-room-enrich.ts. Client polls GET
+  // /api/legal-dd/analyses/:id/files to see per-file progress.
+  app.post("/api/legal-dd/enrich/:id", requireAuth, async (req: any, res: Response) => {
+    const userId = req.session?.userId || req.tokenUserId;
+    if (!userId) return res.status(401).json({ message: "Not signed in" });
+    try {
+      const owns = await pool.query(
+        `SELECT id FROM data_room_analyses WHERE id = $1 AND user_id = $2`,
+        [req.params.id, userId]
+      );
+      if (owns.rows.length === 0) return res.status(404).json({ message: "Analysis not found" });
+
+      const { enrichAnalysis } = await import("./data-room-enrich");
+      // Fire-and-forget. Result is written to data_room_files.enrichment.
+      setImmediate(() => {
+        enrichAnalysis(req.params.id, { concurrency: 4 })
+          .then((r) => console.log(`[legal-dd] enrichment complete for ${req.params.id}:`, r))
+          .catch((err) => console.error(`[legal-dd] enrichment failed for ${req.params.id}:`, err?.message));
+      });
+      res.status(202).json({ started: true, analysisId: req.params.id });
+    } catch (err: any) {
+      console.error("[legal-dd] enrich start error:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to start enrichment" });
+    }
+  });
+
+  // Files for an analysis with their current enrichment status (the
+  // polling target for the client while Push 2 runs). Returns the
+  // JSONB enrichment blob per file, so the UI can render specialist
+  // output + CH/VOA/Land-Registry/FSA matches as they complete.
+  app.get("/api/legal-dd/analyses/:id/files", requireAuth, async (req: any, res: Response) => {
+    const userId = req.session?.userId || req.tokenUserId;
+    if (!userId) return res.status(401).json({ message: "Not signed in" });
+    try {
+      const owns = await pool.query(
+        `SELECT id FROM data_room_analyses WHERE id = $1 AND user_id = $2`,
+        [req.params.id, userId]
+      );
+      if (owns.rows.length === 0) return res.status(404).json({ message: "Analysis not found" });
+      const files = await pool.query(
+        `SELECT id, archive_name, file_name, display_name, file_size, primary_type, sub_type, classification, enrichment, created_at
+         FROM data_room_files WHERE analysis_id = $1 ORDER BY created_at ASC`,
+        [req.params.id]
+      );
+      const done = files.rows.filter(r => r.enrichment?.status === "done").length;
+      const running = files.rows.filter(r => r.enrichment?.status === "running").length;
+      const errors = files.rows.filter(r => r.enrichment?.status === "error").length;
+      res.json({ files: files.rows, progress: { total: files.rows.length, done, running, errors } });
+    } catch (err: any) {
+      console.error("[legal-dd] files progress error:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to load files" });
+    }
+  });
+
   app.post("/api/legal-dd/create-project", requireAuth, async (req: Request, res: Response) => {
     const { getValidMsToken } = await import("./microsoft");
     const token = await getValidMsToken(req);

@@ -4144,7 +4144,7 @@ function LegalDDTab() {
   const [ddTeam, setDdTeam] = useState("Investment");
   const [legalResults, setLegalResults] = useState<LegalAnalysisResult[] | null>(null);
   const [ddResult, setDdResult] = useState<DDResult | null>(null);
-  const [ddClassifiedFiles, setDdClassifiedFiles] = useState<Array<{ originalName: string; displayName: string; size: number; sourceArchive?: string; classification: { primaryType: string; subType: string; confidence: string; propertyAddress?: string; tenantName?: string; landlordName?: string; notes?: string } }>>([]);
+  const [ddClassifiedFiles, setDdClassifiedFiles] = useState<Array<{ originalName: string; displayName: string; size: number; sourceArchive?: string; classification: { primaryType: string; subType: string; confidence: string; propertyAddress?: string; tenantName?: string; landlordName?: string; notes?: string }; enrichment?: any }>>([]);
   const [ddAnalysisId, setDdAnalysisId] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
@@ -4173,13 +4173,54 @@ function LegalDDTab() {
     }
   };
 
+  const [ddEnrichProgress, setDdEnrichProgress] = useState<{ total: number; done: number; running: number; errors: number } | null>(null);
+  const ddEnrichTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Poll enrichment progress every 4s. Stops when done === total or errors
+  // remain static for 3 cycles.
+  const startEnrichmentPolling = (analysisId: string) => {
+    if (ddEnrichTimerRef.current) clearInterval(ddEnrichTimerRef.current);
+    let staleCount = 0;
+    let lastDone = -1;
+    ddEnrichTimerRef.current = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/legal-dd/analyses/${analysisId}/files`, {
+          headers: { ...getAuthHeaders() },
+          credentials: "include",
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        setDdEnrichProgress(data.progress);
+        // Merge enrichment into classified file list for UI rendering.
+        setDdClassifiedFiles(prev => {
+          const byName = new Map(prev.map(p => [p.originalName, p] as const));
+          return (data.files || []).map((f: any) => ({
+            originalName: f.file_name,
+            displayName: f.display_name,
+            size: f.file_size || 0,
+            sourceArchive: f.archive_name || undefined,
+            classification: f.classification || byName.get(f.file_name)?.classification || { primaryType: f.primary_type || "Other", subType: f.sub_type || "", confidence: "low" },
+            enrichment: f.enrichment || null,
+          }));
+        });
+        if (data.progress.done + data.progress.errors >= data.progress.total) {
+          if (ddEnrichTimerRef.current) clearInterval(ddEnrichTimerRef.current);
+        }
+        if (data.progress.done === lastDone) staleCount++; else { lastDone = data.progress.done; staleCount = 0; }
+        if (staleCount > 30) { if (ddEnrichTimerRef.current) clearInterval(ddEnrichTimerRef.current); }
+      } catch {}
+    }, 4000);
+  };
+
   const handleDealDD = async () => {
     if (ddFiles.length === 0 || !dealName.trim()) return;
     setAnalyzing(true);
     setDdResult(null);
     setDdClassifiedFiles([]);
     setDdAnalysisId(null);
+    setDdEnrichProgress(null);
     setProjectCreated(null);
+    if (ddEnrichTimerRef.current) { clearInterval(ddEnrichTimerRef.current); ddEnrichTimerRef.current = null; }
     try {
       const formData = new FormData();
       ddFiles.forEach(f => formData.append("files", f));
@@ -4196,9 +4237,20 @@ function LegalDDTab() {
       toast({
         title: "Due Diligence complete",
         description: zipCount > 0
-          ? `${extractedCount} files analysed (${zipCount} from ZIP archive)`
-          : `${extractedCount} files analysed`,
+          ? `${extractedCount} files analysed (${zipCount} from ZIP archive). Enrichment running...`
+          : `${extractedCount} files analysed. Enrichment running...`,
       });
+      // Kick off Push 2 enrichment in the background and start polling for
+      // per-file specialist + CH/VOA/Land-Registry/FSA badges.
+      if (data.analysisId) {
+        try {
+          await fetch(`/api/legal-dd/enrich/${data.analysisId}`, {
+            method: "POST", headers: { ...getAuthHeaders() }, credentials: "include",
+          });
+          setDdEnrichProgress({ total: extractedCount, done: 0, running: 0, errors: 0 });
+          startEnrichmentPolling(data.analysisId);
+        } catch {}
+      }
     } catch (err: any) {
       toast({ title: "DD analysis failed", description: err.message, variant: "destructive" });
     } finally {
@@ -4523,11 +4575,24 @@ function LegalDDTab() {
                   <CardHeader>
                     <CardTitle className="text-base flex items-center justify-between">
                       <span>Files in Data Room ({ddClassifiedFiles.length})</span>
-                      {ddClassifiedFiles.some(f => f.sourceArchive) && (
-                        <Badge variant="outline" className="text-[10px]">
-                          Expanded from {new Set(ddClassifiedFiles.map(f => f.sourceArchive).filter(Boolean)).size} ZIP archive(s)
-                        </Badge>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {ddEnrichProgress && ddEnrichProgress.total > 0 && ddEnrichProgress.done + ddEnrichProgress.errors < ddEnrichProgress.total && (
+                          <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">
+                            <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                            Enriching {ddEnrichProgress.done}/{ddEnrichProgress.total}
+                          </Badge>
+                        )}
+                        {ddEnrichProgress && ddEnrichProgress.total > 0 && ddEnrichProgress.done + ddEnrichProgress.errors >= ddEnrichProgress.total && (
+                          <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">
+                            Enrichment complete · {ddEnrichProgress.done} ok{ddEnrichProgress.errors > 0 ? ` · ${ddEnrichProgress.errors} errors` : ""}
+                          </Badge>
+                        )}
+                        {ddClassifiedFiles.some(f => f.sourceArchive) && (
+                          <Badge variant="outline" className="text-[10px]">
+                            Expanded from {new Set(ddClassifiedFiles.map(f => f.sourceArchive).filter(Boolean)).size} ZIP archive(s)
+                          </Badge>
+                        )}
+                      </div>
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-1.5 max-h-[320px] overflow-y-auto">
@@ -4568,6 +4633,50 @@ function LegalDDTab() {
                               {cls.landlordName && <span>• LL: {cls.landlordName}</span>}
                               {f.sourceArchive && <span className="text-muted-foreground/60">• from {f.sourceArchive}</span>}
                             </div>
+                            {(f as any).enrichment && (f as any).enrichment.status === "done" && (() => {
+                              const enr = (f as any).enrichment.enrichment || {};
+                              const spec = (f as any).enrichment.specialist;
+                              const chStatusBadge = (m: any, label: string) => {
+                                if (!m) return null;
+                                const colour = m.status === "active"
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  : m.status === "dissolved" || m.status === "liquidation"
+                                  ? "bg-red-50 text-red-700 border-red-200"
+                                  : "bg-gray-50 text-gray-600 border-gray-200";
+                                return <Badge variant="outline" className={`text-[10px] ${colour}`}>{label}: {m.status}</Badge>;
+                              };
+                              const fsa = enr.fsaHygiene;
+                              const fsaColour = fsa?.rating === "5" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : fsa?.rating === "4" ? "bg-emerald-50 text-emerald-600 border-emerald-200"
+                                : fsa?.rating === "3" ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : fsa ? "bg-red-50 text-red-700 border-red-200" : "";
+                              return (
+                                <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                                  {chStatusBadge(enr.tenant, "Tenant")}
+                                  {chStatusBadge(enr.landlord, "LL")}
+                                  {enr.voa && <Badge variant="outline" className="text-[10px] bg-cyan-50 text-cyan-700 border-cyan-200">RV £{Number(enr.voa.rateable_value || 0).toLocaleString()}</Badge>}
+                                  {enr.landRegistry?.title_number && <Badge variant="outline" className="text-[10px] bg-purple-50 text-purple-700 border-purple-200">Title {enr.landRegistry.title_number}</Badge>}
+                                  {fsa && <Badge variant="outline" className={`text-[10px] ${fsaColour}`}>FHR {fsa.rating}</Badge>}
+                                  {spec?.waultYears != null && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-200">WAULT {spec.waultYears}y</Badge>}
+                                  {spec?.passingRent != null && <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-700 border-slate-200">£{Number(spec.passingRent).toLocaleString()}pa</Badge>}
+                                  {spec?.totalPassingRent != null && <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-700 border-slate-200">Total £{Number(spec.totalPassingRent).toLocaleString()}pa</Badge>}
+                                  {spec?.ebitdar != null && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">EBITDAR £{Number(spec.ebitdar).toLocaleString()}</Badge>}
+                                  {spec?.exitYieldPercent != null && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">Exit {spec.exitYieldPercent}%</Badge>}
+                                  {spec?.flags?.some?.((x: any) => x.severity === "red") && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">{spec.flags.filter((x: any) => x.severity === "red").length} red flag</Badge>}
+                                </div>
+                              );
+                            })()}
+                            {(f as any).enrichment?.status === "running" && (
+                              <div className="mt-1 text-[10px] text-muted-foreground flex items-center gap-1">
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                Enriching...
+                              </div>
+                            )}
+                            {(f as any).enrichment?.status === "error" && (
+                              <div className="mt-1 text-[10px] text-red-600">
+                                Enrichment failed: {(f as any).enrichment.error}
+                              </div>
+                            )}
                           </div>
                           <span className="text-[10px] text-muted-foreground shrink-0">{(f.size / 1024).toFixed(0)} KB</span>
                         </div>
