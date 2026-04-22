@@ -2943,6 +2943,64 @@ function polygonBBoxPixels(latLngs: [number, number][], map: L.Map): { w: number
   return { w: maxX - minX, h: maxY - minY };
 }
 
+// Oriented bounding box — finds the polygon's principal axis (longest edge)
+// and returns the dims of the tightest rectangle aligned to it, plus the
+// rotation (deg) that should be applied to text so it runs along that axis.
+// This is what makes narrow-but-rotated rectangles (common on subdivided
+// OS NGD shopfronts) show readable labels like Goad does instead of
+// horizontal text overflowing the polygon.
+function polygonOBBPixels(latLngs: [number, number][], map: L.Map): { w: number; h: number; rotationDeg: number } {
+  if (latLngs.length < 3) {
+    const ab = polygonBBoxPixels(latLngs, map);
+    return { w: ab.w, h: ab.h, rotationDeg: 0 };
+  }
+  const points = latLngs.map(ll => {
+    const p = map.latLngToContainerPoint([ll[0], ll[1]]);
+    return { x: p.x, y: p.y };
+  });
+
+  // Candidate axes: use each edge's direction as an axis and measure the
+  // bounding box aligned to it. Pick the one with smallest area (classic
+  // rotating-calipers OBB, simplified — edge-aligned is optimal for most
+  // building footprints).
+  let best = { w: Infinity, h: Infinity, area: Infinity, angle: 0 };
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1) continue;
+    const angle = Math.atan2(dy, dx);
+    const cos = Math.cos(-angle);
+    const sin = Math.sin(-angle);
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+    for (const p of points) {
+      const u = p.x * cos - p.y * sin;
+      const v = p.x * sin + p.y * cos;
+      if (u < minU) minU = u;
+      if (u > maxU) maxU = u;
+      if (v < minV) minV = v;
+      if (v > maxV) maxV = v;
+    }
+    const w = maxU - minU;
+    const h = maxV - minV;
+    const area = w * h;
+    if (area < best.area) best = { w, h, area, angle };
+  }
+
+  // Ensure width is the longer side (text runs along width).
+  let w = best.w, h = best.h;
+  let rotationDeg = (best.angle * 180) / Math.PI;
+  if (h > w) { const t = w; w = h; h = t; rotationDeg += 90; }
+  // Keep text right-side-up (avoid upside-down labels).
+  rotationDeg = ((rotationDeg + 180) % 360) - 180;   // wrap to [-180, 180)
+  if (rotationDeg > 90) rotationDeg -= 180;
+  if (rotationDeg < -90) rotationDeg += 180;
+
+  return { w, h, rotationDeg };
+}
+
 function fitTextToBuilding(label: string, houseNum: string, isVacant: boolean, pixelW: number, pixelH: number): { text: string; fontSize: number } | null {
   const charWidthAtSize = (size: number) => size * 0.55;
   const lineHeight = (size: number) => size * 1.3;
@@ -3420,17 +3478,29 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           lineCap: "butt",
         });
 
-        const bbox = polygonBBoxPixels(b.latLngs, mapRef.current);
-        // Below zoom 17 buildings are too small to read — skip labels entirely
-        // instead of squeezing scruffy truncated text into tiny boxes.
+        // Oriented bounding box: we measure the polygon along its own
+        // principal axis, not the screen axis. A narrow shopfront that
+        // happens to run north-south gets a "width" that's its long side,
+        // and we rotate the label to match. This is how Goad plans keep
+        // text readable inside narrow units.
+        const obb = polygonOBBPixels(b.latLngs, mapRef.current);
         const zoom = mapRef.current.getZoom();
-        const fitted = zoom < 18 ? null : fitTextToBuilding(b.label, b.houseNum, b.isVacant, bbox.w, bbox.h);
+        const fitted = zoom < 18 ? null : fitTextToBuilding(b.label, b.houseNum, b.isVacant, obb.w, obb.h);
 
         if (fitted) {
           const cssClass = b.isVacant && !b.label
             ? `edozo-label edozo-label-vacant edozo-fs-${fitted.fontSize}`
             : `edozo-label edozo-fs-${fitted.fontSize}`;
-          polygon.bindTooltip(fitted.text, {
+          // If the principal axis is meaningfully rotated (>8° off
+          // horizontal), wrap the text in an inline-block that rotates
+          // inside the Leaflet-positioned tooltip. Small angles are left
+          // alone so labels on near-horizontal frontages don't wobble.
+          const rot = Math.abs(obb.rotationDeg) > 8 ? obb.rotationDeg : 0;
+          const htmlLines = fitted.text.split("\n").map(l => `<div>${l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`).join("");
+          const content = rot === 0
+            ? fitted.text
+            : `<div style="display:inline-block;transform:rotate(${rot}deg);transform-origin:center;white-space:nowrap;line-height:1.1;">${htmlLines}</div>`;
+          polygon.bindTooltip(content, {
             permanent: true,
             direction: "center",
             className: cssClass,
