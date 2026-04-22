@@ -71,20 +71,58 @@ export function registerMapLayerRoutes(app: Express) {
     try {
       const key = `centre-directory:${name.toLowerCase().slice(0, 120)}`;
       const result = await cached(key, async () => {
-        const { askPerplexity } = await import("./perplexity");
         const prompt = `List every tenant at the "${name}" shopping centre${address ? ` (${address})` : ""} in London. For each tenant give: name, unit number if known, category (retail/food/service), and floor level. Prefer the centre's own plan-your-visit or store-directory page. Return strict JSON like:
 {"centre":"${name}","tenants":[{"name":"","unit":"","category":"","floor":""}]}
 If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Return ONLY the JSON.`;
-        const resp = await askPerplexity(prompt, { maxTokens: 2048 });
-        try {
-          const clean = (resp.answer || "").replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+
+        // Primary: Anthropic web_search server tool (no extra API key needed
+        // beyond the one already configured for ChatBGP). Fallback:
+        // Perplexity if configured. Empty result if neither works.
+        const parseJsonFromText = (raw: string) => {
+          const clean = (raw || "").replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
           const firstBrace = clean.indexOf("{");
           const lastBrace = clean.lastIndexOf("}");
-          if (firstBrace < 0 || lastBrace <= firstBrace) return { centre: name, tenants: [], citations: resp.citations };
-          return { ...JSON.parse(clean.slice(firstBrace, lastBrace + 1)), citations: resp.citations || [] };
-        } catch {
-          return { centre: name, tenants: [], citations: resp.citations || [] };
+          if (firstBrace < 0 || lastBrace <= firstBrace) return null;
+          try { return JSON.parse(clean.slice(firstBrace, lastBrace + 1)); } catch { return null; }
+        };
+
+        const anthropicKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+        if (anthropicKey) {
+          try {
+            const Anthropic = (await import("@anthropic-ai/sdk")).default;
+            const client = new Anthropic({
+              apiKey: anthropicKey,
+              ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+                ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL } : {}),
+            });
+            const resp = await client.messages.create({
+              model: "claude-sonnet-4-6",
+              max_tokens: 4096,
+              tools: [{ type: "web_search_20250305" as any, name: "web_search", max_uses: 4 } as any],
+              messages: [{ role: "user", content: prompt }],
+            });
+            const textBlocks = (resp.content || []).filter((b: any) => b.type === "text");
+            const fullText = textBlocks.map((b: any) => b.text).join("\n");
+            const parsed = parseJsonFromText(fullText);
+            if (parsed) return { ...parsed, source: "claude-web-search" };
+          } catch (err: any) {
+            console.warn(`[map/centre-directory] Claude web search failed for "${name}":`, err?.message);
+          }
         }
+
+        // Perplexity fallback
+        if (process.env.PERPLEXITY_API_KEY || process.env.PERPLEXITY_API || process.env["PERPLEXITY API"] || process.env.PERPLEXITY) {
+          try {
+            const { askPerplexity } = await import("./perplexity");
+            const resp = await askPerplexity(prompt, { maxTokens: 2048 });
+            const parsed = parseJsonFromText(resp.answer || "");
+            if (parsed) return { ...parsed, citations: resp.citations || [], source: "perplexity" };
+          } catch (err: any) {
+            console.warn(`[map/centre-directory] Perplexity failed for "${name}":`, err?.message);
+          }
+        }
+
+        return { centre: name, tenants: [], source: "none", error: "no web search provider configured" };
       }, 24 * 30);
       res.json(result);
     } catch (err: any) {

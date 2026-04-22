@@ -509,9 +509,14 @@ async function lookupPropertyDataCoUk(postcode: string, layers?: PropertyDataLay
     const cleanPc = postcode.replace(/\s+/g, "");
     const activeLayers = layers || ["core"];
 
-    // When UPRN is known, replace postcode-wide ownership endpoints with
-    // building-specific /uprn and /uprn-title calls.
-    const skipPostcodeOwnership = !!uprn;
+    // Always query the postcode-wide /freeholds + /leaseholds when a
+    // postcode is available. Even when we have a UPRN, postcode context
+    // is essential: a business-name address like "Shell Recharge Charging
+    // Station" has a UPRN that often has no registered Land Registry
+    // title, so /uprn-title returns empty and the UI shows "no titles"
+    // even though the parent building and every neighbouring property in
+    // the postcode is registered. Running both gives us the UPRN-precise
+    // match (if any) + the postcode-wide context to fall back on.
     const ownershipEndpoints = ["freeholds", "leaseholds"];
 
     const endpoints: Array<{ key: string; extra?: Record<string, string> }> = [];
@@ -519,7 +524,6 @@ async function lookupPropertyDataCoUk(postcode: string, layers?: PropertyDataLay
       const layerEndpoints = PROPERTYDATA_LAYER_MAP[layer];
       if (layerEndpoints) {
         for (const ep of layerEndpoints) {
-          if (skipPostcodeOwnership && ownershipEndpoints.includes(ep.key)) continue;
           endpoints.push(ep);
         }
       }
@@ -605,10 +609,30 @@ async function lookupPropertyDataCoUk(postcode: string, layers?: PropertyDataLay
         return titles;
       };
 
-      if (!skipPostcodeOwnership) {
-        if (results["freeholds"]?.data) results["freeholds"].data = await enrichTitles(results["freeholds"].data);
-        if (results["leaseholds"]?.data) results["leaseholds"].data = await enrichTitles(results["leaseholds"].data);
-      }
+      if (results["freeholds"]?.data) results["freeholds"].data = await enrichTitles(results["freeholds"].data);
+      if (results["leaseholds"]?.data) results["leaseholds"].data = await enrichTitles(results["leaseholds"].data);
+    }
+
+    // If /uprn-title returned titles, merge them into the postcode-wide
+    // freeholds/leaseholds arrays so the Ownership UI sees a unified list.
+    // UPRN-matched rows are tagged with _uprnMatched so the client can
+    // prioritise them over postcode-context entries.
+    const uprnTitleData = results["uprn-title"]?.data;
+    if (uprnTitleData) {
+      const mergeList = (targetKey: "freeholds" | "leaseholds", incoming: any[] | undefined) => {
+        if (!Array.isArray(incoming) || incoming.length === 0) return;
+        if (!results[targetKey]) results[targetKey] = { data: [] };
+        if (!Array.isArray(results[targetKey].data)) results[targetKey].data = [];
+        const seen = new Set<string>(results[targetKey].data.map((t: any) => (t.title_number || "").toUpperCase()));
+        for (const row of incoming) {
+          const tn = (row.title_number || "").toUpperCase();
+          if (tn && seen.has(tn)) continue;
+          results[targetKey].data.push({ ...row, _uprnMatched: true });
+          if (tn) seen.add(tn);
+        }
+      };
+      mergeList("freeholds", uprnTitleData.freeholds);
+      mergeList("leaseholds", uprnTitleData.leaseholds);
     }
 
     const hasAnyData = Object.values(results).some(v => v !== null);
