@@ -254,14 +254,16 @@ export function registerOSDataRoutes(app: Express): void {
     const [swLat, swLng, neLat, neLng] = parts;
     const ngdBbox = `${swLng},${swLat},${neLng},${neLat}`;
 
+    // NGD requires `filter-crs` (NOT bbox-crs) to interpret a WGS84 bbox.
+    const ngdCrs = "filter-crs=http://www.opengis.net/def/crs/EPSG/0/4326";
     const attempts: Array<{ label: string; url: string }> = [
       {
         label: "ngd:bld-fts-buildingpart-1",
-        url: `${NGD_BASE}/collections/bld-fts-buildingpart-1/items?bbox=${ngdBbox}&bbox-crs=http://www.opengis.net/def/crs/EPSG/0/4326&crs=http://www.opengis.net/def/crs/EPSG/0/4326&limit=100&key=${encodeURIComponent(key)}`,
+        url: `${NGD_BASE}/collections/bld-fts-buildingpart-1/items?${ngdCrs}&bbox=${ngdBbox}&limit=100&key=${encodeURIComponent(key)}`,
       },
       {
         label: "ngd:bld-fts-building-1",
-        url: `${NGD_BASE}/collections/bld-fts-building-1/items?bbox=${ngdBbox}&bbox-crs=http://www.opengis.net/def/crs/EPSG/0/4326&crs=http://www.opengis.net/def/crs/EPSG/0/4326&limit=100&key=${encodeURIComponent(key)}`,
+        url: `${NGD_BASE}/collections/bld-fts-building-1/items?${ngdCrs}&bbox=${ngdBbox}&limit=100&key=${encodeURIComponent(key)}`,
       },
       {
         label: "wfs:Topography_TopographicArea",
