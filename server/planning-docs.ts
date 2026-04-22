@@ -333,9 +333,9 @@ export async function downloadPlanningPdf(url: string): Promise<Buffer | null> {
   const isPdfBuffer = (buf: Buffer): boolean =>
     buf.length >= 1024 && buf.slice(0, 4).toString("latin1") === "%PDF";
 
-  const tryFetch = async (label: string, scraperUrl: string): Promise<Buffer | null> => {
+  const tryFetch = async (label: string, scraperUrl: string, timeoutMs: number): Promise<Buffer | null> => {
     try {
-      const res = await fetch(scraperUrl, { signal: AbortSignal.timeout(90000), redirect: "follow" });
+      const res = await fetch(scraperUrl, { signal: AbortSignal.timeout(timeoutMs), redirect: "follow" });
       if (!res.ok) {
         lastDownloadError = `${label} returned HTTP ${res.status}`;
         console.warn(`[planning-docs] ${label} ${res.status} for ${url}`);
@@ -350,7 +350,7 @@ export async function downloadPlanningPdf(url: string): Promise<Buffer | null> {
       if (embedded && embedded !== url) {
         console.log(`[planning-docs] ${label} returned HTML — retrying embedded URL ${embedded}`);
         const retryUrl = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(embedded)}&country_code=uk&render=false`;
-        const retryRes = await fetch(retryUrl, { signal: AbortSignal.timeout(60000), redirect: "follow" });
+        const retryRes = await fetch(retryUrl, { signal: AbortSignal.timeout(25000), redirect: "follow" });
         if (retryRes.ok) {
           const retryBuf = Buffer.from(await retryRes.arrayBuffer());
           if (isPdfBuffer(retryBuf)) return retryBuf;
@@ -367,22 +367,22 @@ export async function downloadPlanningPdf(url: string): Promise<Buffer | null> {
   };
 
   // Strategy 1: cheapest — no JS rendering. Works for direct .pdf URLs.
-  const s1 = await tryFetch("no-render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=false`);
+  const s1 = await tryFetch("no-render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=false`, 25000);
   if (s1) return s1;
 
-  // Strategy 2: enable JS rendering. Some Idox endpoints fire a JS
-  // redirect from the viewer page to the actual PDF stream.
-  const s2 = await tryFetch("render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=true`);
+  // Strategy 2: premium proxy (residential IPs) — often enough on its own
+  // to get past Idox IP-block lists without needing JS render.
+  const s2 = await tryFetch("premium", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=false`, 30000);
   if (s2) return s2;
 
-  // Strategy 3: premium proxy (residential IPs). Beats IP-block lists
-  // that the datacentre pool hits on stricter LPAs.
-  const s3 = await tryFetch("premium", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=false`);
+  // Strategy 3: enable JS rendering. Some Idox endpoints fire a JS
+  // redirect from the viewer page to the actual PDF stream.
+  const s3 = await tryFetch("render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=true`, 45000);
   if (s3) return s3;
 
   // Strategy 4: premium + render. Last resort — slow but handles
   // JS-gated + IP-gated Idox the same way a human browser does.
-  const s4 = await tryFetch("premium+render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=true`);
+  const s4 = await tryFetch("premium+render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=true`, 60000);
   if (s4) return s4;
 
   return null;

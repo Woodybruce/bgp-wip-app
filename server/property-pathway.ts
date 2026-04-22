@@ -4544,19 +4544,41 @@ export function registerPropertyPathwayRoutes(app: Express) {
   // to the user's browser reliably.
   app.get("/api/planning-docs/download", requireAuth, async (req: Request, res: Response) => {
     const url = String(req.query.url || "");
-    if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: "invalid url" });
+    if (!/^https?:\/\//i.test(url)) return res.status(400).send("invalid url");
     try {
       const { downloadPlanningPdf, getPlanningDownloadLastError } = await import("./planning-docs");
       const buf = await downloadPlanningPdf(url);
       if (!buf) {
         const detail = getPlanningDownloadLastError();
-        return res.status(502).json({
-          error: "Could not download planning PDF from the LPA portal.",
-          detail,
-          tried: ["no-render", "render", "premium", "premium+render"],
-          sourceUrl: url,
-          hint: "Some LPAs block even residential proxies. Open the URL directly in the source tab — the doc often loads in a browser session that our proxies can't replicate.",
-        });
+        console.warn(`[planning-docs/download] all strategies failed for ${url}: ${detail}`);
+        // Opening this endpoint as a direct link (target="_blank") means the
+        // browser will render whatever we return. A JSON 502 shows as a blank
+        // page. Return a small HTML error page with a clickable link to the
+        // original LPA URL so the user can try it in their own browser
+        // session.
+        const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+        res.status(200).setHeader("Content-Type", "text/html; charset=utf-8").send(`<!doctype html>
+<html><head><meta charset="utf-8"><title>Planning PDF — download failed</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif; max-width: 620px; margin: 60px auto; padding: 0 24px; color: #1a1a1a; line-height: 1.5; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  .sub { color: #666; font-size: 14px; margin: 0 0 24px; }
+  .card { border: 1px solid #e5e5e5; border-radius: 8px; padding: 16px; background: #fafafa; }
+  code { font-size: 12px; background: #f0f0f0; padding: 2px 6px; border-radius: 3px; word-break: break-all; }
+  a.btn { display: inline-block; background: #000; color: #fff; text-decoration: none; padding: 10px 20px; border-radius: 6px; font-weight: 500; margin-top: 8px; }
+  a.btn:hover { background: #333; }
+  .detail { font-size: 12px; color: #999; margin-top: 16px; font-family: monospace; }
+</style></head>
+<body>
+  <h1>Couldn't download this planning PDF</h1>
+  <p class="sub">The LPA portal blocked all four proxy strategies we tried. Try the link below to open it directly in this browser session — LPA portals often only serve PDFs to the same session that browsed to the document list.</p>
+  <div class="card">
+    <a class="btn" href="${escHtml(url)}" target="_blank" rel="noopener">Open directly on LPA site ↗</a>
+    <p style="font-size: 12px; color: #666; margin: 12px 0 0;">Source URL:<br/><code>${escHtml(url)}</code></p>
+  </div>
+  <p class="detail">Last strategy error: ${escHtml(detail || "unknown")}<br/>Strategies tried: no-render, render, premium, premium+render</p>
+</body></html>`);
+        return;
       }
       const filename = (url.split("/").pop() || "plan.pdf").split("?")[0].replace(/[^a-zA-Z0-9._-]/g, "_");
       res.setHeader("Content-Type", "application/pdf");
@@ -4564,7 +4586,7 @@ export function registerPropertyPathwayRoutes(app: Express) {
       res.setHeader("Cache-Control", "private, max-age=86400");
       res.send(buf);
     } catch (err: any) {
-      res.status(500).json({ error: err?.message });
+      res.status(500).send(`Download failed: ${err?.message || "unknown error"}`);
     }
   });
 
