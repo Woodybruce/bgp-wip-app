@@ -3343,6 +3343,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
 
   // Land Registry title boundaries — always-on red-line layer
   const titleBoundaryLayerRef = useRef<L.LayerGroup | null>(null);
+  const centreTenantLayerRef = useRef<L.LayerGroup | null>(null);
   const titleBoundaryBboxRef = useRef<string>("");
   const baseLayerRef = useRef<{ map: L.LayerGroup; sat: L.LayerGroup } | null>(null);
   const [baseLayer, setBaseLayer] = useState<"map" | "sat">("map");
@@ -3435,6 +3436,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     const titlePane = map.createPane("titlePane");
     titlePane.style.zIndex = "455";
     titleBoundaryLayerRef.current = L.layerGroup({ pane: "titlePane" }).addTo(map);
+    centreTenantLayerRef.current = L.layerGroup().addTo(map);
 
     // CRM data layer groups — clustered (Deals / Comps / Lease Events)
     const crmPane = map.createPane("crmPane");
@@ -3586,6 +3588,14 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       // polygon and adopts the tenant name. Good enough to put "Boots",
       // "Pret", "Costa" etc. into Cardinal Place's subdivided NGD parts.
       const centreLabels: Array<{ lat: number; lng: number; label: string }> = [];
+      // Also draw each tenant as an independent on-map text marker so
+      // centres that NGD doesn't subdivide (Cardinal Place shows as one
+      // big polygon) still get every tenant's name rendered. These
+      // markers live on centreTenantLayerRef and are refreshed on every
+      // moveend.
+      if (centreTenantLayerRef.current && mapRef.current) {
+        centreTenantLayerRef.current.clearLayers();
+      }
       for (const c of (centreDirectories || []) as any[]) {
         const tenants: any[] = Array.isArray(c?.tenants) ? c.tenants : [];
         if (!tenants.length) continue;
@@ -3596,7 +3606,20 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           const angle = (2 * Math.PI * i) / Math.max(tenants.length, 1);
           const dLat = (R / 111) * Math.cos(angle);
           const dLng = (R / (111 * Math.cos(c._centreLat * Math.PI / 180))) * Math.sin(angle);
-          centreLabels.push({ lat: c._centreLat + dLat, lng: c._centreLng + dLng, label: t.unit ? `${t.unit} ${t.name}` : t.name });
+          const labelText = t.unit ? `${t.unit} ${t.name}` : t.name;
+          centreLabels.push({ lat: c._centreLat + dLat, lng: c._centreLng + dLng, label: labelText });
+          // Also drop an independent label marker at this ring position
+          // so the tenant name shows even when NGD gives us one big
+          // polygon for the whole centre.
+          if (centreTenantLayerRef.current && mapRef.current && mapRef.current.getZoom() >= 17) {
+            const icon = L.divIcon({
+              html: `<div class="centre-tenant-label">${labelText.replace(/</g, "&lt;")}</div>`,
+              className: "centre-tenant-icon",
+              iconSize: [80, 14],
+              iconAnchor: [40, 7],
+            });
+            L.marker([c._centreLat + dLat, c._centreLng + dLng], { icon, interactive: false }).addTo(centreTenantLayerRef.current);
+          }
         });
       }
 
@@ -4481,6 +4504,23 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
         }
         .edozo-label::before {
           display: none !important;
+        }
+        .centre-tenant-icon {
+          background: transparent !important;
+          border: none !important;
+        }
+        .centre-tenant-label {
+          font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+          font-size: 9px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.2px;
+          color: #0a0a0a;
+          text-align: center;
+          line-height: 1.1;
+          white-space: nowrap;
+          text-shadow: 0 0 2px rgba(255,255,255,0.95), 0 0 3px rgba(255,255,255,0.8);
+          pointer-events: none;
         }
         .leaflet-control-attribution {
           font-size: 9px !important;

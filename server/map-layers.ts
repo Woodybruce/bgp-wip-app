@@ -73,11 +73,13 @@ export function registerMapLayerRoutes(app: Express) {
       // Known-centre directory URLs we can scrape directly — much more
       // reliable than asking an LLM to find them. Add more as they're
       // verified. Format is { name → [urls to try in order] }.
+      // Note: Cardinal Place + Nova Victoria share the Landsec-run
+      // atvictorialondon.com directory — same URL for both.
       const CENTRE_URLS: Record<string, string[]> = {
-        "Cardinal Place, London": ["https://cardinalplace.co.uk/stores"],
-        "Nova Victoria, London": ["https://atvictorialondon.com/en/plan-your-visit/centre-map"],
-        "Westfield London, Shepherds Bush": ["https://uk.westfield.com/london/info/centre-map", "https://uk.westfield.com/london"],
-        "Westfield Stratford City": ["https://uk.westfield.com/stratfordcity/info/centre-map", "https://uk.westfield.com/stratfordcity"],
+        "Cardinal Place, London": ["https://www.atvictorialondon.com/en/plan-your-visit/centre-map", "https://www.atvictorialondon.com/en/stores"],
+        "Nova Victoria, London": ["https://www.atvictorialondon.com/en/plan-your-visit/centre-map", "https://www.atvictorialondon.com/en/stores"],
+        "Westfield London, Shepherds Bush": ["https://uk.westfield.com/london/info/centre-map", "https://uk.westfield.com/london/stores"],
+        "Westfield Stratford City": ["https://uk.westfield.com/stratfordcity/info/centre-map", "https://uk.westfield.com/stratfordcity/stores"],
         "Brent Cross Shopping Centre": ["https://www.brentcross.co.uk/stores"],
         "Canary Wharf Shopping": ["https://canarywharf.com/shops-restaurants/"],
         "One New Change, London": ["https://www.onenewchange.com/stores"],
