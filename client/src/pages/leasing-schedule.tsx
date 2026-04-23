@@ -17,7 +17,7 @@ import {
   Building2, ChevronLeft, Search, Filter, Calendar, AlertTriangle,
   Edit2, Plus, Trash2, X, Check, MapPin, Users, TrendingUp,
   Clock, Target, Star, ChevronDown, ChevronRight, Loader2,
-  Shield, ShieldCheck, ShieldOff, Download, History, Lock, Eye, ExternalLink,
+  Shield, ShieldCheck, ShieldOff, Download, Upload, History, Lock, Eye, ExternalLink,
   Sparkles, Circle, ThumbsUp, ThumbsDown, UserPlus,
 } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
@@ -702,6 +702,46 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const [statFilter, setStatFilter] = useState<string | null>(null);
   const [showAddUnit, setShowAddUnit] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
+  const [importParsing, setImportParsing] = useState(false);
+  const [importPreview, setImportPreview] = useState<{ sheetName: string; sheetCount: number; rowsScanned: number; units: any[] } | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
+
+  const handleImportExcel = async (file: File) => {
+    setImportParsing(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch(`/api/leasing-schedule/property/${propertyId}/parse-excel`, {
+        method: "POST", headers: getAuthHeaders(), body: fd,
+      });
+      if (!r.ok) { toast({ title: "Parse failed", description: (await r.json()).error || "Could not read file", variant: "destructive" }); return; }
+      const data = await r.json();
+      if (!data.units?.length) { toast({ title: "No units found", description: "AI could not extract rows from that sheet", variant: "destructive" }); return; }
+      setImportPreview(data);
+    } catch (e: any) {
+      toast({ title: "Parse failed", description: e.message, variant: "destructive" });
+    } finally {
+      setImportParsing(false);
+    }
+  };
+
+  const confirmImport = async () => {
+    if (!importPreview?.units?.length) return;
+    try {
+      const r = await fetch(`/api/leasing-schedule/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ property_id: propertyId, units: importPreview.units }),
+      });
+      if (!r.ok) { toast({ title: "Import failed", variant: "destructive" }); return; }
+      const data = await r.json();
+      toast({ title: `${data.imported} units imported` });
+      setImportPreview(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
+    } catch (e: any) {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+    }
+  };
 
   const { data: currentUser } = useQuery<{ id: string; username: string; is_admin: boolean }>({
     queryKey: ["/api/auth/me"],
@@ -1408,6 +1448,20 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
           <Building2 className="w-4 h-4" />Leasing Schedule
         </h3>
         <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => importFileRef.current?.click()} disabled={importParsing} data-testid="btn-import-first">
+            {importParsing ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Upload className="w-3 h-3 mr-1" />}Import Excel
+          </Button>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleImportExcel(f);
+              e.target.value = "";
+            }}
+          />
           <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowAddUnit(true)} data-testid="btn-add-first-unit">
             <Plus className="w-3 h-3 mr-1" />Add Unit
           </Button>
@@ -1422,8 +1476,55 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
       <div className="text-center py-6 text-gray-400 border rounded-lg">
         <Building2 className="w-6 h-6 mx-auto mb-1 opacity-40" />
         <p className="text-xs">No units in leasing schedule</p>
-        <p className="text-[10px] mt-0.5">Add units to track this property's leasing schedule</p>
+        <p className="text-[10px] mt-0.5">Add units or import a landlord Excel to track this property's leasing schedule</p>
       </div>
+
+      <Dialog open={!!importPreview} onOpenChange={(v) => !v && setImportPreview(null)}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-sm">
+              Preview import — {importPreview?.units.length} units from "{importPreview?.sheetName}"
+            </DialogTitle>
+          </DialogHeader>
+          <div className="text-[11px] text-muted-foreground mb-2">
+            AI mapped {importPreview?.rowsScanned} rows. Review before importing — you can edit rows after.
+          </div>
+          <div className="overflow-auto flex-1 border rounded">
+            <table className="w-full text-[11px]">
+              <thead className="bg-muted/40 sticky top-0">
+                <tr>
+                  <th className="text-left px-2 py-1">Unit</th>
+                  <th className="text-left px-2 py-1">Tenant</th>
+                  <th className="text-right px-2 py-1">Sq ft</th>
+                  <th className="text-right px-2 py-1">Rent £ p.a.</th>
+                  <th className="text-left px-2 py-1">Expiry</th>
+                  <th className="text-left px-2 py-1">Break</th>
+                  <th className="text-left px-2 py-1">Review</th>
+                  <th className="text-left px-2 py-1">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {importPreview?.units.map((u, i) => (
+                  <tr key={i} className="border-t">
+                    <td className="px-2 py-1 font-mono">{u.unit_name || "—"}</td>
+                    <td className="px-2 py-1">{u.tenant_name || "—"}</td>
+                    <td className="px-2 py-1 text-right">{u.sqft ? Number(u.sqft).toLocaleString() : "—"}</td>
+                    <td className="px-2 py-1 text-right">{u.rent_pa ? "£" + Number(u.rent_pa).toLocaleString() : "—"}</td>
+                    <td className="px-2 py-1">{u.lease_expiry || "—"}</td>
+                    <td className="px-2 py-1">{u.lease_break || "—"}</td>
+                    <td className="px-2 py-1">{u.rent_review || "—"}</td>
+                    <td className="px-2 py-1">{u.status || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setImportPreview(null)}>Cancel</Button>
+            <Button size="sm" onClick={confirmImport}>Import {importPreview?.units.length} units</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 
@@ -1464,6 +1565,20 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
           <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1" onClick={handleExportExcel} data-testid="btn-export-excel">
             <Download className="w-3 h-3" />Excel
           </Button>
+          <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1" onClick={() => importFileRef.current?.click()} disabled={importParsing} data-testid="btn-import-excel">
+            {importParsing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}Import
+          </Button>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".xlsx,.xls"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleImportExcel(f);
+              e.target.value = "";
+            }}
+          />
           <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1" onClick={() => setShowAddUnit(true)} data-testid="btn-add-unit-prop">
             <Plus className="w-3 h-3" />Add
           </Button>
@@ -1616,6 +1731,53 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
           <div className="text-center py-4 text-gray-400 text-xs">No units match your filters</div>
         )}
       </div>
+
+      <Dialog open={!!importPreview} onOpenChange={(v) => !v && setImportPreview(null)}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-sm">
+              Preview import — {importPreview?.units.length} units from "{importPreview?.sheetName}"
+            </DialogTitle>
+          </DialogHeader>
+          <div className="text-[11px] text-muted-foreground mb-2">
+            AI mapped {importPreview?.rowsScanned} rows. Review before importing — you can edit individual rows after.
+          </div>
+          <div className="overflow-auto flex-1 border rounded">
+            <table className="w-full text-[11px]">
+              <thead className="bg-muted/40 sticky top-0">
+                <tr>
+                  <th className="text-left px-2 py-1">Unit</th>
+                  <th className="text-left px-2 py-1">Tenant</th>
+                  <th className="text-right px-2 py-1">Sq ft</th>
+                  <th className="text-right px-2 py-1">Rent £ p.a.</th>
+                  <th className="text-left px-2 py-1">Expiry</th>
+                  <th className="text-left px-2 py-1">Break</th>
+                  <th className="text-left px-2 py-1">Review</th>
+                  <th className="text-left px-2 py-1">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {importPreview?.units.map((u, i) => (
+                  <tr key={i} className="border-t">
+                    <td className="px-2 py-1 font-mono">{u.unit_name || "—"}</td>
+                    <td className="px-2 py-1">{u.tenant_name || "—"}</td>
+                    <td className="px-2 py-1 text-right">{u.sqft ? Number(u.sqft).toLocaleString() : "—"}</td>
+                    <td className="px-2 py-1 text-right">{u.rent_pa ? "£" + Number(u.rent_pa).toLocaleString() : "—"}</td>
+                    <td className="px-2 py-1">{u.lease_expiry || "—"}</td>
+                    <td className="px-2 py-1">{u.lease_break || "—"}</td>
+                    <td className="px-2 py-1">{u.rent_review || "—"}</td>
+                    <td className="px-2 py-1">{u.status || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" size="sm" onClick={() => setImportPreview(null)}>Cancel</Button>
+            <Button size="sm" onClick={confirmImport} data-testid="btn-confirm-import">Import {importPreview?.units.length} units</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

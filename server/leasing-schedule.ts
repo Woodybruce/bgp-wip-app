@@ -1,7 +1,14 @@
 import { Router, Request, Response } from "express";
+import multer from "multer";
 import { requireAuth } from "./auth";
+import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 
 const router = Router();
+
+const xlsxUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+});
 
 let dbPool: any = null;
 async function getPool() {
@@ -317,14 +324,15 @@ router.post("/api/leasing-schedule/import", requireAuth, async (req, res) => {
       await pool.query(`
         INSERT INTO leasing_schedule_units
           (property_id, zone, positioning, unit_name, tenant_name, agent_initials, lease_expiry,
-           lease_break, rent_review, landlord_break, mat_psqft, lfl_percent, occ_cost_percent,
-           target_brands, optimum_target, priority, status, updates, sort_order)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+           lease_break, rent_review, landlord_break, rent_pa, sqft, mat_psqft, lfl_percent,
+           occ_cost_percent, financial_notes, target_brands, optimum_target, priority, status,
+           updates, sort_order)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
       `, [property_id, u.zone, u.positioning, u.unit_name, u.tenant_name || u.unit_name,
         u.agent_initials, u.lease_expiry || null, u.lease_break || null, u.rent_review || null,
-        u.landlord_break || null, u.mat_psqft, u.lfl_percent, u.occ_cost_percent,
-        u.target_brands, u.optimum_target, u.priority, u.status || 'Occupied',
-        u.updates, u.sort_order || count]);
+        u.landlord_break || null, u.rent_pa ?? null, u.sqft ?? null, u.mat_psqft, u.lfl_percent,
+        u.occ_cost_percent, u.financial_notes || null, u.target_brands, u.optimum_target,
+        u.priority, u.status || 'Occupied', u.updates, u.sort_order || count]);
       count++;
     }
 
@@ -341,6 +349,106 @@ router.post("/api/leasing-schedule/import", requireAuth, async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// Upload a landlord leasing schedule .xlsx and let Haiku map its columns
+// to our unit schema. Returns a preview; the caller then POSTs to /import
+// with the confirmed units.
+router.post(
+  "/api/leasing-schedule/property/:propertyId/parse-excel",
+  requireAuth,
+  xlsxUpload.single("file"),
+  async (req, res) => {
+    try {
+      const pool = await getPool();
+      const propertyId = req.params.propertyId;
+      const { allowed, user } = await checkPropertyAccess(pool, req, propertyId);
+      if (!allowed) return res.status(403).json({ error: "Access denied" });
+      if (!user) return res.status(401).json({ error: "Unauthorized" });
+      if (!req.file) return res.status(400).json({ error: "file required" });
+
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(req.file.buffer as any);
+
+      // Flatten: take every sheet, every row, into a matrix of strings.
+      const sheets: { name: string; rows: string[][] }[] = [];
+      wb.eachSheet((ws) => {
+        const rows: string[][] = [];
+        ws.eachRow({ includeEmpty: false }, (row) => {
+          const vals: string[] = [];
+          row.eachCell({ includeEmpty: true }, (cell) => {
+            const v = cell.value;
+            if (v == null) vals.push("");
+            else if (typeof v === "object" && "text" in (v as any)) vals.push(String((v as any).text || ""));
+            else if (v instanceof Date) vals.push((v as Date).toISOString().slice(0, 10));
+            else vals.push(String(v));
+          });
+          rows.push(vals);
+        });
+        if (rows.length > 0) sheets.push({ name: ws.name, rows });
+      });
+
+      if (sheets.length === 0) return res.status(400).json({ error: "No sheets with data" });
+
+      // Pick the sheet with the most rows as the primary schedule.
+      const primary = sheets.reduce((a, b) => (a.rows.length >= b.rows.length ? a : b));
+
+      // Cap rows sent to the model — schedules rarely exceed 200 units.
+      const capped = primary.rows.slice(0, 250);
+      const csvPreview = capped.map((r) => r.join(" | ")).join("\n").slice(0, 18000);
+
+      const prompt = `You will receive a landlord leasing schedule exported from Excel. Map each data row to our unit schema.
+
+Columns in our schema (all optional except unit_name):
+- unit_name: short label like "Unit 1", "G-01", "Suite 4B"
+- tenant_name: current occupier (or "Vacant" / blank if void)
+- sqft: numeric, convert sq m to sq ft if needed (1 sqm = 10.7639 sqft)
+- rent_pa: annual rent in £ (numeric, no £ sign)
+- lease_expiry: ISO date YYYY-MM-DD
+- lease_break: ISO date YYYY-MM-DD (tenant break)
+- rent_review: ISO date YYYY-MM-DD
+- landlord_break: ISO date YYYY-MM-DD
+- status: "Occupied" | "Vacant" | "Under Offer" | "In Solicitors"
+- zone: floor/level/zone (e.g. "Ground", "L1", "Mall")
+- positioning: category (e.g. "F&B", "Fashion", "Beauty")
+- updates: short note on any special terms
+
+Rules:
+- Skip header rows, subtotals, blank rows, "Total" rows.
+- If a column doesn't exist in the source, leave it null.
+- Dates may be UK format (DD/MM/YYYY) — convert to ISO.
+- Currency strings like "£125,000" → 125000.
+- "Sq ft", "sqm", "NIA", "GIA" all map to sqft (convert sqm).
+- If a row has a tenant name but no unit label, synthesise one (e.g. "Unit 1", "Unit 2" in order).
+
+Return JSON only:
+{"units":[{"unit_name":"...","tenant_name":"...","sqft":123,"rent_pa":125000,"lease_expiry":"2028-06-24",...}]}
+
+Spreadsheet (tab: "${primary.name}"), pipe-separated:
+${csvPreview}`;
+
+      const ai = await callClaude({
+        model: CHATBGP_HELPER_MODEL,
+        max_completion_tokens: 6000,
+        temperature: 0,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const raw = ai.choices?.[0]?.message?.content || "";
+      const parsed = safeParseJSON(raw);
+      const units = Array.isArray(parsed?.units) ? parsed.units : [];
+
+      res.json({
+        sheetName: primary.name,
+        sheetCount: sheets.length,
+        rowsScanned: capped.length,
+        units,
+      });
+    } catch (e: any) {
+      console.error("[leasing-schedule] parse-excel error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  },
+);
 
 router.put("/api/leasing-schedule/property/:propertyId/privacy", requireAuth, async (req, res) => {
   try {
