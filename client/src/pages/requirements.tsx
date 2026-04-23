@@ -240,7 +240,7 @@ function MapLocationsCell({
   );
 }
 
-function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
+function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | null; companyFilter?: string | null }) {
   const [search, setSearch] = useState("");
   const [groupFilter, setGroupFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -434,6 +434,7 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
 
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
+      if (companyFilter && item.companyId !== companyFilter) return false;
       if (teamUserIds) {
         const ids = item.bgpContactUserIds || (item.bgpContactUserId ? [item.bgpContactUserId] : []);
         if (ids.length > 0 && !ids.some(id => teamUserIds.has(id))) return false;
@@ -468,7 +469,7 @@ function LeasingTable({ teamFilter }: { teamFilter?: string | null }) {
       }
       return true;
     });
-  }, [items, groupFilter, statusFilter, columnFilters, search, teamUserIds]);
+  }, [items, groupFilter, statusFilter, columnFilters, search, teamUserIds, companyFilter]);
 
   const activeItems = useMemo(() => filteredItems.filter((i) => i.status === "Active" || !i.status), [filteredItems]);
   const pastItems = useMemo(() => filteredItems.filter((i) => i.status === "Past"), [filteredItems]);
@@ -3296,6 +3297,7 @@ export default function Requirements() {
   const urlParams = new URLSearchParams(window.location.search);
   const typeParam = urlParams.get("type");
   const teamParam = urlParams.get("team");
+  const companyIdParam = urlParams.get("companyId");
   const effectiveTeam = activeTeam === "all" ? userTeam : activeTeam;
   const defaultIsInvestment = effectiveTeam === "Investment";
   const initialView = typeParam ? typeParam === "investment" : defaultIsInvestment;
@@ -3310,7 +3312,11 @@ export default function Requirements() {
           </div>
           <div>
             <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Requirements</h1>
-            <p className="text-sm text-muted-foreground">{isInvestmentView ? "Investment requirements" : "Leasing requirements"}{teamParam ? ` · Filtered by ${teamParam} team` : ""}</p>
+            <p className="text-sm text-muted-foreground">
+              {isInvestmentView ? "Investment requirements" : "Leasing requirements"}
+              {teamParam ? ` · Filtered by ${teamParam} team` : ""}
+              {companyIdParam ? " · Filtered by company" : ""}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-1 bg-muted rounded-lg p-1" data-testid="view-toggle">
@@ -3331,7 +3337,7 @@ export default function Requirements() {
         </div>
       </div>
 
-      {isInvestmentView ? <InvestmentTable teamFilter={teamParam} /> : <LeasingTable teamFilter={teamParam} />}
+      {isInvestmentView ? <InvestmentTable teamFilter={teamParam} /> : <LeasingTable teamFilter={teamParam} companyFilter={companyIdParam} />}
     </div>
   );
 }

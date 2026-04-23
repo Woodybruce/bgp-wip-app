@@ -4,7 +4,7 @@ import { db } from "./db";
 import { newsSources, newsArticles, newsEngagement, teamNewsPreferences, crmProperties, crmComps } from "@shared/schema";
 import { eq, desc, sql, and, inArray, gte, isNull } from "drizzle-orm";
 import { rssappHealth, createRssAppFeed, deleteRssAppFeed } from "./rssapp";
-import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands } from "./news-brand-linking";
+import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications } from "./news-brand-linking";
 import { users } from "@shared/schema";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { getAppToken, graphRequest } from "./shared-mailbox";
@@ -874,6 +874,18 @@ export function setupNewsFeedRoutes(app: Express) {
     try {
       const limit = Number(req.query.limit) || 500;
       const result = await linkRecentArticlesToBrands({ limit });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Backfill AI classification over existing generic "news" brand_signals.
+  // Call repeatedly — each run processes up to ?limit=50 rows.
+  app.post("/api/news-feed/backfill-signals", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const limit = Number(req.query.limit) || 50;
+      const result = await backfillSignalClassifications({ limit });
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });

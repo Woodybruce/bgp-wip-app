@@ -772,6 +772,62 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
             )}
 
+            {/* Relationship strip — lead broker, last touchpoint, active contacts */}
+            {(c.bgp_contact_crm || data.contacts.length > 0) && (() => {
+              const lastContactedAt = data.contacts
+                .map((ct: any) => ct.last_contacted_at)
+                .filter(Boolean)
+                .sort()
+                .reverse()[0] as string | undefined;
+              const recent90d = data.contacts.filter((ct: any) => {
+                if (!ct.last_contacted_at) return false;
+                const d = new Date(ct.last_contacted_at);
+                return Date.now() - d.getTime() < 90 * 864e5;
+              }).length;
+              const daysSince = lastContactedAt
+                ? Math.floor((Date.now() - new Date(lastContactedAt).getTime()) / 864e5)
+                : null;
+              return (
+                <div className="border-t pt-2">
+                  <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                    <Handshake className="w-3 h-3" /> Relationship
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                    {c.bgp_contact_crm && (
+                      <div>
+                        <div className="text-[10px] text-muted-foreground">Lead broker</div>
+                        <div className="font-medium truncate">{c.bgp_contact_crm}</div>
+                      </div>
+                    )}
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">Contacts</div>
+                      <div className="font-medium">{data.contacts.length}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">Last touch</div>
+                      <div className={`font-medium ${
+                        daysSince == null ? "text-muted-foreground"
+                        : daysSince < 30 ? "text-emerald-700"
+                        : daysSince < 90 ? "text-amber-600"
+                        : "text-red-600"
+                      }`}>
+                        {daysSince == null ? "—"
+                         : daysSince === 0 ? "today"
+                         : daysSince === 1 ? "1 day ago"
+                         : `${daysSince} days ago`}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">Active (90d)</div>
+                      <div className={`font-medium ${recent90d > 0 ? "text-emerald-700" : "text-muted-foreground"}`}>
+                        {recent90d}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Deal ledger + active pipeline */}
             {(completedDeals?.length > 0 || activeDeals?.length > 0 || requirements.length > 0) && (
               <div className="border-t pt-2">
@@ -806,6 +862,43 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Active requirements — what this brand is looking for */}
+            {requirements.filter(r => r.status === "Active").length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <FileText className="w-3 h-3" /> Active requirements ({requirements.filter(r => r.status === "Active").length})
+                  </span>
+                  <Link
+                    href={`/requirements?companyId=${c.id}`}
+                    className="text-[10px] text-blue-600 hover:underline"
+                  >
+                    manage →
+                  </Link>
+                </div>
+                <div className="space-y-0.5">
+                  {requirements.filter(r => r.status === "Active").slice(0, 6).map((r) => {
+                    const size = r.size_min && r.size_max
+                      ? `${r.size_min}–${r.size_max} sqft`
+                      : r.size_max ? `≤${r.size_max} sqft`
+                      : r.size_min ? `≥${r.size_min} sqft` : null;
+                    return (
+                      <Link
+                        key={r.id}
+                        href={`/requirements?companyId=${c.id}`}
+                        className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5"
+                      >
+                        {r.use_class && <Badge variant="outline" className="text-[9px] shrink-0">{r.use_class}</Badge>}
+                        {size && <span className="font-medium shrink-0">{size}</span>}
+                        {r.location_notes && <span className="truncate text-muted-foreground">{r.location_notes}</span>}
+                        {r.budget && <span className="text-[10px] text-muted-foreground shrink-0 ml-auto">£{r.budget}</span>}
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
@@ -923,15 +1016,41 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <TrendingUp className="w-3 h-3" /> Recent signals
                 </div>
                 <div className="space-y-1">
-                  {data.signals.slice(0, 5).map((s: any) => (
-                    <div key={s.id} className="text-xs flex items-start gap-2 border-l-2 border-muted pl-2">
-                      <Badge variant="outline" className="text-[10px] shrink-0">{s.signal_type.replace(/_/g, " ")}</Badge>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{s.headline}</p>
-                        {s.signal_date && <span className="text-[10px] text-muted-foreground">{new Date(s.signal_date).toLocaleDateString("en-GB")}</span>}
+                  {data.signals.slice(0, 6).map((s: any) => {
+                    const typeCls: Record<string, string> = {
+                      opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
+                      closure:     "bg-red-50 text-red-700 border-red-200",
+                      funding:     "bg-violet-50 text-violet-700 border-violet-200",
+                      exec_change: "bg-blue-50 text-blue-700 border-blue-200",
+                      sector_move: "bg-amber-50 text-amber-700 border-amber-200",
+                      rumour:      "bg-zinc-50 text-zinc-600 border-zinc-200 italic",
+                      news:        "bg-zinc-50 text-zinc-700 border-zinc-200",
+                    };
+                    const sentCls: Record<string, string> = {
+                      positive: "border-l-emerald-400",
+                      negative: "border-l-red-400",
+                      neutral:  "border-l-muted",
+                    };
+                    return (
+                      <div key={s.id} className={`text-xs flex items-start gap-2 border-l-2 pl-2 ${sentCls[s.sentiment] || "border-l-muted"}`}>
+                        <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[s.signal_type] || ""}`}>
+                          {s.signal_type.replace(/_/g, " ")}
+                          {s.magnitude === "large" && " ●●"}
+                          {s.magnitude === "medium" && " ●"}
+                        </Badge>
+                        <div className="flex-1 min-w-0">
+                          {s.source && s.source.startsWith("http") ? (
+                            <a href={s.source} target="_blank" rel="noopener noreferrer" className="font-medium truncate block hover:underline">
+                              {s.headline}
+                            </a>
+                          ) : (
+                            <p className="font-medium truncate">{s.headline}</p>
+                          )}
+                          {s.signal_date && <span className="text-[10px] text-muted-foreground">{new Date(s.signal_date).toLocaleDateString("en-GB")}</span>}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

@@ -239,3 +239,44 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
 
   return { linked, articles: articles.length };
 }
+
+// Re-classify existing generic "news" signals into specific types.
+// Runs AI on each signal in small batches. Call via admin endpoint.
+export async function backfillSignalClassifications(opts?: { limit?: number }): Promise<
+  { scanned: number; reclassified: number; skipped: number }
+> {
+  const limit = opts?.limit || 50;
+  const haveKey = !!(process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY);
+  if (!haveKey) return { scanned: 0, reclassified: 0, skipped: 0 };
+
+  const brands = await db
+    .select({ id: crmCompanies.id, name: crmCompanies.name })
+    .from(crmCompanies);
+  const brandNameById = new Map(brands.map((b) => [b.id, b.name]));
+
+  const rows = await db
+    .select()
+    .from(brandSignals)
+    .where(and(eq(brandSignals.signalType, "news"), eq(brandSignals.aiGenerated, false)))
+    .limit(limit);
+
+  let reclassified = 0;
+  let skipped = 0;
+  for (const r of rows) {
+    const brandName = brandNameById.get(r.brandCompanyId) || "";
+    if (!brandName) { skipped++; continue; }
+    const classified = await classifySignal(brandName, r.headline, r.detail);
+    if (!classified) { skipped++; continue; }
+    await db
+      .update(brandSignals)
+      .set({
+        signalType: classified.signalType,
+        magnitude: classified.magnitude,
+        sentiment: classified.sentiment,
+        aiGenerated: true,
+      })
+      .where(eq(brandSignals.id, r.id));
+    reclassified++;
+  }
+  return { scanned: rows.length, reclassified, skipped };
+}

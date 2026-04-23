@@ -1881,6 +1881,21 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
+      name: "get_brand_profile",
+      description: "Get the full BGP brand bible for a tracked retail brand — covenant (Companies House health, traffic light), rollout velocity (openings/closures last 12m), store footprint, rent affordability vs peer comps, turnover history, active requirements, pitched-to history (every leasing schedule this brand has been a target on), completed + active deals, agent representations, contacts with last touchpoint, and the AI-classified signals timeline. Use this when the user asks 'who should pitch for X', 'is brand Y expanding', 'what's their covenant', 'when did we last touch them', or anything about a specific retail brand.",
+      parameters: {
+        type: "object",
+        properties: {
+          companyId: { type: "string", description: "The company UUID. Prefer this when known." },
+          name: { type: "string", description: "Brand name — used if companyId isn't known. Matched case-insensitive." },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "update_investment_tracker",
       description: "Update an existing investment tracker item. Use when the user asks to change an investment record's status, client, price, notes, or any other field. Search first to find the record ID.",
       parameters: {
@@ -4416,6 +4431,89 @@ async function executeCrmToolRaw(
     }
     const totalFound = Object.values(results).reduce((sum: number, arr: any) => sum + (arr?.length || 0), 0);
     return { data: { success: true, query: fnArgs.query, totalFound, results } };
+  }
+
+  if (fnName === "get_brand_profile") {
+    let companyId: string | null = fnArgs.companyId || null;
+    if (!companyId && fnArgs.name) {
+      const found = await pool.query(
+        `SELECT id FROM crm_companies WHERE lower(name) = lower($1) AND merged_into_id IS NULL LIMIT 1`,
+        [String(fnArgs.name).trim()]
+      );
+      if (!found.rows[0]) {
+        const fuzzy = await pool.query(
+          `SELECT id, name FROM crm_companies
+             WHERE name ILIKE $1 AND merged_into_id IS NULL
+             ORDER BY CASE WHEN is_tracked_brand THEN 0 ELSE 1 END
+             LIMIT 5`,
+          [`%${String(fnArgs.name).trim()}%`]
+        );
+        if (!fuzzy.rows.length) return { data: { success: false, error: `No brand found matching "${fnArgs.name}"` } };
+        if (fuzzy.rows.length > 1) return { data: { success: false, error: "Multiple matches", candidates: fuzzy.rows } };
+        companyId = fuzzy.rows[0].id;
+      } else {
+        companyId = found.rows[0].id;
+      }
+    }
+    if (!companyId) return { data: { success: false, error: "Provide companyId or name" } };
+
+    // Reuse the brand-profile endpoint directly — proxy via HTTP to keep one
+    // source of truth. Bypasses requireAuth by calling the internal host.
+    try {
+      const port = process.env.PORT || "5000";
+      const res = await fetch(`http://127.0.0.1:${port}/api/brand/${companyId}/profile`, {
+        headers: { cookie: req.headers.cookie || "", authorization: req.headers.authorization || "" },
+      });
+      if (!res.ok) return { data: { success: false, error: `brand-profile ${res.status}` } };
+      const full = await res.json();
+      // Trim for LLM: keep the decision-relevant fields, drop raw CH blobs + images
+      return {
+        data: {
+          success: true,
+          company: {
+            id: full.company.id,
+            name: full.company.name,
+            description: full.company.description,
+            conceptPitch: full.company.concept_pitch,
+            storeCount: full.company.store_count,
+            rolloutStatus: full.company.rollout_status,
+            backers: full.company.backers,
+            isTrackedBrand: full.company.is_tracked_brand,
+            leadBroker: full.company.bgp_contact_crm,
+            industry: full.company.industry,
+            annualRevenue: full.company.annual_revenue,
+          },
+          covenant: full.covenant,
+          rolloutVelocity: full.rolloutVelocity,
+          rentAffordability: full.rentAffordability,
+          turnover: full.turnover,
+          kyc: full.kyc,
+          parentGroup: full.parentGroup,
+          siblings: full.siblings?.slice(0, 10),
+          contactsSummary: {
+            total: full.contacts?.length || 0,
+            lastTouchedAt: full.contacts?.[0]?.last_contacted_at || null,
+            sample: full.contacts?.slice(0, 5).map((ct: any) => ({
+              name: ct.name, role: ct.role, email: ct.email, lastContactedAt: ct.last_contacted_at,
+            })),
+          },
+          completedDealsCount: full.completedDeals?.length || 0,
+          activeDealsCount: full.activeDeals?.length || 0,
+          activeDeals: full.activeDeals?.slice(0, 10).map((d: any) => ({ id: d.id, name: d.name, stage: d.stage, role: d.role })),
+          requirements: full.requirements?.filter((r: any) => r.status === "Active").slice(0, 10),
+          pitchedTo: full.pitchedTo?.slice(0, 15).map((p: any) => ({
+            propertyId: p.property_id, propertyName: p.property_name, unit: p.unit_name, status: p.status,
+          })),
+          signals: full.signals?.slice(0, 15).map((s: any) => ({
+            type: s.signal_type, magnitude: s.magnitude, sentiment: s.sentiment,
+            headline: s.headline, date: s.signal_date, source: s.source,
+          })),
+          representedBy: full.representedBy?.map((r: any) => ({ agent: r.agent_name, type: r.agent_type, region: r.region })),
+        },
+      };
+    } catch (err: any) {
+      return { data: { success: false, error: err?.message || "Failed to fetch brand profile" } };
+    }
   }
 
   if (fnName === "update_investment_tracker") {
