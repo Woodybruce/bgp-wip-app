@@ -203,8 +203,9 @@ export function PropertyTenancySchedule({ propertyId }: { propertyId: string }) 
       formData.append("clearExisting", units.length > 0 ? "true" : "false");
       const r = await fetch("/api/tenancy-schedule/import-excel", {
         method: "POST",
-        headers: { Authorization: getAuthHeaders().Authorization },
+        headers: getAuthHeaders(),
         body: formData,
+        credentials: "include",
       });
       const result = await r.json();
       if (!r.ok) throw new Error(result.error);

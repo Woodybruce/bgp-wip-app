@@ -863,7 +863,7 @@ router.post("/api/title-search/auto-fill/:propertyId", requireAuth, async (req, 
   }
 });
 
-router.post("/api/title-search/auto-fill-from-postcode/:propertyId", async (req, res) => {
+router.post("/api/title-search/auto-fill-from-postcode/:propertyId", requireAuth, async (req, res) => {
   try {
     const { db } = await import("./db");
     const { crmProperties, crmCompanies } = await import("@shared/schema");

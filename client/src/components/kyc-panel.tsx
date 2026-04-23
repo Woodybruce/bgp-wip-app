@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -105,7 +105,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   const { data: veriffStatus } = useQuery<{ configured: boolean }>({
     queryKey: ["/api/veriff/status"],
     queryFn: async () => {
-      const res = await fetch("/api/veriff/status", { credentials: "include" });
+      const res = await fetch("/api/veriff/status", { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) return { configured: false };
       return res.json();
     },
@@ -114,7 +114,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   const { data: veriffSessions = [] } = useQuery<any[]>({
     queryKey: ["/api/veriff/sessions", { companyId }],
     queryFn: async () => {
-      const res = await fetch(`/api/veriff/sessions?companyId=${companyId}`, { credentials: "include" });
+      const res = await fetch(`/api/veriff/sessions?companyId=${companyId}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) return [];
       return res.json();
     },
@@ -155,7 +155,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
   const { data, isLoading } = useQuery<{ company: CompanyAmlState; documents: KycDocument[] }>({
     queryKey: ["/api/kyc/company", companyId],
     queryFn: async () => {
-      const res = await fetch(`/api/kyc/company/${companyId}`, { credentials: "include" });
+      const res = await fetch(`/api/kyc/company/${companyId}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },
@@ -223,6 +223,7 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
         method: "POST",
         body: form,
         credentials: "include",
+        headers: getAuthHeaders(),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));

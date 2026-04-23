@@ -12,7 +12,7 @@ let cachedKey: string | null = null;
 async function fetchKey(): Promise<string> {
   if (cachedKey !== null) return cachedKey;
   try {
-    const res = await fetch("/api/config/maps-key", { credentials: "include" });
+    const res = await fetch("/api/config/maps-key", { credentials: "include", headers: getAuthHeaders() });
     if (res.ok) {
       const data = await res.json();
       const key: string = data.key || "";

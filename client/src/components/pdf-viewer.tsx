@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { getAuthHeaders } from "@/lib/queryClient";
 import {
   ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
   Camera, Loader2, X, CameraOff,
@@ -114,7 +115,8 @@ export default function PDFViewer({ url, fileName, open, onClose, propertyName }
 
     const res = await fetch("/api/image-studio", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify({
         base64Data,
         mimeType: "image/jpeg",

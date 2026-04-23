@@ -33,7 +33,7 @@ function useServerAddressSearch() {
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/address-search?q=${encodeURIComponent(query)}`, { credentials: "include" });
+        const res = await fetch(`/api/address-search?q=${encodeURIComponent(query)}`, { credentials: "include", headers: getAuthHeaders() });
         if (res.ok) {
           const data = await res.json();
           setResults(data.results || []);

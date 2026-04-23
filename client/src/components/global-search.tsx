@@ -59,7 +59,7 @@ export function GlobalSearch() {
     }
     setLoading(true);
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { credentials: "include" });
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { credentials: "include", headers: getAuthHeaders() });
       if (res.ok) {
         const data: SearchResponse = await res.json();
         setResults(data.results);

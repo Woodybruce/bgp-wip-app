@@ -30,7 +30,7 @@ export function useDealAmlStatus(dealId: string) {
   return useQuery<DealAmlStatus>({
     queryKey: ["/api/kyc/deal", dealId, "status"],
     queryFn: async () => {
-      const res = await fetch(`/api/kyc/deal/${dealId}/status`, { credentials: "include" });
+      const res = await fetch(`/api/kyc/deal/${dealId}/status`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load AML status");
       return res.json();
     },

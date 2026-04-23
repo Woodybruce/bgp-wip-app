@@ -424,7 +424,7 @@ router.post("/api/aml/training-modules/:id/attempt", requireAuth, async (req: Re
       }
     }
 
-    res.json({ score, passed, correct, total: quiz.length, detail, attemptId: attempt.rows[0].id });
+    res.json({ score, passed, correct, total: quiz.length, detail, attemptId: attempt.rows[0]?.id || null });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -576,7 +576,7 @@ router.get("/api/aml/reminders/overdue-count", requireAuth, async (_req: Request
     const result = await pool.query(
       "SELECT COUNT(*) as count FROM aml_recheck_reminders WHERE due_date < NOW() AND completed_at IS NULL"
     );
-    res.json({ count: parseInt(result.rows[0].count) });
+    res.json({ count: parseInt(result.rows[0]?.count || "0") });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

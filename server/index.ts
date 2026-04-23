@@ -882,6 +882,12 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("crm_companies", "enrichment_source", "text");
           await addColIfMissing("users", "additional_teams", "text[]");
 
+          // Ensure leasing_schedule_units has rent_pa / sqft / financial_notes (new fields
+          // added for landlord Excel import; existing DBs pre-date the CREATE TABLE).
+          await addColIfMissing("leasing_schedule_units", "rent_pa", "real");
+          await addColIfMissing("leasing_schedule_units", "sqft", "real");
+          await addColIfMissing("leasing_schedule_units", "financial_notes", "text");
+
           // Auto-track all tenant companies as brands (idempotent).
           await db.execute(sql.raw(`
             UPDATE crm_companies
