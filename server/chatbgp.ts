@@ -15,8 +15,8 @@ import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
-const CHATBGP_MODEL = "claude-opus-4-6";        // Main chat: Opus for intelligence
-const CHATBGP_OPUS_MODEL = "claude-opus-4-6";   // Same
+const CHATBGP_MODEL = "claude-opus-4-7";        // Main chat: Opus 4.7 (latest)
+const CHATBGP_OPUS_MODEL = "claude-opus-4-7";   // Same
 const CHATBGP_HELPER_MODEL = "claude-haiku-4-5-20251001"; // Background tasks: Haiku for cost savings
 
 function sanitiseForPdf(text: string): string {
@@ -6254,7 +6254,7 @@ Output STRICT JSON ONLY, no markdown fences:
 Be thorough — include every unit row you can classify, across all properties in the workbook.`;
 
       const response = await callClaude({
-        model: CHATBGP_HELPER_MODEL,
+        model: CHATBGP_MODEL,
         messages: [
           { role: "system", content: extractionSystem },
           { role: "user", content: `Workbook content (CSV-style, one sheet per "=== Sheet:" block):\n\n${sheetText}` },
