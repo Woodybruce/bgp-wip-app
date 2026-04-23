@@ -569,15 +569,24 @@ function BrandExplorer() {
     try { return localStorage.getItem("brand-explorer-search") || ""; } catch { return ""; }
   });
 
-  const { data: companies = [] } = useQuery<any[]>({
+  const { data: allCompanies = [] } = useQuery<any[]>({
     queryKey: ["/api/crm/companies"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/crm/companies");
-      const all = await res.json();
-      return (all as any[]).filter((c: any) => (c.companyType || "").startsWith("Tenant"));
+      return res.json();
     },
     staleTime: 120_000,
   });
+
+  const companies = useMemo(
+    () => (allCompanies as any[]).filter((c: any) => (c.companyType || "").startsWith("Tenant")),
+    [allCompanies]
+  );
+
+  const companyById = useMemo(
+    () => new Map((allCompanies as any[]).map((c: any) => [c.id, c])),
+    [allCompanies]
+  );
 
   const { data: brandNews = [] } = useQuery<any[]>({
     queryKey: ["/api/news-feed/articles", "brand-explorer"],
@@ -716,15 +725,27 @@ function BrandExplorer() {
 
       {/* Brand cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-2">
-        {filtered.map((c: any) => (
-          <Link key={c.id} href={`/companies/${c.id}`}>
-            <div className="flex flex-col items-center gap-1.5 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors cursor-pointer text-center group">
+        {filtered.map((c: any) => {
+          const parent = c.parentCompanyId ? companyById.get(c.parentCompanyId) : null;
+          return (
+            <div key={c.id} className="relative flex flex-col items-center gap-1.5 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-center group">
+              <Link href={`/companies/${c.id}`} className="absolute inset-0 rounded-lg" aria-label={c.name} />
               <BrandLogo name={c.name} domain={c.domain} size={36} />
               <p className="text-xs font-medium leading-tight truncate w-full group-hover:text-primary transition-colors">{c.name}</p>
               <p className="text-[10px] text-muted-foreground truncate w-full">{(c.companyType || "").replace("Tenant - ", "")}</p>
+              {c.parentCompanyId && (
+                <Link
+                  href={`/companies/${c.parentCompanyId}`}
+                  className="relative z-10 text-[10px] text-muted-foreground hover:text-primary transition-colors truncate w-full"
+                  onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                  title={`Part of ${parent?.name || "parent company"}`}
+                >
+                  ↑ {parent?.name || "Parent co."}
+                </Link>
+              )}
             </div>
-          </Link>
-        ))}
+          );
+        })}
         {!filtered.length && (
           <div className="col-span-full text-center py-12 text-muted-foreground">
             <Store className="w-10 h-10 mx-auto mb-2 opacity-20" />
