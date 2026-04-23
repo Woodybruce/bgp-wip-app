@@ -28,14 +28,11 @@ interface MyLiveDeal {
 function MyLiveDealsPanel() {
   const { data: deals = [], isLoading } = useQuery<MyLiveDeal[]>({
     queryKey: ["/api/kyc/my-deals"],
-<<<<<<< HEAD
     queryFn: async () => {
       const res = await fetch("/api/kyc/my-deals", { credentials: "include" });
       if (!res.ok) return [];
       return res.json();
     },
-=======
->>>>>>> claude/terminal-coding-interface-JOGQK
   });
 
   if (isLoading) return null;
