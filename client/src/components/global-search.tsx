@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { Search, Building2, BarChart3, Users, Briefcase, Newspaper, Scale, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { getAuthHeaders } from "@/lib/queryClient";
 import {
   CommandDialog,
   CommandEmpty,

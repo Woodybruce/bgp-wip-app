@@ -1080,8 +1080,20 @@ function CompanyDetail({ id }: { id: string }) {
     );
   }
 
-  const address = company.headOfficeAddress as Record<string, string> | null;
-  const addressText = address ? [address.street, address.city, address.country].filter(Boolean).join(", ") : "";
+  // Prefer UK Companies House registered office when the CH entity is active —
+  // for global brands (Aesop, A&F) this shows the UK trading entity address
+  // rather than the Apollo head-office (Melbourne / Ohio / etc.).
+  const chProfile = (company.companiesHouseData as any)?.profile;
+  const chRegOffice = chProfile?.registeredOfficeAddress;
+  const chIsActive = (chProfile?.companyStatus || "").toLowerCase() === "active";
+  const ukAddressText = chIsActive && chRegOffice
+    ? [chRegOffice.address_line_1, chRegOffice.locality, chRegOffice.postal_code, chRegOffice.country]
+        .filter(Boolean).join(", ")
+    : "";
+  const globalAddress = company.headOfficeAddress as Record<string, string> | null;
+  const globalAddressText = globalAddress ? [globalAddress.street, globalAddress.city, globalAddress.country].filter(Boolean).join(", ") : "";
+  const addressText = ukAddressText || globalAddressText;
+  const hasGlobalHq = !!ukAddressText && !!globalAddressText && ukAddressText !== globalAddressText;
 
   return (
     <div className="p-4 sm:p-6 space-y-6" data-testid="company-detail">
@@ -1191,8 +1203,11 @@ function CompanyDetail({ id }: { id: string }) {
                 )}
                 {addressText && (
                   <div>
-                    <p className="text-xs text-muted-foreground">Address</p>
+                    <p className="text-xs text-muted-foreground">{ukAddressText ? "UK registered office" : "Address"}</p>
                     <p className="flex items-center gap-1" data-testid="text-company-address"><MapPin className="w-3 h-3 text-teal-500" />{addressText}</p>
+                    {hasGlobalHq && (
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Global HQ: {globalAddressText}</p>
+                    )}
                   </div>
                 )}
                 {company.linkedinUrl && (
@@ -1221,9 +1236,9 @@ function CompanyDetail({ id }: { id: string }) {
                     <p className="flex items-center gap-1" data-testid="text-company-employees"><UsersRound className="w-3 h-3 text-teal-500" />{Number(company.employeeCount).toLocaleString()}</p>
                   </div>
                 )}
-                {company.annualRevenue && (
+                {!!company.annualRevenue && (
                   <div>
-                    <p className="text-xs text-muted-foreground">Annual Revenue</p>
+                    <p className="text-xs text-muted-foreground">{ukAddressText ? "Global annual revenue" : "Annual Revenue"}</p>
                     <p className="flex items-center gap-1" data-testid="text-company-revenue">£{Number(company.annualRevenue).toLocaleString()}</p>
                   </div>
                 )}
@@ -1289,11 +1304,7 @@ function CompanyDetail({ id }: { id: string }) {
             );
           })()}
 
-          <Card>
-            <CardContent className="p-3">
-              <CompanyLeasingScheduleSection companyId={id} />
-            </CardContent>
-          </Card>
+          <CompanyLeasingScheduleSection companyId={id} />
 
         </div>
 

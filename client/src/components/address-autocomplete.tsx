@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { MapPin, X, Loader2, ExternalLink } from "lucide-react";
 import { loadGoogleMaps } from "@/lib/google-maps-loader";
+import { getAuthHeaders } from "@/lib/queryClient";
 
 interface AddressResult {
   formatted: string;

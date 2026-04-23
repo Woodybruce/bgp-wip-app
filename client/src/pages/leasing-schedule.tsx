@@ -1856,7 +1856,8 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
   const expiring = units.filter(u => isExpiringSoon(u.lease_expiry)).length;
 
   return (
-    <div className="space-y-3" data-testid="company-leasing-schedule">
+    <Card>
+    <CardContent className="p-3 space-y-3" data-testid="company-leasing-schedule">
       <div className="flex items-center justify-between">
         <h3 className="font-semibold text-sm flex items-center gap-2">
           <Building2 className="w-4 h-4" />Leasing Schedule
@@ -1936,7 +1937,8 @@ export function CompanyLeasingSchedule({ companyId }: { companyId: string }) {
         );
       })}
       </div>
-    </div>
+    </CardContent>
+    </Card>
   );
 }
 

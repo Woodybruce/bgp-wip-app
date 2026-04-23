@@ -159,7 +159,7 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
     let value: any = aiVal;
     if (field === "store_count" || field === "employee_count") {
       const n = Number(aiVal);
-      if (!Number.isFinite(n)) continue;
+      if (!Number.isFinite(n) || n < 0) continue;
       value = Math.round(n);
     }
     if (typeof value === "string") value = value.trim();

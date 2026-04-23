@@ -126,19 +126,35 @@ async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {
   return { fetched, errors };
 }
 
+// Google News RSS image redirects resolve to a Google-hosted logo, not the
+// article image. Reject those so we fall back to a publisher favicon.
+function isJunkImage(url: string | null | undefined): boolean {
+  if (!url) return true;
+  return /google\.com|gstatic\.com|googleusercontent\.com\/.*\/proxy/i.test(url);
+}
+
 function extractImageUrl(item: any): string | null {
-  if (item.enclosure?.url) return item.enclosure.url;
-  if (item["media:content"]?.url) return item["media:content"].url;
-  if (item["media:thumbnail"]?.url) return item["media:thumbnail"].url;
-  const mediaGroup = item["media:group"];
-  if (mediaGroup?.["media:content"]?.url) return mediaGroup["media:content"].url;
-  if (mediaGroup?.["media:thumbnail"]?.url) return mediaGroup["media:thumbnail"].url;
+  const pick = (u?: string | null) => (u && !isJunkImage(u) ? u : null);
+  const candidates: (string | undefined)[] = [
+    item.enclosure?.url,
+    item["media:content"]?.url,
+    item["media:thumbnail"]?.url,
+    item["media:group"]?.["media:content"]?.url,
+    item["media:group"]?.["media:thumbnail"]?.url,
+  ];
+  for (const c of candidates) {
+    const v = pick(c);
+    if (v) return v;
+  }
   const imgMatch = item.content?.match(/<img[^>]+src="([^"]+)"/);
-  if (imgMatch) return imgMatch[1];
+  if (imgMatch && !isJunkImage(imgMatch[1])) return imgMatch[1];
   return null;
 }
 
 async function fetchOgImage(url: string): Promise<string | null> {
+  // Google News URLs redirect to a stub page with Google's logo as og:image.
+  // Skip those — the frontend falls back to a newspaper icon.
+  if (/^https?:\/\/(news\.)?google\.com\//i.test(url)) return null;
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
@@ -152,13 +168,14 @@ async function fetchOgImage(url: string): Promise<string | null> {
     });
     clearTimeout(timeout);
     if (!resp.ok) return null;
+    if (/^https?:\/\/(news\.)?google\.com\//i.test(resp.url)) return null;
     const html = await resp.text();
     const ogMatch = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
       || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
-    if (ogMatch?.[1]) return ogMatch[1];
+    if (ogMatch?.[1] && !isJunkImage(ogMatch[1])) return ogMatch[1];
     const twMatch = html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i)
       || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i);
-    if (twMatch?.[1]) return twMatch[1];
+    if (twMatch?.[1] && !isJunkImage(twMatch[1])) return twMatch[1];
     return null;
   } catch {
     return null;

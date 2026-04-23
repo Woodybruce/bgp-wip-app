@@ -899,6 +899,12 @@ app.use("/api/branding/assets", express.static(
               AND LOWER(company_type) LIKE '%tenant%'
           `));
 
+          // Clear any negative store counts left over from buggy AI enrichment.
+          await db.execute(sql.raw(`UPDATE crm_companies SET store_count = NULL WHERE store_count < 0`));
+
+          // Clear Google News logo image URLs so articles fall back to a newspaper icon.
+          await db.execute(sql.raw(`UPDATE news_articles SET image_url = NULL WHERE image_url ~* 'google\\.com|gstatic\\.com|googleusercontent\\.com/.*/proxy'`));
+
           // Remove duplicate contacts (same name + company_id) keeping the oldest row.
           await db.execute(sql.raw(`
             DELETE FROM crm_contacts

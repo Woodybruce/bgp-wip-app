@@ -2,6 +2,7 @@
 // Used by AddressAutocomplete, Street View panorama capture, and anywhere else
 // we need `google.maps` in the browser. Ensures we only ever inject the
 // <script> tag once, with one set of libraries, per page load.
+import { getAuthHeaders } from "@/lib/queryClient";
 
 let loaded = false;
 let loading = false;

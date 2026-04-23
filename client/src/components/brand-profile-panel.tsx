@@ -99,6 +99,17 @@ interface BrandProfile {
     brandSampleSize: number;
     useClass: string | null;
   } | null;
+  rentComps: Array<{
+    id: string;
+    tenant: string | null;
+    area_sqft: number | null;
+    headline_rent: number | null;
+    rent_psf_overall: number | null;
+    rent_psf_nia: number | null;
+    zone_a_rate: number | null;
+    use_class: string | null;
+    postcode: string | null;
+  }>;
 }
 
 const ROLLOUT_OPTIONS = [
@@ -284,6 +295,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const covenant = data.covenant || null;
   const rolloutVelocity = data.rolloutVelocity || null;
   const rentAffordability = data.rentAffordability || null;
+  const rentComps = data.rentComps || [];
   const isBrand = !!c.is_tracked_brand;
   const isAgent = !!c.agent_type;
 
@@ -723,6 +735,35 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     </div>
                   </div>
                 )}
+                {rentComps.length > 0 && (
+                  <div className="mt-2 pt-2 border-t">
+                    <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                      <PoundSterling className="w-3 h-3" /> Recent deal comps ({rentComps.length})
+                    </div>
+                    <div className="space-y-0.5">
+                      {rentComps.slice(0, 5).map((rc) => {
+                        const psf = rc.rent_psf_overall ?? rc.rent_psf_nia ?? rc.zone_a_rate;
+                        return (
+                          <Link key={rc.id} href={`/comps/${rc.id}`}>
+                            <div className="flex items-center justify-between text-[11px] hover:bg-muted/40 rounded px-1 py-0.5 cursor-pointer">
+                              <span className="truncate flex-1 min-w-0">
+                                {rc.postcode || "—"}
+                                {rc.area_sqft ? ` · ${Math.round(rc.area_sqft).toLocaleString()} sqft` : ""}
+                                {rc.use_class ? ` · ${rc.use_class}` : ""}
+                              </span>
+                              <span className="font-semibold tabular-nums ml-2 shrink-0">
+                                {psf != null ? `£${Math.round(Number(psf))} psf` : "—"}
+                              </span>
+                            </div>
+                          </Link>
+                        );
+                      })}
+                      {rentComps.length > 5 && (
+                        <p className="text-[10px] text-muted-foreground pl-1">+{rentComps.length - 5} more</p>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -881,7 +922,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <div className="border-t pt-2">
               <div className="flex items-center justify-between mb-1.5">
                 <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                  <MapPin className="w-3 h-3" /> Stores ({stores.length}{c.store_count && stores.length !== c.store_count ? ` of ~${c.store_count}` : ""})
+                  <MapPin className="w-3 h-3" /> Stores ({stores.length}{c.store_count && c.store_count > 0 && stores.length !== c.store_count ? ` of ~${c.store_count}` : ""})
                 </div>
                 <Button
                   size="sm"
@@ -1024,13 +1065,17 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       rel="noopener noreferrer"
                       className="flex items-start gap-2 text-xs group hover:bg-muted/40 rounded-md p-1.5 -mx-1.5 transition-colors"
                     >
-                      {article.image_url && (
+                      {article.image_url && !/google\.com|gstatic\.com|googleusercontent\.com\/.*\/proxy/i.test(article.image_url) ? (
                         <img
                           src={article.image_url}
                           alt=""
                           className="w-10 h-10 rounded object-cover shrink-0 border"
                           onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                         />
+                      ) : (
+                        <div className="w-10 h-10 rounded shrink-0 border bg-muted flex items-center justify-center">
+                          <Newspaper className="w-4 h-4 text-muted-foreground" />
+                        </div>
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{article.title}</p>

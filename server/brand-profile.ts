@@ -392,6 +392,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       covenant,
       rolloutVelocity,
       rentAffordability,
+      rentComps: rentComps.rows,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
