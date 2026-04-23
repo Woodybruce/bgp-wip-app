@@ -882,6 +882,14 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("crm_companies", "enrichment_source", "text");
           await addColIfMissing("users", "additional_teams", "text[]");
 
+          // Auto-track all tenant companies as brands (idempotent).
+          await db.execute(sql.raw(`
+            UPDATE crm_companies
+            SET is_tracked_brand = true
+            WHERE is_tracked_brand = false
+              AND LOWER(company_type) LIKE '%tenant%'
+          `));
+
           await db.execute(sql.raw(`
             UPDATE users SET additional_teams = ARRAY['Landsec']
             WHERE LOWER(email) IN (
