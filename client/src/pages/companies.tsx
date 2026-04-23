@@ -545,8 +545,7 @@ function CompaniesHouseCard({ company }: { company: CrmCompany }) {
                     {kycStatus === "pass" ? "KYC Passed" : kycStatus === "warning" ? "Needs Review" : kycStatus === "fail" ? "KYC Failed" : "Linked — Run KYC to verify"}
                   </p>
                   <p className="text-[10px] text-muted-foreground">
-                    {checkedAt ? `Checked ${new Date(checkedAt).toLocaleDateString("en-GB")}` : "Not yet checked"} · Forward to{" "}
-                    <a href="https://kyc4u.co.uk" target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">KYC4U</a> for full verification
+                    {checkedAt ? `Checked ${new Date(checkedAt).toLocaleDateString("en-GB")}` : "Not yet checked"}
                   </p>
                 </div>
               </div>
@@ -1245,9 +1244,7 @@ function CompanyDetail({ id }: { id: string }) {
             </CardContent>
           </Card>
 
-          {!((company?.companyType || "").toLowerCase() === "landlord" || (company?.companyType || "").toLowerCase() === "client" || (company?.companyType || "").toLowerCase() === "landlord / client") && (
-            <BrandProfilePanel companyId={id} />
-          )}
+          <BrandProfilePanel companyId={id} />
 
           {linkedProperties.length > 0 && (() => {
             const userIdToName = new Map<string, string>();
