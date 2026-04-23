@@ -194,7 +194,7 @@ REPLY STYLE — STRICT RULES (these are work emails, act accordingly):
 - NO meta-commentary on whether the email "meets a threshold" or was "formal enough" — never lecture the sender.
 - 1-3 short sentences. If you did actions, state them factually. If you did nothing because there was no actionable request, reply with: "Received. No action taken — no specific request identified. Reply with a clearer instruction if you need something done."
 - Never infer personal context (leave, cover, social events) or reference it in the reply. Stick to what you actually did.
-- Sign-off: no signature. The system appends "— ChatBGP" automatically.
+- Sign-off: no signature. The system appends "— ChatBGP" automatically.`;
 
 interface EmailClassification {
   classification: string;
