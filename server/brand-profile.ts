@@ -8,6 +8,75 @@ import { pool } from "./db";
 
 const router = Router();
 
+// ─── Rent affordability helper ───────────────────────────────────────────
+// Returns { avgRentPsf, avgTurnoverPsf, rentToTurnoverPct, peerRentPsf, sample }.
+// Falls back to null on any given field if we don't have matching data.
+async function computeRentAffordability(
+  brandComps: any[],
+  turnoverRows: any[],
+): Promise<{
+  avgRentPsf: number | null;
+  avgTurnoverPsf: number | null;
+  rentToTurnoverPct: number | null;
+  peerRentPsf: number | null;
+  peerSampleSize: number;
+  brandSampleSize: number;
+  useClass: string | null;
+} | null> {
+  if (!brandComps.length) return null;
+
+  const rentPsfs: number[] = [];
+  for (const c of brandComps) {
+    const v = Number(c.rent_psf_overall || c.rent_psf_nia || c.zone_a_rate);
+    if (Number.isFinite(v) && v > 0) rentPsfs.push(v);
+  }
+  const avgRentPsf = rentPsfs.length
+    ? rentPsfs.reduce((a, b) => a + b, 0) / rentPsfs.length
+    : null;
+
+  const turnoverPsfs = turnoverRows
+    .map((t) => Number(t.turnover_per_sqft))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const avgTurnoverPsf = turnoverPsfs.length
+    ? turnoverPsfs.reduce((a, b) => a + b, 0) / turnoverPsfs.length
+    : null;
+
+  const rentToTurnoverPct = (avgRentPsf && avgTurnoverPsf)
+    ? (avgRentPsf / avgTurnoverPsf) * 100
+    : null;
+
+  // Peer benchmark — most frequent use_class on this brand's comps
+  const useClassCounts: Record<string, number> = {};
+  for (const c of brandComps) if (c.use_class) useClassCounts[c.use_class] = (useClassCounts[c.use_class] || 0) + 1;
+  const topUseClass = Object.entries(useClassCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+
+  let peerRentPsf: number | null = null;
+  let peerSampleSize = 0;
+  if (topUseClass) {
+    const { rows } = await pool.query(
+      `SELECT AVG(COALESCE(rent_psf_overall, rent_psf_nia, zone_a_rate))::float AS avg_psf,
+              COUNT(*)::int AS n
+         FROM crm_comps
+        WHERE use_class = $1
+          AND COALESCE(rent_psf_overall, rent_psf_nia, zone_a_rate) IS NOT NULL
+          AND created_at >= now() - interval '3 years'`,
+      [topUseClass]
+    );
+    peerRentPsf = rows[0]?.avg_psf || null;
+    peerSampleSize = rows[0]?.n || 0;
+  }
+
+  return {
+    avgRentPsf,
+    avgTurnoverPsf,
+    rentToTurnoverPct,
+    peerRentPsf,
+    peerSampleSize,
+    brandSampleSize: brandComps.length,
+    useClass: topUseClass,
+  };
+}
+
 // ─── Auto-create brand_stores table if it doesn't exist ─────────────────
 async function ensureBrandStoresTable() {
   await pool.query(`
@@ -217,14 +286,40 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
+    // Rollout velocity — openings minus closures in last 12m from brand_signals
+    const rolloutVelocityQ = pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE signal_type = 'opening') ::int AS openings_12m,
+         COUNT(*) FILTER (WHERE signal_type = 'closure') ::int AS closures_12m
+         FROM brand_signals
+        WHERE brand_company_id = $1
+          AND COALESCE(signal_date, created_at) >= now() - interval '12 months'`,
+      [companyId]
+    );
+
+    // Rent comps where this brand is the tenant (match on name or contact_company)
+    // Used for rent affordability calc (rent ÷ turnover_per_sqft)
+    const rentCompsQ = pool.query(
+      `SELECT c.id, c.tenant, c.area_sqft, c.headline_rent, c.rent_psf_overall,
+              c.rent_psf_nia, c.zone_a_rate, c.use_class, c.postcode
+         FROM crm_comps c,
+              (SELECT name FROM crm_companies WHERE id = $1) AS co
+        WHERE (c.tenant ILIKE co.name OR c.contact_company ILIKE co.name)
+          AND COALESCE(c.rent_psf_overall, c.rent_psf_nia, c.zone_a_rate) IS NOT NULL
+        ORDER BY c.completion_date DESC NULLS LAST, c.created_at DESC LIMIT 20`,
+      [companyId]
+    );
+
     const [
       company, signals, repsForBrand, brandsForAgent,
       kyc, images, deals, parentGroup, siblings, news,
       requirements, pitchedTo, contacts, stores, turnover,
+      rolloutVelocityRow, rentComps,
     ] = await Promise.all([
       companyQ, signalsQ, repsForBrandQ, brandsForAgentQ,
       kycQ, imagesQ, dealsQ, parentGroupQ, siblingsQ, newsQ,
       requirementsQ, pitchedToQ, contactsQ, storesQ, turnoverQ,
+      rolloutVelocityQ, rentCompsQ,
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
@@ -255,6 +350,25 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     const completedDeals = deals.rows.filter((d: any) => d.status === "completed" || d.hots_completed_at);
     const activeDeals = deals.rows.filter((d: any) => d.status === "active" || d.status === "in_progress" || d.stage === "negotiation");
 
+    // Rollout velocity — signed net from brand_signals, plus store-count trend from brand_stores
+    const velocityRow = rolloutVelocityRow.rows[0] || { openings_12m: 0, closures_12m: 0 };
+    const openStores = stores.rows.filter((s: any) => s.status === "open").length;
+    const closedStores = stores.rows.filter((s: any) => s.status === "closed").length;
+    const rolloutVelocity = {
+      openings12m: Number(velocityRow.openings_12m) || 0,
+      closures12m: Number(velocityRow.closures_12m) || 0,
+      net12m: (Number(velocityRow.openings_12m) || 0) - (Number(velocityRow.closures_12m) || 0),
+      currentOpen: openStores,
+      currentClosed: closedStores,
+    };
+
+    // Rent affordability — rent psf ÷ turnover psf averaged across brand comps,
+    // benchmarked against peer comps in the same use_class.
+    const rentAffordability = await computeRentAffordability(
+      rentComps.rows,
+      turnover.rows,
+    );
+
     res.json({
       company: c,
       signals: signals.rows,
@@ -274,6 +388,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       stores: stores.rows,
       turnover: turnover.rows,
       covenant,
+      rolloutVelocity,
+      rentAffordability,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

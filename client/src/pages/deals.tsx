@@ -507,6 +507,12 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
   return payload;
 }
 
+function formToPayloadWithLearning(form: DealFormData, changeReason: string | undefined, learning: string | undefined) {
+  const p = formToPayload(form, changeReason);
+  if (learning && learning.trim()) p.learning = learning.trim();
+  return p;
+}
+
 
 export function DealFormDialog({
   open,
@@ -527,12 +533,14 @@ export function DealFormDialog({
   const isEdit = !!deal;
   const [form, setForm] = useState<DealFormData>(deal ? dealToForm(deal) : { ...emptyForm });
   const [changeReason, setChangeReason] = useState("");
+  const [learning, setLearning] = useState("");
   const [approvalGateOpen, setApprovalGateOpen] = useState(false);
   const [approvalGateMessage, setApprovalGateMessage] = useState("");
 
   const statusChanged = isEdit && deal && form.status !== (deal.status || "");
   const APPROVAL_STATUSES = ["Invoiced", "Completed"];
   const isApprovalStatus = statusChanged && APPROVAL_STATUSES.includes(form.status);
+  const isCompletingNow = statusChanged && form.status === "Completed";
 
   const { data: currentUser } = useQuery<{ isAdmin?: boolean; email?: string }>({
     queryKey: ["/api/auth/me"],
@@ -565,7 +573,7 @@ export function DealFormDialog({
         const prop = properties.find(p => p.id === finalForm.propertyId);
         if (prop) finalForm.name = prop.name;
       }
-      const payload = formToPayload(finalForm, changeReason || undefined);
+      const payload = formToPayloadWithLearning(finalForm, changeReason || undefined, isCompletingNow ? learning : undefined);
       if (isEdit) {
         await apiRequest("PUT", `/api/crm/deals/${deal.id}`, payload);
       } else {
@@ -729,6 +737,24 @@ export function DealFormDialog({
                     onChange={(e) => setChangeReason(e.target.value)}
                     className="mt-1 text-sm"
                     data-testid="input-change-reason"
+                  />
+                </div>
+              )}
+              {isCompletingNow && (
+                <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2">
+                  <Label className="text-xs font-medium text-emerald-800 flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5" /> What did we learn from this deal?
+                  </Label>
+                  <p className="text-[10px] text-emerald-700 mt-0.5">
+                    1-2 sentences. Attaches to the tenant's brand card so the team builds a deal knowledge bank.
+                  </p>
+                  <Textarea
+                    placeholder="e.g. Tenant needed 6m rent free to accept ZoneA £300 — happy to go higher for a pop-up term."
+                    value={learning}
+                    onChange={(e) => setLearning(e.target.value)}
+                    rows={2}
+                    className="mt-1 text-sm bg-white"
+                    data-testid="input-deal-learning"
                   />
                 </div>
               )}

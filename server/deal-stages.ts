@@ -99,6 +99,9 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     const dealId = String(req.params.dealId);
     const toStage = req.body?.stage;
     const reason = req.body?.reason || null;
+    const learning: string | null = typeof req.body?.learning === "string"
+      ? req.body.learning.trim().slice(0, 2000) || null
+      : null;
     if (!isValidStage(toStage)) {
       return res.status(400).json({ error: `stage must be one of ${PIPELINE.join(", ")}` });
     }
@@ -140,8 +143,37 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     await pool.query(
       `INSERT INTO deal_events (deal_id, event_type, from_stage, to_stage, payload, actor_id, actor_name)
        VALUES ($1, 'stage_change', $2, $3, $4, $5, $6)`,
-      [dealId, fromStage, toStage, JSON.stringify({ reason }), req.user?.id || null, req.user?.name || null]
+      [dealId, fromStage, toStage, JSON.stringify({ reason, learning }), req.user?.id || null, req.user?.name || null]
     );
+
+    // Knowledge capture — on completion with a broker learning, persist as
+    // a brand_signals row against the tenant so it surfaces on the brand card.
+    if (toStage === "completed" && learning) {
+      try {
+        const tenant = await pool.query(
+          `SELECT d.tenant_id, d.name AS deal_name, tc.name AS tenant_name
+             FROM crm_deals d LEFT JOIN crm_companies tc ON tc.id = d.tenant_id
+            WHERE d.id = $1`,
+          [dealId]
+        );
+        const tRow = tenant.rows[0];
+        if (tRow?.tenant_id) {
+          await pool.query(
+            `INSERT INTO brand_signals
+              (brand_company_id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated)
+              VALUES ($1, 'news', $2, $3, $4, now(), 'medium', 'positive', false)`,
+            [
+              tRow.tenant_id,
+              `Deal learning: ${tRow.deal_name || dealId}`.slice(0, 500),
+              learning,
+              `bgp-deal:${dealId}`,
+            ]
+          );
+        }
+      } catch (e: any) {
+        console.warn("[deal-stages] learning capture failed:", e?.message);
+      }
+    }
 
     // Auto-run the full AML sweep on entering HoTs — Clouseau (Companies
     // House + UBO + Sanctions + PEP), Veriff sessions for all contacts,

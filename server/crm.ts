@@ -1305,6 +1305,33 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         });
       }
 
+      // Knowledge capture — on transition to Completed, if a `learning`
+      // note was posted with the update, persist it as a brand_signals row
+      // against the tenant so the brand card shows our deal learnings.
+      const completing = req.body.status === "Completed" && oldDeal?.status !== "Completed";
+      const learning: string | null = typeof req.body?.learning === "string"
+        ? req.body.learning.trim().slice(0, 2000) || null
+        : null;
+      if (completing && learning && oldDeal?.tenantId) {
+        try {
+          await pool.query(
+            `INSERT INTO brand_signals
+              (brand_company_id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated)
+              VALUES ($1, 'news', $2, $3, $4, now(), 'medium', 'positive', false)`,
+            [
+              oldDeal.tenantId,
+              `Deal learning: ${oldDeal.name || req.params.id}`.slice(0, 500),
+              learning,
+              `bgp-deal:${req.params.id}`,
+            ]
+          );
+        } catch (e: any) {
+          console.warn("[deal-learning] capture failed:", e?.message);
+        }
+      }
+      // Strip `learning` from body so it doesn't hit the generic updater
+      if ("learning" in req.body) delete req.body.learning;
+
       const deal = await storage.updateCrmDeal(req.params.id, req.body);
 
       const rentFields = ["rentPa", "rentFree", "leaseLength", "capitalContribution", "totalAreaSqft"];

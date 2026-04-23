@@ -83,6 +83,22 @@ interface BrandProfile {
     checkedAt: string | null;
     trafficLight: "green" | "amber" | "red";
   } | null;
+  rolloutVelocity: {
+    openings12m: number;
+    closures12m: number;
+    net12m: number;
+    currentOpen: number;
+    currentClosed: number;
+  } | null;
+  rentAffordability: {
+    avgRentPsf: number | null;
+    avgTurnoverPsf: number | null;
+    rentToTurnoverPct: number | null;
+    peerRentPsf: number | null;
+    peerSampleSize: number;
+    brandSampleSize: number;
+    useClass: string | null;
+  } | null;
 }
 
 const ROLLOUT_OPTIONS = [
@@ -106,6 +122,27 @@ function RolloutBadge({ status }: { status: string | null }) {
   if (!m) return <Badge variant="outline">{status}</Badge>;
   const Icon = m.icon;
   return <Badge className={m.cls}><Icon className="w-3 h-3 mr-1" />{m.label}</Badge>;
+}
+
+function Sparkline({ values, width = 60, height = 16 }: { values: number[]; width?: number; height?: number }) {
+  const clean = values.filter((v) => Number.isFinite(v) && v > 0);
+  if (clean.length < 2) return null;
+  const max = Math.max(...clean);
+  const min = Math.min(...clean);
+  const span = max - min || 1;
+  const step = width / (clean.length - 1);
+  const points = clean.map((v, i) => `${(i * step).toFixed(1)},${(height - ((v - min) / span) * height).toFixed(1)}`).join(" ");
+  const lastIsUp = clean[clean.length - 1] >= clean[0];
+  return (
+    <svg width={width} height={height} className="inline-block" aria-hidden>
+      <polyline
+        fill="none"
+        stroke={lastIsUp ? "#059669" : "#dc2626"}
+        strokeWidth={1.5}
+        points={points}
+      />
+    </svg>
+  );
 }
 
 function AiChip() {
@@ -242,6 +279,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const activeDeals = data.activeDeals || [];
   const turnover = data.turnover || [];
   const covenant = data.covenant || null;
+  const rolloutVelocity = data.rolloutVelocity || null;
+  const rentAffordability = data.rentAffordability || null;
 
   // Only render on companies that are brands, agents, or have any brand data.
   // Gives users an easy "promote this company into the Brand Bible" button if not yet flagged.
@@ -421,7 +460,22 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <div className="text-[11px] text-muted-foreground flex items-center gap-1">
                     <Store className="w-3 h-3" /> Stores {aiFields.store_count && <AiChip />}
                   </div>
-                  <div className="font-semibold">{c.store_count.toLocaleString()}</div>
+                  <div className="font-semibold flex items-center gap-1.5">
+                    {c.store_count.toLocaleString()}
+                    {rolloutVelocity && rolloutVelocity.net12m !== 0 && (
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] ${
+                          rolloutVelocity.net12m > 0
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-red-50 text-red-700 border-red-200"
+                        }`}
+                        title={`${rolloutVelocity.openings12m} opened · ${rolloutVelocity.closures12m} closed (last 12m)`}
+                      >
+                        {rolloutVelocity.net12m > 0 ? "+" : ""}{rolloutVelocity.net12m} in 12m
+                      </Badge>
+                    )}
+                  </div>
                 </div>
               )}
               {c.rollout_status && (
@@ -676,7 +730,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   </div>
                 )}
                 {turnover.length > 0 && (
-                  <div className="mt-2 flex items-center gap-2 text-xs">
+                  <div className="mt-2 flex items-center gap-2 text-xs flex-wrap">
                     <PoundSterling className="w-3 h-3 text-muted-foreground" />
                     <span className="text-muted-foreground">Turnover trend:</span>
                     {turnover.slice(0, 3).reverse().map((t: any) => (
@@ -684,6 +738,35 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                         {t.period}: £{(t.turnover / 1_000_000).toFixed(1)}m
                       </Badge>
                     ))}
+                    <Sparkline values={turnover.slice().reverse().map((t: any) => Number(t.turnover) || 0)} />
+                  </div>
+                )}
+                {rentAffordability && rentAffordability.rentToTurnoverPct != null && (
+                  <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] pt-2 border-t">
+                    <div>
+                      <div className="text-muted-foreground">Avg rent psf</div>
+                      <div className="font-semibold">
+                        £{rentAffordability.avgRentPsf?.toFixed(0) ?? "—"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">Rent ÷ turnover</div>
+                      <div className={`font-semibold ${
+                        rentAffordability.rentToTurnoverPct > 15 ? "text-red-600"
+                        : rentAffordability.rentToTurnoverPct > 10 ? "text-amber-600"
+                        : "text-emerald-700"
+                      }`}>
+                        {rentAffordability.rentToTurnoverPct.toFixed(1)}%
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">
+                        Peer ({rentAffordability.useClass || "—"}, n={rentAffordability.peerSampleSize})
+                      </div>
+                      <div className="font-semibold">
+                        £{rentAffordability.peerRentPsf?.toFixed(0) ?? "—"}
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

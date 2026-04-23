@@ -1248,9 +1248,20 @@ function TargetCompanyNames({ targetCompanyIds, targetBrands }: { targetCompanyI
     staleTime: 120000,
   });
   if (ids.length > 0 && allCompanies) {
-    const names = ids.map(id => allCompanies.find(c => c.id === id)?.name).filter(Boolean);
-    if (names.length > 0) return <span className="flex flex-wrap gap-0.5">{names.map((n, i) => (
-      <Badge key={i} variant="outline" className="text-[8px] border-teal-300 text-teal-700 bg-teal-50 px-1 py-0">{n}</Badge>
+    const resolved = ids
+      .map(id => ({ id, name: allCompanies.find(c => c.id === id)?.name }))
+      .filter(x => x.name);
+    if (resolved.length > 0) return <span className="flex flex-wrap gap-0.5">{resolved.map((r, i) => (
+      <Link
+        key={i}
+        href={`/companies/${r.id}`}
+        onClick={(e) => e.stopPropagation()}
+        className="inline-flex items-center hover:underline"
+      >
+        <Badge variant="outline" className="text-[8px] border-teal-300 text-teal-700 bg-teal-50 px-1 py-0 cursor-pointer">
+          {r.name}
+        </Badge>
+      </Link>
     ))}</span>;
   }
   return <span>{targetBrands || "—"}</span>;

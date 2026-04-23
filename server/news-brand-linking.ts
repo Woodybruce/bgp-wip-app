@@ -4,6 +4,61 @@ import { db } from "./db";
 import { crmCompanies, newsSources, newsArticles, brandSignals } from "@shared/schema";
 import { eq, and, sql, desc, isNotNull } from "drizzle-orm";
 import { googleNewsRssUrl } from "./rssapp";
+import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
+
+type SignalType = "opening" | "closure" | "funding" | "exec_change" | "sector_move" | "news" | "rumour";
+type Magnitude = "small" | "medium" | "large";
+type Sentiment = "positive" | "neutral" | "negative";
+
+// Ask Haiku to classify an article headline into a brand_signals row.
+// Returns null if AI unavailable / fails — caller falls back to plain "news".
+async function classifySignal(brandName: string, title: string, summary: string | null): Promise<
+  { signalType: SignalType; magnitude: Magnitude; sentiment: Sentiment } | null
+> {
+  const haveKey = !!(process.env.ANTHROPIC_API_KEY || process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY);
+  if (!haveKey) return null;
+
+  const prompt = `Classify this news headline about the brand "${brandName}" into a structured signal.
+
+Headline: ${title}
+${summary ? `Summary: ${summary.slice(0, 400)}` : ""}
+
+Respond with JSON only:
+{
+  "signalType": one of ["opening","closure","funding","exec_change","sector_move","news","rumour"],
+  "magnitude":  one of ["small","medium","large"],
+  "sentiment":  one of ["positive","neutral","negative"]
+}
+
+Rules:
+- "opening" = new store/flagship/branch opening
+- "closure" = store closure, administration, bankruptcy
+- "funding" = raise, investment, acquisition, IPO
+- "exec_change" = new CEO/CFO/founder hire or departure
+- "sector_move" = category expansion, strategic pivot, new product line
+- "rumour" = unconfirmed/speculative story
+- "news" = general brand mention that doesn't fit above
+- magnitude "large" = national flagship, admin, >£10m deal; "small" = minor branch, small hire`;
+
+  try {
+    const r = await callClaude({
+      model: CHATBGP_HELPER_MODEL,
+      max_completion_tokens: 150,
+      temperature: 0,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const txt = r.choices?.[0]?.message?.content || "";
+    const parsed = safeParseJSON(txt);
+    if (!parsed?.signalType) return null;
+    return {
+      signalType: parsed.signalType as SignalType,
+      magnitude: (parsed.magnitude || "medium") as Magnitude,
+      sentiment: (parsed.sentiment || "neutral") as Sentiment,
+    };
+  } catch {
+    return null;
+  }
+}
 
 const BRAND_CATEGORY_PREFIX = "brand:";
 
@@ -82,7 +137,7 @@ async function linkArticleToBrands(article: {
   return hits;
 }
 
-async function upsertBrandSignal(brandId: string, article: {
+async function upsertBrandSignal(brandId: string, brandName: string, article: {
   id: string;
   url: string;
   title: string;
@@ -97,14 +152,18 @@ async function upsertBrandSignal(brandId: string, article: {
     .limit(1);
   if (existing.length > 0) return;
 
+  const classified = await classifySignal(brandName, article.title, article.summary);
+
   await db.insert(brandSignals).values({
     brandCompanyId: brandId,
-    signalType: "news",
+    signalType: classified?.signalType || "news",
     headline: article.title.slice(0, 500),
     detail: article.summary?.slice(0, 1000) || null,
     source: article.url,
     signalDate: article.publishedAt || new Date(),
-    aiGenerated: false,
+    magnitude: classified?.magnitude || null,
+    sentiment: classified?.sentiment || null,
+    aiGenerated: !!classified,
   });
 }
 
@@ -131,6 +190,7 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
   // Load sources once for category lookup
   const sources = await db.select().from(newsSources);
   const sourceById = new Map(sources.map((s) => [s.id, s]));
+  const brandNameById = new Map(brandIndex.map((b) => [b.id, b.name]));
 
   let linked = 0;
   for (const a of articles) {
@@ -139,7 +199,7 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
     // Explicit brand feeds (Google News per-brand) — link directly by category tag
     if (src?.category?.startsWith(BRAND_CATEGORY_PREFIX)) {
       const brandId = src.category.slice(BRAND_CATEGORY_PREFIX.length);
-      await upsertBrandSignal(brandId, {
+      await upsertBrandSignal(brandId, brandNameById.get(brandId) || "", {
         id: a.id,
         url: a.url,
         title: a.title,
@@ -165,7 +225,7 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
       brandIndex,
     );
     for (const brandId of hits) {
-      await upsertBrandSignal(brandId, {
+      await upsertBrandSignal(brandId, brandNameById.get(brandId) || "", {
         id: a.id,
         url: a.url,
         title: a.title,
