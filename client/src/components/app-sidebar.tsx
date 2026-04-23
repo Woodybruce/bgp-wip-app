@@ -40,6 +40,7 @@ import {
   Sun,
   ShieldCheck,
   GraduationCap,
+  Store,
 } from "lucide-react";
 import {
   Sidebar,
@@ -78,6 +79,7 @@ const coreNavBase = [
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "Deals", url: "/deals", icon: BarChart3 },
   { title: "Requirements", url: "/requirements", icon: FileText },
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Store },
   { title: "People Hub", url: "/contacts", icon: Users },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
   { title: "Comps", url: "/comps", icon: Scale },
@@ -375,6 +377,7 @@ const mobileOverlayItems = [
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Requirements", url: "/requirements", icon: FileText },
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Store },
   { title: "People Hub", url: "/contacts", icon: Users },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
   { title: "Comps", url: "/comps", icon: Scale },

@@ -1873,3 +1873,29 @@ export const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 export type LoginData = z.infer<typeof loginSchema>;
+
+// ─── Tenant Rep Status Board ───────────────────────────────────────────────
+export const tenantRepSearches = pgTable("tenant_rep_searches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  clientName: text("client_name").notNull(),
+  companyId: varchar("company_id"),          // → crm_companies
+  contactId: varchar("contact_id"),           // → crm_contacts (key contact at brand)
+  dealId: varchar("deal_id"),                 // → crm_deals
+  status: text("status").notNull().default("Brief Received"),
+  targetUse: text("target_use").array(),
+  sizeMin: integer("size_min"),               // sq ft
+  sizeMax: integer("size_max"),               // sq ft
+  targetLocations: text("target_locations").array(),
+  budgetMin: integer("budget_min"),           // £psf
+  budgetMax: integer("budget_max"),           // £psf
+  nextAction: text("next_action"),
+  nextActionDate: text("next_action_date"),   // ISO date string
+  notes: text("notes"),
+  assignedTo: text("assigned_to"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTenantRepSearchSchema = createInsertSchema(tenantRepSearches).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertTenantRepSearch = z.infer<typeof insertTenantRepSearchSchema>;
+export type TenantRepSearch = typeof tenantRepSearches.$inferSelect;

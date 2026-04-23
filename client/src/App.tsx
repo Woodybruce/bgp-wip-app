@@ -80,6 +80,7 @@ const KycHub = lazy(() => import("@/pages/kyc-hub"));
 const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
 const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
+const TenantRep = lazy(() => import("@/pages/tenant-rep"));
 
 
 function PageLoader() {
@@ -119,6 +120,7 @@ function Router() {
       <Route path="/deals" component={DealsHub} />
       <Route path="/deals/:rest*" component={DealsHub} />
       <Route path="/requirements" component={Requirements} />
+      <Route path="/tenant-rep" component={TenantRep} />
       <Route path="/today" component={TodayPage} />
       <Route path="/news" component={News} />
       <Route path="/diary" component={DiaryRedirect} />

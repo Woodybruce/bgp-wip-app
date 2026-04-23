@@ -4460,6 +4460,99 @@ ${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuc
     }
   });
 
+  // ─── Tenant Rep Status Board ─────────────────────────────────────────────
+  app.get("/api/tenant-rep/searches", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const result = await pool.query(`
+        SELECT
+          s.*,
+          c.name AS company_name,
+          c.domain AS company_domain,
+          c.rollout_status,
+          c.store_count,
+          co.first_name || ' ' || co.last_name AS contact_name,
+          co.email AS contact_email,
+          co.phone AS contact_phone,
+          co.role AS contact_role,
+          d.name AS deal_name
+        FROM tenant_rep_searches s
+        LEFT JOIN crm_companies c ON c.id = s.company_id
+        LEFT JOIN crm_contacts co ON co.id = s.contact_id
+        LEFT JOIN crm_deals d ON d.id = s.deal_id
+        ORDER BY s.created_at DESC
+      `);
+      res.json(result.rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/tenant-rep/searches", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const {
+        clientName, companyId, contactId, dealId, status,
+        targetUse, sizeMin, sizeMax, targetLocations,
+        budgetMin, budgetMax, nextAction, nextActionDate, notes, assignedTo,
+      } = req.body;
+      const result = await pool.query(
+        `INSERT INTO tenant_rep_searches
+          (client_name, company_id, contact_id, deal_id, status,
+           target_use, size_min, size_max, target_locations,
+           budget_min, budget_max, next_action, next_action_date, notes, assigned_to)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         RETURNING *`,
+        [
+          clientName, companyId || null, contactId || null, dealId || null,
+          status || "Brief Received",
+          targetUse || null, sizeMin || null, sizeMax || null,
+          targetLocations || null, budgetMin || null, budgetMax || null,
+          nextAction || null, nextActionDate || null, notes || null, assignedTo || null,
+        ]
+      );
+      res.json(result.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/tenant-rep/searches/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const keyMap: Record<string, string> = {
+        clientName: "client_name", companyId: "company_id", contactId: "contact_id",
+        dealId: "deal_id", status: "status", notes: "notes",
+        targetUse: "target_use", sizeMin: "size_min", sizeMax: "size_max",
+        targetLocations: "target_locations", budgetMin: "budget_min", budgetMax: "budget_max",
+        nextAction: "next_action", nextActionDate: "next_action_date", assignedTo: "assigned_to",
+      };
+      const updates: string[] = [];
+      const values: any[] = [];
+      let idx = 1;
+      for (const [camel, col] of Object.entries(keyMap)) {
+        if (camel in req.body) { updates.push(`${col} = $${idx++}`); values.push(req.body[camel]); }
+      }
+      if (!updates.length) return res.json({ ok: true });
+      updates.push(`updated_at = now()`);
+      values.push(id);
+      const result = await pool.query(
+        `UPDATE tenant_rep_searches SET ${updates.join(", ")} WHERE id = $${idx} RETURNING *`,
+        values
+      );
+      res.json(result.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/tenant-rep/searches/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await pool.query("DELETE FROM tenant_rep_searches WHERE id = $1", [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   return httpServer;
 }
 
