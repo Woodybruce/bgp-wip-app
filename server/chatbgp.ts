@@ -510,6 +510,7 @@ function getToolProgressLabel(toolName: string): string {
     search_news: "Searching news...",
     search_green_street: "Searching Green Street...",
     query_leasing_schedule: "Querying leasing schedule...",
+    import_leasing_schedule: "Importing leasing schedule...",
     query_turnover: "Querying turnover data...",
     tfl_nearby: "Finding nearby stations...",
     scan_duplicates: "Scanning for duplicates...",
@@ -3152,6 +3153,23 @@ export async function getAvailableTools(): Promise<{
           limit: { type: "number", description: "Max results to return (default 50)" },
         },
         required: [],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "import_leasing_schedule",
+      description: "Import leasing schedule data from an uploaded Excel file into the Leasing Schedule Board (leasing_schedule_units table). The workbook can contain multiple properties — the tool parses property headers and unit rows intelligently. The file must have been uploaded to this chat first (drag & drop, or via file picker). Use when the user asks to import / upload / load / populate / restore a leasing schedule, or says they've dragged in a leasing schedule file. ALWAYS call with mode='preview' first, show the user a summary, then call again with mode='import' only after they confirm.",
+      parameters: {
+        type: "object",
+        properties: {
+          mediaFilename: { type: "string", description: "Name of the uploaded Excel file (e.g. 'Landsec_Leasing_Schedule.xlsx'). Must already be uploaded to this chat." },
+          mode: { type: "string", enum: ["preview", "import"], description: "preview = parse and show what would be imported, no DB writes. import = insert rows into database. Default: preview." },
+          propertyFilter: { type: "string", description: "Optional: import only one property from the file (partial name match, e.g. 'Westgate'). Omit to import every property in the workbook." },
+        },
+        required: ["mediaFilename"],
       },
     },
   });
@@ -6142,6 +6160,231 @@ async function executeCrmToolRaw(
       };
     } catch (err: any) {
       return { data: { error: `Leasing schedule query failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "import_leasing_schedule") {
+    try {
+      const mediaFilename = String(fnArgs.mediaFilename || "").trim();
+      const mode = (fnArgs.mode === "import" ? "import" : "preview") as "preview" | "import";
+      const propertyFilter = fnArgs.propertyFilter ? String(fnArgs.propertyFilter).toLowerCase() : null;
+
+      if (!mediaFilename) {
+        return { data: { error: "mediaFilename is required. The user must upload an Excel file to chat first." } };
+      }
+      if (mediaFilename.includes("..") || mediaFilename.includes("/") || mediaFilename.includes("\\")) {
+        return { data: { error: "Invalid filename" } };
+      }
+
+      const mediaPath = path.join(process.cwd(), "ChatBGP", "chat-media", mediaFilename);
+      if (!fs.existsSync(mediaPath)) {
+        const dbFile = await getFile(`chat-media/${mediaFilename}`);
+        if (dbFile?.data) {
+          const dir = path.dirname(mediaPath);
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(mediaPath, dbFile.data);
+        } else {
+          const byName = await findChatMediaByOriginalName(mediaFilename);
+          if (byName?.data) {
+            const dir = path.dirname(mediaPath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(mediaPath, byName.data);
+          } else {
+            return { data: { error: `Chat file not found: ${mediaFilename}. Ask the user to re-upload the file.` } };
+          }
+        }
+      }
+
+      const origName = mediaFilename.replace(/^\d+-/, "");
+      const ext = path.extname(origName).toLowerCase();
+      if (ext !== ".xlsx" && ext !== ".xls" && ext !== ".csv") {
+        return { data: { error: `Only .xlsx, .xls, or .csv files are supported. Got: ${ext}` } };
+      }
+
+      const rawText = await extractTextFromFile(mediaPath, origName);
+      if (!rawText || rawText.length < 50) {
+        return { data: { error: "Could not read any content from the file — it may be empty, password-protected, or corrupted." } };
+      }
+
+      const MAX_CHARS = 150000;
+      const sheetText = rawText.length > MAX_CHARS ? rawText.slice(0, MAX_CHARS) + "\n[...truncated]" : rawText;
+
+      const extractionSystem = `You are extracting leasing schedule data from a BGP Dashboard Excel workbook for insertion into the leasing_schedule_units database table.
+
+The workbook contains one or more PROPERTY SECTIONS. Each property section starts with a header block naming the property (often on its own row or in a merged cell), sometimes with a "Cluster:" line and "Asset Lead:" line. After the header, the property section has these columns:
+  Zone | Positioning | Existing | Targets | Optimum Targets | Financial Performance | Top 10 Priority? | Updates
+
+Then multiple unit rows. Some rows are zone-group headers (Zone column populated, everything else empty) — skip those. Some rows are blank — skip. Some rows at the end of the workbook contain strategy principles, key definitions (GREEN/AMBER/RED), rules — all should be skipped.
+
+For each UNIT ROW, extract:
+- property_name: from the nearest preceding property header
+- zone: the last non-empty Zone value above this row (e.g. "1. Westgate Social")
+- positioning: from Positioning column (e.g. "Social Dining"). If it has "(XX)" at the end, extract those initials as agent_initials and strip from positioning.
+- agent_initials: the "(XX)" part, 2-3 letter initials like "JR", "HK", "TG", "GOH"
+- unit_name: from Existing column. Strip surrounding parens/dates. E.g. "Benito's (JR) (Exp. 10/9/26)" → "Benito's". For empty/void units like "[L13 - Loake]", "Neal's Yard Unit L40", keep as-is.
+- tenant_name: same as unit_name unless explicitly different
+- lease_expiry: parse "(Exp. DD/M/YY)" → YYYY-MM-DD (assume 20YY for 2-digit years). "TaW" or missing → null
+- lease_break: parse "(TB DD/M/YY)" → YYYY-MM-DD. null if missing.
+- landlord_break: parse "(LB DD/M/YY)" → YYYY-MM-DD
+- rent_review: parse "(RR DD/M/YY)" → YYYY-MM-DD
+- target_brands: array of strings parsed from the Targets column. If column has a numbered list "1. X 2. Y", return ["X", "Y"]. Ignore leading category labels like "Grab & Go" or "Premium Casual Dining".
+- optimum_target: from Optimum Targets column. Single string (may be multi-word).
+- lfl_percent: parse from "X% LFL" or "-X% LFL" → number (null if absent or "-")
+- mat_psqft: parse from "£X MAT/sqft" → integer (null if absent)
+- occ_cost_percent: parse from "X% Occ Costs" → number (null if absent or "?")
+- priority: if Priority column says "Top 10 25/26 LS Portfolio Priority" or similar → store that string. "-" or empty → null.
+- updates: full text from Updates column (keep line breaks as \\n). Empty or "-" → null.
+- status: "Occupied" by default. If unit_name is wrapped in "[...]" or the Existing cell suggests void (e.g. "VOID", "[L13 - ...]", "Neal's Yard Unit L40") → "Vacant".
+
+Output STRICT JSON ONLY, no markdown fences:
+{
+  "properties": [
+    {
+      "property_name": "Westgate Oxford",
+      "cluster": "Major Retail - Engine Room",
+      "asset_lead": "JR",
+      "units": [ { ...all fields above... } ]
+    }
+  ],
+  "skipped_rows_count": 0,
+  "notes": "brief notes on any ambiguities"
+}
+
+Be thorough — include every unit row you can classify, across all properties in the workbook.`;
+
+      const response = await callClaude({
+        model: CHATBGP_HELPER_MODEL,
+        messages: [
+          { role: "system", content: extractionSystem },
+          { role: "user", content: `Workbook content (CSV-style, one sheet per "=== Sheet:" block):\n\n${sheetText}` },
+        ],
+        max_completion_tokens: 16000,
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content?.trim() || "";
+      if (!content) return { data: { error: "AI extraction returned empty response" } };
+
+      let parsed: any;
+      try {
+        const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        parsed = JSON.parse(cleaned);
+      } catch (parseErr: any) {
+        return { data: { error: `Could not parse AI response as JSON: ${parseErr?.message}. Raw response started with: ${content.slice(0, 200)}` } };
+      }
+
+      const allProperties = Array.isArray(parsed?.properties) ? parsed.properties : [];
+      const properties = propertyFilter
+        ? allProperties.filter((p: any) => String(p.property_name || "").toLowerCase().includes(propertyFilter))
+        : allProperties;
+
+      if (properties.length === 0) {
+        return { data: { error: propertyFilter ? `No property matching "${fnArgs.propertyFilter}" found in file.` : "No properties could be extracted from the file." } };
+      }
+
+      const userRes = await pool.query("SELECT id, username FROM users WHERE id = $1 LIMIT 1", [userId]);
+      const user = userRes.rows[0];
+
+      const results: any[] = [];
+      for (const prop of properties) {
+        const propName = String(prop.property_name || "").trim();
+        const units = Array.isArray(prop.units) ? prop.units : [];
+
+        const matchRes = await pool.query(
+          "SELECT id, name FROM crm_properties WHERE name ILIKE $1 ORDER BY length(name) ASC LIMIT 1",
+          [`%${propName}%`]
+        );
+        const matched = matchRes.rows[0];
+
+        if (!matched) {
+          results.push({ property: propName, status: "property_not_found_in_crm", units_parsed: units.length, inserted: 0 });
+          continue;
+        }
+
+        if (mode === "preview") {
+          results.push({
+            property: propName,
+            matched_crm_property: matched.name,
+            matched_crm_id: matched.id,
+            units_parsed: units.length,
+            sample_unit: units[0] || null,
+            vacant_count: units.filter((u: any) => u.status === "Vacant").length,
+          });
+          continue;
+        }
+
+        let inserted = 0;
+        let order = 0;
+        for (const u of units) {
+          try {
+            await pool.query(`
+              INSERT INTO leasing_schedule_units
+                (property_id, zone, positioning, unit_name, tenant_name, agent_initials,
+                 lease_expiry, lease_break, rent_review, landlord_break,
+                 mat_psqft, lfl_percent, occ_cost_percent,
+                 target_brands, optimum_target, priority, status, updates, sort_order)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+            `, [
+              matched.id,
+              u.zone || null,
+              u.positioning || null,
+              u.unit_name || "(unnamed)",
+              u.tenant_name || u.unit_name || "(unnamed)",
+              u.agent_initials || null,
+              u.lease_expiry || null,
+              u.lease_break || null,
+              u.rent_review || null,
+              u.landlord_break || null,
+              u.mat_psqft ?? null,
+              u.lfl_percent ?? null,
+              u.occ_cost_percent ?? null,
+              Array.isArray(u.target_brands) && u.target_brands.length > 0
+                ? u.target_brands.map((b: string, i: number) => `${i + 1}. ${b}`).join("\n")
+                : (typeof u.target_brands === "string" ? u.target_brands : null),
+              u.optimum_target || null,
+              u.priority || null,
+              u.status || "Occupied",
+              u.updates || null,
+              order++,
+            ]);
+            inserted++;
+          } catch (insErr: any) {
+            console.error(`[import_leasing_schedule] Insert failed for ${propName} / ${u.unit_name}:`, insErr?.message);
+          }
+        }
+
+        if (inserted > 0 && user) {
+          await pool.query(`
+            INSERT INTO leasing_schedule_audit (property_id, user_id, user_name, action, new_value, created_at)
+            VALUES ($1, $2, $3, $4, $5, NOW())
+          `, [matched.id, user.id, user.username, "import_via_chatbgp", `${inserted} units imported from ${origName}`]);
+        }
+
+        results.push({ property: propName, matched_crm_property: matched.name, units_parsed: units.length, inserted });
+      }
+
+      const totalParsed = results.reduce((s, r) => s + (r.units_parsed || 0), 0);
+      const totalInserted = results.reduce((s, r) => s + (r.inserted || 0), 0);
+      const notMatched = results.filter(r => r.status === "property_not_found_in_crm").map(r => r.property);
+
+      return {
+        data: {
+          mode,
+          file: origName,
+          properties_in_file: allProperties.length,
+          properties_processed: properties.length,
+          total_units_parsed: totalParsed,
+          total_units_inserted: mode === "import" ? totalInserted : 0,
+          properties_not_found_in_crm: notMatched,
+          results,
+          ai_notes: parsed?.notes || null,
+          next_step: mode === "preview"
+            ? "Review the summary. If it looks correct, call import_leasing_schedule again with mode='import'."
+            : "Import complete. Check /leasing-schedule to verify.",
+        },
+      };
+    } catch (err: any) {
+      return { data: { error: `Leasing schedule import failed: ${err?.message}` } };
     }
   }
 
