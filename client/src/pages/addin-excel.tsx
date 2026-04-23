@@ -966,64 +966,76 @@ async function buildModelInWorkbook(
       cellsWritten, totalCells, formulasWritten, namedRangesSet,
     });
 
-    // Batch write: process cells in chunks via single Excel.run calls
+    // Batch write: process cells in chunks via single Excel.run calls.
+    // If a chunked sync() throws (one bad formula/format rejects the whole
+    // batch in Excel), we fall back to cell-by-cell so only the specific
+    // bad cells are lost rather than all 50 in the chunk.
     const BATCH_SIZE = 50;
+    const applyCellOps = (sheet: any, cellDef: any) => {
+      const range = sheet.getRange(cellDef.cell);
+      if (cellDef.formula) {
+        const f = cellDef.formula.startsWith("=") ? cellDef.formula : `=${cellDef.formula}`;
+        range.formulas = [[f]];
+      } else if (cellDef.value !== undefined) {
+        range.values = [[cellDef.value]];
+      }
+      if (cellDef.numberFormat) range.numberFormat = [[cellDef.numberFormat]];
+      if (cellDef.bold) range.format.font.bold = true;
+      if (cellDef.fontColor) range.format.font.color = argbToHex(cellDef.fontColor);
+      if (cellDef.fillColor) range.format.fill.color = argbToHex(cellDef.fillColor);
+      if (cellDef.fontSize) range.format.font.size = cellDef.fontSize;
+      if (cellDef.horizontalAlignment) range.format.horizontalAlignment = cellDef.horizontalAlignment;
+      if (cellDef.borders) {
+        const styleMap: Record<string, string> = { thin: "Thin", medium: "Medium", thick: "Thick" };
+        const style = styleMap[cellDef.borders] || "Thin";
+        const border = range.format.borders;
+        for (const edge of ["EdgeTop", "EdgeBottom", "EdgeLeft", "EdgeRight"]) {
+          const b = border.getItem(edge);
+          b.style = style;
+          b.color = "#B0BEC5";
+        }
+      }
+      if (cellDef.merge) {
+        const mergeRange = sheet.getRange(cellDef.merge);
+        mergeRange.merge();
+      }
+    };
+
     for (let batchStart = 0; batchStart < sheetDef.cells.length; batchStart += BATCH_SIZE) {
       const batch = sheetDef.cells.slice(batchStart, batchStart + BATCH_SIZE);
+      let batchWritten = 0;
+      let batchFormulas = 0;
       try {
         await window.Excel.run(async (context: any) => {
           const sheet = context.workbook.worksheets.getItem(sheetDef.name);
           for (const cellDef of batch) {
-            const range = sheet.getRange(cellDef.cell);
-
-            // Set value or formula
-            if (cellDef.formula) {
-              const f = cellDef.formula.startsWith("=") ? cellDef.formula : `=${cellDef.formula}`;
-              range.formulas = [[f]];
-              formulasWritten++;
-            } else if (cellDef.value !== undefined) {
-              range.values = [[cellDef.value]];
-            }
-
-            // Apply number format
-            if (cellDef.numberFormat) {
-              range.numberFormat = [[cellDef.numberFormat]];
-            }
-
-            // Apply formatting
-            if (cellDef.bold) range.format.font.bold = true;
-            if (cellDef.fontColor) range.format.font.color = argbToHex(cellDef.fontColor);
-            if (cellDef.fillColor) range.format.fill.color = argbToHex(cellDef.fillColor);
-            if (cellDef.fontSize) range.format.font.size = cellDef.fontSize;
-            if (cellDef.horizontalAlignment) range.format.horizontalAlignment = cellDef.horizontalAlignment;
-
-            // Borders
-            if (cellDef.borders) {
-              const styleMap: Record<string, string> = { thin: "Thin", medium: "Medium", thick: "Thick" };
-              const style = styleMap[cellDef.borders] || "Thin";
-              const border = range.format.borders;
-              for (const edge of ["EdgeTop", "EdgeBottom", "EdgeLeft", "EdgeRight"]) {
-                const b = border.getItem(edge);
-                b.style = style;
-                b.color = "#B0BEC5";
-              }
-            }
-
-            // Merge
-            if (cellDef.merge) {
-              const mergeRange = sheet.getRange(cellDef.merge);
-              mergeRange.merge();
-            }
-
-            cellsWritten++;
+            applyCellOps(sheet, cellDef);
+            batchWritten++;
+            if (cellDef.formula) batchFormulas++;
           }
           await context.sync();
         });
+        cellsWritten += batchWritten;
+        formulasWritten += batchFormulas;
       } catch (e: any) {
-        console.warn(`[build-model] Batch error on ${sheetDef.name}:`, e?.message);
+        console.warn(`[build-model] Batch failed on ${sheetDef.name} (cells ${batchStart}-${batchStart + batch.length}). Retrying cell-by-cell:`, e?.message);
+        // Per-cell fallback — slow but guarantees one bad cell only loses
+        // itself, not the 49 healthy neighbours.
+        for (const cellDef of batch) {
+          try {
+            await window.Excel.run(async (context: any) => {
+              const sheet = context.workbook.worksheets.getItem(sheetDef.name);
+              applyCellOps(sheet, cellDef);
+              await context.sync();
+            });
+            cellsWritten++;
+            if (cellDef.formula) formulasWritten++;
+          } catch (cellErr: any) {
+            console.warn(`[build-model] Dropped cell ${sheetDef.name}!${cellDef.cell}: ${cellErr?.message}${cellDef.formula ? ` (formula: ${cellDef.formula})` : ""}`);
+          }
+        }
       }
 
-      // Progress update after each batch
       onProgress({
         phase: "Writing cells",
         sheetName: sheetDef.name,
