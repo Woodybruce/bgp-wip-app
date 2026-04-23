@@ -113,6 +113,10 @@ function TrainingRecords() {
   // to re-take and jump straight into the quiz.
   const { data: modules = [] } = useQuery<Array<{ id: string; title: string }>>({
     queryKey: ["/api/aml/training-modules"],
+<<<<<<< HEAD
+    queryFn: () => fetch("/api/aml/training-modules", { credentials: "include" }).then(r => r.json()),
+=======
+>>>>>>> claude/terminal-coding-interface-JOGQK
   });
   const moduleByTitle = new Map(modules.map(m => [m.title.toLowerCase(), m.id]));
   const moduleByType = (trainingType: string): string | null => {
