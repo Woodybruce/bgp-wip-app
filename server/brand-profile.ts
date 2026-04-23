@@ -132,6 +132,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               concept_pitch, store_count, rollout_status, backers, instagram_handle,
               agent_type, ai_generated_fields, last_enriched_at,
               bgp_contact_crm, bgp_contact_user_ids,
+              brand_analysis, brand_analysis_at,
+              ai_disabled,
               merged_into_id
          FROM crm_companies WHERE id = $1`,
       [companyId]
@@ -421,6 +423,19 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
 
     const c = company.rows[0];
+
+    // Fire-and-forget: if tracked brand has no analysis yet, generate one
+    // in the background so next load picks it up. Respects AI on/off.
+    if (c.is_tracked_brand && !c.ai_disabled && !c.brand_analysis) {
+      (async () => {
+        try {
+          const { refreshBrandAnalysis } = await import("./brand-analysis");
+          await refreshBrandAnalysis(c.id, true);
+        } catch (err: any) {
+          console.error("[brand-profile] background analysis failed:", err.message);
+        }
+      })();
+    }
 
     // Extract covenant data from Companies House JSONB
     const chData = c.companies_house_data;

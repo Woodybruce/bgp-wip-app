@@ -40,6 +40,8 @@ interface BrandProfile {
     agent_type: string | null;
     ai_generated_fields: Record<string, string> | null;
     last_enriched_at: string | null;
+    brand_analysis: string | null;
+    brand_analysis_at: string | null;
     kyc_status: string | null;
     kyc_expires_at: string | null;
     aml_risk_level: string | null;
@@ -471,6 +473,21 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <FileText className="w-3 h-3" /> Concept {aiFields.concept_pitch && <AiChip />}
                 </div>
                 <p className="text-sm leading-snug">{c.concept_pitch}</p>
+              </div>
+            )}
+
+            {/* AI brand analysis — auto-generated briefing */}
+            {c.brand_analysis && (
+              <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2">
+                <div className="flex items-center gap-1 text-[11px] text-purple-700 dark:text-purple-300 mb-1">
+                  <Sparkles className="w-3 h-3" /> Brand analysis
+                  {c.brand_analysis_at && (
+                    <span className="text-[10px] text-muted-foreground ml-auto">
+                      {new Date(c.brand_analysis_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs leading-snug text-foreground/90">{c.brand_analysis}</p>
               </div>
             )}
 

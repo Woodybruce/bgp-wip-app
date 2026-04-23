@@ -6071,6 +6071,16 @@ async function runAutoEnrichmentCycle() {
       }
     }
 
+    // Auto brand analysis — refresh stale AI briefing paragraphs (>14 days).
+    try {
+      const { refreshStaleBrandAnalyses } = await import("./brand-analysis");
+      const out = await refreshStaleBrandAnalyses(3);
+      result.brandAnalysis = out;
+      if (out.processed > 0) console.log(`[auto-enrich] Brand analyses: refreshed ${out.refreshed}/${out.processed}`);
+    } catch (err: any) {
+      result.brandAnalysis = { error: err.message };
+    }
+
     // Auto store research — find Google Places stores for tracked brands that
     // either have no stores cached or were last researched >30 days ago.
     // Skip brands with AI disabled.

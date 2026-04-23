@@ -464,6 +464,11 @@ export const crmCompanies = pgTable("crm_companies", {
   mergedIntoId: varchar("merged_into_id"),
   mergedAt: timestamp("merged_at"),
   mergedBy: text("merged_by"),
+  // AI brand analysis — cached paragraph generated on a schedule from
+  // the full brand profile (covenant, turnover, rent affordability, signals,
+  // rollout velocity). Refreshed automatically, never manually.
+  brandAnalysis: text("brand_analysis"),
+  brandAnalysisAt: timestamp("brand_analysis_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
