@@ -6431,9 +6431,9 @@ Be thorough — include every unit row you can classify, across all properties i
               INSERT INTO leasing_schedule_units
                 (property_id, zone, positioning, unit_name, tenant_name, agent_initials,
                  lease_expiry, lease_break, rent_review, landlord_break,
-                 mat_psqft, lfl_percent, occ_cost_percent,
+                 rent_pa, sqft, mat_psqft, lfl_percent, occ_cost_percent, financial_notes,
                  target_brands, optimum_target, priority, status, updates, sort_order)
-              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
             `, [
               matched.id,
               u.zone || null,
@@ -6445,9 +6445,12 @@ Be thorough — include every unit row you can classify, across all properties i
               u.lease_break || null,
               u.rent_review || null,
               u.landlord_break || null,
+              u.rent_pa ?? null,
+              u.sqft ?? null,
               u.mat_psqft ?? null,
               u.lfl_percent ?? null,
               u.occ_cost_percent ?? null,
+              u.financial_notes || null,
               Array.isArray(u.target_brands) && u.target_brands.length > 0
                 ? u.target_brands.map((b: string, i: number) => `${i + 1}. ${b}`).join("\n")
                 : (typeof u.target_brands === "string" ? u.target_brands : null),

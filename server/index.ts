@@ -887,6 +887,8 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("leasing_schedule_units", "sqft", "real");
           await addColIfMissing("leasing_schedule_units", "financial_notes", "text");
           await addColIfMissing("leasing_schedule_units", "target_company_ids", "text[]");
+          await addColIfMissing("leasing_schedule_units", "sort_order", "integer DEFAULT 0");
+          await addColIfMissing("image_studio_images", "brand_sector", "text");
 
           // Auto-track all tenant companies as brands (idempotent).
           await db.execute(sql.raw(`

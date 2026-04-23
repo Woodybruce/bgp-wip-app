@@ -1049,6 +1049,7 @@ export function registerEmailProcessorRoutes(app: Express) {
   app.post("/api/email-processor/reprocess/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const logId = parseInt(req.params.id);
+      if (isNaN(logId)) return res.status(400).json({ message: "Invalid log ID" });
       const [logEntry] = await db.select().from(chatbgpEmailLog).where(eq(chatbgpEmailLog.id, logId)).limit(1);
       if (!logEntry) return res.status(404).json({ message: "Log entry not found" });
       if (!logEntry.messageId) return res.status(400).json({ message: "No message ID to reprocess" });
