@@ -2434,7 +2434,7 @@ function InteractionArchive() {
   const { data, isLoading } = useQuery<{ interactions: ArchiveInteraction[]; total: number }>({
     queryKey: ["/api/interactions/archive", queryParams],
     queryFn: async () => {
-      const res = await fetch(`/api/interactions/archive?${queryParams}`, { credentials: "include" });
+      const res = await fetch(`/api/interactions/archive?${queryParams}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load archive");
       return res.json();
     },

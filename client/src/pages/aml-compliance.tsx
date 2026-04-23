@@ -113,7 +113,7 @@ function TrainingRecords() {
   // to re-take and jump straight into the quiz.
   const { data: modules = [] } = useQuery<Array<{ id: string; title: string }>>({
     queryKey: ["/api/aml/training-modules"],
-    queryFn: () => fetch("/api/aml/training-modules", { credentials: "include" }).then(r => r.json()),
+    queryFn: () => fetch("/api/aml/training-modules", { credentials: "include", headers: getAuthHeaders() }).then(r => r.json()),
   });
   const moduleByTitle = new Map(modules.map(m => [m.title.toLowerCase(), m.id]));
   const moduleByType = (trainingType: string): string | null => {

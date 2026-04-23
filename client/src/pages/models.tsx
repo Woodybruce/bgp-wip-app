@@ -883,7 +883,7 @@ function SpreadsheetViewer({ endpoint, title, editable, outputs, outputMapping, 
     queryKey: [endpoint, activeSheet],
     queryFn: async () => {
       const url = activeSheet ? `${endpoint}?sheet=${encodeURIComponent(activeSheet)}` : endpoint;
-      const res = await fetch(url, { credentials: "include" });
+      const res = await fetch(url, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },

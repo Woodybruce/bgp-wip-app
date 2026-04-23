@@ -940,7 +940,7 @@ function CompanyDetail({ id }: { id: string }) {
   const { data: relatedContacts } = useQuery<CrmContact[]>({
     queryKey: ["/api/crm/contacts", { companyId: id }],
     queryFn: async () => {
-      const res = await fetch(`/api/crm/contacts?companyId=${id}`, { credentials: "include" });
+      const res = await fetch(`/api/crm/contacts?companyId=${id}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to fetch contacts");
       return res.json();
     },

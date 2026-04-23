@@ -4217,7 +4217,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               setRentAnalysisRunning(true);
               toast({ title: "Running rent analysis", description: "Calculating NER for all lease deals and emailing Tom Cater..." });
               try {
-                const res = await fetch("/api/crm/deals/bulk-rent-analysis", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ sendEmail: true }) });
+                const res = await fetch("/api/crm/deals/bulk-rent-analysis", { method: "POST", headers: { "Content-Type": "application/json", ...getAuthHeaders() }, credentials: "include", body: JSON.stringify({ sendEmail: true }) });
                 if (!res.ok) {
                   const err = await res.json().catch(() => ({}));
                   throw new Error(err.message || `Request failed (${res.status})`);

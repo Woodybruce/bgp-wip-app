@@ -1338,7 +1338,7 @@ export default function Calendar() {
       const params = new URLSearchParams();
       if (effectiveTeamFilter !== "All") params.set("team", effectiveTeamFilter);
       params.set("days", "14");
-      const res = await fetch(`/api/microsoft/team-calendar?${params}`, { credentials: "include" });
+      const res = await fetch(`/api/microsoft/team-calendar?${params}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to fetch team calendar");
       return res.json();
     },

@@ -510,6 +510,7 @@ const loginLimiter = rateLimit({
 });
 app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth/microsoft", loginLimiter);
+app.use("/api/auth/register", loginLimiter);
 
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,

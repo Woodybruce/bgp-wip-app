@@ -251,7 +251,7 @@ export default function ComplianceBoard() {
             Compliance Board
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            AML status for every counterparty on a live deal · {data?.counts.total || 0} total
+            AML status for every counterparty on a live deal · {data?.counts?.total || 0} total
           </p>
         </div>
         <div className="flex items-center gap-2">

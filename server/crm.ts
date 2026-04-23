@@ -41,7 +41,11 @@ function parseAiJson(raw: string): any {
   if (cleaned.startsWith("```")) {
     cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
   }
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch (e: any) {
+    throw new Error(`Failed to parse AI JSON response: ${e.message}. Raw: ${cleaned.slice(0, 200)}`);
+  }
 }
 
 export async function syncWipToCrmDeals(dbPool: Pool) {
