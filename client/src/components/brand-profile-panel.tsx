@@ -271,11 +271,10 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  if (isLoading) return null;
+  if (isLoading || !data) return null;
 
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
-  // Defensive defaults — older cached responses may lack new fields
   const stores = data.stores || [];
   const pitchedTo = data.pitchedTo || [];
   const requirements = data.requirements || [];
@@ -285,7 +284,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const covenant = data.covenant || null;
   const rolloutVelocity = data.rolloutVelocity || null;
   const rentAffordability = data.rentAffordability || null;
-
+  const isBrand = !!c.is_tracked_brand;
+  const isAgent = !!c.agent_type;
 
   const startEdit = () => {
     setForm({
