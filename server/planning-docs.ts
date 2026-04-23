@@ -29,6 +29,11 @@
 
 const SCRAPERAPI_ENDPOINT = "https://api.scraperapi.com/";
 
+import { webshareF, isProxyConfigured, isConnectionError } from "./proxy-fetch";
+
+const BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
 export interface PlanningDoc {
   url: string;
   date: string;           // YYYY-MM-DD (or original raw if unparseable)
@@ -249,32 +254,87 @@ export function docsTabUrl(urlOrNull: string | null | undefined): string {
   }
 }
 
+async function fetchDocsHtml(docsUrl: string): Promise<string | null> {
+  const baseInit = {
+    headers: {
+      "User-Agent": BROWSER_UA,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-GB,en;q=0.9",
+    },
+    redirect: "follow" as const,
+  };
+
+  // Tier 1: direct fetch (works for most non-Westminster Idox portals)
+  try {
+    const res = await fetch(docsUrl, {
+      ...baseInit,
+      signal: AbortSignal.timeout(isProxyConfigured() ? 8000 : 15000),
+    });
+    if (res.ok) return await res.text();
+    if (res.status >= 400 && res.status < 500) return null; // auth/not-found — proxy won't help
+    console.warn(`[planning-docs] direct ${res.status} for ${docsUrl}`);
+  } catch (err: unknown) {
+    if (!isConnectionError(err)) {
+      console.warn(`[planning-docs] direct error: ${(err as any)?.message}`);
+    } else {
+      console.log(`[planning-docs] direct blocked — escalating`);
+    }
+  }
+
+  // Tier 2: Webshare residential proxy
+  if (isProxyConfigured()) {
+    try {
+      const res = await webshareF(docsUrl, {
+        ...baseInit,
+        signal: AbortSignal.timeout(30000),
+      });
+      if (res.ok) {
+        console.log(`[planning-docs] via proxy: ${docsUrl.replace(/^https?:\/\//, "").split("?")[0]}`);
+        return await res.text();
+      }
+      console.warn(`[planning-docs] proxy ${res.status}`);
+    } catch (err: unknown) {
+      console.warn(`[planning-docs] proxy failed: ${(err as any)?.message}`);
+    }
+  }
+
+  // Tier 3: ScraperAPI (if key configured)
+  const apiKey = process.env.SCRAPERAPI_KEY;
+  if (!apiKey) return null;
+  try {
+    const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(docsUrl)}&country_code=uk&render=false`;
+    const res = await fetch(proxied, { signal: AbortSignal.timeout(45000) });
+    if (res.ok) {
+      console.log(`[planning-docs] via ScraperAPI: ${docsUrl.replace(/^https?:\/\//, "").split("?")[0]}`);
+      return await res.text();
+    }
+    console.warn(`[planning-docs] ScraperAPI ${res.status}`);
+    return null;
+  } catch (err: unknown) {
+    console.warn(`[planning-docs] ScraperAPI failed: ${(err as any)?.message}`);
+    return null;
+  }
+}
+
 export async function fetchPlanningDocs(rawUrl: string): Promise<PlanningDoc[]> {
   const docsUrl = docsTabUrl(rawUrl);
   if (!docsUrl) return [];
-  const apiKey = process.env.SCRAPERAPI_KEY;
-  if (!apiKey) {
-    // First-run diagnostic — only warn once per process
-    if (!(globalThis as any).__planningDocsKeyWarned) {
-      console.warn("[planning-docs] SCRAPERAPI_KEY not set — per-application PDF scraping disabled");
-      (globalThis as any).__planningDocsKeyWarned = true;
-    }
-    return [];
-  }
 
   const cached = docCache.get(docsUrl);
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
     return cached.docs;
   }
 
-  try {
-    const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(docsUrl)}&country_code=uk&render=false`;
-    const res = await fetch(proxied, { signal: AbortSignal.timeout(45000) });
-    if (!res.ok) {
-      console.warn(`[planning-docs] ScraperAPI ${res.status} for ${docsUrl}`);
-      return [];
+  if (!process.env.SCRAPERAPI_KEY && !isProxyConfigured()) {
+    if (!(globalThis as any).__planningDocsKeyWarned) {
+      console.warn("[planning-docs] No SCRAPERAPI_KEY and no Webshare proxy — document scraping limited to non-blocked portals");
+      (globalThis as any).__planningDocsKeyWarned = true;
     }
-    const html = await res.text();
+  }
+
+  try {
+    const html = await fetchDocsHtml(docsUrl);
+    if (!html) return [];
     const docs = parseIdoxDocsHtml(html, docsUrl);
     docCache.set(docsUrl, { fetchedAt: Date.now(), docs });
     console.log(`[planning-docs] ${docsUrl.replace(/^https?:\/\//, "").split("?")[0]} → ${docs.length} docs`);
