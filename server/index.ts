@@ -425,6 +425,7 @@ import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
 import apolloContactsRouter from "./apollo-contacts";
+import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
 import dealDocsRouter from "./deal-docs";
 import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
@@ -688,6 +689,7 @@ app.use("/api/branding/assets", express.static(
   app.use(brandProfileRouter);
   app.use(brandEnrichmentRouter);
   app.use(apolloContactsRouter);
+  app.use(propertyGapAnalysisRouter);
   app.use(brandPackRouter);
   app.use(dealDocsRouter);
   app.use(weeklyReportRouter);

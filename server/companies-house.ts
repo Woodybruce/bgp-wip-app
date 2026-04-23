@@ -448,10 +448,12 @@ router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req,
       filingsTotal = filingResult.value.total_count || 0;
     }
 
-    const kycStatus = profile.companyStatus === "active" && !profile.hasInsolvencyHistory && !profile.accountsOverdue
-      ? "pass"
-      : profile.companyStatus !== "active"
-        ? "fail"
+    // Dissolved entity = warning (may be old holding co, not necessarily the trading entity).
+    // Only hard-fail on actual insolvency history.
+    const kycStatus = profile.hasInsolvencyHistory
+      ? "fail"
+      : profile.companyStatus === "active" && !profile.accountsOverdue
+        ? "pass"
         : "warning";
 
     const fetchStatus = {
@@ -600,10 +602,10 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
         filingsTotal = filingResult.value.total_count || 0;
       }
 
-      kycStatus = profile.companyStatus === "active" && !profile.hasInsolvencyHistory && !profile.accountsOverdue
-        ? "pass"
-        : profile.companyStatus !== "active"
-          ? "fail"
+      kycStatus = profile.hasInsolvencyHistory
+        ? "fail"
+        : profile.companyStatus === "active" && !profile.accountsOverdue
+          ? "pass"
           : "warning";
 
       const fetchStatus = {
@@ -1598,6 +1600,76 @@ Format your response as JSON:
       return res.status(503).json({ error: "Companies House API key not configured." });
     }
     console.error("[ownership-intelligence] error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Find active UK operating entity for a brand ───────────────────────────
+// For international brands where the linked CH entity is dissolved or wrong,
+// searches Google Places for UK stores to identify the correct operating entity.
+router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, domain, companies_house_number, companies_house_data FROM crm_companies WHERE id = $1`,
+      [req.params.companyId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: "Company not found" });
+    const company = rows[0];
+
+    const googleKey = process.env.GOOGLE_API_KEY;
+    if (!googleKey) return res.status(400).json({ error: "GOOGLE_API_KEY not configured" });
+
+    // Google Places Text Search for UK stores
+    const query = `${company.name} store UK`;
+    const placesUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&region=uk&key=${googleKey}`;
+    const placesRes = await fetch(placesUrl, { signal: AbortSignal.timeout(10_000) });
+    if (!placesRes.ok) return res.status(500).json({ error: "Places API error" });
+    const placesData: any = await placesRes.json();
+
+    const stores = (placesData.results || []).slice(0, 10).map((p: any) => ({
+      name: p.name,
+      address: p.formatted_address,
+      lat: p.geometry?.location?.lat,
+      lng: p.geometry?.location?.lng,
+      placeId: p.place_id,
+      businessStatus: p.business_status || "OPERATIONAL",
+      types: p.types || [],
+    }));
+
+    // Use the first London store address to search CH for possible entities
+    const londonStores = stores.filter((s: any) => s.address?.includes("London"));
+    const chSuggestions: any[] = [];
+
+    if (company.name) {
+      try {
+        const chSearch = await chFetch(`/search/companies?q=${encodeURIComponent(company.name)}&items_per_page=10`);
+        const chMatches = (chSearch.items || [])
+          .filter((i: any) => i.company_status === "active")
+          .slice(0, 5)
+          .map((i: any) => ({
+            companyNumber: i.company_number,
+            name: i.title,
+            status: i.company_status,
+            type: i.company_type,
+            address: i.address_snippet,
+            dateOfCreation: i.date_of_creation,
+          }));
+        chSuggestions.push(...chMatches);
+      } catch {
+        // CH search failure is non-fatal
+      }
+    }
+
+    res.json({
+      brand: { id: company.id, name: company.name },
+      currentChNumber: company.companies_house_number,
+      currentChStatus: company.companies_house_data?.profile?.companyStatus || null,
+      ukStores: stores,
+      londonStoreCount: londonStores.length,
+      activeChCandidates: chSuggestions,
+    });
+  } catch (err: any) {
+    console.error("[find-uk-entity]", err.message);
     res.status(500).json({ error: err.message });
   }
 });

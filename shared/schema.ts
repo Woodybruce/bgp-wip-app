@@ -511,6 +511,27 @@ export const insertBrandSignalSchema = createInsertSchema(brandSignals).omit({ i
 export type InsertBrandSignal = z.infer<typeof insertBrandSignalSchema>;
 export type BrandSignal = typeof brandSignals.$inferSelect;
 
+// ─── Brand stores — geocoded UK store locations per brand ─────────────────
+export const brandStores = pgTable("brand_stores", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brandCompanyId: varchar("brand_company_id").notNull(),
+  name: text("name").notNull(),          // store display name
+  address: text("address"),              // formatted address from Google
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  placeId: text("place_id"),             // Google Places ID
+  status: text("status").default("open"), // open | closed | unconfirmed
+  storeType: text("store_type"),         // flagship | outlet | concession | pop_up | etc.
+  notes: text("notes"),
+  sourceType: text("source_type").default("google_places"), // google_places | manual | goad
+  researchedAt: timestamp("researched_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertBrandStoreSchema = createInsertSchema(brandStores).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertBrandStore = z.infer<typeof insertBrandStoreSchema>;
+export type BrandStore = typeof brandStores.$inferSelect;
+
 // ─── Leasing pitch — per-property ERV, incentives, target tenants ─────────
 // Captured at instruction time. Drives the initial leasing schedule + the
 // tenant-mix recommender.
