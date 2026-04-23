@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { NewsSourcesTab } from "@/components/news-sources-tab";
 import {
   Select,
   SelectContent,
@@ -1210,6 +1211,10 @@ export default function News() {
             <MessageCircle className="w-4 h-4 mr-1" />
             WhatsApp
           </TabsTrigger>
+          <TabsTrigger value="sources" data-testid="tab-sources">
+            <Rss className="w-4 h-4 mr-1" />
+            Sources
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="feed">
@@ -1226,6 +1231,10 @@ export default function News() {
 
         <TabsContent value="whatsapp">
           <WhatsAppTab />
+        </TabsContent>
+
+        <TabsContent value="sources">
+          <NewsSourcesTab />
         </TabsContent>
       </Tabs>
     </div>

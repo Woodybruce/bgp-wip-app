@@ -3,6 +3,8 @@ import { requireAuth } from "./auth";
 import { db } from "./db";
 import { newsSources, newsArticles, newsEngagement, teamNewsPreferences, crmProperties, crmComps } from "@shared/schema";
 import { eq, desc, sql, and, inArray, gte, isNull } from "drizzle-orm";
+import { rssappHealth, createRssAppFeed, deleteRssAppFeed } from "./rssapp";
+import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands } from "./news-brand-linking";
 import { users } from "@shared/schema";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { getAppToken, graphRequest } from "./shared-mailbox";
@@ -792,6 +794,92 @@ export function setupNewsFeedRoutes(app: Express) {
     }
   });
 
+  // Create a source using RSS.app — given a page URL, generate an RSS feed
+  // via the RSS.app API and save the source with feedUrl filled in.
+  app.post("/api/news-feed/sources/rssapp", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { url, name, category } = req.body || {};
+      if (!url) return res.status(400).json({ message: "URL required" });
+      const feed = await createRssAppFeed(url);
+      const [source] = await db.insert(newsSources).values({
+        name: name || feed.title || url,
+        url,
+        feedUrl: feed.rss_feed_url,
+        type: "rssapp",
+        category: category || "general",
+        active: true,
+      }).returning();
+      res.json({ source, rssappFeed: feed });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to create RSS.app feed" });
+    }
+  });
+
+  // Toggle active flag on a source
+  app.patch("/api/news-feed/sources/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { active, name, category } = req.body || {};
+      const updates: any = {};
+      if (typeof active === "boolean") updates.active = active;
+      if (typeof name === "string") updates.name = name;
+      if (typeof category === "string") updates.category = category;
+      if (Object.keys(updates).length === 0) return res.status(400).json({ message: "No updates provided" });
+      const [updated] = await db.update(newsSources).set(updates).where(eq(newsSources.id, id)).returning();
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Delete source — if it's an RSS.app-generated feed, also delete on RSS.app side.
+  app.delete("/api/news-feed/sources/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const [existing] = await db.select().from(newsSources).where(eq(newsSources.id, id)).limit(1);
+      if (!existing) return res.status(404).json({ message: "Not found" });
+      if (existing.type === "rssapp" && existing.feedUrl) {
+        const m = existing.feedUrl.match(/\/feeds\/([a-zA-Z0-9_-]+)/);
+        if (m?.[1]) {
+          try { await deleteRssAppFeed(m[1]); } catch (e: any) {
+            console.warn("[rssapp] delete failed:", e?.message);
+          }
+        }
+      }
+      await db.delete(newsSources).where(eq(newsSources.id, id));
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // RSS.app health probe
+  app.get("/api/rssapp/health", requireAuth, async (_req: Request, res: Response) => {
+    const health = await rssappHealth();
+    res.status(health.ok ? 200 : 503).json(health);
+  });
+
+  // Ensure one Google News RSS feed per tracked brand
+  app.post("/api/news-feed/ensure-brand-feeds", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const result = await ensureBrandGoogleNewsFeeds();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Re-link existing articles to tracked brands → brand_signals
+  app.post("/api/news-feed/link-brands", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const limit = Number(req.query.limit) || 500;
+      const result = await linkRecentArticlesToBrands({ limit });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/news-feed/fetch", requireAuth, async (_req: Request, res: Response) => {
     try {
       const { fetched, errors } = await fetchRssFeeds();
@@ -1070,6 +1158,12 @@ export function setupNewsFeedRoutes(app: Express) {
   setTimeout(async () => {
     try {
       console.log("[News Feed] Startup fetch...");
+      try {
+        const brandFeeds = await ensureBrandGoogleNewsFeeds();
+        if (brandFeeds.created > 0) console.log(`[News Feed] Seeded ${brandFeeds.created} brand Google News feeds (of ${brandFeeds.total} tracked brands)`);
+      } catch (e: any) {
+        console.warn("[News Feed] brand feed seed failed:", e?.message);
+      }
       const { fetched, errors } = await fetchRssFeeds();
       const gsFetched = await fetchGreenStreetArticles();
       if (fetched > 0 || gsFetched > 0) {
@@ -1077,6 +1171,12 @@ export function setupNewsFeedRoutes(app: Express) {
         console.log(`[News Feed] Startup: ${fetched} RSS articles, ${errors} errors, Green Street ${gsFetched}, scored ${scored}`);
       } else {
         console.log(`[News Feed] Startup: no new articles (${errors} errors)`);
+      }
+      try {
+        const linked = await linkRecentArticlesToBrands({ limit: 500 });
+        if (linked.linked > 0) console.log(`[News Feed] Linked ${linked.linked} brand signals from ${linked.articles} articles`);
+      } catch (e: any) {
+        console.warn("[News Feed] brand linking failed:", e?.message);
       }
       const compResult = await extractCompsFromArticles();
       if (compResult.created > 0) {
@@ -1098,6 +1198,10 @@ export function setupNewsFeedRoutes(app: Express) {
   setInterval(async () => {
     try {
       console.log("[News Feed] Auto-fetching news...");
+      try {
+        const brandFeeds = await ensureBrandGoogleNewsFeeds();
+        if (brandFeeds.created > 0) console.log(`[News Feed] Auto-seeded ${brandFeeds.created} new brand Google News feeds`);
+      } catch {}
       const { fetched, errors } = await fetchRssFeeds();
       const gsFetched = await fetchGreenStreetArticles();
       if (fetched > 0 || gsFetched > 0) {
@@ -1105,6 +1209,12 @@ export function setupNewsFeedRoutes(app: Express) {
         console.log(`[News Feed] Fetched ${fetched} articles, ${errors} errors, Green Street ${gsFetched}, scored ${scored}`);
         const { logActivity } = await import("./activity-logger");
         await logActivity("news-feed", "articles_fetched", `${fetched + gsFetched} articles fetched, ${scored} scored for relevance`, fetched + gsFetched);
+      }
+      try {
+        const linked = await linkRecentArticlesToBrands({ limit: 500 });
+        if (linked.linked > 0) console.log(`[News Feed] Auto-linked ${linked.linked} brand signals from ${linked.articles} articles`);
+      } catch (e: any) {
+        console.warn("[News Feed] brand linking failed:", e?.message);
       }
       await backfillMissingImages();
       await updateTeamPreferencesFromEngagement();
