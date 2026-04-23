@@ -109,7 +109,66 @@ interface BrandProfile {
     zone_a_rate: number | null;
     use_class: string | null;
     postcode: string | null;
+    completion_date: string | null;
   }>;
+  bgpDeals: Array<{
+    id: string;
+    name: string;
+    deal_type: string | null;
+    status: string | null;
+    fee: number | null;
+    team: string[] | null;
+    internal_agent: string[] | null;
+    created_at: string | null;
+    updated_at: string | null;
+    party_role: string | null;
+    property_name: string | null;
+  }>;
+  bgpSummary: {
+    totalDeals: number;
+    completedDeals: number;
+    totalFees: number;
+    team: string[];
+    interactionsTotal: number;
+    interactionsLast90d: number;
+    lastInteractionAt: string | null;
+  };
+  decisionMakers: Array<{
+    id: string;
+    name: string;
+    role: string | null;
+    email: string | null;
+    phone: string | null;
+    linkedin_url: string | null;
+    avatar_url: string | null;
+    last_enriched_at: string | null;
+  }>;
+  leaseEvents: Array<{
+    id: string;
+    unit_name: string | null;
+    tenant_name: string | null;
+    lease_expiry: string | null;
+    lease_break: string | null;
+    rent_review: string | null;
+    property_id: string;
+    property_name: string;
+  }>;
+  competitors: Array<{
+    id: string;
+    name: string;
+    store_count: number | null;
+    rollout_status: string | null;
+  }>;
+  spacePreferences: {
+    sampleSize: number;
+    sqftMin: number | null;
+    sqftMax: number | null;
+    sqftMedian: number | null;
+    rentPsfMin: number | null;
+    rentPsfMax: number | null;
+    rentPsfMedian: number | null;
+    topUseClass: string | null;
+  };
 }
 
 const ROLLOUT_OPTIONS = [
@@ -284,6 +343,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const rolloutVelocity = data.rolloutVelocity || null;
   const rentAffordability = data.rentAffordability || null;
   const rentComps = data.rentComps || [];
+  const bgpDeals = data.bgpDeals || [];
+  const bgpSummary = data.bgpSummary || null;
+  const decisionMakers = data.decisionMakers || [];
+  const leaseEvents = data.leaseEvents || [];
+  const competitors = data.competitors || [];
+  const spacePreferences = data.spacePreferences || null;
+  const siblingBrands = data.siblings || [];
+  const parentGroup = data.parentGroup || null;
   const isBrand = !!c.is_tracked_brand;
   const isAgent = !!c.agent_type;
 
@@ -810,6 +877,199 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
               );
             })()}
+
+            {/* Decision-makers — Property, C-suite */}
+            {decisionMakers.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                  <Users className="w-3 h-3" /> Decision-makers ({decisionMakers.length})
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                  {decisionMakers.slice(0, 6).map((dm) => (
+                    <Link key={dm.id} href={`/contacts/${dm.id}`}>
+                      <div className="flex items-center gap-1.5 text-xs rounded px-1.5 py-1 hover:bg-muted/50 cursor-pointer group">
+                        {dm.avatar_url ? (
+                          <img src={dm.avatar_url} alt={dm.name} className="w-6 h-6 rounded-full bg-muted shrink-0" />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300 shrink-0">
+                            {dm.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate group-hover:text-primary transition-colors">{dm.name}</div>
+                          {dm.role && <div className="text-[10px] text-muted-foreground truncate">{dm.role}</div>}
+                        </div>
+                        {dm.linkedin_url && (
+                          <a
+                            href={dm.linkedin_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-muted-foreground hover:text-primary shrink-0"
+                            title="LinkedIn"
+                          >
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        )}
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* BGP relationship history */}
+            {bgpSummary && (bgpSummary.totalDeals > 0 || bgpSummary.interactionsTotal > 0) && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                  <Briefcase className="w-3 h-3" /> BGP with this brand
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                  <div>
+                    <div className="text-[10px] text-muted-foreground">Deals</div>
+                    <div className="font-semibold">{bgpSummary.totalDeals}{bgpSummary.completedDeals > 0 ? ` · ${bgpSummary.completedDeals} done` : ""}</div>
+                  </div>
+                  {bgpSummary.totalFees > 0 && (
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">Fees</div>
+                      <div className="font-semibold">£{(bgpSummary.totalFees / 1000).toFixed(0)}k</div>
+                    </div>
+                  )}
+                  <div>
+                    <div className="text-[10px] text-muted-foreground">Touches</div>
+                    <div className="font-semibold">{bgpSummary.interactionsTotal}{bgpSummary.interactionsLast90d > 0 ? ` · ${bgpSummary.interactionsLast90d} (90d)` : ""}</div>
+                  </div>
+                  {bgpSummary.team.length > 0 && (
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">BGP team</div>
+                      <div className="font-medium truncate text-[11px]">{bgpSummary.team.slice(0, 3).join(", ")}{bgpSummary.team.length > 3 ? ` +${bgpSummary.team.length - 3}` : ""}</div>
+                    </div>
+                  )}
+                </div>
+                {bgpDeals.length > 0 && (
+                  <div className="mt-1.5 space-y-0.5">
+                    {bgpDeals.slice(0, 4).map((d) => (
+                      <Link key={d.id} href={`/deals/${d.id}`}>
+                        <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
+                          {d.party_role && <Badge variant="outline" className="text-[10px] shrink-0 capitalize">{d.party_role}</Badge>}
+                          <span className="truncate flex-1">{d.name}</span>
+                          {d.status && <Badge variant="secondary" className="text-[10px] shrink-0">{d.status}</Badge>}
+                        </div>
+                      </Link>
+                    ))}
+                    {bgpDeals.length > 4 && <p className="text-[10px] text-muted-foreground pl-1">+{bgpDeals.length - 4} more deals</p>}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}
+            {leaseEvents.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-amber-600" /> Lease events in next 18 months ({leaseEvents.length})
+                </div>
+                <div className="space-y-0.5">
+                  {leaseEvents.slice(0, 5).map((le) => {
+                    const expiry = le.lease_expiry ? new Date(le.lease_expiry) : null;
+                    const brk = le.lease_break ? new Date(le.lease_break) : null;
+                    const nextEvent = [expiry, brk].filter(Boolean).sort((a, b) => a!.getTime() - b!.getTime())[0];
+                    const label = nextEvent === expiry ? "expiry" : "break";
+                    return (
+                      <Link key={le.id} href={`/properties/${le.property_id}`}>
+                        <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
+                          <Badge variant="outline" className="text-[10px] shrink-0 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400 capitalize">{label}</Badge>
+                          <span className="truncate flex-1">{le.property_name}{le.unit_name ? ` · ${le.unit_name}` : ""}</span>
+                          <span className="font-medium tabular-nums text-[11px] shrink-0">{nextEvent?.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</span>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                  {leaseEvents.length > 5 && <p className="text-[10px] text-muted-foreground pl-1">+{leaseEvents.length - 5} more events</p>}
+                </div>
+              </div>
+            )}
+
+            {/* Space preferences — what they typically take */}
+            {spacePreferences && spacePreferences.sampleSize >= 2 && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                  <Target className="w-3 h-3" /> Space preferences (from {spacePreferences.sampleSize} comps)
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                  {spacePreferences.sqftMin != null && spacePreferences.sqftMax != null && (
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">Unit size</div>
+                      <div className="font-semibold">{Math.round(spacePreferences.sqftMin).toLocaleString()}–{Math.round(spacePreferences.sqftMax).toLocaleString()} sqft</div>
+                    </div>
+                  )}
+                  {spacePreferences.rentPsfMin != null && spacePreferences.rentPsfMax != null && (
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">Rent range</div>
+                      <div className="font-semibold">£{Math.round(spacePreferences.rentPsfMin)}–£{Math.round(spacePreferences.rentPsfMax)} psf</div>
+                    </div>
+                  )}
+                  {spacePreferences.topUseClass && (
+                    <div>
+                      <div className="text-[10px] text-muted-foreground">Typical use class</div>
+                      <div className="font-semibold">{spacePreferences.topUseClass}</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Parent group + sibling brands */}
+            {(parentGroup || siblingBrands.length > 0) && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                  <Building2 className="w-3 h-3" /> Group &amp; sibling brands
+                </div>
+                {parentGroup && (
+                  <Link href={`/companies/${parentGroup.id}`}>
+                    <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
+                      <Badge variant="outline" className="text-[10px] shrink-0">parent</Badge>
+                      <span className="font-medium truncate flex-1">{parentGroup.name}</span>
+                      {parentGroup.store_count && <span className="text-[10px] text-muted-foreground tabular-nums">{parentGroup.store_count} stores</span>}
+                    </div>
+                  </Link>
+                )}
+                {siblingBrands.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {siblingBrands.slice(0, 10).map((s: any) => (
+                      <Link key={s.id} href={`/companies/${s.id}`}>
+                        <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer">
+                          {s.name}
+                          {s.store_count && <span className="ml-1 text-muted-foreground">· {s.store_count}</span>}
+                        </Badge>
+                      </Link>
+                    ))}
+                    {siblingBrands.length > 10 && (
+                      <span className="text-[10px] text-muted-foreground">+{siblingBrands.length - 10} more</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Competitor cluster */}
+            {competitors.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                  <Users className="w-3 h-3" /> Similar tenants (same use class)
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {competitors.slice(0, 8).map((comp) => (
+                    <Link key={comp.id} href={`/companies/${comp.id}`}>
+                      <Badge variant="outline" className="text-[10px] hover:bg-muted cursor-pointer">
+                        {comp.name}
+                        {comp.store_count && <span className="ml-1 text-muted-foreground">· {comp.store_count}</span>}
+                      </Badge>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Deal ledger + active pipeline */}
             {(completedDeals?.length > 0 || activeDeals?.length > 0 || requirements.length > 0) && (

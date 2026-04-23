@@ -301,12 +301,104 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // Used for rent affordability calc (rent ÷ turnover_per_sqft)
     const rentCompsQ = pool.query(
       `SELECT c.id, c.tenant, c.area_sqft, c.headline_rent, c.rent_psf_overall,
-              c.rent_psf_nia, c.zone_a_rate, c.use_class, c.postcode
+              c.rent_psf_nia, c.zone_a_rate, c.use_class, c.postcode,
+              c.completion_date, c.rent_review_pattern
          FROM crm_comps c,
               (SELECT name FROM crm_companies WHERE id = $1) AS co
         WHERE (c.tenant ILIKE co.name OR c.contact_company ILIKE co.name)
           AND COALESCE(c.rent_psf_overall, c.rent_psf_nia, c.zone_a_rate) IS NOT NULL
         ORDER BY c.completion_date DESC NULLS LAST, c.created_at DESC LIMIT 20`,
+      [companyId]
+    );
+
+    // BGP relationship history — all deals where this company appears + interactions count.
+    // Used to show "we've done 3 deals with them, last email 2 weeks ago".
+    const bgpDealsQ = pool.query(
+      `SELECT d.id, d.name, d.deal_type, d.status, d.fee,
+              d.team, d.internal_agent,
+              d.created_at, d.updated_at,
+              CASE
+                WHEN d.tenant_id = $1 THEN 'tenant'
+                WHEN d.landlord_id = $1 THEN 'landlord'
+                WHEN d.vendor_id = $1 THEN 'vendor'
+                WHEN d.purchaser_id = $1 THEN 'purchaser'
+              END AS party_role,
+              p.name AS property_name
+         FROM crm_deals d
+         LEFT JOIN crm_properties p ON p.id = d.property_id
+        WHERE d.tenant_id = $1 OR d.landlord_id = $1 OR d.vendor_id = $1 OR d.purchaser_id = $1
+        ORDER BY d.updated_at DESC NULLS LAST LIMIT 20`,
+      [companyId]
+    );
+    const bgpInteractionsQ = pool.query(
+      `SELECT COUNT(*) ::int AS total,
+              MAX(interaction_date) AS last_at,
+              COUNT(*) FILTER (WHERE interaction_date >= now() - interval '90 days') ::int AS last_90d
+         FROM crm_interactions
+        WHERE company_id = $1`,
+      [companyId]
+    );
+
+    // Decision-maker contacts — anyone with a senior or property-focused role.
+    const decisionMakersQ = pool.query(
+      `SELECT id, name, role, email, phone, linkedin_url, avatar_url, last_enriched_at
+         FROM crm_contacts
+        WHERE company_id = $1
+          AND role IS NOT NULL
+          AND (
+            role ILIKE '%property%' OR role ILIKE '%real estate%' OR role ILIKE '%estates%'
+            OR role ILIKE '%acquisition%' OR role ILIKE '%development%' OR role ILIKE '%retail%'
+            OR role ILIKE '%chief%' OR role ILIKE '%ceo%' OR role ILIKE '%coo%' OR role ILIKE '%cfo%'
+            OR role ILIKE '%director%' OR role ILIKE '%head of%' OR role ILIKE '%vp %' OR role ILIKE '%president%'
+          )
+        ORDER BY
+          CASE
+            WHEN role ILIKE '%head of%property%' OR role ILIKE '%property director%' THEN 1
+            WHEN role ILIKE '%property%' OR role ILIKE '%estates%' OR role ILIKE '%acquisition%' THEN 2
+            WHEN role ILIKE '%ceo%' OR role ILIKE '%chief executive%' THEN 3
+            WHEN role ILIKE '%coo%' OR role ILIKE '%chief operat%' THEN 4
+            WHEN role ILIKE '%cfo%' OR role ILIKE '%chief financial%' THEN 5
+            ELSE 9
+          END,
+          name ASC
+        LIMIT 6`,
+      [companyId]
+    );
+
+    // Lease-expiry radar — leasing schedule units occupied by this brand with events in next 18 months.
+    const leaseEventsQ = pool.query(
+      `SELECT u.id, u.unit_name, u.tenant_name, u.lease_expiry, u.lease_break, u.rent_review,
+              p.id AS property_id, p.name AS property_name
+         FROM leasing_schedule_units u
+         JOIN crm_properties p ON p.id = u.property_id,
+              (SELECT name FROM crm_companies WHERE id = $1) AS co
+        WHERE u.tenant_name ILIKE co.name
+          AND (
+            (u.lease_expiry IS NOT NULL AND u.lease_expiry BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '18 months')
+            OR (u.lease_break IS NOT NULL AND u.lease_break BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '18 months')
+          )
+        ORDER BY LEAST(COALESCE(u.lease_expiry, '9999-01-01'::date), COALESCE(u.lease_break, '9999-01-01'::date)) ASC
+        LIMIT 10`,
+      [companyId]
+    );
+
+    // Competitor cluster — other tracked brands in same use class (derived from rent comps)
+    const competitorsQ = pool.query(
+      `WITH me AS (
+         SELECT DISTINCT use_class FROM crm_comps
+          WHERE (tenant ILIKE (SELECT name FROM crm_companies WHERE id = $1)
+             OR contact_company ILIKE (SELECT name FROM crm_companies WHERE id = $1))
+            AND use_class IS NOT NULL
+          LIMIT 3
+       )
+       SELECT DISTINCT c.id, c.name, c.store_count, c.rollout_status
+         FROM crm_companies c
+         JOIN crm_comps cm ON (cm.tenant ILIKE c.name OR cm.contact_company ILIKE c.name)
+        WHERE c.is_tracked_brand = true
+          AND c.id <> $1
+          AND c.merged_into_id IS NULL
+          AND cm.use_class IN (SELECT use_class FROM me)
+        LIMIT 8`,
       [companyId]
     );
 
@@ -317,11 +409,13 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       kyc, images, deals, parentGroup, siblings, news,
       requirements, pitchedTo, contacts, stores, turnover,
       rolloutVelocityRow, rentComps,
+      bgpDeals, bgpInteractions, decisionMakers, leaseEvents, competitors,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
       safe(requirementsQ), safe(pitchedToQ), safe(contactsQ), safe(storesQ), safe(turnoverQ),
       safe(rolloutVelocityQ), safe(rentCompsQ),
+      safe(bgpDealsQ), safe(bgpInteractionsQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
@@ -371,6 +465,57 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       turnover.rows,
     );
 
+    // Space preferences — aggregate from this brand's rent comps
+    // (median sqft, use class mix, typical rent psf).
+    const spacePreferences = (() => {
+      const sizes = rentComps.rows.map((r: any) => Number(r.area_sqft)).filter((n: number) => n > 0);
+      const rents = rentComps.rows
+        .map((r: any) => Number(r.rent_psf_overall ?? r.rent_psf_nia ?? r.zone_a_rate))
+        .filter((n: number) => n > 0);
+      const useClasses = rentComps.rows.map((r: any) => r.use_class).filter(Boolean);
+      const useClassCounts: Record<string, number> = {};
+      for (const uc of useClasses) useClassCounts[uc] = (useClassCounts[uc] || 0) + 1;
+      const topUseClass = Object.entries(useClassCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+      const median = (arr: number[]) => {
+        if (!arr.length) return null;
+        const sorted = [...arr].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+      };
+      return {
+        sampleSize: rentComps.rows.length,
+        sqftMin: sizes.length ? Math.min(...sizes) : null,
+        sqftMax: sizes.length ? Math.max(...sizes) : null,
+        sqftMedian: median(sizes),
+        rentPsfMin: rents.length ? Math.min(...rents) : null,
+        rentPsfMax: rents.length ? Math.max(...rents) : null,
+        rentPsfMedian: median(rents),
+        topUseClass,
+      };
+    })();
+
+    // BGP relationship summary — deals count, fees, last-touch aggregate
+    const bgpSummary = (() => {
+      const rows = bgpDeals.rows;
+      const completed = rows.filter((d: any) => (d.status || "").toLowerCase().includes("complet") || (d.status || "").toLowerCase().includes("won"));
+      const totalFees = rows.reduce((acc: number, d: any) => acc + (Number(d.fee) || 0), 0);
+      const bgpTeam = new Set<string>();
+      for (const d of rows) {
+        for (const t of (d.team || [])) bgpTeam.add(t);
+        for (const a of (d.internal_agent || [])) bgpTeam.add(a);
+      }
+      const lastInteraction = bgpInteractions.rows[0] || {};
+      return {
+        totalDeals: rows.length,
+        completedDeals: completed.length,
+        totalFees,
+        team: Array.from(bgpTeam),
+        interactionsTotal: lastInteraction.total || 0,
+        interactionsLast90d: lastInteraction.last_90d || 0,
+        lastInteractionAt: lastInteraction.last_at || null,
+      };
+    })();
+
     res.json({
       company: c,
       signals: signals.rows,
@@ -393,6 +538,12 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       rolloutVelocity,
       rentAffordability,
       rentComps: rentComps.rows,
+      bgpDeals: bgpDeals.rows,
+      bgpSummary,
+      decisionMakers: decisionMakers.rows,
+      leaseEvents: leaseEvents.rows,
+      competitors: competitors.rows,
+      spacePreferences,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
