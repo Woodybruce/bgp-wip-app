@@ -54,6 +54,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import type { User as UserType } from "@shared/schema";
+import { useChatBGPState } from "@/contexts/chatbgp-context";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -1114,7 +1115,12 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
   const [panelProgressLabel, setPanelProgressLabel] = useState("");
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  // Share activeThreadId with the full-page /chatbgp view (same
+  // ChatBGPProvider context wraps both). Minimising the full page then
+  // leaves the same conversation loaded in the side panel.
+  const chatBgpCtx = useChatBGPState();
+  const activeThreadId = chatBgpCtx.activeThreadId;
+  const setActiveThreadId = chatBgpCtx.setActiveThreadId;
   const [view, setView] = useState<"chat" | "threads" | "new-group">("chat");
   const [showSidebar, setShowSidebar] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -1131,6 +1137,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const unmountedRef = useRef(false);
+  const messageQueueRef = useRef<{ content: string; files: File[] }[]>([]);
 
   const { data: currentUser } = useQuery<UserType>({
     queryKey: ["/api/auth/me"],
@@ -1481,7 +1488,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
           const fetchHeaders: Record<string, string> = { "Content-Type": "application/json" };
           if (token) fetchHeaders["Authorization"] = `Bearer ${token}`;
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 300000);
+          const timeoutId = setTimeout(() => controller.abort(), 600000);
           try {
             const res = await fetch("/api/chatbgp/chat", {
               method: "POST",
@@ -1603,13 +1610,13 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
         .catch(() => {});
     },
     onError: (err: any) => {
-      let msg = "Failed to get a response. Please try again.";
+      let msg = "Something went wrong — please try again.";
       try {
         const raw = err?.message || "";
         if (raw.includes("timed out") || raw.includes("AbortError")) {
-          msg = "Request timed out after 5 minutes. Please try again.";
+          msg = "Request timed out. Try a simpler question or break it into steps.";
         } else if (raw === "Load failed" || raw === "Failed to fetch" || raw.includes("NetworkError")) {
-          msg = "Connection lost — please check your signal and try again.";
+          msg = "Network error — check your connection and try again.";
         } else {
           const jsonStart = raw.indexOf("{");
           if (jsonStart >= 0) {
@@ -1620,7 +1627,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
           }
         }
       } catch {}
-      const errorContent = `Sorry, I couldn't respond: ${msg}`;
+      const errorContent = msg;
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: errorContent },
@@ -2231,29 +2238,24 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
     }
   }, [input, isSending]);
 
-  const handleSend = () => {
-    const text = input.trim();
-    if ((!text && attachedFiles.length === 0) || isSending) return;
-    stopTyping();
-
-    const content = text || (attachedFiles.length > 0 ? `Please process these ${attachedFiles.length} file(s)` : "");
+  const processNextMessage = useCallback((queuedContent?: string, queuedFiles?: File[]) => {
+    const content = queuedContent ?? "";
+    const files = queuedFiles ?? [];
 
     if (isActiveThreadAi || !activeThreadId) {
       const userMessage: LocalChatMessage = {
         role: "user",
         content,
-        attachments: attachedFiles.length > 0 ? attachedFiles.map(f => f.name) : undefined,
+        attachments: files.length > 0 ? files.map(f => f.name) : undefined,
         userName: currentUser?.name,
       };
-      const newMessages = [...messages, userMessage];
-      const filesToSend = [...attachedFiles];
-      setMessages(newMessages);
-      setInput("");
-      setAttachedFiles([]);
-      aiSendMutation.mutate({ newMessages, files: filesToSend, threadId: activeThreadId });
+      setMessages(prev => {
+        const newMessages = [...prev, userMessage];
+        aiSendMutation.mutate({ newMessages, files, threadId: activeThreadId });
+        return newMessages;
+      });
     } else {
-      const hasChatBGPMention = text.toLowerCase().includes("@chatbgp");
-
+      const hasChatBGPMention = content.toLowerCase().includes("@chatbgp");
       const userMessage: LocalChatMessage = {
         role: "user",
         content,
@@ -2261,8 +2263,6 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
         userId: currentUser?.id,
       };
       setMessages(prev => [...prev, userMessage]);
-      setInput("");
-      setAttachedFiles([]);
 
       if (hasChatBGPMention && activeThreadId) {
         chatbgpMentionMutation.mutate({ content, threadId: activeThreadId });
@@ -2270,10 +2270,37 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
         teamSendMutation.mutate({ content, threadId: activeThreadId });
       }
     }
+  }, [activeThreadId, currentUser, isActiveThreadAi, aiSendMutation, teamSendMutation, chatbgpMentionMutation]);
+
+  // Drain the queue when a mutation finishes
+  useEffect(() => {
+    if (!isSending && messageQueueRef.current.length > 0) {
+      const next = messageQueueRef.current.shift()!;
+      processNextMessage(next.content, next.files);
+    }
+  }, [isSending, processNextMessage]);
+
+  const handleSend = () => {
+    const text = input.trim();
+    if (!text && attachedFiles.length === 0) return;
+    stopTyping();
+
+    const content = text || (attachedFiles.length > 0 ? `Please process these ${attachedFiles.length} file(s)` : "");
+    const filesToSend = [...attachedFiles];
+    setInput("");
+    setAttachedFiles([]);
 
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
+
+    if (isSending) {
+      // Queue the message — it will be sent when the current response finishes
+      messageQueueRef.current.push({ content, files: filesToSend });
+      return;
+    }
+
+    processNextMessage(content, filesToSend);
   };
 
   const handleCheckboxClick = useCallback((text: string) => {
@@ -2374,8 +2401,6 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
     }
   };
 
-  if (!open) return null;
-
   const unseenCount = notifications?.unseenCount || 0;
   const threadMembers = activeThread?.members || [];
   const threadCreatorId = activeThread?.createdBy || currentUser?.id || "";
@@ -2388,9 +2413,13 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
         ? (activeThread.title || "Chat")
         : (isActiveThreadAi ? "ChatBGP" : "Chat");
 
+  // Keep the panel mounted when closed so the conversation (messages,
+  // activeThreadId, input, attachments) survives minimising. Hide via
+  // `hidden` so layout collapses and nothing in the closed panel receives
+  // focus / drag events.
   return (
     <div
-      className="h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:z-auto shrink-0 border-l bg-background flex flex-col"
+      className={`h-full w-full fixed inset-0 z-50 md:static md:w-[340px] md:z-auto shrink-0 border-l bg-background flex flex-col ${open ? "" : "hidden"}`}
       data-testid="chat-panel"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -2855,7 +2884,7 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
                       size="icon"
                       className="shrink-0 h-10 w-10 rounded-full bg-gray-900 text-white hover:bg-gray-800"
                       onClick={handleSend}
-                      disabled={(!input.trim() && attachedFiles.length === 0) || isSending}
+                      disabled={!input.trim() && attachedFiles.length === 0}
                       data-testid="button-panel-send-message"
                     >
                       <Send className="w-4 h-4" />

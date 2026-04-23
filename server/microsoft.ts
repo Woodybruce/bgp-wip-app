@@ -17,6 +17,9 @@ const SCOPES = [
   "Mail.Read",
   "Mail.Read.Shared",
   "Mail.Send",
+  "Notes.Read",
+  "Notes.Read.All",
+  "Notes.ReadWrite.All",
 ];
 
 const SHAREPOINT_HOST = "brucegillinghampollardlimited.sharepoint.com";
@@ -648,11 +651,16 @@ export function setupMicrosoftRoutes(app: Express) {
     }
 
     try {
+      // Start from Monday of the current week so the diary shows the full work week
       const now = new Date();
+      const mondayStart = new Date(now);
+      mondayStart.setHours(0, 0, 0, 0);
+      const dow = mondayStart.getDay();
+      mondayStart.setDate(mondayStart.getDate() - ((dow + 6) % 7));
       const endDate = new Date(now);
       endDate.setDate(endDate.getDate() + 14);
 
-      const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${now.toISOString()}&endDateTime=${endDate.toISOString()}&$top=50&$orderby=start/dateTime&$select=subject,start,end,location,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,attendees,bodyPreview,isAllDay,showAs,categories`;
+      const url = `https://graph.microsoft.com/v1.0/me/calendarView?startDateTime=${mondayStart.toISOString()}&endDateTime=${endDate.toISOString()}&$top=50&$orderby=start/dateTime&$select=subject,start,end,location,organizer,isOnlineMeeting,onlineMeetingUrl,onlineMeeting,attendees,bodyPreview,isAllDay,showAs,categories`;
 
       const response = await fetch(url, {
         headers: {
@@ -702,7 +710,12 @@ export function setupMicrosoftRoutes(app: Express) {
       }
 
       const now = new Date();
-      const endDate = new Date(now);
+      // Start from Monday of the current week so past days' events are visible
+      const mondayStart = new Date(now);
+      mondayStart.setHours(0, 0, 0, 0);
+      const dow = mondayStart.getDay();
+      mondayStart.setDate(mondayStart.getDate() - ((dow + 6) % 7));
+      const endDate = new Date(mondayStart);
       const daysParam = parseInt(req.query.days as string) || 7;
       endDate.setDate(endDate.getDate() + daysParam);
 
@@ -715,7 +728,7 @@ export function setupMicrosoftRoutes(app: Express) {
         },
         body: JSON.stringify({
           schedules: emails.map(e => e.email),
-          startTime: { dateTime: now.toISOString(), timeZone: "Europe/London" },
+          startTime: { dateTime: mondayStart.toISOString(), timeZone: "Europe/London" },
           endTime: { dateTime: endDate.toISOString(), timeZone: "Europe/London" },
           availabilityViewInterval: 30,
         }),

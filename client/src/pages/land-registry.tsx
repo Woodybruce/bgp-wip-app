@@ -332,6 +332,32 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
       .finally(() => setSearchesLoading(false));
   }, []);
 
+  // Deep-link from Property Pathway's Title link:
+  // /property-intelligence?tab=land-registry&postcode=<pc> should auto-open
+  // the most recent saved search for that postcode (preferring source=pathway
+  // rows so clicking the Title number surfaces the Stage 1 results directly).
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedRef.current) return;
+    if (typeof window === "undefined") return;
+    if (savedSearches.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const pc = (params.get("postcode") || "").trim().toUpperCase().replace(/\s+/g, "");
+    if (!pc) return;
+    const match =
+      savedSearches.find(s => (s.postcode || "").toUpperCase().replace(/\s+/g, "") === pc && (s as any).source === "pathway")
+      || savedSearches.find(s => (s.postcode || "").toUpperCase().replace(/\s+/g, "") === pc);
+    if (match) {
+      autoOpenedRef.current = true;
+      loadSavedSearch(match);
+      params.delete("postcode");
+      const clean = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${clean ? "?" + clean : ""}`);
+    }
+    // loadSavedSearch identity is stable via useCallback; exclude from deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedSearches]);
+
   const saveSearch = useCallback(async (addr: string, pc: string, fh: any[], lh: any[], intel: Record<string, any>, summary: PropertySummaryData) => {
     try {
       const res = await fetch("/api/land-registry/searches", {
@@ -567,13 +593,24 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
   const purchaseDocuments = async (titleNumber: string, docType: "register" | "plan" | "both") => {
     setDocPurchasing(prev => ({ ...prev, [titleNumber + docType]: true }));
     try {
-      const data = await fetchPD("land-registry-documents", { title: titleNumber, documents: docType, extract_proprietor_data: "true" });
-      if (data.status === "success" || data.document_url) {
-        setDocResults(prev => ({ ...prev, [titleNumber + docType]: data }));
-        toast({ title: "Document purchased", description: `${docType === "both" ? "Title Register & Plan" : docType === "register" ? "Title Register" : "Title Plan"} ready for download` });
-      } else {
-        toast({ title: "Purchase failed", description: data.message || "Could not purchase document", variant: "destructive" });
+      const res = await fetch("/api/land-registry/purchase-title", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ title: titleNumber, documents: docType, extract_proprietor_data: true }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.success) {
+        toast({ title: "Purchase failed", description: body.error || `HTTP ${res.status}`, variant: "destructive" });
+        return;
       }
+      const data = body.data || {};
+      setDocResults(prev => ({ ...prev, [titleNumber + docType]: data }));
+      const label = docType === "both" ? "Title Register & Plan" : docType === "register" ? "Title Register" : "Title Plan";
+      toast({
+        title: body.cached ? `${label} (from BGP archive)` : `${label} purchased`,
+        description: body.cached ? `Previously bought ${new Date(body.purchasedAt).toLocaleDateString("en-GB")} — no new charge` : "Ready for download — saved to BGP archive",
+      });
     } catch (e: any) {
       toast({ title: "Purchase failed", description: e.message, variant: "destructive" });
     } finally { setDocPurchasing(prev => ({ ...prev, [titleNumber + docType]: false })); }

@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -814,11 +815,28 @@ export default function WipReport() {
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(new Set());
   const [selectedFiscalYears, setSelectedFiscalYears] = useState<Set<number>>(new Set());
   const [clickFilter, setClickFilter] = useState<ClickFilter>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [appendUploading, setAppendUploading] = useState(false);
   const [syncingXero, setSyncingXero] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback((checked: boolean, rows: WipDealEntry[]) => {
+    if (checked) {
+      setSelectedIds(new Set(rows.filter(e => e.id).map(e => e.id!)));
+    } else {
+      setSelectedIds(new Set());
+    }
+  }, []);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>, append = false) => {
     const file = e.target.files?.[0];
@@ -1314,6 +1332,34 @@ export default function WipReport() {
       ) : (
       <div className="flex gap-4 flex-1 min-h-0">
         <div className="flex-1 overflow-y-auto space-y-4 min-h-0">
+          {/* KPI stat cards — matching Investment Tracker style */}
+          <ScrollArea className="w-full shrink-0">
+            <div className="flex items-center gap-3 pb-1">
+              {[
+                { label: "Total Entries", value: filteredEntries.length.toString(), color: "bg-primary/60" },
+                { label: "Pipeline", value: filteredEntries.filter(e => e.stage === "pipeline").length.toString(), color: "bg-amber-500" },
+                { label: "WIP", value: formatFullCurrency(totalWip), color: "bg-blue-500" },
+                { label: "Invoiced", value: formatFullCurrency(totalInvoiced), color: "bg-green-500" },
+                { label: "Net Fees", value: formatFullCurrency(totalNetFees), color: "bg-emerald-600" },
+                { label: "Unique Deals", value: new Set(filteredEntries.map(e => e.dealId).filter(Boolean)).size.toString(), color: "bg-violet-500" },
+                { label: "Teams", value: new Set(filteredEntries.map(e => e.team).filter(Boolean)).size.toString(), color: "bg-sky-500" },
+              ].map(stat => (
+                <Card key={stat.label} className="flex-shrink-0 min-w-[120px]" data-testid={`stat-${stat.label.toLowerCase().replace(/\s/g, "-")}`}>
+                  <CardContent className="p-3">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-2.5 h-2.5 rounded-full ${stat.color}`} />
+                      <div>
+                        <p className="text-lg font-bold">{stat.value}</p>
+                        <p className="text-xs text-muted-foreground">{stat.label}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <ClickableSummaryTable
               title="Group"
@@ -1387,10 +1433,29 @@ export default function WipReport() {
                 </Badge>
               )}
             </div>
+            {selectedIds.size > 0 && (
+              <div className="flex items-center gap-3 px-4 py-2 bg-primary/5 border-b">
+                <span className="text-xs font-medium">{selectedIds.size} selected</span>
+                <span className="text-xs text-muted-foreground">
+                  {formatFullCurrency(sortedDetailEntries.filter(e => e.id && selectedIds.has(e.id)).reduce((s, e) => s + (e.amtWip || 0) + (e.amtInvoice || 0), 0))} total
+                </span>
+                <Button variant="outline" size="sm" className="h-6 text-[10px]" onClick={() => setSelectedIds(new Set())}>
+                  Clear Selection
+                </Button>
+              </div>
+            )}
             <ScrollableTable minWidth={1400}>
               <table className="w-full">
                 <thead className="bg-gray-50 border-b sticky top-0 z-10 text-sm">
                   <tr>
+                    <th className="w-[36px] px-2 py-2">
+                      <Checkbox
+                        checked={sortedDetailEntries.length > 0 && sortedDetailEntries.every(e => e.id && selectedIds.has(e.id))}
+                        onCheckedChange={(c) => toggleSelectAll(!!c, sortedDetailEntries)}
+                        aria-label="Select all"
+                        data-testid="checkbox-select-all"
+                      />
+                    </th>
                     {[
                       { key: "ref", label: "Deal", width: "w-40" },
                       { key: "groupName", label: "Group", width: "w-28" },
@@ -1421,7 +1486,17 @@ export default function WipReport() {
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-xs">
                   {sortedDetailEntries.map((e, i) => (
-                    <tr key={e.id || i} className="hover:bg-gray-50 group" data-testid={`wip-row-${i}`}>
+                    <tr key={e.id || i} className={`hover:bg-gray-50 group ${e.id && selectedIds.has(e.id) ? "bg-primary/5" : ""}`} data-testid={`wip-row-${i}`}>
+                      <td className="px-2 py-1.5">
+                        {e.id && (
+                          <Checkbox
+                            checked={selectedIds.has(e.id)}
+                            onCheckedChange={() => toggleSelect(e.id!)}
+                            aria-label={`Select ${e.ref || "row"}`}
+                            data-testid={`checkbox-select-${e.id}`}
+                          />
+                        )}
+                      </td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[180px]">
                         {e.dealId ? (
                           <Link href={`/deals/${e.dealId}`}>
@@ -1463,7 +1538,7 @@ export default function WipReport() {
                 </tbody>
                 <tfoot className="bg-gray-100 border-t font-semibold">
                   <tr>
-                    <td colSpan={7} className="px-2 py-1.5 text-gray-800">Total</td>
+                    <td colSpan={8} className="px-2 py-1.5 text-gray-800">Total</td>
                     <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
                       {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
                     </td>

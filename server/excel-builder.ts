@@ -2872,3 +2872,218 @@ export function buildModelForAddin(params: InvestmentModelParams): AddinModelDef
 
   return { sheets };
 }
+
+// ─── Pathway Integration: build a branded model from an agreed business plan ──
+
+interface PathwayBusinessPlanShape {
+  strategy?: string;
+  holdPeriodYrs?: number;
+  targetPurchasePrice?: number;
+  targetNIY?: number;
+  exitPrice?: number;
+  exitYield?: number;
+  exitYear?: number;
+  capex?: { amount?: number; scope?: string };
+  leasing?: { vacantUnits?: string[]; targetRentPsf?: number; reversionNotes?: string };
+  equityCheck?: number;
+  targetIRR?: number;
+  targetMOIC?: number;
+  risks?: string[];
+  keyMoves?: string[];
+  notes?: string;
+}
+
+/**
+ * Create an Excel model run for a Property Pathway investigation, seeded from
+ * the agreed business plan. Returns identifiers the pathway orchestrator stores
+ * in stage7 so the UI can link the user into the model (Model Studio or the
+ * Excel add-in) to continue iterating before locking.
+ *
+ * Implementation notes:
+ * - We need a templateId because excel_model_runs.template_id is NOT NULL, so
+ *   we ensure a singleton "BGP Pathway Investment Model" template row exists
+ *   (the workbook itself is generated each time — not from a template file).
+ * - The initial workbook is saved as run version 1.
+ */
+export async function createPathwayModelRun(args: {
+  runId: string;
+  address: string;
+  plan: PathwayBusinessPlanShape;
+  propertyId?: string | null;
+  totalAreaSqFt?: number;
+  currentRentPA?: number;
+}): Promise<{ modelRunId: string; modelVersionId: string; workbookUrl: string; modelRunName: string; modelVersionLabel: string }>
+{
+  const { db } = await import("./db");
+  const { excelModelRuns, excelModelRunVersions, excelTemplates } = await import("@shared/schema");
+  const { eq } = await import("drizzle-orm");
+  const { saveFileFromDisk } = await import("./file-storage");
+
+  // 1. Ensure singleton pathway template exists — with a real blank workbook on
+  //    disk + in file_storage so clicking the template in Model Studio doesn't
+  //    404. Heal old rows that were created with the "(generated-per-run)"
+  //    placeholder by back-filling a blank workbook too.
+  const PATHWAY_TEMPLATE_NAME = "BGP Pathway Investment Model";
+  const TEMPLATES_DIR = path.join(process.cwd(), "uploads", "templates");
+  if (!fs.existsSync(TEMPLATES_DIR)) fs.mkdirSync(TEMPLATES_DIR, { recursive: true });
+
+  async function ensureBlankTemplateFile(): Promise<string> {
+    const tplFileName = `bgp-pathway-template.xlsx`;
+    const tplFilePath = path.join(TEMPLATES_DIR, tplFileName);
+    if (!fs.existsSync(tplFilePath)) {
+      const blankBuf = await buildInvestmentModel({ modelName: "BGP Pathway Investment Model", assumptions: {} });
+      fs.writeFileSync(tplFilePath, blankBuf);
+    }
+    try {
+      await saveFileFromDisk(
+        `templates/${tplFileName}`,
+        tplFilePath,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        tplFileName,
+      );
+    } catch (err: any) {
+      console.warn("[createPathwayModelRun] failed to persist template to file_storage:", err?.message);
+    }
+    return tplFilePath;
+  }
+
+  let [tpl] = await db.select().from(excelTemplates).where(eq(excelTemplates.name, PATHWAY_TEMPLATE_NAME)).limit(1);
+  if (!tpl) {
+    const tplFilePath = await ensureBlankTemplateFile();
+    [tpl] = await db.insert(excelTemplates).values({
+      name: PATHWAY_TEMPLATE_NAME,
+      description: "Auto-generated branded investment model for Property Pathway runs. Seeded from the agreed business plan.",
+      filePath: tplFilePath,
+      originalFileName: "bgp-pathway-model.xlsx",
+      inputMapping: "{}",
+      outputMapping: "{}",
+      version: 1,
+    }).returning();
+  } else if (!tpl.filePath || tpl.filePath === "(generated-per-run)" || !fs.existsSync(tpl.filePath)) {
+    const tplFilePath = await ensureBlankTemplateFile();
+    [tpl] = await db.update(excelTemplates)
+      .set({ filePath: tplFilePath })
+      .where(eq(excelTemplates.id, tpl.id))
+      .returning();
+  }
+
+  // 2. Map business plan → excel-builder assumptions
+  const plan = args.plan || {};
+  const assumptions: Record<string, any> = {};
+  if (typeof plan.targetPurchasePrice === "number") assumptions.purchasePrice = plan.targetPurchasePrice;
+  if (typeof plan.holdPeriodYrs === "number") assumptions.holdPeriodYears = plan.holdPeriodYrs;
+  if (typeof plan.exitYield === "number") assumptions.exitCapRate = plan.exitYield;
+  if (plan.leasing && typeof plan.leasing.targetRentPsf === "number") assumptions.ervPerSqFt = plan.leasing.targetRentPsf;
+  // NIY isn't a direct input — we derive passing rent from price * NIY if we have both
+  if (typeof plan.targetPurchasePrice === "number" && typeof plan.targetNIY === "number") {
+    assumptions.currentRentPA = Math.round(plan.targetPurchasePrice * plan.targetNIY);
+  }
+  // Area + passing rent pulled from Stage 1 (tenancy units / aiFacts / VOA)
+  // when the plan doesn't carry them. Overrides the 5,000 sq ft default,
+  // which was sinking things like 18-22 Haymarket.
+  if (typeof args.totalAreaSqFt === "number" && args.totalAreaSqFt > 0) {
+    assumptions.totalAreaSqFt = Math.round(args.totalAreaSqFt);
+  }
+  if (
+    (assumptions.currentRentPA == null) &&
+    typeof args.currentRentPA === "number" &&
+    args.currentRentPA > 0
+  ) {
+    assumptions.currentRentPA = Math.round(args.currentRentPA);
+  }
+
+  // 3. Build the workbook (branded, BGP palette + logo)
+  //    Short-form the address for the model name — full Google-geocoded strings
+  //    ("18, 22 Haymarket, London SW1Y 4DG, UK") are too noisy for a card title.
+  //    Keep the first meaningful segment (building + street).
+  const shortAddress = (() => {
+    const cleaned = args.address
+      .replace(/,\s*UK\b/i, "")
+      .replace(/,\s*United Kingdom\b/i, "")
+      .replace(/\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/gi, "")
+      .trim();
+    const head = cleaned.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 2).join(" ");
+    return head.replace(/\s+/g, " ").trim() || args.address;
+  })();
+  const modelName = `${shortAddress} · Pathway Model`;
+  const buffer = await buildInvestmentModel({ modelName, assumptions });
+
+  // 4. Write to disk — use the server's uploads/model-runs folder so existing
+  //    model-studio download + version endpoints can serve the file.
+  const RUNS_DIR = path.join(process.cwd(), "uploads", "runs");
+  if (!fs.existsSync(RUNS_DIR)) fs.mkdirSync(RUNS_DIR, { recursive: true });
+  const safeAddress = args.address.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "_").slice(0, 60) || "pathway";
+  const fileName = `pathway-${args.runId.slice(0, 8)}-${Date.now()}-${safeAddress}.xlsx`;
+  const filePath = path.join(RUNS_DIR, fileName);
+  fs.writeFileSync(filePath, buffer);
+  // Persist to file_storage (Postgres) so the workbook survives Railway
+  // container restarts — without this, ensureRunFile can't find it.
+  try {
+    await saveFileFromDisk(
+      `runs/${fileName}`,
+      filePath,
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      fileName,
+    );
+  } catch (err: any) {
+    console.warn("[createPathwayModelRun] failed to persist run to file_storage:", err?.message);
+  }
+
+  // 5. Insert model run row
+  const [run] = await db.insert(excelModelRuns).values({
+    templateId: tpl.id,
+    name: modelName,
+    inputValues: JSON.stringify({
+      pathwayRunId: args.runId,
+      plan: args.plan,
+      assumptions,
+    }),
+    outputValues: JSON.stringify({}),
+    generatedFilePath: filePath,
+    status: "draft",
+    propertyId: args.propertyId || undefined,
+  }).returning();
+
+  // 6. Insert version 1 row. Version note summarises the key numbers so the
+  //    model history reads like "v1 · 20 Apr · £60m / 4.75% NIY / 15% IRR"
+  //    rather than an opaque UUID.
+  const versionDate = new Date().toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  const priceStr = typeof plan.targetPurchasePrice === "number"
+    ? `£${(plan.targetPurchasePrice / 1_000_000).toFixed(plan.targetPurchasePrice >= 10_000_000 ? 0 : 1)}m`
+    : null;
+  const niyStr = typeof plan.targetNIY === "number" ? `${(plan.targetNIY * 100).toFixed(2)}% NIY` : null;
+  const irrStr = typeof plan.targetIRR === "number" ? `${(plan.targetIRR * 100).toFixed(1)}% IRR` : null;
+  const versionBits = [`v1`, versionDate, priceStr, niyStr, irrStr].filter(Boolean);
+  const versionNote = versionBits.join(" · ");
+  const [version] = await db.insert(excelModelRunVersions).values({
+    modelRunId: run.id,
+    version: 1,
+    filePath,
+    inputValues: { pathwayRunId: args.runId, plan: args.plan, assumptions } as any,
+    outputValues: {} as any,
+    notes: versionNote,
+  }).returning();
+
+  // 7. Link back onto the pathway run (sets pathway.modelRunId too so existing UI works)
+  try {
+    const { propertyPathwayRuns } = await import("@shared/schema");
+    await db.update(propertyPathwayRuns)
+      .set({ modelRunId: run.id, updatedAt: new Date() })
+      .where(eq(propertyPathwayRuns.id, args.runId));
+  } catch (err: any) {
+    console.warn("[createPathwayModelRun] failed to back-link pathway:", err?.message);
+  }
+
+  // Workbook URL — direct download endpoint so clicking "Open in Excel"
+  // actually opens the xlsx in Excel (desktop or Online), rather than dumping
+  // the user on the Model Studio landing page.
+  const workbookUrl = `/api/models/runs/${run.id}/download`;
+
+  return {
+    modelRunId: run.id,
+    modelVersionId: version.id,
+    workbookUrl,
+    modelRunName: modelName,
+    modelVersionLabel: versionNote,
+  };
+}

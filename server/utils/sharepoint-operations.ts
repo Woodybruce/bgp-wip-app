@@ -50,6 +50,61 @@ export async function getSharePointDriveId(token: string): Promise<string | null
 }
 
 /**
+ * Look up a folder at `parentPath/folderName` and return it if it exists,
+ * without creating anything. Returns null if not found.
+ */
+export async function lookupSharePointFolderIfExists(
+  args: { folderName: string; parentPath?: string },
+  req: Request
+): Promise<{ name: string; path: string; webUrl: string; id: string } | null> {
+  const token = await getValidMsToken(req);
+  if (!token) return null;
+  const driveId = await getSharePointDriveId(token);
+  if (!driveId) return null;
+
+  // Apply the team-folder prefix mapping (mirrors executeCreateSharePointFolder)
+  let parentPath = args.parentPath || "";
+  const teamFolderMappings: Record<string, string> = {
+    "Investment": "BGP share drive/Investment",
+    "London": "BGP share drive/London Leasing",
+    "London Leasing": "BGP share drive/London Leasing",
+    "National": "BGP share drive/National Leasing",
+    "National Leasing": "BGP share drive/National Leasing",
+    "Development": "BGP share drive/Development & Re-purposing",
+    "Tenant Rep": "BGP share drive/Tenant Rep",
+    "Lease Advisory": "BGP share drive/Lease Advisory",
+    "Office": "BGP share drive/Office - Corporate",
+    "Corporate": "BGP share drive/Office - Corporate",
+  };
+  if (teamFolderMappings[parentPath]) {
+    parentPath = teamFolderMappings[parentPath];
+  } else if (parentPath && !parentPath.startsWith("BGP share drive")) {
+    parentPath = `BGP share drive/${parentPath}`;
+  }
+
+  const fullPath = parentPath ? `${parentPath}/${args.folderName}` : args.folderName;
+  const encodedPath = encodeURIComponent(fullPath);
+
+  try {
+    const resp = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedPath}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!resp.ok) return null;
+    const item = await resp.json();
+    if (!item?.folder) return null;
+    return {
+      name: item.name,
+      path: fullPath,
+      webUrl: item.webUrl,
+      id: item.id,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Create a SharePoint folder
  */
 export async function executeCreateSharePointFolder(
@@ -86,10 +141,40 @@ export async function executeCreateSharePointFolder(
   }
 
   const fullPath = parentPath ? `${parentPath}/${args.folderName}` : args.folderName;
-  const encodedPath = encodeURIComponent(fullPath);
+  const encodedParent = encodeURIComponent(parentPath);
+  const encodedFullPath = encodeURIComponent(fullPath);
 
+  // First: check if folder already exists at the exact path — if so, reuse it
+  try {
+    const lookup = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedFullPath}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (lookup.ok) {
+      const existing = await lookup.json();
+      if (existing?.folder) {
+        return {
+          success: true,
+          folder: {
+            name: existing.name,
+            path: fullPath,
+            webUrl: existing.webUrl,
+            id: existing.id,
+          },
+          message: `Folder "${args.folderName}" already exists at: ${fullPath} — reusing`,
+          existed: true,
+        };
+      }
+    }
+  } catch {
+    // fall through to create
+  }
+
+  const createUrl = parentPath
+    ? `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedParent}:/children`
+    : `https://graph.microsoft.com/v1.0/drives/${driveId}/root/children`;
   const resp = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedPath}:/children`,
+    createUrl,
     {
       method: "POST",
       headers: {
@@ -99,7 +184,7 @@ export async function executeCreateSharePointFolder(
       body: JSON.stringify({
         name: args.folderName,
         folder: {},
-        "@microsoft.graph.conflictBehavior": "rename"
+        "@microsoft.graph.conflictBehavior": "fail"
       })
     }
   );
@@ -119,6 +204,145 @@ export async function executeCreateSharePointFolder(
       id: result.id
     },
     message: `Created folder "${args.folderName}" at: ${fullPath}`
+  };
+}
+
+/**
+ * Upload a file (Buffer) to SharePoint. Uses a direct PUT for files ≤4MB and
+ * an upload session (chunked) for larger files. Returns the created drive item.
+ */
+export async function executeUploadFileToSharePoint(
+  args: { folderPath: string; filename: string; content: Buffer; contentType?: string },
+  req: Request
+): Promise<{ success: boolean; file: { name: string; webUrl: string; id: string; path: string; sizeMB: number }; message: string }> {
+  const token = await getValidMsToken(req);
+  if (!token) throw new Error("Failed to authenticate with Microsoft");
+
+  const driveId = await getSharePointDriveId(token);
+  if (!driveId) throw new Error("Failed to access SharePoint site");
+
+  // Apply the same team-folder prefix mapping as executeCreateSharePointFolder
+  let folderPath = args.folderPath || "";
+  const teamFolderMappings: Record<string, string> = {
+    "Investment": "BGP share drive/Investment",
+    "London": "BGP share drive/London Leasing",
+    "London Leasing": "BGP share drive/London Leasing",
+    "National": "BGP share drive/National Leasing",
+    "National Leasing": "BGP share drive/National Leasing",
+    "Development": "BGP share drive/Development & Re-purposing",
+    "Tenant Rep": "BGP share drive/Tenant Rep",
+    "Lease Advisory": "BGP share drive/Lease Advisory",
+    "Office": "BGP share drive/Office - Corporate",
+    "Corporate": "BGP share drive/Office - Corporate",
+  };
+  const firstSeg = folderPath.split("/")[0];
+  if (teamFolderMappings[firstSeg]) {
+    folderPath = teamFolderMappings[firstSeg] + folderPath.slice(firstSeg.length);
+  } else if (folderPath && !folderPath.startsWith("BGP share drive")) {
+    folderPath = `BGP share drive/${folderPath}`;
+  }
+
+  const filePath = `${folderPath}/${args.filename}`.replace(/\/{2,}/g, "/");
+  const encodedFilePath = encodeURIComponent(filePath);
+
+  const SIMPLE_UPLOAD_LIMIT = 4 * 1024 * 1024; // 4 MB
+
+  if (args.content.length <= SIMPLE_UPLOAD_LIMIT) {
+    // Simple one-shot upload
+    const resp = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedFilePath}:/content`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": args.contentType || "application/octet-stream",
+        },
+        body: args.content,
+      }
+    );
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`Upload failed (simple): ${resp.status} ${text.slice(0, 300)}`);
+    }
+    const result = await resp.json();
+    return {
+      success: true,
+      file: {
+        name: result.name,
+        webUrl: result.webUrl,
+        id: result.id,
+        path: filePath,
+        sizeMB: +(args.content.length / 1024 / 1024).toFixed(2),
+      },
+      message: `Uploaded ${args.filename} (${(args.content.length / 1024 / 1024).toFixed(1)}MB)`,
+    };
+  }
+
+  // Chunked upload via upload session
+  const sessionResp = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodedFilePath}:/createUploadSession`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        item: { "@microsoft.graph.conflictBehavior": "replace", name: args.filename },
+      }),
+    }
+  );
+  if (!sessionResp.ok) {
+    const text = await sessionResp.text();
+    throw new Error(`Failed to create upload session: ${sessionResp.status} ${text.slice(0, 300)}`);
+  }
+  const session = await sessionResp.json();
+  const uploadUrl: string = session.uploadUrl;
+
+  // Upload in 5 MB chunks (must be a multiple of 320 KiB per Graph docs)
+  const CHUNK_SIZE = 5 * 1024 * 1024;
+  const total = args.content.length;
+  let offset = 0;
+  let finalItem: any = null;
+
+  while (offset < total) {
+    const end = Math.min(offset + CHUNK_SIZE, total) - 1;
+    const chunk = args.content.subarray(offset, end + 1);
+    const chunkResp = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Length": String(chunk.length),
+        "Content-Range": `bytes ${offset}-${end}/${total}`,
+      },
+      body: chunk,
+    });
+    if (chunkResp.status === 200 || chunkResp.status === 201) {
+      finalItem = await chunkResp.json();
+      break;
+    }
+    if (chunkResp.status !== 202) {
+      const text = await chunkResp.text();
+      // Best-effort abort of the session
+      try { await fetch(uploadUrl, { method: "DELETE" }); } catch {}
+      throw new Error(`Chunk upload failed at offset ${offset}: ${chunkResp.status} ${text.slice(0, 300)}`);
+    }
+    offset = end + 1;
+  }
+
+  if (!finalItem) {
+    throw new Error("Upload session completed with no final item returned");
+  }
+
+  return {
+    success: true,
+    file: {
+      name: finalItem.name,
+      webUrl: finalItem.webUrl,
+      id: finalItem.id,
+      path: filePath,
+      sizeMB: +(total / 1024 / 1024).toFixed(2),
+    },
+    message: `Uploaded ${args.filename} (${(total / 1024 / 1024).toFixed(1)}MB, chunked)`,
   };
 }
 

@@ -3,12 +3,13 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Upload, Ruler, SquareDashedBottom, MousePointer, ZoomIn, ZoomOut,
   RotateCcw, Loader2, Move, Trash2, FileText, Info, Maximize2,
-  Undo2, Redo2,
+  Undo2, Redo2, Scaling, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
 interface DxfEntity {
   type: string;
@@ -36,7 +37,15 @@ interface Measurement {
   unit: string;
 }
 
-type Tool = "pan" | "measure" | "area";
+type Tool = "pan" | "measure" | "area" | "calibrate";
+
+// Metres → target unit factors. PDF calibration is stored as metres-per-point.
+const METRE_TO_UNIT: Record<string, number> = {
+  mm: 1000,
+  m: 1,
+  ft: 3.28084,
+  in: 39.3701,
+};
 
 const DXF_COLORS: Record<number, string> = {
   0: "#000000", 1: "#FF0000", 2: "#FFFF00", 3: "#00FF00", 4: "#00FFFF",
@@ -152,6 +161,42 @@ export default function CadMeasurePage() {
   const [unitLabel, setUnitLabel] = useState("mm");
   const [mouseWorldPos, setMouseWorldPos] = useState<{ x: number; y: number } | null>(null);
   const [entityCount, setEntityCount] = useState(0);
+  const [shiftHeld, setShiftHeld] = useState(false);
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.key === "Shift") setShiftHeld(true); };
+    const up = (e: KeyboardEvent) => { if (e.key === "Shift") setShiftHeld(false); };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, []);
+
+  const orthoSnap = useCallback((from: { x: number; y: number }, to: { x: number; y: number }) => {
+    const dx = Math.abs(to.x - from.x);
+    const dy = Math.abs(to.y - from.y);
+    return dx > dy ? { x: to.x, y: from.y } : { x: from.x, y: to.y };
+  }, []);
+
+  // PDF state
+  const [pdfImage, setPdfImage] = useState<HTMLCanvasElement | null>(null);
+  const [pdfDoc, setPdfDoc] = useState<any>(null);
+  const [pdfPageNum, setPdfPageNum] = useState(1);
+  const [pdfNumPages, setPdfNumPages] = useState(0);
+  const [calibration, setCalibration] = useState<number | null>(null);
+  const [pendingCalibration, setPendingCalibration] = useState<{ points: { x: number; y: number }[]; pixelDistance: number } | null>(null);
+  const [calibInput, setCalibInput] = useState({ value: "", unit: "m" });
+
+  const isPdfMode = !!pdfImage;
+
+  // Effective unit-scale: for DXF uses the manual mm-based unitScale. For PDF w/ calibration,
+  // metresPerPoint × metresToTargetFactor. Uncalibrated PDF shows raw "pt".
+  const effectiveUnitScale = isPdfMode
+    ? (calibration !== null ? calibration * (METRE_TO_UNIT[unitLabel] ?? 1) : 1)
+    : unitScale;
+  const effectiveUnitLabel = isPdfMode && calibration === null ? "pt" : unitLabel;
 
   const screenToWorld = useCallback((sx: number, sy: number) => {
     if (!dxfData) return { x: 0, y: 0 };
@@ -201,6 +246,12 @@ export default function CadMeasurePage() {
       sx: (x - bounds.minX) * s + ox,
       sy: (bounds.maxY - y) * s + oy,
     });
+
+    // PDF background (if loaded). Drawn before entities so measurements sit on top.
+    if (pdfImage) {
+      const tl = toScreen(bounds.minX, bounds.maxY);
+      ctx.drawImage(pdfImage, tl.sx, tl.sy, drawW * s, drawH * s);
+    }
 
     ctx.lineWidth = Math.max(0.5, 1 / scale);
 
@@ -262,8 +313,8 @@ export default function CadMeasurePage() {
         const labelPt = toScreen(m.points[midIdx].x, m.points[midIdx].y);
         ctx.font = "bold 12px Inter, sans-serif";
         const label = m.type === "distance"
-          ? `${(m.value * unitScale).toFixed(2)} ${unitLabel}`
-          : `${(m.value * unitScale * unitScale).toFixed(2)} ${unitLabel}\u00B2`;
+          ? `${(m.value * effectiveUnitScale).toFixed(2)} ${effectiveUnitLabel}`
+          : `${(m.value * effectiveUnitScale * effectiveUnitScale).toFixed(2)} ${effectiveUnitLabel}\u00B2`;
         const tw = ctx.measureText(label).width;
         ctx.fillStyle = isDark ? "rgba(30,41,59,0.9)" : "rgba(255,255,255,0.9)";
         ctx.fillRect(labelPt.sx - tw / 2 - 4, labelPt.sy - 20, tw + 8, 18);
@@ -273,8 +324,9 @@ export default function CadMeasurePage() {
     }
 
     if (currentPoints.length > 0) {
-      ctx.strokeStyle = activeTool === "measure" ? "#f59e0b" : "#8b5cf6";
-      ctx.fillStyle = activeTool === "measure" ? "#f59e0b" : "#8b5cf6";
+      const toolColor = activeTool === "measure" ? "#f59e0b" : activeTool === "calibrate" ? "#10b981" : "#8b5cf6";
+      ctx.strokeStyle = toolColor;
+      ctx.fillStyle = toolColor;
       ctx.lineWidth = 2;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
@@ -284,7 +336,9 @@ export default function CadMeasurePage() {
         else ctx.lineTo(p.sx, p.sy);
       }
       if (mouseWorldPos) {
-        const mp = toScreen(mouseWorldPos.x, mouseWorldPos.y);
+        const last = currentPoints[currentPoints.length - 1];
+        const mw = shiftHeld && last ? orthoSnap(last, mouseWorldPos) : mouseWorldPos;
+        const mp = toScreen(mw.x, mw.y);
         ctx.lineTo(mp.sx, mp.sy);
       }
       ctx.stroke();
@@ -300,14 +354,14 @@ export default function CadMeasurePage() {
 
     ctx.fillStyle = isDark ? "#64748b" : "#94a3b8";
     ctx.font = "11px Inter, sans-serif";
-    ctx.fillText(`Scale: ${scale.toFixed(1)}x | ${entities.length} entities`, 10, canvas.height - 10);
+    ctx.fillText(`Scale: ${scale.toFixed(1)}x | ${isPdfMode ? `${pdfNumPages} page${pdfNumPages === 1 ? "" : "s"}` : `${entities.length} entities`}`, 10, canvas.height - 10);
     if (mouseWorldPos) {
       ctx.fillText(
-        `X: ${(mouseWorldPos.x * unitScale).toFixed(1)} Y: ${(mouseWorldPos.y * unitScale).toFixed(1)} ${unitLabel}`,
+        `X: ${(mouseWorldPos.x * effectiveUnitScale).toFixed(1)} Y: ${(mouseWorldPos.y * effectiveUnitScale).toFixed(1)} ${effectiveUnitLabel}`,
         10, canvas.height - 26
       );
     }
-  }, [dxfData, scale, offset, measurements, currentPoints, mouseWorldPos, activeTool, unitScale, unitLabel]);
+  }, [dxfData, pdfImage, pdfNumPages, isPdfMode, scale, offset, measurements, currentPoints, mouseWorldPos, activeTool, effectiveUnitScale, effectiveUnitLabel, shiftHeld, orthoSnap]);
 
   useEffect(() => { drawCanvas(); }, [drawCanvas]);
 
@@ -335,12 +389,43 @@ export default function CadMeasurePage() {
     return () => { document.head.removeChild(script); };
   }, []);
 
+  const renderPdfPage = useCallback(async (doc: any, pageNum: number): Promise<{ canvas: HTMLCanvasElement; width: number; height: number }> => {
+    const page = await doc.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 2 });
+    const off = document.createElement("canvas");
+    off.width = viewport.width;
+    off.height = viewport.height;
+    const octx = off.getContext("2d")!;
+    await page.render({ canvasContext: octx, viewport }).promise;
+    const vp1 = page.getViewport({ scale: 1 });
+    return { canvas: off, width: vp1.width, height: vp1.height };
+  }, []);
+
   const handleFileUpload = async (file: File) => {
     setLoading(true);
     try {
-      const isDwg = file.name.toLowerCase().endsWith(".dwg");
+      const name = file.name.toLowerCase();
+      const isPdf = name.endsWith(".pdf");
+      const isDwg = name.endsWith(".dwg");
 
-      if (isDwg) {
+      if (isPdf) {
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+          "pdfjs-dist/build/pdf.worker.mjs",
+          import.meta.url
+        ).href;
+        const buf = await file.arrayBuffer();
+        const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+        const { canvas: pageCanvas, width: pdfW, height: pdfH } = await renderPdfPage(doc, 1);
+        setPdfDoc(doc);
+        setPdfImage(pageCanvas);
+        setPdfPageNum(1);
+        setPdfNumPages(doc.numPages);
+        setDxfData({ entities: [], bounds: { minX: 0, minY: 0, maxX: pdfW, maxY: pdfH } });
+        setFileName(file.name);
+        setEntityCount(0);
+        setCalibration(null);
+      } else if (isDwg) {
         const formData = new FormData();
         formData.append("file", file);
         const resp = await fetch("/api/cad/convert-dwg", { method: "POST", body: formData });
@@ -350,12 +435,14 @@ export default function CadMeasurePage() {
         }
         const { entities: rawEntities } = await resp.json();
         const parsed = buildParsedDxf(rawEntities);
+        setPdfImage(null); setPdfDoc(null); setPdfNumPages(0);
         setDxfData(parsed);
         setFileName(file.name);
         setEntityCount(parsed.entities.length);
       } else {
         const text = await file.text();
         const parsed = parseDxfContent(text);
+        setPdfImage(null); setPdfDoc(null); setPdfNumPages(0);
         setDxfData(parsed);
         setFileName(file.name);
         setEntityCount(parsed.entities.length);
@@ -365,27 +452,49 @@ export default function CadMeasurePage() {
       setOffset({ x: 0, y: 0 });
       setMeasurements([]);
       setCurrentPoints([]);
-      toast({ title: "File loaded", description: `${entityCount || "?"} entities from ${file.name}` });
+      toast({
+        title: "File loaded",
+        description: isPdf
+          ? `PDF loaded — use Set Scale to calibrate real-world dimensions`
+          : `${entityCount || "?"} entities from ${file.name}`,
+      });
     } catch (e: any) {
       toast({ title: "Failed to parse file", description: e.message, variant: "destructive" });
     }
     setLoading(false);
   };
 
+  const gotoPdfPage = useCallback(async (newPageNum: number) => {
+    if (!pdfDoc || newPageNum < 1 || newPageNum > pdfNumPages) return;
+    setLoading(true);
+    try {
+      const { canvas: pageCanvas, width: pdfW, height: pdfH } = await renderPdfPage(pdfDoc, newPageNum);
+      setPdfImage(pageCanvas);
+      setPdfPageNum(newPageNum);
+      setDxfData({ entities: [], bounds: { minX: 0, minY: 0, maxX: pdfW, maxY: pdfH } });
+      setMeasurements([]);
+      setCurrentPoints([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [pdfDoc, pdfNumPages, renderPdfPage]);
+
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
     const name = file?.name?.toLowerCase() ?? "";
-    if (file && (name.endsWith(".dxf") || name.endsWith(".dwg"))) {
+    if (file && (name.endsWith(".dxf") || name.endsWith(".dwg") || name.endsWith(".pdf"))) {
       handleFileUpload(file);
     } else {
-      toast({ title: "Unsupported file", description: "Please drop a .dxf or .dwg file", variant: "destructive" });
+      toast({ title: "Unsupported file", description: "Please drop a .dxf, .dwg or .pdf file", variant: "destructive" });
     }
   };
 
   const handleCanvasClick = (e: React.MouseEvent) => {
     if (!dxfData || activeTool === "pan") return;
-    const world = screenToWorld(e.clientX, e.clientY);
+    const raw = screenToWorld(e.clientX, e.clientY);
+    const prev = currentPoints[currentPoints.length - 1];
+    const world = e.shiftKey && prev ? orthoSnap(prev, raw) : raw;
 
     if (activeTool === "measure") {
       if (currentPoints.length === 0) {
@@ -405,6 +514,16 @@ export default function CadMeasurePage() {
       }
     } else if (activeTool === "area") {
       setCurrentPoints(prev => [...prev, world]);
+    } else if (activeTool === "calibrate") {
+      if (currentPoints.length === 0) {
+        setCurrentPoints([world]);
+      } else {
+        const p1 = currentPoints[0];
+        const pixelDist = Math.sqrt((world.x - p1.x) ** 2 + (world.y - p1.y) ** 2);
+        setPendingCalibration({ points: [p1, world], pixelDistance: pixelDist });
+        setCalibInput({ value: "", unit: unitLabel in METRE_TO_UNIT ? unitLabel : "m" });
+        setCurrentPoints([]);
+      }
     }
   };
 
@@ -465,21 +584,29 @@ export default function CadMeasurePage() {
     setCurrentPoints([]);
   };
 
+  // Refs mirror the latest state so keyboard handlers don't see stale values
+  // when Ctrl+Z/Y fires rapidly (key auto-repeat) before React re-renders.
+  const measurementsRef = useRef(measurements);
+  const redoStackRef = useRef(redoStack);
+  const currentPointsRef = useRef(currentPoints);
+  useEffect(() => { measurementsRef.current = measurements; }, [measurements]);
+  useEffect(() => { redoStackRef.current = redoStack; }, [redoStack]);
+  useEffect(() => { currentPointsRef.current = currentPoints; }, [currentPoints]);
+
   const handleUndo = () => {
-    // If the user is mid-polygon (area tool), undo the last clicked point first
-    if (currentPoints.length > 0) {
+    if (currentPointsRef.current.length > 0) {
       setCurrentPoints(prev => prev.slice(0, -1));
       return;
     }
-    if (measurements.length === 0) return;
-    const last = measurements[measurements.length - 1];
+    if (measurementsRef.current.length === 0) return;
+    const last = measurementsRef.current[measurementsRef.current.length - 1];
     setMeasurements(prev => prev.slice(0, -1));
     setRedoStack(prev => [...prev, last]);
   };
 
   const handleRedo = () => {
-    if (redoStack.length === 0) return;
-    const next = redoStack[redoStack.length - 1];
+    if (redoStackRef.current.length === 0) return;
+    const next = redoStackRef.current[redoStackRef.current.length - 1];
     setRedoStack(prev => prev.slice(0, -1));
     setMeasurements(prev => [...prev, next]);
   };
@@ -503,15 +630,15 @@ export default function CadMeasurePage() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [measurements, redoStack, currentPoints]);
+  }, []);
 
   const totalArea = measurements
     .filter(m => m.type === "area")
-    .reduce((sum, m) => sum + m.value * unitScale * unitScale, 0);
+    .reduce((sum, m) => sum + m.value * effectiveUnitScale * effectiveUnitScale, 0);
 
   const totalDistance = measurements
     .filter(m => m.type === "distance")
-    .reduce((sum, m) => sum + m.value * unitScale, 0);
+    .reduce((sum, m) => sum + m.value * effectiveUnitScale, 0);
 
   return (
     <>
@@ -553,7 +680,7 @@ export default function CadMeasurePage() {
             <label className="cursor-pointer">
               <input
                 type="file"
-                accept=".dxf,.dwg"
+                accept=".dxf,.dwg,.pdf"
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
@@ -563,7 +690,7 @@ export default function CadMeasurePage() {
               />
               <Button variant="outline" size="sm" className="gap-1.5 pointer-events-none" data-testid="button-upload-dxf">
                 <Upload className="w-3.5 h-3.5" />
-                {fileName ? "Change File" : "Upload DXF/DWG"}
+                {fileName ? "Change File" : "Upload DXF/DWG/PDF"}
               </Button>
             </label>
           </div>
@@ -575,6 +702,7 @@ export default function CadMeasurePage() {
               { tool: "pan" as Tool, icon: Move, label: "Pan" },
               { tool: "measure" as Tool, icon: Ruler, label: "Measure" },
               { tool: "area" as Tool, icon: SquareDashedBottom, label: "Area" },
+              ...(isPdfMode ? [{ tool: "calibrate" as Tool, icon: Scaling, label: "Set Scale" }] : []),
             ]).map(({ tool, icon: Icon, label }) => (
               <button
                 key={tool}
@@ -663,15 +791,15 @@ export default function CadMeasurePage() {
                   <div className="w-16 h-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
                     <FileText className="w-8 h-8 text-primary/60" />
                   </div>
-                  <h2 className="text-lg font-semibold mb-2">Drop a DXF or DWG file here</h2>
+                  <h2 className="text-lg font-semibold mb-2">Drop a DXF, DWG or PDF file here</h2>
                   <p className="text-sm text-muted-foreground mb-4">
-                    Or click "Upload DXF/DWG" above. Supports AutoCAD .dwg and .dxf formats.
+                    Or click "Upload DXF/DWG/PDF" above. Scaled PDFs work too — load one, click Set Scale, mark a known dimension, and all measurements become real-world.
                   </p>
                   <div className="flex items-start gap-2 text-left bg-muted/50 rounded-lg p-3 text-xs text-muted-foreground">
                     <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
                     <div>
                       <p className="font-medium text-foreground mb-1">Supported features</p>
-                      <p>Lines, polylines, circles, arcs, ellipses. Use the Ruler tool to measure point-to-point distances, or the Area tool to click corners and calculate floor areas.</p>
+                      <p>CAD files: lines, polylines, circles, arcs, ellipses. PDFs: scan architect plans, calibrate with a known dimension (e.g. a door width), then measure floor areas in m² or sq ft directly.</p>
                     </div>
                   </div>
                 </div>
@@ -706,6 +834,50 @@ export default function CadMeasurePage() {
                 {activeTool === "area" && (
                   <p>{currentPoints.length < 3 ? `Click corners (${currentPoints.length}/3+ points)` : "Double-click to finish area"}</p>
                 )}
+                {activeTool === "calibrate" && (
+                  <p>{currentPoints.length === 0 ? "Click one end of a known dimension" : "Click the other end"}</p>
+                )}
+                {(activeTool === "measure" || activeTool === "area" || activeTool === "calibrate") && currentPoints.length > 0 && (
+                  <p className="text-[10px] text-muted-foreground mt-1">Hold <kbd className="px-1 border rounded bg-muted">⇧ Shift</kbd> to lock horizontal/vertical</p>
+                )}
+              </div>
+            )}
+
+            {isPdfMode && pdfNumPages > 1 && (
+              <div className="absolute bottom-3 left-1/2 -translate-x-1/2 bg-background/90 backdrop-blur border rounded-lg flex items-center gap-1 px-2 py-1 shadow-sm">
+                <button className="p-1 rounded hover:bg-muted disabled:opacity-30" onClick={() => gotoPdfPage(pdfPageNum - 1)} disabled={pdfPageNum <= 1 || loading} title="Previous page">
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-xs px-2">Page {pdfPageNum} / {pdfNumPages}</span>
+                <button className="p-1 rounded hover:bg-muted disabled:opacity-30" onClick={() => gotoPdfPage(pdfPageNum + 1)} disabled={pdfPageNum >= pdfNumPages || loading} title="Next page">
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {isPdfMode && calibration !== null && (
+              <div className="absolute top-3 right-3 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg px-3 py-1.5 text-xs shadow-sm">
+                <span className="text-emerald-700 dark:text-emerald-400 font-medium">Scale set</span>
+                <span className="text-muted-foreground ml-2">1 pt = {(calibration * 1000).toFixed(3)} mm</span>
+                <button className="ml-2 text-red-600 hover:underline" onClick={() => setCalibration(null)}>Reset</button>
+              </div>
+            )}
+            {isPdfMode && calibration === null && (
+              <div className="absolute top-3 right-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-1.5 text-xs shadow-sm">
+                {activeTool === "calibrate" ? (
+                  <>
+                    <span className="text-amber-800 dark:text-amber-400 font-medium">Calibrating</span>
+                    <span className="text-muted-foreground ml-2">
+                      {currentPoints.length === 0 && "Click the first point of a known dimension"}
+                      {currentPoints.length === 1 && "Now click the second point"}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-amber-800 dark:text-amber-400 font-medium">Not calibrated</span>
+                    <span className="text-muted-foreground ml-2">Click <Scaling className="inline w-3 h-3 mx-0.5" /> Set Scale in the toolbar</span>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -717,7 +889,7 @@ export default function CadMeasurePage() {
               {totalDistance > 0 && (
                 <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-2.5 mb-2">
                   <p className="text-[10px] text-red-600 font-medium uppercase tracking-wider">Total Distance</p>
-                  <p className="text-lg font-bold text-red-700 dark:text-red-400">{totalDistance.toFixed(2)} {unitLabel}</p>
+                  <p className="text-lg font-bold text-red-700 dark:text-red-400">{totalDistance.toFixed(2)} {effectiveUnitLabel}</p>
                 </div>
               )}
 
@@ -725,9 +897,9 @@ export default function CadMeasurePage() {
                 <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg p-2.5 mb-2">
                   <p className="text-[10px] text-blue-600 font-medium uppercase tracking-wider">Total Area</p>
                   <p className="text-lg font-bold text-blue-700 dark:text-blue-400">
-                    {totalArea.toFixed(2)} {unitLabel}&sup2;
-                    {unitLabel === "m" && <span className="text-xs font-normal ml-1">({(totalArea * 10.7639).toFixed(0)} sq ft)</span>}
-                    {unitLabel === "ft" && <span className="text-xs font-normal ml-1">({(totalArea * 0.0929).toFixed(2)} m&sup2;)</span>}
+                    {totalArea.toFixed(2)} {effectiveUnitLabel}&sup2;
+                    {effectiveUnitLabel === "m" && <span className="text-xs font-normal ml-1">({(totalArea * 10.7639).toFixed(0)} sq ft)</span>}
+                    {effectiveUnitLabel === "ft" && <span className="text-xs font-normal ml-1">({(totalArea * 0.0929).toFixed(2)} m&sup2;)</span>}
                   </p>
                 </div>
               )}
@@ -743,8 +915,8 @@ export default function CadMeasurePage() {
                       )}
                       <span className="font-medium">
                         {m.type === "distance"
-                          ? `${(m.value * unitScale).toFixed(2)} ${unitLabel}`
-                          : `${(m.value * unitScale * unitScale).toFixed(2)} ${unitLabel}\u00B2`
+                          ? `${(m.value * effectiveUnitScale).toFixed(2)} ${effectiveUnitLabel}`
+                          : `${(m.value * effectiveUnitScale * effectiveUnitScale).toFixed(2)} ${effectiveUnitLabel}\u00B2`
                         }
                       </span>
                     </div>
@@ -762,6 +934,75 @@ export default function CadMeasurePage() {
           )}
         </div>
       </div>
+
+      <Dialog open={!!pendingCalibration} onOpenChange={v => { if (!v) setPendingCalibration(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Set scale</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              What is the real-world distance between the two points you clicked?
+            </p>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                step="any"
+                placeholder="e.g. 0.9"
+                value={calibInput.value}
+                onChange={e => setCalibInput(c => ({ ...c, value: e.target.value }))}
+                autoFocus
+                onKeyDown={e => {
+                  if (e.key === "Enter" && calibInput.value && pendingCalibration) {
+                    const realVal = Number(calibInput.value);
+                    if (realVal > 0) {
+                      const metresFactor = calibInput.unit === "mm" ? 0.001 : calibInput.unit === "m" ? 1 : calibInput.unit === "ft" ? 0.3048 : calibInput.unit === "in" ? 0.0254 : 1;
+                      const metresPerPoint = (realVal * metresFactor) / pendingCalibration.pixelDistance;
+                      setCalibration(metresPerPoint);
+                      setUnitLabel(calibInput.unit);
+                      setPendingCalibration(null);
+                      toast({ title: "Scale calibrated", description: `1 pt = ${(metresPerPoint * 1000).toFixed(3)} mm` });
+                    }
+                  }
+                }}
+              />
+              <select
+                className="text-sm border rounded px-2 py-2 bg-background"
+                value={calibInput.unit}
+                onChange={e => setCalibInput(c => ({ ...c, unit: e.target.value }))}
+              >
+                <option value="mm">mm</option>
+                <option value="m">metres</option>
+                <option value="ft">feet</option>
+                <option value="in">inches</option>
+              </select>
+            </div>
+            {pendingCalibration && (
+              <p className="text-xs text-muted-foreground">
+                Pixel distance between clicks: {pendingCalibration.pixelDistance.toFixed(1)} pt
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingCalibration(null)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (!calibInput.value || !pendingCalibration) return;
+                const realVal = Number(calibInput.value);
+                if (!(realVal > 0)) return;
+                const metresFactor = calibInput.unit === "mm" ? 0.001 : calibInput.unit === "m" ? 1 : calibInput.unit === "ft" ? 0.3048 : calibInput.unit === "in" ? 0.0254 : 1;
+                const metresPerPoint = (realVal * metresFactor) / pendingCalibration.pixelDistance;
+                setCalibration(metresPerPoint);
+                setUnitLabel(calibInput.unit);
+                setPendingCalibration(null);
+                toast({ title: "Scale calibrated", description: `1 pt = ${(metresPerPoint * 1000).toFixed(3)} mm` });
+              }}
+            >
+              Save scale
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

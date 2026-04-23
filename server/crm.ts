@@ -198,6 +198,11 @@ export function setupCrmRoutes(app: Express) {
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_url TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_title TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_contact_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_name TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_company TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_phone TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_email TEXT`).catch(() => {});
 
   app.use("/api/crm", requireAuth);
   app.get("/api/crm/stats", async (_req, res) => {
@@ -4608,6 +4613,308 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     res.json({ classified, processed: untyped.length, remaining });
   });
 
+  // ── Brand bible seed endpoint ─────────────────────────────────────────
+  app.post("/api/admin/seed-brands", requireAuth, async (_req, res) => {
+    const SEED_BRANDS: { name: string; companyType: string }[] = [
+      // Luxury
+      ...["Acne Studios","Akris","Alaïa","Alberta Ferretti","Alexander McQueen","Aquazzura","Aspinal of London","Asprey","Azzaro","Balenciaga","Bamford","Bell & Ross","Belstaff","Blancpain","Boggi","Boodles","Bottega Veneta","Boucheron","Breitling","Bremont","Browns","Bulgari","Burberry","Canada Goose","Caramel","Carolina Herrera","Cartier","Celine","Coach","Chanel","Chatila","Chaumet","Chloé","Chopard","Christian Louboutin","Christopher Kane","Claudie Pierlot","Clergerie","Crockett & Jones","Damiani","David Morris","De Beers","Delvaux","Dior","Dolce & Gabbana","Douglas Hayward","Emilio Pucci","Emporio Armani","Ermenegildo Zegna","Etro","Fendi","Fenwick","Ferragamo","Fortnum & Mason","Furla","Garrard","Gianvito Rossi","Gieves & Hawkes","Givenchy","Goyard","Graff","Gucci","Harry Winston","Hermès","IWC","Jaeger-LeCoultre","J & M Davidson","Johnston's of Elgin","Joseph","Karl Lagerfeld","Laduree","Lanvin","Loewe","Longchamp","Longines","Loro Piana","Louis Vuitton","Mackintosh","Marc Jacobs","Marni","MaxMara","Me + Em","Melissa Odabash","Michael Kors","Mikimoto","Miu Miu","Moncler","Montblanc","Moussaieff","Moynat","Mulberry","Omega","Panerai","Patek Philippe","Penhaligon's","Piaget","Polo Ralph Lauren","Pomellato","Prada","Pringle of Scotland","Richard Mille","Rimowa","Roberto Cavalli","Roger Dubuis","Rolex","Sandro","Sergio Rossi","Simone Rocha","Smythson","Stella McCartney","Stephen Webster","TAG Heuer","Tasaki","Tateossian","Tiffany & Co","Tod's","Tommy Hilfiger","Tory Burch","Tumi","Vacheron Constantin","Valentino","Valextra","Vashi","Versace","Victoria Beckham","Victorinox","Vivienne Westwood","Wempe","Wolford","Zilli","Zimmermann"].map(n=>({name:n,companyType:"Tenant - Luxury"})),
+      // Fashion
+      ...["7 For All Mankind","Abercrombie & Fitch","Agent Provocateur","Agnès B","Aldo","All Saints","American Eagle","American Vintage","Anine Bing","Ann Summers","Anthropologie","APC","Apricot","Arket","Armani Exchange","Barbour","Bershka","Beyond Retro","Bimba Y Lola","Boden","Bonpoint","Boss","Boux Avenue","Brandy Melville","Bravissimo","Brora","Calvin Klein","Calzedonia","Cambridge Satchel","Carhartt WIP","Castore","Charles Tyrwhitt","COS","Comptoir des Cotonniers","Dehanche","Deichmann","Derek Rose","Diesel","Dr Martens","Drumohr","END","Eric Bompard","Filippa K","Flannels","Fred Perry","Free People","French Connection","Fusalp","Ganni","GANT","Gap","Golden Goose","H&M","Hackett","Hawes & Curtis","Helmut Lang","Hobbs","Hollister","Honey Birdette","Hugo Boss","Intimissimi","Jack Wills","Jigsaw","JW Anderson","KITH","Kooples","Lacoste","Levi's","LK Bennett","Mango","Massimo Dutti","M&S","Miniso","Mini Rodini","Monki","Monsoon","Moose Knuckles","Moss Bros","New Look","NEXT","Nobody's Child","North Face","Norse Projects","Olivia Rubin","Orlebar Brown","Other Stories","Paul Smith","Petit Bateau","Phase Eight","Primark","Pull & Bear","Puma","Rag & Bone","Ralph Lauren","Reformation","Reiss","River Island","RIXO","Samsoe Samsoe","Scotch & Soda","Seraphine","Sezane","SMCP","Suit Supply","Sunspel","Superdry","Supreme","Ted Baker","Theory","The Little White Company","Timberland","Uniqlo","United Colours of Benetton","Urban Outfitters","Vans","Whistles","Wolf & Badger","YMC","Zadig & Voltaire","Zara","Les Benjamins","Vuori"].map(n=>({name:n,companyType:"Tenant - Fashion"})),
+      // Athleisure
+      ...["Adidas","ALO","Asics","Gymshark","Jack Wolfskin","JD Sports","Lululemon","New Balance","Nike","ON","Rapha","Sports Direct","Sweaty Betty","Varley","Outdoor Voices","Rei"].map(n=>({name:n,companyType:"Tenant - Athleisure"})),
+      // Footwear
+      ...["Allbirds","Axel Arigato","Barker","Baudoin et Lange","Birkenstock","Camper","Carvela","Cheaney Shoes","Clarks","Crocs","Dune","FitFlop","Footasylum","Footlocker","Geox","Gina Shoes","Jimmy Choo","Jones Bootmaker","Joseph Cheaney & Sons","Kick Game","Kurt Geiger","Manolo Blahnik","Office","Onitsuka Tiger","Russell & Bromley","Schuh","Skechers","Sole Trader","Sophia Webster","Steve Madden","Superga","UGG","Veja","Sarah Flint"].map(n=>({name:n,companyType:"Tenant - Footwear"})),
+      // Accessories
+      ...["Accessorize","Ace & Tate","APM Monaco","Apriati Jewels","Astrid & Miyu","Bailey Nelson","Bloobloom","Bottletop","Claire's","Clulows","Cubitts","Dinny Hall","Earnest Jones","Ecco","Finlay & Co","Folli Follie","Furla","Georg Jensen","Goldsmiths","Heidi Klein","H. Samuel","Izipizi","Kate Spade","Links of London","Lovisa","Luxottica","Mappin & Webb","Maya Magal","Mejuri","Monica Vinader","Moscot","Mykita","Oliver Bonas","Optical Express","Pandora","Samsonite","Strathberry","Sunglass Hut","Swarovski","Swatch","Thomas Sabo","Tom Davies","TUMI","Unode50","Vertex","Vision Express","Watchfinder","Watches of Switzerland","William & Son","Gorjana","Karaca"].map(n=>({name:n,companyType:"Tenant - Accessories & Footwear"})),
+      // Beauty
+      ...["Adam Grooming Atelier","Acqua di Parma","Aesop","Body Shop","Byredo","Caudalie","Charlotte Tilbury","Code 8","Creed","Deciem","Estee Lauder","FaceGym","Forrest Essentials","Fragrance Shop","FRESH","Get A Drip","Glossier","Goop","Holland and Barrett","John Bell & Croyden","Kiehl's","Kiko","Laser Clinics","L'Oreal","Lush","MAC","Malin+Goetz","Margaret Dabbs","Molton Brown","NARS","Neom","Oh My Cream","Onda Beauty","Paul Edmonds","Penhaligons","Revital","Rituals","Rush","Sarah Chapman","Seanhanna","Sephora","sk:n","Smilepod","SpaceNK","Superdrug","Ted's Grooming Room","The Organic Pharmacy","Therapie","Toni & Guy","White & Co.","Winky Lux"].map(n=>({name:n,companyType:"Tenant - Beauty"})),
+      // Homewares
+      ...["Anthropologie","BON TON","Brissi","Caravane","Cologne & Cotton","David Mellor","Designers Guild","Earl of East","Evoke London","Farrow & Ball","Flying Tiger","Gaggenau","Habitat","Heals","Honest Jon's","India Jane","Jonathan Adler","Kings of Chelsea","Le Creuset","Mamas & Papas","Martin Moore","Muji","Natuzzi","Nespresso","Osborne & Little","Poliform","Royal Selangor","Robert Dyas","Sevenoaks Sound & Vision","Sheridan","Sigmar","Silvera","Smiggle","Sofa Workshop","Stokke","Tempur","The Conran Shop","The White Company","Tiger","TOAST","Tom Dixon","Thomas Goode","West Elm","Waterstones","Loaf","Wayfair"].map(n=>({name:n,companyType:"Tenant - Homewares"})),
+      // Gifts & Perfumes
+      ...["Adopt Parfum","Alexeeva & Jones","Baobab Collection","Candles & Oud","Cards Galore","Caroline Gardner","Charbonnel et Walker","Clintons","Diptyque","Disney","Endura Roses","Flowers & Plants Co.","Godiva","Hamleys","Hotel Chocolat","Jo Malone","Le Chocolat Alain Ducasse","LEGO","Le Labo","L'Occitane","Menkind","Moyses Stevens","Ortigia","Rococo","Scribbler","Soap & Co","Sook","The Entertainer","The Fragrance Shop","The Perfume Shop","T2 Tea"].map(n=>({name:n,companyType:"Tenant - Gifts & Perfumes"})),
+      // Department Stores
+      ...["Debenhams","House of Fraser","John Lewis","Marks and Spencer","Matalan","Peter Jones","Selfridges","TK Maxx","Waitrose & Partners"].map(n=>({name:n,companyType:"Tenant - Department Store"})),
+      // Technology
+      ...["Apple","Carphone Warehouse","Currys","Dyson","EE","Game","iSmash","Jessops","Microsoft","Netflix","Peloton","Razor","Samsung","Situ Live","Snapchat","Snappy Snaps"].map(n=>({name:n,companyType:"Tenant - Technology"})),
+      // Automotive
+      ...["Genesis","MV Agusta","Polestar","Tesla","Vanmoof","KJ West One"].map(n=>({name:n,companyType:"Tenant - Automotive"})),
+      // Telecoms
+      ...["O2","Sky","Three","Vodafone","Iqos","Vuse","Wanyoo","Xiaomi"].map(n=>({name:n,companyType:"Tenant - Telecoms"})),
+      // Grocery
+      ...["Aldi","Bayley & Sage","Daylesford Organic","Lidl","Planet Organic","Sainsbury's","Tesco","Waitrose"].map(n=>({name:n,companyType:"Tenant - Grocery"})),
+      // Financial Services
+      ...["Barclays","Halifax","HSBC","Lloyd's Bank","Natwest","Santander"].map(n=>({name:n,companyType:"Tenant - Financial Services"})),
+      // Fine Dining
+      ...["Gaucho","Hawksmoor","Hakkasan","Da Henrietta","Cora Pearl","Barrafina","Darjeeling Express","Dishoom","Ave Mario","Bao","Coal Office","Flesh & Buns","Hoppers","Ibérica","JinJuu","La Goccia","Lina Stores","Roka","Sushi Samba","Yauatcha","Veeraswamy","Scalini","Bar Douro","Balthazar","Brasserie Max","Bluebird","Cheesecake Factory","Chotto Matte"].map(n=>({name:n,companyType:"Tenant - Fine Dining"})),
+      // Casual Dining
+      ...["Wagamama","Nando's","Wahaca","Cinnamon Kitchen","Cinnamon Bazaar","Masala Zone","Benihana","Big Easy","Brindisa Kitchen","Casa Pastor","Dehesa","Din Tai Fung","Drake & Morgan","Emilia's Crafted Pasta","FarmerJ","Fatto","Flat Iron","Franco Manca","Granger & Co","Imad's","Island Poké","Itsu","Kanada-Ya","Kimchee","Kolamba","Leon","MamaLan","Marugame","Megan's","Monmouth Kitchen","Mon Plaisir","Morty & Bob's","My Old Dutch","Obica","Ole & Steen","Pastaio","Patty & Bun","Paul","Piccolo","Pizza Express","Pizza Pilgrims","Pilpel","Polpo","Pret a Manger","Poke House","Royal China","Roti King","Shake Shack","Shoryu Ramen","Señor Ceviche","Seoul Bird","Slim Chickens","Sticks n Sushi","Tapas Brindisa","The Barbary","The Breakfast Club","The Good Egg","The Indians Next Door","The Ivy","The Real Greek","The Rum Kitchen","The Vurger Co.","Tonkotsu","Truffle Burger","Ugly Dumpling","Urban Greens","Wildwood Kitchen","Wright Brothers","Maxwell's","Eataly","Caravan"].map(n=>({name:n,companyType:"Tenant - Casual Dining"})),
+      // Quick Service
+      ...["Five Guys","Greggs","GDK","Krispy Kreme","McDonald's","Neat Burger","Wasabi","Chopstix","Gordon Ramsay Street Pizza","Happy Face","Homeslice","Stax","Wafflemeister","Yum Bun","Yolk"].map(n=>({name:n,companyType:"Tenant - Quick Service"})),
+      // Café
+      ...["Caffe Nero","Costa","Starbucks","Joe & the Juice","Beany Green","Café Brera","Café Volonté","Caffe Concerto","Change Please","Chai Guys","Chez Antoinette","Cojean","Crussh","El & N","Grind","Hagen Coffee","Knoops","Le Pain Quotidien","Notes","Redemption Roasters"].map(n=>({name:n,companyType:"Tenant - Café"})),
+      // Bar
+      ...["All Bar One","Brewdog","Humble Grape","Vagabond Wines","Revolution","Revolve","Spiritland","Flare","The Alchemist","The Botanist","The Drop","Vinoteca"].map(n=>({name:n,companyType:"Tenant - Bar"})),
+      // Bakery
+      ...["Ben's Cookies","Buns from Home","Crosstown","Donovan's Bakehouse","Gail's","Lola's Cupcakes","Longboys","Maitre Choux","Ole & Steen"].map(n=>({name:n,companyType:"Tenant - Bakery"})),
+      // Cinema
+      ...["Everyman Cinema","Vue","Odeon","Cineworld"].map(n=>({name:n,companyType:"Tenant - Cinema"})),
+      // Experiential
+      ...["Bounce","Capital Karts","Electric Shuffle","Puttshack","Birdies","City Bouldering","DNA VR","Upside Down House","Dreamscape","All Star Lanes","Tank & Paddle"].map(n=>({name:n,companyType:"Tenant - Experiential"})),
+      // Immersive
+      ...["Kidzania"].map(n=>({name:n,companyType:"Tenant - Immersive Experience"})),
+      // Family Entertainment
+      ...["Blue Almonds"].map(n=>({name:n,companyType:"Tenant - Family Entertainment"})),
+      // Gym
+      ...["BoomCycle","BXR","F45","GymBox","Nuffield Health","Pure Sports Medicine","Sweat by BXR","Third Space","Triyoga","Ultimate Performance","Virgin Active","Athlete Lab"].map(n=>({name:n,companyType:"Tenant - Gym"})),
+      // Wellness
+      ...["111 Cryo","Andrew K Hair","Atherton Cox","Blink Brow Bar","Cubex","Dr Haus Dermatology","Freedom Clinics","Get A Drip","Hari's","London Cryo","London Grace","Mark Glenn","Massage Angels","Melanie Grant","Neil Moodie","Pimps & Pinups","Radio Salon","Regenerative Wellbeing","ReMind","Rys Hair","Stil Salon","Young LDN","Bupa","Lyca Health"].map(n=>({name:n,companyType:"Tenant - Wellness"})),
+      // Yoga
+      ...["Gym & Coffee"].map(n=>({name:n,companyType:"Tenant - Yoga"})),
+    ];
+
+    try {
+      const { rows: existing } = await pool.query(`SELECT LOWER(TRIM(name)) AS n FROM crm_companies`);
+      const existingNames = new Set(existing.map((r: any) => r.n as string));
+      let created = 0, skipped = 0;
+      for (const brand of SEED_BRANDS) {
+        const key = brand.name.toLowerCase().trim();
+        if (existingNames.has(key)) { skipped++; continue; }
+        const { nanoid } = await import("nanoid");
+        const id = nanoid();
+        await pool.query(
+          `INSERT INTO crm_companies (id, name, company_type, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW())`,
+          [id, brand.name, brand.companyType]
+        );
+        existingNames.add(key);
+        created++;
+      }
+      console.log(`[seed-brands] Created: ${created}, Skipped: ${skipped}`);
+      res.json({ success: true, created, skipped });
+    } catch (err: any) {
+      console.error("[seed-brands] Error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Brands Hub aggregated data ───────────────────────────────────────
+  app.get("/api/brands/hub", requireAuth, async (_req, res) => {
+    try {
+      const tenantFilter = `company_type ILIKE 'Tenant -%'`;
+
+      // Category counts
+      const catRows = await pool.query(
+        `SELECT company_type, COUNT(*) as count FROM crm_companies WHERE ${tenantFilter} GROUP BY company_type`
+      ).then(r => r.rows);
+
+      // Who's hot — most recently active brands (deals, requirements, contacts updated last 60 days)
+      const hotRows = await pool.query(`
+        SELECT c.id, c.name, c.company_type, c.domain, c.description,
+               MAX(GREATEST(
+                 COALESCE(d.updated_at, '1970-01-01'),
+                 COALESCE(rl.updated_at, '1970-01-01'),
+                 COALESCE(ct.updated_at, '1970-01-01')
+               )) AS last_activity,
+               COUNT(DISTINCT d.id) AS deal_count,
+               COUNT(DISTINCT rl.id) AS req_count,
+               COUNT(DISTINCT ct.id) AS contact_count
+        FROM crm_companies c
+        LEFT JOIN crm_deals d ON (d.tenant_id = c.id) AND d.updated_at > NOW() - INTERVAL '90 days'
+        LEFT JOIN crm_requirements_leasing rl ON rl.company_id = c.id AND rl.updated_at > NOW() - INTERVAL '90 days'
+        LEFT JOIN crm_contacts ct ON ct.company_id = c.id AND ct.updated_at > NOW() - INTERVAL '90 days'
+        WHERE ${tenantFilter}
+        GROUP BY c.id, c.name, c.company_type, c.domain, c.description
+        HAVING MAX(GREATEST(
+          COALESCE(d.updated_at, '1970-01-01'),
+          COALESCE(rl.updated_at, '1970-01-01'),
+          COALESCE(ct.updated_at, '1970-01-01')
+        )) > NOW() - INTERVAL '90 days'
+        ORDER BY last_activity DESC
+        LIMIT 20
+      `).then(r => r.rows);
+
+      // Super brands — Luxury + Flagship Fashion
+      const superRows = await pool.query(`
+        SELECT id, name, company_type, domain, description
+        FROM crm_companies
+        WHERE company_type IN ('Tenant - Luxury','Tenant - Flagship Fashion','Tenant - Luxury Accessories')
+        ORDER BY name
+        LIMIT 60
+      `).then(r => r.rows);
+
+      // Top turnover — join with turnover_data, most recent per brand
+      const turnoverRows = await pool.query(`
+        SELECT DISTINCT ON (t.company_id)
+          t.id, t.company_id, t.company_name, t.turnover, t.turnover_per_sqft,
+          t.period, t.source, t.confidence, t.category,
+          c.company_type, c.domain
+        FROM turnover_data t
+        LEFT JOIN crm_companies c ON c.id = t.company_id
+        WHERE t.turnover IS NOT NULL
+        ORDER BY t.company_id, t.period DESC, t.turnover DESC
+      `).then(r => r.rows);
+
+      const topTurnover = [...turnoverRows].sort((a: any, b: any) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 20);
+
+      // Active requirements
+      const reqRows = await pool.query(`
+        SELECT rl.id, rl.company_id, c.name AS company_name, c.company_type, c.domain,
+               rl.size_min, rl.size_max, rl.locations, rl.use, rl.notes, rl.created_at,
+               COUNT(ct.id) AS contact_count
+        FROM crm_requirements_leasing rl
+        JOIN crm_companies c ON c.id = rl.company_id
+        LEFT JOIN crm_contacts ct ON ct.company_id = c.id
+        WHERE rl.status = 'Active' AND ${tenantFilter.replace('c.', 'c.')}
+        GROUP BY rl.id, rl.company_id, c.name, c.company_type, c.domain, rl.size_min, rl.size_max, rl.locations, rl.use, rl.notes, rl.created_at
+        ORDER BY rl.created_at DESC
+        LIMIT 30
+      `).then(r => r.rows);
+
+      // Total stats
+      const stats = await pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE ${tenantFilter}) AS total_brands,
+          COUNT(*) FILTER (WHERE ${tenantFilter} AND id IN (SELECT DISTINCT company_id FROM turnover_data WHERE company_id IS NOT NULL)) AS brands_with_turnover,
+          COUNT(*) FILTER (WHERE ${tenantFilter} AND id IN (SELECT DISTINCT company_id FROM crm_requirements_leasing WHERE status = 'Active' AND company_id IS NOT NULL)) AS brands_active_req
+        FROM crm_companies
+      `).then(r => r.rows[0]);
+
+      res.json({
+        stats,
+        categoryCounts: catRows,
+        hotBrands: hotRows,
+        superBrands: superRows,
+        topTurnover,
+        activeRequirements: reqRows,
+      });
+    } catch (err: any) {
+      console.error("[brands/hub]", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Research turnover for a brand via AI ──────────────────────────────
+  app.post("/api/brands/research-turnover/:id", requireAuth, async (req: any, res) => {
+    try {
+      const companyId = req.params.id;
+      const userId = req.session?.userId || req.tokenUserId;
+      const [company] = await pool.query(
+        `SELECT id, name, company_type, domain, companies_house_data FROM crm_companies WHERE id = $1`,
+        [companyId]
+      ).then(r => r.rows);
+
+      if (!company) return res.status(404).json({ error: "Company not found" });
+
+      // Check Companies House data for accounts first
+      let chTurnover: number | null = null;
+      let chPeriod: string | null = null;
+      if (company.companies_house_data?.accounts?.last_accounts?.period_end_on) {
+        const accts = company.companies_house_data.accounts;
+        chPeriod = accts.last_accounts.period_end_on?.substring(0, 4) || null;
+      }
+
+      // Use Claude to research/estimate turnover
+      const prompt = `You are a retail and brand finance research assistant with knowledge of major UK and international retail brands up to 2025.
+
+For the brand "${company.name}" (type: ${company.company_type || "Retail"}${company.domain ? `, website: ${company.domain}` : ""}), provide the most recent annual turnover/revenue figure available.
+
+Return ONLY valid JSON in this exact format:
+{
+  "turnover": <number in GBP, e.g. 5000000 for £5m. Use 0 if unknown>,
+  "year": <year as integer, e.g. 2023>,
+  "confidence": <"High", "Medium", or "Low">,
+  "source": <"Annual Accounts" | "Industry Report" | "News" | "AI Estimate" | "Companies House">,
+  "notes": <brief explanation of the figure and its source, max 100 chars>
+}
+
+Rules:
+- For global brands (Nike, Zara, H&M) report UK revenue if known, otherwise global converted to GBP
+- If the brand is primarily UK-based, report UK turnover
+- If genuinely unknown, set turnover to 0 and confidence to "Low"
+- Do not invent figures — Low confidence with real estimates is better than made-up High confidence`;
+
+      const completion = await callClaude({
+        model: CHATBGP_HELPER_MODEL,
+        messages: [{ role: "user", content: prompt }],
+        max_completion_tokens: 200,
+      });
+
+      const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+      let parsed: any = {};
+      try {
+        const jsonMatch = raw.match(/\{[\s\S]*\}/);
+        if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+      } catch { /* leave empty */ }
+
+      const turnover = parsed.turnover && parsed.turnover > 0 ? parsed.turnover : null;
+      const period = parsed.year ? String(parsed.year) : new Date().getFullYear().toString();
+      const confidence = ["High", "Medium", "Low"].includes(parsed.confidence) ? parsed.confidence : "Low";
+      const source = parsed.source || "AI Estimate";
+      const notes = parsed.notes || `AI-researched turnover for ${company.name}`;
+
+      // Check if we already have a turnover entry for this company
+      const existing = await pool.query(
+        `SELECT id FROM turnover_data WHERE company_id = $1 AND source = $2 LIMIT 1`,
+        [companyId, source]
+      ).then(r => r.rows[0]);
+
+      let entry;
+      if (existing) {
+        entry = await pool.query(
+          `UPDATE turnover_data SET turnover = $1, period = $2, confidence = $3, notes = $4, updated_at = NOW() WHERE id = $5 RETURNING *`,
+          [turnover, period, confidence, notes, existing.id]
+        ).then(r => r.rows[0]);
+      } else {
+        const { nanoid } = await import("nanoid");
+        entry = await pool.query(
+          `INSERT INTO turnover_data (id, company_id, company_name, period, turnover, source, confidence, category, notes, added_by_user_id, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),NOW()) RETURNING *`,
+          [nanoid(), companyId, company.name, period, turnover, source, confidence,
+           (company.company_type || "").replace("Tenant - ", ""), notes, userId]
+        ).then(r => r.rows[0]);
+      }
+
+      res.json({ success: true, entry, researched: { turnover, period, confidence, source, notes } });
+    } catch (err: any) {
+      console.error("[research-turnover]", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Auto turnover research status / toggle / run-now ─────────────────
+  app.get("/api/brands/turnover-research/status", requireAuth, async (_req, res) => {
+    res.json({
+      enabled: autoTurnoverEnabled,
+      running: autoTurnoverRunning,
+      intervalHours: AUTO_TURNOVER_INTERVAL_HOURS,
+      batchSize: AUTO_TURNOVER_BATCH_SIZE,
+      lastRun: autoTurnoverLastRun,
+      lastResult: autoTurnoverLastResult,
+      nextRun: autoTurnoverEnabled && autoTurnoverLastRun
+        ? new Date(autoTurnoverLastRun.getTime() + AUTO_TURNOVER_INTERVAL_HOURS * 60 * 60 * 1000).toISOString()
+        : null,
+    });
+  });
+
+  app.post("/api/brands/turnover-research/toggle", requireAuth, async (req, res) => {
+    const { enabled } = req.body;
+    if (typeof enabled === "boolean") {
+      if (enabled && !autoTurnoverEnabled) {
+        startAutoTurnoverResearch();
+      } else if (!enabled && autoTurnoverEnabled) {
+        stopAutoTurnoverResearch();
+      }
+    }
+    res.json({ enabled: autoTurnoverEnabled });
+  });
+
+  app.post("/api/brands/turnover-research/run-now", requireAuth, async (_req, res) => {
+    if (autoTurnoverRunning) {
+      return res.json({ message: "Already running", running: true });
+    }
+    runAutoTurnoverCycle().catch(err => console.error("[auto-turnover] Manual trigger error:", err.message));
+    res.json({ message: "Turnover research cycle started", running: true });
+  });
+
   // ── My Portfolio dashboard endpoint ──────────────────────────────────
   app.get("/api/dashboard/my-portfolio", requireAuth, async (req: any, res) => {
     try {
@@ -4669,11 +4976,11 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       // Get contacts linked to properties via crm_contact_properties
       const { rows: propertyContacts } = await pool.query(`
-        SELECT cp.property_id, c.id AS contact_id, c.first_name, c.last_name, c.email, c.job_title
+        SELECT cp.property_id, c.id AS contact_id, c.name, c.email, c.job_title
         FROM crm_contact_properties cp
         JOIN crm_contacts c ON c.id = cp.contact_id
         WHERE cp.property_id = ANY($1)
-        ORDER BY c.last_name ASC
+        ORDER BY c.name ASC
       `, [propertyIds]);
 
       // Group by property
@@ -4730,7 +5037,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         if (grouped.has(pc.property_id)) {
           grouped.get(pc.property_id)!.contacts.push({
             id: pc.contact_id,
-            name: [pc.first_name, pc.last_name].filter(Boolean).join(" "),
+            name: pc.name || "",
             email: pc.email,
             jobTitle: pc.job_title,
           });
@@ -5539,14 +5846,14 @@ async function runAutoEnrichmentCycle() {
             }
             if (!companyDomain && contact.company_name) companyName = contact.company_name;
 
-            // mixed_people/search (replaces deprecated people/match)
+            // mixed_people/api_search (replaces deprecated mixed_people/search)
             const body: Record<string, any> = { page: 1, per_page: 1 };
             if (contact.email) body.person_emails = [contact.email];
             if (companyDomain) body.q_organization_domains_list = [companyDomain];
             else if (companyName) body.organization_names = [companyName];
             if (firstName || lastName) body.q_keywords = `${firstName} ${lastName}`.trim();
 
-            const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+            const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
               method: "POST",
               headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloKey },
               body: JSON.stringify(body),
@@ -5772,4 +6079,164 @@ export function stopAutoEnrichment() {
   }
   autoEnrichEnabled = false;
   console.log("[auto-enrich] Stopped");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Auto Turnover Research
+// Periodically finds tenant brands with no turnover data (or data >6 months old)
+// and runs Claude research on them in small batches.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const AUTO_TURNOVER_INTERVAL_HOURS = 18;
+const AUTO_TURNOVER_BATCH_SIZE = 4;
+let autoTurnoverInterval: ReturnType<typeof setInterval> | null = null;
+let autoTurnoverEnabled = true;
+let autoTurnoverRunning = false;
+let autoTurnoverLastRun: Date | null = null;
+let autoTurnoverLastResult: Record<string, any> | null = null;
+
+async function runAutoTurnoverCycle() {
+  if (autoTurnoverRunning) return;
+  autoTurnoverRunning = true;
+
+  const result: Record<string, any> = {
+    startedAt: new Date().toISOString(),
+    processed: 0,
+    skipped: 0,
+    errors: 0,
+    brands: [] as string[],
+  };
+
+  try {
+    // Pick tenant companies with no turnover data OR last entry > 6 months ago
+    const { rows: candidates } = await pool.query(`
+      SELECT c.id, c.name, c.company_type, c.domain
+      FROM crm_companies c
+      WHERE c.company_type ILIKE 'Tenant%'
+        AND (
+          NOT EXISTS (
+            SELECT 1 FROM turnover_data t WHERE t.company_id = c.id
+          )
+          OR NOT EXISTS (
+            SELECT 1 FROM turnover_data t
+            WHERE t.company_id = c.id
+              AND t.updated_at > NOW() - INTERVAL '6 months'
+          )
+        )
+      ORDER BY RANDOM()
+      LIMIT $1
+    `, [AUTO_TURNOVER_BATCH_SIZE]);
+
+    if (candidates.length === 0) {
+      result.message = "All brands have recent turnover data";
+      return;
+    }
+
+    const { nanoid } = await import("nanoid");
+
+    for (const company of candidates) {
+      try {
+        const prompt = `You are a retail and brand finance research assistant with knowledge of major UK and international retail brands up to 2025.
+
+For the brand "${company.name}" (type: ${company.company_type || "Retail"}${company.domain ? `, website: ${company.domain}` : ""}), provide the most recent annual turnover/revenue figure available.
+
+Return ONLY valid JSON in this exact format:
+{
+  "turnover": <number in GBP, e.g. 5000000 for £5m. Use 0 if unknown>,
+  "year": <year as integer, e.g. 2023>,
+  "confidence": <"High", "Medium", or "Low">,
+  "source": <"Annual Accounts" | "Industry Report" | "News" | "AI Estimate" | "Companies House">,
+  "notes": <brief explanation of the figure and its source, max 100 chars>
+}
+
+Rules:
+- For global brands (Nike, Zara, H&M) report UK revenue if known, otherwise global converted to GBP
+- If the brand is primarily UK-based, report UK turnover
+- If genuinely unknown, set turnover to 0 and confidence to "Low"
+- Do not invent figures — Low confidence with real estimates is better than made-up High confidence`;
+
+        const completion = await callClaude({
+          model: CHATBGP_HELPER_MODEL,
+          messages: [{ role: "user", content: prompt }],
+          max_completion_tokens: 200,
+        });
+
+        const raw = completion.choices[0]?.message?.content?.trim() || "{}";
+        let parsed: any = {};
+        try {
+          const jsonMatch = raw.match(/\{[\s\S]*\}/);
+          if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+        } catch { /* leave empty */ }
+
+        const turnover = parsed.turnover && parsed.turnover > 0 ? parsed.turnover : null;
+        const period = parsed.year ? String(parsed.year) : new Date().getFullYear().toString();
+        const confidence = ["High", "Medium", "Low"].includes(parsed.confidence) ? parsed.confidence : "Low";
+        const source = parsed.source || "AI Estimate";
+        const notes = parsed.notes || `Auto-researched turnover for ${company.name}`;
+
+        const existing = await pool.query(
+          `SELECT id FROM turnover_data WHERE company_id = $1 AND source = $2 LIMIT 1`,
+          [company.id, source]
+        ).then(r => r.rows[0]);
+
+        if (existing) {
+          await pool.query(
+            `UPDATE turnover_data SET turnover = $1, period = $2, confidence = $3, notes = $4, updated_at = NOW() WHERE id = $5`,
+            [turnover, period, confidence, notes, existing.id]
+          );
+        } else {
+          await pool.query(
+            `INSERT INTO turnover_data (id, company_id, company_name, period, turnover, source, confidence, category, notes, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())`,
+            [nanoid(), company.id, company.name, period, turnover, source, confidence,
+             (company.company_type || "").replace("Tenant - ", ""), notes]
+          );
+        }
+
+        result.processed++;
+        result.brands.push(company.name);
+
+        // Small delay between API calls to avoid rate limits
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      } catch (err: any) {
+        console.error(`[auto-turnover] Error researching ${company.name}:`, err.message);
+        result.errors++;
+      }
+    }
+
+    if (result.processed > 0) {
+      console.log(`[auto-turnover] Cycle complete — ${result.processed} brands researched: ${result.brands.join(", ")}`);
+    }
+  } catch (err: any) {
+    console.error("[auto-turnover] Cycle error:", err.message);
+    result.error = err.message;
+  } finally {
+    autoTurnoverLastRun = new Date();
+    autoTurnoverLastResult = result;
+    autoTurnoverRunning = false;
+  }
+}
+
+export function startAutoTurnoverResearch() {
+  if (autoTurnoverInterval) return;
+  autoTurnoverEnabled = true;
+  console.log(`[auto-turnover] Started — running every ${AUTO_TURNOVER_INTERVAL_HOURS} hours (batch size: ${AUTO_TURNOVER_BATCH_SIZE})`);
+
+  // Initial run 90 seconds after server start (after auto-enrich has kicked off)
+  setTimeout(() => {
+    runAutoTurnoverCycle().catch(err => console.error("[auto-turnover] Initial run error:", err.message));
+  }, 90000);
+
+  autoTurnoverInterval = setInterval(() => {
+    runAutoTurnoverCycle().catch(err => console.error("[auto-turnover] Scheduled run error:", err.message));
+  }, AUTO_TURNOVER_INTERVAL_HOURS * 60 * 60 * 1000);
+}
+
+export function stopAutoTurnoverResearch() {
+  if (autoTurnoverInterval) {
+    clearInterval(autoTurnoverInterval);
+    autoTurnoverInterval = null;
+  }
+  autoTurnoverEnabled = false;
+  console.log("[auto-turnover] Stopped");
 }

@@ -1,42 +1,38 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Loader2, ShieldCheck, LayoutGrid, GraduationCap, Settings } from "lucide-react";
+import { Loader2, LayoutGrid, GraduationCap, Settings } from "lucide-react";
 
-// Lazy so we only parse the big investigator bundle when the user actually
-// lands on that tab; other tabs can be opened without paying its cost.
-const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
+// Lazy so we only parse each tab's bundle when the user actually opens it.
 const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
 const AmlTraining = lazy(() => import("@/pages/aml-training"));
 const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
 
-type TabId = "investigator" | "board" | "training" | "settings";
+type TabId = "board" | "training" | "settings";
 
 const TABS: Array<{ id: TabId; label: string; icon: any }> = [
-  { id: "investigator", label: "Investigator", icon: ShieldCheck },
   { id: "board", label: "Compliance Board", icon: LayoutGrid },
   { id: "training", label: "Training", icon: GraduationCap },
   { id: "settings", label: "Firm Settings", icon: Settings },
 ];
 
 function readTabFromUrl(): TabId {
-  if (typeof window === "undefined") return "investigator";
+  if (typeof window === "undefined") return "board";
   const params = new URLSearchParams(window.location.search);
   const t = (params.get("tab") || "").toLowerCase() as TabId;
   if (TABS.some(x => x.id === t)) return t;
-  // Fallback for legacy routes — keep deep links working
+  // Fallback for legacy routes
   const path = window.location.pathname;
   if (path.startsWith("/compliance-board")) return "board";
   if (path.startsWith("/aml-training")) return "training";
   if (path.startsWith("/aml-compliance")) return "settings";
-  return "investigator";
+  return "board";
 }
 
 export default function KycHub() {
   const [, navigate] = useLocation();
   const [tab, setTab] = useState<TabId>(readTabFromUrl());
 
-  // Sync URL when the user switches tabs so refresh + bookmarking works
   const handleTabChange = (next: string) => {
     const nextTab = next as TabId;
     setTab(nextTab);
@@ -45,7 +41,6 @@ export default function KycHub() {
     navigate(`/kyc-clouseau?${params.toString()}`, { replace: true });
   };
 
-  // If the URL changes externally (e.g. sidebar click to /aml-training), pick up the new tab
   useEffect(() => {
     const handler = () => setTab(readTabFromUrl());
     window.addEventListener("popstate", handler);
@@ -78,9 +73,6 @@ export default function KycHub() {
 
         <div className="flex-1 overflow-y-auto">
           <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}>
-            <TabsContent value="investigator" className="m-0 h-full">
-              <KycClouseau />
-            </TabsContent>
             <TabsContent value="board" className="m-0">
               <ComplianceBoard />
             </TabsContent>

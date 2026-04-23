@@ -234,6 +234,11 @@ export default function PropertyMap() {
 
   const initMap = useCallback(() => {
     if (!mapRef.current || !scriptReady || googleMapRef.current) return;
+    if (typeof google === "undefined" || !google.maps) return;
+
+    // Defer init if container has no dimensions yet (lazy/suspense race)
+    const rect = mapRef.current.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return; // useEffect retry handles this
 
     const urlParams = new URLSearchParams(window.location.search);
     const qLat = parseFloat(urlParams.get("lat") || "");
@@ -264,6 +269,9 @@ export default function PropertyMap() {
 
     googleMapRef.current = map;
     infoWindowRef.current = new google.maps.InfoWindow();
+
+    // Force tile load after init — container may have resized during Suspense
+    setTimeout(() => google.maps.event.trigger(map, "resize"), 0);
 
     map.addListener("zoom_changed", () => {
       setMapZoom(map.getZoom() || DEFAULT_ZOOM);
@@ -331,7 +339,30 @@ export default function PropertyMap() {
 
   useEffect(() => {
     initMap();
-  }, [initMap]);
+    // If initMap bailed because the container had no dimensions, retry until it does
+    if (scriptReady && mapRef.current && !googleMapRef.current) {
+      const retryInterval = setInterval(() => {
+        if (googleMapRef.current) {
+          clearInterval(retryInterval);
+          return;
+        }
+        initMap();
+      }, 150);
+      return () => clearInterval(retryInterval);
+    }
+  }, [initMap, scriptReady]);
+
+  // Trigger resize when the map container size changes so tiles render
+  useEffect(() => {
+    const container = mapRef.current;
+    if (!container || !scriptReady) return;
+    const ro = new ResizeObserver(() => {
+      const map = googleMapRef.current;
+      if (map) google.maps.event.trigger(map, "resize");
+    });
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [scriptReady]);
 
   // Create markers when filtered properties change
   useEffect(() => {
@@ -685,8 +716,8 @@ export default function PropertyMap() {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-4" data-testid="property-map-page">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="p-4 sm:p-6 space-y-4 h-full flex flex-col overflow-hidden" data-testid="property-map-page">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-map-title">Property Map</h1>
           <p className="text-sm text-muted-foreground">
@@ -841,7 +872,7 @@ export default function PropertyMap() {
         </div>
       )}
 
-      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+      <div className="flex items-center gap-3 text-xs text-muted-foreground shrink-0">
         {Object.entries(STATUS_COLORS).map(([status, bg]) => (
           <div key={status} className="flex items-center gap-1">
             <div className={`w-2.5 h-2.5 rounded-full ${bg}`} />
@@ -850,7 +881,7 @@ export default function PropertyMap() {
         ))}
       </div>
 
-      <div className={`flex gap-4 ${viewMode === "map" ? "" : "flex-col lg:flex-row"}`} style={{ height: "calc(100vh - 300px)" }}>
+      <div className={`flex gap-4 flex-1 min-h-0 ${viewMode === "map" ? "" : "flex-col lg:flex-row"}`}>
         {viewMode === "split" && (
           <div className="lg:w-[350px] w-full lg:h-full h-[300px] overflow-y-auto space-y-2 flex-shrink-0" data-testid="property-list-panel">
             <p className="text-xs text-muted-foreground sticky top-0 bg-background py-1 z-10">

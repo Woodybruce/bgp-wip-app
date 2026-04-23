@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import "leaflet.markercluster/dist/MarkerCluster.css";
+import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+import "leaflet.markercluster";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import {
   Search,
   X,
@@ -59,6 +63,8 @@ import {
   UserCheck,
   Crown,
   Link2,
+  Sparkles,
+  Download,
 } from "lucide-react";
 
 interface SearchResult {
@@ -779,6 +785,12 @@ function RawDataToggle({ data }: { data: any }) {
 }
 
 function titleMatchesAddress(title: any, searchAddr: string): boolean {
+  // New server-tagged matches beat the weak string-match heuristic. The
+  // /api/land-registry/resolve endpoint tags titles as "uprn" (exact),
+  // "street" (likely), or "postcode" (neighbour) — anything better than
+  // postcode is a true match to the subject.
+  if (title?._match === "uprn" || title?._match === "street") return true;
+  if (title?._match === "postcode") return false;
   if (!searchAddr) return false;
   const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, " ").replace(/\s+/g, " ").trim();
   const search = norm(searchAddr);
@@ -1656,6 +1668,7 @@ function PropertyPanel({
   onLoadLayer,
   loadingLayer,
   address,
+  onSearchSaved,
 }: {
   postcode: string;
   data: PropertyData | null;
@@ -1665,10 +1678,128 @@ function PropertyPanel({
   onLoadLayer: (layer: string) => void;
   loadingLayer: string | null;
   address?: string;
+  onSearchSaved?: (search: any) => void;
 }) {
-  const [viewMode, setViewMode] = useState<"summary" | "full">("summary");
   const [fullTitleData, setFullTitleData] = useState<any[] | null>(null);
   const [fullTitleLoading, setFullTitleLoading] = useState(false);
+  const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [savedSearchId, setSavedSearchId] = useState<number | null>(null);
+  // Per-title purchases — keyed by title number, stores either "loading" or
+  // the purchase record from /api/land-registry/purchase-title
+  const [titlePurchases, setTitlePurchases] = useState<Record<string, any>>({});
+
+  // Load already-purchased titles so we don't re-charge BGP for the same register
+  useEffect(() => {
+    fetch("/api/land-registry/purchases", {
+      credentials: "include",
+      headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: any[]) => {
+        if (!Array.isArray(rows)) return;
+        const map: Record<string, any> = {};
+        for (const row of rows) {
+          map[(row.title_number || row.titleNumber || "").toUpperCase()] = {
+            ...row,
+            cached: true,
+          };
+        }
+        setTitlePurchases(map);
+      })
+      .catch(() => {});
+  }, []);
+
+  const purchaseDocs = async (titleNumber: string, documents: "register" | "plan" | "both") => {
+    const key = titleNumber.toUpperCase();
+    setTitlePurchases((prev) => ({ ...prev, [key]: { loading: true, documents } }));
+    try {
+      const res = await fetch("/api/land-registry/purchase-title", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("bgp_token")}`,
+        },
+        body: JSON.stringify({ title: titleNumber, documents, extract_proprietor_data: true }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setTitlePurchases((prev) => ({ ...prev, [key]: { error: body.error || `Purchase failed (${res.status})` } }));
+        return;
+      }
+      const d = body.data || {};
+      setTitlePurchases((prev) => ({
+        ...prev,
+        [key]: {
+          register_url: d.document_url || d.register_url || d.register?.url || prev[key]?.register_url,
+          plan_url: d.plan_url || d.plan?.url || prev[key]?.plan_url,
+          proprietor_data: d.proprietor || d.extracted || prev[key]?.proprietor_data,
+          cached: body.cached,
+        },
+      }));
+    } catch (err: any) {
+      setTitlePurchases((prev) => ({ ...prev, [key]: { error: err?.message || "Network error" } }));
+    }
+  };
+
+  // Auto-save this search when data first loads
+  useEffect(() => {
+    if (!data || loading || savedSearchId !== null) return;
+    const freeholds = data.propertyDataCoUk?.["freeholds"]?.data || [];
+    const leaseholds = data.propertyDataCoUk?.["leaseholds"]?.data || [];
+    const intelligence: any = {};
+    if (data.floodRisk) {
+      const coords = (data.floodRisk as any).postcodeData;
+      if (coords?.latitude && coords?.longitude) {
+        intelligence.flood = { coordinates: { lat: coords.latitude, lng: coords.longitude } };
+      }
+    }
+    const headers: Record<string, string> = {
+      ...getAuthHeaders(),
+      "Content-Type": "application/json",
+    };
+    const token = localStorage.getItem("bgp_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    fetch("/api/land-registry/searches", {
+      method: "POST",
+      credentials: "include",
+      headers,
+      body: JSON.stringify({
+        address: address || postcode,
+        postcode,
+        freeholds,
+        leaseholds,
+        intelligence,
+      }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(saved => {
+        if (saved?.id) {
+          setSavedSearchId(saved.id);
+          onSearchSaved?.(saved);
+        }
+      })
+      .catch(() => {});
+  }, [data, loading]);
+
+  // Update saved search when full title search completes
+  useEffect(() => {
+    if (!fullTitleData || savedSearchId === null) return;
+    const freeholds = fullTitleData.filter(t => t._tenure === "Freehold");
+    const leaseholds = fullTitleData.filter(t => t._tenure === "Leasehold");
+    const headers: Record<string, string> = {
+      ...getAuthHeaders(),
+      "Content-Type": "application/json",
+    };
+    const token = localStorage.getItem("bgp_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    fetch(`/api/land-registry/searches/${savedSearchId}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers,
+      body: JSON.stringify({ freeholds, leaseholds }),
+    }).catch(() => {});
+  }, [fullTitleData, savedSearchId]);
 
   const runFullTitleSearch = useCallback(async (freeholds: any[]) => {
     if (fullTitleLoading) return;
@@ -1745,36 +1876,32 @@ function PropertyPanel({
   return (
     <div className="absolute top-0 right-0 h-full w-[400px] bg-white border-l shadow-xl z-[1001] flex flex-col">
       <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
-        <div>
+        <div className="min-w-0 flex-1 mr-2">
           <h3 className="font-semibold text-sm" data-testid="panel-title">Property Intelligence</h3>
-          {address && <p className="text-xs text-gray-700 font-medium">{address}</p>}
+          {address && <p className="text-xs text-gray-700 font-medium truncate">{address}</p>}
           <p className="text-xs text-gray-500">{postcode}</p>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
+          {!loading && data && (
+            <button
+              onClick={async () => {
+                setGeneratingPdf(true);
+                try { await generatePropertyPDF(data, postcode); } catch {}
+                setGeneratingPdf(false);
+              }}
+              disabled={generatingPdf}
+              className="flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-gray-300 hover:border-indigo-400 hover:text-indigo-600 text-gray-600 transition-colors disabled:opacity-50"
+              title="Download PDF report"
+            >
+              {generatingPdf ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileDown className="w-3 h-3" />}
+              {generatingPdf ? "..." : "PDF"}
+            </button>
+          )}
           <button onClick={onClose} className="p-1 hover:bg-gray-200 rounded" data-testid="panel-close">
             <X className="w-4 h-4" />
           </button>
         </div>
       </div>
-
-      {!loading && data && (
-        <div className="flex border-b">
-          <button
-            onClick={() => setViewMode("summary")}
-            className={`flex-1 text-xs py-2 font-medium transition-colors ${viewMode === "summary" ? "border-b-2 border-indigo-500 text-indigo-700" : "text-gray-500 hover:text-gray-700"}`}
-            data-testid="tab-summary"
-          >
-            Summary
-          </button>
-          <button
-            onClick={() => setViewMode("full")}
-            className={`flex-1 text-xs py-2 font-medium transition-colors ${viewMode === "full" ? "border-b-2 border-indigo-500 text-indigo-700" : "text-gray-500 hover:text-gray-700"}`}
-            data-testid="tab-full-report"
-          >
-            Full Report
-          </button>
-        </div>
-      )}
 
       <ScrollArea className="flex-1">
         {loading ? (
@@ -1785,10 +1912,40 @@ function PropertyPanel({
             <Skeleton className="h-20 w-full" />
           </div>
         ) : data ? (
-          viewMode === "full" ? (
-            <FullReportView data={data} postcode={postcode} searchAddress={address} />
-          ) : (
+          (
             <div className="p-3 space-y-4">
+              {/* Pathway linkage strip — "gold" data if a run exists, or a prompt to launch one */}
+              {(data as any)._pathwayRun ? (
+                <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 rounded-lg p-2.5 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Sparkles className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">Pathway intelligence</p>
+                      <p className="text-[10px] text-emerald-700 dark:text-emerald-400 truncate">
+                        Verified · {new Date((data as any)._pathwayRun.updatedAt).toLocaleDateString("en-GB")}
+                      </p>
+                    </div>
+                  </div>
+                  <a href={`/property-pathway?runId=${(data as any)._pathwayRun.id}`} className="text-[10px] text-emerald-700 dark:text-emerald-400 hover:underline shrink-0">Open full →</a>
+                </div>
+              ) : (address || postcode) ? (
+                <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 rounded-lg p-2.5 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-indigo-800 dark:text-indigo-300">No Pathway run yet</p>
+                      <p className="text-[10px] text-indigo-700 dark:text-indigo-400">Run for verified titles, planning, KYC &amp; business plan</p>
+                    </div>
+                  </div>
+                  <a
+                    href={`/property-pathway?address=${encodeURIComponent(address || "")}&postcode=${encodeURIComponent(postcode || "")}`}
+                    className="text-[10px] bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-1 rounded shrink-0"
+                  >
+                    Run Pathway
+                  </a>
+                </div>
+              ) : null}
+
               {summaryStats && (
                 <div className="grid grid-cols-3 gap-2">
                   <div className="text-center p-2 bg-indigo-50 rounded border border-indigo-100">
@@ -1804,8 +1961,10 @@ function PropertyPanel({
                   <div className="text-center p-2 bg-violet-50 rounded border border-violet-100">
                     <div className="text-lg font-bold text-violet-700">
                       {(() => {
+                        const govApps = (data.planningData as any)?.planningApplications?.length || 0;
                         const raw = data.propertyDataCoUk?.["planning-applications"]?.data;
-                        return (Array.isArray(raw) ? raw.length : raw?.planning_applications?.length) || 0;
+                        const pdCount = (Array.isArray(raw) ? raw.length : raw?.planning_applications?.length) || 0;
+                        return govApps + pdCount;
                       })()}
                     </div>
                     <div className="text-[10px] text-violet-600">Planning Apps</div>
@@ -1814,13 +1973,46 @@ function PropertyPanel({
               )}
 
               {(() => {
-                const freeholds = data.propertyDataCoUk?.["freeholds"]?.data || [];
-                const leaseholds = data.propertyDataCoUk?.["leaseholds"]?.data || [];
+                const freeholdsRaw = data.propertyDataCoUk?.["freeholds"]?.data || [];
+                const leaseholdsRaw = data.propertyDataCoUk?.["leaseholds"]?.data || [];
+                // Show every title PropertyData returned, even if proprietor data
+                // is missing — the title number + tenure + address is still useful
+                // signal. Only drop completely empty rows (no title, no address).
+                const hasAnyInfo = (t: any) =>
+                  t.title_number || t.title || t.proprietor_name_1 || t.proprietor_address ||
+                  (Array.isArray(t.property) ? t.property.length > 0 : !!t.property);
+                const freeholds = freeholdsRaw.filter(hasAnyInfo);
+                const leaseholds = leaseholdsRaw.filter(hasAnyInfo);
+                const hiddenEmpty = 0;
                 const allTitles = [
                   ...freeholds.map((f: any) => ({ ...f, _tenure: "Freehold" })),
                   ...leaseholds.map((l: any) => ({ ...l, _tenure: "Leasehold" })),
                 ];
-                if (allTitles.length === 0) return null;
+                if (allTitles.length === 0) {
+                  // Only show the empty-state if we actually queried (postcode present)
+                  if (!postcode) return null;
+                  const pdErrors = (data as any)?._landRegistryResolve?.pdErrors || (data as any)?.pdErrors || [];
+                  const hadError = Array.isArray(pdErrors) && pdErrors.length > 0;
+                  return (
+                    <DataSection title={`Ownership`} icon={Building2} color="text-indigo-600">
+                      <p className="text-xs text-gray-600 mb-1.5">
+                        {hadError
+                          ? "PropertyData could not return Land Registry titles for this postcode (API error — see below)."
+                          : "PropertyData returned no Land Registry titles for this postcode."}
+                      </p>
+                      {hadError && (
+                        <div className="mb-1.5 space-y-0.5">
+                          {pdErrors.slice(0, 3).map((e: any, i: number) => (
+                            <p key={i} className="text-[10px] text-red-600 font-mono truncate">
+                              {e.endpoint} {e.status ? `HTTP ${e.status}` : ""} — {e.body || "unknown"}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-[10px] text-gray-500">Run a Pathway investigation (top of panel) for a deeper search including title register purchases and KYC.</p>
+                    </DataSection>
+                  );
+                }
                 const sorted = address
                   ? [...allTitles].sort((a, b) => {
                       const aM = titleMatchesAddress(a, address) ? 1 : 0;
@@ -1834,27 +2026,63 @@ function PropertyPanel({
                     {address && allTitles.length > 0 && (
                       <div className="text-[10px] text-gray-500 mb-1.5">
                         {matchCount > 0
-                          ? <><span className="font-medium text-indigo-600">{matchCount}</span> matching "{address}" · {allTitles.length - matchCount} other titles at this postcode</>
-                          : <>No exact matches for "{address}" — showing all {allTitles.length} titles at this postcode</>
+                          ? <><span className="font-medium text-indigo-600">{matchCount}</span> matching "{address}"{hiddenEmpty > 0 && <> · {hiddenEmpty} empty rows hidden</>}</>
+                          : <>No exact matches for "{address}" — showing all {allTitles.length} titles at this postcode{hiddenEmpty > 0 && <> · {hiddenEmpty} empty rows hidden</>}</>
                         }
                       </div>
                     )}
                     {sorted.slice(0, 8).map((t: any, i: number) => {
                       const isMatch = address ? titleMatchesAddress(t, address) : false;
+                      const tn = (t.title_number || "").toUpperCase();
+                      const purchase = tn ? titlePurchases[tn] : null;
+                      const proprietorFromBuy = purchase?.proprietor_data;
                       return (
-                        <div key={i} className={`text-xs border rounded p-2 space-y-0.5 ${isMatch ? "bg-indigo-50 border-indigo-200" : "bg-gray-50"}`}>
-                          <div className="flex items-center gap-1.5">
-                            <Badge variant="outline" className={`text-[9px] px-1 py-0 ${t._tenure === "Freehold" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : "border-blue-300 text-blue-700 bg-blue-50"}`}>
+                        <div key={i} className={`text-xs border rounded p-2 space-y-0.5 overflow-hidden ${isMatch ? "bg-indigo-50 border-indigo-200" : "bg-gray-50"}`}>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Badge variant="outline" className={`text-[9px] px-1 py-0 shrink-0 ${t._tenure === "Freehold" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : "border-blue-300 text-blue-700 bg-blue-50"}`}>
                               {t._tenure === "Freehold" ? "F" : "L"}
                             </Badge>
-                            <span className="font-medium truncate">{t.proprietor_name_1 || t.address || "Unknown"}</span>
+                            <span className="font-medium truncate flex-1 min-w-0">
+                              {t.proprietor_name_1 || proprietorFromBuy?.name_1 || proprietorFromBuy?.proprietor_name_1 || t.address || (purchase?.cached || purchase?.register_url ? "Owner — see register" : "Unknown")}
+                            </span>
                             {isMatch && <span className="text-[8px] bg-indigo-100 text-indigo-600 px-1 py-0.5 rounded font-medium shrink-0">MATCH</span>}
-                            {t.proprietor_category && <span className="text-[9px] text-gray-400 ml-auto shrink-0">{t.proprietor_category}</span>}
+                            {t.proprietor_category && <span className="text-[9px] text-gray-400 shrink-0">{t.proprietor_category}</span>}
                           </div>
-                          {t.title_number && <p className="text-gray-400 text-[10px]">Title: {t.title_number}{t.company_reg ? ` · Co. ${t.company_reg}` : ""}</p>}
+                          {t.title_number && <p className="text-gray-400 text-[10px] truncate">Title: {t.title_number}{t.company_reg ? ` · Co. ${t.company_reg}` : ""}</p>}
                           {t.proprietor_address && <p className="text-gray-400 text-[10px] truncate">{t.proprietor_address}</p>}
                           {t.plot_size && <p className="text-gray-400 text-[10px]">Plot: {t.plot_size} acres</p>}
                           {t.price_paid && <p className="text-gray-400 text-[10px]">Price: £{Number(t.price_paid).toLocaleString()}</p>}
+                          {tn && (
+                            <div className="flex items-center gap-1 pt-1.5 border-t border-gray-200/70 mt-1">
+                              {purchase?.loading ? (
+                                <span className="text-[10px] text-gray-500 flex items-center gap-1"><Loader2 className="w-2.5 h-2.5 animate-spin" /> Buying {purchase.documents}...</span>
+                              ) : purchase?.error ? (
+                                <span className="text-[10px] text-red-600">{purchase.error}</span>
+                              ) : (
+                                <>
+                                  {purchase?.register_url ? (
+                                    <a href={purchase.register_url} target="_blank" rel="noopener" className="text-[10px] bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 py-0.5 rounded hover:bg-emerald-100 inline-flex items-center gap-0.5">
+                                      <ExternalLink className="w-2.5 h-2.5" /> Register
+                                    </a>
+                                  ) : (
+                                    <button onClick={() => purchaseDocs(tn, "register")} className="text-[10px] bg-white border border-indigo-200 text-indigo-700 px-1.5 py-0.5 rounded hover:bg-indigo-50">
+                                      Buy Register £4
+                                    </button>
+                                  )}
+                                  {purchase?.plan_url ? (
+                                    <a href={purchase.plan_url} target="_blank" rel="noopener" className="text-[10px] bg-emerald-50 border border-emerald-200 text-emerald-700 px-1.5 py-0.5 rounded hover:bg-emerald-100 inline-flex items-center gap-0.5">
+                                      <ExternalLink className="w-2.5 h-2.5" /> Plan
+                                    </a>
+                                  ) : (
+                                    <button onClick={() => purchaseDocs(tn, "plan")} className="text-[10px] bg-white border border-indigo-200 text-indigo-700 px-1.5 py-0.5 rounded hover:bg-indigo-50">
+                                      Buy Plan £3
+                                    </button>
+                                  )}
+                                  {purchase?.cached && <span className="text-[9px] text-gray-400 ml-auto">cached</span>}
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -1879,29 +2107,61 @@ function PropertyPanel({
 
                     {fullTitleData && fullTitleData.length > 0 && (
                       <div className="mt-2 border-t pt-2 space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <p className="text-[10px] font-semibold text-indigo-700">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[10px] font-semibold text-indigo-700 truncate">
                             Full Title Search — {fullTitleData.filter(t => t._tenure === "Freehold").length}F / {fullTitleData.filter(t => t._tenure === "Leasehold").length}L
                           </p>
-                          <button onClick={() => setFullTitleData(null)} className="text-[9px] text-gray-400 hover:text-gray-600" data-testid="btn-close-full-titles">Clear</button>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={() => {
+                                const rows = [
+                                  ["Tenure","Title Number","Proprietor","Category","Company Reg","Address","Plot Size (acres)","Parent Title","Leasehold Count"],
+                                  ...fullTitleData.map(t => [
+                                    t._tenure || "",
+                                    t.title_number || "",
+                                    t.proprietor_name_1 || "",
+                                    t.proprietor_category || "",
+                                    t.company_reg || "",
+                                    t.proprietor_address || "",
+                                    t.plot_size || "",
+                                    t._parentTitle || "",
+                                    t.leaseholdCount || "",
+                                  ])
+                                ];
+                                const csv = rows.map(r => r.map((v: any) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+                                const blob = new Blob([csv], { type: "text/csv" });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `Title_Search_${(address || postcode).replace(/[^a-zA-Z0-9]/g, "_")}.csv`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }}
+                              className="flex items-center gap-0.5 text-[9px] text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-1.5 py-0.5 hover:bg-indigo-50 transition-colors"
+                              title="Download all title search results as CSV"
+                            >
+                              <Download className="w-2.5 h-2.5" /> CSV
+                            </button>
+                            <button onClick={() => setFullTitleData(null)} className="text-[9px] text-gray-400 hover:text-gray-600" data-testid="btn-close-full-titles">Clear</button>
+                          </div>
                         </div>
                         {fullTitleData.map((t: any, i: number) => (
-                          <div key={i} className={`text-xs border rounded p-2 space-y-0.5 ${t._tenure === "Leasehold" ? "bg-blue-50/50 ml-3 border-blue-200" : "bg-emerald-50/50 border-emerald-200"}`}>
-                            <div className="flex items-center gap-1.5">
-                              <Badge variant="outline" className={`text-[9px] px-1 py-0 ${t._tenure === "Freehold" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : "border-blue-300 text-blue-700 bg-blue-50"}`}>
+                          <div key={i} className={`text-xs border rounded p-2 space-y-0.5 overflow-hidden ${t._tenure === "Leasehold" ? "bg-blue-50/50 ml-3 border-blue-200" : "bg-emerald-50/50 border-emerald-200"}`}>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <Badge variant="outline" className={`text-[9px] px-1 py-0 shrink-0 ${t._tenure === "Freehold" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : "border-blue-300 text-blue-700 bg-blue-50"}`}>
                                 {t._tenure === "Freehold" ? "F" : "L"}
                               </Badge>
-                              <span className="font-medium truncate text-[11px]">{t.proprietor_name_1 || "Unknown"}</span>
-                              {t.proprietor_category && <span className="text-[9px] text-gray-400 ml-auto shrink-0">{t.proprietor_category}</span>}
+                              <span className="font-medium truncate flex-1 min-w-0 text-[11px]">{t.proprietor_name_1 || "Unknown"}</span>
+                              {t.proprietor_category && <span className="text-[9px] text-gray-400 shrink-0">{t.proprietor_category}</span>}
                             </div>
-                            <p className="text-gray-400 text-[10px]">
+                            <p className="text-gray-400 text-[10px] truncate">
                               Title: {t.title_number}
                               {t.company_reg ? ` · Co. ${t.company_reg}` : ""}
                               {t.leaseholdCount ? ` · ${t.leaseholdCount} leases` : ""}
                             </p>
                             {t.proprietor_address && <p className="text-gray-400 text-[10px] truncate">{t.proprietor_address}</p>}
                             {t.plot_size && <p className="text-gray-400 text-[10px]">Plot: {t.plot_size} acres</p>}
-                            {t._parentTitle && <p className="text-blue-400 text-[9px]">Under freehold: {t._parentTitle}</p>}
+                            {t._parentTitle && <p className="text-blue-400 text-[9px] truncate">Under freehold: {t._parentTitle}</p>}
                           </div>
                         ))}
                       </div>
@@ -1929,27 +2189,55 @@ function PropertyPanel({
               )}
 
               {(() => {
-                const raw = data.propertyDataCoUk?.["planning-applications"]?.data;
-                const planningApps = Array.isArray(raw) ? raw : (raw?.planning_applications || []);
-                if (!planningApps || planningApps.length === 0) return null;
+                // Merge from planning.data.gov.uk (via planningData) + PropertyData API
+                const govApps: any[] = (data.planningData as any)?.planningApplications || [];
+                const pdRaw = data.propertyDataCoUk?.["planning-applications"]?.data;
+                const pdApps: any[] = Array.isArray(pdRaw) ? pdRaw : (pdRaw?.planning_applications || []);
+                // Normalise PropertyData format to match gov format
+                const pdNormalised = pdApps.map((pa: any) => ({
+                  reference: pa.application_number || pa.reference,
+                  address: pa.address || pa.site_address || "",
+                  description: pa.proposal || pa.description || "",
+                  status: pa.status || pa.decision || "",
+                  type: pa.application_type || pa.type || "",
+                  decidedAt: pa.dates?.decision || pa.decision_date || "",
+                  receivedAt: pa.dates?.received_at || pa.received_date || "",
+                  decision: pa.decision || "",
+                  documentUrl: pa.url || "",
+                }));
+                // Deduplicate by reference, gov data takes priority
+                const govRefs = new Set(govApps.map((a: any) => a.reference).filter(Boolean));
+                const merged = [...govApps, ...pdNormalised.filter((a: any) => !a.reference || !govRefs.has(a.reference))];
+                if (merged.length === 0) return null;
                 return (
-                  <DataSection title={`Planning Applications (${planningApps.length})`} icon={Landmark} color="text-violet-600">
-                    {planningApps.slice(0, 8).map((pa: any, i: number) => (
-                      <div key={i} className="text-xs border rounded p-2 space-y-0.5 bg-gray-50">
-                        <p className="font-medium truncate">{pa.proposal || pa.description || pa.address || "Application"}</p>
-                        <div className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                  <DataSection title={`Planning Applications — last 10 yrs (${merged.length})`} icon={Landmark} color="text-violet-600">
+                    {merged.slice(0, 10).map((pa: any, i: number) => (
+                      <div key={i} className="text-xs border rounded p-2 space-y-0.5 bg-gray-50 overflow-hidden">
+                        <p className="font-medium truncate">{pa.description || pa.address || pa.reference || "Application"}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap text-[10px] min-w-0">
                           {pa.status && (
-                            <Badge variant="outline" className={`text-[9px] px-1 py-0 ${pa.decision?.rating === "positive" ? "border-emerald-300 text-emerald-700 bg-emerald-50" : pa.decision?.rating === "negative" ? "border-red-300 text-red-700 bg-red-50" : ""}`}>
+                            <Badge variant="outline" className={`text-[9px] px-1 py-0 shrink-0 ${
+                              /approv|grant|permit/i.test(pa.status || pa.decision) ? "border-emerald-300 text-emerald-700 bg-emerald-50" :
+                              /refus|reject/i.test(pa.status || pa.decision) ? "border-red-300 text-red-700 bg-red-50" : ""
+                            }`}>
                               {pa.status}
                             </Badge>
                           )}
-                          {pa.type && <span className="text-gray-500">{pa.type}</span>}
-                          {pa.dates?.received_at && <span className="text-gray-400">{pa.dates.received_at}</span>}
+                          {pa.type && <span className="text-gray-500 truncate">{pa.type}</span>}
+                          {(pa.receivedAt || pa.decidedAt) && (
+                            <span className="text-gray-400 shrink-0">{pa.receivedAt || pa.decidedAt}</span>
+                          )}
                         </div>
-                        {pa.address && <p className="text-[10px] text-gray-400 truncate">{pa.address}</p>}
+                        {pa.reference && <p className="text-[10px] text-gray-400">Ref: {pa.reference}</p>}
+                        {pa.address && pa.description && <p className="text-[10px] text-gray-400 truncate">{pa.address}</p>}
+                        {pa.documentUrl && (
+                          <a href={pa.documentUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-indigo-500 hover:underline inline-flex items-center gap-0.5">
+                            View <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        )}
                       </div>
                     ))}
-                    {planningApps.length > 8 && <p className="text-[10px] text-gray-400 text-center">+{planningApps.length - 8} more</p>}
+                    {merged.length > 10 && <p className="text-[10px] text-gray-400 text-center">+{merged.length - 10} more</p>}
                   </DataSection>
                 );
               })()}
@@ -2668,6 +2956,64 @@ function polygonBBoxPixels(latLngs: [number, number][], map: L.Map): { w: number
   return { w: maxX - minX, h: maxY - minY };
 }
 
+// Oriented bounding box — finds the polygon's principal axis (longest edge)
+// and returns the dims of the tightest rectangle aligned to it, plus the
+// rotation (deg) that should be applied to text so it runs along that axis.
+// This is what makes narrow-but-rotated rectangles (common on subdivided
+// OS NGD shopfronts) show readable labels like Goad does instead of
+// horizontal text overflowing the polygon.
+function polygonOBBPixels(latLngs: [number, number][], map: L.Map): { w: number; h: number; rotationDeg: number } {
+  if (latLngs.length < 3) {
+    const ab = polygonBBoxPixels(latLngs, map);
+    return { w: ab.w, h: ab.h, rotationDeg: 0 };
+  }
+  const points = latLngs.map(ll => {
+    const p = map.latLngToContainerPoint([ll[0], ll[1]]);
+    return { x: p.x, y: p.y };
+  });
+
+  // Candidate axes: use each edge's direction as an axis and measure the
+  // bounding box aligned to it. Pick the one with smallest area (classic
+  // rotating-calipers OBB, simplified — edge-aligned is optimal for most
+  // building footprints).
+  let best = { w: Infinity, h: Infinity, area: Infinity, angle: 0 };
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1) continue;
+    const angle = Math.atan2(dy, dx);
+    const cos = Math.cos(-angle);
+    const sin = Math.sin(-angle);
+    let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+    for (const p of points) {
+      const u = p.x * cos - p.y * sin;
+      const v = p.x * sin + p.y * cos;
+      if (u < minU) minU = u;
+      if (u > maxU) maxU = u;
+      if (v < minV) minV = v;
+      if (v > maxV) maxV = v;
+    }
+    const w = maxU - minU;
+    const h = maxV - minV;
+    const area = w * h;
+    if (area < best.area) best = { w, h, area, angle };
+  }
+
+  // Ensure width is the longer side (text runs along width).
+  let w = best.w, h = best.h;
+  let rotationDeg = (best.angle * 180) / Math.PI;
+  if (h > w) { const t = w; w = h; h = t; rotationDeg += 90; }
+  // Keep text right-side-up (avoid upside-down labels).
+  rotationDeg = ((rotationDeg + 180) % 360) - 180;   // wrap to [-180, 180)
+  if (rotationDeg > 90) rotationDeg -= 180;
+  if (rotationDeg < -90) rotationDeg += 180;
+
+  return { w, h, rotationDeg };
+}
+
 function fitTextToBuilding(label: string, houseNum: string, isVacant: boolean, pixelW: number, pixelH: number): { text: string; fontSize: number } | null {
   const charWidthAtSize = (size: number) => size * 0.55;
   const lineHeight = (size: number) => size * 1.3;
@@ -2689,27 +3035,24 @@ function fitTextToBuilding(label: string, houseNum: string, isVacant: boolean, p
   const padW = pixelW * 0.8;
   const padH = pixelH * 0.75;
 
-  if (padW < 12 || padH < 8) return null;
-
-  let fontSize = 9.5;
+  if (padW < 26 || padH < 16) return null;
 
   const tryFit = (size: number, text: string): string | null => {
     const cw = charWidthAtSize(size);
     const lh = lineHeight(size);
     const maxCharsPerLine = Math.floor(padW / cw);
-    if (maxCharsPerLine < 2) return null;
+    if (maxCharsPerLine < 3) return null;
 
     const words = text.split(/\s+/);
     const lines: string[] = [];
     let currentLine = "";
 
     for (const word of words) {
-      if (word.length > maxCharsPerLine) {
-        if (currentLine) lines.push(currentLine);
-        lines.push(word.substring(0, maxCharsPerLine));
-        currentLine = "";
-        continue;
-      }
+      // Never truncate mid-word — that's the scruffy Goad-destroying
+      // behaviour. If a single word doesn't fit on a line, fail the
+      // fit and let the caller try a smaller font size (or drop the
+      // label entirely).
+      if (word.length > maxCharsPerLine) return null;
       if (currentLine && (currentLine.length + 1 + word.length) > maxCharsPerLine) {
         lines.push(currentLine);
         currentLine = word;
@@ -2720,33 +3063,89 @@ function fitTextToBuilding(label: string, houseNum: string, isVacant: boolean, p
     if (currentLine) lines.push(currentLine);
 
     const maxLines = Math.floor(padH / lh);
-    if (maxLines < 1) return null;
+    if (maxLines < 1 || lines.length > maxLines) return null;
 
-    const visibleLines = lines.slice(0, maxLines);
-    return visibleLines.join("\n");
+    return lines.join("\n");
   };
 
-  for (const size of [9.5, 8, 7, 6]) {
+  for (const size of [11, 10, 9, 8, 7]) {
     const result = tryFit(size, displayText);
     if (result) {
       return { text: result, fontSize: size };
     }
   }
 
-  const cw = charWidthAtSize(6);
-  const maxChars = Math.floor(padW / cw);
-  if (maxChars >= 2) {
-    const truncated = displayText.substring(0, maxChars);
-    return { text: truncated, fontSize: 6 };
+  // If the full tenant name + number won't fit cleanly at any size, try just
+  // the house number on its own (still cleaner than a truncated name that
+  // ends mid-word). If even that doesn't fit, drop the label entirely —
+  // that's how Goad plans look: empty box rather than scruffy truncation.
+  if (houseNum && houseNum !== displayText) {
+    for (const size of [11, 10, 9, 8, 7]) {
+      const result = tryFit(size, houseNum.toUpperCase());
+      if (result) {
+        return { text: result, fontSize: size };
+      }
+    }
   }
 
   return null;
+}
+
+// Fetch OS NGD building polygons via our server proxy. NGD gives subdivided
+// MasterMap-equivalent footprints — individual shop units inside shopping
+// centres, separate parts of office blocks, etc. — which is what makes a
+// Goad-style plan possible. Returns [] if the endpoint fails or the tier
+// doesn't cover it, in which case the caller falls back to OSM.
+async function fetchNgdBuildings(bounds: L.LatLngBounds): Promise<any[]> {
+  const bboxParam = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+  try {
+    const resp = await fetch(`/api/os/mastermap-buildings?bbox=${bboxParam}`, {
+      credentials: "include",
+      headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+    });
+    if (!resp.ok) return [];
+    const body = await resp.json();
+    const features: any[] = body?.data?.features || [];
+    const out: any[] = [];
+    for (const f of features) {
+      const g = f.geometry;
+      if (!g) continue;
+      // Normalise Polygon and MultiPolygon to arrays of rings
+      const polys: number[][][] = g.type === "MultiPolygon" ? g.coordinates.flat(1) : g.type === "Polygon" ? g.coordinates : [];
+      for (const ring of polys) {
+        if (!Array.isArray(ring) || ring.length < 3) continue;
+        const latLngs = ring.map((c: number[]) => [c[1], c[0]] as [number, number]);
+        const areaSqM = polygonAreaSqM(latLngs);
+        // NGD 'Sites' will be huge polygons — filter those out of the per-unit
+        // building layer so they don't blanket the map.
+        if (areaSqM > 20000) continue;
+        out.push({
+          latLngs,
+          label: "",
+          houseNum: "",
+          isVacant: false,
+          areaSqM,
+          isUnit: areaSqM < 500,
+          _toid: f.properties?.toid || null,
+          _osid: f.properties?.osid || null,
+          _source: "ngd",
+        });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 async function fetchBuildings(map: L.Map): Promise<any[]> {
   const bounds = map.getBounds();
   const zoom = map.getZoom();
   if (zoom < 16) return [];
+
+  // Prefer NGD polygons (subdivided, Goad-style). Fall back to OSM if NGD
+  // returns nothing. Overpass still runs in parallel to harvest POI labels.
+  const ngdPromise = fetchNgdBuildings(bounds);
 
   const s = bounds.getSouth();
   const w = bounds.getWest();
@@ -2856,14 +3255,44 @@ out body;>;out skel qt;`;
       }
     }
 
+    // Wait for NGD (fired in parallel at the top of the function). If NGD
+    // returned polygons, use those instead of OSM — NGD is subdivided and
+    // authoritative — but keep OSM's POIs to hydrate labels for each polygon.
+    const ngd = await ngdPromise;
+    if (ngd.length > 0) {
+      for (const nb of ngd) {
+        // Label / house-number fallback from OSM POIs inside this polygon.
+        let label = "";
+        let houseNum = "";
+        let isVacant = false;
+        for (const poi of poiNodes) {
+          if (pointInPolygon(poi.lat, poi.lng, nb.latLngs)) {
+            const info = getLabelFromTags(poi.tags);
+            if (info.label || info.houseNum) {
+              label = label || info.label;
+              houseNum = houseNum || info.houseNum;
+              isVacant = info.isVacant && !info.label;
+              if (label && houseNum) break;
+            }
+          }
+        }
+        nb.label = label;
+        nb.houseNum = houseNum;
+        nb.isVacant = isVacant;
+      }
+      return ngd;
+    }
+
     return buildings;
   } catch (err) {
     console.error("[edozo] Overpass error:", err);
-    return [];
+    // If Overpass failed, still try to return whatever NGD gave us
+    try { return await ngdPromise; } catch { return []; }
   }
 }
 
-export default function EdozoMap() {
+export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialSearch?: { address: string; postcode: string | null } | null; onSearchConsumed?: () => void } = {}) {
+  const { toast } = useToast();
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const buildingLayerRef = useRef<L.LayerGroup | null>(null);
@@ -2875,7 +3304,7 @@ export default function EdozoMap() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
-  const [selectedPostcode, setSelectedPostcode] = useState("");
+  const [postcode, setSelectedPostcode] = useState("");
   const [propertyData, setPropertyData] = useState<PropertyData | null>(null);
   const [loadingData, setLoadingData] = useState(false);
   const [currentArea, setCurrentArea] = useState("Belgravia");
@@ -2902,8 +3331,22 @@ export default function EdozoMap() {
   const osLastBboxRef = useRef<{ buildings: string; uprns: string; sites: string }>({ buildings: "", uprns: "", sites: "" });
   const osDebounceRef = useRef<ReturnType<typeof setTimeout>>();
   const [mapZoom, setMapZoom] = useState(17);
+
+  // CRM data layers — Deals, Comps, Lease Events
+  const [showDeals, setShowDeals] = useState(false);
+  const [showComps, setShowComps] = useState(false);
+  const [showLeaseEvents, setShowLeaseEvents] = useState(false);
+  const dealsLayerRef = useRef<any>(null);
+  const compsLayerRef = useRef<any>(null);
+  const leaseEventsLayerRef = useRef<any>(null);
+  const [mapPins, setMapPins] = useState<{ deals: any[]; comps: any[]; leaseEvents: any[] } | null>(null);
+
+  // Land Registry title boundaries — always-on red-line layer
+  const titleBoundaryLayerRef = useRef<L.LayerGroup | null>(null);
+  const titleBoundaryBboxRef = useRef<string>("");
   const baseLayerRef = useRef<{ map: L.LayerGroup; sat: L.LayerGroup } | null>(null);
   const [baseLayer, setBaseLayer] = useState<"map" | "sat">("map");
+  const [exportingPlan, setExportingPlan] = useState(false);
 
   // Swap base layers atomically when the toggle changes.
   // Runs after the map init effect has populated baseLayerRef.
@@ -2987,6 +3430,20 @@ export default function EdozoMap() {
     osUprnLayerRef.current = L.layerGroup({ pane: "osUprnPane" }).addTo(map);
     osSiteLayerRef.current = L.layerGroup({ pane: "osSitePane" }).addTo(map);
 
+    // Land Registry title boundaries — always-on red-line layer. Sits above
+    // buildings so proprietor polygons are the most visible feature.
+    const titlePane = map.createPane("titlePane");
+    titlePane.style.zIndex = "455";
+    titleBoundaryLayerRef.current = L.layerGroup({ pane: "titlePane" }).addTo(map);
+
+    // CRM data layer groups — clustered (Deals / Comps / Lease Events)
+    const crmPane = map.createPane("crmPane");
+    crmPane.style.zIndex = "460";
+    const clusterOpts = { maxClusterRadius: 40, disableClusteringAtZoom: 17 };
+    dealsLayerRef.current = (L as any).markerClusterGroup(clusterOpts);
+    compsLayerRef.current = (L as any).markerClusterGroup(clusterOpts);
+    leaseEventsLayerRef.current = (L as any).markerClusterGroup(clusterOpts);
+
     // Track zoom for OS layer visibility
     map.on("zoomend", () => {
       setMapZoom(map.getZoom());
@@ -2999,23 +3456,64 @@ export default function EdozoMap() {
       for (const b of buildings) {
         const hasInfo = b.label || b.houseNum;
         const isUnit = b.isUnit;
+
+        // Goad-style categorical palette by use-class / label heuristics
+        const classify = (label: string): string => {
+          const l = (label || "").toLowerCase();
+          if (!l) return hasInfo ? "other" : "empty";
+          if (/(restaurant|cafe|café|bar|pub|kitchen|grill|sushi|pizza|burger|coffee|starbucks|pret|deli|chop|steak|dine)/.test(l)) return "fb";
+          if (/(bank|hsbc|barclays|natwest|lloyds|santander|metro|post office|bureau|exchange)/.test(l)) return "services";
+          if (/(hotel|hostel|inn|lodge|premier|travelodge|radisson|edwardian)/.test(l)) return "hotel";
+          if (/(theatre|cinema|odeon|vue|fountain|monument|gallery|museum|institute|embassy|church|palace|park|square)/.test(l)) return "civic";
+          if (/(vac|vacant|to let|available)/.test(l)) return "vacant";
+          return "retail";
+        };
+        const category = b.isVacant ? "vacant" : classify(b.label || "");
+        const catFill: Record<string, string> = {
+          retail:   "#fff4e0",  // warm cream
+          fb:       "#ffe8d4",  // peach
+          services: "#e8f0ff",  // pale blue
+          hotel:    "#f0e8ff",  // pale purple
+          civic:    "#e8f5e8",  // pale green
+          vacant:   "#e8e8e8",  // grey
+          empty:    "#f4f2eb",  // off-white
+          other:    "#fbf9f2",
+        };
+
         const polygon = L.polygon(b.latLngs, {
-          color: isUnit ? "#333" : "#222",
-          weight: isUnit ? 1.2 : 1,
-          fillColor: hasInfo ? "#faf8f0" : "#f0eee6",
-          fillOpacity: 0.95,
+          color: "#1a1a1a",
+          weight: isUnit ? 1.4 : 2.2,
+          fillColor: catFill[category] || catFill.other,
+          fillOpacity: 1,
           opacity: 1,
           pane: "buildingPane",
+          lineJoin: "miter",
+          lineCap: "butt",
         });
 
-        const bbox = polygonBBoxPixels(b.latLngs, mapRef.current);
-        const fitted = fitTextToBuilding(b.label, b.houseNum, b.isVacant, bbox.w, bbox.h);
+        // Oriented bounding box: we measure the polygon along its own
+        // principal axis, not the screen axis. A narrow shopfront that
+        // happens to run north-south gets a "width" that's its long side,
+        // and we rotate the label to match. This is how Goad plans keep
+        // text readable inside narrow units.
+        const obb = polygonOBBPixels(b.latLngs, mapRef.current);
+        const zoom = mapRef.current.getZoom();
+        const fitted = zoom < 18 ? null : fitTextToBuilding(b.label, b.houseNum, b.isVacant, obb.w, obb.h);
 
         if (fitted) {
           const cssClass = b.isVacant && !b.label
             ? `edozo-label edozo-label-vacant edozo-fs-${fitted.fontSize}`
             : `edozo-label edozo-fs-${fitted.fontSize}`;
-          polygon.bindTooltip(fitted.text, {
+          // If the principal axis is meaningfully rotated (>8° off
+          // horizontal), wrap the text in an inline-block that rotates
+          // inside the Leaflet-positioned tooltip. Small angles are left
+          // alone so labels on near-horizontal frontages don't wobble.
+          const rot = Math.abs(obb.rotationDeg) > 8 ? obb.rotationDeg : 0;
+          const htmlLines = fitted.text.split("\n").map(l => `<div>${l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`).join("");
+          const content = rot === 0
+            ? fitted.text
+            : `<div style="display:inline-block;transform:rotate(${rot}deg);transform-origin:center;white-space:nowrap;line-height:1.1;">${htmlLines}</div>`;
+          polygon.bindTooltip(content, {
             permanent: true,
             direction: "center",
             className: cssClass,
@@ -3035,12 +3533,147 @@ export default function EdozoMap() {
       loadCounterRef.current += 1;
       const thisLoad = loadCounterRef.current;
 
-      const buildings = await fetchBuildings(map);
+      // Fetch buildings (OSM) and label overrides (CRM > Comps > Google) in parallel
+      const bboxParam = `${bounds.getSouth()},${bounds.getWest()},${bounds.getNorth()},${bounds.getEast()}`;
+      const labelsPromise = fetch(`/api/map/labels?bbox=${bboxParam}`, {
+        credentials: "include",
+        headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+
+      // Known London shopping centres — when the viewport overlaps one of
+      // these, fetch its interior tenant directory via Claude web search
+      // (cached 30 days server-side). Tenants merge into the labels pipeline
+      // below as another override source — ranked below CRM/Comps but
+      // above generic Google Places.
+      const KNOWN_CENTRES = [
+        { name: "Cardinal Place, London", lat: 51.4975, lng: -0.1370, radiusKm: 0.2 },
+        { name: "Nova Victoria, London", lat: 51.4965, lng: -0.1396, radiusKm: 0.2 },
+        { name: "Westfield London, Shepherds Bush", lat: 51.5074, lng: -0.2216, radiusKm: 0.4 },
+        { name: "Westfield Stratford City", lat: 51.5437, lng: -0.0063, radiusKm: 0.4 },
+        { name: "Brent Cross Shopping Centre", lat: 51.5768, lng: -0.2244, radiusKm: 0.4 },
+        { name: "Canary Wharf Shopping", lat: 51.5055, lng: -0.0206, radiusKm: 0.3 },
+        { name: "One New Change, London", lat: 51.5141, lng: -0.0961, radiusKm: 0.15 },
+      ];
+      const mapCentre = bounds.getCenter();
+      const centreHaversine = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+        const R = 6371; const φ1 = lat1*Math.PI/180; const φ2 = lat2*Math.PI/180;
+        const Δφ = (lat2-lat1)*Math.PI/180; const Δλ = (lng2-lng1)*Math.PI/180;
+        const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+        return 2*R*Math.asin(Math.sqrt(a));
+      };
+      const centresInView = KNOWN_CENTRES.filter(c => centreHaversine(mapCentre.lat, mapCentre.lng, c.lat, c.lng) < c.radiusKm + 0.3);
+      const centreDirectoriesPromise = Promise.all(centresInView.map(c =>
+        fetch(`/api/map/centre-directory?name=${encodeURIComponent(c.name)}`, {
+          credentials: "include",
+          headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+        }).then(r => r.ok ? r.json() : null).catch(() => null).then(d => d ? { ...d, _centreLat: c.lat, _centreLng: c.lng, _radiusKm: c.radiusKm } : null)
+      )).then(rs => rs.filter(Boolean));
+
+      const [buildings, labelsResp, centreDirectories] = await Promise.all([
+        fetchBuildings(map),
+        labelsPromise,
+        centreDirectoriesPromise,
+      ]);
 
       if (loadCounterRef.current !== thisLoad) return;
       if (buildings.length === 0 && buildingLayerRef.current && buildingLayerRef.current.getLayers().length > 0) return;
 
-      renderBuildings(buildings);
+      // Flatten centre directory tenants into label points. We don't know
+      // each tenant's exact position inside the centre, so we space them
+      // evenly around the centre point — the label-snap finds the nearest
+      // polygon and adopts the tenant name. Good enough to put "Boots",
+      // "Pret", "Costa" etc. into Cardinal Place's subdivided NGD parts.
+      const centreLabels: Array<{ lat: number; lng: number; label: string }> = [];
+      for (const c of (centreDirectories || []) as any[]) {
+        const tenants: any[] = Array.isArray(c?.tenants) ? c.tenants : [];
+        if (!tenants.length) continue;
+        // Spread tenants in a ring inside the centre radius
+        const R = c._radiusKm * 0.6;
+        tenants.forEach((t, i) => {
+          if (!t?.name) return;
+          const angle = (2 * Math.PI * i) / Math.max(tenants.length, 1);
+          const dLat = (R / 111) * Math.cos(angle);
+          const dLng = (R / (111 * Math.cos(c._centreLat * Math.PI / 180))) * Math.sin(angle);
+          centreLabels.push({ lat: c._centreLat + dLat, lng: c._centreLng + dLng, label: t.unit ? `${t.unit} ${t.name}` : t.name });
+        });
+      }
+
+      // Merge labels into buildings — CRM beats Comp beats Google. For each
+      // building, snap to the nearest label point within ~25m and override.
+      const overrideLabel = (b: any) => {
+        if (!labelsResp) return b;
+        const center = b.center || (b.latLngs?.[0] ? { lat: b.latLngs[0][0], lng: b.latLngs[0][1] } : null);
+        if (!center) return b;
+        const distM = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+          const R = 6371000;
+          const φ1 = (lat1 * Math.PI) / 180;
+          const φ2 = (lat2 * Math.PI) / 180;
+          const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+          const Δλ = ((lng2 - lng1) * Math.PI) / 180;
+          const a = Math.sin(Δφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+          return 2 * R * Math.asin(Math.sqrt(a));
+        };
+        const findClosest = (pts: any[]) => {
+          let best: any = null;
+          let bestD = 25; // max metres
+          for (const p of pts) {
+            const d = distM(center.lat, center.lng, p.lat, p.lng);
+            if (d < bestD) { best = p; bestD = d; }
+          }
+          return best;
+        };
+        const crm = findClosest(labelsResp.crm || []);
+        if (crm) return { ...b, label: crm.label, _labelSource: "crm" };
+        const comp = findClosest(labelsResp.comps || []);
+        if (comp) return { ...b, label: comp.label, _labelSource: "comp" };
+        // Shopping centre directory beats generic VOA/Google because it's
+        // the centre's own authoritative tenant list. Bigger match radius
+        // (40m) because the ring-spreading is approximate.
+        const centreFinder = (pts: any[]) => {
+          let best: any = null; let bestD = 40;
+          for (const p of pts) {
+            const d = distM(center.lat, center.lng, p.lat, p.lng);
+            if (d < bestD) { best = p; bestD = d; }
+          }
+          return best;
+        };
+        const centre = centreFinder(centreLabels);
+        if (centre) return { ...b, label: centre.label, _labelSource: "centre" };
+        const voa = findClosest(labelsResp.voa || []);
+        if (voa) return { ...b, label: voa.label, _labelSource: "voa" };
+        const google = findClosest(labelsResp.google || []);
+        if (google) return { ...b, label: google.label, _labelSource: "google" };
+        return b;
+      };
+
+      const enriched = buildings.map(overrideLabel);
+
+      // Deduplicate labels across NGD building-parts that share a TOID or
+      // that got matched to the same VOA/CRM/Comp/Google record. Without
+      // this, a single Boots shopfront made of five NGD parts gets
+      // "BOOTS OPTICIANS" printed five times, each overflowing its sliver.
+      // Keep the label on the largest polygon of each group; blank the
+      // others so their polygons render without text.
+      const groupBy = new Map<string, any[]>();
+      for (const b of enriched) {
+        if (!b.label) continue;
+        const key = `${(b.label || "").toLowerCase().trim()}|${b._toid || ""}`;
+        if (!groupBy.has(key)) groupBy.set(key, []);
+        groupBy.get(key)!.push(b);
+      }
+      for (const group of groupBy.values()) {
+        if (group.length <= 1) continue;
+        group.sort((a, b) => (b.areaSqM || 0) - (a.areaSqM || 0));
+        for (let i = 1; i < group.length; i++) {
+          group[i].label = "";
+          group[i].houseNum = "";
+          group[i]._dedupedFrom = group[0].label;
+        }
+      }
+
+      renderBuildings(enriched);
     };
 
     const debouncedLoad = () => {
@@ -3084,6 +3717,186 @@ export default function EdozoMap() {
         setCrmProperties(props);
       })
       .catch(() => {});
+  }, []);
+
+  // Fetch CRM map pins (Deals, Comps, Lease Events) on mount
+  useEffect(() => {
+    const headers = { ...getAuthHeaders(), Authorization: `Bearer ${localStorage.getItem("bgp_token")}` };
+    fetch("/api/map/pins", { credentials: "include", headers })
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setMapPins(data); })
+      .catch(err => {
+        console.error("[map] failed to load CRM pins:", err?.message);
+        toast({ title: "Map layers unavailable", description: "Couldn't load Deals / Comps / Lease Events pins. Check your connection and try again.", variant: "destructive" });
+      });
+  }, [toast]);
+
+  // Render Deals layer
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = dealsLayerRef.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    if (!showDeals || !mapPins?.deals.length) {
+      if (map.hasLayer(layer)) map.removeLayer(layer);
+      return;
+    }
+    if (!map.hasLayer(layer)) layer.addTo(map);
+    for (const d of mapPins.deals) {
+      const marker = L.circleMarker([d.lat, d.lng], {
+        radius: 7, fillColor: "#f59e0b", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9,
+      });
+      const statusColor = d.status === "Complete" || d.status === "Completed" ? "#10b981"
+        : d.status === "Live" || d.status === "Active" ? "#3b82f6"
+        : d.status === "SOLs" ? "#8b5cf6"
+        : "#f59e0b";
+      marker.bindPopup(`
+        <div style="min-width:190px;font-family:sans-serif;font-size:12px">
+          <p style="font-weight:700;margin:0 0 4px">${d.label}</p>
+          ${d.addressLabel && d.addressLabel !== d.label ? `<p style="color:#666;margin:0 0 4px;font-size:11px">${d.addressLabel}</p>` : ""}
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0">
+            ${d.dealType ? `<span style="background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;font-size:10px">${d.dealType}</span>` : ""}
+            ${d.status ? `<span style="background:${statusColor}22;color:${statusColor};padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">${d.status}</span>` : ""}
+          </div>
+          ${d.pricing ? `<p style="margin:2px 0;font-size:11px;color:#333">£${Number(d.pricing).toLocaleString()}</p>` : ""}
+          ${d.areaSqft ? `<p style="margin:2px 0;font-size:11px;color:#666">${Number(d.areaSqft).toLocaleString()} sq ft</p>` : ""}
+          <a href="/deals" style="display:inline-block;margin-top:8px;font-size:11px;color:#6366f1;text-decoration:none;border:1px solid #e0e7ff;padding:3px 8px;border-radius:4px">Open Deals →</a>
+        </div>
+      `, { maxWidth: 260 });
+      layer.addLayer(marker);
+    }
+  }, [showDeals, mapPins]);
+
+  // Render Comps layer
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = compsLayerRef.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    if (!showComps || !mapPins?.comps.length) {
+      if (map.hasLayer(layer)) map.removeLayer(layer);
+      return;
+    }
+    if (!map.hasLayer(layer)) layer.addTo(map);
+    for (const c of mapPins.comps) {
+      const marker = L.circleMarker([c.lat, c.lng], {
+        radius: 6, fillColor: "#8b5cf6", color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.85,
+      });
+      marker.bindPopup(`
+        <div style="min-width:190px;font-family:sans-serif;font-size:12px">
+          <p style="font-weight:700;margin:0 0 4px">${c.label || c.postcode || "Comp"}</p>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0">
+            ${c.compType ? `<span style="background:#ede9fe;color:#5b21b6;padding:2px 6px;border-radius:4px;font-size:10px">${c.compType}</span>` : ""}
+            ${c.dealType ? `<span style="background:#f3f4f6;color:#374151;padding:2px 6px;border-radius:4px;font-size:10px">${c.dealType}</span>` : ""}
+          </div>
+          ${c.tenant ? `<p style="margin:2px 0;font-size:11px;color:#333"><strong>Tenant:</strong> ${c.tenant}</p>` : ""}
+          ${c.headlineRent ? `<p style="margin:2px 0;font-size:11px;color:#333"><strong>Rent:</strong> ${c.headlineRent}</p>` : ""}
+          ${c.areaSqft ? `<p style="margin:2px 0;font-size:11px;color:#666">${c.areaSqft} sq ft</p>` : ""}
+          ${c.completionDate ? `<p style="margin:2px 0;font-size:10px;color:#999">${c.completionDate}</p>` : ""}
+          <a href="/comps/${c.id}" style="display:inline-block;margin-top:8px;font-size:11px;color:#6366f1;text-decoration:none;border:1px solid #e0e7ff;padding:3px 8px;border-radius:4px">Open Comp →</a>
+        </div>
+      `, { maxWidth: 260 });
+      layer.addLayer(marker);
+    }
+  }, [showComps, mapPins]);
+
+  // Render Lease Events layer
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = leaseEventsLayerRef.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    if (!showLeaseEvents || !mapPins?.leaseEvents.length) {
+      if (map.hasLayer(layer)) map.removeLayer(layer);
+      return;
+    }
+    if (!map.hasLayer(layer)) layer.addTo(map);
+    for (const e of mapPins.leaseEvents) {
+      const urgencyColor = e.eventDate
+        ? new Date(e.eventDate) < new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+          ? "#ef4444" : "#ec4899"
+        : "#ec4899";
+      const marker = L.circleMarker([e.lat, e.lng], {
+        radius: 6, fillColor: urgencyColor, color: "#fff", weight: 2, opacity: 1, fillOpacity: 0.9,
+      });
+      const dateStr = e.eventDate ? new Date(e.eventDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+      marker.bindPopup(`
+        <div style="min-width:190px;font-family:sans-serif;font-size:12px">
+          <p style="font-weight:700;margin:0 0 4px">${e.eventType || "Lease Event"}</p>
+          ${e.label ? `<p style="color:#666;margin:0 0 4px;font-size:11px">${e.label}</p>` : ""}
+          ${e.tenant ? `<p style="margin:2px 0;font-size:11px;color:#333"><strong>Tenant:</strong> ${e.tenant}</p>` : ""}
+          ${dateStr ? `<p style="margin:2px 0;font-size:11px;color:#333"><strong>Date:</strong> ${dateStr}</p>` : ""}
+          ${e.currentRent ? `<p style="margin:2px 0;font-size:11px;color:#333"><strong>Rent:</strong> ${e.currentRent}</p>` : ""}
+          ${e.status ? `<span style="background:#fce7f3;color:#9d174d;padding:2px 6px;border-radius:4px;font-size:10px;display:inline-block;margin-top:2px">${e.status}</span>` : ""}
+          <a href="/lease-events" style="display:inline-block;margin-top:8px;font-size:11px;color:#6366f1;text-decoration:none;border:1px solid #e0e7ff;padding:3px 8px;border-radius:4px">Open Lease Events →</a>
+        </div>
+      `, { maxWidth: 260 });
+      layer.addLayer(marker);
+    }
+  }, [showLeaseEvents, mapPins]);
+
+  // Land Registry title boundaries — always-on red-line layer.
+  // Fetches the polygons for the visible postcode district on each map move
+  // (cached 30d server-side), draws them as crisp red outlines. No toggle —
+  // these are the core of a property plan.
+  useEffect(() => {
+    if (!mapRef.current || !titleBoundaryLayerRef.current) return;
+    const map = mapRef.current;
+    const layer = titleBoundaryLayerRef.current;
+
+    const refresh = async () => {
+      const bounds = map.getBounds();
+      const bbox = `${bounds.getSouth().toFixed(4)},${bounds.getWest().toFixed(4)},${bounds.getNorth().toFixed(4)},${bounds.getEast().toFixed(4)}`;
+      if (bbox === titleBoundaryBboxRef.current) return;
+      titleBoundaryBboxRef.current = bbox;
+      try {
+        const res = await fetch(`/api/map/title-boundaries?bbox=${bbox}`, {
+          credentials: "include",
+          headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        layer.clearLayers();
+
+        const drawTitle = (t: any, tenure: "F" | "L") => {
+          const geo = t.polygons;
+          if (!geo) return;
+          const style = {
+            color: tenure === "F" ? "#dc2626" : "#2563eb",
+            weight: 1.4,
+            fillOpacity: 0,
+            opacity: 0.85,
+            dashArray: tenure === "F" ? undefined : "4,3",
+            pane: "titlePane",
+          };
+          try {
+            const geojson = L.geoJSON(geo, { style } as any);
+            geojson.bindTooltip(
+              `<div style="font-family:sans-serif;font-size:11px;max-width:240px">
+                 <strong>${t.proprietor || "Title " + (t.titleNumber || "")}</strong><br/>
+                 <span style="color:#666">${tenure === "F" ? "Freehold" : "Leasehold"}${t.titleNumber ? " · " + t.titleNumber : ""}</span>
+                 ${t.proprietorCategory ? `<br/><span style="color:#888;font-size:10px">${t.proprietorCategory}</span>` : ""}
+                 ${t.pricePaid ? `<br/><span style="color:#888;font-size:10px">£${Number(t.pricePaid).toLocaleString()}${t.dateOfPurchase ? " · " + t.dateOfPurchase : ""}</span>` : ""}
+               </div>`,
+              { sticky: true, direction: "top", opacity: 0.95 }
+            );
+            layer.addLayer(geojson);
+          } catch (err) {
+            // Malformed polygon — skip silently
+          }
+        };
+
+        for (const t of data.freeholds || []) drawTitle(t, "F");
+        for (const t of data.leaseholds || []) drawTitle(t, "L");
+      } catch (err) {
+        // Non-fatal — the layer just won't have new polygons
+      }
+    };
+
+    refresh();
+    const onMoveEnd = () => { setTimeout(refresh, 400); };
+    map.on("moveend", onMoveEnd);
+    return () => { map.off("moveend", onMoveEnd); };
   }, []);
 
   // Render search history pins on map
@@ -3165,7 +3978,7 @@ export default function EdozoMap() {
         if (p.postcode) {
           setSelectedPostcode(p.postcode);
           setCurrentArea(p.name || p.address || p.postcode);
-          loadPropertyData(p.postcode, undefined, p.address || undefined);
+          loadPropertyData(p.postcode, undefined, p.address || undefined, { lat: p.latitude, lng: p.longitude });
         }
       });
       crmMarkersRef.current.addLayer(marker);
@@ -3262,7 +4075,7 @@ export default function EdozoMap() {
                               if (rgData.postcode) {
                                 setSelectedPostcode(rgData.postcode);
                                 setCurrentArea(rgData.displayAddr || rgData.postcode);
-                                loadPropertyData(rgData.postcode, undefined, rgData.displayAddr || undefined);
+                                loadPropertyData(rgData.postcode, undefined, rgData.displayAddr || undefined, { lat: center.lat, lng: center.lng });
                               }
                             } catch (err) {
                               console.error("[os-buildings] Reverse geocode error:", err);
@@ -3396,16 +4209,36 @@ export default function EdozoMap() {
     }
     const addressPart = result.label.split("—")[0]?.trim() || "";
     setSelectedPostcode(result.postcode);
-    loadPropertyData(result.postcode, undefined, addressPart || undefined);
+    loadPropertyData(result.postcode, undefined, addressPart || undefined, result.lat && result.lng ? { lat: result.lat, lng: result.lng } : null);
     setSearchResults([]);
     suppressSearchRef.current = true;
     setSearchQuery(result.label);
   };
 
+  // Auto-search when navigating from Investigation Board
+  useEffect(() => {
+    if (!initialSearch?.address && !initialSearch?.postcode) return;
+    const query = initialSearch.address || initialSearch.postcode || "";
+    if (!query) return;
+
+    // If we have a postcode, load property data directly
+    if (initialSearch.postcode) {
+      suppressSearchRef.current = true;
+      setSearchQuery(query);
+      setSelectedPostcode(initialSearch.postcode);
+      loadPropertyData(initialSearch.postcode, undefined, initialSearch.address || undefined);
+    } else {
+      // Otherwise trigger an address search
+      suppressSearchRef.current = false;
+      setSearchQuery(query);
+    }
+    onSearchConsumed?.();
+  }, [initialSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [activePdLayers, setActivePdLayers] = useState<string[]>(["core"]);
   const [loadingLayer, setLoadingLayer] = useState<string | null>(null);
 
-  const loadPropertyData = async (postcode: string, pdLayers?: string[], address?: string) => {
+  const loadPropertyData = async (postcode: string, pdLayers?: string[], address?: string, coords?: { lat: number; lng: number } | null) => {
     setLoadingData(true);
     setPropertyData(null);
     const layersParam = pdLayers || ["core"];
@@ -3413,27 +4246,115 @@ export default function EdozoMap() {
     try {
       let url = `/api/property-lookup?postcode=${encodeURIComponent(postcode)}&layers=core&propertyDataLayers=${layersParam.join(",")}`;
       if (address) url += `&address=${encodeURIComponent(address)}`;
-      const resp = await fetch(url, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
-      });
-      if (resp.ok) {
-        const data = await resp.json();
+      const authHeaders = { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` };
+
+      // Three-way parallel fetch. Priority order:
+      //   1. Stored Pathway run (gold — curated titles with verified proprietors)
+      //   2. Live Land Registry resolve (UPRN-first match, fallback to street/postcode)
+      //   3. Legacy property-lookup (still provides VOA, planning, prices, EPC)
+      // If a Pathway run exists, its title data overrides the raw resolve output.
+      const pathwayParams = new URLSearchParams();
+      if (address) pathwayParams.set("address", address);
+      if (postcode) pathwayParams.set("postcode", postcode);
+      const [propResp, resolveResp, pathwayResp] = await Promise.all([
+        fetch(url, { headers: authHeaders }),
+        (address || coords)
+          ? fetch("/api/land-registry/resolve", {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json", ...authHeaders },
+              body: JSON.stringify({ address, postcode, lat: coords?.lat, lng: coords?.lng }),
+            }).catch(() => null)
+          : Promise.resolve(null),
+        (address || postcode)
+          ? fetch(`/api/property-pathway/latest?${pathwayParams.toString()}`, { headers: authHeaders }).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+
+      if (propResp.ok) {
+        const data = await propResp.json();
+
+        // Layer 1: stored Pathway run (highest fidelity — already AI-verified).
+        let pathwayRun: any = null;
+        if (pathwayResp && pathwayResp.ok) {
+          try { pathwayRun = await pathwayResp.json(); } catch {}
+        }
+        if (pathwayRun) {
+          data._pathwayRun = pathwayRun;
+          const stage4 = pathwayRun?.stageResults?.stage4 || {};
+          const stage1 = pathwayRun?.stageResults?.stage1 || {};
+          const pathwayTitles: any[] = [];
+          for (const t of (stage4.titleRegisters || [])) {
+            pathwayTitles.push({
+              title_number: t.titleNumber,
+              proprietor_name_1: t.proprietorName || stage1?.initialOwnership?.proprietorName,
+              property: t.address ? [t.address] : undefined,
+              _match: "uprn" as const,
+              _source: "pathway" as const,
+            });
+          }
+          if (stage1?.initialOwnership?.titleNumber && pathwayTitles.length === 0) {
+            pathwayTitles.push({
+              title_number: stage1.initialOwnership.titleNumber,
+              proprietor_name_1: stage1.initialOwnership.proprietorName,
+              property: stage1.initialOwnership.address ? [stage1.initialOwnership.address] : undefined,
+              _match: "uprn" as const,
+              _source: "pathway" as const,
+            });
+          }
+          if (pathwayTitles.length > 0) {
+            if (!data.propertyDataCoUk) data.propertyDataCoUk = {};
+            data.propertyDataCoUk["freeholds"] = { data: pathwayTitles };
+            data.propertyDataCoUk["leaseholds"] = data.propertyDataCoUk["leaseholds"] || { data: [] };
+          }
+        }
+
+        // Layer 2: live Land Registry resolve (only used if Pathway data didn't
+        // populate titles). Tags each row with uprn/street/postcode match quality.
+        if (!pathwayRun && resolveResp && resolveResp.ok) {
+          try {
+            const r = await resolveResp.json();
+            const taggedFreeholds = [
+              ...(r?.matched?.freeholds || []).map((f: any) => ({ ...f, _match: "uprn" as const })),
+              ...(r?.fallback?.freeholds || []).map((f: any) => ({ ...f, _match: "street" as const })),
+              ...(r?.context?.freeholds || []).map((f: any) => ({ ...f, _match: "postcode" as const })),
+            ];
+            const taggedLeaseholds = [
+              ...(r?.matched?.leaseholds || []).map((l: any) => ({ ...l, _match: "uprn" as const })),
+              ...(r?.fallback?.leaseholds || []).map((l: any) => ({ ...l, _match: "street" as const })),
+              ...(r?.context?.leaseholds || []).map((l: any) => ({ ...l, _match: "postcode" as const })),
+            ];
+            if (!data.propertyDataCoUk) data.propertyDataCoUk = {};
+            data.propertyDataCoUk["freeholds"] = { data: taggedFreeholds };
+            data.propertyDataCoUk["leaseholds"] = { data: taggedLeaseholds };
+            data._landRegistryResolve = {
+              matchedCount: (r?.matched?.freeholds?.length || 0) + (r?.matched?.leaseholds?.length || 0),
+              fallbackCount: (r?.fallback?.freeholds?.length || 0) + (r?.fallback?.leaseholds?.length || 0),
+              contextCount: (r?.context?.freeholds?.length || 0) + (r?.context?.leaseholds?.length || 0),
+              source: r?.source || null,
+              pdErrors: r?.pdErrors || [],
+            };
+          } catch (e) {
+            console.warn("[edozo-map] Land Registry resolve merge failed:", e);
+          }
+        }
         setPropertyData(data);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Property lookup error:", e);
+      toast({ title: "Property lookup failed", description: e?.message || "Couldn't fetch property data. Try again.", variant: "destructive" });
     }
     setLoadingData(false);
   };
 
   const loadAdditionalLayer = async (layer: string) => {
-    if (!selectedPostcode || !propertyData) return;
+    if (!postcode || !propertyData) return;
     const newLayers = [...activePdLayers, layer];
     setActivePdLayers(newLayers);
     setLoadingLayer(layer);
     try {
       const extendedLayers = layer === "market" || layer === "area" || layer === "residential" ? "core,extended" : "core";
-      const url = `/api/property-lookup?postcode=${encodeURIComponent(selectedPostcode)}&layers=${extendedLayers}&propertyDataLayers=${newLayers.join(",")}`;
+      const url = `/api/property-lookup?postcode=${encodeURIComponent(postcode)}&layers=${extendedLayers}&propertyDataLayers=${newLayers.join(",")}`;
       const resp = await fetch(url, {
         headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` },
       });
@@ -3465,9 +4386,52 @@ export default function EdozoMap() {
 
       setSelectedPostcode(postcode);
       setCurrentArea(displayAddr || postcode);
-      loadPropertyData(postcode, undefined, displayAddr || undefined);
+      loadPropertyData(postcode, undefined, displayAddr || undefined, { lat, lng });
     } catch (e) {
       console.error("Reverse geocode error:", e);
+    }
+  };
+
+  // Export the current map view as a BGP-branded PDF plan
+  const exportGoadPlanPdf = async () => {
+    const map = mapRef.current;
+    const container = mapContainerRef.current;
+    if (!map || !container) return;
+    setExportingPlan(true);
+    try {
+      const { toPng } = await import("html-to-image");
+      const { jsPDF } = await import("jspdf");
+      const dataUrl = await toPng(container, { cacheBust: true, pixelRatio: 2, backgroundColor: "#faf8f2" });
+      const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a3" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+
+      pdf.setFillColor(26, 26, 26);
+      pdf.rect(0, 0, pageW, 14, "F");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(11);
+      pdf.setFont("helvetica", "bold");
+      pdf.text("BRUCE GILLINGHAM POLLARD", margin, 9);
+      pdf.setFontSize(9);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`${currentArea || postcode || "London"}  ·  Intelligence Plan  ·  ${new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`, pageW - margin, 9, { align: "right" });
+
+      const imgW = pageW - margin * 2;
+      const imgH = pageH - 14 - margin * 2;
+      pdf.addImage(dataUrl, "PNG", margin, 14 + margin, imgW, imgH, undefined, "FAST");
+
+      pdf.setTextColor(80, 80, 80);
+      pdf.setFontSize(7);
+      pdf.text("Data: OS Zoomstack, OpenStreetMap, Valuation Office Agency, HM Land Registry, Google Places. BGP Intelligence Map.", margin, pageH - 4);
+
+      const filename = `BGP_Plan_${(currentArea || postcode || "map").replace(/[^a-zA-Z0-9]/g, "_")}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      pdf.save(filename);
+    } catch (err: any) {
+      console.error("[map] export PDF failed:", err);
+      toast({ title: "Export failed", description: err?.message || "Couldn't export the plan as a PDF.", variant: "destructive" });
+    } finally {
+      setExportingPlan(false);
     }
   };
 
@@ -3487,25 +4451,33 @@ export default function EdozoMap() {
           background: transparent !important;
           border: none !important;
           box-shadow: none !important;
-          color: #111 !important;
-          font-size: 9px !important;
+          color: #0a0a0a !important;
+          font-size: 10px !important;
           font-weight: 700 !important;
           font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
           text-transform: uppercase !important;
-          letter-spacing: 0.1px !important;
+          letter-spacing: 0.3px !important;
           white-space: pre-line !important;
           padding: 0 !important;
           text-align: center !important;
-          line-height: 1.2 !important;
-          overflow: hidden !important;
+          line-height: 1.15 !important;
+          /* overflow: visible so CSS-rotated labels inside the tooltip
+             wrapper render past the non-rotated wrapper box; the polygon
+             OBB fit check already guarantees the text stays inside the
+             polygon. */
+          overflow: visible !important;
+          text-shadow: 0 0 2px rgba(255,255,255,0.9), 0 0 2px rgba(255,255,255,0.9), 0 0 3px rgba(255,255,255,0.7) !important;
+          pointer-events: none !important;
         }
-        .edozo-fs-9\\.5 { font-size: 9.5px !important; }
-        .edozo-fs-8 { font-size: 8px !important; }
-        .edozo-fs-7 { font-size: 7px !important; }
-        .edozo-fs-6 { font-size: 6px !important; font-weight: 600 !important; }
+        .edozo-fs-11 { font-size: 11px !important; letter-spacing: 0.4px !important; }
+        .edozo-fs-10 { font-size: 10px !important; letter-spacing: 0.3px !important; }
+        .edozo-fs-9 { font-size: 9px !important; letter-spacing: 0.2px !important; }
+        .edozo-fs-8 { font-size: 8px !important; letter-spacing: 0.1px !important; }
+        .edozo-fs-7 { font-size: 7px !important; font-weight: 600 !important; letter-spacing: 0.05px !important; }
         .edozo-label-vacant {
-          color: #777 !important;
+          color: #555 !important;
           font-weight: 600 !important;
+          font-style: italic !important;
         }
         .edozo-label::before {
           display: none !important;
@@ -3520,8 +4492,10 @@ export default function EdozoMap() {
           font-size: 10px !important;
         }
         .leaflet-container {
-          background: #e8e6de !important;
+          background: #faf8f2 !important;
+          font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif !important;
         }
+        .leaflet-tile-container img { filter: grayscale(0.35) brightness(1.02); }
       `}</style>
 
       <div className="w-[220px] border-r bg-white flex flex-col z-[1001] relative shrink-0">
@@ -3585,111 +4559,36 @@ export default function EdozoMap() {
 
         <div className="border-t" />
 
-        <div className="px-3 py-2.5">
-          <div className="flex items-center justify-between">
-            <p className="text-[11px] font-semibold text-gray-700">Edit data</p>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] text-gray-400">Save to my organisation</span>
-              <Switch
-                checked={saveToOrg}
-                onCheckedChange={setSaveToOrg}
-                className="h-4 w-7"
-                data-testid="save-org-toggle"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t" />
-
-        <div className="px-3 py-2.5">
-          <p className="text-[11px] font-semibold text-gray-700 mb-2">Tools</p>
-          <div className="flex flex-wrap gap-0.5">
-            {tools.map(({ key, icon: Icon, label }) => (
+        <div className="px-3 py-3">
+          <p className="text-[11px] font-semibold text-gray-700 mb-2.5">Map Layers</p>
+          <div className="space-y-2.5">
+            {[
+              { key: "search", label: "Search History", count: recentSearches.length, dot: "#ef4444", on: showSearchHistory, set: setShowSearchHistory },
+              { key: "crm",    label: "CRM Properties", count: crmProperties.length, dot: "#3b82f6", on: showCrmLayer, set: setShowCrmLayer },
+              { key: "deals",  label: "Deals",          count: mapPins?.deals.length ?? 0, dot: "#f59e0b", on: showDeals, set: setShowDeals },
+              { key: "comps",  label: "Comps",          count: mapPins?.comps.length ?? 0, dot: "#8b5cf6", on: showComps, set: setShowComps },
+              { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
+            ].map((row) => (
               <button
-                key={key}
-                onClick={() => setActiveTool(key)}
-                className={`w-[30px] h-[30px] rounded flex items-center justify-center transition-colors ${
-                  activeTool === key
-                    ? "bg-gray-200 text-gray-900"
-                    : "hover:bg-gray-100 text-gray-500"
+                key={row.key}
+                onClick={() => row.set(!row.on)}
+                className={`w-full flex items-center justify-between px-2 py-1.5 rounded border transition-colors ${
+                  row.on ? "bg-gray-900 border-gray-900 text-white" : "bg-white border-gray-200 text-gray-700 hover:border-gray-300"
                 }`}
-                title={label}
-                data-testid={`tool-${key}`}
+                data-testid={`layer-toggle-${row.key}`}
               >
-                <Icon className="w-3.5 h-3.5" />
+                <div className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: row.dot }} />
+                  <span className="text-[11px] font-medium">{row.label}</span>
+                  {row.count > 0 && (
+                    <span className={`text-[9px] ${row.on ? "text-gray-300" : "text-gray-400"}`}>({row.count})</span>
+                  )}
+                </div>
+                <span className={`text-[9px] font-semibold ${row.on ? "text-white" : "text-gray-400"}`}>{row.on ? "ON" : "OFF"}</span>
               </button>
             ))}
           </div>
-          <div className="flex gap-0.5 mt-1">
-            <button className="w-[30px] h-[30px] rounded flex items-center justify-center hover:bg-gray-100 text-gray-500" title="Edit">
-              <Pencil className="w-3.5 h-3.5" />
-            </button>
-            <button className="w-[30px] h-[30px] rounded flex items-center justify-center hover:bg-gray-100 text-gray-500" title="Search">
-              <Search className="w-3.5 h-3.5" />
-            </button>
-          </div>
         </div>
-
-        <div className="border-t" />
-
-        <div className="px-3 py-2.5">
-          <p className="text-[11px] font-semibold text-gray-700 mb-1.5">Name your plan</p>
-          <Input
-            placeholder="Enter plan name..."
-            className="h-8 text-xs bg-white border-gray-300 rounded"
-            data-testid="plan-name-input"
-          />
-        </div>
-
-        <div className="border-t" />
-
-        <div className="px-3 py-2.5">
-          <Button variant="outline" size="sm" className="w-full h-8 text-xs font-medium" data-testid="create-plan-btn">
-            Create your plan
-          </Button>
-        </div>
-
-        <div className="border-t" />
-
-        <div className="px-3 py-2.5">
-          <p className="text-[11px] font-semibold text-gray-700 mb-2">Map Layers</p>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
-                <span className="text-[10px] text-gray-600">Search History</span>
-              </div>
-              <Switch
-                checked={showSearchHistory}
-                onCheckedChange={setShowSearchHistory}
-                className="h-4 w-7"
-                data-testid="toggle-search-history"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
-                <span className="text-[10px] text-gray-600">CRM Properties</span>
-              </div>
-              <Switch
-                checked={showCrmLayer}
-                onCheckedChange={setShowCrmLayer}
-                className="h-4 w-7"
-                data-testid="toggle-crm-layer"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                <span className="text-[10px] text-gray-600">Acquired</span>
-              </div>
-              <span className="text-[9px] text-gray-400">via status</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="border-t" />
 
         <ScrollArea className="flex-1">
           <div className="px-3 py-2.5">
@@ -3715,7 +4614,7 @@ export default function EdozoMap() {
                         if (s.postcode) {
                           setSelectedPostcode(s.postcode);
                           setCurrentArea(s.address || s.postcode);
-                          loadPropertyData(s.postcode, undefined, s.address || undefined);
+                          loadPropertyData(s.postcode, undefined, s.address || undefined, coords?.lat && coords?.lng ? { lat: coords.lat, lng: coords.lng } : null);
                         }
                       }}
                       className="w-full text-left px-2 py-1.5 rounded hover:bg-gray-50 transition-colors group/item"
@@ -3757,59 +4656,90 @@ export default function EdozoMap() {
         <div ref={mapContainerRef} className="w-full h-full" data-testid="edozo-map" />
 
         {/* Map / Satellite base-layer pill toggle — top-right of the map */}
-        <div className="absolute top-3 right-3 z-[1000] bg-white rounded-full shadow-lg border border-border/60 flex p-0.5" data-testid="base-layer-toggle">
+        <div className="absolute top-3 right-3 z-[1000] flex items-center gap-2" data-testid="base-layer-toggle">
           <button
-            onClick={() => setBaseLayer("map")}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${baseLayer === "map" ? "bg-black text-white" : "text-gray-700 hover:bg-gray-50"}`}
-            data-testid="base-layer-map"
+            onClick={exportGoadPlanPdf}
+            disabled={exportingPlan}
+            className="bg-black text-white rounded-full shadow-lg px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 hover:bg-gray-800 disabled:opacity-60 disabled:cursor-wait"
+            data-testid="export-goad-plan"
+            title="Download the current map view as a BGP-branded PDF plan"
           >
-            Map
+            {exportingPlan ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+            {exportingPlan ? "Exporting..." : "Download Plan"}
           </button>
-          <button
-            onClick={() => setBaseLayer("sat")}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${baseLayer === "sat" ? "bg-black text-white" : "text-gray-700 hover:bg-gray-50"}`}
-            data-testid="base-layer-sat"
-          >
-            Satellite
-          </button>
+          <div className="bg-white rounded-full shadow-lg border border-border/60 flex p-0.5">
+            <button
+              onClick={() => setBaseLayer("map")}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${baseLayer === "map" ? "bg-black text-white" : "text-gray-700 hover:bg-gray-50"}`}
+              data-testid="base-layer-map"
+            >
+              Map
+            </button>
+            <button
+              onClick={() => setBaseLayer("sat")}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${baseLayer === "sat" ? "bg-black text-white" : "text-gray-700 hover:bg-gray-50"}`}
+              data-testid="base-layer-sat"
+            >
+              Satellite
+            </button>
+          </div>
         </div>
 
-        {/* OS Data Layers floating control panel */}
-        <div className="absolute top-20 right-3 z-[1000] bg-white rounded-lg shadow-lg border p-3 space-y-2" data-testid="os-layer-panel">
-          <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Map Layers</p>
-          <label className="flex items-center gap-2 text-xs cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showOSBuildings}
-              onChange={() => setShowOSBuildings(!showOSBuildings)}
-              className="rounded"
-              data-testid="toggle-os-buildings"
-            />
-            <span>Building Footprints</span>
-            {mapZoom < 16 && showOSBuildings && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
-          </label>
-          <label className="flex items-center gap-2 text-xs cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showOSSites}
-              onChange={() => setShowOSSites(!showOSSites)}
-              className="rounded"
-              data-testid="toggle-os-sites"
-            />
-            <span>Named Sites</span>
-            {mapZoom < 14 && showOSSites && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
-          </label>
+        {/* Goad-style building key — floating panel top-right */}
+        <div className="absolute top-20 right-3 z-[1000] bg-white/95 backdrop-blur rounded-lg shadow-lg border border-gray-200 p-3 w-[200px]" data-testid="map-key-panel">
+          <p className="text-[10px] font-bold text-gray-800 uppercase tracking-wider mb-2">Building Key</p>
+          <div className="space-y-1.5">
+            {[
+              { c: "#fff4e0", l: "Retail" },
+              { c: "#ffe8d4", l: "Food & Drink" },
+              { c: "#e8f0ff", l: "Services" },
+              { c: "#f0e8ff", l: "Hotel" },
+              { c: "#e8f5e8", l: "Civic / Cultural" },
+              { c: "#e8e8e8", l: "Vacant" },
+            ].map((k) => (
+              <div key={k.l} className="flex items-center gap-2 text-[10px]">
+                <span className="w-4 h-3 border border-gray-900 rounded-sm shrink-0" style={{ background: k.c }} />
+                <span className="text-gray-700">{k.l}</span>
+              </div>
+            ))}
+          </div>
+          <div className="border-t mt-2.5 pt-2 space-y-1.5">
+            <p className="text-[10px] font-bold text-gray-800 uppercase tracking-wider mb-1">OS Data</p>
+            <label className="flex items-center gap-2 text-[10px] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showOSBuildings}
+                onChange={() => setShowOSBuildings(!showOSBuildings)}
+                className="rounded accent-gray-900"
+                data-testid="toggle-os-buildings"
+              />
+              <span className="text-gray-700">Building Footprints</span>
+              {mapZoom < 16 && showOSBuildings && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
+            </label>
+            <label className="flex items-center gap-2 text-[10px] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showOSSites}
+                onChange={() => setShowOSSites(!showOSSites)}
+                className="rounded accent-gray-900"
+                data-testid="toggle-os-sites"
+              />
+              <span className="text-gray-700">Named Sites</span>
+              {mapZoom < 14 && showOSSites && <span className="text-[9px] text-gray-400 ml-auto">zoom in</span>}
+            </label>
+          </div>
         </div>
 
-        {(selectedPostcode || loadingData) && (
+        {(postcode || loadingData) && (
           <PropertyPanel
-            postcode={selectedPostcode}
+            postcode={postcode}
             data={propertyData}
             loading={loadingData}
             activeLayers={activePdLayers}
             onLoadLayer={loadAdditionalLayer}
             loadingLayer={loadingLayer}
-            address={currentArea !== selectedPostcode ? currentArea : undefined}
+            address={currentArea !== postcode ? currentArea : undefined}
+            onSearchSaved={(saved) => setRecentSearches(prev => [saved, ...prev.filter(s => s.id !== saved.id)])}
             onClose={() => {
               setSelectedPostcode("");
               setPropertyData(null);

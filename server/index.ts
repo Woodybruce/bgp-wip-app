@@ -1,5 +1,13 @@
 import express, { type Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
+import dns from "node:dns";
+
+// Railway's default DNS result order prefers IPv6, which silently
+// times out against several gov.uk edges (Idox Public Access, etc).
+// Force IPv4-first resolution before any outbound fetch runs.
+if (typeof dns.setDefaultResultOrder === "function") {
+  dns.setDefaultResultOrder("ipv4first");
+}
 
 process.on("unhandledRejection", (reason, promise) => {
   console.error("[FATAL] Unhandled promise rejection:", reason);
@@ -21,6 +29,66 @@ import { pool } from "./db";
   const MIGRATIONS: string[] = [
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS leasing_privacy_enabled BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS sharepoint_folder_url TEXT`,
+    `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS source_url TEXT`,
+    `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS source_title TEXT`,
+    `ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS source_contact_id VARCHAR`,
+    `UPDATE crm_leads SET source = 'News' WHERE source = 'News Feed'`,
+    `UPDATE crm_leads SET source = 'Email' WHERE source IN ('Team Email', 'team email', 'email')`,
+    `UPDATE crm_leads SET source = 'File' WHERE source IN ('SharePoint File', 'sharepoint file', 'file')`,
+    `UPDATE crm_comps SET source_evidence = 'News' WHERE source_evidence = 'News Feed'`,
+    `UPDATE crm_comps SET source_evidence = 'Email' WHERE source_evidence IN ('Team Email', 'team email')`,
+    `UPDATE crm_comps SET source_evidence = 'File' WHERE source_evidence IN ('SharePoint File', 'sharepoint file')`,
+    `CREATE TABLE IF NOT EXISTS lease_events (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      property_id VARCHAR,
+      address TEXT,
+      tenant TEXT,
+      tenant_company_id VARCHAR,
+      unit_ref TEXT,
+      event_type TEXT NOT NULL,
+      event_date TIMESTAMP,
+      notice_date TIMESTAMP,
+      current_rent TEXT,
+      estimated_erv TEXT,
+      sqft TEXT,
+      source_evidence TEXT,
+      source_url TEXT,
+      source_title TEXT,
+      source_contact_id VARCHAR,
+      contact_id VARCHAR,
+      assigned_to TEXT,
+      status TEXT DEFAULT 'Monitoring',
+      notes TEXT,
+      deal_id VARCHAR,
+      comp_id VARCHAR,
+      created_by TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_lease_events_property ON lease_events(property_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_lease_events_date ON lease_events(event_date)`,
+    `CREATE INDEX IF NOT EXISTS idx_lease_events_status ON lease_events(status)`,
+    `CREATE TABLE IF NOT EXISTS property_intelligence_cache (
+      cache_key TEXT PRIMARY KEY,
+      payload JSONB NOT NULL,
+      created_at TIMESTAMP DEFAULT now(),
+      expires_at TIMESTAMP NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_pi_cache_expires ON property_intelligence_cache(expires_at)`,
+    `CREATE TABLE IF NOT EXISTS land_registry_title_purchases (
+      id SERIAL PRIMARY KEY,
+      title_number TEXT NOT NULL,
+      documents TEXT NOT NULL,
+      register_url TEXT,
+      plan_url TEXT,
+      proprietor_data JSONB,
+      raw_response JSONB,
+      cost_gbp NUMERIC(10,2),
+      requested_by VARCHAR,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_lr_title_purchases_title_docs ON land_registry_title_purchases(title_number, documents)`,
+    `CREATE INDEX IF NOT EXISTS idx_lr_title_purchases_created ON land_registry_title_purchases(created_at DESC)`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS po_number TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS kyc_approved_at TIMESTAMP`,
@@ -61,6 +129,13 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS knowledge_base_category_idx ON knowledge_base (category)`,
     `CREATE INDEX IF NOT EXISTS chat_messages_content_search_idx ON chat_messages USING GIN (to_tsvector('english', coalesce(content,'')))`,
     `CREATE TABLE IF NOT EXISTS user_tasks (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), user_id VARCHAR NOT NULL, title TEXT NOT NULL, description TEXT, due_date TIMESTAMP, priority TEXT DEFAULT 'medium', status TEXT DEFAULT 'todo', category TEXT, linked_deal_id VARCHAR, linked_property_id VARCHAR, linked_contact_id VARCHAR, sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), completed_at TIMESTAMP)`,
+    `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_onenote_page_id TEXT`,
+    `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_onenote_page_url TEXT`,
+    `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_evernote_note_id TEXT`,
+    `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_evernote_note_url TEXT`,
+    `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS parent_task_id VARCHAR`,
+    `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT false`,
+    `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS tags TEXT`,
     `CREATE TABLE IF NOT EXISTS system_activity_log (id SERIAL PRIMARY KEY, source TEXT NOT NULL, action TEXT NOT NULL, detail TEXT, count INTEGER DEFAULT 1, created_at TIMESTAMP DEFAULT now())`,
     `CREATE TABLE IF NOT EXISTS image_studio_images (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), file_name TEXT NOT NULL, category TEXT DEFAULT 'Uncategorised', tags TEXT[] DEFAULT '{}', description TEXT, source TEXT DEFAULT 'upload', property_id VARCHAR, area TEXT, address TEXT, brand_name TEXT, brand_sector TEXT, property_type TEXT, mime_type TEXT DEFAULT 'image/jpeg', file_size INTEGER, width INTEGER, height INTEGER, thumbnail_data TEXT, sharepoint_item_id TEXT, sharepoint_drive_id TEXT, local_path TEXT, uploaded_by VARCHAR, created_at TIMESTAMP DEFAULT now())`,
     `CREATE TABLE IF NOT EXISTS image_studio_collections (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), name TEXT NOT NULL, description TEXT, cover_image_id VARCHAR, created_by VARCHAR, created_at TIMESTAMP DEFAULT now())`,
@@ -87,6 +162,18 @@ import { pool } from "./db";
     `CREATE TABLE IF NOT EXISTS veriff_sessions (session_id TEXT PRIMARY KEY, company_id VARCHAR, contact_id VARCHAR, deal_id VARCHAR, first_name TEXT NOT NULL, last_name TEXT NOT NULL, email TEXT, status TEXT, decision_code INTEGER, decision_reason TEXT, verdict_person JSONB, verdict_document JSONB, verification_url TEXT, requested_by VARCHAR, created_at TIMESTAMP DEFAULT now(), received_at TIMESTAMP)`,
     `CREATE INDEX IF NOT EXISTS idx_veriff_sessions_company ON veriff_sessions(company_id)`,
     `CREATE INDEX IF NOT EXISTS idx_veriff_sessions_deal ON veriff_sessions(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS data_room_analyses (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), user_id VARCHAR NOT NULL, deal_name TEXT NOT NULL, team TEXT, crm_deal_id VARCHAR, file_count INTEGER DEFAULT 0, red_flags INTEGER DEFAULT 0, amber_flags INTEGER DEFAULT 0, green_flags INTEGER DEFAULT 0, overall_risk TEXT, overall_summary TEXT, analysis JSONB, created_at TIMESTAMP DEFAULT now())`,
+    `ALTER TABLE data_room_analyses ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'done'`,
+    `ALTER TABLE data_room_analyses ADD COLUMN IF NOT EXISTS progress_classified INTEGER DEFAULT 0`,
+    `ALTER TABLE data_room_analyses ADD COLUMN IF NOT EXISTS progress_total INTEGER DEFAULT 0`,
+    `ALTER TABLE data_room_analyses ADD COLUMN IF NOT EXISTS error_message TEXT`,
+    `ALTER TABLE data_room_analyses ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP`,
+    `CREATE INDEX IF NOT EXISTS idx_data_room_analyses_user ON data_room_analyses(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_data_room_analyses_deal ON data_room_analyses(crm_deal_id) WHERE crm_deal_id IS NOT NULL`,
+    `CREATE TABLE IF NOT EXISTS data_room_files (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), analysis_id VARCHAR NOT NULL, user_id VARCHAR NOT NULL, archive_name TEXT, file_name TEXT NOT NULL, display_name TEXT NOT NULL, file_size INTEGER, primary_type TEXT, sub_type TEXT, extracted_text TEXT, classification JSONB, enrichment JSONB, created_at TIMESTAMP DEFAULT now())`,
+    `ALTER TABLE data_room_files ADD COLUMN IF NOT EXISTS local_path TEXT`,
+    `ALTER TABLE data_room_files ADD COLUMN IF NOT EXISTS mime_type TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_data_room_files_analysis ON data_room_files(analysis_id)`,
     `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_status TEXT`,
     `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_approved_at TIMESTAMP`,
     `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_approved_by TEXT`,
@@ -273,6 +360,21 @@ import { pool } from "./db";
     `ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS weekly_report_enabled BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS weekly_report_last_sent_at TIMESTAMP`,
     `CREATE INDEX IF NOT EXISTS idx_crm_contacts_weekly_report ON crm_contacts(weekly_report_enabled) WHERE weekly_report_enabled = true`,
+
+    // Push notification subscriptions
+    `CREATE TABLE IF NOT EXISTS push_subscriptions (id SERIAL PRIMARY KEY, user_id VARCHAR NOT NULL, endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL, created_at TIMESTAMP DEFAULT now())`,
+
+    // Team calendar events
+    `CREATE TABLE IF NOT EXISTS team_events (id SERIAL PRIMARY KEY, title TEXT NOT NULL, event_type TEXT, start_time TIMESTAMP NOT NULL, end_time TIMESTAMP, property_id VARCHAR, property_name TEXT, deal_id VARCHAR, company_name TEXT, location TEXT, attendees TEXT[] DEFAULT '{}', notes TEXT, created_by VARCHAR, created_at TIMESTAMP DEFAULT now())`,
+
+    // Remove dead/blocked RSS sources from news_sources table
+    `DELETE FROM news_sources WHERE name IN ('React News','EG / CoStar','Property Reporter','Estates Gazette','Bisnow London','Planning Resource','The Caterer')`,
+
+    // Address resolution fields on pathway runs
+    `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS uprn TEXT`,
+    `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS formatted_address TEXT`,
+    `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION`,
+    `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION`,
   ];
 
   let ok = 0, skipped = 0;
@@ -298,17 +400,21 @@ import { setupModelsRoutes } from "./models";
 import { setupDocumentTemplateRoutes } from "./document-templates";
 import { setupCanvaRoutes } from "./canva";
 import { setupXeroRoutes } from "./xero";
+import { setupEvernoteRoutes } from "./evernote";
 import { registerLandRegistryRoutes } from "./land-registry";
 // Simple request queue for AI endpoints
 const activeRequests = new Set<string>();
 const requestQueue: Array<{ req: Request; res: Response; next: NextFunction }> = [];
 const MAX_CONCURRENT_AI_REQUESTS = 3;
-import { registerVoaRoutes } from "./voa";
+import { registerVoaRoutes, startVoaAutoImport } from "./voa";
 import { registerLegalDDRoutes } from "./legal-dd";
 import { setupSharedMailboxRoutes } from "./shared-mailbox";
 import { registerInteractionRoutes } from "./interactions";
-import { setupCrmRoutes, startAutoEnrichment } from "./crm";
+import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
 import companiesHouseRouter from "./companies-house";
+import { registerPropertyPathwayRoutes } from "./property-pathway";
+import { registerRetailContextPlanRoutes } from "./retail-context-plan";
+import { registerMapLayerRoutes } from "./map-layers";
 import sanctionsRouter from "./sanctions-screening";
 import kycClouseauRouter, { runMonthlyReScreening } from "./kyc-clouseau";
 import amlComplianceRouter from "./aml-compliance";
@@ -319,6 +425,7 @@ import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
 import apolloContactsRouter from "./apollo-contacts";
+import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
 import dealDocsRouter from "./deal-docs";
 import weeklyReportRouter, { runWeeklyClientReports } from "./weekly-report";
@@ -539,8 +646,22 @@ app.use("/api/branding/assets", express.static(
   setupDocumentTemplateRoutes(app);
   setupCanvaRoutes(app);
   setupXeroRoutes(app);
+  setupEvernoteRoutes(app);
   registerLandRegistryRoutes(app);
   registerVoaRoutes(app);
+  // Probe the VOA SQLite snapshot at boot so we log where rates data is coming
+  // from. No-op if the file isn't mounted — callers gracefully degrade.
+  try {
+    const { voaSqliteInfo } = await import("./voa-sqlite");
+    const info = voaSqliteInfo();
+    if (info.available) {
+      console.log(`[voa-sqlite] backend=sqlite path=${info.path} rows=${info.rowCount} builtAt=${info.builtAt} areas=${info.areas}`);
+    } else {
+      console.log("[voa-sqlite] backend=postgres (no SQLite file present — falling back to voa_ratings table)");
+    }
+  } catch (err: any) {
+    console.warn("[voa-sqlite] probe error:", err?.message || err);
+  }
   registerLegalDDRoutes(app);
   setupSharedMailboxRoutes(app);
   registerInteractionRoutes(app);
@@ -552,6 +673,9 @@ app.use("/api/branding/assets", express.static(
   registerMcpRoutes(app);
   setupCrmRoutes(app);
   app.use(companiesHouseRouter);
+  registerPropertyPathwayRoutes(app);
+  registerRetailContextPlanRoutes(app);
+  registerMapLayerRoutes(app);
   app.use(leasingScheduleRouter);
   app.use(tenancyScheduleRouter);
   app.use(turnoverRouter);
@@ -565,6 +689,7 @@ app.use("/api/branding/assets", express.static(
   app.use(brandProfileRouter);
   app.use(brandEnrichmentRouter);
   app.use(apolloContactsRouter);
+  app.use(propertyGapAnalysisRouter);
   app.use(brandPackRouter);
   app.use(dealDocsRouter);
   app.use(weeklyReportRouter);
@@ -620,6 +745,7 @@ app.use("/api/branding/assets", express.static(
       const isProduction = process.env.NODE_ENV === "production";
       if (isProduction) {
         setTimeout(() => startAutoEnrichment(), 30000);
+        setTimeout(() => startAutoTurnoverResearch(), 30000);
         setTimeout(async () => {
           try {
             const { startImageSync } = await import("./image-studio");
@@ -629,6 +755,27 @@ app.use("/api/branding/assets", express.static(
           }
         }, 60000);
         setTimeout(() => startArchivist(), 300000);
+        setTimeout(async () => {
+          try {
+            const { startLeaseEventMonitoring } = await import("./lease-events");
+            startLeaseEventMonitoring();
+          } catch (e: any) {
+            console.error("[lease-events] Failed to start monitoring:", e.message);
+          }
+        }, 90000);
+        setTimeout(async () => {
+          try {
+            const { startIntelCachePurge } = await import("./utils/intel-cache");
+            startIntelCachePurge();
+          } catch (e: any) {
+            console.error("[intel-cache] Failed to start:", e.message);
+          }
+        }, 120000);
+        // VOA auto-import disabled — was OOM-killing the server. Admin can
+        // run POST /api/voa/import manually (or hit GET /api/voa/status?import=1)
+        // when the service has enough headroom, ideally from a one-off job.
+        // To re-enable: uncomment the line below AND ensure ≥2GB memory.
+        // startVoaAutoImport();
       } else {
         console.log("[dev] Skipping background crawls (image-sync, archivist, auto-enrich) — production only");
       }

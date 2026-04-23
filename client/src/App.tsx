@@ -4,6 +4,7 @@ import { queryClient, getQueryFn, apiRequest } from "./lib/queryClient";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { MessageSquare, ArrowLeft, Sparkles, Menu, Smartphone } from "lucide-react";
 import { Toaster } from "@/components/ui/toaster";
+import { HandwritingPanel } from "@/components/handwriting-panel";
 import { useToast } from "@/hooks/use-toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -14,6 +15,7 @@ import { TeamProvider, useTeam } from "@/lib/team-context";
 import type { TeamName } from "@/lib/team-context";
 import { BrandProvider } from "@/lib/brand-context";
 import { EntitySidebarProvider } from "@/components/crm/entity-sidebar";
+import { ChatBGPProvider } from "@/contexts/chatbgp-context";
 import { ChatPanel } from "@/components/chat-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -70,16 +72,20 @@ const ImageStudio = lazy(() => import("@/pages/image-studio"));
 const AddinsPage = lazy(() => import("@/pages/addins"));
 const AvailableUnitsPage = lazy(() => import("@/pages/available-units"));
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
+const BrandsHub = lazy(() => import("@/pages/brands-hub"));
 const TasksPage = lazy(() => import("@/pages/tasks"));
 const CadMeasure = lazy(() => import("@/pages/cad-measure"));
+const LeaseEvents = lazy(() => import("@/pages/lease-events"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
 const AmlCompliance = lazy(() => import("@/pages/aml-compliance"));
 const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
 const AmlTraining = lazy(() => import("@/pages/aml-training"));
 const KycHub = lazy(() => import("@/pages/kyc-hub"));
+const PropertyIntelligence = lazy(() => import("@/pages/property-intelligence"));
 const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
 const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
+const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
 
 
 function PageLoader() {
@@ -150,14 +156,22 @@ function Router() {
       <Route path="/leasing-schedule/:propertyId" component={LeasingSchedule} />
       <Route path="/tasks" component={TasksPage} />
       <Route path="/cad-measure" component={CadMeasure} />
-      {/* Unified KYC & AML hub — one page with four tabs. Old routes still
-          resolve here so existing links / external references don't break. */}
+      <Route path="/lease-events" component={LeaseEvents} />
+      {/* Property Intelligence Hub — unified investigation hub with 5 tabs.
+          Legacy tool routes redirect here so old links keep working. */}
+      <Route path="/property-intelligence" component={PropertyIntelligence} />
+      <Route path="/land-registry" component={PropertyIntelligence} />
+      <Route path="/business-rates" component={PropertyIntelligence} />
+      {/* AML / KYC hub — compliance-focused tabs (board, training, settings).
+          The Investigator tool has moved to Property Intelligence. */}
       <Route path="/kyc-clouseau" component={KycHub} />
       <Route path="/aml-compliance" component={KycHub} />
       <Route path="/compliance-board" component={KycHub} />
       <Route path="/aml-training" component={KycHub} />
       {/* Deep-link for a specific training module needs the legacy component */}
       <Route path="/aml-training/:id" component={AmlTraining} />
+      <Route path="/brands" component={BrandsHub} />
+      <Route path="/property-pathway" component={PropertyPathway} />
       <Route path="/turnover" component={TurnoverBoard} />
       <Route path="/wip-report" component={DealsHub} />
       <Route path="/upload" component={UploadPage} />
@@ -294,9 +308,15 @@ function AuthenticatedApp() {
         <header className="flex items-center justify-between gap-2 px-3 py-2 border-b h-12 shrink-0">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => navigate("/")}
+              onClick={() => {
+                // Back to the last non-chat page so the in-progress board
+                // (pathway/CRM/whatever) stays mounted underneath. Falls back
+                // to dashboard only on a cold-open of /chatbgp.
+                if (window.history.length > 1) window.history.back();
+                else navigate("/");
+              }}
               className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
-              title="Back to Dashboard"
+              title="Back"
               data-testid="button-chatbgp-back"
             >
               <ArrowLeft className="h-4 w-4" />
@@ -321,37 +341,40 @@ function AuthenticatedApp() {
 
   return (
     <SidebarProvider style={style as React.CSSProperties}>
+      {/* ChatBGPProvider is hoisted to AppContent so the full-page /chatbgp
+          view and the side panel share the same messages / activeThreadId —
+          toggling between them keeps the conversation alive. */}
       <div className="flex h-screen w-full">
-        <AppSidebar />
-        <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-          <header className="flex items-center justify-between gap-2 p-2 border-b h-12 shrink-0">
-            <div className="flex items-center gap-2">
-              <SidebarTrigger data-testid="button-sidebar-toggle" />
-              <GlobalSearch />
+          <AppSidebar />
+          <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+            <header className="flex items-center justify-between gap-2 p-2 border-b h-12 shrink-0">
+              <div className="flex items-center gap-2">
+                <SidebarTrigger data-testid="button-sidebar-toggle" />
+                <GlobalSearch />
+              </div>
+              <div className="flex items-center gap-2">
+                <ColorSchemeSelector />
+                <NotificationCenter />
+                <button
+                  data-testid="button-chat-toggle"
+                  onClick={() => setChatOpen(prev => !prev)}
+                  className="relative inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
+                  title="Team Chat"
+                >
+                  <MessageSquare className="h-4 w-4" />
+                  {chatUnseenCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-medium">
+                      {chatUnseenCount > 99 ? "99+" : chatUnseenCount}
+                    </span>
+                  )}
+                </button>
+              </div>
+            </header>
+            <div className="flex-1 overflow-y-auto min-h-0">
+              <Router />
             </div>
-            <div className="flex items-center gap-2">
-              <ColorSchemeSelector />
-              <NotificationCenter />
-              <button
-                data-testid="button-chat-toggle"
-                onClick={() => setChatOpen(prev => !prev)}
-                className="relative inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
-                title="Team Chat"
-              >
-                <MessageSquare className="h-4 w-4" />
-                {chatUnseenCount > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-medium">
-                    {chatUnseenCount > 99 ? "99+" : chatUnseenCount}
-                  </span>
-                )}
-              </button>
-            </div>
-          </header>
-          <div className="flex-1 overflow-y-auto min-h-0">
-            <Router />
           </div>
-        </div>
-        <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} />
+          <ChatPanel open={chatOpen} onClose={() => setChatOpen(false)} openAiChat={aiChatRequested} onAiChatHandled={() => setAiChatRequested(false)} />
       </div>
       {isForceDesktop && (
         <button
@@ -447,10 +470,10 @@ function AppContent() {
   }
 
   return (
-    <>
+    <ChatBGPProvider>
       <ConnectionStatus />
       <AuthenticatedApp />
-    </>
+    </ChatBGPProvider>
   );
 }
 
@@ -464,6 +487,7 @@ function App() {
               <EntitySidebarProvider>
                 <AppContent />
                 <Toaster />
+                <HandwritingPanel />
               </EntitySidebarProvider>
             </TooltipProvider>
           </BrandProvider>

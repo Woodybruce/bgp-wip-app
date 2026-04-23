@@ -173,10 +173,14 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       tools: groupTools.length > 0 ? groupTools : undefined,
     };
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error("AI response timed out")), TIMEOUT_MS)
-    );
-    let claudeResponse = await Promise.race([callClaude(completionOptions), timeoutPromise]) as any;
+    const withTimeout = <T>(p: Promise<T>): Promise<T> => {
+      let timer: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("AI response timed out")), TIMEOUT_MS);
+      });
+      return Promise.race([p, timeoutPromise]).finally(() => { if (timer) clearTimeout(timer); }) as Promise<T>;
+    };
+    let claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
     let currentMessage = claudeResponse.choices?.[0]?.message;
     let loopCount = 0;
     const maxLoops = 5;
@@ -185,7 +189,17 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
       loopCount++;
       const toolCall = currentMessage.tool_calls[0];
       const fnName = toolCall.function.name;
-      const fnArgs = JSON.parse(toolCall.function.arguments || "{}");
+      let fnArgs: any;
+      try {
+        fnArgs = JSON.parse(toolCall.function.arguments || "{}");
+      } catch (parseErr: any) {
+        console.error("[ai-group] Bad tool args JSON:", parseErr?.message);
+        completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
+        completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "Invalid JSON in tool arguments" }) });
+        claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
+        currentMessage = claudeResponse.choices?.[0]?.message;
+        continue;
+      }
 
       try {
         const result = await chatbgp.handleCrmToolCall(fnName, fnArgs, req, completionOptions, currentMessage, toolCall);
@@ -209,13 +223,13 @@ async function triggerAiGroupResponse(threadId: string, senderUserId: string, re
 
         completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
         completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: "Tool not handled" }) });
-        claudeResponse = await Promise.race([callClaude(completionOptions), timeoutPromise]) as any;
+        claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
         currentMessage = claudeResponse.choices?.[0]?.message;
       } catch (toolErr: any) {
         console.error("[ai-group] Tool call error:", toolErr?.message);
         completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
         completionOptions.messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify({ error: toolErr?.message || "Tool execution failed" }) });
-        claudeResponse = await Promise.race([callClaude(completionOptions), timeoutPromise]) as any;
+        claudeResponse = await withTimeout(callClaude(completionOptions)) as any;
         currentMessage = claudeResponse.choices?.[0]?.message;
       }
     }
@@ -267,6 +281,9 @@ export async function registerRoutes(
 
   const { registerImageStudioRoutes } = await import("./image-studio");
   registerImageStudioRoutes(app);
+
+  const { registerLeaseEventRoutes } = await import("./lease-events");
+  registerLeaseEventRoutes(app);
 
   const { registerIntegrationsStatusRoutes } = await import("./integrations-status");
   registerIntegrationsStatusRoutes(app);
@@ -378,21 +395,35 @@ export async function registerRoutes(
       if (blockedPatterns.some(p => p.test(hostname))) {
         return res.status(400).json({ message: "URL not allowed" });
       }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-      const resp = await fetch(url, {
-        signal: controller.signal,
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; BGPDashboard/1.0)" },
-        redirect: "follow",
-      });
-      clearTimeout(timeout);
-      const finalUrl = resp.url || url;
-      try {
-        const finalHostname = new URL(finalUrl).hostname.toLowerCase();
-        if (blockedPatterns.some(p => p.test(finalHostname))) {
+      let currentUrl = url;
+      let resp!: Awaited<ReturnType<typeof fetch>>;
+      let redirects = 0;
+      while (true) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000);
+        try {
+          resp = await fetch(currentUrl, {
+            signal: controller.signal,
+            headers: { "User-Agent": "Mozilla/5.0 (compatible; BGPDashboard/1.0)" },
+            redirect: "manual",
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
+        if (resp.status < 300 || resp.status >= 400) break;
+        const location = resp.headers.get("location");
+        if (!location) break;
+        if (++redirects > 5) return res.status(502).json({ message: "Too many redirects" });
+        let next: URL;
+        try { next = new URL(location, currentUrl); } catch { return res.status(400).json({ message: "Invalid redirect" }); }
+        if (next.protocol !== "http:" && next.protocol !== "https:") {
           return res.status(400).json({ message: "URL not allowed" });
         }
-      } catch {}
+        if (blockedPatterns.some(p => p.test(next.hostname.toLowerCase()))) {
+          return res.status(400).json({ message: "URL not allowed" });
+        }
+        currentUrl = next.toString();
+      }
       if (!resp.ok) return res.status(502).json({ message: `Failed to fetch image: ${resp.status}` });
       const contentType = resp.headers.get("content-type") || "image/png";
       if (!contentType.startsWith("image/")) return res.status(400).json({ message: "URL is not an image" });
@@ -2164,6 +2195,37 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     } catch (err: any) { console.error("[routes] WIP file download error:", err?.message); res.status(500).end(); }
   });
 
+  // PDF proxy — streams a SharePoint file to the browser so pdfjs can render it cross-origin
+  app.get("/api/pdf-proxy", requireAuth, async (req, res) => {
+    const driveId = req.query.driveId as string;
+    const itemId = req.query.itemId as string;
+    const shareUrl = req.query.shareUrl as string;
+    if (!driveId && !shareUrl) return res.status(400).json({ message: "driveId+itemId or shareUrl required" });
+    try {
+      const { getValidMsToken } = await import("./microsoft");
+      const token = await getValidMsToken(req as any);
+      if (!token) return res.status(401).json({ message: "Not signed into Microsoft" });
+      let graphUrl: string;
+      if (driveId && itemId) {
+        graphUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/content`;
+      } else {
+        const b64 = Buffer.from(shareUrl).toString("base64url");
+        graphUrl = `https://graph.microsoft.com/v1.0/shares/u!${b64}/driveItem/content`;
+      }
+      const upstream = await fetch(graphUrl, { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" });
+      if (!upstream.ok) return res.status(upstream.status).json({ message: `SharePoint returned ${upstream.status}` });
+      const ctype = upstream.headers.get("content-type") || "application/pdf";
+      res.setHeader("Content-Type", ctype);
+      res.setHeader("Content-Disposition", "inline");
+      res.setHeader("Cache-Control", "private, max-age=300");
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.send(buf);
+    } catch (err: any) {
+      console.error("[pdf-proxy]", err?.message);
+      res.status(500).json({ message: err?.message });
+    }
+  });
+
   // Investment Tracker routes
   app.get("/api/investment-tracker", requireAuth, async (req, res) => {
     try {
@@ -2627,7 +2689,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         companyName = contact.company_name;
       }
 
-      // Build mixed_people/search body (replaces deprecated people/match)
+      // Build mixed_people/api_search body (replaces deprecated people/match)
       const body: Record<string, any> = {
         page: 1,
         per_page: 1,
@@ -2637,7 +2699,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       else if (companyName) body.organization_names = [companyName];
       if (firstName || lastName) body.q_keywords = `${firstName} ${lastName}`.trim();
 
-      const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+      const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2746,10 +2808,40 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         } catch {}
       }
 
-      const params = new URLSearchParams();
-      if (domain) params.set("domain", domain);
-      if (!domain) params.set("name", company.name);
+      // Apollo's /organizations/enrich requires a domain — passing `name` alone
+      // returns 422. If we don't have a domain, try to discover one via the
+      // mixed_companies/api_search endpoint first, then enrich.
+      if (!domain) {
+        try {
+          const searchRes = await fetch(`https://api.apollo.io/api/v1/mixed_companies/api_search`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-cache",
+              "X-Api-Key": apiKey,
+            },
+            body: JSON.stringify({ q_organization_name: company.name, per_page: 1 }),
+          });
+          if (searchRes.ok) {
+            const searchData: any = await searchRes.json();
+            const first = searchData?.organizations?.[0] || searchData?.accounts?.[0];
+            if (first?.primary_domain) domain = first.primary_domain;
+            else if (first?.website_url) {
+              try { domain = new URL(first.website_url).hostname.replace(/^www\./, ""); } catch {}
+            }
+          }
+        } catch (err: any) {
+          console.warn("[apollo] Pre-enrich search failed:", err?.message);
+        }
+      }
 
+      if (!domain) {
+        return res.status(400).json({
+          error: `No domain available for "${company.name}". Apollo's enrich API requires a company website/domain. Add a domain to the company record and try again.`,
+        });
+      }
+
+      const params = new URLSearchParams({ domain });
       const apolloRes = await fetch(`https://api.apollo.io/api/v1/organizations/enrich?${params.toString()}`, {
         method: "GET",
         headers: {
@@ -2762,7 +2854,12 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!apolloRes.ok) {
         const errText = await apolloRes.text();
         console.error("[apollo] Company API error:", apolloRes.status, errText);
-        return res.status(apolloRes.status).json({ error: `Apollo API error: ${apolloRes.status}` });
+        // Surface Apollo's own error message so the user understands what's wrong
+        let apolloMsg = "";
+        try { apolloMsg = JSON.parse(errText)?.error || JSON.parse(errText)?.errors?.[0] || ""; } catch {}
+        return res.status(apolloRes.status).json({
+          error: `Apollo ${apolloRes.status}: ${apolloMsg || errText.slice(0, 200) || "No details"}. Domain tried: ${domain}`,
+        });
       }
 
       const data = await apolloRes.json() as any;
@@ -2863,7 +2960,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const apiKey = process.env.APOLLO_API_KEY;
       if (!apiKey) return res.status(500).json({ error: "Apollo API key not configured" });
 
-      // Build mixed_people/search body (replaces deprecated people/match)
+      // Build mixed_people/api_search body (replaces deprecated people/match)
       const body: Record<string, any> = {
         page: 1,
         per_page: 1,
@@ -2873,7 +2970,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       else if (companyName) body.organization_names = [companyName];
       if (firstName || lastName) body.q_keywords = `${firstName || ""} ${lastName || ""}`.trim();
 
-      const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+      const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2955,7 +3052,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           const firstName = nameParts[0] || "";
           const lastName = nameParts.slice(1).join(" ") || "";
 
-          // Build mixed_people/search body (replaces deprecated people/match)
+          // Build mixed_people/api_search body (replaces deprecated people/match)
           const body: Record<string, any> = {
             page: 1,
             per_page: 1,
@@ -2965,7 +3062,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           else if (companyName) body.organization_names = [companyName];
           if (firstName || lastName) body.q_keywords = `${firstName} ${lastName}`.trim();
 
-          const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+          const apolloRes = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -3723,7 +3820,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         query += ` AND t.status = $2`;
         params.push(status);
       }
-      query += ` ORDER BY CASE t.priority 
+      query += ` ORDER BY COALESCE(t.is_pinned, false) DESC, CASE t.priority
         WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
         t.due_date ASC NULLS LAST, t.sort_order ASC, t.created_at DESC`;
       const result = await pool.query(query, params);
@@ -3735,12 +3832,19 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const userId = req.session?.userId || (req as any).tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { title, description, dueDate, priority, category, linkedDealId, linkedPropertyId, linkedContactId } = req.body;
+      const { title, description, dueDate, priority, category, linkedDealId, linkedPropertyId, linkedContactId,
+              linkedOnenotePageId, linkedOnenotePageUrl, linkedEvernoteNoteId, linkedEvernoteNoteUrl,
+              parentTaskId, isPinned, tags } = req.body;
       if (!title || !title.trim()) return res.status(400).json({ error: "Title is required" });
       const result = await pool.query(
-        `INSERT INTO user_tasks (user_id, title, description, due_date, priority, category, linked_deal_id, linked_property_id, linked_contact_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
-        [userId, title.trim(), description?.trim() || null, dueDate || null, priority || "medium", category || null, linkedDealId || null, linkedPropertyId || null, linkedContactId || null]
+        `INSERT INTO user_tasks (user_id, title, description, due_date, priority, category, linked_deal_id, linked_property_id, linked_contact_id,
+          linked_onenote_page_id, linked_onenote_page_url, linked_evernote_note_id, linked_evernote_note_url,
+          parent_task_id, is_pinned, tags)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
+        [userId, title.trim(), description?.trim() || null, dueDate || null, priority || "medium", category || null,
+         linkedDealId || null, linkedPropertyId || null, linkedContactId || null,
+         linkedOnenotePageId || null, linkedOnenotePageUrl || null, linkedEvernoteNoteId || null, linkedEvernoteNoteUrl || null,
+         parentTaskId || null, isPinned || false, tags || null]
       );
       res.json(result.rows[0]);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -3758,11 +3862,17 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const values: any[] = [];
       let idx = 1;
 
-      const allowed = ["title", "description", "priority", "category", "status", "sortOrder", "linkedDealId", "linkedPropertyId", "linkedContactId"];
+      const allowed = ["title", "description", "priority", "category", "status", "sortOrder",
+        "linkedDealId", "linkedPropertyId", "linkedContactId",
+        "linkedOnenotePageId", "linkedOnenotePageUrl", "linkedEvernoteNoteId", "linkedEvernoteNoteUrl",
+        "parentTaskId", "isPinned", "tags"];
       const colMap: Record<string, string> = {
         title: "title", description: "description", priority: "priority", category: "category",
         status: "status", sortOrder: "sort_order", linkedDealId: "linked_deal_id",
-        linkedPropertyId: "linked_property_id", linkedContactId: "linked_contact_id"
+        linkedPropertyId: "linked_property_id", linkedContactId: "linked_contact_id",
+        linkedOnenotePageId: "linked_onenote_page_id", linkedOnenotePageUrl: "linked_onenote_page_url",
+        linkedEvernoteNoteId: "linked_evernote_note_id", linkedEvernoteNoteUrl: "linked_evernote_note_url",
+        parentTaskId: "parent_task_id", isPinned: "is_pinned", tags: "tags",
       };
 
       for (const key of allowed) {
@@ -4026,20 +4136,56 @@ ${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuc
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Diagnostic: check OneNote token + scopes
+  app.get("/api/tasks/onenote/status", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { getValidMsToken } = await import("./microsoft");
+      const msToken = await getValidMsToken(req);
+      if (!msToken) {
+        return res.json({ connected: false, error: "No Microsoft token — sign out and back in", hasSession: !!req.session?.msTokens });
+      }
+      // Decode JWT to check scopes (middle part is the payload)
+      let scopes: string[] = [];
+      try {
+        const payload = JSON.parse(Buffer.from(msToken.split(".")[1], "base64").toString());
+        scopes = (payload.scp || "").split(" ");
+      } catch {}
+      const hasNotes = scopes.some(s => s.toLowerCase().includes("notes"));
+      // Test actual OneNote API call
+      const testRes = await fetch("https://graph.microsoft.com/v1.0/me/onenote/notebooks?$top=1", {
+        headers: { Authorization: `Bearer ${msToken}` }
+      });
+      const testBody = await testRes.text().catch(() => "");
+      return res.json({
+        connected: true,
+        hasNotesScope: hasNotes,
+        scopes,
+        onenoteApiStatus: testRes.status,
+        onenoteApiOk: testRes.ok,
+        onenoteApiResponse: testBody.slice(0, 500),
+      });
+    } catch (e: any) {
+      res.json({ connected: false, error: e.message });
+    }
+  });
+
   app.get("/api/tasks/import/onenote/notebooks", requireAuth, async (req: Request, res: Response) => {
     try {
       const { getValidMsToken } = await import("./microsoft");
       const msToken = await getValidMsToken(req);
       if (!msToken) {
-        return res.status(401).json({ error: "No Microsoft token available" });
+        return res.status(401).json({ error: "No Microsoft token available — please sign out and back in to reconnect Microsoft 365" });
       }
       const nbRes = await fetch("https://graph.microsoft.com/v1.0/me/onenote/notebooks?$select=id,displayName,lastModifiedDateTime&$orderby=lastModifiedDateTime desc&$top=20", {
         headers: { Authorization: `Bearer ${msToken}` }
       });
       if (!nbRes.ok) {
         const errText = await nbRes.text().catch(() => "");
-        console.error("[onenote] API error:", nbRes.status, errText.slice(0, 300));
-        return res.status(nbRes.status).json({ error: nbRes.status === 401 ? "Your Microsoft session has expired — please sign out and back in" : "Unable to access OneNote. Please try again." });
+        console.error("[onenote] API error:", nbRes.status, errText.slice(0, 500));
+        if (nbRes.status === 401 || nbRes.status === 403) {
+          return res.status(nbRes.status).json({ error: "OneNote access denied. Your Microsoft token may not include Notes permissions. Please sign out of BGP, then sign back in — you should see a consent prompt for OneNote access." });
+        }
+        return res.status(nbRes.status).json({ error: `OneNote API error (${nbRes.status}). ${errText.slice(0, 200)}` });
       }
       const data = await nbRes.json();
       const notebooks = (data.value || []).map((nb: any) => ({
@@ -4175,6 +4321,177 @@ ${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuc
       res.json({ imported, total: items.length });
     } catch (e: any) {
       console.error("[evernote] Import error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── OneNote: list pages in a section (for "link note" picker) ─────────────
+  app.get("/api/tasks/onenote/pages/:sectionId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { getValidMsToken } = await import("./microsoft");
+      const msToken = await getValidMsToken(req);
+      if (!msToken) return res.status(401).json({ error: "No Microsoft token" });
+      const pRes = await fetch(
+        `https://graph.microsoft.com/v1.0/me/onenote/sections/${req.params.sectionId}/pages?$select=id,title,links,lastModifiedDateTime&$top=50&$orderby=lastModifiedDateTime desc`,
+        { headers: { Authorization: `Bearer ${msToken}` } }
+      );
+      if (!pRes.ok) return res.status(pRes.status).json({ error: "Failed to fetch pages" });
+      const data = await pRes.json();
+      res.json((data.value || []).map((p: any) => ({
+        id: p.id,
+        title: p.title,
+        webUrl: p.links?.oneNoteWebUrl?.href || null,
+        lastModified: p.lastModifiedDateTime,
+      })));
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── OneNote: link a page to a task ──────────────────────────────────────────
+  app.post("/api/tasks/:id/link-onenote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { pageId, pageUrl } = req.body;
+      if (!pageId) return res.status(400).json({ error: "pageId required" });
+      const result = await pool.query(
+        `UPDATE user_tasks SET linked_onenote_page_id = $1, linked_onenote_page_url = $2 WHERE id = $3 AND user_id = $4 RETURNING *`,
+        [pageId, pageUrl || null, req.params.id, userId]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: "Task not found" });
+      res.json(result.rows[0]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── OneNote: unlink a page from a task ──────────────────────────────────────
+  app.delete("/api/tasks/:id/link-onenote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const result = await pool.query(
+        `UPDATE user_tasks SET linked_onenote_page_id = NULL, linked_onenote_page_url = NULL WHERE id = $1 AND user_id = $2 RETURNING *`,
+        [req.params.id, userId]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: "Task not found" });
+      res.json(result.rows[0]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── OneNote: export/push a task as a new OneNote page ───────────────────────
+  app.post("/api/tasks/:id/export-onenote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { sectionId } = req.body;
+      if (!sectionId) return res.status(400).json({ error: "sectionId required" });
+
+      const task = await pool.query("SELECT * FROM user_tasks WHERE id = $1 AND user_id = $2", [req.params.id, userId]);
+      if (!task.rows[0]) return res.status(404).json({ error: "Task not found" });
+      const t = task.rows[0];
+
+      const { getValidMsToken } = await import("./microsoft");
+      const msToken = await getValidMsToken(req);
+      if (!msToken) return res.status(401).json({ error: "No Microsoft token" });
+
+      const html = `<!DOCTYPE html><html><head><title>${t.title}</title></head><body>
+<h1>${t.title}</h1>
+<p><strong>Priority:</strong> ${t.priority} | <strong>Status:</strong> ${t.status}${t.due_date ? ` | <strong>Due:</strong> ${new Date(t.due_date).toLocaleDateString("en-GB")}` : ""}</p>
+${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
+<p style="color:#888;font-size:12px;">Exported from BGP Tasks</p>
+</body></html>`;
+
+      const pageRes = await fetch(
+        `https://graph.microsoft.com/v1.0/me/onenote/sections/${sectionId}/pages`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${msToken}`,
+            "Content-Type": "application/xhtml+xml",
+          },
+          body: html,
+        }
+      );
+      if (!pageRes.ok) {
+        const err = await pageRes.text();
+        console.error("[onenote-export]", err.slice(0, 300));
+        return res.status(pageRes.status).json({ error: "Failed to create OneNote page" });
+      }
+      const page = await pageRes.json();
+      const pageUrl = page.links?.oneNoteWebUrl?.href || null;
+
+      await pool.query(
+        `UPDATE user_tasks SET linked_onenote_page_id = $1, linked_onenote_page_url = $2 WHERE id = $3`,
+        [page.id, pageUrl, req.params.id]
+      );
+
+      res.json({ pageId: page.id, pageUrl, title: page.title });
+    } catch (e: any) {
+      console.error("[onenote-export]", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Evernote: link a note to a task ─────────────────────────────────────────
+  app.post("/api/tasks/:id/link-evernote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { noteId, noteUrl } = req.body;
+      if (!noteId) return res.status(400).json({ error: "noteId required" });
+      const result = await pool.query(
+        `UPDATE user_tasks SET linked_evernote_note_id = $1, linked_evernote_note_url = $2 WHERE id = $3 AND user_id = $4 RETURNING *`,
+        [noteId, noteUrl || null, req.params.id, userId]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: "Task not found" });
+      res.json(result.rows[0]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Evernote: unlink a note from a task ─────────────────────────────────────
+  app.delete("/api/tasks/:id/link-evernote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const result = await pool.query(
+        `UPDATE user_tasks SET linked_evernote_note_id = NULL, linked_evernote_note_url = NULL WHERE id = $1 AND user_id = $2 RETURNING *`,
+        [req.params.id, userId]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: "Task not found" });
+      res.json(result.rows[0]);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
+  // ── Evernote: export/push a task as a new Evernote note ─────────────────────
+  app.post("/api/tasks/:id/export-evernote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { notebookId } = req.body;
+      if (!notebookId) return res.status(400).json({ error: "notebookId required" });
+
+      const task = await pool.query("SELECT * FROM user_tasks WHERE id = $1 AND user_id = $2", [req.params.id, userId]);
+      if (!task.rows[0]) return res.status(404).json({ error: "Task not found" });
+      const t = task.rows[0];
+
+      const { evernoteApi } = await import("./evernote");
+      const content = `Priority: ${t.priority} | Status: ${t.status}${t.due_date ? ` | Due: ${new Date(t.due_date).toLocaleDateString("en-GB")}` : ""}\n\n${t.description || ""}\n\nExported from BGP Tasks`;
+
+      const note = await evernoteApi(req.session, `/v3/notebooks/${notebookId}/notes`, {
+        method: "POST",
+        body: JSON.stringify({ title: t.title, content }),
+      });
+
+      const noteId = note.id || note.guid;
+      const noteUrl = note.webUrl || null;
+
+      await pool.query(
+        `UPDATE user_tasks SET linked_evernote_note_id = $1, linked_evernote_note_url = $2 WHERE id = $3`,
+        [noteId, noteUrl, req.params.id]
+      );
+
+      res.json({ noteId, noteUrl, title: t.title });
+    } catch (e: any) {
+      console.error("[evernote-export]", e.message);
+      if (e.message.includes("Not connected")) return res.status(401).json({ error: e.message });
       res.status(500).json({ error: e.message });
     }
   });

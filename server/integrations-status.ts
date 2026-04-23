@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import crypto from "crypto";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
+import { pingComplyAdvantage } from "./comply-advantage";
 
 async function requireAdmin(req: Request, res: Response, next: Function) {
   const userId = (req.session as any)?.userId || (req as any).tokenUserId;
@@ -46,9 +47,16 @@ const KEYS: KeyDef[] = [
   { name: "XERO_CLIENT_ID", label: "Xero Client ID", group: "Accounting" },
   { name: "XERO_CLIENT_SECRET", label: "Xero Client Secret", group: "Accounting" },
 
+  // Notes / Productivity
+  { name: "EVERNOTE_CLIENT_ID", label: "Evernote Client ID", group: "Notes" },
+  { name: "EVERNOTE_CLIENT_SECRET", label: "Evernote Client Secret", group: "Notes" },
+
   // KYC / AML
   { name: "VERIFF_API_KEY", label: "Veriff API Key", group: "KYC", fallbacks: ["VERIFF_PUBLIC_KEY", "VERIFF_KEY", "VERIFF_INTEGRATION_ID"] },
   { name: "VERIFF_SECRET", label: "Veriff Secret", group: "KYC", fallbacks: ["VERIFF_PRIVATE_KEY", "VERIFF_SHARED_SECRET"] },
+  { name: "COMPLY_ADVANTAGE_USERNAME", label: "ComplyAdvantage Username", group: "KYC" },
+  { name: "COMPLY_ADVANTAGE_PASSWORD", label: "ComplyAdvantage Password", group: "KYC" },
+  { name: "COMPLY_ADVANTAGE_REALM", label: "ComplyAdvantage Realm", group: "KYC" },
 
   // Web search / research
   { name: "PERPLEXITY_API_KEY", label: "Perplexity", group: "Research", fallbacks: ["PERPLEXITY_API", "PERPLEXITY API", "PERPLEXITY"] },
@@ -123,7 +131,7 @@ async function pingApollo(): Promise<PingResult> {
     // mixed_people/search with an empty query: authed requests return 200
     // with an empty people array; unauth returns 401/403.
     const res = await withTimeout(
-      fetch("https://api.apollo.io/api/v1/mixed_people/search", {
+      fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Api-Key": key },
         body: JSON.stringify({ page: 1, per_page: 1 }),
@@ -371,7 +379,7 @@ export function registerIntegrationsStatusRoutes(app: Express) {
 
   // Live connectivity checks — actually hit each upstream API.
   app.get("/api/integrations/ping", requireAuth, requireAdmin, async (req: Request, res: Response) => {
-    const [apollo, companiesHouse, xero, veriff, perplexity, exa, osPlaces, fal] = await Promise.all([
+    const [apollo, companiesHouse, xero, veriff, perplexity, exa, osPlaces, fal, complyAdvantage] = await Promise.all([
       pingApollo(),
       pingCompaniesHouse(),
       pingXero(req),
@@ -380,7 +388,8 @@ export function registerIntegrationsStatusRoutes(app: Express) {
       pingExa(),
       pingOsPlaces(),
       pingFal(),
+      pingComplyAdvantage(),
     ]);
-    res.json({ apollo, companiesHouse, xero, veriff, perplexity, exa, osPlaces, fal });
+    res.json({ apollo, companiesHouse, xero, veriff, perplexity, exa, osPlaces, fal, complyAdvantage });
   });
 }

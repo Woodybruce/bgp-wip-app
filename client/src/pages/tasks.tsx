@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
+import { TaskNotesCanvas } from "@/components/task-notes-canvas";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import {
@@ -9,7 +10,7 @@ import {
   Sparkles, Brain, ChevronDown, ChevronRight, GripVertical, X, RefreshCw,
   CheckCircle2, CircleDot, Filter, SlidersHorizontal, Loader2, Star,
   Flag, ArrowUp, ArrowDown, Minus, Zap, Sun, Coffee, Briefcase, Target,
-  Download, BookOpen, FileText, Notebook, FolderOpen, ChevronLeft,
+  Download, BookOpen, FileText, Notebook, FolderOpen, ChevronLeft, Pin, Search, Hash,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,13 @@ interface Task {
   linked_deal_id: string | null;
   linked_property_id: string | null;
   linked_contact_id: string | null;
+  linked_onenote_page_id: string | null;
+  linked_onenote_page_url: string | null;
+  linked_evernote_note_id: string | null;
+  linked_evernote_note_url: string | null;
+  parent_task_id: string | null;
+  is_pinned: boolean;
+  tags: string | null;
   sort_order: number;
   created_at: string;
   completed_at: string | null;
@@ -69,14 +77,14 @@ const PRIORITY_CONFIG: Record<string, { label: string; color: string; icon: any;
 };
 
 const CATEGORY_OPTIONS = [
-  { value: "follow-up", label: "Follow Up", icon: RefreshCw },
-  { value: "meeting", label: "Meeting", icon: Briefcase },
-  { value: "deal", label: "Deal", icon: Target },
-  { value: "admin", label: "Admin", icon: SlidersHorizontal },
-  { value: "client", label: "Client", icon: User },
-  { value: "research", label: "Research", icon: Brain },
-  { value: "viewing", label: "Viewing", icon: Building2 },
-  { value: "personal", label: "Personal", icon: Star },
+  { value: "follow-up", label: "Follow Up", icon: RefreshCw, color: "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800" },
+  { value: "meeting", label: "Meeting", icon: Briefcase, color: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800" },
+  { value: "deal", label: "Deal", icon: Target, color: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800" },
+  { value: "admin", label: "Admin", icon: SlidersHorizontal, color: "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800/30 dark:text-slate-300 dark:border-slate-700" },
+  { value: "client", label: "Client", icon: User, color: "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-900/30 dark:text-violet-300 dark:border-violet-800" },
+  { value: "research", label: "Research", icon: Brain, color: "bg-cyan-100 text-cyan-700 border-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-300 dark:border-cyan-800" },
+  { value: "viewing", label: "Viewing", icon: Building2, color: "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:border-rose-800" },
+  { value: "personal", label: "Personal", icon: Star, color: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800" },
 ];
 
 function PriorityBadge({ priority }: { priority: string }) {
@@ -95,7 +103,7 @@ function CategoryBadge({ category }: { category: string }) {
   if (!cat) return null;
   const Icon = cat.icon;
   return (
-    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground border">
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border ${cat.color}`}>
       <Icon className="w-2.5 h-2.5" />
       {cat.label}
     </span>
@@ -117,15 +125,20 @@ function formatDueDate(dateStr: string | null) {
   return { text: date.toLocaleDateString("en-GB", { day: "numeric", month: "short" }), className: "text-muted-foreground" };
 }
 
-function TaskRow({ task, onToggle, onEdit, onDelete }: { task: Task; onToggle: () => void; onEdit: () => void; onDelete: () => void }) {
+function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubtask, onToggleSubtask }: {
+  task: Task; subtasks: Task[]; onToggle: () => void; onEdit: () => void; onDelete: () => void;
+  onPin: () => void; onAddSubtask: () => void; onToggleSubtask: (id: string) => void;
+}) {
   const isDone = task.status === "done";
   const dueInfo = formatDueDate(task.due_date);
   const isOverdue = task.due_date && new Date(task.due_date) < new Date() && !isDone;
+  const [showSubtasks, setShowSubtasks] = useState(subtasks.length > 0);
+  const subtasksDone = subtasks.filter(s => s.status === "done").length;
 
   return (
+    <div data-testid={`task-row-${task.id}`}>
     <div
-      className={`group flex items-start gap-3 px-4 py-3 border-b last:border-b-0 transition-colors hover:bg-muted/30 ${isDone ? "opacity-50" : ""} ${isOverdue ? "bg-red-50/50 dark:bg-red-950/20" : ""}`}
-      data-testid={`task-row-${task.id}`}
+      className={`group flex items-start gap-3 px-4 py-3 border-b last:border-b-0 transition-colors hover:bg-muted/30 ${isDone ? "opacity-50" : ""} ${isOverdue ? "bg-red-50/50 dark:bg-red-950/20" : ""} ${task.is_pinned ? "bg-amber-50/50 dark:bg-amber-950/10" : ""}`}
     >
       <button
         onClick={onToggle}
@@ -143,14 +156,32 @@ function TaskRow({ task, onToggle, onEdit, onDelete }: { task: Task; onToggle: (
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
+          {task.is_pinned && <Pin className="w-3 h-3 text-amber-500 -rotate-45 flex-shrink-0" />}
           <span className={`text-sm font-medium ${isDone ? "line-through text-muted-foreground" : ""}`}>
             {task.title}
           </span>
           <PriorityBadge priority={task.priority} />
           {task.category && <CategoryBadge category={task.category} />}
+          {task.tags && task.tags.split(",").map(t => t.trim()).filter(Boolean).map(tag => (
+            <span key={tag} className="inline-flex items-center gap-0.5 px-1.5 py-0 rounded-full text-[9px] font-medium bg-primary/10 text-primary border border-primary/20">
+              <Hash className="w-2 h-2" />{tag}
+            </span>
+          ))}
+          {subtasks.length > 0 && (
+            <button onClick={() => setShowSubtasks(!showSubtasks)} className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-0.5">
+              <CheckCircle2 className="w-3 h-3" />
+              {subtasksDone}/{subtasks.length}
+            </button>
+          )}
         </div>
         {task.description && (
-          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{task.description}</p>
+          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2" dangerouslySetInnerHTML={{
+            __html: task.description
+              .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+              .replace(/\*(.*?)\*/g, "<em>$1</em>")
+              .replace(/\n/g, " · ")
+              .slice(0, 200)
+          }} />
         )}
         <div className="flex items-center gap-3 mt-1 flex-wrap">
           {dueInfo && (
@@ -181,17 +212,60 @@ function TaskRow({ task, onToggle, onEdit, onDelete }: { task: Task; onToggle: (
               {task.contact_name}
             </span>
           )}
+          {task.linked_onenote_page_url && (
+            <a href={task.linked_onenote_page_url} target="_blank" rel="noopener noreferrer">
+              <span className="text-[11px] text-purple-600 flex items-center gap-1 hover:underline cursor-pointer">
+                <BookOpen className="w-3 h-3" />
+                OneNote
+              </span>
+            </a>
+          )}
+          {task.linked_evernote_note_url && (
+            <a href={task.linked_evernote_note_url} target="_blank" rel="noopener noreferrer">
+              <span className="text-[11px] text-green-600 flex items-center gap-1 hover:underline cursor-pointer">
+                <BookOpen className="w-3 h-3" />
+                Evernote
+              </span>
+            </a>
+          )}
         </div>
       </div>
 
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+        <Button variant="ghost" size="sm" className={`h-7 w-7 p-0 ${task.is_pinned ? "text-amber-500 opacity-100" : ""}`} onClick={onPin} title={task.is_pinned ? "Unpin" : "Pin to top"} data-testid={`task-pin-${task.id}`}>
+          <Pin className="w-3.5 h-3.5" />
+        </Button>
         <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onEdit} data-testid={`task-edit-${task.id}`}>
           <Pencil className="w-3.5 h-3.5" />
+        </Button>
+        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={onAddSubtask} title="Add subtask" data-testid={`task-add-subtask-${task.id}`}>
+          <Plus className="w-3.5 h-3.5" />
         </Button>
         <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-destructive hover:text-destructive" onClick={onDelete} data-testid={`task-delete-${task.id}`}>
           <Trash2 className="w-3.5 h-3.5" />
         </Button>
       </div>
+    </div>
+
+    {/* Subtasks */}
+    {showSubtasks && subtasks.length > 0 && (
+      <div className="ml-12 border-l-2 border-muted pl-3 pb-1">
+        {subtasks.map(sub => (
+          <div key={sub.id} className="flex items-center gap-2 py-1.5 text-xs group/sub">
+            <button
+              onClick={() => onToggleSubtask(sub.id)}
+              className={`flex-shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-all ${
+                sub.status === "done" ? "bg-emerald-500 border-emerald-500 text-white" : "border-gray-300 hover:border-primary"
+              }`}
+            >
+              {sub.status === "done" && <Check className="w-2.5 h-2.5" />}
+            </button>
+            <span className={sub.status === "done" ? "line-through text-muted-foreground" : ""}>{sub.title}</span>
+            {sub.due_date && <span className="text-[10px] text-muted-foreground ml-auto">{formatDueDate(sub.due_date)?.text}</span>}
+          </div>
+        ))}
+      </div>
+    )}
     </div>
   );
 }
@@ -288,14 +362,20 @@ function AddTaskInline({ onAdd }: { onAdd: (title: string) => void }) {
 export default function TasksPage() {
   const { toast } = useToast();
   const [filter, setFilter] = useState<"all" | "todo" | "in_progress" | "done">("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [editTask, setEditTask] = useState<Task | null>(null);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [briefingExpanded, setBriefingExpanded] = useState(true);
   const [showCompletedSection, setShowCompletedSection] = useState(false);
+  const [addingSubtaskFor, setAddingSubtaskFor] = useState<string | null>(null);
+  const [subtaskTitle, setSubtaskTitle] = useState("");
 
   const [editForm, setEditForm] = useState({
     title: "", description: "", priority: "medium", category: "", dueDate: "",
     linkedDealId: "", linkedPropertyId: "", linkedContactId: "",
+    linkedOnenotePageId: "", linkedOnenotePageUrl: "",
+    linkedEvernoteNoteId: "", linkedEvernoteNoteUrl: "",
+    tags: "",
   });
 
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -308,6 +388,26 @@ export default function TasksPage() {
   const [importingOnenote, setImportingOnenote] = useState(false);
   const [evernoteText, setEvernoteText] = useState("");
   const [importingEvernote, setImportingEvernote] = useState(false);
+
+  // Evernote connection + notebook browsing state
+  const [evernoteConnected, setEvernoteConnected] = useState(false);
+  const [evernoteNotebooks, setEvernoteNotebooks] = useState<any[]>([]);
+  const [evernoteNotes, setEvernoteNotes] = useState<any[]>([]);
+  const [selectedEvernoteNotebook, setSelectedEvernoteNotebook] = useState<string | null>(null);
+  const [evernoteLoading, setEvernoteLoading] = useState(false);
+
+  // Note linking state (for edit dialog)
+  const [showNotePicker, setShowNotePicker] = useState<"onenote" | "evernote" | null>(null);
+  const [notePickerNotebooks, setNotePickerNotebooks] = useState<any[]>([]);
+  const [notePickerSections, setNotePickerSections] = useState<any[]>([]);
+  const [notePickerPages, setNotePickerPages] = useState<any[]>([]);
+  const [notePickerStep, setNotePickerStep] = useState<"notebooks" | "sections" | "pages">("notebooks");
+
+  // Export to notes state (for edit dialog)
+  const [showExportPicker, setShowExportPicker] = useState<"onenote" | "evernote" | null>(null);
+  const [exportSections, setExportSections] = useState<any[]>([]);
+  const [exportNotebooks, setExportNotebooks] = useState<any[]>([]);
+  const [exporting, setExporting] = useState(false);
 
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<Task[]>({
     queryKey: ["/api/tasks"],
@@ -456,6 +556,11 @@ export default function TasksPage() {
       linkedDealId: task.linked_deal_id || "",
       linkedPropertyId: task.linked_property_id || "",
       linkedContactId: task.linked_contact_id || "",
+      linkedOnenotePageId: task.linked_onenote_page_id || "",
+      linkedOnenotePageUrl: task.linked_onenote_page_url || "",
+      linkedEvernoteNoteId: task.linked_evernote_note_id || "",
+      linkedEvernoteNoteUrl: task.linked_evernote_note_url || "",
+      tags: task.tags || "",
     });
     setShowEditDialog(true);
   };
@@ -472,6 +577,11 @@ export default function TasksPage() {
       linkedDealId: editForm.linkedDealId || null,
       linkedPropertyId: editForm.linkedPropertyId || null,
       linkedContactId: editForm.linkedContactId || null,
+      linkedOnenotePageId: editForm.linkedOnenotePageId || null,
+      linkedOnenotePageUrl: editForm.linkedOnenotePageUrl || null,
+      linkedEvernoteNoteId: editForm.linkedEvernoteNoteId || null,
+      linkedEvernoteNoteUrl: editForm.linkedEvernoteNoteUrl || null,
+      tags: editForm.tags || null,
     });
   };
 
@@ -484,7 +594,30 @@ export default function TasksPage() {
   });
   const urgentHighTasks = activeTasks.filter(t => t.priority === "urgent" || t.priority === "high");
 
-  const filteredTasks = filter === "all" ? tasks : tasks.filter(t => t.status === filter);
+  // Separate parent tasks from subtasks
+  const parentTasks = useMemo(() => tasks.filter(t => !t.parent_task_id), [tasks]);
+  const subtaskMap = useMemo(() => {
+    const map: Record<string, Task[]> = {};
+    tasks.filter(t => t.parent_task_id).forEach(t => {
+      if (!map[t.parent_task_id!]) map[t.parent_task_id!] = [];
+      map[t.parent_task_id!].push(t);
+    });
+    return map;
+  }, [tasks]);
+
+  // Apply search + filter on parent tasks only
+  let filteredTasks = filter === "all" ? parentTasks : parentTasks.filter(t => t.status === filter);
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    filteredTasks = filteredTasks.filter(t =>
+      t.title.toLowerCase().includes(q) ||
+      (t.description || "").toLowerCase().includes(q) ||
+      (t.deal_name || "").toLowerCase().includes(q) ||
+      (t.property_name || "").toLowerCase().includes(q) ||
+      (t.tags || "").toLowerCase().includes(q) ||
+      (subtaskMap[t.id] || []).some(s => s.title.toLowerCase().includes(q))
+    );
+  }
   const displayActive = filteredTasks.filter(t => t.status !== "done");
   const displayCompleted = filteredTasks.filter(t => t.status === "done");
 
@@ -626,9 +759,16 @@ export default function TasksPage() {
                     <TaskRow
                       key={task.id}
                       task={task}
+                      subtasks={subtaskMap[task.id] || []}
                       onToggle={() => handleToggle(task)}
                       onEdit={() => openEdit(task)}
                       onDelete={() => deleteMutation.mutate(task.id)}
+                      onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
+                      onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
+                      onToggleSubtask={(id) => {
+                        const sub = tasks.find(t => t.id === id);
+                        if (sub) updateMutation.mutate({ id, status: sub.status === "done" ? "todo" : "done" });
+                      }}
                     />
                   ))}
                 </CardContent>
@@ -661,6 +801,25 @@ export default function TasksPage() {
               <CardContent className="px-0 pb-0 pt-2">
                 <AddTaskInline onAdd={handleQuickAdd} />
 
+                {/* Search bar */}
+                <div className="px-4 pb-2">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                    <Input
+                      placeholder="Search tasks, deals, descriptions, tags..."
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      className="pl-8 h-8 text-xs"
+                      data-testid="input-task-search"
+                    />
+                    {searchQuery && (
+                      <button className="absolute right-2 top-1/2 -translate-y-1/2" onClick={() => setSearchQuery("")}>
+                        <X className="w-3 h-3 text-muted-foreground hover:text-foreground" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
                 {tasksLoading ? (
                   <div className="p-4 space-y-3">
                     {[1, 2, 3].map(i => <Skeleton key={i} className="h-12 w-full" />)}
@@ -677,11 +836,47 @@ export default function TasksPage() {
                       <TaskRow
                         key={task.id}
                         task={task}
+                        subtasks={subtaskMap[task.id] || []}
                         onToggle={() => handleToggle(task)}
                         onEdit={() => openEdit(task)}
                         onDelete={() => deleteMutation.mutate(task.id)}
+                        onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
+                        onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
+                        onToggleSubtask={(id) => {
+                          const sub = tasks.find(t => t.id === id);
+                          if (sub) updateMutation.mutate({ id, status: sub.status === "done" ? "todo" : "done" });
+                        }}
                       />
                     ))}
+                    {addingSubtaskFor && displayActive.some(t => t.id === addingSubtaskFor) && (
+                      <div className="ml-12 pl-3 border-l-2 border-muted py-2 flex items-center gap-2">
+                        <Input
+                          autoFocus
+                          placeholder="Subtask title..."
+                          value={subtaskTitle}
+                          onChange={e => setSubtaskTitle(e.target.value)}
+                          className="h-7 text-xs flex-1"
+                          onKeyDown={e => {
+                            if (e.key === "Enter" && subtaskTitle.trim()) {
+                              createMutation.mutate({ title: subtaskTitle.trim(), parentTaskId: addingSubtaskFor, priority: "medium" });
+                              setSubtaskTitle("");
+                              setAddingSubtaskFor(null);
+                            }
+                            if (e.key === "Escape") setAddingSubtaskFor(null);
+                          }}
+                        />
+                        <Button size="sm" className="h-7 text-xs" onClick={() => {
+                          if (subtaskTitle.trim()) {
+                            createMutation.mutate({ title: subtaskTitle.trim(), parentTaskId: addingSubtaskFor, priority: "medium" });
+                            setSubtaskTitle("");
+                            setAddingSubtaskFor(null);
+                          }
+                        }}>Add</Button>
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setAddingSubtaskFor(null)}>
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    )}
 
                     {displayCompleted.length > 0 && (
                       <>
@@ -697,9 +892,16 @@ export default function TasksPage() {
                           <TaskRow
                             key={task.id}
                             task={task}
+                            subtasks={subtaskMap[task.id] || []}
                             onToggle={() => handleToggle(task)}
                             onEdit={() => openEdit(task)}
                             onDelete={() => deleteMutation.mutate(task.id)}
+                            onPin={() => updateMutation.mutate({ id: task.id, isPinned: !task.is_pinned })}
+                            onAddSubtask={() => { setAddingSubtaskFor(task.id); setSubtaskTitle(""); }}
+                            onToggleSubtask={(id) => {
+                              const sub = tasks.find(t => t.id === id);
+                              if (sub) updateMutation.mutate({ id, status: sub.status === "done" ? "todo" : "done" });
+                            }}
                           />
                         ))}
                       </>
@@ -768,6 +970,7 @@ export default function TasksPage() {
                   rows={3}
                   data-testid="input-task-description"
                 />
+                <TaskNotesCanvas onTextRecognized={(text) => setEditForm(f => ({ ...f, description: f.description ? f.description + "\n" + text : text }))} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -836,6 +1039,292 @@ export default function TasksPage() {
                   </SelectContent>
                 </Select>
               </div>
+
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Tags (comma-separated)</label>
+                <Input
+                  placeholder="e.g. urgent, vendor, legal"
+                  value={editForm.tags || ""}
+                  onChange={e => setEditForm({ ...editForm, tags: e.target.value })}
+                  data-testid="input-task-tags"
+                />
+              </div>
+
+              {/* Linked Notes */}
+              <div className="border rounded-lg p-3 space-y-2 bg-muted/20">
+                <label className="text-xs font-semibold text-muted-foreground block">Linked Notes</label>
+                <div className="space-y-1.5">
+                  {editForm.linkedOnenotePageUrl ? (
+                    <div className="flex items-center gap-2 text-xs">
+                      <BookOpen className="w-3.5 h-3.5 text-purple-600" />
+                      <a href={editForm.linkedOnenotePageUrl} target="_blank" rel="noopener noreferrer" className="text-purple-600 hover:underline truncate flex-1">
+                        OneNote page linked
+                      </a>
+                      <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setEditForm(f => ({ ...f, linkedOnenotePageId: "", linkedOnenotePageUrl: "" }))}>
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="outline" size="sm" className="h-7 text-xs w-full justify-start gap-1.5"
+                      onClick={async () => {
+                        try {
+                          const res = await fetch("/api/tasks/import/onenote/notebooks", { headers: getAuthHeaders() });
+                          if (res.ok) {
+                            const nbs = await res.json();
+                            setNotePickerNotebooks(nbs);
+                            setNotePickerStep("notebooks");
+                            setShowNotePicker("onenote");
+                          } else {
+                            toast({ title: "Could not load OneNote notebooks", variant: "destructive" });
+                          }
+                        } catch { toast({ title: "OneNote not connected", variant: "destructive" }); }
+                      }}
+                    >
+                      <BookOpen className="w-3 h-3 text-purple-600" />
+                      Link OneNote Page
+                    </Button>
+                  )}
+                  {editForm.linkedEvernoteNoteUrl ? (
+                    <div className="flex items-center gap-2 text-xs">
+                      <BookOpen className="w-3.5 h-3.5 text-green-600" />
+                      <a href={editForm.linkedEvernoteNoteUrl} target="_blank" rel="noopener noreferrer" className="text-green-600 hover:underline truncate flex-1">
+                        Evernote note linked
+                      </a>
+                      <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setEditForm(f => ({ ...f, linkedEvernoteNoteId: "", linkedEvernoteNoteUrl: "" }))}>
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="outline" size="sm" className="h-7 text-xs w-full justify-start gap-1.5"
+                      onClick={async () => {
+                        try {
+                          const statusRes = await fetch("/api/evernote/status", { headers: getAuthHeaders() });
+                          const status = await statusRes.json();
+                          if (!status.connected) {
+                            toast({ title: "Evernote not connected — connect via Settings or Import dialog" });
+                            return;
+                          }
+                          const res = await fetch("/api/evernote/notebooks", { headers: getAuthHeaders() });
+                          if (res.ok) {
+                            const nbs = await res.json();
+                            setNotePickerNotebooks(nbs);
+                            setNotePickerStep("notebooks");
+                            setShowNotePicker("evernote");
+                          }
+                        } catch { toast({ title: "Evernote not available", variant: "destructive" }); }
+                      }}
+                    >
+                      <BookOpen className="w-3 h-3 text-green-600" />
+                      Link Evernote Note
+                    </Button>
+                  )}
+                </div>
+                {editTask && (
+                  <div className="flex gap-2 pt-1">
+                    <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1" onClick={async () => {
+                      try {
+                        const res = await fetch("/api/tasks/import/onenote/notebooks", { headers: getAuthHeaders() });
+                        if (res.ok) {
+                          const nbs = await res.json();
+                          setExportNotebooks(nbs);
+                          setShowExportPicker("onenote");
+                        }
+                      } catch { toast({ title: "OneNote not connected", variant: "destructive" }); }
+                    }}>
+                      Push to OneNote
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-6 text-[10px] gap-1" onClick={async () => {
+                      try {
+                        const statusRes = await fetch("/api/evernote/status", { headers: getAuthHeaders() });
+                        const status = await statusRes.json();
+                        if (!status.connected) {
+                          toast({ title: "Evernote not connected" });
+                          return;
+                        }
+                        const res = await fetch("/api/evernote/notebooks", { headers: getAuthHeaders() });
+                        if (res.ok) {
+                          const nbs = await res.json();
+                          setExportNotebooks(nbs);
+                          setShowExportPicker("evernote");
+                        }
+                      } catch { toast({ title: "Evernote not available", variant: "destructive" }); }
+                    }}>
+                      Push to Evernote
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Note picker sub-dialog */}
+              {showNotePicker && (
+                <div className="border rounded-lg p-3 bg-background space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold">
+                      {showNotePicker === "onenote" ? "Select OneNote Page" : "Select Evernote Note"}
+                    </span>
+                    <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setShowNotePicker(null)}>
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                  {notePickerStep === "notebooks" && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {notePickerNotebooks.map((nb: any) => (
+                        <button key={nb.id} className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1.5" onClick={async () => {
+                          if (showNotePicker === "onenote") {
+                            const res = await fetch(`/api/tasks/import/onenote/sections/${nb.id}`, { headers: getAuthHeaders() });
+                            if (res.ok) {
+                              const secs = await res.json();
+                              setNotePickerSections(secs);
+                              setNotePickerStep("sections");
+                            }
+                          } else {
+                            const res = await fetch(`/api/evernote/notebooks/${nb.id}/notes`, { headers: getAuthHeaders() });
+                            if (res.ok) {
+                              const notes = await res.json();
+                              setNotePickerPages(notes);
+                              setNotePickerStep("pages");
+                            }
+                          }
+                        }}>
+                          <FolderOpen className="w-3 h-3 text-muted-foreground" />
+                          {nb.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {notePickerStep === "sections" && showNotePicker === "onenote" && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      <button className="text-[10px] text-muted-foreground hover:underline mb-1" onClick={() => setNotePickerStep("notebooks")}>
+                        Back to notebooks
+                      </button>
+                      {notePickerSections.map((sec: any) => (
+                        <button key={sec.id} className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1.5" onClick={async () => {
+                          const res = await fetch(`/api/tasks/onenote/pages/${sec.id}`, { headers: getAuthHeaders() });
+                          if (res.ok) {
+                            const pages = await res.json();
+                            setNotePickerPages(pages);
+                            setNotePickerStep("pages");
+                          }
+                        }}>
+                          <FileText className="w-3 h-3 text-muted-foreground" />
+                          {sec.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {notePickerStep === "pages" && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      <button className="text-[10px] text-muted-foreground hover:underline mb-1" onClick={() => setNotePickerStep(showNotePicker === "onenote" ? "sections" : "notebooks")}>
+                        Back
+                      </button>
+                      {notePickerPages.map((page: any) => (
+                        <button key={page.id} className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1.5" onClick={() => {
+                          if (showNotePicker === "onenote") {
+                            setEditForm(f => ({ ...f, linkedOnenotePageId: page.id, linkedOnenotePageUrl: page.webUrl || "" }));
+                          } else {
+                            setEditForm(f => ({ ...f, linkedEvernoteNoteId: page.id, linkedEvernoteNoteUrl: page.webUrl || page.url || "" }));
+                          }
+                          setShowNotePicker(null);
+                          toast({ title: `${showNotePicker === "onenote" ? "OneNote page" : "Evernote note"} linked` });
+                        }}>
+                          <Notebook className="w-3 h-3 text-muted-foreground" />
+                          {page.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Export picker sub-dialog */}
+              {showExportPicker && editTask && (
+                <div className="border rounded-lg p-3 bg-background space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold">
+                      {showExportPicker === "onenote" ? "Export to OneNote — select section" : "Export to Evernote — select notebook"}
+                    </span>
+                    <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setShowExportPicker(null)}>
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                  {showExportPicker === "onenote" && exportSections.length === 0 && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {exportNotebooks.map((nb: any) => (
+                        <button key={nb.id} className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1.5" onClick={async () => {
+                          const res = await fetch(`/api/tasks/import/onenote/sections/${nb.id}`, { headers: getAuthHeaders() });
+                          if (res.ok) setExportSections(await res.json());
+                        }}>
+                          <FolderOpen className="w-3 h-3 text-muted-foreground" />
+                          {nb.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {showExportPicker === "onenote" && exportSections.length > 0 && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      <button className="text-[10px] text-muted-foreground hover:underline mb-1" onClick={() => setExportSections([])}>
+                        Back to notebooks
+                      </button>
+                      {exportSections.map((sec: any) => (
+                        <button key={sec.id} className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1.5" disabled={exporting} onClick={async () => {
+                          setExporting(true);
+                          try {
+                            const res = await fetch(`/api/tasks/${editTask.id}/export-onenote`, {
+                              method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+                              body: JSON.stringify({ sectionId: sec.id }),
+                            });
+                            if (res.ok) {
+                              const data = await res.json();
+                              setEditForm(f => ({ ...f, linkedOnenotePageId: data.pageId, linkedOnenotePageUrl: data.pageUrl || "" }));
+                              queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+                              toast({ title: "Task exported to OneNote" });
+                              setShowExportPicker(null);
+                            } else {
+                              toast({ title: "Export failed", variant: "destructive" });
+                            }
+                          } catch { toast({ title: "Export failed", variant: "destructive" }); }
+                          setExporting(false);
+                        }}>
+                          <FileText className="w-3 h-3 text-muted-foreground" />
+                          {sec.name}
+                          {exporting && <Loader2 className="w-3 h-3 animate-spin ml-auto" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {showExportPicker === "evernote" && (
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {exportNotebooks.map((nb: any) => (
+                        <button key={nb.id} className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-1.5" disabled={exporting} onClick={async () => {
+                          setExporting(true);
+                          try {
+                            const res = await fetch(`/api/tasks/${editTask.id}/export-evernote`, {
+                              method: "POST", headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+                              body: JSON.stringify({ notebookId: nb.id }),
+                            });
+                            if (res.ok) {
+                              const data = await res.json();
+                              setEditForm(f => ({ ...f, linkedEvernoteNoteId: data.noteId, linkedEvernoteNoteUrl: data.noteUrl || "" }));
+                              queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+                              toast({ title: "Task exported to Evernote" });
+                              setShowExportPicker(null);
+                            } else {
+                              toast({ title: "Export failed", variant: "destructive" });
+                            }
+                          } catch { toast({ title: "Export failed", variant: "destructive" }); }
+                          setExporting(false);
+                        }}>
+                          <FolderOpen className="w-3 h-3 text-muted-foreground" />
+                          {nb.name}
+                          {exporting && <Loader2 className="w-3 h-3 animate-spin ml-auto" />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setShowEditDialog(false)} data-testid="button-cancel-task">Cancel</Button>

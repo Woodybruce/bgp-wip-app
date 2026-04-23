@@ -323,6 +323,539 @@ async function requireAdmin(req: Request, res: Response, next: Function) {
   next();
 }
 
+/**
+ * Capture a Google Street View image for an address and save to image_studio_images.
+ * Exposed for the property-pathway orchestrator (Stage 8 — Studio Time).
+ */
+export async function captureStreetViewForAddress(args: { address: string; propertyId?: string | null; heading?: number; pitch?: number; fov?: number }): Promise<{ id: string; localPath: string }> {
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (!apiKey) throw new Error("GOOGLE_API_KEY not configured");
+
+  const params = new URLSearchParams({
+    size: "1200x800",
+    location: args.address,
+    heading: String(args.heading ?? 0),
+    pitch: String(args.pitch ?? 0),
+    fov: String(args.fov ?? 90),
+    key: apiKey,
+  });
+  const resp = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params}`);
+  if (!resp.ok) throw new Error(`Street View fetch failed: ${resp.status}`);
+  const buffer = Buffer.from(await resp.arrayBuffer());
+  const safeName = args.address.replace(/[^a-zA-Z0-9 ]/g, "").trim().replace(/\s+/g, "-").slice(0, 80);
+  const filename = `streetview-${safeName}-${crypto.randomUUID().slice(0, 8)}.jpg`;
+  const filePath = path.join(IMAGE_DIR, filename);
+  fs.writeFileSync(filePath, buffer);
+
+  const { thumbnail, width, height } = await generateThumbnail(buffer);
+
+  const [inserted] = await db.insert(imageStudioImages).values({
+    fileName: `Street View — ${args.address}`,
+    category: "Street Views",
+    tags: ["Street View", "Google", "Exterior", "pathway"],
+    description: `Google Street View capture of ${args.address} (auto — property pathway Stage 8)`,
+    source: "streetview",
+    propertyId: args.propertyId || undefined,
+    address: args.address,
+    mimeType: "image/jpeg",
+    fileSize: buffer.length,
+    width,
+    height,
+    thumbnailData: thumbnail,
+    localPath: filePath,
+  }).returning();
+
+  return { id: inserted.id, localPath: filePath };
+}
+
+// ─── Stage 8 bulk image sweep ─────────────────────────────────────────────
+// Runs after the business plan and Excel model are agreed. Sweeps every
+// source we have — Street View (4 headings + ±offsets along the street),
+// Google Places photos, Clearbit logos for tenants — and files the results
+// into three named collections on the run: Building / Tenants / Area.
+//
+// Nothing here is expensive enough to gate on — API keys burn a few hundred
+// quota points per run, not dollars. No image generation (Flux/DALL-E) is
+// triggered; we only harvest real photography.
+
+type StoredImage = { id: string; localPath: string };
+
+async function storeImageFromBuffer(args: {
+  buffer: Buffer;
+  fileName: string;
+  category: string;
+  tags: string[];
+  description: string;
+  source: string;
+  propertyId?: string | null;
+  address?: string;
+  brandName?: string;
+  mimeType?: string;
+  filenameHint?: string;
+}): Promise<StoredImage> {
+  const ext = (args.mimeType || "image/jpeg").includes("png") ? ".png" : ".jpg";
+  const safeHint = (args.filenameHint || args.fileName).replace(/[^a-zA-Z0-9]/g, "-").slice(0, 60);
+  const filename = `${args.source}-${safeHint}-${crypto.randomUUID().slice(0, 8)}${ext}`;
+  const filePath = path.join(IMAGE_DIR, filename);
+  await persistImage(filePath, args.buffer, args.mimeType || "image/jpeg", args.fileName);
+  const { thumbnail, width, height } = await generateThumbnail(args.buffer);
+  const [inserted] = await db.insert(imageStudioImages).values({
+    fileName: args.fileName,
+    category: args.category,
+    tags: args.tags,
+    description: args.description,
+    source: args.source,
+    propertyId: args.propertyId || undefined,
+    address: args.address,
+    brandName: args.brandName,
+    mimeType: args.mimeType || "image/jpeg",
+    fileSize: args.buffer.length,
+    width,
+    height,
+    thumbnailData: thumbnail,
+    localPath: filePath,
+  }).returning();
+  return { id: inserted.id, localPath: filePath };
+}
+
+async function ensureRunCollection(args: {
+  runId: string;
+  address: string;
+  bucket: "Building" | "Tenants" | "Area";
+  userId?: string;
+}): Promise<string> {
+  const name = `Pathway · ${args.address} · ${args.bucket}`;
+  const existing = await db.select().from(imageStudioCollections)
+    .where(eq(imageStudioCollections.name, name)).limit(1);
+  if (existing[0]?.id) return existing[0].id;
+  const [created] = await db.insert(imageStudioCollections).values({
+    name,
+    description: `Auto-created for property pathway run ${args.runId} (${args.bucket})`,
+    createdBy: args.userId || undefined,
+  }).returning();
+  return created.id;
+}
+
+async function addImagesToCollection(collectionId: string, imageIds: string[]): Promise<number> {
+  let added = 0;
+  for (const imageId of imageIds) {
+    try {
+      const r = await pool.query(
+        `INSERT INTO image_studio_collection_images (collection_id, image_id) VALUES ($1, $2) ON CONFLICT (collection_id, image_id) DO NOTHING`,
+        [collectionId, imageId],
+      );
+      if ((r.rowCount ?? 0) > 0) added++;
+    } catch {}
+  }
+  return added;
+}
+
+async function geocodeAddress(address: string, apiKey: string): Promise<{ lat: number; lng: number; placeId?: string } | null> {
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(address)}&inputtype=textquery&fields=geometry,place_id,formatted_address&locationbias=circle:50000@51.5074,-0.1278&key=${apiKey}`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const data: any = await r.json();
+    const c = data?.candidates?.[0];
+    if (!c?.geometry?.location) return null;
+    return { lat: c.geometry.location.lat, lng: c.geometry.location.lng, placeId: c.place_id };
+  } catch {
+    return null;
+  }
+}
+
+async function streetViewBuffer(args: { lat?: number; lng?: number; address?: string; heading: number; pitch?: number; apiKey: string }): Promise<Buffer | null> {
+  const params = new URLSearchParams({
+    size: "1200x800",
+    heading: String(args.heading),
+    pitch: String(args.pitch ?? 0),
+    fov: "90",
+    key: args.apiKey,
+  });
+  if (args.lat != null && args.lng != null) {
+    params.set("location", `${args.lat},${args.lng}`);
+  } else if (args.address) {
+    params.set("location", args.address);
+  } else return null;
+  try {
+    const r = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params}`);
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    // Google returns a tiny generic "Sorry, we have no imagery here" for blind
+    // locations (~2-6KB). Filter those.
+    if (buf.length < 7000) return null;
+    return buf;
+  } catch {
+    return null;
+  }
+}
+
+async function placeDetailsPhotos(placeId: string, apiKey: string, max = 15): Promise<string[]> {
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=photos&key=${apiKey}`;
+    const r = await fetch(url);
+    if (!r.ok) return [];
+    const data: any = await r.json();
+    const refs: string[] = (data?.result?.photos || []).map((p: any) => p.photo_reference).filter(Boolean);
+    return refs.slice(0, max);
+  } catch {
+    return [];
+  }
+}
+
+async function placePhotoBuffer(photoReference: string, apiKey: string): Promise<Buffer | null> {
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=1200&photo_reference=${photoReference}&key=${apiKey}`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return Buffer.from(await r.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+async function findPlaceByText(query: string, apiKey: string, bias?: { lat: number; lng: number; radiusM?: number }): Promise<{ placeId: string; name: string; lat: number; lng: number } | null> {
+  try {
+    const locationBias = bias
+      ? `circle:${bias.radiusM ?? 300}@${bias.lat},${bias.lng}`
+      : `circle:50000@51.5074,-0.1278`;
+    const url = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(query)}&inputtype=textquery&fields=geometry,place_id,name&locationbias=${locationBias}&key=${apiKey}`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const data: any = await r.json();
+    const c = data?.candidates?.[0];
+    if (!c?.place_id) return null;
+    return {
+      placeId: c.place_id,
+      name: c.name || query,
+      lat: c.geometry?.location?.lat || 0,
+      lng: c.geometry?.location?.lng || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function nearbyPlaces(lat: number, lng: number, apiKey: string, radius = 80, limit = 6): Promise<Array<{ placeId: string; name: string; lat: number; lng: number; types: string[] }>> {
+  try {
+    const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=${radius}&key=${apiKey}`;
+    const r = await fetch(url);
+    if (!r.ok) return [];
+    const data: any = await r.json();
+    const results = (data?.results || []) as any[];
+    return results.slice(0, limit).map((p: any) => ({
+      placeId: p.place_id,
+      name: p.name,
+      lat: p.geometry?.location?.lat || 0,
+      lng: p.geometry?.location?.lng || 0,
+      types: p.types || [],
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function clearbitLogoBuffer(companyName: string): Promise<{ buffer: Buffer; domain: string } | null> {
+  try {
+    const sugResp = await fetch(`https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(companyName)}`);
+    if (!sugResp.ok) return null;
+    const suggestions: any[] = await sugResp.json().catch(() => []);
+    const domain = suggestions?.[0]?.domain;
+    if (!domain) return null;
+    const logoResp = await fetch(`https://logo.clearbit.com/${domain}?size=512`);
+    if (!logoResp.ok) return null;
+    const buf = Buffer.from(await logoResp.arrayBuffer());
+    if (buf.length < 400) return null;
+    return { buffer: buf, domain };
+  } catch {
+    return null;
+  }
+}
+
+export async function sweepStage8ImagesForRun(args: {
+  runId: string;
+  address: string;
+  postcode?: string;
+  propertyId?: string | null;
+  tenantNames?: string[];
+  userId?: string;
+  brochurePdfs?: Array<{ name: string; buffer: Buffer; webUrl?: string }>;
+}): Promise<{
+  buildingCollectionId?: string;
+  tenantsCollectionId?: string;
+  areaCollectionId?: string;
+  imagesAdded: number;
+  streetViewImageId?: string;
+  collections: Array<{ id: string; name: string; bucket: "building" | "tenants" | "area"; imageCount: number }>;
+}> {
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (!apiKey) {
+    console.warn("[pathway sweep] GOOGLE_API_KEY missing — Stage 8 image sweep skipped");
+    return { imagesAdded: 0, collections: [] };
+  }
+
+  await ensureTable().catch(() => {});
+
+  const [buildingId, tenantsId, areaId] = await Promise.all([
+    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Building", userId: args.userId }),
+    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Tenants", userId: args.userId }),
+    ensureRunCollection({ runId: args.runId, address: args.address, bucket: "Area", userId: args.userId }),
+  ]);
+
+  const buildingImages: string[] = [];
+  const tenantImages: string[] = [];
+  const areaImages: string[] = [];
+  let firstStreetViewImageId: string | undefined;
+
+  const geo = await geocodeAddress(args.address, apiKey);
+
+  // ─── Building: 4-heading street view + Places photos of the building ────
+  for (const heading of [0, 90, 180, 270]) {
+    const buf = await streetViewBuffer({ lat: geo?.lat, lng: geo?.lng, address: args.address, heading, apiKey });
+    if (!buf) continue;
+    try {
+      const stored = await storeImageFromBuffer({
+        buffer: buf,
+        fileName: `Street View ${heading}° — ${args.address}`,
+        category: "Street Views",
+        tags: ["Street View", "Building", "Exterior", "pathway", `heading-${heading}`],
+        description: `Google Street View of ${args.address} at ${heading}° heading (auto — pathway Stage 8).`,
+        source: "streetview",
+        propertyId: args.propertyId,
+        address: args.address,
+        filenameHint: `${args.address}-${heading}`,
+      });
+      buildingImages.push(stored.id);
+      if (!firstStreetViewImageId) firstStreetViewImageId = stored.id;
+    } catch (err: any) {
+      console.warn(`[pathway sweep] SV ${heading}° failed:`, err?.message);
+    }
+  }
+
+  if (geo?.placeId) {
+    const refs = await placeDetailsPhotos(geo.placeId, apiKey, 15);
+    let idx = 0;
+    for (const ref of refs) {
+      idx++;
+      const buf = await placePhotoBuffer(ref, apiKey);
+      if (!buf) continue;
+      try {
+        const stored = await storeImageFromBuffer({
+          buffer: buf,
+          fileName: `Place photo ${idx} — ${args.address}`,
+          category: "Places",
+          // Google building photos are overwhelmingly interior. Tag them that
+          // way so Why Buy / Image Studio filters can favour exteriors
+          // (Street View) when an exterior is needed.
+          tags: ["Google Places", "Building", "Interior-likely", "pathway"],
+          description: `Google Places photo ${idx} of ${args.address} (auto — pathway Stage 8).`,
+          source: "places",
+          propertyId: args.propertyId,
+          address: args.address,
+          filenameHint: `${args.address}-place-${idx}`,
+        });
+        buildingImages.push(stored.id);
+      } catch {}
+    }
+  }
+
+  // ─── Tenants: Clearbit logos + Places photos of flagship stores ─────────
+  const uniqueTenants = Array.from(new Set((args.tenantNames || []).map(t => t.trim()).filter(t => t && t.length > 1)));
+  for (const tenant of uniqueTenants.slice(0, 6)) {
+    // Clearbit logo
+    try {
+      const logo = await clearbitLogoBuffer(tenant);
+      if (logo) {
+        const stored = await storeImageFromBuffer({
+          buffer: logo.buffer,
+          fileName: `${tenant} — Logo`,
+          category: "Brands",
+          tags: ["Logo", "Tenant", tenant, "pathway"],
+          description: `Clearbit logo for ${tenant} (${logo.domain}) — pathway Stage 8.`,
+          source: "clearbit",
+          propertyId: args.propertyId,
+          brandName: tenant,
+          mimeType: "image/png",
+          filenameHint: tenant,
+        });
+        tenantImages.push(stored.id);
+      }
+    } catch (err: any) {
+      console.warn(`[pathway sweep] Clearbit ${tenant} failed:`, err?.message);
+    }
+
+    // Places findplace → photos + shopfront Street View. Bias the search
+    // to the subject building so we resolve the correct branch (e.g. the
+    // Haymarket Pret, not a Pret 5 miles away).
+    try {
+      const bias = geo ? { lat: geo.lat, lng: geo.lng, radiusM: 250 } : undefined;
+      const place = await findPlaceByText(`${tenant}`, apiKey, bias)
+        || await findPlaceByText(`${tenant} ${args.address}`, apiKey, bias)
+        || await findPlaceByText(`${tenant} London`, apiKey);
+      if (place?.placeId) {
+        // Up to 4 Places photos (was 2) — actual store shots.
+        const refs = await placeDetailsPhotos(place.placeId, apiKey, 4);
+        let idx = 0;
+        for (const ref of refs) {
+          idx++;
+          const buf = await placePhotoBuffer(ref, apiKey);
+          if (!buf) continue;
+          const stored = await storeImageFromBuffer({
+            buffer: buf,
+            fileName: `${tenant} — Store photo ${idx}`,
+            category: "Places",
+            tags: ["Google Places", "Tenant", "Brand", tenant, `brand:${tenant}`, "pathway"],
+            description: `Google Places photo of ${place.name} (tenant: ${tenant}) — pathway Stage 8.`,
+            source: "places",
+            propertyId: args.propertyId,
+            brandName: tenant,
+            filenameHint: `${tenant}-place-${idx}`,
+          });
+          tenantImages.push(stored.id);
+        }
+        // Guaranteed shopfront exterior via Street View at the tenant's own
+        // coord. Pull two headings so one reads well even if facing away.
+        if (place.lat && place.lng) {
+          for (const heading of [0, 180]) {
+            const svBuf = await streetViewBuffer({ lat: place.lat, lng: place.lng, heading, apiKey });
+            if (!svBuf) continue;
+            try {
+              const stored = await storeImageFromBuffer({
+                buffer: svBuf,
+                fileName: `${tenant} — Shopfront ${heading}°`,
+                category: "Street Views",
+                tags: ["Street View", "Tenant", "Brand", "Exterior", "Shopfront", tenant, `brand:${tenant}`, "pathway"],
+                description: `Street View shopfront of ${place.name} (tenant: ${tenant}) at ${heading}° — pathway Stage 8.`,
+                source: "streetview",
+                propertyId: args.propertyId,
+                brandName: tenant,
+                filenameHint: `${tenant}-shopfront-${heading}`,
+              });
+              tenantImages.push(stored.id);
+            } catch {}
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[pathway sweep] Places ${tenant} failed:`, err?.message);
+    }
+  }
+
+  // ─── Area: street view ± offsets along the street + nearby places ───────
+  if (geo) {
+    // 30m and 60m offsets in four cardinal directions
+    const M_IN_DEG_LAT = 1 / 111_000;
+    const M_IN_DEG_LNG = 1 / (111_000 * Math.cos((geo.lat * Math.PI) / 180));
+    const offsets: Array<{ dLat: number; dLng: number; heading: number; label: string }> = [
+      { dLat:  30 * M_IN_DEG_LAT, dLng: 0,                        heading: 180, label: "+30m N" },
+      { dLat: -30 * M_IN_DEG_LAT, dLng: 0,                        heading: 0,   label: "-30m S" },
+      { dLat: 0,                   dLng:  30 * M_IN_DEG_LNG,      heading: 270, label: "+30m E" },
+      { dLat: 0,                   dLng: -30 * M_IN_DEG_LNG,      heading: 90,  label: "-30m W" },
+    ];
+    for (const off of offsets) {
+      const buf = await streetViewBuffer({ lat: geo.lat + off.dLat, lng: geo.lng + off.dLng, heading: off.heading, apiKey });
+      if (!buf) continue;
+      try {
+        const stored = await storeImageFromBuffer({
+          buffer: buf,
+          fileName: `Area SV ${off.label} — ${args.address}`,
+          category: "Street Views",
+          tags: ["Street View", "Area", "Context", "pathway"],
+          description: `Street View ${off.label} from ${args.address} — pathway Stage 8.`,
+          source: "streetview",
+          propertyId: args.propertyId,
+          address: args.address,
+          filenameHint: `${args.address}-${off.label}`,
+        });
+        areaImages.push(stored.id);
+      } catch {}
+    }
+
+    const neighbours = await nearbyPlaces(geo.lat, geo.lng, apiKey, 80, 6);
+    for (const p of neighbours) {
+      // skip the building's own place_id
+      if (p.placeId === geo.placeId) continue;
+      const refs = await placeDetailsPhotos(p.placeId, apiKey, 1);
+      for (const ref of refs) {
+        const buf = await placePhotoBuffer(ref, apiKey);
+        if (!buf) continue;
+        try {
+          const stored = await storeImageFromBuffer({
+            buffer: buf,
+            fileName: `${p.name} — nearby`,
+            category: "Places",
+            tags: ["Google Places", "Area", "Neighbour", "pathway"],
+            description: `Nearby: ${p.name} (${p.types.slice(0, 3).join(", ")}) — pathway Stage 8.`,
+            source: "places",
+            propertyId: args.propertyId,
+            filenameHint: p.name,
+          });
+          areaImages.push(stored.id);
+        } catch {}
+      }
+    }
+  }
+
+  // ─── Brochures: extract embedded images from PDFs via poppler ───────────
+  if (args.brochurePdfs?.length) {
+    try {
+      const { extractImagesFromPdf } = await import("./pdf-image-extract");
+      for (const bro of args.brochurePdfs.slice(0, 6)) {
+        try {
+          const extracted = await extractImagesFromPdf({ pdfBuffer: bro.buffer, maxImages: 20, minBytes: 15_000 });
+          console.log(`[pathway sweep] brochure "${bro.name}" → ${extracted.length} images`);
+          for (const img of extracted) {
+            try {
+              const stored = await storeImageFromBuffer({
+                buffer: img.buffer,
+                fileName: `${bro.name} — ${img.filename}`,
+                category: "Brochures",
+                tags: ["Brochure", "PDF-extract", "Building", "pathway"],
+                description: `Extracted from brochure "${bro.name}"${bro.webUrl ? ` (${bro.webUrl})` : ""} — pathway Stage 8.`,
+                source: "brochure",
+                propertyId: args.propertyId,
+                address: args.address,
+                mimeType: img.mimeType,
+                filenameHint: `${bro.name}-${img.filename}`,
+              });
+              buildingImages.push(stored.id);
+            } catch (err: any) {
+              console.warn(`[pathway sweep] brochure store failed:`, err?.message);
+            }
+          }
+        } catch (err: any) {
+          console.warn(`[pathway sweep] brochure extract failed for "${bro.name}":`, err?.message);
+        }
+      }
+    } catch (err: any) {
+      console.warn("[pathway sweep] pdf-image-extract unavailable:", err?.message);
+    }
+  }
+
+  const [buildingAdded, tenantAdded, areaAdded] = await Promise.all([
+    addImagesToCollection(buildingId, buildingImages),
+    addImagesToCollection(tenantsId, tenantImages),
+    addImagesToCollection(areaId, areaImages),
+  ]);
+
+  const collections: Array<{ id: string; name: string; bucket: "building" | "tenants" | "area"; imageCount: number }> = [
+    { id: buildingId, name: `Pathway · ${args.address} · Building`, bucket: "building", imageCount: buildingImages.length },
+    { id: tenantsId,  name: `Pathway · ${args.address} · Tenants`,  bucket: "tenants",  imageCount: tenantImages.length },
+    { id: areaId,     name: `Pathway · ${args.address} · Area`,     bucket: "area",     imageCount: areaImages.length },
+  ];
+
+  console.log(`[pathway sweep] Stage 8 complete: Building ${buildingAdded}, Tenants ${tenantAdded}, Area ${areaAdded}`);
+
+  return {
+    buildingCollectionId: buildingId,
+    tenantsCollectionId: tenantsId,
+    areaCollectionId: areaId,
+    imagesAdded: buildingAdded + tenantAdded + areaAdded,
+    streetViewImageId: firstStreetViewImageId,
+    collections,
+  };
+}
+
 export function registerImageStudioRoutes(app: Express) {
   ensureTable().catch(err => console.error("[image-studio] Table setup error:", err.message));
 
@@ -1300,6 +1833,147 @@ export function registerImageStudioRoutes(app: Express) {
       );
       res.json({ success: true });
     } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Render a PDF (local path or SharePoint driveId+itemId) to images and save each page
+  app.post("/api/image-studio/capture-pdf", requireAuth, async (req: Request, res: Response) => {
+    const { driveId, itemId, localPath: localFilePath, fileName, category = "Marketing", propertyName, tags = [], maxPages } = req.body;
+    if (!driveId && !localFilePath) return res.status(400).json({ error: "driveId+itemId or localPath required" });
+    try {
+      let pdfBuffer: Buffer;
+      if (driveId && itemId) {
+        const { getValidMsToken } = await import("./microsoft");
+        const token = await getValidMsToken(req as any);
+        if (!token) return res.status(401).json({ error: "Not signed into Microsoft" });
+        const upstream = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/content`, {
+          headers: { Authorization: `Bearer ${token}` }, redirect: "follow",
+        });
+        if (!upstream.ok) return res.status(upstream.status).json({ error: `SharePoint fetch failed: ${upstream.status}` });
+        pdfBuffer = Buffer.from(await upstream.arrayBuffer());
+      } else {
+        if (!fs.existsSync(localFilePath)) return res.status(404).json({ error: "File not found" });
+        pdfBuffer = fs.readFileSync(localFilePath);
+      }
+
+      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs") as any;
+      const { createCanvas } = await import("canvas") as any;
+
+      class NodeCanvasFactory {
+        create(w: number, h: number) { const cv = createCanvas(w, h); return { canvas: cv, context: cv.getContext("2d") }; }
+        reset(ca: any, w: number, h: number) { ca.canvas.width = w; ca.canvas.height = h; }
+        destroy(ca: any) { ca.canvas.width = 0; ca.canvas.height = 0; }
+      }
+
+      const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer), disableFontFace: true });
+      const pdfDoc = await loadingTask.promise;
+      const numPages = Math.min(pdfDoc.numPages, maxPages || 999);
+      const baseName = (fileName || "brochure").replace(/\.pdf$/i, "");
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const saved: { id: string; page: number; fileName: string }[] = [];
+      const pageTags = [...(Array.isArray(tags) ? tags : []), "brochure", "pdf-capture", ...(propertyName ? [propertyName] : [])];
+
+      for (let p = 1; p <= numPages; p++) {
+        const page = await pdfDoc.getPage(p);
+        const viewport = page.getViewport({ scale: 1.8 });
+        const factory = new NodeCanvasFactory();
+        const { canvas, context } = factory.create(viewport.width, viewport.height);
+        await page.render({ canvasContext: context, viewport, canvasFactory: factory }).promise;
+        const jpegBuf: Buffer = (canvas as any).toBuffer("image/jpeg", { quality: 0.88 });
+        const pageLabel = numPages > 1 ? ` p${p}` : "";
+        const imgFileName = `${baseName}${pageLabel}.jpg`;
+        const { thumbnail, width, height } = await generateThumbnail(jpegBuf);
+        const diskName = `${crypto.randomUUID()}.jpg`;
+        const diskPath = path.join(IMAGE_DIR, diskName);
+        await persistImage(diskPath, jpegBuf, "image/jpeg", imgFileName);
+        const [inserted] = await db.insert(imageStudioImages).values({
+          fileName: imgFileName, category, tags: pageTags,
+          description: propertyName ? `Page ${p} of ${baseName} — ${propertyName}` : `Page ${p} of ${baseName}`,
+          source: "chatbgp", area: null, address: null, brandName: null, propertyType: null,
+          mimeType: "image/jpeg", fileSize: jpegBuf.length, width, height,
+          thumbnailData: thumbnail, localPath: diskPath, uploadedBy: userId,
+        }).returning();
+        saved.push({ id: inserted.id, page: p, fileName: imgFileName });
+        factory.destroy({ canvas, context });
+      }
+
+      console.log(`[image-studio] capture-pdf: saved ${saved.length} pages from "${fileName}"`);
+      res.json({ success: true, pages: saved.length, images: saved });
+    } catch (e: any) {
+      console.error("[image-studio] capture-pdf error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Save base64 image — used by PDF viewer page-capture and ChatBGP fetchUrl/SharePoint import
+  app.post("/api/image-studio", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { base64Data, mimeType = "image/jpeg", fileName, category = "Marketing", description, area, address, brandName, propertyType, tags = [] } = req.body;
+      if (!base64Data || !fileName) return res.status(400).json({ error: "base64Data and fileName required" });
+
+      // Skip if an image with this fileName already exists in this category — prevents duplicate saves
+      // when ChatBGP or any upstream caller re-invokes the tool.
+      const dupe = await pool.query(
+        `SELECT id FROM image_studio_images WHERE file_name = $1 AND category = $2 LIMIT 1`,
+        [fileName, category]
+      );
+      if (dupe.rows.length > 0) {
+        return res.json({ success: true, imageId: dupe.rows[0].id, fileName, category, deduped: true });
+      }
+
+      const buffer = Buffer.from(base64Data, "base64");
+      if (buffer.length > 20 * 1024 * 1024) return res.status(400).json({ error: "Image too large (max 20MB)" });
+      const ext = mimeType.includes("png") ? ".png" : mimeType.includes("webp") ? ".webp" : ".jpg";
+      const filename = `${crypto.randomUUID()}${ext}`;
+      const filePath = path.join(IMAGE_DIR, filename);
+      await persistImage(filePath, buffer, mimeType, fileName);
+      const { thumbnail, width, height } = await generateThumbnail(buffer);
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const [inserted] = await db.insert(imageStudioImages).values({
+        fileName,
+        category,
+        tags: Array.isArray(tags) ? tags : [],
+        description: description || null,
+        source: "chatbgp",
+        area: area || null,
+        address: address || null,
+        brandName: brandName || null,
+        propertyType: propertyType || null,
+        mimeType,
+        fileSize: buffer.length,
+        width,
+        height,
+        thumbnailData: thumbnail,
+        localPath: filePath,
+        uploadedBy: userId,
+      }).returning();
+      res.json({ success: true, imageId: inserted.id, fileName, category });
+    } catch (e: any) {
+      console.error("[image-studio] save error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Dedup Brands category — keeps the earliest row per (file_name, category) and removes the rest.
+  // Fixes the ~500 duplicate logos left behind when ChatBGP re-invoked save_to_image_studio per logo.
+  app.post("/api/image-studio/dedup-brands", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const result = await pool.query(`
+        WITH dupes AS (
+          SELECT id, file_name,
+            ROW_NUMBER() OVER (PARTITION BY LOWER(file_name), category ORDER BY created_at ASC, id ASC) AS rn
+          FROM image_studio_images
+          WHERE category = 'Brands'
+        )
+        DELETE FROM image_studio_images
+        WHERE id IN (SELECT id FROM dupes WHERE rn > 1)
+        RETURNING id
+      `);
+      console.log(`[image-studio] dedup-brands removed ${result.rowCount} duplicate rows`);
+      res.json({ success: true, removed: result.rowCount });
+    } catch (e: any) {
+      console.error("[image-studio] dedup-brands error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });

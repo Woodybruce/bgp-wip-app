@@ -1779,7 +1779,7 @@ export default function Dashboard() {
           "quick-actions": { w: 12, h: 2, minW: 6, minH: 2 },
           "new-requirements": { w: 6, h: 8, minW: 4, minH: 5 },
           "activity-alerts": { w: 6, h: 8, minW: 4, minH: 5 },
-          "available-units": { w: 12, h: 10, minW: 6, minH: 6 },
+          "available-units": { w: 6, h: 14, minW: 4, minH: 6 },
           "agent-pipeline": { w: 12, h: 22, minW: 6, minH: 14 },
           "inbox": { w: 12, h: 20, minW: 6, minH: 10 },
           "sharepoint": { w: 6, h: 12, minW: 4, minH: 6 },
@@ -1787,7 +1787,7 @@ export default function Dashboard() {
           "properties-deals": { w: 12, h: 14, minW: 6, minH: 8 },
           "system-activity": { w: 6, h: 9, minW: 4, minH: 5 },
           "daily-digest": { w: 6, h: 9, minW: 4, minH: 5 },
-          "my-tasks": { w: 6, h: 18, minW: 4, minH: 10 },
+          "my-tasks": { w: 6, h: 14, minW: 4, minH: 8 },
           "my-portfolio": { w: 6, h: 10, minW: 4, minH: 6 },
           "landsec-analytics": { w: 12, h: 20, minW: 8, minH: 12 },
           "kpi-overview": { w: 12, h: 5, minW: 6, minH: 4 },
@@ -1989,7 +1989,7 @@ export default function Dashboard() {
                 </div>
 
                 <div className="flex flex-1 overflow-hidden">
-                  <div className="w-[160px] flex-shrink-0 border-r overflow-y-auto p-2 space-y-3">
+                  <div className="flex-1 min-w-0 border-r overflow-y-auto p-2 space-y-3">
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-[10px] font-semibold text-muted-foreground">{calMonthW.toLocaleDateString("en-GB", { month: "long", year: "numeric" })}</span>
@@ -2045,7 +2045,7 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  <div className="flex-1 overflow-hidden flex flex-col">
+                  <div className="flex-[5] min-w-0 overflow-hidden flex flex-col">
                     <div className="flex border-b">
                       <div className="w-[44px] flex-shrink-0" />
                       {calDaysW.map((day, i) => {

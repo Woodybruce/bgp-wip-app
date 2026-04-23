@@ -4192,10 +4192,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               toast({ title: "Running rent analysis", description: "Calculating NER for all lease deals and emailing Tom Cater..." });
               try {
                 const res = await fetch("/api/crm/deals/bulk-rent-analysis", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ sendEmail: true }) });
+                if (!res.ok) {
+                  const err = await res.json().catch(() => ({}));
+                  throw new Error(err.message || `Request failed (${res.status})`);
+                }
                 const data = await res.json();
                 queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
                 toast({ title: "Rent Analysis Complete", description: `${data.analysed} deals analysed, ${data.updated} updated${data.emailSent ? " — report sent to Tom" : ""}` });
-              } catch { toast({ title: "Error", description: "Rent analysis failed", variant: "destructive" }); }
+              } catch (err: any) { toast({ title: "Error", description: err?.message || "Rent analysis failed", variant: "destructive" }); }
               setRentAnalysisRunning(false);
             }}
             data-testid="button-rent-analysis"

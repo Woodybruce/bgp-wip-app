@@ -3,6 +3,8 @@ import { requireAuth } from "./auth";
 import { db } from "./db";
 import { newsSources, newsArticles, newsEngagement, teamNewsPreferences, crmProperties, crmComps } from "@shared/schema";
 import { eq, desc, sql, and, inArray, gte, isNull } from "drizzle-orm";
+import { rssappHealth, createRssAppFeed, deleteRssAppFeed } from "./rssapp";
+import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands } from "./news-brand-linking";
 import { users } from "@shared/schema";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { getAppToken, graphRequest } from "./shared-mailbox";
@@ -14,21 +16,14 @@ import * as path from "path";
 
 const DEFAULT_SOURCES = [
   { name: "Property Week", url: "https://www.propertyweek.com", feedUrl: "https://www.propertyweek.com/rss", type: "rss", category: "Property" },
-  { name: "React News", url: "https://reactnews.com", feedUrl: "https://reactnews.com/feed/", type: "rss", category: "Property" },
-  { name: "EG / CoStar", url: "https://www.costar.co.uk", feedUrl: "https://www.costar.co.uk/rss", type: "rss", category: "Property" },
-  { name: "Property Reporter", url: "https://www.propertyreporter.co.uk", feedUrl: "https://www.propertyreporter.co.uk/feed", type: "rss", category: "Property" },
   { name: "Commercial News Media", url: "https://www.commercialnewsmedia.com", feedUrl: "https://www.commercialnewsmedia.com/feed", type: "rss", category: "Property" },
   { name: "Propel Hospitality", url: "https://www.propelhospitality.com", feedUrl: "https://www.propelhospitality.com/rss", type: "rss", category: "Hospitality" },
   { name: "Business of Fashion", url: "https://www.businessoffashion.com", feedUrl: "https://www.businessoffashion.com/feed", type: "rss", category: "Retail" },
   { name: "Retail Gazette", url: "https://www.retailgazette.co.uk", feedUrl: "https://www.retailgazette.co.uk/feed/", type: "rss", category: "Retail" },
   { name: "City AM Property", url: "https://www.cityam.com/category/property/", feedUrl: "https://www.cityam.com/category/property/feed/", type: "rss", category: "Property" },
   { name: "London Property News", url: "https://www.londonpropertynews.co.uk", feedUrl: "https://www.londonpropertynews.co.uk/feed/", type: "rss", category: "Property" },
-  { name: "Estates Gazette", url: "https://www.egi.co.uk", feedUrl: "https://www.egi.co.uk/news/feed/", type: "rss", category: "Property" },
   { name: "Property Investor Today", url: "https://www.propertyinvestortoday.co.uk", feedUrl: "https://www.propertyinvestortoday.co.uk/rss.xml", type: "rss", category: "Investment" },
-  { name: "Bisnow London", url: "https://www.bisnow.com/london", feedUrl: "https://www.bisnow.com/feed/london", type: "rss", category: "Property" },
-  { name: "Planning Resource", url: "https://www.planningresource.co.uk", feedUrl: "https://www.planningresource.co.uk/rss", type: "rss", category: "Planning" },
   { name: "Drapers", url: "https://www.drapersonline.com", feedUrl: "https://www.drapersonline.com/rss", type: "rss", category: "Retail" },
-  { name: "The Caterer", url: "https://www.thecaterer.com", feedUrl: "https://www.thecaterer.com/rss", type: "rss", category: "Hospitality" },
 ];
 
 const TEAM_PROFILES: Record<string, { focus: string; keywords: string[] }> = {
@@ -344,7 +339,7 @@ async function extractCompsFromArticles(): Promise<{ extracted: number; created:
     const comps = parsed?.comps || [];
     extracted = comps.length;
     const articleRefs = leasingArticles.map(a => ({ url: a.url, title: a.title }));
-    created = await saveExtractedComps(comps, "News Feed", articleRefs);
+    created = await saveExtractedComps(comps, "News", articleRefs);
   } catch (err: any) {
     console.error("[Comp Extract] AI extraction error:", err?.message?.slice(0, 200));
   }
@@ -443,24 +438,23 @@ async function extractCompsFromEmails(): Promise<{ extracted: number; created: n
 
     if (teamEmails.length === 0) return { extracted: 0, created: 0 };
 
-    const propertyKeywords = ["letting", "lease", "tenant", "rent", "sq ft", "psf", "zone a", "lease renewal", "comp", "comparable", "transaction"];
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    // Search all-time for comp-related emails — no date restriction.
+    // Use Graph $search so we only pull emails that mention these terms rather than
+    // fetching everything and filtering client-side.
+    const compSearchQuery = encodeURIComponent('"zone a" OR "net effective" OR "ITZA" OR "new letting" OR "rent free" OR "headline rent" OR "comparable" OR "sq ft" OR "psf" OR "lease renewal"');
 
     const emailTexts: string[] = [];
 
     for (const email of teamEmails.slice(0, 15)) {
       try {
-        const searchPath = `/users/${email}/messages?$filter=receivedDateTime ge ${sevenDaysAgo}&$top=25&$select=subject,bodyPreview,from,receivedDateTime&$orderby=receivedDateTime desc`;
+        const searchPath = `/users/${email}/messages?$search=${compSearchQuery}&$top=50&$select=subject,bodyPreview,from,receivedDateTime&$orderby=receivedDateTime desc`;
         const data = await graphRequest(searchPath);
         const messages = data?.value || [];
 
         for (const msg of messages) {
           const preview = msg.bodyPreview || "";
           const subject = msg.subject || "";
-          const combined = `${subject} ${preview}`.toLowerCase();
-          const hasCompContent = propertyKeywords.some(k => combined.includes(k));
-          if (!hasCompContent) continue;
-
+          // Graph $search already filtered by comp keywords — push all results
           emailTexts.push(
             `Email from ${msg.from?.emailAddress?.name || "Unknown"} (${msg.from?.emailAddress?.address || ""}):\nSubject: ${subject}\nDate: ${msg.receivedDateTime?.split("T")[0] || "unknown"}\nPreview: ${preview.slice(0, 500)}`
           );
@@ -472,7 +466,7 @@ async function extractCompsFromEmails(): Promise<{ extracted: number; created: n
 
     if (emailTexts.length === 0) return { extracted: 0, created: 0 };
 
-    const batchText = emailTexts.slice(0, 30).join("\n\n---\n\n");
+    const batchText = emailTexts.slice(0, 50).join("\n\n---\n\n");
 
     const response = await callClaude({
       model: CHATBGP_HELPER_MODEL,
@@ -490,7 +484,7 @@ async function extractCompsFromEmails(): Promise<{ extracted: number; created: n
     const parsed = safeParseJSON(content);
     const comps = parsed?.comps || [];
     extracted = comps.length;
-    created = await saveExtractedComps(comps, "Team Email");
+    created = await saveExtractedComps(comps, "Email");
   } catch (err: any) {
     console.error("[Comp Extract] Email extraction error:", err?.message?.slice(0, 200));
   }
@@ -577,7 +571,7 @@ async function extractCompsFromSharePoint(): Promise<{ extracted: number; create
             const parsed = safeParseJSON(content);
             const comps = parsed?.comps || [];
             extracted += comps.length;
-            created += await saveExtractedComps(comps, "SharePoint File");
+            created += await saveExtractedComps(comps, "File");
           }
         } finally {
           try { fs.unlinkSync(tmpFile); } catch { }
@@ -795,6 +789,92 @@ export function setupNewsFeedRoutes(app: Express) {
       if (!name || !url) return res.status(400).json({ message: "Name and URL required" });
       const [source] = await db.insert(newsSources).values({ name, url, feedUrl, type: type || "rss", category: category || "general" }).returning();
       res.json(source);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Create a source using RSS.app — given a page URL, generate an RSS feed
+  // via the RSS.app API and save the source with feedUrl filled in.
+  app.post("/api/news-feed/sources/rssapp", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { url, name, category } = req.body || {};
+      if (!url) return res.status(400).json({ message: "URL required" });
+      const feed = await createRssAppFeed(url);
+      const [source] = await db.insert(newsSources).values({
+        name: name || feed.title || url,
+        url,
+        feedUrl: feed.rss_feed_url,
+        type: "rssapp",
+        category: category || "general",
+        active: true,
+      }).returning();
+      res.json({ source, rssappFeed: feed });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to create RSS.app feed" });
+    }
+  });
+
+  // Toggle active flag on a source
+  app.patch("/api/news-feed/sources/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { active, name, category } = req.body || {};
+      const updates: any = {};
+      if (typeof active === "boolean") updates.active = active;
+      if (typeof name === "string") updates.name = name;
+      if (typeof category === "string") updates.category = category;
+      if (Object.keys(updates).length === 0) return res.status(400).json({ message: "No updates provided" });
+      const [updated] = await db.update(newsSources).set(updates).where(eq(newsSources.id, id)).returning();
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Delete source — if it's an RSS.app-generated feed, also delete on RSS.app side.
+  app.delete("/api/news-feed/sources/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const [existing] = await db.select().from(newsSources).where(eq(newsSources.id, id)).limit(1);
+      if (!existing) return res.status(404).json({ message: "Not found" });
+      if (existing.type === "rssapp" && existing.feedUrl) {
+        const m = existing.feedUrl.match(/\/feeds\/([a-zA-Z0-9_-]+)/);
+        if (m?.[1]) {
+          try { await deleteRssAppFeed(m[1]); } catch (e: any) {
+            console.warn("[rssapp] delete failed:", e?.message);
+          }
+        }
+      }
+      await db.delete(newsSources).where(eq(newsSources.id, id));
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // RSS.app health probe
+  app.get("/api/rssapp/health", requireAuth, async (_req: Request, res: Response) => {
+    const health = await rssappHealth();
+    res.status(health.ok ? 200 : 503).json(health);
+  });
+
+  // Ensure one Google News RSS feed per tracked brand
+  app.post("/api/news-feed/ensure-brand-feeds", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const result = await ensureBrandGoogleNewsFeeds();
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Re-link existing articles to tracked brands → brand_signals
+  app.post("/api/news-feed/link-brands", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const limit = Number(req.query.limit) || 500;
+      const result = await linkRecentArticlesToBrands({ limit });
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -1078,6 +1158,12 @@ export function setupNewsFeedRoutes(app: Express) {
   setTimeout(async () => {
     try {
       console.log("[News Feed] Startup fetch...");
+      try {
+        const brandFeeds = await ensureBrandGoogleNewsFeeds();
+        if (brandFeeds.created > 0) console.log(`[News Feed] Seeded ${brandFeeds.created} brand Google News feeds (of ${brandFeeds.total} tracked brands)`);
+      } catch (e: any) {
+        console.warn("[News Feed] brand feed seed failed:", e?.message);
+      }
       const { fetched, errors } = await fetchRssFeeds();
       const gsFetched = await fetchGreenStreetArticles();
       if (fetched > 0 || gsFetched > 0) {
@@ -1085,6 +1171,12 @@ export function setupNewsFeedRoutes(app: Express) {
         console.log(`[News Feed] Startup: ${fetched} RSS articles, ${errors} errors, Green Street ${gsFetched}, scored ${scored}`);
       } else {
         console.log(`[News Feed] Startup: no new articles (${errors} errors)`);
+      }
+      try {
+        const linked = await linkRecentArticlesToBrands({ limit: 500 });
+        if (linked.linked > 0) console.log(`[News Feed] Linked ${linked.linked} brand signals from ${linked.articles} articles`);
+      } catch (e: any) {
+        console.warn("[News Feed] brand linking failed:", e?.message);
       }
       const compResult = await extractCompsFromArticles();
       if (compResult.created > 0) {
@@ -1106,6 +1198,10 @@ export function setupNewsFeedRoutes(app: Express) {
   setInterval(async () => {
     try {
       console.log("[News Feed] Auto-fetching news...");
+      try {
+        const brandFeeds = await ensureBrandGoogleNewsFeeds();
+        if (brandFeeds.created > 0) console.log(`[News Feed] Auto-seeded ${brandFeeds.created} new brand Google News feeds`);
+      } catch {}
       const { fetched, errors } = await fetchRssFeeds();
       const gsFetched = await fetchGreenStreetArticles();
       if (fetched > 0 || gsFetched > 0) {
@@ -1113,6 +1209,12 @@ export function setupNewsFeedRoutes(app: Express) {
         console.log(`[News Feed] Fetched ${fetched} articles, ${errors} errors, Green Street ${gsFetched}, scored ${scored}`);
         const { logActivity } = await import("./activity-logger");
         await logActivity("news-feed", "articles_fetched", `${fetched + gsFetched} articles fetched, ${scored} scored for relevance`, fetched + gsFetched);
+      }
+      try {
+        const linked = await linkRecentArticlesToBrands({ limit: 500 });
+        if (linked.linked > 0) console.log(`[News Feed] Auto-linked ${linked.linked} brand signals from ${linked.articles} articles`);
+      } catch (e: any) {
+        console.warn("[News Feed] brand linking failed:", e?.message);
       }
       await backfillMissingImages();
       await updateTeamPreferencesFromEngagement();

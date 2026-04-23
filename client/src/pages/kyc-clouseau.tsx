@@ -37,8 +37,10 @@ import {
   UserSearch,
   ListChecks,
   CalendarClock,
+  ExternalLink,
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
+import { AddressAutocomplete } from "@/components/address-autocomplete";
 
 interface InvestigationResult {
   subject: { name: string; companyNumber?: string; type: string };
@@ -50,6 +52,12 @@ interface InvestigationResult {
   insolvencyHistory?: any[];
   sanctionsScreening?: any[];
   aiAnalysis?: string;
+  accountsAnalysis?: {
+    filingDate: string;
+    description: string;
+    documentId: string;
+    summary: string;
+  } | null;
   riskScore?: number;
   riskLevel?: string;
   flags?: string[];
@@ -376,16 +384,23 @@ function RecentInvestigations({
   onSelect: (investigation: any) => void;
 }) {
   const [typeFilter, setTypeFilter] = useState<"all" | "company" | "individual" | "property_intelligence">("all");
-  const [mineOnly, setMineOnly] = useState(false);
+  const [searchQ, setSearchQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [expanded, setExpanded] = useState(true);
 
+  // Debounce the search input so we don't hit the server on every keystroke
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(searchQ), 300);
+    return () => clearTimeout(t);
+  }, [searchQ]);
+
   const { data, isLoading } = useQuery({
-    queryKey: ["kyc-recent", typeFilter, mineOnly],
+    queryKey: ["kyc-recent", typeFilter, debouncedQ],
     queryFn: async () => {
       const params = new URLSearchParams();
-      params.set("limit", "30");
+      params.set("limit", "200");
       if (typeFilter !== "all") params.set("type", typeFilter);
-      if (mineOnly) params.set("mine", "true");
+      if (debouncedQ) params.set("q", debouncedQ);
       const res = await apiRequest("GET", `/api/kyc-clouseau/recent?${params.toString()}`);
       return res.json();
     },
@@ -423,40 +438,47 @@ function RecentInvestigations({
       >
         <span className="flex items-center gap-1.5">
           <Clock className="h-3 w-3" />
-          Recent Searches {!isLoading && investigations.length > 0 && `(${investigations.length})`}
+          Investigation History {!isLoading && investigations.length > 0 && `(${investigations.length})`}
         </span>
         <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
       </button>
       {expanded && (
         <>
-          <div className="px-3 pb-2 flex flex-wrap gap-1">
-            {(["all", "company", "individual", "property_intelligence"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTypeFilter(t)}
-                className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
-                  typeFilter === t ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
-                }`}
-              >
-                {t === "all" ? "All" : t === "property_intelligence" ? "Property" : t === "individual" ? "Individual" : "Company"}
-              </button>
-            ))}
-            <button
-              onClick={() => setMineOnly(!mineOnly)}
-              className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ml-auto ${
-                mineOnly ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
-              }`}
-            >
-              Mine only
-            </button>
+          <div className="px-3 pb-2 space-y-1.5">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+              <input
+                type="text"
+                value={searchQ}
+                onChange={(e) => setSearchQ(e.target.value)}
+                placeholder="Search investigations..."
+                className="w-full pl-7 pr-2 py-1 text-[11px] rounded border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                data-testid="investigation-search"
+              />
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {(["all", "company", "individual", "property_intelligence"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTypeFilter(t)}
+                  className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                    typeFilter === t ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-accent"
+                  }`}
+                >
+                  {t === "all" ? "All" : t === "property_intelligence" ? "Property" : t === "individual" ? "Individual" : "Company"}
+                </button>
+              ))}
+            </div>
           </div>
-          <ScrollArea className="max-h-64">
+          <ScrollArea className="max-h-[50vh]">
             <div className="px-2 pb-2 space-y-0.5">
               {isLoading && (
                 <div className="text-[11px] text-muted-foreground text-center py-4">Loading...</div>
               )}
               {!isLoading && investigations.length === 0 && (
-                <div className="text-[11px] text-muted-foreground text-center py-4">No recent searches</div>
+                <div className="text-[11px] text-muted-foreground text-center py-4">
+                  {debouncedQ ? "No matching investigations" : "No investigations yet"}
+                </div>
               )}
               {investigations.map((inv) => (
                 <button
@@ -483,7 +505,7 @@ function RecentInvestigations({
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className="text-[9px] text-muted-foreground">
-                          {new Date(inv.conducted_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                          {new Date(inv.conducted_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
                         </span>
                         {inv.risk_level && (
                           <span className={`text-[9px] px-1 rounded ${
@@ -872,6 +894,24 @@ export default function KycClouseau() {
     return () => { cancelled = true; clearTimeout(t); };
   }, [aiPollingId]);
 
+  // Re-run the AI narrative for a saved company investigation whose original
+  // synchronous call timed out. Keeps structured data; only replaces aiAnalysis.
+  const regenerateAiMutation = useMutation({
+    mutationFn: async (investigationId: number) => {
+      const res = await apiRequest("POST", `/api/kyc-clouseau/investigation/${investigationId}/regenerate-ai`);
+      return res.json();
+    },
+    onSuccess: (data, investigationId) => {
+      setInvestigation((prev) => prev ? ({ ...prev, aiStatus: "pending", aiAnalysis: "" } as any) : prev);
+      setAiPollingId(investigationId);
+      toast({ title: "Regenerating AI analysis", description: "This usually takes 30-90 seconds. It will appear here automatically." });
+    },
+    onError: (err) => {
+      const message = extractErrorMessage(err, "Could not queue AI regeneration.");
+      toast({ title: "Regenerate failed", description: message, variant: "destructive" });
+    },
+  });
+
   function extractErrorMessage(err: unknown, fallback: string): string {
     if (err instanceof Error) {
       const msg = err.message || fallback;
@@ -1003,19 +1043,47 @@ export default function KycClouseau() {
 
   // Auto-run when coming from a cross-link (Compliance Board → Investigate).
   // Reads ?run=<CHnumber>&name=<name> once per mount.
+  // Also reads ?investigation=<id> to re-open a persisted investigation
+  // (e.g. Property Pathway's Stage 4 links here with the investigationId
+  // it saved to kyc_investigations, so the full report opens in place).
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const run = params.get("run");
     const name = params.get("name");
-    if (run || name) {
+    const investigationId = params.get("investigation");
+
+    if (investigationId) {
+      (async () => {
+        try {
+          const res = await apiRequest("GET", `/api/kyc-clouseau/investigation/${encodeURIComponent(investigationId)}`);
+          const row = await res.json();
+          const payload = typeof row.result === "string" ? JSON.parse(row.result) : row.result;
+          if (payload) {
+            if (row.id && !payload.investigationId) payload.investigationId = row.id;
+            setInvestigation(payload);
+            setIndividualResult(null);
+            setSelectedOfficer(null);
+            setOfficerDeepDive(null);
+            if (payload.aiStatus === "pending" && payload.investigationId) {
+              setAiPollingId(payload.investigationId);
+            }
+          }
+        } catch (err: any) {
+          toast({ title: "Could not open investigation", description: err?.message || "Unknown error", variant: "destructive" });
+        }
+      })();
+    } else if (run || name) {
       investigateMutation.mutate({
         companyNumber: run || undefined,
         companyName: name || undefined,
       } as any);
-      // Strip the run/name params so refresh doesn't fire again (keep tab)
+    }
+
+    if (run || name || investigationId) {
       params.delete("run");
       params.delete("name");
+      params.delete("investigation");
       const clean = params.toString();
       window.history.replaceState({}, "", `${window.location.pathname}${clean ? "?" + clean : ""}`);
     }
@@ -1170,16 +1238,26 @@ export default function KycClouseau() {
             )}
             {searchMode === "property" && (
               <div className="space-y-2">
-                <Input
-                  data-testid="input-property-address"
-                  placeholder="Property address..."
-                  value={propertyAddressInput}
-                  onChange={(e) => setPropertyAddressInput(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && propertyResolveMutation.mutate({ address: propertyAddressInput, postcode: propertyPostcodeInput })}
+                <AddressAutocomplete
+                  value={propertyAddressInput ? { formatted: propertyAddressInput, placeId: "", postcode: propertyPostcodeInput } : null}
+                  onChange={(addr) => {
+                    if (!addr) {
+                      setPropertyAddressInput("");
+                      setPropertyPostcodeInput("");
+                      return;
+                    }
+                    setPropertyAddressInput(addr.formatted);
+                    setPropertyPostcodeInput(addr.postcode || "");
+                    // Auto-fire lookup once Google/server has given us both pieces
+                    if (addr.postcode) {
+                      propertyResolveMutation.mutate({ address: addr.formatted, postcode: addr.postcode });
+                    }
+                  }}
+                  placeholder="Start typing an address (e.g. 18-22 Haymarket)..."
                 />
                 <Input
                   data-testid="input-property-postcode"
-                  placeholder="Postcode (e.g. W1K 6WA)"
+                  placeholder="Postcode (override if needed)"
                   value={propertyPostcodeInput}
                   onChange={(e) => setPropertyPostcodeInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && propertyResolveMutation.mutate({ address: propertyAddressInput, postcode: propertyPostcodeInput })}
@@ -1198,7 +1276,7 @@ export default function KycClouseau() {
                   Look up Property
                 </Button>
                 <p className="text-[10px] text-muted-foreground">
-                  Resolves via Land Registry → proprietor → full intelligence.
+                  Google Places → Land Registry → proprietor → full intelligence. Postcode auto-fills on select.
                 </p>
               </div>
             )}
@@ -1380,15 +1458,20 @@ export default function KycClouseau() {
 
             <RecentInvestigations
               onSelect={(inv) => {
+                // RecentInvestigations passes `_investigationId` — normalise to
+                // `investigationId` so the Regenerate-AI button can find it.
+                const normalised: any = inv && !inv.investigationId && (inv as any)._investigationId
+                  ? { ...inv, investigationId: (inv as any)._investigationId }
+                  : inv;
                 // Route reopened results to the right view state
-                if (inv?.subject?.type === "property_intelligence" || inv?.subject_type === "property_intelligence") {
-                  setInvestigation(inv);
+                if (normalised?.subject?.type === "property_intelligence" || normalised?.subject_type === "property_intelligence") {
+                  setInvestigation(normalised);
                   setIndividualResult(null);
-                } else if (inv?.subject?.type === "individual" || inv?.subject_type === "individual") {
-                  setIndividualResult(inv);
+                } else if (normalised?.subject?.type === "individual" || normalised?.subject_type === "individual") {
+                  setIndividualResult(normalised);
                   setInvestigation(null);
                 } else {
-                  setInvestigation(inv);
+                  setInvestigation(normalised);
                   setIndividualResult(null);
                 }
                 setSelectedOfficer(null);
@@ -1633,6 +1716,23 @@ export default function KycClouseau() {
 
               <SourcesStrip result={investigation} />
 
+              {investigation.propertyContext?.source === "property-pathway" && investigation.propertyContext?.runId && (
+                <div className="border rounded-md bg-blue-50 dark:bg-blue-950/30 border-blue-200 dark:border-blue-800 px-3 py-2 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm text-blue-900 dark:text-blue-100">
+                    <Landmark className="h-4 w-4 shrink-0" />
+                    <span>
+                      Linked to Property Pathway run for <span className="font-medium">{investigation.propertyContext.propertyAddress || investigation.propertyContext.address || "property"}</span>
+                    </span>
+                  </div>
+                  <a
+                    href={`/property-pathway?runId=${investigation.propertyContext.runId}`}
+                    className="text-xs text-blue-700 dark:text-blue-300 hover:underline flex items-center gap-1 shrink-0"
+                  >
+                    Open pathway board <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              )}
+
               {investigation.companyProfile?.company_number && (
                 <CrmMatchStrip
                   companyNumber={investigation.companyProfile.company_number}
@@ -1766,19 +1866,71 @@ export default function KycClouseau() {
                   <TabsTrigger value="filings" data-testid="tab-filings">Filings</TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="analysis" className="mt-4">
+                <TabsContent value="analysis" className="mt-4 space-y-4">
+                  {investigation.accountsAnalysis?.summary && (
+                    <Card className="border-emerald-200 bg-emerald-50/40">
+                      <CardHeader className="pb-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <CardTitle className="text-sm flex items-center gap-2">
+                            <FileText className="h-4 w-4 text-emerald-700" />
+                            Latest statutory accounts — {investigation.accountsAnalysis.description}
+                            <span className="text-xs font-normal text-muted-foreground">({investigation.accountsAnalysis.filingDate})</span>
+                          </CardTitle>
+                          <a
+                            href={`/api/companies-house/document/${investigation.accountsAnalysis.documentId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs text-primary hover:underline flex items-center gap-1"
+                          >
+                            Open PDF <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <MarkdownContent content={investigation.accountsAnalysis.summary} />
+                      </CardContent>
+                    </Card>
+                  )}
                   <Card>
                     <CardContent className="pt-6">
-                      {investigation.aiAnalysis ? (
-                        <MarkdownContent content={investigation.aiAnalysis} />
-                      ) : (investigation as any).aiStatus === "pending" || aiPollingId ? (
-                        <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          <span>AI analysis running in the background — raw intelligence is ready below, narrative will appear here when complete.</span>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">No AI analysis available</p>
-                      )}
+                      {(() => {
+                        const invId = (investigation as any).investigationId || (investigation as any)._investigationId;
+                        const narrative = investigation.aiAnalysis || "";
+                        const timedOut = /AI analysis (unavailable|timed out)/i.test(narrative);
+                        const isPending = (investigation as any).aiStatus === "pending" || aiPollingId;
+                        if (isPending) {
+                          return (
+                            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span>AI analysis running in the background — raw intelligence is ready below, narrative will appear here when complete.</span>
+                            </div>
+                          );
+                        }
+                        if (narrative && !timedOut) {
+                          return <MarkdownContent content={narrative} />;
+                        }
+                        return (
+                          <div className="space-y-3">
+                            {narrative && <MarkdownContent content={narrative} />}
+                            {!narrative && <p className="text-sm text-muted-foreground">No AI analysis available.</p>}
+                            {invId && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => regenerateAiMutation.mutate(Number(invId))}
+                                disabled={regenerateAiMutation.isPending}
+                                data-testid="btn-regenerate-ai"
+                              >
+                                {regenerateAiMutation.isPending ? (
+                                  <><Loader2 className="h-3 w-3 animate-spin mr-2" /> Queuing…</>
+                                ) : (
+                                  <>Regenerate AI analysis</>
+                                )}
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </CardContent>
                   </Card>
                 </TabsContent>
@@ -2033,13 +2185,28 @@ export default function KycClouseau() {
                   <Card>
                     <CardContent className="pt-6">
                       <div className="space-y-2">
-                        {investigation.filingHistory?.map((filing, i) => (
-                          <div key={i} className="flex items-center gap-3 text-sm py-1.5 border-b last:border-0">
-                            <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                            <span className="text-xs text-muted-foreground flex-shrink-0 w-20">{filing.date}</span>
-                            <span className="flex-1 truncate">{filing.description || filing.type}</span>
-                          </div>
-                        ))}
+                        {investigation.filingHistory?.map((filing: any, i: number) => {
+                          const docMeta = filing.links?.document_metadata || filing.documentMetadata;
+                          const docId = typeof docMeta === "string" ? docMeta.split("/").filter(Boolean).pop() : null;
+                          return (
+                            <div key={i} className="flex items-center gap-3 text-sm py-1.5 border-b last:border-0">
+                              <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                              <span className="text-xs text-muted-foreground flex-shrink-0 w-20">{filing.date}</span>
+                              <span className="flex-1 truncate">{filing.description || filing.type}</span>
+                              {docId && (
+                                <a
+                                  href={`/api/companies-house/document/${docId}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-primary hover:underline flex-shrink-0"
+                                  title="Download filing PDF from Companies House"
+                                >
+                                  PDF
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })}
                         {(!investigation.filingHistory || investigation.filingHistory.length === 0) && (
                           <p className="text-sm text-muted-foreground">No recent filings</p>
                         )}

@@ -1,9 +1,13 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback, memo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import { ViewToggle } from "@/components/mobile-card-view";
 import {
   ShieldCheck, ShieldAlert, Clock, AlertCircle, CheckCircle2,
   Loader2, FileText, Search, Building2, Sun, Handshake, ChevronRight,
@@ -71,7 +75,7 @@ const COLUMNS: Array<{
   { key: "approved", label: "Approved", tone: "border-emerald-400 bg-emerald-50/40", icon: CheckCircle2, description: "AML clean — invoice unlocked" },
 ];
 
-function CardItem({ row }: { row: BoardRow }) {
+const CardItem = memo(function CardItem({ row }: { row: BoardRow }) {
   const [expanded, setExpanded] = useState(false);
   const dealCount = row.deals?.length || 0;
   const checklistTicked = row.aml_checklist
@@ -189,7 +193,7 @@ function CardItem({ row }: { row: BoardRow }) {
       )}
     </div>
   );
-}
+});
 
 interface DealRow {
   id: string;
@@ -211,6 +215,7 @@ interface DealBoardData {
 export default function ComplianceBoard() {
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"table" | "card" | "board">("board");
 
   const { data, isLoading, error } = useQuery<BoardData>({
     queryKey: ["/api/kyc/board"],
@@ -250,6 +255,7 @@ export default function ComplianceBoard() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <ViewToggle view={viewMode} onToggle={setViewMode} showBoard />
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -288,7 +294,7 @@ export default function ComplianceBoard() {
         </TabsList>
 
         <TabsContent value="counterparties" className="mt-4">
-          {/* Summary row */}
+          {/* Summary cards */}
           <div className="grid grid-cols-3 gap-3 mb-5">
             {COLUMNS.map(col => {
               const count = data?.counts[col.key] || 0;
@@ -308,35 +314,143 @@ export default function ComplianceBoard() {
             })}
           </div>
 
-          {/* Kanban */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {COLUMNS.map(col => {
-              const items = filtered.filter(r => r.column === col.key);
-              return (
-                <div key={col.key} className={`rounded-lg border-2 ${col.tone} p-2 min-h-[400px]`} data-testid={`board-column-${col.key}`}>
-                  <div className="flex items-center justify-between px-1 py-1.5 mb-2">
-                    <h3 className="font-semibold text-sm flex items-center gap-1.5">
-                      <col.icon className="w-3.5 h-3.5" />
-                      {col.label}
-                    </h3>
-                    <Badge variant="secondary">{items.length}</Badge>
-                  </div>
-                  <div className="space-y-2">
-                    {items.length === 0 ? (
-                      <div className="text-center text-xs text-muted-foreground italic py-8">None</div>
-                    ) : (
-                      items.map(row => <CardItem key={row.id} row={row} />)
-                    )}
-                  </div>
+          {viewMode === "board" && (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {COLUMNS.map(col => {
+                  const items = filtered.filter(r => r.column === col.key);
+                  return (
+                    <div key={col.key} className={`rounded-lg border-2 ${col.tone} p-2 min-h-[400px]`} data-testid={`board-column-${col.key}`}>
+                      <div className="flex items-center justify-between px-1 py-1.5 mb-2">
+                        <h3 className="font-semibold text-sm flex items-center gap-1.5">
+                          <col.icon className="w-3.5 h-3.5" />
+                          {col.label}
+                        </h3>
+                        <Badge variant="secondary">{items.length}</Badge>
+                      </div>
+                      <div className="space-y-2">
+                        {items.length === 0 ? (
+                          <div className="text-center text-xs text-muted-foreground italic py-8">None</div>
+                        ) : (
+                          items.map(row => <CardItem key={row.id} row={row} />)
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {((data?.counts.expired || 0) > 0 || (data?.counts.rejected || 0) > 0) && (
+                <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground px-1">
+                  {(data?.counts.expired || 0) > 0 && <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {data?.counts.expired} expired</span>}
+                  {(data?.counts.rejected || 0) > 0 && <span className="flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> {data?.counts.rejected} rejected</span>}
+                  <span>— not shown on board</span>
                 </div>
-              );
-            })}
-          </div>
-          {((data?.counts.expired || 0) > 0 || (data?.counts.rejected || 0) > 0) && (
-            <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground px-1">
-              {(data?.counts.expired || 0) > 0 && <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {data?.counts.expired} expired</span>}
-              {(data?.counts.rejected || 0) > 0 && <span className="flex items-center gap-1"><ShieldAlert className="w-3 h-3" /> {data?.counts.rejected} rejected</span>}
-              <span>— not shown on board</span>
+              )}
+            </>
+          )}
+
+          {viewMode === "table" && (
+            <div className="border rounded-lg overflow-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="text-xs">
+                    <TableHead className="w-[200px]">Company</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Risk</TableHead>
+                    <TableHead>PEP</TableHead>
+                    <TableHead>Checklist</TableHead>
+                    <TableHead>Docs</TableHead>
+                    <TableHead>Sources</TableHead>
+                    <TableHead>Deals</TableHead>
+                    <TableHead>Re-check</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.length === 0 ? (
+                    <TableRow><TableCell colSpan={9} className="text-center text-sm text-muted-foreground py-8">No counterparties found</TableCell></TableRow>
+                  ) : filtered.map(row => {
+                    const checklistTicked = row.aml_checklist
+                      ? Object.values(row.aml_checklist as Record<string, { ticked?: boolean }>).filter(v => v?.ticked).length
+                      : 0;
+                    const sources = extractSources(row.aml_checklist);
+                    return (
+                      <TableRow key={row.id} className="text-xs">
+                        <TableCell className="font-medium">
+                          <Link href={`/companies/${row.id}`} className="hover:text-primary hover:underline flex items-center gap-1.5">
+                            <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            {row.name}
+                          </Link>
+                          {row.companies_house_number && <span className="text-[10px] text-muted-foreground ml-5">CH {row.companies_house_number}</span>}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`text-[10px] ${
+                            row.column === "approved" ? "border-emerald-300 text-emerald-700 bg-emerald-50" :
+                            row.column === "in_review" ? "border-blue-300 text-blue-700 bg-blue-50" :
+                            "border-amber-300 text-amber-700 bg-amber-50"
+                          }`}>
+                            {COLUMNS.find(c => c.key === row.column)?.label || row.column}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {row.aml_risk_level ? (
+                            <Badge variant="outline" className={`text-[10px] ${
+                              row.aml_risk_level === "critical" ? "border-red-300 text-red-700" :
+                              row.aml_risk_level === "high" ? "border-orange-300 text-orange-700" :
+                              row.aml_risk_level === "medium" ? "border-amber-300 text-amber-700" :
+                              "border-emerald-300 text-emerald-700"
+                            }`}>{row.aml_risk_level}</Badge>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell>
+                          {row.aml_pep_status ? (
+                            <Badge variant="outline" className={`text-[10px] ${
+                              row.aml_pep_status === "clear" ? "border-emerald-300 text-emerald-700" : "border-purple-300 text-purple-700"
+                            }`}>{row.aml_pep_status === "clear" ? "Clear" : "PEP"}</Badge>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell>
+                          <span className={checklistTicked >= 12 ? "text-emerald-600 font-semibold" : ""}>{checklistTicked}/12</span>
+                        </TableCell>
+                        <TableCell>{row.doc_count}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-0.5">
+                            {sources.map(s => {
+                              const meta = SOURCE_META[s];
+                              return <span key={s} title={meta?.title || s} className={`text-[9px] px-1 py-0.5 rounded border ${meta?.tone || ""} font-medium`}>{meta?.label || s}</span>;
+                            })}
+                            {sources.length === 0 && <span className="text-muted-foreground">—</span>}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {row.deals && row.deals.length > 0 ? (
+                            <div className="space-y-0.5">
+                              {row.deals.slice(0, 2).map((d, i) => (
+                                <Link key={`${d.id}-${i}`} href={`/deals/${d.id}`} className="text-primary hover:underline block truncate max-w-[120px]">{d.name}</Link>
+                              ))}
+                              {row.deals.length > 2 && <span className="text-muted-foreground">+{row.deals.length - 2} more</span>}
+                            </div>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell>
+                          {row.kyc_expires_at ? (
+                            <span className={row.isExpired ? "text-red-600 font-semibold" : ""}>
+                              {new Date(row.kyc_expires_at).toLocaleDateString("en-GB")}
+                            </span>
+                          ) : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
+          {viewMode === "card" && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filtered.length === 0 ? (
+                <div className="col-span-full text-center text-sm text-muted-foreground py-8">No counterparties found</div>
+              ) : filtered.map(row => <CardItem key={row.id} row={row} />)}
             </div>
           )}
         </TabsContent>
@@ -407,7 +521,7 @@ function DealsKanban({ data, loading }: { data: DealBoardData | undefined; loadi
   );
 }
 
-function DealCard({ row }: { row: DealRow }) {
+const DealCard = memo(function DealCard({ row }: { row: DealRow }) {
   const [expanded, setExpanded] = useState(false);
   const [expandedCp, setExpandedCp] = useState<string | null>(null);
 
@@ -497,7 +611,7 @@ function DealCard({ row }: { row: DealRow }) {
                     </div>
                   </div>
                   <button
-                    onClick={() => setExpandedCp(isOpen ? null : cp.id)}
+                    onClick={(e) => { e.stopPropagation(); setExpandedCp(isOpen ? null : cp.id); }}
                     className="text-[10px] text-primary hover:underline flex items-center gap-0.5 shrink-0"
                     data-testid={`btn-expand-cp-kyc-${cp.id}`}
                   >
@@ -517,4 +631,4 @@ function DealCard({ row }: { row: DealRow }) {
       )}
     </div>
   );
-}
+});

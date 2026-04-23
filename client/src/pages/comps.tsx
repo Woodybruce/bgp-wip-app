@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
+import { SOURCE_TYPES, SOURCE_LIST, normaliseSource, type SourceType } from "@shared/source-types";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -33,12 +34,15 @@ import {
   MoreHorizontal, Ruler, Loader2, Newspaper, Sparkles,
   FileText, Upload, X, Paperclip, FileDown, Info, Presentation,
   TrendingUp, Inbox, ArrowRight, Eye, ExternalLink, Phone, Mail, User,
+  Bell,
 } from "lucide-react";
 import type { CrmComp } from "@shared/schema";
 import jsPDF from "jspdf";
 import { Link } from "wouter";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
+import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import InvestmentCompsPage from "@/pages/investment-comps";
+import LeaseEventsPage from "@/pages/lease-events";
 
 interface CompFile {
   id: string;
@@ -842,110 +846,945 @@ function RpiCpiCalculator() {
   );
 }
 
-function NetRentCalculator({ onClose }: { onClose: () => void }) {
-  const [headlineRent, setHeadlineRent] = useState("");
-  const [rentFreeMonths, setRentFreeMonths] = useState("");
-  const [fitoutContrib, setFitoutContrib] = useState("");
-  const [leaseTerm, setLeaseTerm] = useState("");
-  const [areaSqft, setAreaSqft] = useState("");
-  const [itzaArea, setItzaArea] = useState("");
+const ITZA_ZONES = [
+  { key: "zA",  label: "Zone A",    div: 1 },
+  { key: "zA1", label: "Zone A1",   div: 1.5 },
+  { key: "zB",  label: "Zone B",    div: 2 },
+  { key: "zB1", label: "Zone B1",   div: 3 },
+  { key: "zC",  label: "Zone C",    div: 4 },
+  { key: "zC1", label: "Zone C1",   div: 6 },
+  { key: "zD",  label: "Zone D",    div: 8 },
+  { key: "zD1", label: "Zone D1",   div: 10 },
+  { key: "rem", label: "Remainder", div: 12 },
+] as const;
+
+const GIA_FLOORS = [
+  { key: "groundSales",     label: "Ground – Sales",        floor: "Ground",   weight: 1 },
+  { key: "groundAncillary", label: "Ground – Ancillary",    floor: "",         weight: 0.5 },
+  { key: "firstTrading",    label: "First – Trading",       floor: "First",    weight: 0.5 },
+  { key: "firstAncillary",  label: "First – Ancillary",     floor: "",         weight: 0.25 },
+  { key: "secondTrading",   label: "Second – Trading",      floor: "Second",   weight: 0.25 },
+  { key: "secondAncillary", label: "Second – Ancillary",    floor: "",         weight: 0.15 },
+  { key: "basTrading",      label: "Basement – Trading",    floor: "Basement", weight: 0.5 },
+  { key: "basAncillary",    label: "Basement – Ancillary",  floor: "",         weight: 0.25 },
+  { key: "basVaults",       label: "Basement – Vaults",     floor: "",         weight: 0.125 },
+  { key: "terrace",         label: "Terrace / External",    floor: "Terrace",  weight: 0.15 },
+] as const;
+
+function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; prefillComp?: CrmComp }) {
+  const [calcTab, setCalcTab] = useState<"ner" | "itza" | "gia">("ner");
+
+  // ── NER state ────────────────────────────────────────────────────
+  const [nerAddress, setNerAddress] = useState(prefillComp ? (prefillComp.name || "") : "");
+  const [headlineRent, setHeadlineRent] = useState(prefillComp ? String(parseNum(prefillComp.headlineRent) || "") : "");
+  const [rentFreeMonths, setRentFreeMonths] = useState(prefillComp ? String(parseMonths(prefillComp.rentFreeMonths || prefillComp.rentFree) || "") : "");
+  // How many of the rent-free months to amortise as an incentive. Balance is treated
+  // as a genuine fit-out period (not netted against rent). Defaults to the full rent-free.
+  const [rfAmortisedMonths, setRfAmortisedMonths] = useState("");
+  const [fitoutContrib, setFitoutContrib] = useState(prefillComp ? String(parseNum(prefillComp.fitoutContribution) || "") : "");
+  const [leaseTerm, setLeaseTerm] = useState(prefillComp ? String(parseYears(prefillComp.term) || "") : "");
+  // Optional years-to-break. When set, incentives amortise over this rather than the full term.
+  const [yearsToBreak, setYearsToBreak] = useState(prefillComp ? String(parseYears(prefillComp.breakClause || "") || "") : "");
+  const [areaSqft, setAreaSqft] = useState(prefillComp ? String(parseNum(prefillComp.niaSqft || prefillComp.areaSqft) || "") : "");
+  const [itzaAreaNer, setItzaAreaNer] = useState(prefillComp ? String(parseNum(prefillComp.itzaSqft) || "") : "");
 
   const headline = parseFloat(headlineRent) || 0;
   const rf = parseFloat(rentFreeMonths) || 0;
+  const rfAmort = rfAmortisedMonths === "" ? rf : (parseFloat(rfAmortisedMonths) || 0);
   const fitout = parseFloat(fitoutContrib) || 0;
   const term = parseFloat(leaseTerm) || 0;
+  const ytb = parseFloat(yearsToBreak) || 0;
+  // Amortisation horizon: years-to-break if provided, else the full lease term.
+  const amortYears = ytb > 0 ? ytb : term;
   const area = parseFloat(areaSqft) || 0;
-  const itza = parseFloat(itzaArea) || 0;
-
-  const totalRentFreeValue = (headline / 12) * rf;
+  const itzaNer = parseFloat(itzaAreaNer) || 0;
+  const totalRentFreeValue = (headline / 12) * rfAmort;
   const totalIncentives = totalRentFreeValue + fitout;
-  const annualisedIncentive = term > 0 ? totalIncentives / term : 0;
+  const annualisedIncentive = amortYears > 0 ? totalIncentives / amortYears : 0;
   const netEffectiveRent = headline - annualisedIncentive;
   const netPsfNia = area > 0 ? netEffectiveRent / area : 0;
   const headlinePsfNia = area > 0 ? headline / area : 0;
-  const headlineZoneA = itza > 0 ? headline / itza : 0;
-  const netZoneA = itza > 0 ? netEffectiveRent / itza : 0;
-  const incentivePct = headline > 0 ? (totalIncentives / (headline * (term || 1))) * 100 : 0;
+  const headlineZoneA = itzaNer > 0 ? headline / itzaNer : 0;
+  const netZoneA = itzaNer > 0 ? netEffectiveRent / itzaNer : 0;
+  const incentivePct = headline > 0 && amortYears > 0 ? (totalIncentives / (headline * amortYears)) * 100 : 0;
+  // Tom's worked-example formulation: monthly rent × (months-to-break − amortised RF months)
+  // annualised back over years-to-break. Equivalent to the above when fitout=0.
+  const monthsToBreak = amortYears > 0 ? amortYears * 12 : 0;
+  const totalIncomeToBreak = headline > 0 && monthsToBreak > 0 ? (headline / 12) * (monthsToBreak - rfAmort) - fitout : 0;
+
+  // ── ITZA state (A1 retail analysis) ─────────────────────────────
+  const [itzaAddress, setItzaAddress] = useState("");
+  const [itzaRate, setItzaRate] = useState("");
+  const [itzaZoneAreas, setItzaZoneAreas] = useState<Record<string, string>>({
+    zA: "", zA1: "", zB: "", zB1: "", zC: "", zC1: "", zD: "", zD1: "", rem: "",
+    basStorage: "", firstTrading: "",
+  });
+  const [itzaDiscount1, setItzaDiscount1] = useState("");
+  const [itzaAddition1, setItzaAddition1] = useState("");
+  const [itzaEndDiscount, setItzaEndDiscount] = useState("");
+  const [itzaEndAddition, setItzaEndAddition] = useState("");
+
+  const itzaRateVal = parseFloat(itzaRate) || 0;
+  const groundZoneCalcs = ITZA_ZONES.map(z => {
+    const a = parseFloat(itzaZoneAreas[z.key]) || 0;
+    const rate = itzaRateVal / z.div;
+    return { ...z, area: a, rate, erv: a * rate };
+  });
+  const basStorageArea = parseFloat(itzaZoneAreas.basStorage) || 0;
+  const firstTradingAreaVal = parseFloat(itzaZoneAreas.firstTrading) || 0;
+  const basStorageERV = basStorageArea * (itzaRateVal / 20);
+  const firstTradingERV = firstTradingAreaVal * (itzaRateVal / 10);
+  const itzaGIA = groundZoneCalcs.reduce((s, z) => s + z.area, 0) + basStorageArea + firstTradingAreaVal;
+  const itzaITZA = groundZoneCalcs.reduce((s, z) => s + (z.div > 0 ? z.area / z.div : 0), 0);
+  const groundSubTotal = groundZoneCalcs.reduce((s, z) => s + z.erv, 0);
+  const d1pct = parseFloat(itzaDiscount1) || 0;
+  const a1pct = parseFloat(itzaAddition1) || 0;
+  const groundAdjusted = groundSubTotal * (1 + a1pct / 100 - d1pct / 100);
+  const itzaSubTotal = groundAdjusted + basStorageERV + firstTradingERV;
+  const endDiscPct = parseFloat(itzaEndDiscount) || 0;
+  const endAddPct = parseFloat(itzaEndAddition) || 0;
+  const itzaTotal = itzaSubTotal * (1 + endAddPct / 100 - endDiscPct / 100);
+  const itzaSay = Math.round(itzaTotal / 1000) * 1000;
+
+  // ── GIA state (A3 restaurant/gym analysis) ───────────────────────
+  const [giaAddress, setGiaAddress] = useState("");
+  const [giaRate, setGiaRate] = useState("");
+  const [giaAreas, setGiaAreas] = useState<Record<string, string>>({
+    groundSales: "", groundAncillary: "",
+    firstTrading: "", firstAncillary: "",
+    basTrading: "", basAncillary: "", basVaults: "",
+  });
+  const [giaAdj1, setGiaAdj1] = useState("");
+  const [giaAdj2, setGiaAdj2] = useState("");
+  // Service-charge allowance — percentage haircut applied after other ground-floor adjustments.
+  // Per Tom's Cardiff template, this is a named line (e.g. -5% where SC is materially above market).
+  const [giaScAllowance, setGiaScAllowance] = useState("");
+  const [giaLease1, setGiaLease1] = useState("");
+  const [giaLease2, setGiaLease2] = useState("");
+
+  const giaRateVal = parseFloat(giaRate) || 0;
+  const giaFloorCalcs = GIA_FLOORS.map(f => {
+    const a = parseFloat(giaAreas[f.key]) || 0;
+    return { ...f, area: a, rate: giaRateVal * f.weight, erv: a * giaRateVal * f.weight };
+  });
+  const giaTotalArea = giaFloorCalcs.reduce((s, f) => s + f.area, 0);
+  const giaSubTotal = giaFloorCalcs.reduce((s, f) => s + f.erv, 0);
+  const giaA1pct = parseFloat(giaAdj1) || 0;
+  const giaA2pct = parseFloat(giaAdj2) || 0;
+  const giaScPct = parseFloat(giaScAllowance) || 0;
+  const giaL1pct = parseFloat(giaLease1) || 0;
+  const giaL2pct = parseFloat(giaLease2) || 0;
+  const giaAfterAdj = giaSubTotal * (1 + giaA1pct / 100 + giaA2pct / 100 + giaScPct / 100);
+  const giaTotal = giaAfterAdj * (1 + giaL1pct / 100 + giaL2pct / 100);
+  const giaSay = Math.round(giaTotal / 1000) * 1000;
+
+  // ── Excel downloads ───────────────────────────────────────────────
+  function downloadItzaExcel() {
+    import("xlsx").then(XLSX => {
+      const wb = XLSX.utils.book_new();
+      const rows: any[][] = [
+        ["Address", itzaAddress || ""],
+        [],
+        [null, null, null, null, null, null, null, null, itzaRateVal || null, "psf ITZA"],
+        [],
+        ["Floor", "Description", null, "Area", "Rate ITZA", null, "Rate", "% adjustment", "ERV"],
+        [],
+        ...groundZoneCalcs.map((z, i) => [
+          i === 0 ? "Ground" : null,
+          "Sales",
+          z.label,
+          z.area || null,
+          "A/",
+          z.div,
+          z.area > 0 ? z.rate : 0,
+          null,
+          z.area > 0 ? z.erv : 0,
+        ]),
+        [null, "GIA (net of stairs)", null, itzaGIA || null],
+        [null, "ITZA", null, itzaITZA ? parseFloat(itzaITZA.toFixed(1)) : null],
+        [],
+        [null, "Discounts (frontage to depth etc)", null, null, null, null, null, d1pct ? d1pct / 100 : null, d1pct ? -(groundSubTotal * d1pct / 100) : 0],
+        [null, "Additions (return frontage etc)", null, null, null, null, null, a1pct ? a1pct / 100 : null, a1pct ? groundSubTotal * a1pct / 100 : 0],
+        [],
+        ["Basement", "Storage", null, basStorageArea || null, "A/", 20, basStorageArea > 0 ? itzaRateVal / 20 : 0, null, basStorageArea > 0 ? basStorageERV : 0],
+        [],
+        ["First", "Trading", null, firstTradingAreaVal || null, "A/", 10, firstTradingAreaVal > 0 ? itzaRateVal / 10 : 0, null, firstTradingAreaVal > 0 ? firstTradingERV : 0],
+        [],
+        [null, "Total / Sub Total", null, null, null, null, null, null, itzaSubTotal || 0],
+        [],
+        [null, "End discounts (short term etc)", null, null, null, null, null, endDiscPct ? endDiscPct / 100 : null, endDiscPct ? -(itzaSubTotal * endDiscPct / 100) : 0],
+        [null, "End additions (breaks, outside Act etc)", null, null, null, null, null, endAddPct ? endAddPct / 100 : null, endAddPct ? itzaSubTotal * endAddPct / 100 : 0],
+        [],
+        [null, null, null, null, null, null, null, "TOTAL", itzaTotal || 0],
+        [null, null, null, null, null, null, null, "Say", itzaSay || 0],
+        [],
+        ["Notes"],
+        ["Need ability to change rates - some areas basement trading might be A/8, others A/10"],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [
+        { wch: 12 }, { wch: 32 }, { wch: 12 }, { wch: 10 }, { wch: 10 },
+        { wch: 6 }, { wch: 12 }, { wch: 16 }, { wch: 12 },
+      ];
+      XLSX.utils.book_append_sheet(wb, ws, "Rent analysis");
+      // TOTAL sits two rows above Say (end of the rows[] array above). With a single header
+      // row before the body (row 1) and the structure held stable, TOTAL and Say are the
+      // penultimate and last rows — their current cells are `Rent analysis!I25` and `I26`.
+      appendBgpMeta(XLSX, wb, "itza", {
+        address: itzaAddress,
+        rate: itzaRateVal,
+        totalErv: itzaTotal,
+        say: itzaSay,
+        gia: itzaGIA,
+        itza: itzaITZA,
+      }, {
+        // Point at cells the add-in will resolve on write-back so edits flow back to the CRM.
+        headlineRent: "'Rent analysis'!I25",
+        netEffectiveRent: "'Rent analysis'!I26",
+        zoneARate: "'Rent analysis'!I3",
+        itzaSqft: "'Rent analysis'!D10",
+      });
+      XLSX.writeFile(wb, `ITZA_Analysis_${(itzaAddress || "BGP").replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`);
+    });
+  }
+
+  function downloadGiaExcel() {
+    import("xlsx").then(XLSX => {
+      const wb = XLSX.utils.book_new();
+      const a = (k: string) => parseFloat(giaAreas[k]) || 0;
+      const gsSales = a("groundSales");
+      const gsAnc   = a("groundAncillary");
+      const ftTrad  = a("firstTrading");
+      const ftAnc   = a("firstAncillary");
+      const snTrad  = a("secondTrading");
+      const snAnc   = a("secondAncillary");
+      const bsTrad  = a("basTrading");
+      const bsAnc   = a("basAncillary");
+      const bsVault = a("basVaults");
+      const terrace = a("terrace");
+      const row = (area: number, weight: number) => area > 0 ? area * giaRateVal * weight : 0;
+      const rows: any[][] = [
+        ["Address", giaAddress || ""],
+        [],
+        [null, null, null, null, null, null, null, giaRateVal || null, "psf ITGF"],
+        [],
+        ["Floor", "Description", "Area", null, "Rate (%)", "Rate", "ERV"],
+        [],
+        ["Ground", "Sales",     gsSales || null, "@", 1,     giaRateVal,         row(gsSales, 1)],
+        [null,     "Ancillary", gsAnc   || null, "@", 0.5,   giaRateVal * 0.5,   row(gsAnc, 0.5)],
+        [null, null, null, null, null, null, row(gsSales, 1) + row(gsAnc, 0.5)],
+        [],
+        [null, "Adjustments (steps, prominence, configuration etc)", null, null, null, "%"],
+        [null, null, null, null, null, giaA1pct ? giaA1pct / 100 : null, giaA1pct ? giaSubTotal * giaA1pct / 100 : null],
+        [null, null, null, null, null, giaA2pct ? giaA2pct / 100 : null, giaA2pct ? giaSubTotal * giaA2pct / 100 : null],
+        [null, "Service Charge allowance (high SC)", null, null, null, giaScPct ? giaScPct / 100 : null, giaScPct ? giaSubTotal * giaScPct / 100 : null],
+        [],
+        ["First",    "Trading",   ftTrad  || null, "@", 0.5,   giaRateVal * 0.5,   row(ftTrad, 0.5)],
+        [null,       "Ancillary", ftAnc   || null, "@", 0.25,  giaRateVal * 0.25,  row(ftAnc, 0.25)],
+        [],
+        ["Second",   "Trading",   snTrad  || null, "@", 0.25,  giaRateVal * 0.25,  row(snTrad, 0.25)],
+        [null,       "Ancillary", snAnc   || null, "@", 0.15,  giaRateVal * 0.15,  row(snAnc, 0.15)],
+        [],
+        ["Basement", "Trading",   bsTrad  || null, "@", 0.5,   giaRateVal * 0.5,   row(bsTrad, 0.5)],
+        [null,       "Ancillary", bsAnc   || null, "@", 0.25,  giaRateVal * 0.25,  row(bsAnc, 0.25)],
+        [null,       "Vaults",    bsVault || null, "@", 0.125, giaRateVal * 0.125, row(bsVault, 0.125)],
+        [],
+        ["Terrace",  "External",  terrace || null, "@", 0.15,  giaRateVal * 0.15,  row(terrace, 0.15)],
+        [],
+        [null, "GIA (net of stairs)", giaTotalArea || null],
+        [],
+        [null, "Lease Adjustments (breaks, fully fitted, term etc)", null, null, null, "%"],
+        [null, null, null, null, null, giaL1pct ? giaL1pct / 100 : null, giaL1pct ? giaAfterAdj * giaL1pct / 100 : null],
+        [null, null, null, null, null, giaL2pct ? giaL2pct / 100 : null, giaL2pct ? giaAfterAdj * giaL2pct / 100 : null],
+        [],
+        [null, null, null, null, null, null, giaTotal || 0],
+        [null, null, null, null, null, "Say", giaSay || 0, "pax"],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [
+        { wch: 12 }, { wch: 35 }, { wch: 10 }, { wch: 4 },
+        { wch: 10 }, { wch: 10 }, { wch: 12 },
+      ];
+      XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+      // Sheet1 layout: the last two content rows hold the Total ERV and Say figures.
+      // Column G carries the per-row ERV and the final total; the Say value is in column G too.
+      appendBgpMeta(XLSX, wb, "gia", {
+        address: giaAddress,
+        rate: giaRateVal,
+        totalErv: giaTotal,
+        say: giaSay,
+        gia: giaTotalArea,
+      }, {
+        headlineRent: `Sheet1!G${rows.length - 1}`,
+        netEffectiveRent: `Sheet1!G${rows.length}`,
+        overallRate: "Sheet1!H3",
+        giaSqft: `Sheet1!C${rows.findIndex(r => r[1] === "GIA (net of stairs)") + 1}`,
+      });
+      XLSX.writeFile(wb, `GIA_Analysis_${(giaAddress || "BGP").replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`);
+    });
+  }
+
+  function downloadNerExcel() {
+    import("xlsx").then(XLSX => {
+      const wb = XLSX.utils.book_new();
+      const rows: any[][] = [
+        ["Net Effective Rent Analysis"],
+        ["Address", nerAddress || ""],
+        [],
+        ["Inputs"],
+        ["Headline rent (£ pa)",               headline || null],
+        ["Lease term (years)",                  term || null],
+        ["Years to break (override)",           ytb || null],
+        ["Rent free (months)",                  rf || null],
+        ["Rent free — amortised months",        rfAmort || null],
+        ["Rent free — non-amortised (fit-out)", Math.max(0, rf - rfAmort) || null],
+        ["Fit-out / capital contribution (£)",  fitout || null],
+        ["NIA area (sq ft)",                    area || null],
+        ["ITZA area (sq ft)",                   itzaNer || null],
+        [],
+        ["Amortisation horizon (years)",        amortYears || null],
+        ["Rent-free value (£)",                 totalRentFreeValue || null],
+        ["Total incentive value (£)",           totalIncentives || null],
+        ["Annualised incentive (£ pa)",         annualisedIncentive || null],
+        ["Incentive as % of amort term",        amortYears > 0 ? incentivePct / 100 : null],
+        [],
+        ["Results"],
+        ["Headline rent",                       headline || null],
+        ["Net effective rent (£ pa)",           netEffectiveRent || null],
+        ["Headline £ psf (NIA)",                area > 0 ? headlinePsfNia : null],
+        ["Net £ psf (NIA)",                     area > 0 ? netPsfNia : null],
+        ["Headline Zone A (£ psf ITZA)",        itzaNer > 0 ? headlineZoneA : null],
+        ["Net Zone A (£ psf ITZA)",             itzaNer > 0 ? netZoneA : null],
+        [],
+        ["Worked check (Tom's formulation)"],
+        ["Monthly rent × (months to break − amortised RF months)", totalIncomeToBreak || null],
+        ["÷ years to break = NER pa",            amortYears > 0 ? totalIncomeToBreak / amortYears : null],
+        [],
+        ["Method"],
+        ["NER = headline − (rent-free value + capital contribution) ÷ amortisation horizon."],
+        ["Amortisation horizon defaults to lease term; if a tenant break is entered, the horizon is the years-to-break."],
+        ["Rent-free can be split: amortised months count as incentive; any balance is treated as a genuine fit-out period and excluded."],
+      ];
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [{ wch: 50 }, { wch: 18 }];
+      XLSX.utils.book_append_sheet(wb, ws, "NER");
+      // Row mapping is fixed: Results block lives rows 22-27 (1-indexed) in column B.
+      const idx = (label: string) => rows.findIndex(r => r[0] === label) + 1;
+      appendBgpMeta(XLSX, wb, "ner", {
+        address: nerAddress,
+        headlineRent: headline,
+        term,
+        yearsToBreak: ytb,
+        rentFreeMonths: rf,
+        rentFreeAmortised: rfAmort,
+        fitoutContribution: fitout,
+        netEffectiveRent,
+        rentPsfNia: area > 0 ? netPsfNia : 0,
+      }, {
+        headlineRent: `NER!B${idx("Headline rent (£ pa)")}`,
+        term: `NER!B${idx("Lease term (years)")}`,
+        breakClause: `NER!B${idx("Years to break (override)")}`,
+        rentFreeMonths: `NER!B${idx("Rent free (months)")}`,
+        fitoutContribution: `NER!B${idx("Fit-out / capital contribution (£)")}`,
+        netEffectiveRent: `NER!B${idx("Net effective rent (£ pa)")}`,
+      });
+      XLSX.writeFile(wb, `NER_Analysis_${(nerAddress || "BGP").replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`);
+    });
+  }
+
+  /** Writes a hidden `_BGP_META` sheet with the comp id, snapshot results, and a writeback
+   * mapping so the BGP Excel Add-in can re-read the cells a user edits and push them back
+   * to `/api/crm/comps/:id`. */
+  function appendBgpMeta(
+    XLSX: any,
+    wb: any,
+    kind: "ner" | "itza" | "gia",
+    payload: Record<string, any>,
+    writeback: Record<string, string> = {},
+  ) {
+    const meta: any[][] = [
+      ["key", "value"],
+      ["bgpKind", kind],
+      ["bgpCompId", prefillComp?.id || ""],
+      ["bgpApiBase", typeof window !== "undefined" ? window.location.origin : ""],
+      ["generatedAt", new Date().toISOString()],
+      ...Object.entries(payload).map(([k, v]) => [`snapshot:${k}`, v ?? ""]),
+      ...Object.entries(writeback).map(([field, ref]) => [`writeback:${field}`, ref]),
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(meta);
+    ws["!cols"] = [{ wch: 28 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, ws, "_BGP_META");
+    if (wb.Workbook?.Sheets) {
+      const entry = wb.Workbook.Sheets.find((s: any) => s.name === "_BGP_META");
+      if (entry) entry.Hidden = 1;
+    } else {
+      wb.Workbook = wb.Workbook || {};
+      wb.Workbook.Sheets = wb.Workbook.Sheets || [];
+      wb.Workbook.Sheets.push({ name: "_BGP_META", Hidden: 1 });
+    }
+  }
 
   return (
-    <div className="space-y-4" data-testid="net-rent-calculator">
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Headline Rent (£ pa)</label>
-          <Input type="number" value={headlineRent} onChange={e => setHeadlineRent(e.target.value)} placeholder="250,000" className="h-9" data-testid="calc-headline-rent" />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Lease Term (years)</label>
-          <Input type="number" value={leaseTerm} onChange={e => setLeaseTerm(e.target.value)} placeholder="10" className="h-9" data-testid="calc-lease-term" />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Rent Free (months)</label>
-          <Input type="number" value={rentFreeMonths} onChange={e => setRentFreeMonths(e.target.value)} placeholder="12" className="h-9" data-testid="calc-rent-free" />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Fitout / Capital Contribution (£)</label>
-          <Input type="number" value={fitoutContrib} onChange={e => setFitoutContrib(e.target.value)} placeholder="50,000" className="h-9" data-testid="calc-fitout" />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">NIA Area (sq ft)</label>
-          <Input type="number" value={areaSqft} onChange={e => setAreaSqft(e.target.value)} placeholder="2,500" className="h-9" data-testid="calc-area" />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">ITZA Area (sq ft)</label>
-          <Input type="number" value={itzaArea} onChange={e => setItzaArea(e.target.value)} placeholder="800" className="h-9" data-testid="calc-itza" />
-        </div>
-      </div>
+    <Tabs value={calcTab} onValueChange={v => setCalcTab(v as "ner" | "itza" | "gia")}>
+      <TabsList className="w-full grid grid-cols-3 mb-4">
+        <TabsTrigger value="ner" className="text-xs">Net Effective Rent</TabsTrigger>
+        <TabsTrigger value="itza" className="text-xs">ITZA (Retail)</TabsTrigger>
+        <TabsTrigger value="gia" className="text-xs">GIA (Restaurant / Gym)</TabsTrigger>
+      </TabsList>
 
-      {headline > 0 && (
-        <div className="bg-muted/50 rounded-xl p-4 space-y-3">
-          <h4 className="text-sm font-semibold flex items-center gap-2"><Calculator className="w-4 h-4" /> Results</h4>
-          <div className="grid grid-cols-2 gap-y-2 gap-x-4">
-            <div>
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Headline Rent</p>
-              <p className="text-sm font-bold">£{headline.toLocaleString()} pa</p>
+      {/* ── NER tab ── */}
+      <TabsContent value="ner">
+        <div className="space-y-4" data-testid="net-rent-calculator">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Address / Reference</label>
+              <Input value={nerAddress} onChange={e => setNerAddress(e.target.value)} placeholder="e.g. Franco Manca, Church St, Cardiff" className="h-9" />
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Net Effective Rent</p>
-              <p className="text-sm font-bold text-green-600">£{Math.round(netEffectiveRent).toLocaleString()} pa</p>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Headline Rent (£ pa)</label>
+              <Input type="number" value={headlineRent} onChange={e => setHeadlineRent(e.target.value)} placeholder="92,500" className="h-9" data-testid="calc-headline-rent" />
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Incentive Value</p>
-              <p className="text-sm font-semibold text-amber-600">£{Math.round(totalIncentives).toLocaleString()}</p>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Lease Term (years)</label>
+              <Input type="number" value={leaseTerm} onChange={e => setLeaseTerm(e.target.value)} placeholder="15" className="h-9" data-testid="calc-lease-term" />
             </div>
             <div>
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Incentive as % of Term</p>
-              <p className="text-sm font-semibold">{incentivePct.toFixed(1)}%</p>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block" title="If set, incentives amortise over years-to-break rather than the full term">Years to break (optional)</label>
+              <Input type="number" value={yearsToBreak} onChange={e => setYearsToBreak(e.target.value)} placeholder="10" className="h-9" data-testid="calc-years-to-break" />
             </div>
-            {area > 0 && (
-              <>
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Headline £ psf (NIA)</p>
-                  <p className="text-sm font-semibold">£{headlinePsfNia.toFixed(2)} psf</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Net £ psf (NIA)</p>
-                  <p className="text-sm font-semibold text-green-600">£{netPsfNia.toFixed(2)} psf</p>
-                </div>
-              </>
-            )}
-            {itza > 0 && (
-              <>
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Headline Zone A</p>
-                  <p className="text-sm font-semibold">£{headlineZoneA.toFixed(2)} psf ZA</p>
-                </div>
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Net Zone A</p>
-                  <p className="text-sm font-semibold text-green-600">£{netZoneA.toFixed(2)} psf ZA</p>
-                </div>
-              </>
-            )}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Rent Free (months)</label>
+              <Input type="number" value={rentFreeMonths} onChange={e => setRentFreeMonths(e.target.value)} placeholder="12" className="h-9" data-testid="calc-rent-free" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block" title="Of the total rent-free, how many months are treated as an incentive. Balance is treated as a genuine fit-out period (not netted against rent). Defaults to the full rent-free.">RF months amortised (optional)</label>
+              <Input type="number" value={rfAmortisedMonths} onChange={e => setRfAmortisedMonths(e.target.value)} placeholder={rf ? String(rf) : "9"} className="h-9" data-testid="calc-rf-amortised" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Fitout / Capital Contribution (£)</label>
+              <Input type="number" value={fitoutContrib} onChange={e => setFitoutContrib(e.target.value)} placeholder="50,000" className="h-9" data-testid="calc-fitout" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">NIA Area (sq ft)</label>
+              <Input type="number" value={areaSqft} onChange={e => setAreaSqft(e.target.value)} placeholder="2,500" className="h-9" data-testid="calc-area" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">ITZA Area (sq ft)</label>
+              <Input type="number" value={itzaAreaNer} onChange={e => setItzaAreaNer(e.target.value)} placeholder="800" className="h-9" data-testid="calc-itza" />
+            </div>
           </div>
-          <div className="pt-2 border-t">
-            <p className="text-[10px] text-muted-foreground">
-              <span className="font-semibold">RICS Note:</span> Net effective rent calculated by straight-line amortisation of total incentives (rent free value + capital contribution) over the lease term. Zone A rates per RICS Code of Measuring Practice 6th Edition.
-            </p>
+          {headline > 0 && (
+            <div className="bg-muted/50 rounded-xl p-4 space-y-3">
+              <h4 className="text-sm font-semibold flex items-center gap-2"><Calculator className="w-4 h-4" /> Results</h4>
+              <div className="grid grid-cols-2 gap-y-2 gap-x-4">
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Headline Rent</p>
+                  <p className="text-sm font-bold">£{headline.toLocaleString()} pa</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Net Effective Rent</p>
+                  <p className="text-sm font-bold text-green-600">£{Math.round(netEffectiveRent).toLocaleString()} pa</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Incentive Value</p>
+                  <p className="text-sm font-semibold text-amber-600">£{Math.round(totalIncentives).toLocaleString()}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Incentive as % of Term</p>
+                  <p className="text-sm font-semibold">{incentivePct.toFixed(1)}%</p>
+                </div>
+                {area > 0 && (
+                  <>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Headline £ psf (NIA)</p>
+                      <p className="text-sm font-semibold">£{headlinePsfNia.toFixed(2)} psf</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Net £ psf (NIA)</p>
+                      <p className="text-sm font-semibold text-green-600">£{netPsfNia.toFixed(2)} psf</p>
+                    </div>
+                  </>
+                )}
+                {itzaNer > 0 && (
+                  <>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Headline Zone A</p>
+                      <p className="text-sm font-semibold">£{headlineZoneA.toFixed(2)} psf ZA</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Net Zone A</p>
+                      <p className="text-sm font-semibold text-green-600">£{netZoneA.toFixed(2)} psf ZA</p>
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="pt-2 border-t space-y-2">
+                <p className="text-[10px] text-muted-foreground">
+                  <span className="font-semibold">Method:</span> NER = headline − (rent-free value + capital contribution) ÷ amortisation horizon.
+                  Amortisation horizon = <span className="font-semibold">{ytb > 0 ? `${ytb} yr (to break)` : `${term || "—"} yr (lease term)`}</span>.
+                  Rent-free amortised: <span className="font-semibold">{rfAmort}</span> of {rf} months{rf > rfAmort ? ` (${rf - rfAmort} mo treated as fit-out period, not netted)` : ""}.
+                </p>
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-muted-foreground">Zone A per RICS Code of Measuring Practice 6th Ed.</p>
+                  <Button variant="outline" size="sm" onClick={downloadNerExcel} className="h-7 text-xs gap-1.5" data-testid="ner-download-excel">
+                    <Download className="w-3 h-3" /> Download Excel
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </TabsContent>
+
+      {/* ── ITZA tab (A1 retail analysis) ── */}
+      <TabsContent value="itza">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Address</label>
+              <Input value={itzaAddress} onChange={e => setItzaAddress(e.target.value)} placeholder="e.g. 12 High Street, London" className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Rate ITZA (£ psf)</label>
+              <Input type="number" value={itzaRate} onChange={e => setItzaRate(e.target.value)} placeholder="100" className="h-9" />
+            </div>
           </div>
+
+          {/* Ground floor zones */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Ground Floor Zones</p>
+            <div className="rounded-lg border overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/60">
+                  <tr>
+                    <th className="text-left px-2 py-1.5 font-medium">Zone</th>
+                    <th className="text-left px-2 py-1.5 font-medium">Divisor</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Area (sq ft)</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Rate (£ psf)</th>
+                    <th className="text-right px-2 py-1.5 font-medium">ERV (£)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {groundZoneCalcs.map(z => (
+                    <tr key={z.key} className="hover:bg-muted/20">
+                      <td className="px-2 py-1">{z.label}</td>
+                      <td className="px-2 py-1 text-muted-foreground">A/{z.div}</td>
+                      <td className="px-2 py-1">
+                        <Input
+                          type="number"
+                          value={itzaZoneAreas[z.key]}
+                          onChange={e => setItzaZoneAreas(prev => ({ ...prev, [z.key]: e.target.value }))}
+                          placeholder="0"
+                          className="h-7 text-xs text-right w-24 ml-auto"
+                        />
+                      </td>
+                      <td className="px-2 py-1 text-right text-muted-foreground">
+                        {itzaRateVal > 0 ? `£${(itzaRateVal / z.div).toFixed(2)}` : "—"}
+                      </td>
+                      <td className="px-2 py-1 text-right font-medium">
+                        {z.erv > 0 ? `£${Math.round(z.erv).toLocaleString()}` : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="bg-muted/30 font-semibold">
+                    <td className="px-2 py-1.5 text-muted-foreground" colSpan={2}>Ground sub-total</td>
+                    <td className="px-2 py-1.5 text-right">{groundZoneCalcs.reduce((s, z) => s + z.area, 0) > 0 ? `${groundZoneCalcs.reduce((s, z) => s + z.area, 0).toLocaleString()} sq ft` : "—"}</td>
+                    <td />
+                    <td className="px-2 py-1.5 text-right">{groundSubTotal > 0 ? `£${Math.round(groundSubTotal).toLocaleString()}` : "—"}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Ground adjustments */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Discount % (frontage to depth etc)</label>
+              <Input type="number" value={itzaDiscount1} onChange={e => setItzaDiscount1(e.target.value)} placeholder="0" className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Addition % (return frontage etc)</label>
+              <Input type="number" value={itzaAddition1} onChange={e => setItzaAddition1(e.target.value)} placeholder="0" className="h-9" />
+            </div>
+          </div>
+
+          {/* Other floors */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Other Floors</p>
+            <div className="rounded-lg border overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/60">
+                  <tr>
+                    <th className="text-left px-2 py-1.5 font-medium">Floor / Use</th>
+                    <th className="text-left px-2 py-1.5 font-medium">Divisor</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Area (sq ft)</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Rate (£ psf)</th>
+                    <th className="text-right px-2 py-1.5 font-medium">ERV (£)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  <tr className="hover:bg-muted/20">
+                    <td className="px-2 py-1">Basement – Storage</td>
+                    <td className="px-2 py-1 text-muted-foreground">A/20</td>
+                    <td className="px-2 py-1">
+                      <Input
+                        type="number"
+                        value={itzaZoneAreas.basStorage}
+                        onChange={e => setItzaZoneAreas(prev => ({ ...prev, basStorage: e.target.value }))}
+                        placeholder="0"
+                        className="h-7 text-xs text-right w-24 ml-auto"
+                      />
+                    </td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 ? `£${(itzaRateVal / 20).toFixed(2)}` : "—"}</td>
+                    <td className="px-2 py-1 text-right font-medium">{basStorageERV > 0 ? `£${Math.round(basStorageERV).toLocaleString()}` : "—"}</td>
+                  </tr>
+                  <tr className="hover:bg-muted/20">
+                    <td className="px-2 py-1">First – Trading</td>
+                    <td className="px-2 py-1 text-muted-foreground">A/10</td>
+                    <td className="px-2 py-1">
+                      <Input
+                        type="number"
+                        value={itzaZoneAreas.firstTrading}
+                        onChange={e => setItzaZoneAreas(prev => ({ ...prev, firstTrading: e.target.value }))}
+                        placeholder="0"
+                        className="h-7 text-xs text-right w-24 ml-auto"
+                      />
+                    </td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 ? `£${(itzaRateVal / 10).toFixed(2)}` : "—"}</td>
+                    <td className="px-2 py-1 text-right font-medium">{firstTradingERV > 0 ? `£${Math.round(firstTradingERV).toLocaleString()}` : "—"}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* End adjustments */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">End Discount % (short term etc)</label>
+              <Input type="number" value={itzaEndDiscount} onChange={e => setItzaEndDiscount(e.target.value)} placeholder="0" className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">End Addition % (breaks, outside Act etc)</label>
+              <Input type="number" value={itzaEndAddition} onChange={e => setItzaEndAddition(e.target.value)} placeholder="0" className="h-9" />
+            </div>
+          </div>
+
+          {/* Results */}
+          {itzaRateVal > 0 && (
+            <div className="bg-muted/50 rounded-xl p-4 space-y-3">
+              <h4 className="text-sm font-semibold flex items-center gap-2"><Calculator className="w-4 h-4" /> Results</h4>
+              <div className="grid grid-cols-3 gap-y-2 gap-x-4">
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">GIA</p>
+                  <p className="text-sm font-semibold">{itzaGIA > 0 ? `${itzaGIA.toLocaleString()} sq ft` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">ITZA</p>
+                  <p className="text-sm font-semibold">{itzaITZA > 0 ? `${itzaITZA.toFixed(1)} sq ft` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Rate ITZA</p>
+                  <p className="text-sm font-semibold">£{itzaRateVal.toFixed(2)} psf</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total ERV</p>
+                  <p className="text-sm font-bold text-green-600">{itzaTotal > 0 ? `£${Math.round(itzaTotal).toLocaleString()} pa` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Say</p>
+                  <p className="text-sm font-bold text-green-600">{itzaSay > 0 ? `£${itzaSay.toLocaleString()} pa` : "—"}</p>
+                </div>
+              </div>
+              <div className="pt-2 border-t flex items-center justify-between">
+                <p className="text-[10px] text-muted-foreground">RICS Code of Measuring Practice 6th Edition — Zone A depth 6.1m (20ft).</p>
+                <Button variant="outline" size="sm" onClick={downloadItzaExcel} className="h-7 text-xs gap-1.5">
+                  <Download className="w-3 h-3" /> Download Excel
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </TabsContent>
+
+      {/* ── GIA tab (A3 restaurant/gym analysis) ── */}
+      <TabsContent value="gia">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Address</label>
+              <Input value={giaAddress} onChange={e => setGiaAddress(e.target.value)} placeholder="e.g. 5 Kings Road, London" className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Rate ITGF (£ psf)</label>
+              <Input type="number" value={giaRate} onChange={e => setGiaRate(e.target.value)} placeholder="50" className="h-9" />
+            </div>
+          </div>
+
+          {/* Floor areas */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Floor Areas &amp; Weightings</p>
+            <div className="rounded-lg border overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/60">
+                  <tr>
+                    <th className="text-left px-2 py-1.5 font-medium">Floor / Use</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Weight</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Area (sq ft)</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Rate (£ psf)</th>
+                    <th className="text-right px-2 py-1.5 font-medium">ERV (£)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {giaFloorCalcs.map(f => (
+                    <tr key={f.key} className="hover:bg-muted/20">
+                      <td className="px-2 py-1">{f.label}</td>
+                      <td className="px-2 py-1 text-right text-muted-foreground">{(f.weight * 100).toFixed(1)}%</td>
+                      <td className="px-2 py-1">
+                        <Input
+                          type="number"
+                          value={giaAreas[f.key]}
+                          onChange={e => setGiaAreas(prev => ({ ...prev, [f.key]: e.target.value }))}
+                          placeholder="0"
+                          className="h-7 text-xs text-right w-24 ml-auto"
+                        />
+                      </td>
+                      <td className="px-2 py-1 text-right text-muted-foreground">
+                        {giaRateVal > 0 ? `£${f.rate.toFixed(2)}` : "—"}
+                      </td>
+                      <td className="px-2 py-1 text-right font-medium">
+                        {f.erv > 0 ? `£${Math.round(f.erv).toLocaleString()}` : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="bg-muted/30 font-semibold">
+                    <td className="px-2 py-1.5 text-muted-foreground" colSpan={2}>GIA total</td>
+                    <td className="px-2 py-1.5 text-right">{giaTotalArea > 0 ? `${giaTotalArea.toLocaleString()} sq ft` : "—"}</td>
+                    <td />
+                    <td className="px-2 py-1.5 text-right">{giaSubTotal > 0 ? `£${Math.round(giaSubTotal).toLocaleString()}` : "—"}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Adjustments */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Adjustments (steps, prominence, configuration etc)</p>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Adjustment 1 (%)</label>
+                <Input type="number" value={giaAdj1} onChange={e => setGiaAdj1(e.target.value)} placeholder="0" className="h-9" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Adjustment 2 (%)</label>
+                <Input type="number" value={giaAdj2} onChange={e => setGiaAdj2(e.target.value)} placeholder="0" className="h-9" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block" title="Haircut where service charge is materially above market — typically entered as a negative %">Service Charge allowance (%)</label>
+                <Input type="number" value={giaScAllowance} onChange={e => setGiaScAllowance(e.target.value)} placeholder="-5" className="h-9" />
+              </div>
+            </div>
+          </div>
+
+          {/* Lease adjustments */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Lease Adjustments (breaks, fully fitted, term etc)</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Lease Adjustment 1 (%)</label>
+                <Input type="number" value={giaLease1} onChange={e => setGiaLease1(e.target.value)} placeholder="0" className="h-9" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Lease Adjustment 2 (%)</label>
+                <Input type="number" value={giaLease2} onChange={e => setGiaLease2(e.target.value)} placeholder="0" className="h-9" />
+              </div>
+            </div>
+          </div>
+
+          {/* Results */}
+          {giaRateVal > 0 && (
+            <div className="bg-muted/50 rounded-xl p-4 space-y-3">
+              <h4 className="text-sm font-semibold flex items-center gap-2"><Calculator className="w-4 h-4" /> Results</h4>
+              <div className="grid grid-cols-3 gap-y-2 gap-x-4">
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">GIA</p>
+                  <p className="text-sm font-semibold">{giaTotalArea > 0 ? `${giaTotalArea.toLocaleString()} sq ft` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Rate ITGF</p>
+                  <p className="text-sm font-semibold">£{giaRateVal.toFixed(2)} psf</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Sub-total ERV</p>
+                  <p className="text-sm font-semibold">{giaSubTotal > 0 ? `£${Math.round(giaSubTotal).toLocaleString()}` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total ERV</p>
+                  <p className="text-sm font-bold text-green-600">{giaTotal > 0 ? `£${Math.round(giaTotal).toLocaleString()} pa` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Say</p>
+                  <p className="text-sm font-bold text-green-600">{giaSay > 0 ? `£${giaSay.toLocaleString()} pa` : "—"}</p>
+                </div>
+              </div>
+              <div className="pt-2 border-t flex items-center justify-between">
+                <p className="text-[10px] text-muted-foreground">GIA weighted by floor and use type per RICS Property Measurement 2nd Edition.</p>
+                <Button variant="outline" size="sm" onClick={downloadGiaExcel} className="h-7 text-xs gap-1.5">
+                  <Download className="w-3 h-3" /> Download Excel
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </TabsContent>
+    </Tabs>
+  );
+}
+
+/** Hybrid input: type to search BGP properties + Google Places, or enter a manual address */
+function PropertyAddressInput({ value, propertyOptions, onSelectProperty, onSelectAddress, onManualInput }: {
+  value: string;
+  propertyOptions: { id: string; name: string }[];
+  onSelectProperty: (p: { id: string; name: string }) => void;
+  onSelectAddress: (addr: { formatted: string; placeId: string; lat?: number; lng?: number; street?: string; city?: string; region?: string; postcode?: string; country?: string }) => void;
+  onManualInput: (v: string) => void;
+}) {
+  const [query, setQuery] = useState(value);
+  const [showDrop, setShowDrop] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const autocompleteService = useRef<google.maps.places.AutocompleteService | null>(null);
+  const placesService = useRef<google.maps.places.PlacesService | null>(null);
+  const [googlePredictions, setGooglePredictions] = useState<google.maps.places.AutocompletePrediction[]>([]);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => { setQuery(value); }, [value]);
+
+  useEffect(() => {
+    import("@/lib/google-maps-loader").then(({ loadGoogleMaps }) =>
+      loadGoogleMaps().then((ok) => {
+        if (ok) {
+          autocompleteService.current = new google.maps.places.AutocompleteService();
+          const div = document.createElement("div");
+          placesService.current = new google.maps.places.PlacesService(div);
+        }
+      })
+    );
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setShowDrop(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const matchingProps = useMemo(() => {
+    if (query.length < 2) return [];
+    const q = query.toLowerCase();
+    return propertyOptions.filter(p => p.name.toLowerCase().includes(q)).slice(0, 5);
+  }, [query, propertyOptions]);
+
+  const searchGoogle = useCallback((input: string) => {
+    if (!autocompleteService.current || input.length < 3) { setGooglePredictions([]); return; }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      autocompleteService.current!.getPlacePredictions(
+        { input, componentRestrictions: { country: "gb" }, locationBias: { center: { lat: 51.5074, lng: -0.1278 }, radius: 50000 } } as any,
+        (results, status) => {
+          if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+            setGooglePredictions(results.filter(r => {
+              const types = r.types || [];
+              return !(types.includes("country") || types.includes("administrative_area_level_1"));
+            }).slice(0, 5));
+          } else setGooglePredictions([]);
+        }
+      );
+    }, 300);
+  }, []);
+
+  const selectGooglePlace = (prediction: google.maps.places.AutocompletePrediction) => {
+    if (!placesService.current) return;
+    placesService.current.getDetails(
+      { placeId: prediction.place_id, fields: ["formatted_address", "geometry", "place_id", "address_components"] },
+      (place, status) => {
+        if (status === google.maps.places.PlacesServiceStatus.OK && place) {
+          const comp = (type: string) => place.address_components?.find((c: any) => c.types.includes(type))?.long_name;
+          const streetNumber = comp("street_number") || "";
+          const route = comp("route") || "";
+          const street = [streetNumber, route].filter(Boolean).join(" ");
+          onSelectAddress({
+            formatted: place.formatted_address || prediction.description,
+            placeId: place.place_id || prediction.place_id,
+            lat: place.geometry?.location?.lat(),
+            lng: place.geometry?.location?.lng(),
+            street: street || undefined,
+            city: comp("postal_town") || comp("locality") || undefined,
+            region: comp("administrative_area_level_2") || comp("administrative_area_level_1") || undefined,
+            postcode: comp("postal_code") || undefined,
+            country: comp("country") || undefined,
+          });
+          setQuery(place.formatted_address || prediction.description);
+          setShowDrop(false);
+          setGooglePredictions([]);
+        }
+      }
+    );
+  };
+
+  const handleChange = (v: string) => {
+    setQuery(v);
+    onManualInput(v);
+    searchGoogle(v);
+    setShowDrop(v.length >= 2);
+  };
+
+  const hasResults = matchingProps.length > 0 || googlePredictions.length > 0;
+
+  return (
+    <div ref={containerRef} className="relative">
+      <Input
+        value={query}
+        onChange={e => handleChange(e.target.value)}
+        onFocus={() => hasResults && query.length >= 2 && setShowDrop(true)}
+        placeholder="Search BGP property or type address..."
+        className="h-9"
+        data-testid="create-comp-name"
+      />
+      {showDrop && hasResults && (
+        <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border rounded-md shadow-lg max-h-[240px] overflow-y-auto">
+          {matchingProps.length > 0 && (
+            <>
+              <div className="px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wide bg-muted/50">BGP Properties</div>
+              {matchingProps.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => { onSelectProperty(p); setQuery(p.name); setShowDrop(false); }}
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2"
+                >
+                  <Building2 className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                  <span>{p.name}</span>
+                </button>
+              ))}
+            </>
+          )}
+          {googlePredictions.length > 0 && (
+            <>
+              <div className="px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wide bg-muted/50">Google Addresses</div>
+              {googlePredictions.map(p => (
+                <button
+                  key={p.place_id}
+                  onClick={() => selectGooglePlace(p)}
+                  className="w-full text-left px-3 py-2 text-xs hover:bg-accent flex items-center gap-2"
+                >
+                  <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  <span>{p.description}</span>
+                </button>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -968,6 +1807,7 @@ export default function Comps() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [createOpen, setCreateOpen] = useState(false);
   const [calcOpen, setCalcOpen] = useState(false);
+  const [calcComp, setCalcComp] = useState<CrmComp | null>(null);
   const [rpiOpen, setRpiOpen] = useState(false);
   const [confirmLead, setConfirmLead] = useState<CrmComp | null>(null);
   const [selectedComp, setSelectedComp] = useState<CrmComp | null>(null);
@@ -1058,13 +1898,17 @@ export default function Comps() {
     return companyByName.get(n) || null;
   }, [companyByName]);
 
-  const propertyLinkFor = useCallback((comp: CrmComp): string => {
-    if (comp.propertyId) return `/properties/${comp.propertyId}`;
+  const propertyLinkFor = useCallback((comp: CrmComp): { href: string; external: boolean } => {
+    if (comp.propertyId) return { href: `/properties/${comp.propertyId}`, external: false };
     if (comp.name) {
       const match = propertyByName.get(normName(comp.name));
-      if (match) return `/properties/${match}`;
+      if (match) return { href: `/properties/${match}`, external: false };
     }
-    return "/properties";
+    // No BGP property — link to Google Maps with the address/name
+    const addr = comp.address as any;
+    const googleUrl = buildGoogleMapsUrl(addr?.formatted || comp.name);
+    if (googleUrl) return { href: googleUrl, external: true };
+    return { href: "/properties", external: false };
   }, [propertyByName]);
 
   const { data: deals = [] } = useQuery<{ id: string; name: string; status?: string | null }[]>({
@@ -1274,8 +2118,11 @@ export default function Comps() {
   }, [filtered]);
 
   const [newName, setNewName] = useState("");
+  const [newPropertyId, setNewPropertyId] = useState<string | null>(null);
+  const [newAddress, setNewAddress] = useState<any>(null);
   const [newTenant, setNewTenant] = useState("");
   const [newArea, setNewArea] = useState("");
+  const [newPostcode, setNewPostcode] = useState("");
   const [newUseClass, setNewUseClass] = useState("");
   const [newTxnType, setNewTxnType] = useState("");
   const [newHeadlineRent, setNewHeadlineRent] = useState("");
@@ -1283,7 +2130,8 @@ export default function Comps() {
   const [newDate, setNewDate] = useState("");
 
   const resetCreateForm = () => {
-    setNewName(""); setNewTenant(""); setNewArea(""); setNewUseClass("");
+    setNewName(""); setNewPropertyId(null); setNewAddress(null);
+    setNewTenant(""); setNewArea(""); setNewPostcode(""); setNewUseClass("");
     setNewTxnType(""); setNewHeadlineRent(""); setNewZoneA(""); setNewDate("");
   };
 
@@ -1373,12 +2221,14 @@ export default function Comps() {
               <h1 className="text-2xl font-bold tracking-tight" data-testid="text-comps-title">
                 {activeTab === "investment" ? "Investment Comps"
                   : activeTab === "leads" ? "Comps Leads"
+                  : activeTab === "lease-events" ? "Lease Events"
                   : activeTab === "pdf-template" ? "PDF Template"
                   : "Leasing Comps"}
               </h1>
               <p className="text-sm text-muted-foreground">
                 {activeTab === "investment" ? "Capital markets comparable transactions"
                   : activeTab === "leads" ? "Unconfirmed comps extracted from news, emails & files"
+                  : activeTab === "lease-events" ? "Rent reviews, breaks & expiries — BD pipeline for lease advisory"
                   : activeTab === "pdf-template" ? "Customise the PDF export template"
                   : "Rent review evidence & comparable transactions"}
               </p>
@@ -1400,6 +2250,10 @@ export default function Comps() {
                     {leadComps.length}
                   </span>
                 )}
+              </TabsTrigger>
+              <TabsTrigger value="lease-events" data-testid="tab-comps-lease-events">
+                <Bell className="w-3.5 h-3.5 mr-1.5" />
+                Lease Events
               </TabsTrigger>
               <TabsTrigger value="pdf-template" data-testid="tab-comps-pdf-template">
                 <Presentation className="w-3.5 h-3.5 mr-1.5" />
@@ -1693,6 +2547,9 @@ export default function Comps() {
                         <DropdownMenuItem onClick={() => setSelectedComp(comp)}>
                           <Eye className="w-3.5 h-3.5 mr-2" /> View Details
                         </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => { setCalcComp(comp); setCalcOpen(true); }}>
+                          <Calculator className="w-3.5 h-3.5 mr-2" /> Rent Analysis (NER / GIA / ITZA)
+                        </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => startPdfExport([comp])}>
                           <FileDown className="w-3.5 h-3.5 mr-2" /> Export PDF
                         </DropdownMenuItem>
@@ -1710,27 +2567,67 @@ export default function Comps() {
                   </td>
                   <td className="px-2 py-1.5 align-top">
                     <div className="flex items-center gap-1">
-                      <Link
-                        href={propertyLinkFor(comp)}
-                        className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block"
-                        data-testid={`comp-name-${comp.id}`}
-                      >
-                        {comp.name}
-                      </Link>
+                      {(() => {
+                        const link = propertyLinkFor(comp);
+                        return link.external ? (
+                          <a
+                            href={link.href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block"
+                            data-testid={`comp-name-${comp.id}`}
+                          >
+                            {comp.name}
+                          </a>
+                        ) : (
+                          <Link
+                            href={link.href}
+                            className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block"
+                            data-testid={`comp-name-${comp.id}`}
+                          >
+                            {comp.name}
+                          </Link>
+                        );
+                      })()}
                       <InlineLinkSelect
                         value={comp.propertyId}
                         options={propertyOptions}
                         href={comp.propertyId ? `/properties/${comp.propertyId}` : undefined}
-                        onSave={(v) => updateMutation.mutate({ id: comp.id, field: "propertyId", value: v })}
+                        onSave={(v) => {
+                          updateMutation.mutate({ id: comp.id, field: "propertyId", value: v });
+                          // Auto-fill area + postcode from property address when area is empty
+                          if (v) {
+                            const prop = properties.find((p: any) => p.id === v);
+                            const addr = prop?.address as any;
+                            if (addr?.city && !comp.areaLocation) {
+                              updateMutation.mutate({ id: comp.id, field: "areaLocation", value: addr.city });
+                            }
+                            if (addr?.postcode && !comp.postcode) {
+                              updateMutation.mutate({ id: comp.id, field: "postcode", value: addr.postcode });
+                            }
+                          }
+                        }}
                         compact
                       />
+                      {!comp.propertyId && !propertyByName.get(normName(comp.name || "")) && (
+                        <a
+                          href={buildGoogleMapsUrl((comp.address as any)?.formatted || comp.name) || "#"}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="shrink-0 p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-blue-600 transition-colors"
+                          title="View on Google Maps"
+                        >
+                          <MapPin className="w-3 h-3" />
+                        </a>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 flex-wrap">
                       {comp.postcode && <span className="text-[10px] text-muted-foreground">{comp.postcode}</span>}
-                      {comp.sourceEvidence === "News Feed" && <span className="text-[9px] px-1 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">News</span>}
-                      {comp.sourceEvidence === "Team Email" && <span className="text-[9px] px-1 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">Email</span>}
-                      {comp.sourceEvidence === "SharePoint File" && <span className="text-[9px] px-1 rounded bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-400">File</span>}
-                      {comp.sourceEvidence === "BGP Direct" && <span className="text-[9px] px-1 rounded bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">BGP</span>}
+                      {(() => {
+                        const src = normaliseSource(comp.sourceEvidence);
+                        if (!src) return null;
+                        return <span className={`text-[9px] px-1 rounded border ${SOURCE_TYPES[src].badgeClass}`} title={SOURCE_TYPES[src].description}>{SOURCE_TYPES[src].label}</span>;
+                      })()}
                       {comp.dealId && dealById.get(comp.dealId) && (
                         <span className="text-[9px] px-1 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 truncate max-w-[140px]" title={dealById.get(comp.dealId)?.name}>
                           {dealById.get(comp.dealId)?.name}
@@ -1892,16 +2789,9 @@ export default function Comps() {
                   <td className="px-2 py-1.5">
                     <div className="flex flex-col gap-0.5">
                       <InlineLabelSelect
-                        value={comp.sourceEvidence || ""}
-                        options={["BGP Direct", "News Feed", "Team Email", "SharePoint File", "Agent", "Other"]}
-                        colorMap={{
-                          "BGP Direct": "bg-green-600 text-white",
-                          "News Feed": "bg-amber-600 text-white",
-                          "Team Email": "bg-purple-600 text-white",
-                          "SharePoint File": "bg-cyan-600 text-white",
-                          "Agent": "bg-blue-600 text-white",
-                          "Other": "bg-gray-600 text-white",
-                        }}
+                        value={normaliseSource(comp.sourceEvidence) || comp.sourceEvidence || ""}
+                        options={SOURCE_LIST as unknown as string[]}
+                        colorMap={SOURCE_LIST.reduce<Record<string, string>>((m, k) => { m[k] = SOURCE_TYPES[k].badgeClass; return m; }, {})}
                         onSave={v => updateMutation.mutate({ id: comp.id, field: "sourceEvidence", value: v })}
                       />
                       {(comp as any).sourceUrl && (
@@ -2043,6 +2933,10 @@ export default function Comps() {
         <InvestmentCompsPage embedded />
       </TabsContent>
 
+      <TabsContent value="lease-events" className="flex-1 mt-0 data-[state=inactive]:hidden overflow-hidden">
+        <LeaseEventsPage embedded />
+      </TabsContent>
+
       <TabsContent value="leads" className="flex-1 overflow-auto mt-0 p-4">
         <div className="mb-3 flex items-center justify-between">
           <div>
@@ -2172,13 +3066,28 @@ export default function Comps() {
                           </DropdownMenu>
                         </td>
                         <td className="px-2 py-1.5 truncate">
-                          <Link
-                            href={propertyLinkFor(lead)}
-                            className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block w-full"
-                            data-testid={`lead-name-${lead.id}`}
-                          >
-                            {lead.name || "Untitled"}
-                          </Link>
+                          {(() => {
+                            const link = propertyLinkFor(lead);
+                            return link.external ? (
+                              <a
+                                href={link.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block w-full"
+                                data-testid={`lead-name-${lead.id}`}
+                              >
+                                {lead.name || "Untitled"}
+                              </a>
+                            ) : (
+                              <Link
+                                href={link.href}
+                                className="text-left font-medium hover:text-primary hover:underline transition-colors truncate block w-full"
+                                data-testid={`lead-name-${lead.id}`}
+                              >
+                                {lead.name || "Untitled"}
+                              </Link>
+                            );
+                          })()}
                           {lead.postcode && <div className="text-[10px] text-muted-foreground">{lead.postcode}</div>}
                         </td>
                         <td className="px-2 py-1.5 truncate">{lead.tenant || "—"}</td>
@@ -2432,7 +3341,41 @@ export default function Comps() {
           <div className="space-y-3 mt-2">
             <div>
               <label className="text-xs font-medium mb-1 block">Property / Address *</label>
-              <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="10 Mount Street, W1K" className="h-9" data-testid="create-comp-name" />
+              <PropertyAddressInput
+                value={newName}
+                propertyOptions={propertyOptions}
+                onSelectProperty={(p) => {
+                  setNewName(p.name);
+                  setNewPropertyId(p.id);
+                  setNewAddress(null);
+                  // Auto-fill area from property if available
+                  const prop = properties.find((pr: any) => pr.id === p.id);
+                  if (prop) {
+                    const addr = prop.address as any;
+                    if (addr?.city && !newArea) setNewArea(addr.city);
+                    if (addr?.postcode && !newPostcode) setNewPostcode(addr.postcode);
+                  }
+                }}
+                onSelectAddress={(addr) => {
+                  setNewName(addr.formatted);
+                  setNewPropertyId(null);
+                  setNewAddress(addr);
+                  if (addr.city && !newArea) setNewArea(addr.city);
+                  if (addr.region && !newArea) setNewArea(addr.region);
+                  if (addr.postcode) setNewPostcode(addr.postcode);
+                }}
+                onManualInput={(v) => { setNewName(v); setNewPropertyId(null); setNewAddress(null); }}
+              />
+              {newPropertyId && (
+                <p className="text-[10px] text-green-600 mt-1 flex items-center gap-1">
+                  <Building2 className="w-2.5 h-2.5" /> Linked to BGP property
+                </p>
+              )}
+              {!newPropertyId && newAddress && (
+                <p className="text-[10px] text-blue-600 mt-1 flex items-center gap-1">
+                  <MapPin className="w-2.5 h-2.5" /> Google address
+                </p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -2492,8 +3435,11 @@ export default function Comps() {
               disabled={!newName.trim() || createMutation.isPending}
               onClick={() => createMutation.mutate({
                 name: newName.trim(),
+                propertyId: newPropertyId || undefined,
+                address: newAddress ? { formatted: newAddress.formatted, placeId: newAddress.placeId, lat: newAddress.lat, lng: newAddress.lng, street: newAddress.street, city: newAddress.city, region: newAddress.region, postcode: newAddress.postcode, country: newAddress.country } : undefined,
                 tenant: newTenant || null,
                 areaLocation: newArea || null,
+                postcode: newPostcode || null,
                 useClass: newUseClass || null,
                 transactionType: newTxnType || null,
                 headlineRent: newHeadlineRent || null,
@@ -2509,15 +3455,15 @@ export default function Comps() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={calcOpen} onOpenChange={setCalcOpen}>
-        <DialogContent className="max-w-lg">
+      <Dialog open={calcOpen} onOpenChange={(v) => { setCalcOpen(v); if (!v) setCalcComp(null); }}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Calculator className="w-5 h-5" />
-              Net Effective Rent Calculator
+              Rent Analysis{calcComp ? ` — ${calcComp.name}` : ""}
             </DialogTitle>
           </DialogHeader>
-          <NetRentCalculator onClose={() => setCalcOpen(false)} />
+          <NetRentCalculator key={calcComp?.id || "blank"} onClose={() => setCalcOpen(false)} prefillComp={calcComp || undefined} />
           <div className="mt-3 p-3 bg-muted/30 rounded-lg">
             <p className="text-[10px] text-muted-foreground leading-relaxed">
               <span className="font-semibold">RICS Professional Statement:</span> Calculations follow the RICS Valuation Global Standards (Red Book) methodology. Zone A analysis per RICS Code of Measuring Practice 6th Edition — retail premises measured on ITZA basis with standard zone depth of 6.1m (20ft). GIA/NIA per RICS Property Measurement 2nd Edition (2018) aligned with IPMS.

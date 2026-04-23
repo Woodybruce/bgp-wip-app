@@ -2,6 +2,7 @@ import { db } from "./db";
 import { voaRatings } from "@shared/schema";
 import { ilike, or, and, sql } from "drizzle-orm";
 import { escapeLike } from "./utils/escape-like";
+import { cached } from "./utils/intel-cache";
 
 const LR_BASE = "https://landregistry.data.gov.uk/data";
 
@@ -34,17 +35,19 @@ function extractLabel(obj: any): string {
 }
 
 async function lookupPricePaid(postcode: string, street?: string): Promise<any[]> {
-  try {
-    const params = new URLSearchParams();
-    params.set("propertyAddress.postcode", postcode.toUpperCase());
-    if (street) params.set("propertyAddress.street", street.toUpperCase());
-    params.set("_pageSize", "20");
-    params.set("_sort", "-transactionDate");
+  const cacheKey = `ppi:${postcode.toUpperCase().replace(/\s/g, "")}:${(street || "").toUpperCase()}`;
+  return cached(cacheKey, async () => {
+    try {
+      const params = new URLSearchParams();
+      params.set("propertyAddress.postcode", postcode.toUpperCase());
+      if (street) params.set("propertyAddress.street", street.toUpperCase());
+      params.set("_pageSize", "20");
+      params.set("_sort", "-transactionDate");
 
-    const resp = await fetch(`${LR_BASE}/ppi/transaction-record.json?${params}`);
-    if (!resp.ok) return [];
-    const data = await resp.json();
-    const items = data.result?.items || [];
+      const resp = await fetch(`${LR_BASE}/ppi/transaction-record.json?${params}`);
+      if (!resp.ok) return [];
+      const data = await resp.json();
+      const items = data.result?.items || [];
 
     return items.map((item: any) => ({
       price: item.pricePaid,
@@ -55,19 +58,28 @@ async function lookupPricePaid(postcode: string, street?: string): Promise<any[]
         item.propertyAddress?.street ? extractLabel(item.propertyAddress.street) : "",
         item.propertyAddress?.town ? extractLabel(item.propertyAddress.town) : "",
       ].filter(Boolean).join(", "),
-      postcode: item.propertyAddress?.postcode || "",
-      propertyType: extractLabel(item.propertyType),
-      estateType: extractLabel(item.estateType),
-      newBuild: item.newBuild === true,
-    }));
-  } catch (e) {
-    console.error("[property-lookup] Price paid error:", e);
-    return [];
-  }
+        postcode: item.propertyAddress?.postcode || "",
+        propertyType: extractLabel(item.propertyType),
+        estateType: extractLabel(item.estateType),
+        newBuild: item.newBuild === true,
+      }));
+    } catch (e) {
+      console.error("[property-lookup] Price paid error:", e);
+      return [];
+    }
+  });
 }
 
 async function lookupVOA(postcode: string, street?: string): Promise<any[]> {
+  // VOA is now served by a local SQLite snapshot (server/voa-sqlite.ts).
+  // If the file is missing, the SQLite reader returns [] and we fall through
+  // to the legacy Postgres table as a safety net during rollout.
   try {
+    const { voaSqliteAvailable, lookupVoaByPostcode } = await import("./voa-sqlite");
+    if (voaSqliteAvailable()) {
+      return lookupVoaByPostcode(postcode, street, 20);
+    }
+    // Fallback: legacy Postgres path (will be dropped in Phase 2)
     const normalizedPc = postcode.replace(/\s+/g, "").trim();
     const formattedPc = normalizedPc.length > 3
       ? normalizedPc.slice(0, -3) + " " + normalizedPc.slice(-3)
@@ -311,29 +323,32 @@ async function lookupPlanningData(postcode: string): Promise<any> {
 
     const results: Record<string, any[]> = {};
 
-    await Promise.all(
-      datasets.map(async (dataset) => {
-        try {
-          const resp = await fetch(
-            `https://www.planning.data.gov.uk/entity.json?dataset=${dataset}&longitude=${lng}&latitude=${lat}&limit=10`,
-            { signal: AbortSignal.timeout(15000) }
-          );
-          if (!resp.ok) return;
-          const data = await resp.json();
-          if (data.entities?.length > 0) {
-            results[dataset] = data.entities.map((e: any) => ({
-              name: e.name || e.reference,
-              reference: e.reference,
-              dataset: e.dataset,
-              startDate: e["start-date"],
-              documentUrl: e["document-url"] || e["documentation-url"],
-              designationDate: e["designation-date"],
-            }));
+    const [, planningApps] = await Promise.all([
+      Promise.all(
+        datasets.map(async (dataset) => {
+          try {
+            const resp = await fetch(
+              `https://www.planning.data.gov.uk/entity.json?dataset=${dataset}&longitude=${lng}&latitude=${lat}&limit=10`,
+              { signal: AbortSignal.timeout(15000) }
+            );
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (data.entities?.length > 0) {
+              results[dataset] = data.entities.map((e: any) => ({
+                name: e.name || e.reference,
+                reference: e.reference,
+                dataset: e.dataset,
+                startDate: e["start-date"],
+                documentUrl: e["document-url"] || e["documentation-url"],
+                designationDate: e["designation-date"],
+              }));
+            }
+          } catch {
           }
-        } catch {
-        }
-      })
-    );
+        })
+      ),
+      lookupPlanningApplications(lat, lng),
+    ]);
 
     return {
       conservationAreas: results["conservation-area"] || [],
@@ -350,11 +365,41 @@ async function lookupPlanningData(postcode: string): Promise<any> {
       locallyListedBuildings: results["locally-listed-building"] || [],
       heritageCoast: results["heritage-coast"] || [],
       specialAreasOfConservation: results["special-area-of-conservation"] || [],
+      planningApplications: planningApps || [],
       coordinates: { lat, lng },
     };
   } catch (e) {
     console.error("[property-lookup] Planning data error:", e);
     return null;
+  }
+}
+
+async function lookupPlanningApplications(lat: number, lng: number): Promise<any[]> {
+  try {
+    const twentyYearsAgo = new Date();
+    twentyYearsAgo.setFullYear(twentyYearsAgo.getFullYear() - 20);
+    const fromDate = twentyYearsAgo.toISOString().split("T")[0]; // YYYY-MM-DD
+
+    // Query planning.data.gov.uk for planning applications within ~500m radius
+    const url = `https://www.planning.data.gov.uk/entity.json?dataset=planning-application&longitude=${lng}&latitude=${lat}&geometry_relation=intersects&limit=100&entry_date_after=${fromDate}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!resp.ok) return [];
+    const data = await resp.json() as any;
+    const entities = data.entities || [];
+    return entities.map((e: any) => ({
+      reference: e.reference || e["application-reference"],
+      address: e.name || e.address || e["site-address"] || "",
+      description: e.description || e["development-description"] || e.proposal || "",
+      status: e["application-status"] || e.status || "",
+      type: e["application-type"] || e.type || "",
+      decidedAt: e["decision-date"] || e["determined-date"] || "",
+      receivedAt: e["entry-date"] || e["received-date"] || e["start-date"] || "",
+      decision: e.decision || "",
+      documentUrl: e["document-url"] || e["documentation-url"] || "",
+    })).filter((p: any) => p.reference || p.description);
+  } catch (e) {
+    console.error("[property-lookup] Planning applications lookup error:", e);
+    return [];
   }
 }
 
@@ -393,7 +438,7 @@ async function lookupTflNearby(postcode: string): Promise<any> {
 const PROPERTYDATA_CORE_ENDPOINTS = [
   { key: "freeholds" },
   { key: "leaseholds" },
-  { key: "planning-applications", extra: { max_age: "3650" } },
+  { key: "planning-applications", extra: { max_age: "7300" } },
 ];
 
 const PROPERTYDATA_MARKET_ENDPOINTS = [
@@ -455,84 +500,148 @@ const PROPERTYDATA_LAYER_MAP: Record<PropertyDataLayer, Array<{ key: string; ext
   residential: PROPERTYDATA_RESIDENTIAL_ENDPOINTS,
 };
 
-async function lookupPropertyDataCoUk(postcode: string, layers?: PropertyDataLayer[]): Promise<any> {
+async function lookupPropertyDataCoUk(postcode: string, layers?: PropertyDataLayer[], uprn?: string): Promise<any> {
   const apiKey = process.env.PROPERTYDATA_API_KEY;
   if (!apiKey) return null;
+  const cacheKey = `pdata:${postcode.replace(/\s+/g, "").toUpperCase()}:${(layers || ["core"]).join(",")}:${uprn || ""}`;
+  return cached(cacheKey, async () => {
   try {
     const cleanPc = postcode.replace(/\s+/g, "");
     const activeLayers = layers || ["core"];
+
+    // Always query the postcode-wide /freeholds + /leaseholds when a
+    // postcode is available. Even when we have a UPRN, postcode context
+    // is essential: a business-name address like "Shell Recharge Charging
+    // Station" has a UPRN that often has no registered Land Registry
+    // title, so /uprn-title returns empty and the UI shows "no titles"
+    // even though the parent building and every neighbouring property in
+    // the postcode is registered. Running both gives us the UPRN-precise
+    // match (if any) + the postcode-wide context to fall back on.
+    const ownershipEndpoints = ["freeholds", "leaseholds"];
+
     const endpoints: Array<{ key: string; extra?: Record<string, string> }> = [];
     for (const layer of activeLayers) {
       const layerEndpoints = PROPERTYDATA_LAYER_MAP[layer];
-      if (layerEndpoints) endpoints.push(...layerEndpoints);
+      if (layerEndpoints) {
+        for (const ep of layerEndpoints) {
+          endpoints.push(ep);
+        }
+      }
     }
-    if (endpoints.length === 0) return null;
+    if (endpoints.length === 0 && !uprn) return null;
 
     const results: any = {};
-    const BATCH_SIZE = 4;
-    const BATCH_DELAY = 2800;
-    for (let i = 0; i < endpoints.length; i += BATCH_SIZE) {
-      const batch = endpoints.slice(i, i + BATCH_SIZE);
-      await Promise.all(batch.map(async (ep) => {
-        try {
-          const params = new URLSearchParams({ key: apiKey, postcode: cleanPc, ...(ep.extra || {}) });
-          const res = await fetch(`https://api.propertydata.co.uk/${ep.key}?${params}`, { signal: AbortSignal.timeout(20000) });
-          if (!res.ok) { results[ep.key] = null; return; }
-          const data = await res.json() as any;
-          results[ep.key] = data.status === "error" ? null : data;
-        } catch {
-          results[ep.key] = null;
-        }
-      }));
-      if (i + BATCH_SIZE < endpoints.length) {
-        await new Promise(r => setTimeout(r, BATCH_DELAY));
-      }
+
+    // UPRN-specific lookups — building-level precision
+    if (uprn) {
+      await Promise.all([
+        (async () => {
+          try {
+            const res = await fetch(`https://api.propertydata.co.uk/uprn?key=${apiKey}&uprn=${encodeURIComponent(uprn)}`, { signal: AbortSignal.timeout(15000) });
+            if (!res.ok) return;
+            const data = await res.json() as any;
+            results["uprn"] = data.status === "error" ? null : data;
+          } catch { results["uprn"] = null; }
+        })(),
+        (async () => {
+          try {
+            const res = await fetch(`https://api.propertydata.co.uk/uprn-title?key=${apiKey}&uprn=${encodeURIComponent(uprn)}`, { signal: AbortSignal.timeout(15000) });
+            if (!res.ok) return;
+            const data = await res.json() as any;
+            results["uprn-title"] = data.status === "error" ? null : data;
+          } catch { results["uprn-title"] = null; }
+        })(),
+      ]);
+      console.log(`[property-lookup] UPRN ${uprn} → uprn:${!!results["uprn"]} uprn-title:${!!results["uprn-title"]}`);
     }
+
+    // Postcode-based endpoints (planning, conservation, flood, etc.)
+    if (cleanPc && endpoints.length > 0) {
+      const BATCH_SIZE = 4;
+      const BATCH_DELAY = 2800;
+      for (let i = 0; i < endpoints.length; i += BATCH_SIZE) {
+        const batch = endpoints.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (ep) => {
+          try {
+            const params = new URLSearchParams({ key: apiKey, postcode: cleanPc, ...(ep.extra || {}) });
+            const res = await fetch(`https://api.propertydata.co.uk/${ep.key}?${params}`, { signal: AbortSignal.timeout(20000) });
+            if (!res.ok) { results[ep.key] = null; return; }
+            const data = await res.json() as any;
+            results[ep.key] = data.status === "error" ? null : data;
+          } catch {
+            results[ep.key] = null;
+          }
+        }));
+        if (i + BATCH_SIZE < endpoints.length) {
+          await new Promise(r => setTimeout(r, BATCH_DELAY));
+        }
+      }
+
+      // Enrich postcode-wide title lists when UPRN wasn't available
+      const enrichTitles = async (titles: any[]) => {
+        if (!titles || titles.length === 0) return titles;
+        const TITLE_BATCH = 3;
+        const TITLE_DELAY = 1200;
+        for (let i = 0; i < Math.min(titles.length, 15); i += TITLE_BATCH) {
+          const batch = titles.slice(i, i + TITLE_BATCH);
+          await Promise.all(batch.map(async (t) => {
+            if (!t.title_number) return;
+            try {
+              const r = await fetch(`https://api.propertydata.co.uk/title?key=${apiKey}&title=${encodeURIComponent(t.title_number)}`, { signal: AbortSignal.timeout(12000) });
+              if (!r.ok) return;
+              const d = await r.json() as any;
+              if (d.status !== "success" || !d.data) return;
+              const ownership = d.data.ownership;
+              if (ownership?.details?.owner) {
+                t.proprietor_name_1 = ownership.details.owner;
+                t.proprietor_category = ownership.type;
+                if (ownership.details.company_reg) t.company_reg = ownership.details.company_reg;
+                if (ownership.details.owner_address) t.proprietor_address = ownership.details.owner_address;
+              }
+              if (d.data.plot_size) t.plot_size = d.data.plot_size;
+              if (d.data.uprns) t.uprns = d.data.uprns;
+            } catch {}
+          }));
+          if (i + TITLE_BATCH < Math.min(titles.length, 15)) {
+            await new Promise(r => setTimeout(r, TITLE_DELAY));
+          }
+        }
+        return titles;
+      };
+
+      if (results["freeholds"]?.data) results["freeholds"].data = await enrichTitles(results["freeholds"].data);
+      if (results["leaseholds"]?.data) results["leaseholds"].data = await enrichTitles(results["leaseholds"].data);
+    }
+
+    // If /uprn-title returned titles, merge them into the postcode-wide
+    // freeholds/leaseholds arrays so the Ownership UI sees a unified list.
+    // UPRN-matched rows are tagged with _uprnMatched so the client can
+    // prioritise them over postcode-context entries.
+    const uprnTitleData = results["uprn-title"]?.data;
+    if (uprnTitleData) {
+      const mergeList = (targetKey: "freeholds" | "leaseholds", incoming: any[] | undefined) => {
+        if (!Array.isArray(incoming) || incoming.length === 0) return;
+        if (!results[targetKey]) results[targetKey] = { data: [] };
+        if (!Array.isArray(results[targetKey].data)) results[targetKey].data = [];
+        const seen = new Set<string>(results[targetKey].data.map((t: any) => (t.title_number || "").toUpperCase()));
+        for (const row of incoming) {
+          const tn = (row.title_number || "").toUpperCase();
+          if (tn && seen.has(tn)) continue;
+          results[targetKey].data.push({ ...row, _uprnMatched: true });
+          if (tn) seen.add(tn);
+        }
+      };
+      mergeList("freeholds", uprnTitleData.freeholds);
+      mergeList("leaseholds", uprnTitleData.leaseholds);
+    }
+
     const hasAnyData = Object.values(results).some(v => v !== null);
     if (!hasAnyData) return null;
-
-    const enrichTitles = async (titles: any[]) => {
-      if (!titles || titles.length === 0) return titles;
-      const TITLE_BATCH = 3;
-      const TITLE_DELAY = 1200;
-      for (let i = 0; i < Math.min(titles.length, 15); i += TITLE_BATCH) {
-        const batch = titles.slice(i, i + TITLE_BATCH);
-        await Promise.all(batch.map(async (t) => {
-          if (!t.title_number) return;
-          try {
-            const r = await fetch(`https://api.propertydata.co.uk/title?key=${apiKey}&title=${encodeURIComponent(t.title_number)}`, { signal: AbortSignal.timeout(12000) });
-            if (!r.ok) return;
-            const d = await r.json() as any;
-            if (d.status !== "success" || !d.data) return;
-            const ownership = d.data.ownership;
-            if (ownership?.details?.owner) {
-              t.proprietor_name_1 = ownership.details.owner;
-              t.proprietor_category = ownership.type;
-              if (ownership.details.company_reg) t.company_reg = ownership.details.company_reg;
-              if (ownership.details.owner_address) t.proprietor_address = ownership.details.owner_address;
-            }
-            if (d.data.plot_size) t.plot_size = d.data.plot_size;
-            if (d.data.uprns) t.uprns = d.data.uprns;
-          } catch {}
-        }));
-        if (i + TITLE_BATCH < Math.min(titles.length, 15)) {
-          await new Promise(r => setTimeout(r, TITLE_DELAY));
-        }
-      }
-      return titles;
-    };
-
-    if (results["freeholds"]?.data) {
-      results["freeholds"].data = await enrichTitles(results["freeholds"].data);
-    }
-    if (results["leaseholds"]?.data) {
-      results["leaseholds"].data = await enrichTitles(results["leaseholds"].data);
-    }
-
     return results;
   } catch {
     return null;
   }
+  });
 }
 
 export async function performPropertyLookup(params: {
@@ -540,10 +649,11 @@ export async function performPropertyLookup(params: {
   postcode?: string;
   street?: string;
   buildingNameOrNumber?: string;
+  uprn?: string;
   layers?: string[];
   propertyDataLayers?: string[];
 }): Promise<PropertyLookupResult> {
-  const { address, postcode, street, buildingNameOrNumber, layers, propertyDataLayers } = params;
+  const { address, postcode, street, buildingNameOrNumber, uprn, layers, propertyDataLayers } = params;
 
   const pc = postcode || "";
   const st = street || "";
@@ -562,7 +672,7 @@ export async function performPropertyLookup(params: {
     shouldLoadExtended && pc ? lookupFloodRiskByPostcode(pc) : Promise.resolve(null),
     shouldLoadExtended && pc ? lookupListedBuildings(pc) : Promise.resolve([]),
     shouldLoadCore && pc ? lookupPlanningData(pc) : Promise.resolve(null),
-    pc ? lookupPropertyDataCoUk(pc, pdLayers) : Promise.resolve(null),
+    (pc || uprn) ? lookupPropertyDataCoUk(pc, pdLayers, uprn) : Promise.resolve(null),
     shouldLoadExtended && pc ? lookupTflNearby(pc) : Promise.resolve(null),
   ]);
 

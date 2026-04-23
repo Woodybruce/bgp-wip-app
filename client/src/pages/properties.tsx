@@ -2140,7 +2140,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
     try {
       const res = await fetch("/api/title-search/download-document", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         credentials: "include",
         body: JSON.stringify({ title: titleNum, document: docType }),
       });
@@ -2176,7 +2176,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
     }
     setSearchingTitles(true);
     try {
-      const res = await fetch(`/api/title-search/freeholds?postcode=${encodeURIComponent(postcode)}`, { credentials: "include" });
+      const res = await fetch(`/api/title-search/freeholds?postcode=${encodeURIComponent(postcode)}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error((await res.json()).error || "Search failed");
       const data = await res.json();
       const titles = data.data || [];
@@ -2202,7 +2202,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
     setLeaseholdDetails([]);
     setLeaseholdPage(0);
     try {
-      const fRes = await fetch(`/api/title-search/freeholds?postcode=${encodeURIComponent(postcode)}`, { credentials: "include" });
+      const fRes = await fetch(`/api/title-search/freeholds?postcode=${encodeURIComponent(postcode)}`, { credentials: "include", headers: getAuthHeaders() });
       if (!fRes.ok) throw new Error("Search failed");
       const fData = await fRes.json();
       const titles = fData.data || [];
@@ -2216,7 +2216,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
         const results = await Promise.allSettled(
           chunk.map(async (fh: any) => {
             const tn = fh.title_number || fh.title;
-            const lRes = await fetch(`/api/title-search/leaseholds/${encodeURIComponent(tn)}`, { credentials: "include" });
+            const lRes = await fetch(`/api/title-search/leaseholds/${encodeURIComponent(tn)}`, { credentials: "include", headers: getAuthHeaders() });
             if (!lRes.ok) throw new Error("Failed");
             return lRes.json();
           })
@@ -2260,7 +2260,7 @@ export function PropertyKycPanel({ property }: { property: CrmProperty }) {
 
       const res = await fetch("/api/title-search/leasehold-details", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         credentials: "include",
         body: JSON.stringify({ titles: batch }),
       });
@@ -3016,7 +3016,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
     try {
       const res = await fetch("/api/title-search/download-document", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         credentials: "include",
         body: JSON.stringify({ title: titleNumber, document: docType }),
       });
@@ -3048,7 +3048,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
     setExpandedLeaseholds(prev => ({ ...prev, [titleNumber]: true }));
     setLeaseholdsData(prev => ({ ...prev, [titleNumber]: { titles: [], details: [], loading: true, page: 0 } }));
     try {
-      const res = await fetch(`/api/title-search/leaseholds/${encodeURIComponent(titleNumber)}`, { credentials: "include" });
+      const res = await fetch(`/api/title-search/leaseholds/${encodeURIComponent(titleNumber)}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed");
       const data = await res.json();
       const titles = data.leaseholds || [];
@@ -3073,7 +3073,7 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
     try {
       const res = await fetch("/api/title-search/leasehold-details", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         credentials: "include",
         body: JSON.stringify({ titles: batch }),
       });

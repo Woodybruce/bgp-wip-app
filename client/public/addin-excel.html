@@ -52,6 +52,20 @@
     @keyframes spin { to { transform: rotate(360deg); } }
 
     #diag { position: fixed; bottom: 4px; left: 4px; font-size: 9px; color: #9ca3af; }
+
+    /* BGP comp writeback banner — shown only when the workbook has a _BGP_META sheet */
+    #bgpBanner { display: none; padding: 8px 10px; background: #f0f9ff; border-bottom: 1px solid #bae6fd;
+      font-size: 11px; color: #0c4a6e; flex-direction: column; gap: 4px; }
+    #bgpBanner.active { display: flex; }
+    #bgpBanner .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    #bgpBanner .label { font-weight: 600; }
+    #bgpBanner .sub { color: #075985; font-size: 10px; }
+    #bgpBanner button { height: 26px; padding: 0 10px; border: none; border-radius: 6px;
+      background: #0369a1; color: #fff; font-size: 11px; font-weight: 500; cursor: pointer; }
+    #bgpBanner button:disabled { opacity: 0.6; cursor: wait; }
+    #bgpBanner .status { font-size: 10px; margin-top: 2px; min-height: 12px; }
+    #bgpBanner .status.ok { color: #047857; }
+    #bgpBanner .status.err { color: #b91c1c; }
   </style>
 </head>
 <body>
@@ -77,6 +91,16 @@
         <div class="sub" id="userLabel">Claude Sonnet</div>
       </div>
       <button id="logoutBtn">Sign out</button>
+    </div>
+    <div id="bgpBanner">
+      <div class="row">
+        <div>
+          <div class="label">BGP comp linked</div>
+          <div class="sub" id="bgpBannerSub">—</div>
+        </div>
+        <button id="bgpPushBtn">Push to comp</button>
+      </div>
+      <div class="status" id="bgpStatus"></div>
     </div>
     <div class="messages" id="messages"></div>
     <div class="inputRow">
@@ -123,6 +147,7 @@
           addMessage("assistant", "Hi! I'm ChatBGP. Ask me anything about your workbook, BGP's CRM, or Excel formulas.");
         }
         setTimeout(function() { inputEl.focus(); }, 100);
+        try { refreshBgpBanner(); } catch (e) {}
       }
       function showLogin() {
         loginEl.style.display = "flex";
@@ -203,6 +228,138 @@
             return out;
           });
         } catch (e) { return ""; }
+      }
+
+      // ── BGP comp write-back ──────────────────────────────────────────
+      // When a workbook was exported from the BGP Rent Analysis dialog it carries a
+      // hidden `_BGP_META` sheet recording the comp id + the cells each CRM field
+      // maps to. We surface a banner and a one-click push-back button when present.
+
+      var bgpBanner    = document.getElementById("bgpBanner");
+      var bgpBannerSub = document.getElementById("bgpBannerSub");
+      var bgpPushBtn   = document.getElementById("bgpPushBtn");
+      var bgpStatus    = document.getElementById("bgpStatus");
+      var bgpState     = null;
+
+      async function readBgpMeta() {
+        if (!window.Excel) return null;
+        try {
+          return await Excel.run(async function(ctx) {
+            var sheet = ctx.workbook.worksheets.getItemOrNullObject("_BGP_META");
+            sheet.load("name");
+            await ctx.sync();
+            if (sheet.isNullObject) return null;
+            var range = sheet.getUsedRange();
+            range.load("values");
+            await ctx.sync();
+            var rows = range.values || [];
+            var meta = { snapshot: {}, writeback: {} };
+            rows.forEach(function(r) {
+              if (!r || r.length < 2) return;
+              var k = String(r[0] || "");
+              var v = r[1];
+              if (!k || k === "key") return;
+              if (k.indexOf("snapshot:") === 0) meta.snapshot[k.slice(9)] = v;
+              else if (k.indexOf("writeback:") === 0) meta.writeback[k.slice(10)] = String(v || "");
+              else meta[k] = v;
+            });
+            return meta;
+          });
+        } catch (e) { return null; }
+      }
+
+      async function resolveWritebackValues(writeback) {
+        return Excel.run(async function(ctx) {
+          var entries = Object.keys(writeback);
+          var ranges = entries.map(function(field) {
+            var ref = writeback[field];
+            var parts = ref.split("!");
+            if (parts.length !== 2) return null;
+            var sheetName = parts[0].replace(/^'/, "").replace(/'$/, "");
+            var addr = parts[1].replace(/\$/g, "");
+            try {
+              return { field: field, range: ctx.workbook.worksheets.getItem(sheetName).getRange(addr) };
+            } catch (e) { return null; }
+          }).filter(Boolean);
+          ranges.forEach(function(r) { r.range.load("values"); });
+          await ctx.sync();
+          var out = {};
+          ranges.forEach(function(r) {
+            var v = r.range.values && r.range.values[0] ? r.range.values[0][0] : null;
+            if (v !== null && v !== "" && typeof v !== "undefined") out[r.field] = v;
+          });
+          return out;
+        });
+      }
+
+      async function refreshBgpBanner() {
+        var meta = await readBgpMeta();
+        bgpState = meta && meta.bgpCompId ? meta : null;
+        if (!bgpState) {
+          bgpBanner.classList.remove("active");
+          return;
+        }
+        var kind = bgpState.bgpKind || "analysis";
+        var label = (kind === "ner" ? "NER" : kind === "gia" ? "GIA" : kind === "itza" ? "ITZA" : kind) + " · " + (bgpState.snapshot.address || "Comp " + String(bgpState.bgpCompId).slice(0, 8));
+        bgpBannerSub.textContent = label;
+        bgpStatus.textContent = "";
+        bgpStatus.className = "status";
+        bgpBanner.classList.add("active");
+      }
+
+      async function pushBgpWriteback() {
+        if (!bgpState || !bgpState.bgpCompId) return;
+        var token = getToken();
+        if (!token) { showLogin(); return; }
+        bgpPushBtn.disabled = true;
+        bgpStatus.className = "status";
+        bgpStatus.textContent = "Reading cells…";
+        try {
+          var values = await resolveWritebackValues(bgpState.writeback || {});
+          // Normalise numbers to strings so they match the CRM's text columns.
+          var payload = {};
+          Object.keys(values).forEach(function(k) {
+            var v = values[k];
+            if (typeof v === "number") payload[k] = String(Math.round(v * 100) / 100);
+            else payload[k] = String(v);
+          });
+          if (Object.keys(payload).length === 0) {
+            bgpStatus.className = "status err";
+            bgpStatus.textContent = "No writeback cells resolved. Sheet layout may have changed.";
+            return;
+          }
+          bgpStatus.textContent = "Pushing " + Object.keys(payload).length + " field(s)…";
+          var base = bgpState.bgpApiBase || "";
+          var r = await fetch(base + "/api/crm/comps/" + encodeURIComponent(bgpState.bgpCompId), {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+            body: JSON.stringify(payload),
+          });
+          if (r.status === 401) { clearToken(); showLogin(); return; }
+          if (!r.ok) throw new Error("Server error (" + r.status + ")");
+          bgpStatus.className = "status ok";
+          bgpStatus.textContent = "Updated: " + Object.keys(payload).join(", ");
+        } catch (err) {
+          bgpStatus.className = "status err";
+          bgpStatus.textContent = "Push failed: " + (err.message || "unknown");
+        } finally {
+          bgpPushBtn.disabled = false;
+        }
+      }
+
+      if (bgpPushBtn) bgpPushBtn.addEventListener("click", pushBgpWriteback);
+
+      if (window.Office && Office.onReady) {
+        Office.onReady().then(function() {
+          refreshBgpBanner();
+          try {
+            // Re-check when the active workbook or sheet changes.
+            Excel.run(async function(ctx) {
+              ctx.workbook.onActivated.add(refreshBgpBanner);
+              await ctx.sync();
+            }).catch(function() {});
+          } catch (e) {}
+        });
       }
 
       var conversation = [];

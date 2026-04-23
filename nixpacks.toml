@@ -1,0 +1,5 @@
+[phases.setup]
+# poppler_utils gives us `pdfimages` (extracts embedded photos) and
+# `pdftoppm` (rasterises pages) — used by server/pdf-image-extract.ts
+# for property-pathway Stage 8 brochure image sweeps.
+nixPkgs = ["...", "poppler_utils"]

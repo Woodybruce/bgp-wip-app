@@ -11,8 +11,8 @@ import { setupAdvancedModelsRoutes } from "./models-advanced";
 import { buildInvestmentModel, buildDCFModel, analyzeAdvancedWorkbook, applyBGPBranding, buildModelForAddin } from "./excel-builder";
 import { getValidMsToken } from "./microsoft";
 import { performPropertyLookup, formatPropertyReport } from "./property-lookup";
-import { crmDeals, crmContacts, crmCompanies, crmProperties, chatbgpLearnings, appFeedbackLog, appChangeRequests, excelTemplates, excelModelRuns } from "@shared/schema";
-import { ilike, or, eq, sql } from "drizzle-orm";
+import { crmDeals, crmContacts, crmCompanies, crmProperties, chatbgpLearnings, appFeedbackLog, appChangeRequests, excelTemplates, excelModelRuns, excelModelRunVersions } from "@shared/schema";
+import { ilike, or, eq, sql, desc, and } from "drizzle-orm";
 import { saveFileFromDisk, ensureFileOnDisk, syncFileToDisk } from "./file-storage";
 
 const UPLOAD_DIR = path.join(process.cwd(), "ChatBGP", "templates");
@@ -1283,13 +1283,15 @@ export function setupModelsRoutes(app: Express) {
       const run = await storage.getExcelModelRun(req.params.id as string);
       if (!run) return res.status(404).json({ message: "Run not found" });
       if (!run.generatedFilePath) return res.status(404).json({ message: "Generated file not found" });
-      await ensureRunFile(run.generatedFilePath);
-      if (!fs.existsSync(run.generatedFilePath)) {
-        return res.status(404).json({ message: "Generated file not found" });
-      }
-      const resolved = path.resolve(run.generatedFilePath);
+      // Rebuild the path inside the *current* RUNS_DIR so that stale absolute
+      // paths stored from a previous Railway container still resolve.
+      const resolved = path.resolve(path.join(RUNS_DIR, path.basename(run.generatedFilePath)));
       if (!resolved.startsWith(path.resolve(RUNS_DIR))) {
         return res.status(403).json({ message: "Access denied" });
+      }
+      await ensureRunFile(resolved);
+      if (!fs.existsSync(resolved)) {
+        return res.status(404).json({ message: "Generated file not found" });
       }
       const safeName = run.name.replace(/[^a-zA-Z0-9 _-]/g, "_");
       res.download(resolved, `${safeName}.xlsx`);
@@ -1369,6 +1371,172 @@ export function setupModelsRoutes(app: Express) {
     } catch (err: any) {
       console.error("[save-to-sharepoint]", err);
       res.status(500).json({ message: `Failed to save to SharePoint: ${err?.message}` });
+    }
+  });
+
+  // Save a new version of a model run's workbook (e.g. after user edits in Excel add-in).
+  // Stores a versioned copy, extracts updated outputs via the template's output mapping,
+  // mirrors to SharePoint, and updates the run's pointer to the latest file.
+  app.post("/api/models/runs/:id/save-version", requireAuth, upload.single("file"), async (req: Request, res: Response) => {
+    try {
+      const runId = req.params.id as string;
+      const run = await storage.getExcelModelRun(runId);
+      if (!run) return res.status(404).json({ message: "Run not found" });
+      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+      const template = await storage.getExcelTemplate(run.templateId);
+      const outputMapping = template ? JSON.parse(template.outputMapping || "{}") : {};
+      const inputMapping = template ? JSON.parse(template.inputMapping || "{}") : {};
+
+      const existingVersions = await db
+        .select()
+        .from(excelModelRunVersions)
+        .where(eq(excelModelRunVersions.modelRunId, runId));
+      const nextVersion = existingVersions.length + 1;
+
+      const versionedFileName = `run-${runId}-v${nextVersion}-${Date.now()}.xlsx`;
+      const versionedFilePath = path.join(RUNS_DIR, versionedFileName);
+      fs.copyFileSync(req.file.path, versionedFilePath);
+      try { fs.unlinkSync(req.file.path); } catch {}
+      try { await saveFileFromDisk(`runs/${versionedFileName}`, versionedFilePath, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", `${run.name} v${nextVersion}.xlsx`); } catch {}
+
+      let newOutputs: Record<string, any> = {};
+      let newInputs: Record<string, any> = JSON.parse(run.inputValues || "{}");
+      try {
+        const wb = XLSX.readFile(versionedFilePath);
+        newOutputs = extractOutputs(wb, outputMapping);
+        if (inputMapping && typeof inputMapping === "object") {
+          const reread: Record<string, any> = {};
+          for (const [key, mapping] of Object.entries(inputMapping as Record<string, any>)) {
+            if (mapping?.sheet && mapping?.cell) {
+              const ws = wb.Sheets[mapping.sheet];
+              const cell = ws?.[mapping.cell];
+              if (cell && cell.v !== undefined) reread[key] = cell.v;
+            }
+          }
+          if (Object.keys(reread).length) newInputs = reread;
+        }
+      } catch (err: any) {
+        console.warn(`[save-version] output extraction failed:`, err?.message);
+      }
+
+      let sharepointUrl: string | null = null;
+      let sharepointDriveItemId: string | null = null;
+      try {
+        const { getValidMsToken } = await import("./microsoft");
+        const msToken = await getValidMsToken(req);
+        if (msToken) {
+          const SP_HOST = "brucegillinghampollard.sharepoint.com";
+          const SP_SITE = "/sites/BGPsharedrive";
+          const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+          if (siteRes.ok) {
+            const site = await siteRes.json();
+            const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
+            if (drivesRes.ok) {
+              const drives = await drivesRes.json();
+              const bgpDrive = drives.value?.find((d: any) => d.name === "BGP share drive" || d.name === "Documents");
+              if (bgpDrive) {
+                let folderPath = "BGP share drive/Models";
+                if (run.propertyId) {
+                  const [prop] = await db.select().from(crmProperties).where(eq(crmProperties.id, run.propertyId)).limit(1);
+                  if (prop?.name) folderPath = `BGP share drive/Investment/${prop.name}/Financial Model`;
+                }
+                const fileName = `${(run.name || "model-run").replace(/[^a-zA-Z0-9 _-]/g, "_")}_v${nextVersion}.xlsx`;
+                const cleanFolder = folderPath.replace(/^\/+|\/+$/g, "");
+                const encoded = encodeURIComponent(cleanFolder).replace(/%2F/g, "/");
+                const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${bgpDrive.id}/root:/${encoded}/${encodeURIComponent(fileName)}:/content`;
+                const fileBuffer = fs.readFileSync(versionedFilePath);
+                const uploadRes = await fetch(uploadUrl, {
+                  method: "PUT",
+                  headers: { Authorization: `Bearer ${msToken}`, "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" },
+                  body: fileBuffer,
+                });
+                if (uploadRes.ok) {
+                  const uploadResult = await uploadRes.json();
+                  sharepointUrl = uploadResult.webUrl;
+                  sharepointDriveItemId = uploadResult.id;
+                }
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[save-version] SharePoint mirror failed:`, err?.message);
+      }
+
+      const userId = (req.session.userId || (req as any).tokenUserId) as string | undefined;
+      let userName: string | undefined;
+      try {
+        if (userId) {
+          const { users } = await import("@shared/schema");
+          const [u] = await db.select({ username: users.username }).from(users).where(eq(users.id, userId)).limit(1);
+          userName = u?.username;
+        }
+      } catch {}
+
+      const [version] = await db
+        .insert(excelModelRunVersions)
+        .values({
+          modelRunId: runId,
+          version: nextVersion,
+          filePath: versionedFilePath,
+          inputValues: newInputs,
+          outputValues: newOutputs,
+          sharepointUrl: sharepointUrl || undefined,
+          sharepointDriveItemId: sharepointDriveItemId || undefined,
+          savedBy: userId,
+          savedByName: userName,
+          notes: (req.body?.notes as string) || undefined,
+        })
+        .returning();
+
+      await db.update(excelModelRuns).set({
+        inputValues: JSON.stringify(newInputs),
+        outputValues: JSON.stringify(newOutputs),
+        generatedFilePath: versionedFilePath,
+        ...(sharepointUrl ? { sharepointUrl, sharepointDriveItemId: sharepointDriveItemId || undefined } : {}),
+      }).where(eq(excelModelRuns.id, runId));
+
+      res.json({ success: true, version, outputs: newOutputs });
+    } catch (err: any) {
+      console.error("[save-version] error:", err?.message);
+      res.status(500).json({ message: err?.message || "Failed to save version" });
+    }
+  });
+
+  app.get("/api/models/runs/:id/versions", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const runId = req.params.id as string;
+      const versions = await db
+        .select()
+        .from(excelModelRunVersions)
+        .where(eq(excelModelRunVersions.modelRunId, runId))
+        .orderBy(desc(excelModelRunVersions.version));
+      res.json(versions);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to list versions" });
+    }
+  });
+
+  app.get("/api/models/runs/:runId/versions/:versionId/download", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const [version] = await db
+        .select()
+        .from(excelModelRunVersions)
+        .where(and(eq(excelModelRunVersions.id, String(req.params.versionId)), eq(excelModelRunVersions.modelRunId, String(req.params.runId))))
+        .limit(1);
+      if (!version) return res.status(404).json({ message: "Version not found" });
+      const resolved = path.resolve(path.join(RUNS_DIR, path.basename(version.filePath)));
+      if (!resolved.startsWith(path.resolve(RUNS_DIR))) {
+        return res.status(403).json({ message: "Access denied" });
+      }
+      await ensureRunFile(resolved);
+      if (!fs.existsSync(resolved)) return res.status(404).json({ message: "Version file missing" });
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="model-v${version.version}.xlsx"`);
+      fs.createReadStream(resolved).pipe(res);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message });
     }
   });
 

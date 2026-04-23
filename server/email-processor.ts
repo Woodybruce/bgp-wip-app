@@ -10,6 +10,61 @@ import { generateAutonomousDocument, exportDocumentToPdf } from "./document-temp
 const SHARED_MAILBOX = "chatbgp@brucegillinghampollard.com";
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
 
+// Convert Microsoft Graph message HTML/text body to a plain-text string
+// that preserves readable structure. The old extractor preferred
+// bodyPreview (always just ~255 chars from Graph) or did a crude tag
+// strip — result was empty or near-empty text for forwarded newsletters
+// where the actual content sits in nested HTML.
+function htmlToText(html: string): string {
+  if (!html) return "";
+  let s = html;
+  // Drop scripts/styles entirely.
+  s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
+  s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
+  s = s.replace(/<!--[\s\S]*?-->/g, "");
+  // Block-level and <br> tags become newlines BEFORE stripping remaining tags.
+  s = s.replace(/<\s*br\s*\/?\s*>/gi, "\n");
+  s = s.replace(/<\/(p|div|li|tr|h[1-6]|blockquote|article|section)\s*>/gi, "\n");
+  s = s.replace(/<\s*hr\s*\/?\s*>/gi, "\n---\n");
+  // Strip all remaining tags.
+  s = s.replace(/<[^>]+>/g, " ");
+  // Decode the common HTML entities. Anything else we leave — the classifier
+  // can cope with a stray &mdash;.
+  s = s.replace(/&nbsp;/g, " ")
+       .replace(/&amp;/g, "&")
+       .replace(/&lt;/g, "<")
+       .replace(/&gt;/g, ">")
+       .replace(/&quot;/g, '"')
+       .replace(/&#39;/g, "'")
+       .replace(/&apos;/g, "'")
+       .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+       .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  // Collapse runs of whitespace but keep paragraph breaks.
+  s = s.replace(/[ \t]+/g, " ")
+       .replace(/\n[ \t]+/g, "\n")
+       .replace(/\n{3,}/g, "\n\n")
+       .trim();
+  return s;
+}
+
+// Pick the richest readable body for a Microsoft Graph message. Falls
+// back through body.content → bodyPreview so forwarded newsletters
+// (where the bulletin HTML is in body.content) no longer look blank.
+function extractEmailBodyText(msg: any): string {
+  const raw = msg?.body?.content || "";
+  const type = (msg?.body?.contentType || "").toLowerCase();
+  let text = "";
+  if (raw) {
+    text = type === "html" ? htmlToText(raw) : raw;
+  }
+  // If Graph gave us nothing useful but had a preview, use that so we
+  // at least get SOMETHING through to the classifier.
+  if (!text.trim() && msg?.bodyPreview) text = msg.bodyPreview;
+  // Cap at 20k chars — classifier only reads ~6k, but we keep some
+  // headroom so specialist prompts can see more context later.
+  return text.slice(0, 20000);
+}
+
 let registeredUserEmails: Set<string> | null = null;
 let registeredUsersCacheTime = 0;
 
@@ -665,7 +720,7 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
       const fromEmail = msg.from?.emailAddress?.address || "";
       const fromName = msg.from?.emailAddress?.name || "";
       const subject = msg.subject || "";
-      const bodyText = msg.bodyPreview || msg.body?.content?.replace(/<[^>]*>/g, " ").slice(0, 6000) || "";
+      const bodyText = extractEmailBodyText(msg);
       const receivedAt = msg.receivedDateTime ? new Date(msg.receivedDateTime) : new Date();
       const toRecipients = (msg.toRecipients || []).map((r: any) => r.emailAddress?.address || "");
       const ccRecipients = (msg.ccRecipients || []).map((r: any) => r.emailAddress?.address || "");
@@ -997,7 +1052,7 @@ export function registerEmailProcessorRoutes(app: Express) {
       const fromEmail = msg.from?.emailAddress?.address || "";
       const fromName = msg.from?.emailAddress?.name || "";
       const subject = msg.subject || "";
-      const bodyText = msg.bodyPreview || msg.body?.content?.replace(/<[^>]*>/g, " ").slice(0, 6000) || "";
+      const bodyText = extractEmailBodyText(msg);
       const receivedAt = msg.receivedDateTime ? new Date(msg.receivedDateTime) : new Date();
       const toRecipients = (msg.toRecipients || []).map((r: any) => r.emailAddress?.address || "");
       const ccRecipients = (msg.ccRecipients || []).map((r: any) => r.emailAddress?.address || "");

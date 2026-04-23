@@ -12,11 +12,10 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useTeam } from "@/lib/team-context";
 import type { User } from "@shared/schema";
 import {
-  Building2, Users, Store, Crown, Search, Globe, MapPin,
+  Building2, Users, Crown, Search, Globe, MapPin,
   ChevronRight, ChevronDown, Building, Briefcase,
   Phone, Mail, X, TrendingUp, Trash2,
-  Handshake, ShoppingBag,
-  Utensils, Clapperboard, ClipboardList, Dumbbell,
+  Handshake, ClipboardList,
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -770,277 +769,19 @@ function AgentsTab({
   );
 }
 
-const TENANT_SECTORS = [
-  { key: "all", label: "All Tenants", icon: Store },
-  { key: "retail", label: "Retail", icon: ShoppingBag, match: ["Tenant - Retail", "Tenant"] },
-  { key: "restaurant", label: "Restaurants", icon: Utensils, match: ["Tenant - Restaurant"] },
-  { key: "leisure", label: "Leisure", icon: Clapperboard, match: ["Tenant - Leisure"] },
-  { key: "gym", label: "Gym / Fitness", icon: Dumbbell, match: ["Tenant - Gym", "Tenant - Fitness", "Tenant - Health & Fitness"] },
-];
-
-function TenantsTab({
-  companies,
-  contacts,
-  onDeleteCompany,
-  viewMode = "card",
-}: {
-  companies: CrmCompany[];
-  contacts: CrmContact[];
-  onDeleteCompany?: (id: string, name: string) => void;
-  viewMode?: "table" | "card" | "board";
-}) {
-  const [search, setSearch] = useState("");
-  const [activeSector, setActiveSector] = useState("all");
-
-  const { data: leasingReqs = [] } = useQuery<CrmRequirementsLeasing[]>({
-    queryKey: ["/api/crm/requirements-leasing"],
-  });
-  const { data: investmentReqs = [] } = useQuery<CrmRequirementsInvestment[]>({
-    queryKey: ["/api/crm/requirements-investment"],
-  });
-
-  const reqCountsByCompany = useMemo(() => {
-    const counts: Record<string, { leasing: number; investment: number }> = {};
-    leasingReqs.forEach((r) => {
-      if (r.companyId) {
-        if (!counts[r.companyId]) counts[r.companyId] = { leasing: 0, investment: 0 };
-        counts[r.companyId].leasing++;
-      }
-    });
-    investmentReqs.forEach((r) => {
-      if (r.companyId) {
-        if (!counts[r.companyId]) counts[r.companyId] = { leasing: 0, investment: 0 };
-        counts[r.companyId].investment++;
-      }
-    });
-    return counts;
-  }, [leasingReqs, investmentReqs]);
-
-  const tenantCompanies = useMemo(() => {
-    return companies.filter((c) => {
-      const t = (c.companyType || "").toLowerCase();
-      return t.startsWith("tenant");
-    });
-  }, [companies]);
-
-  const sectorCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: tenantCompanies.length };
-    TENANT_SECTORS.forEach((s) => {
-      if (s.key === "all") return;
-      counts[s.key] = tenantCompanies.filter((c) =>
-        s.match?.some((m) => (c.companyType || "").toLowerCase().trim() === m.toLowerCase())
-      ).length;
-    });
-    return counts;
-  }, [tenantCompanies]);
-
-  const contactsByCompany = useMemo(() => {
-    const map: Record<string, CrmContact[]> = {};
-    contacts.forEach((c) => {
-      if (c.companyId) {
-        if (!map[c.companyId]) map[c.companyId] = [];
-        map[c.companyId].push(c);
-      }
-    });
-    return map;
-  }, [contacts]);
-
-  const filtered = useMemo(() => {
-    let list = tenantCompanies;
-
-    if (activeSector !== "all") {
-      const sector = TENANT_SECTORS.find((s) => s.key === activeSector);
-      if (sector?.match) {
-        list = list.filter((c) => sector.match!.some((m) => (c.companyType || "").toLowerCase().trim() === m.toLowerCase()));
-      }
-    }
-
-    if (search.trim()) {
-      const s = search.toLowerCase();
-      list = list.filter((c) =>
-        c.name.toLowerCase().includes(s) ||
-        (c.description || "").toLowerCase().includes(s)
-      );
-    }
-
-    return list.sort((a, b) => a.name.localeCompare(b.name));
-  }, [tenantCompanies, activeSector, search]);
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-        <div className="cursor-pointer" onClick={() => setActiveSector("all")} data-testid="stat-all-tenants">
-          <StatCard label="All Tenants" value={sectorCounts.all} icon={Store} color={activeSector === "all" ? "bg-teal-800 ring-2 ring-teal-400" : "bg-teal-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setActiveSector(activeSector === "retail" ? "all" : "retail")} data-testid="stat-retail">
-          <StatCard label="Retail" value={sectorCounts.retail} icon={ShoppingBag} color={activeSector === "retail" ? "bg-sky-800 ring-2 ring-sky-400" : "bg-sky-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setActiveSector(activeSector === "restaurant" ? "all" : "restaurant")} data-testid="stat-restaurants">
-          <StatCard label="Restaurants" value={sectorCounts.restaurant} icon={Utensils} color={activeSector === "restaurant" ? "bg-rose-800 ring-2 ring-rose-400" : "bg-rose-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setActiveSector(activeSector === "leisure" ? "all" : "leisure")} data-testid="stat-leisure">
-          <StatCard label="Leisure" value={sectorCounts.leisure} icon={Clapperboard} color={activeSector === "leisure" ? "bg-purple-800 ring-2 ring-purple-400" : "bg-purple-600"} />
-        </div>
-        <div className="cursor-pointer" onClick={() => setActiveSector(activeSector === "gym" ? "all" : "gym")} data-testid="stat-gym">
-          <StatCard label="Gym / Fitness" value={sectorCounts.gym || 0} icon={Dumbbell} color={activeSector === "gym" ? "bg-orange-800 ring-2 ring-orange-400" : "bg-orange-600"} />
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="Search tenants..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 h-9"
-            data-testid="input-search-tenants"
-          />
-          {search && (
-            <button className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => setSearch("")}>
-              <X className="w-3.5 h-3.5 text-muted-foreground" />
-            </button>
-          )}
-        </div>
-        <p className="text-sm text-muted-foreground">{filtered.length} results</p>
-      </div>
-
-      {viewMode === "table" ? (
-        <Card className="overflow-hidden">
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Sector</TableHead>
-                  <TableHead className="text-center">Contacts</TableHead>
-                  <TableHead className="text-center">Requirements</TableHead>
-                  <TableHead></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filtered.map((company) => {
-                  const compContacts = contactsByCompany[company.id] || [];
-                  const reqs = reqCountsByCompany[company.id];
-                  const totalReqs = reqs ? reqs.leasing + reqs.investment : 0;
-                  return (
-                    <TableRow key={company.id} className="cursor-pointer hover:bg-muted/50 group" onClick={() => window.location.href = `/companies/${company.id}`}>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <CompanyLogo company={company} size="sm" />
-                          <div className="min-w-0">
-                            <span className="font-medium text-sm truncate">{company.name}</span>
-                            {company.description && <p className="text-xs text-muted-foreground truncate max-w-[250px]">{company.description}</p>}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm">{company.companyType?.replace("Tenant - ", "") || "Tenant"}</TableCell>
-                      <TableCell className="text-center text-sm">{compContacts.length}</TableCell>
-                      <TableCell className="text-center text-sm">{totalReqs > 0 ? totalReqs : "—"}</TableCell>
-                      <TableCell className="text-right">
-                        {onDeleteCompany && (
-                          <button onClick={(e) => { e.stopPropagation(); onDeleteCompany(company.id, company.name); }} className="p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        </Card>
-      ) : (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-        {filtered.map((company) => {
-          const compContacts = contactsByCompany[company.id] || [];
-          const ct = (company.companyType || "").toLowerCase();
-          const sectorColor = ct.includes("restaurant")
-            ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
-            : ct.includes("leisure")
-              ? "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300"
-              : ct.includes("gym") || ct.includes("fitness") || ct.includes("health")
-                ? "bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
-                : "bg-teal-100 text-teal-700 dark:bg-teal-950 dark:text-teal-300";
-
-          return (
-            <Link key={company.id} href={`/companies/${company.id}`}>
-              <Card className="hover:shadow-md transition-shadow cursor-pointer h-full relative group" data-testid={`card-tenant-${company.id}`}>
-                {onDeleteCompany && (
-                  <button
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDeleteCompany(company.id, company.name); }}
-                    className="absolute top-2 right-2 p-1 rounded-full opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all z-10"
-                    title="Delete"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                <CardContent className="p-3.5">
-                  <div className="flex items-center gap-2.5">
-                    <CompanyLogo company={company} size="md" />
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-sm truncate">{company.name}</h3>
-                      <Badge className={`text-[10px] px-1.5 py-0 mt-0.5 ${sectorColor} border-0`}>
-                        {company.companyType?.replace("Tenant - ", "") || "Tenant"}
-                      </Badge>
-                    </div>
-                  </div>
-                  {company.description && (
-                    <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{company.description}</p>
-                  )}
-                  {(compContacts.length > 0 || reqCountsByCompany[company.id]) && (
-                    <div className="mt-2 pt-2 border-t flex items-center gap-3 flex-wrap">
-                      {compContacts.length > 0 && (
-                        <p className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Users className="w-3 h-3" />
-                          {compContacts.length} {compContacts.length === 1 ? "contact" : "contacts"}
-                        </p>
-                      )}
-                      {reqCountsByCompany[company.id] && (
-                        <p className="text-xs flex items-center gap-1">
-                          <ClipboardList className="w-3 h-3 text-blue-500" />
-                          <span className="text-blue-600 dark:text-blue-400 font-medium">
-                            {(reqCountsByCompany[company.id].leasing + reqCountsByCompany[company.id].investment)} {(reqCountsByCompany[company.id].leasing + reqCountsByCompany[company.id].investment) === 1 ? "requirement" : "requirements"}
-                          </span>
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </Link>
-          );
-        })}
-      </div>
-      )}
-    </div>
-  );
-}
-
-const ContactsList = lazy(() => import("@/pages/contacts"));
-const CompaniesList = lazy(() => import("@/pages/companies"));
-
-type PeopleTab = "landlords" | "agents" | "tenants" | "contacts" | "all-companies";
+type PeopleTab = "landlords" | "agents";
 
 const ALL_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "landlords", label: "Landlords", icon: Building2 },
   { key: "agents", label: "Agents", icon: Briefcase },
-  { key: "tenants", label: "Tenants", icon: Store },
-  { key: "contacts", label: "All Contacts", icon: Users },
-  { key: "all-companies", label: "All Companies", icon: Building },
 ];
 
 const SCOPED_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "agents", label: "Agents", icon: Briefcase },
-  { key: "tenants", label: "Tenants", icon: Store },
 ];
 
 const LANDSEC_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "agents", label: "Agents", icon: Briefcase },
-  { key: "tenants", label: "Tenants", icon: Store },
-  { key: "contacts", label: "All Contacts", icon: Users },
-  { key: "all-companies", label: "All Companies", icon: Building },
 ];
 
 export default function PeoplePage() {
@@ -1204,19 +945,6 @@ function PeopleHub() {
           )}
           {tab === "agents" && (
             <AgentsTab companies={companies} contacts={contacts} defaultTenantRep={isLandsec} onDeleteCompany={onDeleteCompany} />
-          )}
-          {tab === "tenants" && (
-            <TenantsTab companies={companies} contacts={contacts} onDeleteCompany={onDeleteCompany} viewMode={viewMode} />
-          )}
-          {tab === "contacts" && !scopedLandlord && (
-            <Suspense fallback={<PageLoader />}>
-              <ContactsList />
-            </Suspense>
-          )}
-          {tab === "all-companies" && !scopedLandlord && (
-            <Suspense fallback={<PageLoader />}>
-              <CompaniesList />
-            </Suspense>
           )}
         </>
       )}

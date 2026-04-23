@@ -23,10 +23,16 @@ import sharp from "sharp";
 import path from "path";
 import fs from "fs/promises";
 import crypto from "crypto";
+import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
 const router = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const MODEL = "claude-haiku-4-5-20251001";
+// Brand enrichment runs once per tracked brand and feeds every downstream
+// decision (concept pitch, backer detail, rollout status). Use Opus for best
+// factual accuracy, fall back to Sonnet then Haiku on failure.
+const MODEL_PRIMARY = "claude-opus-4-7";
+const MODEL_FALLBACK_1 = "claude-sonnet-4-6";
+const MODEL_FALLBACK_2 = "claude-haiku-4-5-20251001";
 
 // Fields Claude is allowed to write. Everything else (CH number, address,
 // registered legal name, founded year from CH) we leave alone.
@@ -45,7 +51,19 @@ type EnrichableField = (typeof ENRICHABLE_FIELDS)[number];
 
 const ROLLOUT_VALUES = ["scaling", "stable", "contracting", "entering_uk", "rumoured"];
 
-function buildPrompt(company: any): string {
+async function fetchBrandWebContext(name: string, domain: string | null): Promise<string> {
+  if (!isPerplexityConfigured()) return "";
+  try {
+    const query = `${name} UK retail brand: store count, expansion plans, investors, concept, industry sector${domain ? ` site:${domain} OR` : ""}`;
+    const r = await askPerplexity(query, { maxTokens: 400, temperature: 0.1 });
+    const citations = r.citations.map(c => c.url).join(", ");
+    return `\nLive web research (Perplexity, ${new Date().toISOString().slice(0, 10)}):\n${r.answer}${citations ? `\nSources: ${citations}` : ""}`;
+  } catch {
+    return "";
+  }
+}
+
+function buildPrompt(company: any, webContext: string): string {
   return `You are enriching a UK retail-property CRM record for the brand/company below.
 
 Return a JSON object that best describes this company's current public profile for a commercial property agent. Fields to fill (any you cannot determine with reasonable confidence → null, do not guess):
@@ -54,8 +72,8 @@ Return a JSON object that best describes this company's current public profile f
   "concept_pitch": "1-2 sentence plain description of what the brand does / its concept (customer-facing), or null",
   "store_count": integer UK store count or null,
   "rollout_status": one of ${JSON.stringify(ROLLOUT_VALUES)} or null,
-  "backers": "Names of investors, parent group, or notable backers (comma-separated string), or null",
-  "backers_detail": [{"name":"Backer Co","type":"PE fund|VC|parent group|angel|sovereign wealth|family office|other","description":"1-sentence about who they are and what they're known for"}] or null — up to 5 most notable backers/investors,
+  "backers": "ULTIMATE parent group / controlling owner at the TOP of the corporate chain — not the immediate holding company. Walk up: e.g. for Christian Dior → LVMH; for Bottega Veneta → Kering; for Zara → Inditex; for Dover Street Market → Comme des Garçons (Kawakubo family). Include notable past owners only if they held a meaningful stake within the last 5 years. Comma-separated string, or null",
+  "backers_detail": [{"name":"Backer Co","type":"PE fund|VC|parent group|angel|sovereign wealth|family office|other|former parent","description":"1-sentence about who they are and what they're known for. Mark clearly if the stake has been exited."}] or null — up to 5 most notable current AND recent (last 5y) backers/investors, in priority order with current ultimate parent FIRST,
   "instagram_handle": "handle without the @, or null",
   "description": "1-sentence corporate description, or null",
   "industry": "e.g. 'Fashion retail', 'QSR restaurant', 'Fitness', or null",
@@ -68,11 +86,11 @@ Known facts (do not contradict):
 - Companies House: ${company.companies_house_number || "unknown"}
 - Existing concept pitch: ${company.concept_pitch || "(none)"}
 - Existing store count: ${company.store_count ?? "(none)"}
-
+${webContext}
 Output JSON only. No prose, no code fences.`;
 }
 
-async function enrichCompany(companyId: string): Promise<{ updated: string[]; skipped: string[]; reason?: string }> {
+async function enrichCompany(companyId: string): Promise<{ updated: string[]; skipped: string[]; reason?: string; aiOut?: any }> {
   const q = await pool.query(
     `SELECT id, name, domain, domain_url, companies_house_number, concept_pitch, store_count,
             rollout_status, backers, instagram_handle, description, industry, employee_count,
@@ -85,19 +103,31 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
 
   const aiFields: Record<string, string> = c.ai_generated_fields || {};
 
-  const prompt = buildPrompt(c);
+  const webContext = await fetchBrandWebContext(c.name, c.domain || c.domain_url || null);
+  const prompt = buildPrompt(c, webContext);
   let aiOut: any = null;
-  try {
-    const msg = await anthropic.messages.create({
-      model: MODEL,
-      max_tokens: 500,
-      messages: [{ role: "user", content: prompt }],
-    });
-    const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
-    const match = txt.match(/\{[\s\S]*\}/);
-    if (match) aiOut = JSON.parse(match[0]);
-  } catch (e: any) {
-    return { updated: [], skipped: [], reason: `AI call failed: ${e?.message || e}` };
+  const modelsToTry = [MODEL_PRIMARY, MODEL_FALLBACK_1, MODEL_FALLBACK_2];
+  let lastErr: any = null;
+  for (const model of modelsToTry) {
+    try {
+      const msg = await anthropic.messages.create({
+        model,
+        max_tokens: 800,
+        messages: [{ role: "user", content: prompt }],
+      });
+      const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
+      const match = txt.match(/\{[\s\S]*\}/);
+      if (match) {
+        aiOut = JSON.parse(match[0]);
+        break;
+      }
+    } catch (e: any) {
+      lastErr = e;
+      console.warn(`[brand-enrichment] ${model} failed (${e?.message}), trying next`);
+    }
+  }
+  if (!aiOut && lastErr) {
+    return { updated: [], skipped: [], reason: `AI call failed: ${lastErr?.message || lastErr}` };
   }
 
   if (!aiOut || typeof aiOut !== "object") {
@@ -167,7 +197,17 @@ async function enrichCompany(companyId: string): Promise<{ updated: string[]; sk
     );
   }
 
-  return { updated, skipped };
+  return { updated, skipped, aiOut };
+}
+
+// Exported for property-pathway orchestrator (Stage 2)
+export async function enrichBrandById(companyId: string): Promise<Record<string, any>> {
+  const r = await enrichCompany(companyId);
+  const out: Record<string, any> = {};
+  for (const f of r.updated) {
+    out[f] = r.aiOut?.[f];
+  }
+  return out;
 }
 
 // ─── Endpoints ──────────────────────────────────────────────────────────

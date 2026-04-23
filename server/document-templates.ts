@@ -9,6 +9,78 @@ import os from "os";
 import mammoth from "mammoth";
 import Anthropic from "@anthropic-ai/sdk";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
+
+// Document Studio uses the best available Opus model for all generations.
+// Try 4.7 (Claude Design model) first; fall back to 4.6 if not yet API-accessible.
+const DOC_OPUS_PRIMARY = "claude-opus-4-7";
+const DOC_OPUS_FALLBACK = "claude-opus-4-6";
+
+async function callDocOpus(opts: Parameters<typeof callClaude>[0]): Promise<ReturnType<typeof callClaude>> {
+  try {
+    return await callClaude({ ...opts, model: DOC_OPUS_PRIMARY });
+  } catch (err: any) {
+    if (/model|not found|invalid/i.test(err?.message || "")) {
+      console.log(`[doc-studio] ${DOC_OPUS_PRIMARY} not available, falling back to ${DOC_OPUS_FALLBACK}`);
+      return callClaude({ ...opts, model: DOC_OPUS_FALLBACK });
+    }
+    throw err;
+  }
+}
+
+// Build a structured slide plan from document content using Opus.
+// Returns an array of slide objects; falls back to null on error.
+async function buildSlidePlan(content: string, title: string, documentType?: string): Promise<any[] | null> {
+  const prompt = `You are a professional presentation designer for Bruce Gillingham Pollard, a premier London commercial property agency.
+
+Convert the document content below into a structured slide plan for a polished PPTX deck.
+
+Return a JSON object with a "slides" array. Each slide must be one of these exact types:
+
+{"type":"cover","title":"...","subtitle":"..."} — opening title slide
+{"type":"section","title":"SECTION NAME IN CAPS"} — dark divider slide between major sections
+{"type":"content","sectionLabel":"SHORT LABEL","heading":"Slide heading (4-7 words)","bullets":["concise bullet","concise bullet","max 6"]} — standard content slide
+{"type":"twocol","sectionLabel":"SHORT LABEL","heading":"Heading","leftBullets":["..."],"rightBullets":["..."]} — two-column layout for comparisons
+{"type":"stat","sectionLabel":"SHORT LABEL","heading":"What this means","stats":[{"value":"£X.Xm","label":"Headline Rent"},{"value":"X%","label":"Yield"},{"value":"X,XXX sq ft","label":"Area"}]} — key numbers slide (max 4 stats)
+{"type":"quote","text":"The quote text here","attribution":"SOURCE OR PERSON"} — pull-quote or key statement
+{"type":"end"} — closing thank you slide
+
+RULES:
+- One story per slide — split any section with >6 bullets into two content slides
+- Section labels are SHORT UPPERCASE abbreviations (3-4 words max): "INVESTMENT OVERVIEW", "MARKET DATA"
+- Headings: sentence case, punchy, 4-7 words
+- Bullets: factual, max 12 words each, no filler words
+- Use twocol for before/after, pros/cons, or two-location comparisons
+- Use stat slides for pages with 3-4 key numbers
+- Use quote slides for testimonials, headlines, or dramatic single facts
+- Add section dividers between major topic changes
+- Always start with cover, always end with end
+
+Document title: ${title}
+Document type: ${documentType || "General"}
+
+CONTENT:
+${content.slice(0, 12000)}
+
+Return ONLY the JSON object. No explanation.`;
+
+  try {
+    const completion = await callDocOpus({
+      model: DOC_OPUS_PRIMARY,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      max_completion_tokens: 4096,
+    });
+    const raw = completion.choices[0]?.message?.content || "{}";
+    // Strip markdown code fences if present
+    const jsonStr = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+    const parsed = JSON.parse(jsonStr);
+    const slides = Array.isArray(parsed.slides) ? parsed.slides : [];
+    return slides.length > 0 ? slides : null;
+  } catch (err: any) {
+    console.log("[doc-studio] Slide plan generation failed, using markdown fallback:", err?.message?.slice(0, 100));
+    return null;
+  }
+}
 import { GoogleGenAI } from "@google/genai";
 
 const CANVA_TOKEN_URL = "https://api.canva.com/rest/v1/oauth/token";
@@ -895,20 +967,16 @@ Do NOT include HTML tags, CSS, or placeholder text like "[BGP LOGO]".`;
     }
   }
   if (!content) {
-    // Use Opus for high-value document types, Sonnet for routine docs
-    const OPUS_DOCUMENT_TYPES = ["Investment Memo", "Pitch Deck", "Pitch Presentation", "Marketing Particulars", "Board Report", "Client Report"];
-    const docModel = OPUS_DOCUMENT_TYPES.some(t => documentType?.toLowerCase().includes(t.toLowerCase()))
-      ? "claude-opus-4-6"
-      : CHATBGP_HELPER_MODEL;
-    console.log(`[doc-generate] Using model: ${docModel} for type: ${documentType || "unspecified"}`);
-    const completion = await callClaude({
-      model: docModel,
+    // Document Studio always uses Opus for highest quality output (Claude Design model)
+    console.log(`[doc-generate] Using Opus for type: ${documentType || "unspecified"}`);
+    const completion = await callDocOpus({
+      model: DOC_OPUS_PRIMARY,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
       temperature: 0.3,
-      max_completion_tokens: docModel === "claude-opus-4-6" ? 8192 : 4000,
+      max_completion_tokens: 16384,
     });
     content = completion.choices[0]?.message?.content || "No content generated.";
   }
@@ -3031,130 +3099,194 @@ Be concise, professional, and use British English. All document advice should al
           { x: 0.6, y: 7.0, w: 4.0, h: 0.24, fontSize: 10, color: brandMid, fontFace: brandFont }
         );
 
-        const contentGroups: { heading: string; lines: string[]; isQuote: boolean }[] = [];
-        let currentHeading = "";
-        let currentLines: string[] = [];
-        let currentIsQuote = false;
+        // ── Two-pass PPTX generation ─────────────────────────────────────────
+        // Pass 1: Ask Opus to produce a structured slide plan (JSON).
+        // Pass 2: Render each slide type using pptxgenjs primitives.
+        // If Pass 1 fails we fall back to the markdown→slides approach.
+        // ─────────────────────────────────────────────────────────────────────
+        console.log("[doc-studio] Building slide plan with Opus…");
+        const slidePlan = await buildSlidePlan(cleaned, docTitle, documentType);
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          const lt = classifyLine(trimmed);
+        if (slidePlan && slidePlan.length > 0) {
+          console.log(`[doc-studio] Slide plan ready: ${slidePlan.length} slides`);
+          // Render from slide plan — skip the cover slide (already rendered above)
+          for (const s of slidePlan) {
+            if (s.type === "cover") continue; // already rendered
+            if (s.type === "end") continue;   // rendered below
 
-          if (lt === "heading" && currentLines.length > 0) {
-            contentGroups.push({ heading: currentHeading, lines: [...currentLines], isQuote: currentIsQuote });
-            currentLines = [];
-            currentIsQuote = false;
-          }
-          if (lt === "heading") {
-            currentHeading = stripMd(trimmed);
-          } else {
-            if (lt === "blockquote") currentIsQuote = true;
-            currentLines.push(line);
-          }
-        }
-        if (currentLines.length > 0 || currentHeading) {
-          contentGroups.push({ heading: currentHeading, lines: [...currentLines], isQuote: currentIsQuote });
-        }
+            if (s.type === "section") {
+              const secSlide = pptx.addSlide({ masterName: "BGP_SECTION" });
+              secSlide.addShape(pptx.ShapeType.rect, { x: 0.9, y: 2.8, w: 1.5, h: 0.04, fill: { color: brandGreen } });
+              secSlide.addText(String(s.title || "").toUpperCase(), {
+                x: 0.9, y: 3.0, w: 11.5, h: 2.0,
+                fontSize: 44, color: "FFFFFF", fontFace: brandFont, bold: false, valign: "top",
+              });
 
-        // Determine if this document type should have generated images in slides
-        const pptxNeedsImages = shouldGenerateDocImages(documentType) && !!process.env.OPENAI_API_KEY;
-        let pptxImageCount = 0;
-        const PPTX_MAX_IMAGES = 3; // Limit to avoid excessive generation time
+            } else if (s.type === "content" || s.type === "twocol") {
+              const slide = pptx.addSlide({ masterName: "BGP_CONTENT" });
+              // Section label — small caps above the heading
+              if (s.sectionLabel) {
+                slide.addText(String(s.sectionLabel).toUpperCase(), {
+                  x: 0.5, y: 0.18, w: 12.0, h: 0.32,
+                  fontSize: 9, color: brandMid, fontFace: brandFont, bold: false, letterSpacing: 2,
+                });
+              }
+              // Heading
+              if (s.heading) {
+                slide.addText(String(s.heading), {
+                  x: 0.5, y: 0.55, w: 12.0, h: 0.6,
+                  fontSize: 26, color: brandDarkGreen, fontFace: brandFont, bold: true,
+                });
+              }
+              // Green divider line under heading
+              slide.addShape(pptx.ShapeType.rect, { x: 0.5, y: 1.22, w: 12.34, h: 0.03, fill: { color: brandLight } });
 
-        let sectionIdx = 0;
-        for (const group of contentGroups) {
-          if (group.lines.every(l => !l.trim()) && !group.heading) continue;
-          sectionIdx++;
-
-          if (group.heading && sectionIdx > 1) {
-            const secSlide = pptx.addSlide({ masterName: "BGP_SECTION" });
-            // Green accent bar before section title
-            secSlide.addShape(pptx.ShapeType.rect, { x: 0.9, y: 0.5, w: 1.5, h: 0.04, fill: { color: brandGreen } });
-            secSlide.addText(group.heading.toUpperCase(), {
-              x: 0.9, y: 0.75, w: 6.0, h: 0.44,
-              fontSize: 20, color: "FFFFFF", fontFace: brandFont, bold: false, letterSpacing: 2,
-            });
-
-            // Generate a hero image for key sections in pitch-quality documents
-            if (pptxNeedsImages && pptxImageCount < PPTX_MAX_IMAGES) {
-              const sectionLower = group.heading.toLowerCase();
-              const imageWorthy = ["property", "location", "overview", "introduction", "market", "team", "case stud", "portfolio", "services", "track record"].some(kw => sectionLower.includes(kw));
-              if (imageWorthy) {
-                console.log(`[doc-images] PPTX: Generating image for section "${group.heading}"...`);
-                const imgPrompt = `Professional commercial property scene for a section titled "${group.heading}". Premium London commercial real estate, modern architecture, elegant interiors or impressive cityscapes.`;
-                const b64 = await generateImageForDocument(imgPrompt);
-                if (b64) {
-                  const imgSlide = pptx.addSlide({ masterName: "BGP_CONTENT" });
-                  imgSlide.addImage({
-                    data: `image/png;base64,${b64}`,
-                    x: 0.5, y: 0.5, w: 12.34, h: 6.5,
-                  });
-                  imgSlide.addText(group.heading.toUpperCase(), {
-                    x: 0.6, y: 6.5, w: 12.0, h: 0.5,
-                    fontSize: 10, color: brandMid, fontFace: brandFont, italic: true, align: "right",
-                  });
-                  pptxImageCount++;
-                  console.log(`[doc-images] PPTX: Image slide added for "${group.heading}" (${pptxImageCount}/${PPTX_MAX_IMAGES})`);
+              if (s.type === "twocol") {
+                // Two-column layout
+                const left = Array.isArray(s.leftBullets) ? s.leftBullets : [];
+                const right = Array.isArray(s.rightBullets) ? s.rightBullets : [];
+                const leftParts = left.map((b: string) => ({ text: `\u2014  ${b}\n`, options: { fontSize: 14, color: brandDark, fontFace: brandFont } }));
+                const rightParts = right.map((b: string) => ({ text: `\u2014  ${b}\n`, options: { fontSize: 14, color: brandDark, fontFace: brandFont } }));
+                if (leftParts.length) slide.addText(leftParts, { x: 0.5, y: 1.4, w: 6.0, h: 5.5, valign: "top", paraSpaceAfter: 8 });
+                if (rightParts.length) slide.addText(rightParts, { x: 6.8, y: 1.4, w: 6.0, h: 5.5, valign: "top", paraSpaceAfter: 8 });
+              } else {
+                // Single-column bullets
+                const bullets = Array.isArray(s.bullets) ? s.bullets : [];
+                const parts = bullets.map((b: string) => ({
+                  text: `\u2014  ${b}\n`,
+                  options: { fontSize: 16, color: brandDark, fontFace: brandFont, paraSpaceAfter: 10 },
+                }));
+                if (parts.length) {
+                  slide.addText(parts, { x: 0.5, y: 1.4, w: 12.34, h: 5.4, valign: "top" });
                 }
               }
-            }
-          }
 
-          if (group.isQuote && group.lines.length <= 4) {
-            const quoteSlide = pptx.addSlide({ masterName: "BGP_QUOTE" });
-            const quoteText = group.lines
-              .map(l => stripMd(l.trim().replace(/^>\s*/, "")))
-              .filter(l => l)
-              .join(" ");
-            // Green quote mark accent
-            quoteSlide.addText("\u201C", {
-              x: 1.5, y: 1.5, w: 1.0, h: 1.0,
-              fontSize: 80, color: brandGreen, fontFace: brandFont, bold: true,
-            });
-            quoteSlide.addText(quoteText, {
-              x: 2.5, y: 2.5, w: 8.5, h: 2.5,
-              fontSize: 50, color: brandDark, fontFace: brandFont, bold: false, align: "center", valign: "middle",
-            });
-            continue;
-          }
-
-          const slideLines = [...group.lines];
-          while (slideLines.length > 0) {
-            const batch = slideLines.splice(0, 14);
-            if (batch.every(l => !l.trim())) continue;
-
-            const slide = pptx.addSlide({ masterName: "BGP_CONTENT" });
-
-            if (group.heading) {
-              slide.addText(group.heading.toUpperCase(), {
-                x: 0.4, y: 0.21, w: 5.0, h: 0.44,
-                fontSize: 20, color: brandDark, fontFace: brandFont, bold: false, letterSpacing: 2,
+            } else if (s.type === "stat") {
+              const slide = pptx.addSlide({ masterName: "BGP_CONTENT" });
+              if (s.sectionLabel) {
+                slide.addText(String(s.sectionLabel).toUpperCase(), {
+                  x: 0.5, y: 0.18, w: 12.0, h: 0.32,
+                  fontSize: 9, color: brandMid, fontFace: brandFont, bold: false, letterSpacing: 2,
+                });
+              }
+              if (s.heading) {
+                slide.addText(String(s.heading), {
+                  x: 0.5, y: 0.55, w: 12.0, h: 0.6,
+                  fontSize: 26, color: brandDarkGreen, fontFace: brandFont, bold: true,
+                });
+              }
+              slide.addShape(pptx.ShapeType.rect, { x: 0.5, y: 1.22, w: 12.34, h: 0.03, fill: { color: brandLight } });
+              // Stat boxes — up to 4 across the slide
+              const stats = Array.isArray(s.stats) ? s.stats.slice(0, 4) : [];
+              const boxW = stats.length <= 2 ? 5.5 : stats.length === 3 ? 3.8 : 2.9;
+              const startX = stats.length <= 2 ? 1.0 : 0.5;
+              stats.forEach((stat: any, idx: number) => {
+                const x = startX + idx * (boxW + 0.3);
+                slide.addShape(pptx.ShapeType.rect, { x, y: 2.2, w: boxW, h: 3.2, fill: { color: "F5F4F0" } });
+                slide.addText(String(stat.value || ""), {
+                  x, y: 2.5, w: boxW, h: 1.6,
+                  fontSize: 48, color: brandGreen, fontFace: brandFont, bold: true, align: "center",
+                });
+                slide.addText(String(stat.label || "").toUpperCase(), {
+                  x, y: 4.3, w: boxW, h: 0.6,
+                  fontSize: 11, color: brandMid, fontFace: brandFont, bold: false, align: "center", letterSpacing: 1,
+                });
               });
-            }
 
-            const textParts: any[] = [];
-            for (const line of batch) {
-              const trimmed = line.trim();
-              const lt = classifyLine(trimmed);
-              const plain = stripMd(trimmed);
-
-              if (lt === "blank") { textParts.push({ text: "\n", options: { fontSize: 6 } }); continue; }
-              if (lt === "hr") continue;
-
-              if (lt === "heading") {
-                const isSubSection = /^\d+\.\d+/.test(plain);
-                textParts.push({ text: plain + "\n", options: { fontSize: isSubSection ? 18 : 24, bold: true, color: isSubSection ? brandMid : brandGreen, fontFace: brandFont } });
-              } else if (lt === "bullet") {
-                textParts.push({ text: `  \u2014  ${stripMd(plain.replace(/^[-\u2022*]\s*/, ""))}\n`, options: { fontSize: 14, color: brandMid, fontFace: brandFont } });
-              } else if (lt === "blockquote") {
-                textParts.push({ text: `\u201C${stripMd(trimmed.replace(/^>\s*/, ""))}\u201D\n`, options: { fontSize: 14, italic: true, color: brandMid, fontFace: brandFont } });
-              } else {
-                textParts.push({ text: plain + "\n", options: { fontSize: 14, color: brandDark, fontFace: brandFont } });
+            } else if (s.type === "quote") {
+              const quoteSlide = pptx.addSlide({ masterName: "BGP_QUOTE" });
+              quoteSlide.addText("\u201C", {
+                x: 0.6, y: 1.2, w: 1.0, h: 1.0,
+                fontSize: 100, color: brandGreen, fontFace: brandFont, bold: true,
+              });
+              quoteSlide.addText(String(s.text || ""), {
+                x: 1.0, y: 2.0, w: 11.0, h: 3.5,
+                fontSize: 36, color: brandDark, fontFace: brandFont, bold: false, italic: true, valign: "middle",
+              });
+              if (s.attribution) {
+                quoteSlide.addShape(pptx.ShapeType.rect, { x: 1.0, y: 5.7, w: 1.5, h: 0.04, fill: { color: brandGreen } });
+                quoteSlide.addText(String(s.attribution).toUpperCase(), {
+                  x: 1.0, y: 5.9, w: 11.0, h: 0.4,
+                  fontSize: 11, color: brandMid, fontFace: brandFont, bold: false, letterSpacing: 2,
+                });
               }
             }
+          }
 
-            if (textParts.length > 0) {
-              slide.addText(textParts, { x: 0.6, y: 1.0, w: 11.73, h: 6.0, valign: "top", paraSpaceAfter: 6 });
+        } else {
+          // ── Markdown fallback (original loop) ────────────────────────────────
+          console.log("[doc-studio] Using markdown fallback for slides");
+          const contentGroups: { heading: string; lines: string[]; isQuote: boolean }[] = [];
+          let currentHeading = "";
+          let currentLines: string[] = [];
+          let currentIsQuote = false;
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            const lt = classifyLine(trimmed);
+            if (lt === "heading" && currentLines.length > 0) {
+              contentGroups.push({ heading: currentHeading, lines: [...currentLines], isQuote: currentIsQuote });
+              currentLines = [];
+              currentIsQuote = false;
+            }
+            if (lt === "heading") {
+              currentHeading = stripMd(trimmed);
+            } else {
+              if (lt === "blockquote") currentIsQuote = true;
+              currentLines.push(line);
+            }
+          }
+          if (currentLines.length > 0 || currentHeading) {
+            contentGroups.push({ heading: currentHeading, lines: [...currentLines], isQuote: currentIsQuote });
+          }
+
+          let sectionIdx = 0;
+          for (const group of contentGroups) {
+            if (group.lines.every(l => !l.trim()) && !group.heading) continue;
+            sectionIdx++;
+            if (group.heading && sectionIdx > 1) {
+              const secSlide = pptx.addSlide({ masterName: "BGP_SECTION" });
+              secSlide.addShape(pptx.ShapeType.rect, { x: 0.9, y: 2.8, w: 1.5, h: 0.04, fill: { color: brandGreen } });
+              secSlide.addText(group.heading.toUpperCase(), {
+                x: 0.9, y: 3.0, w: 11.5, h: 2.0,
+                fontSize: 44, color: "FFFFFF", fontFace: brandFont, bold: false, valign: "top",
+              });
+            }
+            if (group.isQuote && group.lines.length <= 4) {
+              const quoteSlide = pptx.addSlide({ masterName: "BGP_QUOTE" });
+              const quoteText = group.lines.map(l => stripMd(l.trim().replace(/^>\s*/, ""))).filter(l => l).join(" ");
+              quoteSlide.addText("\u201C", { x: 1.5, y: 1.5, w: 1.0, h: 1.0, fontSize: 80, color: brandGreen, fontFace: brandFont, bold: true });
+              quoteSlide.addText(quoteText, { x: 2.5, y: 2.5, w: 8.5, h: 2.5, fontSize: 36, color: brandDark, fontFace: brandFont, italic: true, align: "center", valign: "middle" });
+              continue;
+            }
+            const slideLines = [...group.lines];
+            while (slideLines.length > 0) {
+              const batch = slideLines.splice(0, 10);
+              if (batch.every(l => !l.trim())) continue;
+              const slide = pptx.addSlide({ masterName: "BGP_CONTENT" });
+              if (group.heading) {
+                slide.addText(group.heading.toUpperCase(), { x: 0.5, y: 0.18, w: 12.0, h: 0.32, fontSize: 9, color: brandMid, fontFace: brandFont, letterSpacing: 2 });
+              }
+              const textParts: any[] = [];
+              for (const line of batch) {
+                const trimmed = line.trim();
+                const lt = classifyLine(trimmed);
+                const plain = stripMd(trimmed);
+                if (lt === "blank") { textParts.push({ text: "\n", options: { fontSize: 5 } }); continue; }
+                if (lt === "hr") continue;
+                if (lt === "heading") {
+                  textParts.push({ text: plain + "\n", options: { fontSize: 22, bold: true, color: brandDarkGreen, fontFace: brandFont } });
+                } else if (lt === "bullet") {
+                  textParts.push({ text: `\u2014  ${stripMd(plain.replace(/^[-\u2022*]\s*/, ""))}\n`, options: { fontSize: 16, color: brandDark, fontFace: brandFont } });
+                } else if (lt === "blockquote") {
+                  textParts.push({ text: `\u201C${stripMd(trimmed.replace(/^>\s*/, ""))}\u201D\n`, options: { fontSize: 16, italic: true, color: brandMid, fontFace: brandFont } });
+                } else {
+                  textParts.push({ text: plain + "\n", options: { fontSize: 16, color: brandDark, fontFace: brandFont } });
+                }
+              }
+              if (textParts.length > 0) {
+                slide.addText(textParts, { x: 0.5, y: 0.6, w: 12.34, h: 6.3, valign: "top", paraSpaceAfter: 8 });
+              }
             }
           }
         }
@@ -3208,6 +3340,54 @@ Be concise, professional, and use British English. All document advice should al
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ message: "Failed to update document run" });
+    }
+  });
+
+  app.post("/api/doc-runs/:id/refine", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { message, history } = req.body;
+      if (!message || typeof message !== "string" || message.length > 5000) {
+        return res.status(400).json({ message: "A valid message is required (max 5,000 chars)" });
+      }
+      const run = await storage.getDocumentRun(req.params.id);
+      if (!run) return res.status(404).json({ message: "Document run not found" });
+
+      const systemPrompt = `You are refining a BGP (Bruce Gillingham Pollard) professional property document.
+You are a senior property advisor and document specialist. Make precise, high-quality edits as requested.
+
+RULES:
+- Return the COMPLETE updated document — every section, not just the changed parts
+- Preserve all existing structure and formatting (headings, bullets, tables)
+- Match the professional BGP tone: precise, confident, no filler words
+- Keep markdown formatting (# headings, ## subheadings, **bold**, bullet points)
+- Only change what the user asked for — don't add unsolicited content
+- Document type: ${(run as any).document_type || "General"}`;
+
+      const messages: any[] = [{ role: "system", content: systemPrompt }];
+
+      // Include recent conversation history for context (up to 8 previous turns)
+      if (Array.isArray(history)) {
+        for (const h of history.slice(-8)) {
+          if (h.role === "user" || h.role === "assistant") {
+            messages.push({ role: h.role, content: String(h.content).slice(0, 2000) });
+          }
+        }
+      }
+
+      messages.push({
+        role: "user",
+        content: `Here is the current document:\n\n${(run as any).content}\n\n---\n\nPlease make this change: ${message}`,
+      });
+
+      const completion = await callDocOpus({ messages, max_completion_tokens: 16384, temperature: 0.2 });
+      const newContent = completion.choices[0]?.message?.content;
+      if (!newContent) return res.status(500).json({ message: "No content returned from AI" });
+
+      await storage.updateDocumentRun(req.params.id, { content: newContent });
+      res.json({ content: newContent });
+    } catch (err: any) {
+      console.error("[doc-refine]", err?.message || err);
+      res.status(500).json({ message: err?.message || "Failed to refine document" });
     }
   });
 

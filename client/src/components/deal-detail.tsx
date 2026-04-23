@@ -3,6 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
+import PathwayIntelStrip from "@/components/pathway-intel-strip";
 import {
   Dialog,
   DialogContent,
@@ -481,6 +482,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <PathwayIntelStrip
+        propertyId={(deal as any).propertyId || undefined}
+        address={(deal as any).propertyAddress || (deal as any).address || deal.name}
+        postcode={(deal as any).postcode}
+      />
 
       <DealKYCPanel deal={deal} companies={companies} />
 

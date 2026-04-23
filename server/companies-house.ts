@@ -294,18 +294,61 @@ router.get("/api/companies-house/pscs/:number", requireAuth, async (req, res) =>
 
 router.get("/api/companies-house/filing-history/:number", requireAuth, async (req, res) => {
   try {
-    const data = await chFetch(`/company/${encodeURIComponent(req.params.number)}/filing-history?items_per_page=10`);
+    const items = Math.min(Number(req.query.items) || 25, 100);
+    const data = await chFetch(`/company/${encodeURIComponent(req.params.number)}/filing-history?items_per_page=${items}`);
     const filings = (data.items || []).map((f: any) => ({
       date: f.date,
       category: f.category,
       type: f.type,
       description: f.description,
       descriptionValues: f.description_values,
+      // Pull the document_metadata id (last path segment) so the client can
+      // stream the PDF via our proxy route below. CH returns a full URL like
+      // https://frontend-doc-api.../document/zABCdef123 — we only need "zABCdef123".
+      documentId: (() => {
+        const m = f.links?.document_metadata;
+        if (!m) return null;
+        const parts = String(m).split("/").filter(Boolean);
+        return parts[parts.length - 1] || null;
+      })(),
     }));
     res.json({ filings, totalCount: data.total_count || 0 });
   } catch (err: any) {
     console.error("[companies-house] filing-history error:", err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Proxy route: stream a filing document PDF from Companies House.
+// Free API — just requires the CH key + document metadata ID (pulled from
+// filing-history above). We first GET /document/{id} to resolve the actual
+// PDF URL, then stream that back to the client. Adds 24h cache headers since
+// filed documents are immutable once accepted.
+router.get("/api/companies-house/document/:id", requireAuth, async (req, res) => {
+  try {
+    if (!CH_API_KEY) return res.status(503).json({ error: "Companies House API key not configured" });
+    const id = req.params.id;
+    if (!/^[A-Za-z0-9_-]+$/.test(id)) return res.status(400).json({ error: "Invalid document id" });
+
+    const auth = `Basic ${Buffer.from(CH_API_KEY + ":").toString("base64")}`;
+    // CH document API lives on a different subdomain from the main API.
+    const docRes = await fetch(`https://document-api.company-information.service.gov.uk/document/${encodeURIComponent(id)}/content`, {
+      headers: { Authorization: auth, Accept: "application/pdf" },
+      redirect: "follow",
+    });
+    if (!docRes.ok) {
+      const text = await docRes.text().catch(() => "");
+      return res.status(docRes.status).json({ error: `Companies House document fetch failed: ${docRes.status}`, details: text.slice(0, 200) });
+    }
+    const filename = req.query.filename ? String(req.query.filename).replace(/[^A-Za-z0-9._-]/g, "_") : `${id}.pdf`;
+    res.setHeader("Content-Type", docRes.headers.get("content-type") || "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    const buf = Buffer.from(await docRes.arrayBuffer());
+    res.end(buf);
+  } catch (err: any) {
+    console.error("[companies-house] document proxy error:", err?.message || err);
+    res.status(500).json({ error: err?.message || "Document fetch failed" });
   }
 });
 
@@ -405,10 +448,12 @@ router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req,
       filingsTotal = filingResult.value.total_count || 0;
     }
 
-    const kycStatus = profile.companyStatus === "active" && !profile.hasInsolvencyHistory && !profile.accountsOverdue
-      ? "pass"
-      : profile.companyStatus !== "active"
-        ? "fail"
+    // Dissolved entity = warning (may be old holding co, not necessarily the trading entity).
+    // Only hard-fail on actual insolvency history.
+    const kycStatus = profile.hasInsolvencyHistory
+      ? "fail"
+      : profile.companyStatus === "active" && !profile.accountsOverdue
+        ? "pass"
         : "warning";
 
     const fetchStatus = {
@@ -557,10 +602,10 @@ router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async 
         filingsTotal = filingResult.value.total_count || 0;
       }
 
-      kycStatus = profile.companyStatus === "active" && !profile.hasInsolvencyHistory && !profile.accountsOverdue
-        ? "pass"
-        : profile.companyStatus !== "active"
-          ? "fail"
+      kycStatus = profile.hasInsolvencyHistory
+        ? "fail"
+        : profile.companyStatus === "active" && !profile.accountsOverdue
+          ? "pass"
           : "warning";
 
       const fetchStatus = {
@@ -1555,6 +1600,76 @@ Format your response as JSON:
       return res.status(503).json({ error: "Companies House API key not configured." });
     }
     console.error("[ownership-intelligence] error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Find active UK operating entity for a brand ───────────────────────────
+// For international brands where the linked CH entity is dissolved or wrong,
+// searches Google Places for UK stores to identify the correct operating entity.
+router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, name, domain, companies_house_number, companies_house_data FROM crm_companies WHERE id = $1`,
+      [req.params.companyId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: "Company not found" });
+    const company = rows[0];
+
+    const googleKey = process.env.GOOGLE_API_KEY;
+    if (!googleKey) return res.status(400).json({ error: "GOOGLE_API_KEY not configured" });
+
+    // Google Places Text Search for UK stores
+    const query = `${company.name} store UK`;
+    const placesUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&region=uk&key=${googleKey}`;
+    const placesRes = await fetch(placesUrl, { signal: AbortSignal.timeout(10_000) });
+    if (!placesRes.ok) return res.status(500).json({ error: "Places API error" });
+    const placesData: any = await placesRes.json();
+
+    const stores = (placesData.results || []).slice(0, 10).map((p: any) => ({
+      name: p.name,
+      address: p.formatted_address,
+      lat: p.geometry?.location?.lat,
+      lng: p.geometry?.location?.lng,
+      placeId: p.place_id,
+      businessStatus: p.business_status || "OPERATIONAL",
+      types: p.types || [],
+    }));
+
+    // Use the first London store address to search CH for possible entities
+    const londonStores = stores.filter((s: any) => s.address?.includes("London"));
+    const chSuggestions: any[] = [];
+
+    if (company.name) {
+      try {
+        const chSearch = await chFetch(`/search/companies?q=${encodeURIComponent(company.name)}&items_per_page=10`);
+        const chMatches = (chSearch.items || [])
+          .filter((i: any) => i.company_status === "active")
+          .slice(0, 5)
+          .map((i: any) => ({
+            companyNumber: i.company_number,
+            name: i.title,
+            status: i.company_status,
+            type: i.company_type,
+            address: i.address_snippet,
+            dateOfCreation: i.date_of_creation,
+          }));
+        chSuggestions.push(...chMatches);
+      } catch {
+        // CH search failure is non-fatal
+      }
+    }
+
+    res.json({
+      brand: { id: company.id, name: company.name },
+      currentChNumber: company.companies_house_number,
+      currentChStatus: company.companies_house_data?.profile?.companyStatus || null,
+      ukStores: stores,
+      londonStoreCount: londonStores.length,
+      activeChCandidates: chSuggestions,
+    });
+  } catch (err: any) {
+    console.error("[find-uk-entity]", err.message);
     res.status(500).json({ error: err.message });
   }
 });

@@ -13,6 +13,7 @@ import mammoth from "mammoth";
 import { getValidMsToken } from "./microsoft";
 import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
 import { escapeLike } from "./utils/escape-like";
+import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
 const CHATBGP_MODEL = "claude-opus-4-6";        // Main chat: Opus for intelligence
 const CHATBGP_OPUS_MODEL = "claude-opus-4-6";   // Same
@@ -341,6 +342,112 @@ function getCached<T>(key: string): T | null {
 
 function setCache<T>(key: string, data: T, ttlMs: number): void {
   contextCache.set(key, { data, expiresAt: Date.now() + ttlMs });
+}
+
+// Shared implementation of the search_emails tool, used by two handler sites.
+// - Default (no mailbox arg): uses the current user's delegated token on /me/messages.
+// - mailbox === "all": fans out across the shared inbox + every active BGP user's mailbox
+//   via the app-only token on /users/{email}/messages (requires Mail.Read Application).
+// - mailbox === specific email: uses the app-only token to search just that mailbox.
+async function runSearchEmailsTool(opts: { query: string; top: number; mailbox: string; req: any }):
+  Promise<{ messages: any[]; scope: string } | { error: string }> {
+  const { query, top, mailbox, req } = opts;
+  const mapMsg = (msg: any, via?: string, mailboxEmail?: string) => ({
+    id: msg.id,
+    subject: (msg.subject || "(No subject)") + (via ? ` · via ${via}` : ""),
+    from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown",
+    fromEmail: msg.from?.emailAddress?.address || "",
+    to: (msg.toRecipients || []).map((r: any) => r.emailAddress?.name || r.emailAddress?.address).join(", "),
+    date: msg.receivedDateTime,
+    preview: (msg.bodyPreview || "").slice(0, 200).replace(/\n/g, " "),
+    isRead: msg.isRead,
+    hasAttachments: msg.hasAttachments,
+    msgId: msg.id,
+    // CRITICAL: Graph message IDs are mailbox-scoped. To download attachments
+    // from a message found in another user's mailbox, we need the mailbox
+    // address to route via /users/{email}/messages/{id}/attachments with the
+    // app token. Surface it so the model knows to pass it through.
+    mailboxEmail: mailboxEmail || undefined,
+  });
+  const selectFields = "id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,conversationId";
+
+  // App-token path (used for mailbox=email or mailbox=all)
+  if (mailbox && mailbox !== "me") {
+    try {
+      const { graphRequest } = await import("./shared-mailbox");
+
+      // Build the list of mailboxes to query
+      const mailboxes: Array<{ email: string; owner: string }> = [];
+      if (mailbox === "all") {
+        const { db } = await import("./db");
+        const { users } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        mailboxes.push({ email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox" });
+        try {
+          const activeUsers = await db
+            .select({ username: users.username, email: users.email, name: users.name })
+            .from(users)
+            .where(eq(users.isActive, true));
+          for (const u of activeUsers) {
+            const mb = u.email || u.username;
+            if (mb && /@brucegillinghampollard\.com$/i.test(mb) && mb.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
+              mailboxes.push({ email: mb, owner: u.name || mb });
+            }
+          }
+        } catch {}
+      } else {
+        mailboxes.push({ email: mailbox, owner: mailbox });
+      }
+
+      const seen = new Set<string>();
+      const collected: any[] = [];
+      const errors: string[] = [];
+      for (const mb of mailboxes) {
+        try {
+          const url = `/users/${encodeURIComponent(mb.email)}/messages?$search=${encodeURIComponent(`"${query}"`)}&$top=${top}&$select=${encodeURIComponent(selectFields)}`;
+          const data = await graphRequest(url);
+          for (const msg of data?.value || []) {
+            if (seen.has(msg.id)) continue;
+            seen.add(msg.id);
+            collected.push(mapMsg(msg, mailbox === "all" ? mb.owner : undefined, mb.email));
+          }
+        } catch (err: any) {
+          errors.push(`${mb.email}: ${String(err?.message || err).slice(0, 120)}`);
+        }
+      }
+      collected.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      const scope = mailbox === "all" ? `${mailboxes.length} mailboxes` : mailbox;
+      if (collected.length === 0 && errors.length > 0) {
+        return { error: `No results, and all mailboxes errored. First: ${errors[0]}` };
+      }
+      return { messages: collected.slice(0, top), scope };
+    } catch (err: any) {
+      return { error: `App-token search setup error: ${err?.message || "unknown"}` };
+    }
+  }
+
+  // Default path: delegated /me/messages
+  try {
+    const token = await getValidMsToken(req);
+    if (!token) return { error: "Not connected to Microsoft 365. Please sign in first." };
+    const url = "https://graph.microsoft.com/v1.0/me/messages?" + new URLSearchParams({
+      $search: `"${query}"`,
+      $top: String(top),
+      $select: selectFields,
+    });
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+    if (!res.ok) {
+      const errText = await res.text();
+      return { error: `Email search failed: ${res.status} ${errText.slice(0, 200)}` };
+    }
+    const data = await res.json();
+    const messages = (data.value || [])
+      .sort((a: any, b: any) => new Date(b.receivedDateTime).getTime() - new Date(a.receivedDateTime).getTime())
+      .map((msg: any) => mapMsg(msg));
+    return { messages, scope: "my inbox" };
+  } catch (err: any) {
+    return { error: `Email search error: ${err?.message || "unknown"}` };
+  }
 }
 
 export function invalidateContextCache(prefix?: string): void {
@@ -848,7 +955,7 @@ You are an active operational agent with full CRM read/write access, internet se
 
 ## HONESTY — never fabricate outcomes
 - Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
-- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, or \`export_to_excel\`. A made-up URL will 404 for the user.
+- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_designed_deck\`, or \`compile_brochure_from_pdfs\`. A made-up URL will 404 for the user.
 - If the user asks you to modify something and no suitable tool exists, SAY SO plainly ("I can't edit the PDF renderer from here — that needs a code change"). Offer the closest alternative rather than inventing fake fixes.
 - For template edits, always call \`update_document_template\` with the existing templateId (from the docTemplates list). Don't just describe what you would change — actually change it. After the tool returns, report what the tool confirmed.
 - For template deletions, call \`delete_document_template\` — never just say "removed it".
@@ -860,7 +967,10 @@ You are an active operational agent with full CRM read/write access, internet se
 - **KYC**: run_kyc_check for Companies House + sanctions + financial strength. deep_investigate for full D&B-style intelligence combining all sources.
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
-- **Documents**: generate_pdf, generate_word, generate_pptx, export_to_excel. All include BGP branding. Proactively export tables to Excel.
+- **Documents (plain text)**: generate_pdf (TEXT ONLY — no imagery, no design), generate_word, generate_pptx, export_to_excel. Use these ONLY for internal text reports.
+- **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use **generate_designed_deck** (Gamma — full visual design with imagery). NEVER use generate_pdf for these. Don't apologise afterwards about the PDF being "just text" — pick the right tool upfront.
+- **Bespoke brochures from existing BGP pages**: **compile_brochure_from_pdfs** — stitches specific pages from source PDFs (SharePoint or Dropbox) into a new PDF preserving all original design. Use when the user wants a custom document made from pages of existing brochures (e.g. "pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard"). Ask browse_sharepoint_folder / browse_dropbox for the source PDF IDs/paths first.
+- **Bulk file-move**: **copy_dropbox_to_sharepoint** — copies raw PDF binaries from Dropbox into a SharePoint folder. Use when the user says "pull these into a SharePoint folder". Do NOT claim SharePoint "glitched" if upload fails — report the exact error.
 - **Maps**: navigate_to "property-map" with lat/lng/zoom. Tell users to use built-in Radius/Distance buttons.
 - **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London Leasing, etc.
 - **deep_investigate**: If report.property.ambiguous === true, present options as numbered list and ask user to pick. Never guess.
@@ -921,6 +1031,9 @@ General-purpose AI with property expertise. Writing, analysis, research, strateg
 - **Deal Timeline**: Chronological events on deal detail pages.
 - **Property 360 Hub**: Matching requirements, comps, deals, news on property pages.
 - **Daily Digest**: Stuck deals, KYC gaps, cooling contacts. Encourage daily checks.
+
+## Tenant Mix Recommendations — CRITICAL RULE
+When suggesting target tenants for a scheme, leasing pitch, or tenant mix analysis, ONLY recommend occupiers who operate physical retail / F&B / leisure / fitness / beauty premises (i.e. businesses with a shopfront, customer-facing space, or physical presence). NEVER suggest office occupiers, serviced office operators, co-working businesses, professional services firms, or any business that does not trade from a public-facing ground-floor unit. If a business has no shop front or plans to open one, it must not appear in any tenant mix recommendation. The relevant categories are: fashion / clothing, food & drink / restaurants / cafés / bars, beauty & wellness / spas / salons, leisure / entertainment / experiential, gym & fitness / yoga / pilates, lifestyle / gifts / homewares / books, and other physical retail. If you are unsure whether a business qualifies, err on the side of exclusion.
 
 ## WIP/Deals Architecture
 crm_deals IS the WIP source of truth. Status determines WIP stage automatically. Update deals → WIP Report updates automatically. Fee allocations (dealFeeAllocations) track per-agent billing.
@@ -1855,8 +1968,106 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
+      name: "start_property_pathway",
+      description: "Start a new end-to-end Property Pathway investigation on an address. This orchestrates all BGP app modules — email + SharePoint search, CRM lookup, Land Registry, brand enrichment, property intelligence, image studio, model studio, and Why Buy document generation. Returns a runId to use with advance_property_pathway and get_property_pathway. Always use this instead of ad-hoc tool chaining when the user asks for a comprehensive property investigation, deal briefing, or Why Buy document.",
+      parameters: {
+        type: "object",
+        properties: {
+          address: { type: "string", description: "The property address, e.g. '18-22 Haymarket' or '17 Dover Street'" },
+          postcode: { type: "string", description: "UK postcode, e.g. 'SW1Y 4DG'" },
+          propertyId: { type: "string", description: "Optional CRM property id if this already has a record" },
+        },
+        required: ["address"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "advance_property_pathway",
+      description: "Run the next stage (or a specific stage) of a Property Pathway investigation. Stages: 1=Initial Search (email/SharePoint/CRM/LandReg/folder tree), 2=Brand Intelligence, 3=Review summary, 4=Property Intelligence (titles/planning/KYC), 5=Investigation Board ready, 6=Business Plan (Claude drafts plan from all prior findings; user must agree before moving on), 7=Excel Model (generated from agreed plan; refined in Excel add-in; user must agree), 8=Studios (Street View + Retail Context Plan + area/brand imagery), 9=Why Buy PDF. Always summarise what was found after each stage and ask the user before advancing.",
+      parameters: {
+        type: "object",
+        properties: {
+          runId: { type: "string", description: "The pathway run id returned by start_property_pathway" },
+          stage: { type: "number", description: "Optional specific stage to run (1-9). Defaults to current stage." },
+        },
+        required: ["runId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "update_business_plan",
+      description: "Patch one or more fields on the Stage 6 business plan draft for a Property Pathway run. Use this as you discuss the plan with the user — whenever they agree to a change (e.g. 'bump the target price to £14m', 'let's make it a 5-year hold not 7'), call this tool to persist the change. Then restate the full updated plan so they can confirm. Do NOT call agree_business_plan yourself — only the user agrees, via the UI or by an explicit 'agree' request.",
+      parameters: {
+        type: "object",
+        properties: {
+          runId: { type: "string", description: "The pathway run id" },
+          patch: {
+            type: "object",
+            description: "Partial BusinessPlan — any subset of: strategy, holdPeriodYrs, targetPurchasePrice, targetNIY (decimal), exitPrice, exitYield (decimal), exitYear, capex {amount, scope}, leasing {vacantUnits, targetRentPsf, reversionNotes}, equityCheck, targetIRR (decimal), targetMOIC, risks (string[]), keyMoves (string[]), notes",
+          },
+          note: { type: "string", description: "Optional short note on why this change was made (shown in the revision log)" },
+        },
+        required: ["runId", "patch"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "agree_business_plan",
+      description: "Lock the current Stage 6 business plan draft as agreed, which unlocks Stage 7 (Excel Model). ONLY call this when the user explicitly says 'agree', 'lock it', 'ship it', or similar — never proactively. Always summarise the plan first and get explicit user confirmation.",
+      parameters: {
+        type: "object",
+        properties: {
+          runId: { type: "string", description: "The pathway run id" },
+        },
+        required: ["runId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "get_property_pathway",
+      description: "Fetch the current state of a Property Pathway run — all stages, findings, images, model links, market intel (lease comps, availability, submarket context crawled from EG / CoStar / web during Stage 1), and the Why Buy PDF URL if generated. Use this to answer follow-up questions about a pathway investigation without re-running anything. If the user refers to a current investigation by address rather than runId, call list_property_pathway first to find the right runId.",
+      parameters: {
+        type: "object",
+        properties: {
+          runId: { type: "string", description: "The pathway run id" },
+        },
+        required: ["runId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "list_property_pathway",
+      description: "List active and recent Property Pathway investigations on the board — address, current stage, who started it, last update. Use this when the user asks a general question about what's being worked on (\"how's Haymarket going?\", \"what investigations are open?\") so you can match their address/context to the right runId, then call get_property_pathway for detail.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Optional substring match on address/postcode to narrow the list" },
+          limit: { type: "number", description: "Max runs to return (default 15)" },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "generate_pdf",
-      description: "Generate a professional PDF document from HTML content and save it as a downloadable file. Use this when the user asks for a PDF, report, or printable document. The HTML content will be converted to a clean, branded PDF with BGP header and page numbers. Returns a download link.",
+      description: "Generate a PLAIN-TEXT PDF report (no imagery, no visual design — headings, paragraphs, bullets only). Use ONLY for internal text summaries like meeting notes or data digests. DO NOT use for brochures, pitch decks, client-facing documents, placemaking materials, or anything the user describes as 'great-looking', 'designed', 'brochure', 'deck', 'pitch', or 'playbook' — for those use `generate_designed_deck` (Gamma, full visual design) or `compile_brochure_from_pdfs` (stitch real pages from existing BGP brochures).",
       parameters: {
         type: "object",
         properties: {
@@ -1981,12 +2192,13 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "search_emails",
-      description: "Search the user's Outlook inbox for emails matching a query. Returns up to 50 results. Use this when the user asks to find specific emails, conversations, or correspondence beyond the 15 most recent shown in context. Supports searching by keyword, sender name, subject, or date range.",
+      description: "Search Outlook for emails matching a query. By default searches the signed-in user's inbox. Pass `mailbox` to search a specific BGP teammate's inbox, or 'all' to search across every team member's mailbox plus the shared inbox (uses app-level Mail.Read). Returns up to 50 results. Use when the user asks to find specific emails, correspondence, or historic threads beyond the 15 most recent shown in context.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Search query — matches against subject, body, sender, and recipients. Use KQL syntax: e.g. 'from:john subject:proposal', 'hasattachment:true landsec', 'received>=2025-01-01'" },
+          query: { type: "string", description: "Search query — matches against subject, body, sender, recipients, and attachments. Use KQL syntax: e.g. 'from:john subject:proposal', 'hasattachment:true landsec', 'received>=2025-01-01'" },
           top: { type: "number", description: "Number of results to return (default 25, max 50)" },
+          mailbox: { type: "string", description: "Optional. A specific BGP mailbox email address (e.g. 'jack@brucegillinghampollard.com') to search, OR the literal string 'all' to fan out across every active BGP user's mailbox plus the shared inbox. Omit to search only the current user's inbox." },
         },
         required: ["query"],
       },
@@ -1997,11 +2209,12 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "get_email_attachments",
-      description: "List the attachments on a specific email. Returns attachment names, IDs, content types, and sizes. Use this when the user asks about an attachment on an email — you'll need the msgId from the email context or search results.",
+      description: "List the attachments on a specific email. Returns attachment names, IDs, content types, and sizes. Use this when the user asks about an attachment on an email — you'll need the msgId from the email context or search results. If the email came from search_emails with a mailboxEmail (i.e. another user's mailbox), you MUST pass mailboxEmail too — Graph message IDs are mailbox-scoped and will return ErrorInvalidMailboxItemId otherwise.",
       parameters: {
         type: "object",
         properties: {
           messageId: { type: "string", description: "The Graph API message ID from the email context [msgId:...] tag or from search_emails results." },
+          mailboxEmail: { type: "string", description: "The owner of the mailbox the message lives in (e.g. 'ollie@brucegillinghampollard.com'). REQUIRED when the message was returned by search_emails with mailbox=<email> or mailbox=all — the search result's mailboxEmail field has this value. Omit only when the message is in the calling user's own inbox." },
         },
         required: ["messageId"],
       },
@@ -2012,12 +2225,13 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "download_email_attachment",
-      description: "Download and read the content of an email attachment. For text-based files (PDF, Word, Excel, CSV, text), returns the extracted text content so you can read and summarise it. For binary files, returns metadata and a download link. Use get_email_attachments first to get the attachment ID.",
+      description: "Download and read the content of an email attachment. For text-based files (PDF, Word, Excel, CSV, text), returns the extracted text content so you can read and summarise it. For binary files, returns metadata and a download link. Use get_email_attachments first to get the attachment ID. If the email is in another user's mailbox (came from search_emails with mailboxEmail), you MUST pass the same mailboxEmail here — the ID is mailbox-scoped.",
       parameters: {
         type: "object",
         properties: {
           messageId: { type: "string", description: "The Graph API message ID of the email containing the attachment." },
           attachmentId: { type: "string", description: "The attachment ID from get_email_attachments results." },
+          mailboxEmail: { type: "string", description: "The owner of the mailbox the message lives in. REQUIRED when the message was returned by search_emails with mailbox=<email> or mailbox=all. The search result's mailboxEmail field has this value." },
           action: { type: "string", enum: ["read", "save_to_sharepoint"], description: "What to do with the attachment. 'read' returns the content. 'save_to_sharepoint' saves it to SharePoint (requires folderPath)." },
           folderPath: { type: "string", description: "SharePoint folder path to save the attachment to (required when action is 'save_to_sharepoint'). e.g. 'Deals/Brixton Market'" },
         },
@@ -2334,7 +2548,7 @@ export async function getAvailableTools(): Promise<{
           completionDate: { type: "string", description: "Date of transaction" },
           areaLocation: { type: "string", description: "London area e.g. Mayfair, City, Covent Garden" },
           postcode: { type: "string", description: "Postcode" },
-          sourceEvidence: { type: "string", enum: ["BGP Direct", "Opposing Agent", "Published", "EGi/CoStar", "Market Intel", "OneDrive Extract"], description: "Source of evidence" },
+          sourceEvidence: { type: "string", enum: ["Email", "WhatsApp", "File", "Brochure", "News", "SharePoint", "Dropbox", "Manual", "ChatBGP", "BGP Direct"], description: "Where the comp came from. Default: ChatBGP if created by the AI; match the actual origin (email, brochure, WhatsApp, etc.) when extracting from content." },
           measurementStandard: { type: "string", enum: ["NIA", "GIA", "IPMS 3 Office", "IPMS 3 Retail", "ITZA", "GEA"], description: "RICS measurement basis used" },
           rentPsfNia: { type: "string", description: "Rent per sq ft on NIA basis" },
           rentPsfGia: { type: "string", description: "Rent per sq ft on GIA basis" },
@@ -2426,77 +2640,79 @@ export async function getAvailableTools(): Promise<{
     },
   });
 
-  tools.push({
-    type: "function",
-    function: {
-      name: "edit_source_file",
-      description: "Edit or create a project source file. Use when the user asks to change the app — add features, fix bugs, change UI, modify backend logic. The change is applied immediately and the app restarts. All changes are logged for rollback. IMPORTANT: Read the file first before editing to understand the existing code.",
-      parameters: {
-        type: "object",
-        properties: {
-          filePath: { type: "string", description: "File path relative to project root, e.g. 'server/routes.ts'" },
-          action: { type: "string", enum: ["replace", "insert", "create", "append"], description: "replace: find and replace text. insert: insert text at a line number. create: create a new file. append: add text to end of file." },
-          searchText: { type: "string", description: "For 'replace' action: the exact text to find and replace. Must match the file content exactly." },
-          replaceText: { type: "string", description: "For 'replace' action: the new text to replace searchText with. For 'create'/'append': the full content to write." },
-          insertAtLine: { type: "number", description: "For 'insert' action: line number to insert before" },
-          insertText: { type: "string", description: "For 'insert' action: text to insert" },
-          content: { type: "string", description: "For 'create' action: full file content" },
-          description: { type: "string", description: "Brief description of what this change does, for the audit log" },
+  if (process.env.CHATBGP_ALLOW_CODE_EDITS === "true") {
+    tools.push({
+      type: "function",
+      function: {
+        name: "edit_source_file",
+        description: "Edit or create a project source file. Use when the user asks to change the app — add features, fix bugs, change UI, modify backend logic. The change is applied immediately and the app restarts. All changes are logged for rollback. IMPORTANT: Read the file first before editing to understand the existing code.",
+        parameters: {
+          type: "object",
+          properties: {
+            filePath: { type: "string", description: "File path relative to project root, e.g. 'server/routes.ts'" },
+            action: { type: "string", enum: ["replace", "insert", "create", "append"], description: "replace: find and replace text. insert: insert text at a line number. create: create a new file. append: add text to end of file." },
+            searchText: { type: "string", description: "For 'replace' action: the exact text to find and replace. Must match the file content exactly." },
+            replaceText: { type: "string", description: "For 'replace' action: the new text to replace searchText with. For 'create'/'append': the full content to write." },
+            insertAtLine: { type: "number", description: "For 'insert' action: line number to insert before" },
+            insertText: { type: "string", description: "For 'insert' action: text to insert" },
+            content: { type: "string", description: "For 'create' action: full file content" },
+            description: { type: "string", description: "Brief description of what this change does, for the audit log" },
+          },
+          required: ["filePath", "action", "description"],
         },
-        required: ["filePath", "action", "description"],
       },
-    },
-  });
+    });
 
-  tools.push({
-    type: "function",
-    function: {
-      name: "run_shell_command",
-      description: "Execute a shell command on the server. Use for database migrations (ALTER TABLE), installing packages (npm install), checking logs, or running scripts. Dangerous commands (rm -rf, git push --force, DROP DATABASE) are blocked. Output is captured and logged.",
-      parameters: {
-        type: "object",
-        properties: {
-          command: { type: "string", description: "The shell command to run. e.g. 'npm install lodash', 'psql $DATABASE_URL -c \"ALTER TABLE crm_contacts ADD COLUMN linkedin TEXT\"'" },
-          description: { type: "string", description: "Brief description of what this command does, for the audit log" },
+    tools.push({
+      type: "function",
+      function: {
+        name: "run_shell_command",
+        description: "Execute a shell command on the server. Use for database migrations (ALTER TABLE), installing packages (npm install), checking logs, or running scripts. Dangerous commands (rm -rf, git push --force, DROP DATABASE) are blocked. Output is captured and logged.",
+        parameters: {
+          type: "object",
+          properties: {
+            command: { type: "string", description: "The shell command to run. e.g. 'npm install lodash', 'psql $DATABASE_URL -c \"ALTER TABLE crm_contacts ADD COLUMN linkedin TEXT\"'" },
+            description: { type: "string", description: "Brief description of what this command does, for the audit log" },
+          },
+          required: ["command", "description"],
         },
-        required: ["command", "description"],
       },
-    },
-  });
+    });
 
-  tools.push({
-    type: "function",
-    function: {
-      name: "add_database_column",
-      description: "Add a new column to an existing database table. A safe, targeted tool for extending the CRM schema. The column will automatically appear in search results and API responses. Use when the user says 'add a field for X' or 'I need to track Y on deals/contacts/properties'.",
-      parameters: {
-        type: "object",
-        properties: {
-          tableName: { type: "string", enum: ["crm_deals", "crm_contacts", "crm_companies", "crm_properties", "investment_tracker", "available_units", "requirements", "crm_comps", "investment_comps", "crm_leads", "diary_entries"], description: "Database table to add the column to" },
-          columnName: { type: "string", description: "Column name in snake_case, e.g. 'linkedin_url', 'floor_area', 'aml_status'" },
-          columnType: { type: "string", enum: ["TEXT", "INTEGER", "REAL", "BOOLEAN", "TIMESTAMP", "JSONB"], description: "Data type for the column" },
-          defaultValue: { type: "string", description: "Optional default value. Use 'NULL' for nullable, or a specific value like 'true', '0', 'active'" },
-          description: { type: "string", description: "What this field is for — will be logged in the audit trail" },
+    tools.push({
+      type: "function",
+      function: {
+        name: "add_database_column",
+        description: "Add a new column to an existing database table. A safe, targeted tool for extending the CRM schema. The column will automatically appear in search results and API responses. Use when the user says 'add a field for X' or 'I need to track Y on deals/contacts/properties'.",
+        parameters: {
+          type: "object",
+          properties: {
+            tableName: { type: "string", enum: ["crm_deals", "crm_contacts", "crm_companies", "crm_properties", "investment_tracker", "available_units", "requirements", "crm_comps", "investment_comps", "crm_leads", "diary_entries"], description: "Database table to add the column to" },
+            columnName: { type: "string", description: "Column name in snake_case, e.g. 'linkedin_url', 'floor_area', 'aml_status'" },
+            columnType: { type: "string", enum: ["TEXT", "INTEGER", "REAL", "BOOLEAN", "TIMESTAMP", "JSONB"], description: "Data type for the column" },
+            defaultValue: { type: "string", description: "Optional default value. Use 'NULL' for nullable, or a specific value like 'true', '0', 'active'" },
+            description: { type: "string", description: "What this field is for — will be logged in the audit trail" },
+          },
+          required: ["tableName", "columnName", "columnType", "description"],
         },
-        required: ["tableName", "columnName", "columnType", "description"],
       },
-    },
-  });
+    });
 
-  tools.push({
-    type: "function",
-    function: {
-      name: "restart_application",
-      description: "Restart the BGP application after making code changes. Use after editing source files to apply the changes. The app typically restarts automatically, but use this if it doesn't or if the user reports issues.",
-      parameters: {
-        type: "object",
-        properties: {
-          reason: { type: "string", description: "Why the restart is needed" },
+    tools.push({
+      type: "function",
+      function: {
+        name: "restart_application",
+        description: "Restart the BGP application after making code changes. Use after editing source files to apply the changes. The app typically restarts automatically, but use this if it doesn't or if the user reports issues.",
+        parameters: {
+          type: "object",
+          properties: {
+            reason: { type: "string", description: "Why the restart is needed" },
+          },
+          required: ["reason"],
         },
-        required: ["reason"],
       },
-    },
-  });
+    });
+  }
 
   tools.push({
     type: "function",
@@ -2534,13 +2750,16 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "save_to_image_studio",
-      description: "Save an image to the BGP Image Studio library. Can save: (1) an AI-generated image from a previous generate_image call by providing the imageUrl, or (2) a base64-encoded image directly. Use when the user wants to save a generated image, upload an image to the studio, or add an image to the library. The image will appear in the Image Studio with all metadata.",
+      description: "Save an image to the BGP Image Studio library. Can save: (1) an AI-generated image from a previous generate_image call by providing the imageUrl, (2) a base64-encoded image directly, (3) a SharePoint image by providing sharepointDriveId + sharepointItemId, or (4) any public image URL via fetchUrl (e.g. company logos from Clearbit: 'https://logo.clearbit.com/pret.com'). Use when the user wants to save a generated image, upload an image, import SharePoint headshots/photos, or bulk-import company logos.",
       parameters: {
         type: "object",
         properties: {
           imageUrl: { type: "string", description: "URL of a previously generated image (from generate_image action), e.g. '/api/chat-media/xxx.png'" },
           base64Data: { type: "string", description: "Base64-encoded image data (alternative to imageUrl)" },
           mimeType: { type: "string", description: "MIME type if using base64Data, e.g. 'image/png', 'image/jpeg'" },
+          fetchUrl: { type: "string", description: "A public HTTPS image URL to fetch and save, e.g. 'https://logo.clearbit.com/savills.com' for company logos. Must be https://. Do not use for SharePoint — use sharepointDriveId+itemId for that." },
+          sharepointDriveId: { type: "string", description: "SharePoint driveId of the image file (from a browse_sharepoint_folder result). Use together with sharepointItemId to import a SharePoint image directly." },
+          sharepointItemId: { type: "string", description: "SharePoint itemId of the image file (from a browse_sharepoint_folder result). Use together with sharepointDriveId." },
           fileName: { type: "string", description: "Name for the image file, e.g. 'Oxford Street Retail View'" },
           category: { type: "string", description: "Category: Exteriors, Interiors, Floor Plans, Properties, Areas, Marketing, Brands, Generated, Other", enum: ["Exteriors", "Interiors", "Floor Plans", "Properties", "Areas", "Marketing", "Brands", "Generated", "Other"] },
           description: { type: "string", description: "Optional description of the image" },
@@ -2551,6 +2770,105 @@ export async function getAvailableTools(): Promise<{
           tags: { type: "array", items: { type: "string" }, description: "Optional tags for the image" },
         },
         required: ["fileName", "category"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "capture_pdf_pages",
+      description: "Render a PDF brochure into images and save each page to the Image Studio. Use when the user says 'take images of this brochure', 'capture the pages', 'save brochure images', or similar. Requires the SharePoint driveId and itemId from a browse_sharepoint_folder result. Works silently in the background — no viewer needed.",
+      parameters: {
+        type: "object",
+        properties: {
+          driveId: { type: "string", description: "SharePoint driveId of the PDF file" },
+          itemId: { type: "string", description: "SharePoint itemId of the PDF file" },
+          fileName: { type: "string", description: "Display name for the saved images, e.g. '18-22 Haymarket Brochure'" },
+          propertyName: { type: "string", description: "Property name for tagging, e.g. '18-22 Haymarket'" },
+          category: { type: "string", description: "Image Studio category. Default: Marketing", enum: ["Exteriors", "Interiors", "Floor Plans", "Properties", "Areas", "Marketing", "Brands", "Generated", "Other"] },
+          maxPages: { type: "number", description: "Maximum pages to capture (default: all). Use 1 for cover-only." },
+        },
+        required: ["driveId", "itemId", "fileName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "generate_designed_deck",
+      description: "Generate a properly designed, visually polished deck, brochure, pitch document, or playbook using Gamma. Full visual design with photography, typography, and layout — NOT a text-only PDF. Use this whenever the user asks for a brochure, deck, pitch, presentation, playbook, placemaking document, or any client-facing visual output. Returns both a PDF and a PPTX. This is the ONLY tool for making good-looking client documents from scratch.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Document title (also used for the filename)." },
+          inputText: { type: "string", description: "The full content to build the deck from — Gamma turns this into a designed document. Write 500-3000 words of structured content with headings and bullet points. Be specific and substantive — Gamma uses this verbatim to design the pages." },
+          format: { type: "string", enum: ["presentation", "document", "social"], description: "'presentation' = slide deck (use for pitches/decks), 'document' = long-form brochure (use for playbooks/reports), 'social' = square social post. Default: 'document'." },
+          numCards: { type: "number", description: "Target number of pages/slides (default: let Gamma decide)." },
+          themeName: { type: "string", description: "Gamma theme name for visual style (optional — Gamma picks a good default)." },
+          exportAs: { type: "string", enum: ["pdf", "pptx"], description: "Output format. Default 'pdf'. Use 'pptx' if the user wants to edit in PowerPoint." },
+          additionalInstructions: { type: "string", description: "Style guidance for Gamma, e.g. 'Use a minimal design with lots of imagery. Tone: property investment, British, professional.'" },
+        },
+        required: ["title", "inputText"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "compile_brochure_from_pdfs",
+      description: "Stitch specific pages from existing PDF brochures into a single new PDF, preserving all original design, imagery, and typography. Use when the user wants a bespoke brochure made from real BGP brochure pages (e.g. 'take pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard'). The output is a properly designed document because the pages ARE properly designed — you're just assembling them. Source PDFs must be accessible via SharePoint or Dropbox.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Title for the new combined PDF (used for the filename)." },
+          sources: {
+            type: "array",
+            description: "Ordered list of source PDF slices. Each item contributes its specified pages to the final output, in the order given.",
+            items: {
+              type: "object",
+              properties: {
+                source: { type: "string", enum: ["sharepoint", "dropbox"], description: "Where the source PDF lives." },
+                sharepointDriveId: { type: "string", description: "SharePoint driveId (required if source=sharepoint)" },
+                sharepointItemId: { type: "string", description: "SharePoint itemId (required if source=sharepoint)" },
+                dropboxPath: { type: "string", description: "Dropbox file path or ID (required if source=dropbox)" },
+                pages: { type: "array", items: { type: "number" }, description: "1-indexed page numbers to include (e.g. [3,4,5,6,7,8,9,10,11,12]). Use ranges if needed." },
+                label: { type: "string", description: "Optional human label for this source (for logging/debug)." },
+              },
+              required: ["source", "pages"],
+            },
+          },
+        },
+        required: ["title", "sources"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "copy_dropbox_to_sharepoint",
+      description: "Copy one or more files from Dropbox into a SharePoint folder, preserving the binary file (not just text). Use when the user asks to 'pull files into a SharePoint folder', 'file these to SharePoint', or 'move these PDFs to a shared folder'. Creates the destination folder if it doesn't exist.",
+      parameters: {
+        type: "object",
+        properties: {
+          files: {
+            type: "array",
+            description: "List of Dropbox files to copy.",
+            items: {
+              type: "object",
+              properties: {
+                dropboxPath: { type: "string", description: "Dropbox file path (e.g. '/Brixton/Target Tenants/Prospectus/Brixton Master Plan.pdf')" },
+                renameTo: { type: "string", description: "Optional: rename the file on upload. Defaults to original filename." },
+              },
+              required: ["dropboxPath"],
+            },
+          },
+          destinationFolderPath: { type: "string", description: "SharePoint folder path (e.g. 'Investment/Islington Square/Placemaking References'). Folder is created if missing." },
+        },
+        required: ["files", "destinationFolderPath"],
       },
     },
   });
@@ -2688,6 +3006,33 @@ export async function getAvailableTools(): Promise<{
           radius: { type: "number", description: "Search radius in metres (default 1500, max 3000)" },
         },
         required: ["postcode"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "log_lease_event",
+      description: "Log an upcoming lease event (rent review, break, expiry, renewal option) to the Lease Events tracker. Use when the user mentions an upcoming lease event in conversation, or when you extract one from an email/brochure/WhatsApp. Lease advisory team uses this as their BD pipeline. Always set sourceEvidence to match where the info came from.",
+      parameters: {
+        type: "object",
+        properties: {
+          tenant: { type: "string", description: "Tenant company name" },
+          address: { type: "string", description: "Property address" },
+          unitRef: { type: "string", description: "Unit reference, e.g. 'Unit 2A' or floor number" },
+          eventType: { type: "string", enum: ["Rent Review", "Break Option", "Lease Expiry", "Renewal Option", "Service Charge", "Other"], description: "Type of lease event" },
+          eventDate: { type: "string", description: "Event date as ISO date string (YYYY-MM-DD)" },
+          noticeDate: { type: "string", description: "Notice date as ISO (for break options)" },
+          currentRent: { type: "string", description: "Current rent, e.g. '£125,000 pa'" },
+          estimatedErv: { type: "string", description: "Estimated rental value if known" },
+          sqft: { type: "string", description: "Unit size" },
+          sourceEvidence: { type: "string", enum: ["Email", "WhatsApp", "File", "Brochure", "News", "SharePoint", "Dropbox", "Manual", "ChatBGP", "BGP Direct"], description: "Where this information came from" },
+          sourceUrl: { type: "string", description: "Link back to the source (email URL, SharePoint link, etc.)" },
+          sourceTitle: { type: "string", description: "Short title for the source, e.g. 'Pete's email — 14 Apr'" },
+          notes: { type: "string", description: "Any context from the source" },
+        },
+        required: ["tenant", "eventType"],
       },
     },
   });
@@ -4346,7 +4691,7 @@ async function executeCrmToolRaw(
       comments: fnArgs.comments || null, propertyId: fnArgs.propertyId || null, dealId: fnArgs.dealId || null,
       transactionType: fnArgs.transactionType || null, useClass: fnArgs.useClass || null,
       ltActStatus: fnArgs.ltActStatus || null, passingRent: fnArgs.passingRent || null,
-      fitoutContribution: fnArgs.fitoutContribution || null, sourceEvidence: fnArgs.sourceEvidence || null,
+      fitoutContribution: fnArgs.fitoutContribution || null, sourceEvidence: fnArgs.sourceEvidence || "ChatBGP",
       niaSqft: fnArgs.niaSqft || null, giaSqft: fnArgs.giaSqft || null, itzaSqft: fnArgs.itzaSqft || null,
       netEffectiveRent: fnArgs.netEffectiveRent || null, breakClause: fnArgs.breakClause || null,
       areaLocation: fnArgs.areaLocation || null, postcode: fnArgs.postcode || null,
@@ -4452,6 +4797,9 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "edit_source_file") {
+    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
+      return { data: { success: false, error: "Code editing is disabled. Ask Woody to make the change via terminal Claude Code, or enable CHATBGP_ALLOW_CODE_EDITS=true in Railway." } };
+    }
     const fs = await import("fs");
     const path = await import("path");
     const projectRoot = process.cwd();
@@ -4506,6 +4854,9 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "run_shell_command") {
+    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
+      return { data: { success: false, error: "Shell access is disabled. Ask Woody to run the command manually, or enable CHATBGP_ALLOW_CODE_EDITS=true in Railway." } };
+    }
     const { execSync } = await import("child_process");
     const command = fnArgs.command as string;
     const description = fnArgs.description || "Shell command via ChatBGP";
@@ -4549,6 +4900,9 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "add_database_column") {
+    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
+      return { data: { success: false, error: "Schema changes are disabled. Ask Woody to run the migration, or enable CHATBGP_ALLOW_CODE_EDITS=true in Railway." } };
+    }
     const tableName = fnArgs.tableName as string;
     const columnName = (fnArgs.columnName as string).replace(/[^a-z0-9_]/gi, "");
     const columnType = fnArgs.columnType as string;
@@ -4582,6 +4936,9 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "restart_application") {
+    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
+      return { data: { success: false, error: "Application restart is disabled. Ask Woody to redeploy via Railway." } };
+    }
     const { execSync } = await import("child_process");
     try {
       execSync("kill -USR2 1 2>/dev/null || true", { timeout: 5000 });
@@ -4634,6 +4991,28 @@ async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] Image generation error:", err?.message);
       return { data: { success: false, error: `Image generation failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "capture_pdf_pages") {
+    try {
+      const { driveId, itemId, fileName, propertyName, category = "Marketing", maxPages } = fnArgs as any;
+      if (!driveId || !itemId) return { data: { success: false, error: "driveId and itemId are required — browse SharePoint first to find the PDF." } };
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      const sessionCookie = req.headers.cookie || "";
+      const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol;
+      const host = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string);
+      const baseUrl = `${protocol}://${host}`;
+      const captureRes = await fetch(`${baseUrl}/api/image-studio/capture-pdf`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: sessionCookie },
+        body: JSON.stringify({ driveId, itemId, fileName, propertyName, category, maxPages }),
+      });
+      const data = await captureRes.json() as any;
+      if (!captureRes.ok) return { data: { success: false, error: data.error || `Capture failed: ${captureRes.status}` } };
+      return { data: { success: true, pages: data.pages, message: `Captured ${data.pages} page${data.pages === 1 ? "" : "s"} from "${fileName}" and saved to Image Studio under ${category}.` } };
+    } catch (err: any) {
+      return { data: { success: false, error: `PDF capture error: ${err?.message}` } };
     }
   }
 
@@ -4692,13 +5071,56 @@ async function executeCrmToolRaw(
       const imageUrl = fnArgs.imageUrl as string;
       const base64Data = fnArgs.base64Data as string;
       const mimeType = String(fnArgs.mimeType || "image/png");
+      const fetchUrl = fnArgs.fetchUrl as string;
+      const spDriveId = fnArgs.sharepointDriveId as string;
+      const spItemId = fnArgs.sharepointItemId as string;
 
       let imageBuffer: Buffer;
       let ext = "png";
 
-      if (imageUrl) {
-        const fsModule = await import("fs");
-        const pathModule = await import("path");
+      if (fetchUrl) {
+        if (!fetchUrl.startsWith("https://")) {
+          return { data: { success: false, error: "fetchUrl must be an https:// URL." } };
+        }
+        try {
+          const u = new URL(fetchUrl);
+          const host = u.hostname.toLowerCase();
+          if (host === "localhost" || host === "127.0.0.1" || /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || host === "169.254.169.254") {
+            return { data: { success: false, error: "fetchUrl points to a private/internal address — not allowed." } };
+          }
+        } catch {
+          return { data: { success: false, error: "fetchUrl is not a valid URL." } };
+        }
+        const fetchRes = await fetch(fetchUrl, { redirect: "follow", signal: AbortSignal.timeout(15000) });
+        if (!fetchRes.ok) {
+          return { data: { success: false, error: `Fetch failed: HTTP ${fetchRes.status} from ${fetchUrl}` } };
+        }
+        const ctype = fetchRes.headers.get("content-type") || "";
+        if (!ctype.startsWith("image/")) {
+          return { data: { success: false, error: `URL did not return an image (content-type: ${ctype}). Check the URL is correct.` } };
+        }
+        const bytes = await fetchRes.arrayBuffer();
+        if (bytes.byteLength > 10 * 1024 * 1024) {
+          return { data: { success: false, error: "Image is larger than 10MB — too large to import." } };
+        }
+        imageBuffer = Buffer.from(bytes);
+        ext = ctype.includes("jpeg") || ctype.includes("jpg") ? "jpg" : ctype.includes("png") ? "png" : ctype.includes("webp") ? "webp" : ctype.includes("svg") ? "svg" : "jpg";
+      } else if (spDriveId && spItemId) {
+        const token = await getValidMsToken(req);
+        if (!token) {
+          return { data: { success: false, error: "Not signed into Microsoft — cannot fetch SharePoint image." } };
+        }
+        const contentRes = await fetch(
+          `https://graph.microsoft.com/v1.0/drives/${spDriveId}/items/${spItemId}/content`,
+          { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" }
+        );
+        if (!contentRes.ok) {
+          return { data: { success: false, error: `SharePoint fetch failed: HTTP ${contentRes.status}` } };
+        }
+        imageBuffer = Buffer.from(await contentRes.arrayBuffer());
+        const ctype = contentRes.headers.get("content-type") || "";
+        ext = ctype.includes("jpeg") || ctype.includes("jpg") ? "jpg" : ctype.includes("png") ? "png" : ctype.includes("webp") ? "webp" : "jpg";
+      } else if (imageUrl) {
         if (imageUrl.startsWith("/api/chat-media/")) {
           const mediaName = imageUrl.replace("/api/chat-media/", "");
           const { getFile } = await import("./file-storage");
@@ -4715,7 +5137,7 @@ async function executeCrmToolRaw(
         imageBuffer = Buffer.from(base64Data, "base64");
         ext = mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "png";
       } else {
-        return { data: { success: false, error: "Provide either imageUrl (from generate_image) or base64Data." } };
+        return { data: { success: false, error: "Provide imageUrl (from generate_image), base64Data, or sharepointDriveId+sharepointItemId." } };
       }
 
       const fsModule = await import("fs");
@@ -4759,41 +5181,10 @@ async function executeCrmToolRaw(
   if (fnName === "web_search") {
     const searchQuery = fnArgs.query as string;
     try {
-      const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
-      const searchRes = await fetch(searchUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        },
-        signal: AbortSignal.timeout(15000),
-      });
-      const html = await searchRes.text();
-      const results: Array<{ title: string; url: string; snippet: string }> = [];
-      const resultBlocks = html.split(/class="result\s/);
-      for (let i = 1; i < resultBlocks.length && results.length < 8; i++) {
-        const block = resultBlocks[i];
-        const titleMatch = block.match(/class="result__a"[^>]*>([^<]+)</);
-        const urlMatch = block.match(/class="result__url"[^>]*href="([^"]*)"/) || block.match(/href="\/\/duckduckgo\.com\/l\/\?uddg=([^&"]+)/);
-        const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\//);
-        if (titleMatch && urlMatch) {
-          let resultUrl = urlMatch[1];
-          if (resultUrl.startsWith("//duckduckgo.com/l/?uddg=")) {
-            resultUrl = decodeURIComponent(resultUrl.replace("//duckduckgo.com/l/?uddg=", ""));
-          } else if (!resultUrl.startsWith("http")) {
-            resultUrl = decodeURIComponent(resultUrl.trim());
-            if (!resultUrl.startsWith("http")) resultUrl = "https://" + resultUrl;
-          }
-          results.push({
-            title: titleMatch[1].trim(),
-            url: resultUrl,
-            snippet: (snippetMatch?.[1] || "").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').trim(),
-          });
-        }
-      }
-      if (results.length === 0) {
-        return { data: { results: [], message: "No results found. Try a different search query." } };
-      }
-      console.log(`[ChatBGP] Web search for "${searchQuery}" returned ${results.length} results`);
-      return { data: { results, query: searchQuery, resultCount: results.length } };
+      if (!isPerplexityConfigured()) return { data: { error: "Web search not configured (PERPLEXITY_API_KEY missing)" } };
+      const r = await askPerplexity(searchQuery, { maxTokens: 800, temperature: 0.1 });
+      console.log(`[ChatBGP] Web search for "${searchQuery}" via Perplexity — ${r.citations.length} citations`);
+      return { data: { answer: r.answer, citations: r.citations, query: searchQuery } };
     } catch (err: any) {
       console.error("[chatbgp] Web search error:", err?.message);
       return { data: { error: `Web search failed: ${err?.message}` } };
@@ -4957,6 +5348,35 @@ async function executeCrmToolRaw(
     }
   }
 
+  if (fnName === "log_lease_event") {
+    try {
+      const { tenant, address, unitRef, eventType, eventDate, noticeDate, currentRent, estimatedErv, sqft, sourceEvidence, sourceUrl, sourceTitle, notes } = fnArgs as any;
+      if (!tenant || !eventType) return { data: { success: false, error: "tenant and eventType are required" } };
+      const userId = req.session?.userId || (req as any).tokenUserId || "chatbgp";
+      const { leaseEvents } = await import("@shared/schema");
+      const [row] = await db.insert(leaseEvents).values({
+        tenant,
+        address: address || null,
+        unitRef: unitRef || null,
+        eventType,
+        eventDate: eventDate ? new Date(eventDate) : null,
+        noticeDate: noticeDate ? new Date(noticeDate) : null,
+        currentRent: currentRent || null,
+        estimatedErv: estimatedErv || null,
+        sqft: sqft || null,
+        sourceEvidence: sourceEvidence || "ChatBGP",
+        sourceUrl: sourceUrl || null,
+        sourceTitle: sourceTitle || null,
+        notes: notes || null,
+        status: "Monitoring",
+        createdBy: userId,
+      }).returning();
+      return { data: { success: true, id: row.id, message: `Logged ${eventType} for ${tenant}${eventDate ? ` on ${new Date(eventDate).toLocaleDateString("en-GB")}` : ""}. Visible on the Lease Events board.` } };
+    } catch (err: any) {
+      return { data: { success: false, error: err?.message } };
+    }
+  }
+
   if (fnName === "query_wip") {
     let sql = `SELECT id, name, group_name AS "groupName", deal_type AS "dealType", status, team, pricing, fee, rent_pa AS "rentPa", total_area_sqft AS "totalAreaSqft" FROM crm_deals WHERE 1=1`;
     const params: any[] = [];
@@ -5036,6 +5456,39 @@ async function executeCrmToolRaw(
     } catch (pdfErr: any) {
       console.error("[chatbgp] PDF generation error:", pdfErr?.message);
       return { data: { error: `Failed to generate PDF: ${pdfErr?.message || "Unknown error"}` } };
+    }
+  }
+
+  if (fnName === "generate_designed_deck") {
+    try {
+      const { generateDesignedDeck } = await import("./chatbgp-design-tools");
+      const result = await generateDesignedDeck(fnArgs);
+      return { data: result };
+    } catch (err: any) {
+      console.error("[chatbgp] generate_designed_deck error:", err?.message);
+      return { data: { error: `Gamma deck generation failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "compile_brochure_from_pdfs") {
+    try {
+      const { compileBrochureFromPdfs } = await import("./chatbgp-design-tools");
+      const result = await compileBrochureFromPdfs(fnArgs, req);
+      return { data: result };
+    } catch (err: any) {
+      console.error("[chatbgp] compile_brochure_from_pdfs error:", err?.message);
+      return { data: { error: `Brochure compilation failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "copy_dropbox_to_sharepoint") {
+    try {
+      const { copyDropboxToSharepoint } = await import("./chatbgp-design-tools");
+      const result = await copyDropboxToSharepoint(fnArgs, req);
+      return { data: result };
+    } catch (err: any) {
+      console.error("[chatbgp] copy_dropbox_to_sharepoint error:", err?.message);
+      return { data: { error: `Dropbox→SharePoint copy failed: ${err?.message}` } };
     }
   }
 
@@ -5235,36 +5688,12 @@ async function executeCrmToolRaw(
 
   if (fnName === "search_emails") {
     try {
-      const token = await getValidMsToken(req);
-      if (!token) return { data: { error: "Not connected to Microsoft 365. Please sign in first." } };
       const searchQuery = fnArgs.query;
       const top = Math.min(fnArgs.top || 25, 50);
-      const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-      const url = "https://graph.microsoft.com/v1.0/me/messages?" + new URLSearchParams({
-        $search: `"${searchQuery}"`,
-        $top: String(top),
-        $select: "id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,conversationId",
-        $orderby: "receivedDateTime desc",
-      });
-      const res = await fetch(url, { headers });
-      if (!res.ok) {
-        const errText = await res.text();
-        return { data: { error: `Email search failed: ${res.status} ${errText.slice(0, 200)}` } };
-      }
-      const data = await res.json();
-      const messages = (data.value || []).map((msg: any) => ({
-        id: msg.id,
-        subject: msg.subject || "(No subject)",
-        from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown",
-        fromEmail: msg.from?.emailAddress?.address || "",
-        to: (msg.toRecipients || []).map((r: any) => r.emailAddress?.name || r.emailAddress?.address).join(", "),
-        date: msg.receivedDateTime,
-        preview: (msg.bodyPreview || "").slice(0, 200).replace(/\n/g, " "),
-        isRead: msg.isRead,
-        hasAttachments: msg.hasAttachments,
-        msgId: msg.id,
-      }));
-      return { data: { results: messages, count: messages.length, query: searchQuery } };
+      const mailboxArg = typeof fnArgs.mailbox === "string" ? fnArgs.mailbox.trim().toLowerCase() : "";
+      const results = await runSearchEmailsTool({ query: searchQuery, top, mailbox: mailboxArg, req });
+      if ("error" in results) return { data: { error: results.error } };
+      return { data: { results: results.messages, count: results.messages.length, query: searchQuery, scope: results.scope } };
     } catch (searchErr: any) {
       return { data: { error: `Email search error: ${searchErr?.message || "Unknown error"}` } };
     }
@@ -5272,9 +5701,24 @@ async function executeCrmToolRaw(
 
   if (fnName === "get_email_attachments") {
     try {
+      const msgId = encodeURIComponent(fnArgs.messageId);
+      const mailboxEmail: string | undefined = fnArgs.mailboxEmail;
+      // Cross-mailbox path: route via app token on /users/{email}/messages/...
+      // Graph message IDs are mailbox-scoped, so using /me here against an id
+      // from another user's mailbox returns ErrorInvalidMailboxItemId.
+      if (mailboxEmail) {
+        const { graphRequest } = await import("./shared-mailbox");
+        const data = await graphRequest(
+          `/users/${encodeURIComponent(mailboxEmail)}/messages/${msgId}/attachments?$select=id,name,contentType,size,isInline`,
+          { headers: { "X-AnchorMailbox": mailboxEmail } as any }
+        );
+        const attachments = (data?.value || [])
+          .filter((a: any) => !a.isInline && a["@odata.type"] !== "#microsoft.graph.itemAttachment")
+          .map((a: any) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size }));
+        return { data: { attachments, count: attachments.length, mailboxEmail } };
+      }
       const token = await getValidMsToken(req);
       if (!token) return { data: { error: "Not connected to Microsoft 365. Please sign in first." } };
-      const msgId = encodeURIComponent(fnArgs.messageId);
       const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
       const graphRes = await fetch(
         `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments?$select=id,name,contentType,size,isInline`,
@@ -5282,7 +5726,7 @@ async function executeCrmToolRaw(
       );
       if (!graphRes.ok) {
         const errText = await graphRes.text();
-        return { data: { error: `Failed to fetch attachments: ${graphRes.status} ${errText.slice(0, 200)}` } };
+        return { data: { error: `Failed to fetch attachments: ${graphRes.status} ${errText.slice(0, 200)}${errText.includes("ErrorInvalidMailboxItemId") ? " — this message is in another user's mailbox. Pass mailboxEmail (from the search_emails result)." : ""}` } };
       }
       const data = await graphRes.json();
       const attachments = (data.value || [])
@@ -5296,24 +5740,34 @@ async function executeCrmToolRaw(
 
   if (fnName === "download_email_attachment") {
     try {
-      const token = await getValidMsToken(req);
-      if (!token) return { data: { error: "Not connected to Microsoft 365. Please sign in first." } };
       const action = fnArgs.action || "read";
       if (action === "save_to_sharepoint" && !fnArgs.folderPath) {
         return { data: { error: "folderPath is required when action is 'save_to_sharepoint'." } };
       }
       const msgId = encodeURIComponent(fnArgs.messageId);
       const attId = encodeURIComponent(fnArgs.attachmentId);
-      const headers = { Authorization: `Bearer ${token}` };
-      const graphRes = await fetch(
-        `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments/${attId}`,
-        { headers }
-      );
-      if (!graphRes.ok) {
-        const errText = await graphRes.text();
-        return { data: { error: `Failed to download attachment: ${graphRes.status} ${errText.slice(0, 200)}` } };
+      const mailboxEmail: string | undefined = fnArgs.mailboxEmail;
+      let attachment: any;
+      if (mailboxEmail) {
+        const { graphRequest } = await import("./shared-mailbox");
+        attachment = await graphRequest(
+          `/users/${encodeURIComponent(mailboxEmail)}/messages/${msgId}/attachments/${attId}`,
+          { headers: { "X-AnchorMailbox": mailboxEmail } as any }
+        );
+      } else {
+        const token = await getValidMsToken(req);
+        if (!token) return { data: { error: "Not connected to Microsoft 365. Please sign in first." } };
+        const headers = { Authorization: `Bearer ${token}` };
+        const graphRes = await fetch(
+          `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments/${attId}`,
+          { headers }
+        );
+        if (!graphRes.ok) {
+          const errText = await graphRes.text();
+          return { data: { error: `Failed to download attachment: ${graphRes.status} ${errText.slice(0, 200)}${errText.includes("ErrorInvalidMailboxItemId") ? " — this message is in another user's mailbox. Pass mailboxEmail (from the search_emails result)." : ""}` } };
+        }
+        attachment = await graphRes.json();
       }
-      const attachment = await graphRes.json();
       if (!attachment.contentBytes) {
         return { data: { error: "This attachment type is not downloadable (no content bytes). It may be a linked item rather than a file." } };
       }
@@ -6928,13 +7382,13 @@ async function executeCrmToolRaw(
                 const lastName = nameParts[0]?.trim();
                 const firstName = nameParts[1]?.trim()?.split(/\s+/)[0];
 
-                // mixed_people/search (replaces deprecated people/match)
+                // mixed_people/api_search (replaces deprecated mixed_people/search)
                 const body: Record<string, any> = { page: 1, per_page: 1 };
                 if (firstName || lastName) body.q_keywords = `${firstName || ""} ${lastName || ""}`.trim();
                 const orgName = report.company.profile?.companyName || targetCompanyName;
                 body.organization_names = [orgName];
 
-                const apolloRes = await timedFetch("https://api.apollo.io/api/v1/mixed_people/search", {
+                const apolloRes = await timedFetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
                   method: "POST",
                   headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloApiKey },
                   body: JSON.stringify(body),
@@ -7052,13 +7506,13 @@ async function executeCrmToolRaw(
             const nameParts = personName.split(/\s+/);
             const firstName = nameParts[0];
             const lastName = nameParts.slice(1).join(" ");
-            // mixed_people/search (replaces deprecated people/match)
+            // mixed_people/api_search (replaces deprecated mixed_people/search)
             const body: Record<string, any> = { page: 1, per_page: 1 };
             if (firstName || lastName) body.q_keywords = `${firstName || ""} ${lastName || ""}`.trim();
             const orgName = targetCompanyName || companyName || "";
             if (orgName) body.organization_names = [orgName];
 
-            const apolloRes = await timedFetch("https://api.apollo.io/api/v1/mixed_people/search", {
+            const apolloRes = await timedFetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
               method: "POST",
               headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloApiKey },
               body: JSON.stringify(body),
@@ -7674,7 +8128,7 @@ export async function handleCrmToolCall(
       comments: fnArgs.comments || null, propertyId: fnArgs.propertyId || null, dealId: fnArgs.dealId || null,
       transactionType: fnArgs.transactionType || null, useClass: fnArgs.useClass || null,
       ltActStatus: fnArgs.ltActStatus || null, passingRent: fnArgs.passingRent || null,
-      fitoutContribution: fnArgs.fitoutContribution || null, sourceEvidence: fnArgs.sourceEvidence || null,
+      fitoutContribution: fnArgs.fitoutContribution || null, sourceEvidence: fnArgs.sourceEvidence || "ChatBGP",
       niaSqft: fnArgs.niaSqft || null, giaSqft: fnArgs.giaSqft || null, itzaSqft: fnArgs.itzaSqft || null,
       netEffectiveRent: fnArgs.netEffectiveRent || null, breakClause: fnArgs.breakClause || null,
       areaLocation: fnArgs.areaLocation || null, postcode: fnArgs.postcode || null,
@@ -7773,41 +8227,13 @@ export async function handleCrmToolCall(
   if (fnName === "web_search") {
     const searchQuery = fnArgs.query as string;
     try {
-      const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
-      const searchRes = await fetch(searchUrl, {
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
-        signal: AbortSignal.timeout(15000),
-      });
-      const html = await searchRes.text();
-      const results: Array<{ title: string; url: string; snippet: string }> = [];
-      const resultBlocks = html.split(/class="result\s/);
-      for (let i = 1; i < resultBlocks.length && results.length < 8; i++) {
-        const block = resultBlocks[i];
-        const titleMatch = block.match(/class="result__a"[^>]*>([^<]+)</);
-        const urlMatch = block.match(/class="result__url"[^>]*href="([^"]*)"/) || block.match(/href="\/\/duckduckgo\.com\/l\/\?uddg=([^&"]+)/);
-        const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\//);
-        if (titleMatch && urlMatch) {
-          let resultUrl = urlMatch[1];
-          if (resultUrl.startsWith("//duckduckgo.com/l/?uddg=")) {
-            resultUrl = decodeURIComponent(resultUrl.replace("//duckduckgo.com/l/?uddg=", ""));
-          } else if (!resultUrl.startsWith("http")) {
-            resultUrl = decodeURIComponent(resultUrl.trim());
-            if (!resultUrl.startsWith("http")) resultUrl = "https://" + resultUrl;
-          }
-          results.push({
-            title: titleMatch[1].trim(),
-            url: resultUrl,
-            snippet: (snippetMatch?.[1] || "").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').trim(),
-          });
-        }
-      }
-      console.log(`[ChatBGP] Web search for "${searchQuery}" returned ${results.length} results`);
-      if (results.length === 0) {
-        return { handled: true, response: { reply: `I searched the web for "${searchQuery}" but couldn't find relevant results. Let me try a different approach.` } };
-      }
-      const formatted = results.map((r, i) => `${i + 1}. **${r.title}**\n   ${r.url}\n   ${r.snippet}`).join("\n\n");
-      const reply = await summaryHelper({ success: true, query: searchQuery, resultCount: results.length, results });
-      return { handled: true, response: { reply: reply || `Found ${results.length} results for "${searchQuery}":\n\n${formatted}` } };
+      if (!isPerplexityConfigured()) return { handled: true, response: { reply: "Web search is not configured (PERPLEXITY_API_KEY missing)." } };
+      const r = await askPerplexity(searchQuery, { maxTokens: 800, temperature: 0.1 });
+      console.log(`[ChatBGP] Web search for "${searchQuery}" via Perplexity — ${r.citations.length} citations`);
+      const citationList = r.citations.length > 0
+        ? "\n\nSources: " + r.citations.map(c => c.title ? `[${c.title}](${c.url})` : c.url).join(" · ")
+        : "";
+      return { handled: true, response: { reply: r.answer + citationList } };
     } catch (err: any) {
       return { handled: true, response: { reply: `Sorry, the web search failed: ${err.message}` } };
     }
@@ -8304,37 +8730,13 @@ export async function handleCrmToolCall(
 
   if (fnName === "search_emails") {
     try {
-      const token = await getValidMsToken(req);
-      if (!token) return { handled: true, response: { reply: "Not connected to Microsoft 365. Please sign in first." } };
       const searchQuery = fnArgs.query;
       const top = Math.min(fnArgs.top || 25, 50);
-      const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-      const url = "https://graph.microsoft.com/v1.0/me/messages?" + new URLSearchParams({
-        $search: `"${searchQuery}"`,
-        $top: String(top),
-        $select: "id,subject,from,toRecipients,receivedDateTime,bodyPreview,isRead,hasAttachments,conversationId",
-        $orderby: "receivedDateTime desc",
-      });
-      const searchRes = await fetch(url, { headers });
-      if (!searchRes.ok) {
-        const errText = await searchRes.text();
-        return { handled: true, response: { reply: `Email search failed: ${searchRes.status} ${errText.slice(0, 200)}` } };
-      }
-      const data = await searchRes.json();
-      const messages = (data.value || []).map((msg: any) => ({
-        id: msg.id,
-        subject: msg.subject || "(No subject)",
-        from: msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown",
-        fromEmail: msg.from?.emailAddress?.address || "",
-        to: (msg.toRecipients || []).map((r: any) => r.emailAddress?.name || r.emailAddress?.address).join(", "),
-        date: msg.receivedDateTime,
-        preview: (msg.bodyPreview || "").slice(0, 200).replace(/\n/g, " "),
-        isRead: msg.isRead,
-        hasAttachments: msg.hasAttachments,
-        msgId: msg.id,
-      }));
-      const reply = await summaryHelper({ results: messages, count: messages.length, query: searchQuery });
-      return { handled: true, response: { reply: reply || `Found ${messages.length} emails matching "${searchQuery}".` } };
+      const mailboxArg = typeof fnArgs.mailbox === "string" ? fnArgs.mailbox.trim().toLowerCase() : "";
+      const results = await runSearchEmailsTool({ query: searchQuery, top, mailbox: mailboxArg, req });
+      if ("error" in results) return { handled: true, response: { reply: results.error } };
+      const reply = await summaryHelper({ results: results.messages, count: results.messages.length, query: searchQuery, scope: results.scope });
+      return { handled: true, response: { reply: reply || `Found ${results.messages.length} emails matching "${searchQuery}" (${results.scope}).` } };
     } catch (searchErr: any) {
       return { handled: true, response: { reply: `Email search error: ${searchErr?.message || "Unknown error"}` } };
     }
@@ -8342,22 +8744,37 @@ export async function handleCrmToolCall(
 
   if (fnName === "get_email_attachments") {
     try {
-      const token = await getValidMsToken(req);
-      if (!token) return { handled: true, response: { reply: "Not connected to Microsoft 365. Please sign in first." } };
       const msgId = encodeURIComponent(fnArgs.messageId);
-      const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-      const graphRes = await fetch(
-        `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments?$select=id,name,contentType,size,isInline`,
-        { headers }
-      );
-      if (!graphRes.ok) {
-        return { handled: true, response: { reply: `Failed to fetch attachments: ${graphRes.status}` } };
+      const mailboxEmail: string | undefined = fnArgs.mailboxEmail;
+      let attachments: any[];
+      if (mailboxEmail) {
+        const { graphRequest } = await import("./shared-mailbox");
+        const data = await graphRequest(
+          `/users/${encodeURIComponent(mailboxEmail)}/messages/${msgId}/attachments?$select=id,name,contentType,size,isInline`,
+          { headers: { "X-AnchorMailbox": mailboxEmail } as any }
+        );
+        attachments = (data?.value || [])
+          .filter((a: any) => !a.isInline && a["@odata.type"] !== "#microsoft.graph.itemAttachment")
+          .map((a: any) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size }));
+      } else {
+        const token = await getValidMsToken(req);
+        if (!token) return { handled: true, response: { reply: "Not connected to Microsoft 365. Please sign in first." } };
+        const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+        const graphRes = await fetch(
+          `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments?$select=id,name,contentType,size,isInline`,
+          { headers }
+        );
+        if (!graphRes.ok) {
+          const errText = await graphRes.text();
+          const hint = errText.includes("ErrorInvalidMailboxItemId") ? " — this message is in another user's mailbox. Pass mailboxEmail." : "";
+          return { handled: true, response: { reply: `Failed to fetch attachments: ${graphRes.status}${hint}` } };
+        }
+        const data = await graphRes.json();
+        attachments = (data.value || [])
+          .filter((a: any) => !a.isInline && a["@odata.type"] !== "#microsoft.graph.itemAttachment")
+          .map((a: any) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size }));
       }
-      const data = await graphRes.json();
-      const attachments = (data.value || [])
-        .filter((a: any) => !a.isInline && a["@odata.type"] !== "#microsoft.graph.itemAttachment")
-        .map((a: any) => ({ id: a.id, name: a.name, contentType: a.contentType, size: a.size }));
-      const reply = await summaryHelper({ attachments, count: attachments.length });
+      const reply = await summaryHelper({ attachments, count: attachments.length, mailboxEmail });
       return { handled: true, response: { reply: reply || `Found ${attachments.length} attachment(s).` } };
     } catch (err: any) {
       return { handled: true, response: { reply: `Attachment list error: ${err?.message || "Unknown error"}` } };
@@ -8366,23 +8783,35 @@ export async function handleCrmToolCall(
 
   if (fnName === "download_email_attachment") {
     try {
-      const token = await getValidMsToken(req);
-      if (!token) return { handled: true, response: { reply: "Not connected to Microsoft 365. Please sign in first." } };
       const action = fnArgs.action || "read";
       if (action === "save_to_sharepoint" && !fnArgs.folderPath) {
         return { handled: true, response: { reply: "I need a SharePoint folder path to save the attachment. Could you tell me where you'd like it saved?" } };
       }
       const msgId = encodeURIComponent(fnArgs.messageId);
       const attId = encodeURIComponent(fnArgs.attachmentId);
-      const headers = { Authorization: `Bearer ${token}` };
-      const graphRes = await fetch(
-        `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments/${attId}`,
-        { headers }
-      );
-      if (!graphRes.ok) {
-        return { handled: true, response: { reply: `Failed to download attachment: ${graphRes.status}` } };
+      const mailboxEmail: string | undefined = fnArgs.mailboxEmail;
+      let attachment: any;
+      if (mailboxEmail) {
+        const { graphRequest } = await import("./shared-mailbox");
+        attachment = await graphRequest(
+          `/users/${encodeURIComponent(mailboxEmail)}/messages/${msgId}/attachments/${attId}`,
+          { headers: { "X-AnchorMailbox": mailboxEmail } as any }
+        );
+      } else {
+        const token = await getValidMsToken(req);
+        if (!token) return { handled: true, response: { reply: "Not connected to Microsoft 365. Please sign in first." } };
+        const headers = { Authorization: `Bearer ${token}` };
+        const graphRes = await fetch(
+          `https://graph.microsoft.com/v1.0/me/messages/${msgId}/attachments/${attId}`,
+          { headers }
+        );
+        if (!graphRes.ok) {
+          const errText = await graphRes.text();
+          const hint = errText.includes("ErrorInvalidMailboxItemId") ? " — this message is in another user's mailbox. Pass mailboxEmail." : "";
+          return { handled: true, response: { reply: `Failed to download attachment: ${graphRes.status}${hint}` } };
+        }
+        attachment = await graphRes.json();
       }
-      const attachment = await graphRes.json();
       if (!attachment.contentBytes) {
         return { handled: true, response: { reply: "This attachment type is not downloadable — it may be a linked item rather than a file." } };
       }
@@ -8924,6 +9353,181 @@ export function setupChatBGPRoutes(app: Express) {
       }
     }
     // Property lookup — geocode then fetch
+    // Property Pathway — orchestrator thin wrappers
+    if (tcName === "start_property_pathway") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const { desc } = await import("drizzle-orm");
+        const userId = req.session?.userId || (req as any).tokenUserId || null;
+        const address = String(tcArgs.address || "").trim();
+        const postcode = tcArgs.postcode ? String(tcArgs.postcode).trim() : null;
+
+        // Dedupe (same logic as POST /api/property-pathway/start) — same postcode
+        // or aggressively-normalised address wins. Prevents duplicate runs when
+        // ChatBGP spawns a new investigation for an address we already track.
+        const normaliseAddr = (s: string) =>
+          s.trim().toLowerCase().replace(/[—–]/g, "-").replace(/\s*-\s*/g, "-").replace(/[.,]/g, "").replace(/\s+/g, " ");
+        const normalisedAddr = normaliseAddr(address);
+        const normalisedPostcode = (postcode || "").replace(/\s+/g, "").toUpperCase();
+        const existing = await db.select().from(propertyPathwayRuns).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(200);
+        const match = existing.find((r) => {
+          const rAddr = normaliseAddr(r.address || "");
+          const rPostcode = (r.postcode || "").replace(/\s+/g, "").toUpperCase();
+          if (normalisedPostcode && rPostcode) return rPostcode === normalisedPostcode;
+          return rAddr === normalisedAddr;
+        });
+        if (match) {
+          return {
+            data: { runId: match.id, address: match.address, currentStage: match.currentStage, existing: true, nextStep: `Existing investigation reused. Call advance_property_pathway to continue from stage ${match.currentStage}.` },
+            action: { type: "navigate", path: `/property-pathway?runId=${match.id}` },
+          };
+        }
+
+        const [runRow] = await db.insert(propertyPathwayRuns).values({
+          address,
+          postcode,
+          propertyId: tcArgs.propertyId || null,
+          currentStage: 1,
+          stageStatus: {},
+          stageResults: {},
+          startedBy: userId,
+        }).returning();
+        return {
+          data: { runId: runRow.id, address: runRow.address, currentStage: runRow.currentStage, nextStep: "Call advance_property_pathway with stage 1 to run Initial Search" },
+          action: { type: "navigate", path: `/property-pathway?runId=${runRow.id}` },
+        };
+      } catch (err: any) {
+        return { data: { error: `Failed to start pathway: ${err?.message}` } };
+      }
+    }
+    if (tcName === "advance_property_pathway") {
+      try {
+        const { runStage } = await import("./property-pathway");
+        const runId = String(tcArgs.runId);
+        const stage = tcArgs.stage ? Number(tcArgs.stage) : undefined;
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        const [existing] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
+        if (!existing) return { data: { error: "Pathway run not found" } };
+        const targetStage = stage ?? existing.currentStage;
+        const updated = await runStage(runId, targetStage, req);
+        const sres: any = updated.stageResults;
+        const summary = sres?.[`stage${targetStage}`]?.summary || sres?.stage3?.summary || `Stage ${targetStage} completed`;
+        return {
+          data: {
+            runId: updated.id,
+            stageRun: targetStage,
+            nextStage: updated.currentStage,
+            status: updated.stageStatus,
+            summary,
+            whyBuyUrl: updated.whyBuyDocumentUrl || null,
+          },
+        };
+      } catch (err: any) {
+        return { data: { error: `Failed to advance pathway: ${err?.message}` } };
+      }
+    }
+    if (tcName === "get_property_pathway") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, String(tcArgs.runId))).limit(1);
+        if (!run) return { data: { error: "Pathway run not found" } };
+        return { data: run };
+      } catch (err: any) {
+        return { data: { error: `Failed to fetch pathway: ${err?.message}` } };
+      }
+    }
+
+    if (tcName === "update_business_plan") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        const runId = String(tcArgs.runId || "");
+        const patch = tcArgs.patch;
+        if (!runId || !patch || typeof patch !== "object") return { data: { error: "runId and patch (object) required" } };
+        const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
+        if (!run) return { data: { error: "Pathway run not found" } };
+        const sr: any = run.stageResults || {};
+        const stage6: any = sr.stage6 || {};
+        const base = stage6.agreed ? { ...stage6.agreed } : { ...(stage6.draft || {}) };
+        const merged = { ...base, ...patch };
+        const revisions = [
+          ...(stage6.revisions || []),
+          { at: new Date().toISOString(), source: "chat", patch, note: tcArgs.note },
+        ].slice(-50);
+        const nextStage6 = stage6.agreed
+          ? { ...stage6, agreed: merged, revisions }
+          : { ...stage6, draft: merged, revisions };
+        await db.update(propertyPathwayRuns).set({ stageResults: { ...sr, stage6: nextStage6 }, updatedAt: new Date() }).where(eq(propertyPathwayRuns.id, runId));
+        return { data: { ok: true, plan: merged, agreed: !!stage6.agreed } };
+      } catch (err: any) {
+        return { data: { error: `Failed to update business plan: ${err?.message}` } };
+      }
+    }
+
+    if (tcName === "agree_business_plan") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        const runId = String(tcArgs.runId || "");
+        if (!runId) return { data: { error: "runId required" } };
+        const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
+        if (!run) return { data: { error: "Pathway run not found" } };
+        const sr: any = run.stageResults || {};
+        const stage6: any = sr.stage6 || {};
+        if (!stage6.draft) return { data: { error: "No draft to agree — run Stage 6 first." } };
+        const agreed = { ...stage6.draft };
+        const user: any = (req as any).user;
+        const nextStage6 = {
+          ...stage6,
+          agreed,
+          agreedAt: new Date().toISOString(),
+          agreedBy: user?.username || user?.email || "chatbgp",
+        };
+        const nextStatus = { ...(run.stageStatus as any), stage6: "completed" };
+        await db.update(propertyPathwayRuns).set({
+          stageResults: { ...sr, stage6: nextStage6 },
+          stageStatus: nextStatus,
+          currentStage: Math.max(run.currentStage || 6, 7),
+          updatedAt: new Date(),
+        }).where(eq(propertyPathwayRuns.id, runId));
+        return { data: { ok: true, agreed, nextStage: 7 } };
+      } catch (err: any) {
+        return { data: { error: `Failed to agree plan: ${err?.message}` } };
+      }
+    }
+
+    if (tcName === "list_property_pathway") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns } = await import("@shared/schema");
+        const { desc, or, ilike } = await import("drizzle-orm");
+        const limit = Math.min(Math.max(Number(tcArgs.limit) || 15, 1), 50);
+        const q = tcArgs.query ? String(tcArgs.query).trim() : "";
+        const query = db.select({
+          id: propertyPathwayRuns.id,
+          address: propertyPathwayRuns.address,
+          postcode: propertyPathwayRuns.postcode,
+          currentStage: propertyPathwayRuns.currentStage,
+          stageStatus: propertyPathwayRuns.stageStatus,
+          createdAt: propertyPathwayRuns.createdAt,
+          updatedAt: propertyPathwayRuns.updatedAt,
+        }).from(propertyPathwayRuns);
+        const rows = q
+          ? await query.where(or(ilike(propertyPathwayRuns.address, `%${q}%`), ilike(propertyPathwayRuns.postcode, `%${q}%`))).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(limit)
+          : await query.orderBy(desc(propertyPathwayRuns.updatedAt)).limit(limit);
+        return { data: { count: rows.length, runs: rows } };
+      } catch (err: any) {
+        return { data: { error: `Failed to list pathway runs: ${err?.message}` } };
+      }
+    }
+
     if (tcName === "property_lookup") {
       const { performPropertyLookup, formatPropertyReport } = await import("./property-lookup");
       const args = { ...tcArgs };
@@ -9060,7 +9664,7 @@ export function setupChatBGPRoutes(app: Express) {
     };
 
     const requestStart = Date.now();
-    const REQUEST_DEADLINE_MS = 240000; // 240 seconds — give extended thinking + multi-tool flows room to breathe
+    const REQUEST_DEADLINE_MS = 480000; // 8 minutes — complex multi-tool flows need room to breathe
     let clientDisconnected = false;
     const isOverDeadline = () => clientDisconnected || Date.now() - requestStart > REQUEST_DEADLINE_MS;
 
@@ -9264,7 +9868,7 @@ export function setupChatBGPRoutes(app: Express) {
           console.log(`[ChatBGP] Deadline reached after ${loopCount} loops`);
           const timeoutMsg = clientDisconnected
             ? "Connection lost. Please refresh and try again."
-            : "Request took too long. I've completed what I could - please ask a follow-up question if you need more.";
+            : "This is taking longer than expected — try breaking your request into smaller steps (e.g. ask me to check one category at a time).";
           await sendResult({ reply: timeoutMsg, partial: true });
           return;
         }
@@ -9326,7 +9930,10 @@ export function setupChatBGPRoutes(app: Express) {
             console.log(`[ChatBGP] Loop ${loopCount}: tool=${tcName}${tcArgs?.command ? ' cmd=' + tcArgs.command.substring(0, 80) : ''}`);
 
             try {
-              const toolTimeoutMs = tcName.includes("sharepoint") || tcName.includes("file") ? 20000 : 15000;
+              const toolTimeoutMs =
+                tcName.includes("property_pathway") || tcName === "run_model" || tcName === "deep_investigate" ? 240000 :
+                tcName.includes("sharepoint") || tcName.includes("file") ? 20000 :
+                15000;
               const toolResult = await withTimeout(
                 executeAnyTool(tcName, tcArgs, req, msToken),
                 toolTimeoutMs,
@@ -9633,7 +10240,10 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
             let tcArgs: any;
             try { tcArgs = JSON.parse(tc.function.arguments); } catch { tcArgs = {}; }
             try {
-              const toolTimeoutMs = tcName.includes("sharepoint") || tcName.includes("file") ? 20000 : 15000;
+              const toolTimeoutMs =
+                tcName.includes("property_pathway") || tcName === "run_model" || tcName === "deep_investigate" ? 240000 :
+                tcName.includes("sharepoint") || tcName.includes("file") ? 20000 :
+                15000;
               const toolResult = await withTimeout(
                 executeAnyTool(tcName, tcArgs, req, msToken),
                 toolTimeoutMs,
@@ -9669,7 +10279,7 @@ ${safeExcelContext ? `**Current Workbook Data (automatically read from the user'
       // Fell through the loop — write whatever's last
       clearInterval(heartbeat);
       try {
-        res.write(`data: ${JSON.stringify({ reply: "Request took too long. I've completed what I could — please ask a follow-up if you need more.", partial: true, ...(lastAction ? { action: lastAction } : {}) })}\n\n`);
+        res.write(`data: ${JSON.stringify({ reply: "This is taking longer than expected — try breaking your request into smaller steps.", partial: true, ...(lastAction ? { action: lastAction } : {}) })}\n\n`);
         res.end();
       } catch {}
     } catch (err: any) {

@@ -1,10 +1,104 @@
 import type { Express } from "express";
 import { requireAuth } from "./auth";
 import Anthropic from "@anthropic-ai/sdk";
-import { db } from "./db";
+import { db, pool } from "./db";
 import { landRegistrySearches } from "@shared/schema";
 import { desc, eq, sql } from "drizzle-orm";
 import pLimit from "p-limit";
+
+/**
+ * Shared persistence helper for land_registry_searches — used by:
+ *  - the direct LR page POST /api/land-registry/searches
+ *  - Property Pathway Stage 1 (after its inline LR lookup)
+ *  - Clouseau /api/land-registry/resolve
+ *
+ * Dedupe rule: one row per (userId, normalised address+postcode). If a row
+ * already exists we update the snapshot in place rather than spawning a new
+ * row each time — same pattern as kyc_investigations.
+ */
+function normaliseKey(address: string, postcode?: string | null): string {
+  const a = (address || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const p = (postcode || "").toUpperCase().replace(/\s+/g, "").trim();
+  return `${a}::${p}`;
+}
+
+export interface PersistLandRegistrySearchInput {
+  userId: string;
+  address: string;
+  postcode?: string | null;
+  freeholds?: any[];
+  leaseholds?: any[];
+  intelligence?: any;
+  aiSummary?: any;
+  ownership?: any;
+  source?: string; // direct | pathway | clouseau
+  pathwayRunId?: string | null;
+}
+
+export async function persistLandRegistrySearch(input: PersistLandRegistrySearchInput) {
+  const {
+    userId,
+    address,
+    postcode,
+    freeholds,
+    leaseholds,
+    intelligence,
+    aiSummary,
+    ownership,
+    source,
+    pathwayRunId,
+  } = input;
+
+  if (!userId) throw new Error("userId required");
+  if (!address) throw new Error("address required");
+
+  const fhArr = Array.isArray(freeholds) ? freeholds : [];
+  const lhArr = Array.isArray(leaseholds) ? leaseholds : [];
+  const key = normaliseKey(address, postcode || null);
+
+  // Find existing row for this user with the same normalised address+postcode.
+  const existing = await db.select().from(landRegistrySearches)
+    .where(eq(landRegistrySearches.userId, userId));
+  const match = existing.find((r) => normaliseKey(r.address, r.postcode) === key);
+
+  if (match) {
+    const updates: Record<string, any> = {
+      freeholds: fhArr,
+      leaseholds: lhArr,
+      freeholdsCount: fhArr.length,
+      leaseholdsCount: lhArr.length,
+    };
+    if (intelligence !== undefined) updates.intelligence = intelligence;
+    if (aiSummary !== undefined) updates.aiSummary = aiSummary;
+    if (ownership !== undefined) updates.ownership = ownership;
+    // Source: keep existing unless caller explicitly upgrades it (don't downgrade
+    // a 'direct' row to 'pathway' silently — but do attach pathwayRunId if given).
+    if (source && match.source === "direct" && source !== "direct") updates.source = source;
+    if (pathwayRunId && !match.pathwayRunId) updates.pathwayRunId = pathwayRunId;
+
+    const [row] = await db.update(landRegistrySearches)
+      .set(updates)
+      .where(eq(landRegistrySearches.id, match.id))
+      .returning();
+    return row;
+  }
+
+  const [row] = await db.insert(landRegistrySearches).values({
+    userId,
+    address,
+    postcode: postcode || null,
+    freeholds: fhArr,
+    leaseholds: lhArr,
+    freeholdsCount: fhArr.length,
+    leaseholdsCount: lhArr.length,
+    intelligence: intelligence ?? null,
+    aiSummary: aiSummary ?? null,
+    ownership: ownership ?? null,
+    source: source || "direct",
+    pathwayRunId: pathwayRunId || null,
+  }).returning();
+  return row;
+}
 
 const LR_BASE = "https://landregistry.data.gov.uk/data";
 
@@ -60,6 +154,11 @@ export function registerLandRegistryRoutes(app: Express) {
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS notes text`).catch(() => {});
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS tags jsonb DEFAULT '[]'`).catch(() => {});
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS status varchar DEFAULT 'New'`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS voa_rateable_value integer`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS kyc_risk_level text`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS kyc_investigation_id integer`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS source varchar DEFAULT 'direct'`).catch(() => {});
+  db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS pathway_run_id varchar`).catch(() => {});
 
   app.get("/api/land-registry/price-paid", requireAuth, async (req, res) => {
     try {
@@ -484,13 +583,110 @@ export function registerLandRegistryRoutes(app: Express) {
   // Ordnance Survey's UPRN (the unique id Land Registry titles are
   // actually anchored to) so the matched titles are exactly the property
   // the user picked.
-  app.post("/api/land-registry/resolve", requireAuth, async (req, res) => {
+  // Purchase HMLR title documents via PropertyData (Official Copy Register + Plan).
+  // Costs £3-£4 per title for documents, plus £1+VAT if proprietor data is extracted.
+  // Saves every purchase to `land_registry_title_purchases` and returns the cached
+  // copy on subsequent requests for the same (title, documents) pair so BGP doesn't
+  // pay twice for the same register.
+  app.post("/api/land-registry/purchase-title", requireAuth, async (req: any, res) => {
     try {
-      const { address: inputAddress, postcode: inputPostcode, lat, lng } = req.body || {};
+      const { title, documents = "both", extract_proprietor_data = true, force = false } = req.body || {};
+      if (!title || typeof title !== "string") return res.status(400).json({ error: "title (title number) required" });
+      const titleUpper = title.trim().toUpperCase();
+      const userId = req.session?.userId || req.tokenUserId || null;
+
+      if (!force) {
+        const existing = await pool.query(
+          `SELECT id, title_number, documents, register_url, plan_url, proprietor_data, raw_response, created_at
+             FROM land_registry_title_purchases
+            WHERE title_number = $1 AND documents = $2
+            ORDER BY created_at DESC LIMIT 1`,
+          [titleUpper, documents]
+        );
+        if (existing.rows.length) {
+          const row = existing.rows[0];
+          return res.json({
+            success: true,
+            cached: true,
+            purchasedAt: row.created_at,
+            data: row.raw_response ?? { document_url: row.register_url, plan_url: row.plan_url, proprietor: row.proprietor_data },
+          });
+        }
+      }
+
+      const PD_KEY = process.env.PROPERTYDATA_API_KEY;
+      if (!PD_KEY) return res.status(503).json({ error: "PropertyData API key not configured" });
+      const params = new URLSearchParams({ key: PD_KEY, title: titleUpper, documents });
+      if (extract_proprietor_data) params.set("extract_proprietor_data", "true");
+      const url = `https://api.propertydata.co.uk/land-registry-documents?${params.toString()}`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(60000) });
+      const body = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        return res.status(resp.status).json({ error: body?.message || `PropertyData returned ${resp.status}` });
+      }
+
+      const data = body?.data ?? body ?? {};
+      const registerUrl: string | null = data.document_url || data.register_url || data.register?.url || null;
+      const planUrl: string | null = data.plan_url || data.plan?.url || null;
+      const proprietorData = data.proprietor || data.extracted || null;
+
+      try {
+        await pool.query(
+          `INSERT INTO land_registry_title_purchases
+             (title_number, documents, register_url, plan_url, proprietor_data, raw_response, requested_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (title_number, documents) DO UPDATE SET
+             register_url = EXCLUDED.register_url,
+             plan_url = EXCLUDED.plan_url,
+             proprietor_data = EXCLUDED.proprietor_data,
+             raw_response = EXCLUDED.raw_response,
+             requested_by = EXCLUDED.requested_by,
+             created_at = NOW()`,
+          [titleUpper, documents, registerUrl, planUrl, proprietorData, data, userId]
+        );
+      } catch (persistErr: any) {
+        console.warn("[land-registry/purchase-title] persist failed:", persistErr?.message);
+      }
+
+      res.json({ success: true, cached: false, data });
+    } catch (err: any) {
+      console.error("[land-registry/purchase-title]", err?.message);
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // List previously-purchased titles so the Land Registry board can badge rows
+  // the firm already owns a copy of.
+  app.get("/api/land-registry/purchases", requireAuth, async (_req: any, res) => {
+    try {
+      const rows = await pool.query(
+        `SELECT title_number AS "titleNumber", documents, register_url AS "registerUrl", plan_url AS "planUrl",
+                proprietor_data AS "proprietorData", created_at AS "purchasedAt"
+           FROM land_registry_title_purchases
+          ORDER BY created_at DESC LIMIT 500`
+      );
+      res.json(rows.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  app.post("/api/land-registry/resolve", requireAuth, async (req: any, res) => {
+    try {
+      const { address: inputAddress, postcode: inputPostcode, lat, lng, source: callerSource, pathwayRunId: callerRunId } = req.body || {};
       const PD_KEY = process.env.PROPERTYDATA_API_KEY;
       if (!PD_KEY) return res.status(503).json({ error: "PropertyData API key not configured" });
 
-      let resolvedAddress: string = typeof inputAddress === "string" ? inputAddress.trim() : "";
+      // Strip parenthetical annotations like "(formerly Thomas Exchange Global)"
+      // and "t/a ..." before sending to OS Places / PropertyData — these confuse
+      // every address matcher and are never part of the Land Registry record.
+      const stripAddressNoise = (s: string) =>
+        s.replace(/\s*\([^)]*\)/g, "")         // remove anything in (brackets)
+         .replace(/\bt\/a\b.*$/i, "")           // remove "t/a <trading name>" suffix
+         .replace(/\bformerly\b.*$/i, "")       // remove "formerly ..." clause
+         .replace(/,\s*,/g, ",").replace(/,\s*$/, "").trim();
+
+      let resolvedAddress: string = typeof inputAddress === "string" ? stripAddressNoise(inputAddress.trim()) : "";
       let resolvedPostcode: string = typeof inputPostcode === "string" ? inputPostcode.trim().toUpperCase() : "";
       let buildingName = "";
 
@@ -525,37 +721,123 @@ export function registerLandRegistryRoutes(app: Express) {
         return res.status(400).json({ error: "Provide address, postcode, or lat+lng" });
       }
 
+      // If the user typed the postcode inside the address field ("18-22 Haymarket,
+      // London SW1Y 4DG") pull it out so the downstream PropertyData calls,
+      // which all require a postcode, can still run.
+      if (!resolvedPostcode && resolvedAddress) {
+        const pcMatch = resolvedAddress.match(/\b([A-Z]{1,2}[0-9][A-Z0-9]?)\s*([0-9][A-Z]{2})\b/i);
+        if (pcMatch) {
+          resolvedPostcode = `${pcMatch[1]} ${pcMatch[2]}`.toUpperCase();
+          resolvedAddress = resolvedAddress.replace(pcMatch[0], "").replace(/,\s*$/, "").replace(/,\s*,/g, ",").trim();
+        }
+      }
+
+      if (!resolvedPostcode) {
+        return res.status(400).json({ error: "A postcode is required. Enter it in the postcode field or include it in the address (e.g. '18-22 Haymarket, London SW1Y 4DG')." });
+      }
+
       const cleanPc = resolvedPostcode.replace(/\s+/g, "");
 
-      // Step 2: ask PropertyData to resolve the address (plus postcode) to
-      // the exact UPRN(s). If this returns one or more UPRNs we have an
-      // exact match and can query /uprn-title for precision.
+      // Extract the first street-number-or-range from anywhere in the address
+      // ("Dover Street Market, 3rd floor, 18-22 Haymarket" → "18-22"). This is
+      // used both to narrow UPRN matching and as a fallback filter later.
+      const numberMatch = resolvedAddress.match(/\b(\d+[a-z]?(?:\s*-\s*\d+[a-z]?)?)\b/i);
+      const streetNumberRaw = numberMatch ? numberMatch[1].replace(/\s*-\s*/g, "-").toLowerCase() : null;
+      // Drop building-name prefix and floor clauses — PropertyData's address
+      // matcher does much better with "18-22 Haymarket" than with
+      // "Dover Street Market, 3rd floor, 18-22 Haymarket".
+      const cleanedAddressCandidates: string[] = [resolvedAddress];
+      if (numberMatch && numberMatch.index !== undefined && numberMatch.index > 0) {
+        const tail = resolvedAddress.slice(numberMatch.index).replace(/,\s*$/, "").trim();
+        if (tail && tail !== resolvedAddress) cleanedAddressCandidates.unshift(tail);
+      }
+
+      // Step 2a: ask OS AddressBase for the UPRN. Prefer lat/lng nearest-point
+      // when we have them (e.g. from a map click) — it bypasses address-string
+      // parsing entirely and resolves commercial/mixed-use buildings
+      // accurately even when Google reverse-geocoded them under a business
+      // name like "Steak and Company - Piccadilly Circus, 18 Haymarket".
+      // Fall through to OS find-by-address if no coords.
       let matchedUprns: string[] = [];
-      if (resolvedAddress && cleanPc) {
-        try {
-          const umUrl = `https://api.propertydata.co.uk/address-match-uprn?key=${PD_KEY}&address=${encodeURIComponent(resolvedAddress)}&postcode=${encodeURIComponent(cleanPc)}`;
-          const umResp = await fetch(umUrl, { signal: AbortSignal.timeout(8000) });
-          if (umResp.ok) {
-            const umData = await umResp.json() as any;
-            const d = umData?.data ?? umData;
-            if (Array.isArray(d?.uprns)) matchedUprns = d.uprns.map(String);
-            else if (d?.uprn) matchedUprns = [String(d.uprn)];
-            else if (Array.isArray(d)) matchedUprns = d.map((x: any) => String(x?.uprn || x)).filter(Boolean);
+      try {
+        const { osPlacesNearest, osPlacesFind } = await import("./os-data");
+        if (typeof lat === "number" && typeof lng === "number") {
+          for (const radius of [20, 40, 80]) {
+            const nearest = await osPlacesNearest(lat, lng, radius);
+            const uprns = nearest.map(r => r.uprn).filter(Boolean) as string[];
+            if (uprns.length) {
+              matchedUprns = uprns.slice(0, 5);
+              break;
+            }
           }
-        } catch (e: any) {
-          console.warn("[land-registry/resolve] address-match-uprn failed:", e?.message);
+        }
+        if (matchedUprns.length === 0) {
+          const queries = [
+            [resolvedAddress, resolvedPostcode].filter(Boolean).join(", "),
+            ...cleanedAddressCandidates.map(c => [c, resolvedPostcode].filter(Boolean).join(", ")),
+          ].filter((q, i, arr) => q && arr.indexOf(q) === i);
+          for (const q of queries) {
+            const os = await osPlacesFind(q, 5);
+            const uprns = os.map(r => r.uprn).filter(Boolean) as string[];
+            if (uprns.length) {
+              matchedUprns = uprns.slice(0, 5);
+              break;
+            }
+          }
+        }
+      } catch (e: any) {
+        console.warn("[land-registry/resolve] OS Places lookup failed:", e?.message);
+      }
+
+      // Step 2b: fall back to PropertyData's address-match-uprn if OS didn't
+      // return a UPRN. Try the cleaned candidate first — raw input as backup.
+      if (matchedUprns.length === 0) {
+        for (const candidate of cleanedAddressCandidates) {
+          if (!candidate || !cleanPc) continue;
+          try {
+            const umUrl = `https://api.propertydata.co.uk/address-match-uprn?key=${PD_KEY}&address=${encodeURIComponent(candidate)}&postcode=${encodeURIComponent(cleanPc)}`;
+            const umResp = await fetch(umUrl, { signal: AbortSignal.timeout(8000) });
+            if (umResp.ok) {
+              const umData = await umResp.json() as any;
+              const d = umData?.data ?? umData;
+              if (Array.isArray(d?.uprns)) matchedUprns = d.uprns.map(String);
+              else if (d?.uprn) matchedUprns = [String(d.uprn)];
+              else if (Array.isArray(d)) matchedUprns = d.map((x: any) => String(x?.uprn || x)).filter(Boolean);
+              if (matchedUprns.length > 0) break;
+            }
+          } catch (e: any) {
+            console.warn("[land-registry/resolve] address-match-uprn failed:", e?.message);
+          }
         }
       }
 
       // Step 3: fetch exact titles via uprn-title (for each UPRN) AND the
       // wider postcode context in parallel so the MLRO sees both.
+      const pdErrors: Array<{ endpoint: string; status?: number; body?: string }> = [];
       const pdFetch = async (endpoint: string, params: Record<string, string>): Promise<any> => {
         const qs = new URLSearchParams({ key: PD_KEY, ...params }).toString();
         try {
           const r = await fetch(`https://api.propertydata.co.uk/${endpoint}?${qs}`, { signal: AbortSignal.timeout(15000) });
-          if (!r.ok) return null;
-          return await r.json();
-        } catch { return null; }
+          if (!r.ok) {
+            const body = await r.text().catch(() => "");
+            pdErrors.push({ endpoint, status: r.status, body: body.slice(0, 300) });
+            console.warn(`[land-registry/resolve] PropertyData ${endpoint} HTTP ${r.status}: ${body.slice(0, 200)}`);
+            return null;
+          }
+          const data = await r.json() as any;
+          // PropertyData returns HTTP 200 with { status: "error", message: "..." } for
+          // rate limits and plan-denied calls. Log those so we can tell the difference
+          // between "no titles at this postcode" and "API call failed silently".
+          if (data?.status === "error") {
+            pdErrors.push({ endpoint, status: 200, body: String(data.message || data.error || "status:error") });
+            console.warn(`[land-registry/resolve] PropertyData ${endpoint} returned status=error: ${data.message || data.error}`);
+          }
+          return data;
+        } catch (e: any) {
+          pdErrors.push({ endpoint, body: e?.message || "fetch threw" });
+          console.warn(`[land-registry/resolve] PropertyData ${endpoint} threw:`, e?.message);
+          return null;
+        }
       };
 
       const [uprnTitleResults, postcodeFreeholds, postcodeLeaseholds] = await Promise.all([
@@ -596,17 +878,40 @@ export function registerLandRegistryRoutes(app: Express) {
       // UPRN record for a quirky address.
       let fallbackFreeholds: any[] = [];
       let fallbackLeaseholds: any[] = [];
-      if (matchedFreeholds.length === 0 && matchedLeaseholds.length === 0 && resolvedAddress) {
-        const streetNumMatch = resolvedAddress.match(/^(\d+[a-z]?)\b/i);
-        const streetNum = streetNumMatch ? streetNumMatch[1].toLowerCase() : null;
-        if (streetNum) {
-          const pickByStreet = (rows: any[]) => rows.filter((r: any) => {
-            const props: string[] = Array.isArray(r.property) ? r.property : (r.property ? [r.property] : []);
-            return props.some((p: string) => p.toLowerCase().startsWith(streetNum + " ") || p.toLowerCase().startsWith(streetNum + ",") || p.toLowerCase().includes(" " + streetNum + " "));
+      if (matchedFreeholds.length === 0 && matchedLeaseholds.length === 0 && streetNumberRaw) {
+        // Break "18-22" into "18" and "22" so we match titles listing either number
+        // at the top of the range (LR often records just one number per title).
+        const numParts = streetNumberRaw.split("-").map(n => n.trim()).filter(Boolean);
+        const pickByStreet = (rows: any[]) => rows.filter((r: any) => {
+          const props: string[] = Array.isArray(r.property) ? r.property : (r.property ? [r.property] : []);
+          const joined = props.join(" | ").toLowerCase();
+          if (joined.includes(streetNumberRaw)) return true;
+          return numParts.some(n => joined.includes(n + " ") || joined.includes(n + ",") || joined.includes(n + "-"));
+        });
+        fallbackFreeholds = pickByStreet(((postcodeFreeholds as any)?.data || []));
+        fallbackLeaseholds = pickByStreet(((postcodeLeaseholds as any)?.data || []));
+      }
+
+      // Persist this resolve to the unified Land Registry history. The board
+      // shows entries from direct LR searches, Property Pathway Stage 1, and
+      // Clouseau property tab side-by-side, dedup'd by address+postcode.
+      try {
+        const userId = req.session?.userId || req.tokenUserId || null;
+        if (userId && resolvedAddress) {
+          const persistFh = matchedFreeholds.length > 0 ? matchedFreeholds : fallbackFreeholds;
+          const persistLh = matchedLeaseholds.length > 0 ? matchedLeaseholds : fallbackLeaseholds;
+          await persistLandRegistrySearch({
+            userId,
+            address: resolvedAddress,
+            postcode: resolvedPostcode,
+            freeholds: persistFh,
+            leaseholds: persistLh,
+            source: callerSource || "clouseau",
+            pathwayRunId: callerRunId || null,
           });
-          fallbackFreeholds = pickByStreet(((postcodeFreeholds as any)?.data || []));
-          fallbackLeaseholds = pickByStreet(((postcodeLeaseholds as any)?.data || []));
         }
+      } catch (persistErr: any) {
+        console.warn("[land-registry/resolve] persist failed:", persistErr?.message);
       }
 
       res.json({
@@ -616,6 +921,7 @@ export function registerLandRegistryRoutes(app: Express) {
         lat: typeof lat === "number" ? lat : null,
         lng: typeof lng === "number" ? lng : null,
         uprns: matchedUprns,
+        pdErrors,
         matched: {
           freeholds: matchedFreeholds,
           leaseholds: matchedLeaseholds,
@@ -992,20 +1298,20 @@ Respond with ONLY a JSON object (no markdown, no backticks):
     try {
       const userId = req.session?.userId || req.tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { address, postcode, freeholds, leaseholds, intelligence, aiSummary, ownership } = req.body;
+      const { address, postcode, freeholds, leaseholds, intelligence, aiSummary, ownership, source, pathwayRunId } = req.body;
       if (!address) return res.status(400).json({ error: "Address required" });
-      const [row] = await db.insert(landRegistrySearches).values({
+      const row = await persistLandRegistrySearch({
         userId,
         address,
-        postcode: postcode || null,
-        freeholdsCount: Array.isArray(freeholds) ? freeholds.length : 0,
-        leaseholdsCount: Array.isArray(leaseholds) ? leaseholds.length : 0,
-        freeholds: freeholds || [],
-        leaseholds: leaseholds || [],
-        intelligence: intelligence || {},
-        aiSummary: aiSummary || null,
-        ownership: ownership || null,
-      }).returning();
+        postcode,
+        freeholds,
+        leaseholds,
+        intelligence,
+        aiSummary,
+        ownership,
+        source,
+        pathwayRunId,
+      });
       res.json(row);
     } catch (e: any) {
       console.error("[land-registry-searches] Save error:", e);
@@ -1053,7 +1359,7 @@ Respond with ONLY a JSON object (no markdown, no backticks):
       const searchId = parseInt(req.params.id);
       if (isNaN(searchId)) return res.status(400).json({ error: "Invalid search id" });
 
-      const { notes, tags, status } = req.body;
+      const { notes, tags, status, freeholds, leaseholds } = req.body;
       const validStatuses = ["New", "Investigating", "Contacted Owner", "No Interest", "Acquired"];
       if (status && !validStatuses.includes(status)) {
         return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` });
@@ -1063,20 +1369,31 @@ Respond with ONLY a JSON object (no markdown, no backticks):
       if (notes !== undefined) updates.notes = notes;
       if (tags !== undefined) updates.tags = Array.isArray(tags) ? tags : [];
       if (status !== undefined) updates.status = status;
+      if (freeholds !== undefined) {
+        updates.freeholds = Array.isArray(freeholds) ? freeholds : [];
+        updates.freeholdsCount = Array.isArray(freeholds) ? freeholds.length : 0;
+      }
+      if (leaseholds !== undefined) {
+        updates.leaseholds = Array.isArray(leaseholds) ? leaseholds : [];
+        updates.leaseholdsCount = Array.isArray(leaseholds) ? leaseholds.length : 0;
+      }
 
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: "No fields to update" });
       }
 
+      const setParts: any[] = [];
+      if (updates.notes !== undefined) setParts.push(sql`notes = ${updates.notes}`);
+      if (updates.tags !== undefined) setParts.push(sql`tags = ${JSON.stringify(updates.tags)}::jsonb`);
+      if (updates.status !== undefined) setParts.push(sql`status = ${updates.status}`);
+      if (updates.freeholds !== undefined) setParts.push(sql`freeholds = ${JSON.stringify(updates.freeholds)}::jsonb`);
+      if (updates.freeholdsCount !== undefined) setParts.push(sql`freeholds_count = ${updates.freeholdsCount}`);
+      if (updates.leaseholds !== undefined) setParts.push(sql`leaseholds = ${JSON.stringify(updates.leaseholds)}::jsonb`);
+      if (updates.leaseholdsCount !== undefined) setParts.push(sql`leaseholds_count = ${updates.leaseholdsCount}`);
+
       const result = await db.execute(sql`
         UPDATE land_registry_searches
-        SET ${sql.join(
-          Object.entries(updates).map(([key, value]) => {
-            const col = key === "notes" ? sql`notes` : key === "tags" ? sql`tags` : sql`status`;
-            return sql`${col} = ${key === "tags" ? sql`${JSON.stringify(value)}::jsonb` : sql`${value}`}`;
-          }),
-          sql`, `
-        )}
+        SET ${sql.join(setParts, sql`, `)}
         WHERE id = ${searchId} AND user_id = ${userId}
         RETURNING *
       `);

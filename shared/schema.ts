@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, real, jsonb, uuid, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, real, jsonb, uuid, serial, doublePrecision } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -116,6 +116,7 @@ export const users = pgTable("users", {
   dashboardWidgets: jsonb("dashboard_widgets").$type<string[]>(),
   dashboardLayout: jsonb("dashboard_layout").$type<Record<string, any>>(),
   profilePicUrl: text("profile_pic_url"),
+  clientViewMode: boolean("client_view_mode").default(false),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
@@ -440,6 +441,7 @@ export const crmCompanies = pgTable("crm_companies", {
   aiDisabled: boolean("ai_disabled").default(false),
   linkedinUrl: text("linkedin_url"),
   phone: text("phone"),
+  website: text("website"),
   industry: text("industry"),
   employeeCount: text("employee_count"),
   annualRevenue: text("annual_revenue"),
@@ -508,6 +510,27 @@ export const brandSignals = pgTable("brand_signals", {
 export const insertBrandSignalSchema = createInsertSchema(brandSignals).omit({ id: true, createdAt: true });
 export type InsertBrandSignal = z.infer<typeof insertBrandSignalSchema>;
 export type BrandSignal = typeof brandSignals.$inferSelect;
+
+// ─── Brand stores — geocoded UK store locations per brand ─────────────────
+export const brandStores = pgTable("brand_stores", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brandCompanyId: varchar("brand_company_id").notNull(),
+  name: text("name").notNull(),          // store display name
+  address: text("address"),              // formatted address from Google
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  placeId: text("place_id"),             // Google Places ID
+  status: text("status").default("open"), // open | closed | unconfirmed
+  storeType: text("store_type"),         // flagship | outlet | concession | pop_up | etc.
+  notes: text("notes"),
+  sourceType: text("source_type").default("google_places"), // google_places | manual | goad
+  researchedAt: timestamp("researched_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertBrandStoreSchema = createInsertSchema(brandStores).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertBrandStore = z.infer<typeof insertBrandStoreSchema>;
+export type BrandStore = typeof brandStores.$inferSelect;
 
 // ─── Leasing pitch — per-property ERV, incentives, target tenants ─────────
 // Captured at instruction time. Drives the initial leasing schedule + the
@@ -592,12 +615,16 @@ export const crmContacts = pgTable("crm_contacts", {
   contactType: text("contact_type"),
   agentSpecialty: text("agent_specialty"),
   phone: text("phone"),
+  phoneMobile: text("phone_mobile"),
+  subGroup: text("sub_group"),
   bgpClient: boolean("bgp_client").default(false),
   isFavourite: boolean("is_favourite").default(false),
   nextMeetingDate: text("next_meeting_date"),
   notes: text("notes"),
   avatarUrl: text("avatar_url"),
   linkedinUrl: text("linkedin_url"),
+  weeklyReportEnabled: boolean("weekly_report_enabled").default(false),
+  weeklyReportLastSentAt: timestamp("weekly_report_last_sent_at"),
   lastEnrichedAt: timestamp("last_enriched_at"),
   enrichmentSource: text("enrichment_source"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -617,6 +644,10 @@ export const crmProperties = pgTable("crm_properties", {
   landlordId: varchar("landlord_id"),
   status: text("status"),
   address: jsonb("address"),
+  postcode: text("postcode"),
+  latitude: text("latitude"),
+  longitude: text("longitude"),
+  tags: text("tags"),
   bgpEngagement: text("bgp_engagement").array(),
   assetClass: text("asset_class"),
   tenure: text("tenure"),
@@ -893,7 +924,6 @@ export const crmComps = pgTable("crm_comps", {
   passingRentPa: text("passing_rent_pa"),
   rentFreeMonths: text("rent_free_months"),
   evidenceSource: text("evidence_source"),
-  sourceUrl: text("source_url"),
   contactId: varchar("contact_id"),
   contactName: text("contact_name"),
   contactCompany: text("contact_company"),
@@ -937,6 +967,9 @@ export const crmLeads = pgTable("crm_leads", {
   status: text("status"),
   leadType: text("lead_type"),
   source: text("source"),
+  sourceUrl: text("source_url"),
+  sourceTitle: text("source_title"),
+  sourceContactId: varchar("source_contact_id"),
   email: text("email"),
   phone: text("phone"),
   dateAdded: text("date_added"),
@@ -950,6 +983,41 @@ export const crmLeads = pgTable("crm_leads", {
 export const insertCrmLeadSchema = createInsertSchema(crmLeads).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertCrmLead = z.infer<typeof insertCrmLeadSchema>;
 export type CrmLead = typeof crmLeads.$inferSelect;
+
+// Lease events — forward-looking calendar of rent reviews, breaks, expiries, renewal options.
+// Fed by comps, deals, and AI-extracted signals from brochures / emails / WhatsApp. Lease advisory
+// team uses this for business-development chase-ups. Shares source-tracking columns with comps/leads.
+export const leaseEvents = pgTable("lease_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id"),
+  address: text("address"),
+  tenant: text("tenant"),
+  tenantCompanyId: varchar("tenant_company_id"),
+  unitRef: text("unit_ref"),
+  eventType: text("event_type").notNull(),
+  eventDate: timestamp("event_date"),
+  noticeDate: timestamp("notice_date"),
+  currentRent: text("current_rent"),
+  estimatedErv: text("estimated_erv"),
+  sqft: text("sqft"),
+  sourceEvidence: text("source_evidence"),
+  sourceUrl: text("source_url"),
+  sourceTitle: text("source_title"),
+  sourceContactId: varchar("source_contact_id"),
+  contactId: varchar("contact_id"),
+  assignedTo: text("assigned_to"),
+  status: text("status").default("Monitoring"),
+  notes: text("notes"),
+  dealId: varchar("deal_id"),
+  compId: varchar("comp_id"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertLeaseEventSchema = createInsertSchema(leaseEvents).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertLeaseEvent = z.infer<typeof insertLeaseEventSchema>;
+export type LeaseEvent = typeof leaseEvents.$inferSelect;
 
 export const crmPropertyAgents = pgTable("crm_property_agents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1248,6 +1316,42 @@ export const insertInvestmentCompSchema = createInsertSchema(investmentComps).om
 export type InsertInvestmentComp = z.infer<typeof insertInvestmentCompSchema>;
 export type InvestmentComp = typeof investmentComps.$inferSelect;
 
+// Retail leasing comps — extracted from emails / brochures / manual entry.
+// Deliberately separate from the CRM so we can curate before flooding it.
+export const retailLeasingComps = pgTable("retail_leasing_comps", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  address: text("address").notNull(),
+  postcode: text("postcode"),
+  outwardCode: text("outward_code"),
+  submarket: text("submarket"),
+  tenant: text("tenant"),
+  landlord: text("landlord"),
+  useClass: text("use_class"),
+  sector: text("sector"),
+  rentPa: real("rent_pa"),
+  rentPsf: real("rent_psf"),
+  areaSqft: real("area_sqft"),
+  premium: real("premium"),
+  rentFreeMonths: real("rent_free_months"),
+  leaseDate: text("lease_date"),
+  termYears: real("term_years"),
+  breakYears: real("break_years"),
+  sourceType: text("source_type"),      // 'email' | 'brochure' | 'crm' | 'manual'
+  sourceId: text("source_id"),          // message id / file id
+  sourceRef: text("source_ref"),        // subject / filename
+  sourceDate: text("source_date"),
+  agent: text("agent"),
+  notes: text("notes"),
+  confidence: real("confidence"),
+  dedupeKey: text("dedupe_key").unique(),
+  createdAt: timestamp("created_at").defaultNow(),
+  createdBy: text("created_by"),
+});
+
+export const insertRetailLeasingCompSchema = createInsertSchema(retailLeasingComps).omit({ id: true, createdAt: true });
+export type InsertRetailLeasingComp = z.infer<typeof insertRetailLeasingCompSchema>;
+export type RetailLeasingComp = typeof retailLeasingComps.$inferSelect;
+
 export const xeroInvoices = pgTable("xero_invoices", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   dealId: varchar("deal_id").notNull(),
@@ -1544,7 +1648,11 @@ export const turnoverData = pgTable("turnover_data", {
   companyName: text("company_name").notNull(),
   propertyId: varchar("property_id"),
   propertyName: text("property_name"),
+  storeName: text("store_name"),
   location: text("location"),
+  googlePlaceId: text("google_place_id"),
+  lat: real("lat"),
+  lng: real("lng"),
   period: text("period").notNull(),
   turnover: real("turnover"),
   sqft: real("sqft"),
@@ -1553,6 +1661,7 @@ export const turnoverData = pgTable("turnover_data", {
   confidence: text("confidence").notNull().default("Medium"),
   category: text("category"),
   notes: text("notes"),
+  isDraft: boolean("is_draft").default(false),
   linkedRequirementId: varchar("linked_requirement_id"),
   addedBy: text("added_by"),
   addedByUserId: varchar("added_by_user_id"),
@@ -1679,6 +1788,13 @@ export const userTasks = pgTable("user_tasks", {
   linkedDealId: varchar("linked_deal_id"),
   linkedPropertyId: varchar("linked_property_id"),
   linkedContactId: varchar("linked_contact_id"),
+  linkedOnenotePageId: text("linked_onenote_page_id"),
+  linkedOnenotePageUrl: text("linked_onenote_page_url"),
+  linkedEvernoteNoteId: text("linked_evernote_note_id"),
+  linkedEvernoteNoteUrl: text("linked_evernote_note_url"),
+  parentTaskId: varchar("parent_task_id"),
+  isPinned: boolean("is_pinned").default(false),
+  tags: text("tags"),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow(),
   completedAt: timestamp("completed_at"),
@@ -1704,6 +1820,11 @@ export const landRegistrySearches = pgTable("land_registry_searches", {
   notes: text("notes"),
   tags: jsonb("tags").default(sql`'[]'::jsonb`),
   status: varchar("status").default("New"),
+  voaRateableValue: integer("voa_rateable_value"),
+  kycRiskLevel: text("kyc_risk_level"),
+  kycInvestigationId: integer("kyc_investigation_id"),
+  source: varchar("source").default("direct"), // direct | pathway | clouseau
+  pathwayRunId: varchar("pathway_run_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1867,6 +1988,135 @@ export const amlRecheckReminders = pgTable("aml_recheck_reminders", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 export type AmlRecheckReminder = typeof amlRecheckReminders.$inferSelect;
+
+export const propertyPathwayRuns = pgTable("property_pathway_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id"),
+  address: text("address").notNull(),
+  postcode: text("postcode"),
+  formattedAddress: text("formatted_address"),
+  uprn: text("uprn"),
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  currentStage: integer("current_stage").notNull().default(1),
+  stageStatus: jsonb("stage_status").notNull().default(sql`'{}'::jsonb`),
+  stageResults: jsonb("stage_results").notNull().default(sql`'{}'::jsonb`),
+  sharepointFolderPath: text("sharepoint_folder_path"),
+  sharepointFolderUrl: text("sharepoint_folder_url"),
+  modelRunId: varchar("model_run_id"),
+  whyBuyDocumentUrl: text("why_buy_document_url"),
+  startedBy: varchar("started_by"),
+  startedAt: timestamp("started_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+});
+
+export const insertPropertyPathwayRunSchema = createInsertSchema(propertyPathwayRuns).omit({ id: true, startedAt: true, updatedAt: true, completedAt: true });
+export type InsertPropertyPathwayRun = z.infer<typeof insertPropertyPathwayRunSchema>;
+export type PropertyPathwayRun = typeof propertyPathwayRuns.$inferSelect;
+
+export const excelModelRunVersions = pgTable("excel_model_run_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  modelRunId: varchar("model_run_id").notNull(),
+  version: integer("version").notNull(),
+  filePath: text("file_path").notNull(),
+  inputValues: jsonb("input_values"),
+  outputValues: jsonb("output_values"),
+  sharepointUrl: text("sharepoint_url"),
+  sharepointDriveItemId: text("sharepoint_drive_item_id"),
+  savedBy: varchar("saved_by"),
+  savedByName: text("saved_by_name"),
+  notes: text("notes"),
+  savedAt: timestamp("saved_at").defaultNow(),
+});
+
+export const insertExcelModelRunVersionSchema = createInsertSchema(excelModelRunVersions).omit({ id: true, savedAt: true });
+export type InsertExcelModelRunVersion = z.infer<typeof insertExcelModelRunVersionSchema>;
+export type ExcelModelRunVersion = typeof excelModelRunVersions.$inferSelect;
+
+// ─── Infrastructure tables (managed by framework, declared so drizzle-kit leaves them alone) ───
+
+// Express session store (managed by connect-pg-simple)
+export const session = pgTable("session", {
+  sid: varchar("sid").primaryKey(),
+  sess: jsonb("sess").notNull(),
+  expire: timestamp("expire", { precision: 6, withTimezone: false }).notNull(),
+});
+
+// API bearer tokens
+export const authTokens = pgTable("auth_tokens", {
+  id: integer("id").primaryKey().notNull().default(sql`nextval('auth_tokens_id_seq'::regclass)`),
+  token: text("token").notNull().unique("auth_tokens_token_key"),
+  userId: varchar("user_id").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
+// SSO exchange codes (short-lived auth tokens)
+export const ssoExchangeCodes = pgTable("sso_exchange_codes", {
+  id: integer("id").primaryKey().notNull().default(sql`nextval('sso_exchange_codes_id_seq'::regclass)`),
+  code: text("code").notNull().unique("sso_exchange_codes_code_key"),
+  userId: varchar("user_id").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
+// Code change audit log (ChatBGP self-build actions)
+export const codeChanges = pgTable("code_changes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  toolUsed: text("tool_used"),
+  filePath: text("file_path"),
+  shellCommand: text("shell_command"),
+  shellOutput: text("shell_output"),
+  description: text("description"),
+  beforeContent: text("before_content"),
+  afterContent: text("after_content"),
+  status: text("status").default("applied"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Per-user activity / telemetry
+export const userActivity = pgTable("user_activity", {
+  id: integer("id").primaryKey().notNull().default(sql`nextval('user_activity_id_seq'::regclass)`),
+  userId: varchar("user_id").notNull().unique("user_activity_user_id_key"),
+  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+  loginCount: integer("login_count").default(0),
+  lastActiveAt: timestamp("last_active_at", { withTimezone: true }),
+  pageViews: integer("page_views").default(0),
+  loginMethod: text("login_method"),
+  o365Linked: boolean("o365_linked").default(false),
+  o365LinkedAt: timestamp("o365_linked_at", { withTimezone: true }),
+  currentSessionStart: timestamp("current_session_start", { withTimezone: true }),
+  lastHeartbeatAt: timestamp("last_heartbeat_at", { withTimezone: true }),
+  totalSessionMinutes: integer("total_session_minutes").default(0),
+  chatbgpMessageCount: integer("chatbgp_message_count").default(0),
+  lastChatbgpAt: timestamp("last_chatbgp_at", { withTimezone: true }),
+});
+
+// Blob storage for uploaded files
+export const fileStorage = pgTable("file_storage", {
+  storageKey: varchar("storage_key").primaryKey(),
+  data: text("data").notNull(), // bytea on DB, represented as text for drizzle compatibility
+  contentType: varchar("content_type").notNull().default("application/octet-stream"),
+  originalName: varchar("original_name"),
+  size: integer("size"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// AML training module definitions
+export const amlTrainingModules = pgTable("aml_training_modules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  description: text("description"),
+  contentMarkdown: text("content_markdown").notNull(),
+  quiz: jsonb("quiz").notNull().default(sql`'[]'::jsonb`),
+  passScore: integer("pass_score").default(80),
+  estimatedMinutes: integer("estimated_minutes"),
+  requiredForRoles: text("required_for_roles").array(),
+  active: boolean("active").default(true),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
 
 export const loginSchema = z.object({
   username: z.string().min(1, "Username is required"),

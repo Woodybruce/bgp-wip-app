@@ -67,6 +67,12 @@ interface InvestigationResult {
   insolvencyHistory?: any[];
   sanctionsScreening?: any;
   aiAnalysis?: string;
+  accountsAnalysis?: {
+    filingDate: string;
+    description: string;
+    documentId: string;
+    summary: string;
+  } | null;
   riskScore?: number;
   riskLevel?: "low" | "medium" | "high" | "critical";
   flags?: string[];
@@ -107,24 +113,72 @@ export async function getCompanyData(companyNumber: string) {
 export async function screenSanctions(names: string[]) {
   try {
     const { screenName, loadSanctionsList } = await import("./sanctions-screening");
+    const { screenNames: caScreen, isComplyAdvantageConfigured } = await import("./comply-advantage");
     await loadSanctionsList();
+
+    // Run free lists (OFSI/OFAC) and ComplyAdvantage (sanctions + PEP +
+    // adverse media) in parallel. CA gives us the signals the free lists
+    // don't carry — PEPs and adverse media — which is where most of the
+    // real risk sits for West End trophy-asset proprietors.
+    const caConfigured = isComplyAdvantageConfigured();
+    const [freeByName, caResults] = await Promise.all([
+      Promise.resolve(names.map(n => ({ name: n, matches: screenName(n, 0.6) }))),
+      caConfigured ? caScreen(names.map(n => ({ name: n }))).catch((err: any) => {
+        console.warn("[kyc-clouseau] ComplyAdvantage screen failed, falling back to free lists only:", err?.message);
+        return [] as any[];
+      }) : Promise.resolve([] as any[]),
+    ]);
+
+    const caByName = new Map<string, any>();
+    for (const r of caResults) caByName.set(r.name, r);
+
     const results: any[] = [];
-    for (const name of names) {
-      const matches = screenName(name, 0.6);
-      if (matches.length > 0) {
-        results.push({
-          name,
-          status: matches[0].score >= 0.9 ? "strong_match" : "potential_match",
-          matches: matches.slice(0, 3).map(m => ({
-            sanctionedName: m.entry.name,
-            score: m.score,
-            regime: m.entry.regime,
-            designation: m.entry.designationType,
-          })),
+    for (const { name, matches: freeMatches } of freeByName) {
+      const ca = caByName.get(name);
+      const merged: any[] = [];
+
+      for (const m of freeMatches) {
+        merged.push({
+          matchType: "sanctions",
+          source: "free-list",
+          sanctionedName: m.entry.name,
+          score: m.score,
+          regime: m.entry.regime,
+          designation: m.entry.designationType,
         });
-      } else {
-        results.push({ name, status: "clear", matches: [] });
       }
+      for (const m of (ca?.matches || [])) {
+        merged.push({
+          matchType: m.matchType,
+          source: "complyadvantage",
+          sanctionedName: m.name,
+          listName: m.listName,
+          score: m.score,
+          details: m.details,
+        });
+      }
+
+      if (merged.length === 0) {
+        results.push({ name, status: "clear", matches: [] });
+        continue;
+      }
+      const topScore = Math.max(...merged.map(m => m.score || 0));
+      const hasSanctions = merged.some(m => m.matchType === "sanctions" || m.matchType === "warning");
+      const hasPep = merged.some(m => m.matchType === "pep");
+      const hasAdverse = merged.some(m => m.matchType === "adverse_media" || m.matchType === "adverse-media");
+      const status: "strong_match" | "potential_match" =
+        (hasSanctions && topScore >= 0.9) ? "strong_match" :
+        (hasPep && topScore >= 0.9) ? "strong_match" :
+        "potential_match";
+
+      results.push({
+        name,
+        status,
+        hasSanctions,
+        hasPep,
+        hasAdverse,
+        matches: merged.slice(0, 5),
+      });
     }
     return results;
   } catch (err: any) {
@@ -204,15 +258,35 @@ export function assessRisk(data: any, sanctionsResult: any): { score: number; le
   }
 
   if (sanctionsResult) {
-    const matches = sanctionsResult.filter((s: any) => s.status === "strong_match" || s.status === "potential_match");
-    if (matches.length > 0) {
-      const strongMatches = matches.filter((m: any) => m.status === "strong_match");
-      if (strongMatches.length > 0) {
-        flags.push(`🚨 SANCTIONS MATCH: ${strongMatches.length} strong match(es) found`);
-        score += 50;
-      } else {
-        flags.push(`⚠️ Potential sanctions match: ${matches.length} name(s) flagged`);
-        score += 25;
+    const hits = sanctionsResult.filter((s: any) => s.status === "strong_match" || s.status === "potential_match");
+    if (hits.length > 0) {
+      const sanctionsHits = hits.filter((h: any) => h.hasSanctions);
+      const pepHits = hits.filter((h: any) => h.hasPep);
+      const adverseHits = hits.filter((h: any) => h.hasAdverse);
+
+      if (sanctionsHits.length > 0) {
+        const strong = sanctionsHits.filter((h: any) => h.status === "strong_match");
+        if (strong.length > 0) {
+          flags.push(`🚨 SANCTIONS MATCH: ${strong.length} strong match(es)`);
+          score += 50;
+        } else {
+          flags.push(`⚠️ Potential sanctions match: ${sanctionsHits.length} name(s) flagged`);
+          score += 25;
+        }
+      }
+      if (pepHits.length > 0) {
+        const strongPep = pepHits.filter((h: any) => h.status === "strong_match");
+        if (strongPep.length > 0) {
+          flags.push(`🏛️ PEP MATCH: ${strongPep.length} politically-exposed person(s) (ComplyAdvantage)`);
+          score += 30;
+        } else {
+          flags.push(`⚠️ Potential PEP match: ${pepHits.length} name(s) (ComplyAdvantage)`);
+          score += 15;
+        }
+      }
+      if (adverseHits.length > 0) {
+        flags.push(`📰 Adverse media: ${adverseHits.length} name(s) flagged (ComplyAdvantage)`);
+        score += 15;
       }
     }
   }
@@ -225,7 +299,104 @@ export function assessRisk(data: any, sanctionsResult: any): { score: number; le
   return { score: Math.min(score, 100), level, flags };
 }
 
-async function runAiAnalysis(data: any, riskFlags: string[], ownershipChain: any, propertyContext?: any): Promise<string> {
+/**
+ * Find the most recent "accounts" filing that has a downloadable document,
+ * fetch the PDF via the CH document-api, extract text, and return a digest
+ * for AI summarisation. Returns null if no accounts doc is available
+ * (e.g. scanned-only PDF with no text layer, or filing has no document_metadata).
+ */
+async function fetchLatestAccountsText(filings: any[]): Promise<{
+  date: string;
+  description: string;
+  documentId: string;
+  text: string;
+} | null> {
+  const apiKey = process.env.COMPANIES_HOUSE_API_KEY;
+  if (!apiKey) return null;
+
+  const accountsFilings = (filings || [])
+    .filter((f: any) => f.category === "accounts" && f.links?.document_metadata)
+    .sort((a: any, b: any) => (b.date || "").localeCompare(a.date || ""));
+
+  for (const f of accountsFilings.slice(0, 3)) {
+    try {
+      const metaUrl: string = f.links.document_metadata;
+      const documentId = metaUrl.split("/").filter(Boolean).pop();
+      if (!documentId) continue;
+      const auth = `Basic ${Buffer.from(apiKey + ":").toString("base64")}`;
+      const docRes = await fetch(
+        `https://document-api.company-information.service.gov.uk/document/${encodeURIComponent(documentId)}/content`,
+        { headers: { Authorization: auth, Accept: "application/pdf" }, redirect: "follow" },
+      );
+      if (!docRes.ok) continue;
+      const buf = Buffer.from(await docRes.arrayBuffer());
+      const pdfModule: any = await import("pdf-parse");
+      const PDFParse = pdfModule.PDFParse || pdfModule.default || pdfModule;
+      let text = "";
+      try {
+        const parser = new PDFParse(new Uint8Array(buf));
+        const data = await parser.getText();
+        text = typeof data === "string" ? data : (data as any)?.text || "";
+        try { parser.destroy?.(); } catch {}
+      } catch {
+        const parsed = await (pdfModule.default || pdfModule)(buf);
+        text = parsed?.text || "";
+      }
+      if (text && text.trim().length > 200) {
+        return {
+          date: f.date,
+          description: f.description || f.type || "Accounts",
+          documentId,
+          text: text.slice(0, 40000),
+        };
+      }
+    } catch (err: any) {
+      console.warn(`[kyc-clouseau] accounts fetch failed for filing ${f.date}:`, err?.message);
+    }
+  }
+  return null;
+}
+
+async function summariseAccounts(companyName: string, accounts: { date: string; description: string; text: string }): Promise<string> {
+  try {
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const anthropic = new Anthropic({
+      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+      ...(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+        ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
+        : {}),
+    });
+    const prompt = `You are a financial analyst reviewing UK Companies House statutory accounts for ${companyName}. The document below was filed on ${accounts.date} (${accounts.description}). Extract the key financial indicators and assess covenant strength as a tenant or counterparty.
+
+Return a concise markdown section with these parts — use actual figures wherever present, and say "not disclosed" rather than guessing:
+
+**Period covered:** e.g. year ended 31 Dec 2024
+**Size regime:** micro-entity / small / medium / full
+**P&L highlights:** turnover, operating profit/(loss), profit before tax, comparison with prior year
+**Balance sheet:** net assets / (liabilities), cash, debtors, creditors falling due within 1y, long-term creditors
+**Liquidity:** current ratio if computable; working capital position
+**Going concern:** any going-concern notes, qualifications, or auditor concerns
+**Trend:** one sentence on direction of travel vs prior year
+**Covenant verdict:** a single-sentence judgement — e.g. "Strong covenant — well-capitalised with growing profitability", or "Weak covenant — loss-making and running down reserves"
+
+Keep it under 250 words. Do not invent numbers. If the accounts are micro-entity with minimal disclosure, say so explicitly.
+
+ACCOUNTS TEXT:
+${accounts.text}`;
+
+    const res = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1500,
+      messages: [{ role: "user", content: prompt }],
+    });
+    return res.content[0].type === "text" ? res.content[0].text : "";
+  } catch (err: any) {
+    console.error("[kyc-clouseau] accounts summarise error:", err?.message);
+    return "";
+  }
+}
+
+async function runAiAnalysis(data: any, riskFlags: string[], ownershipChain: any, propertyContext?: any, accountsSummary?: string): Promise<string> {
   try {
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
     const anthropic = new Anthropic({
@@ -298,7 +469,10 @@ ${riskFlags.map(f => `- ${f}`).join("\n") || "None identified"}
 
 RECENT FILINGS (last 10):
 ${(data.filings || []).slice(0, 10).map((f: any) => `- ${f.date}: ${f.description || f.type}`).join("\n") || "None"}
-${propertyContext ? `
+${accountsSummary ? `
+LATEST STATUTORY ACCOUNTS (parsed from the filed PDF — use these actual figures in the FINANCIAL HEALTH INDICATORS section, don't just infer from filing status):
+${accountsSummary}
+` : ""}${propertyContext ? `
 PROPERTY ACQUISITION CONTEXT:
 This investigation originates from a Land Registry search. The user is exploring whether to acquire a property and needs to identify the best person to contact about purchasing it.
 - Property address: ${propertyContext.propertyAddress || "Unknown"}
@@ -340,123 +514,195 @@ Format with clear headers and be specific. Reference actual names and data point
   }
 }
 
-router.post("/api/kyc-clouseau/investigate", requireAuth, async (req: Request, res: Response) => {
+/**
+ * Shared helper used by the /investigate route AND by Property Pathway's
+ * Stage 4 — runs a full company KYC, persists it to kyc_investigations so
+ * the same record appears in Clouseau's Investigation History regardless
+ * of where the investigation was kicked off from.
+ *
+ * Returns `{ result, investigationId }`. `investigationId` is the primary
+ * key in kyc_investigations (null if DB insert failed).
+ */
+export async function runCompanyInvestigation(opts: {
+  companyNumber?: string;
+  companyName?: string;
+  propertyContext?: any;
+  crmCompanyId?: string | null;
+  userId?: string | null;
+  skipAi?: boolean;
+}): Promise<{ result: InvestigationResult; investigationId: number | null }> {
+  const { companyNumber, companyName, propertyContext, crmCompanyId, userId = null, skipAi = false } = opts;
+
+  if (!companyNumber && !companyName) {
+    throw new Error("Provide companyNumber or companyName");
+  }
+
+  let targetNumber = companyNumber;
+  if (!targetNumber && companyName) {
+    const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(companyName)}&items_per_page=1`);
+    if (searchData.items?.length > 0) {
+      targetNumber = searchData.items[0].company_number;
+    } else {
+      throw new Error(`No company found matching "${companyName}"`);
+    }
+  }
+
+  console.log(`[kyc-clouseau] Starting investigation: ${targetNumber}`);
+
+  const companyData = await getCompanyData(targetNumber!);
+
+  let ownershipChain = null;
   try {
-    const { companyNumber, companyName, type = "company", propertyContext } = req.body;
+    ownershipChain = await discoverUltimateParent(targetNumber!);
+  } catch {}
 
-    if (!companyNumber && !companyName) {
-      return res.status(400).json({ error: "Provide companyNumber or companyName" });
-    }
+  const namesToScreen: string[] = [];
+  if (companyData.profile?.company_name) namesToScreen.push(companyData.profile.company_name);
+  const activeOfficers = (companyData.officers || []).filter((o: any) => !o.resigned_on);
+  activeOfficers.forEach((o: any) => { if (o.name) namesToScreen.push(o.name); });
+  const activePscs = (companyData.pscs || []).filter((p: any) => !p.ceased_on);
+  activePscs.forEach((p: any) => { if (p.name) namesToScreen.push(p.name); });
 
-    let targetNumber = companyNumber;
-    if (!targetNumber && companyName) {
-      const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(companyName)}&items_per_page=1`);
-      if (searchData.items?.length > 0) {
-        targetNumber = searchData.items[0].company_number;
-      } else {
-        return res.status(404).json({ error: `No company found matching "${companyName}"` });
-      }
-    }
+  const sanctionsResult = await screenSanctions(namesToScreen);
+  const risk = assessRisk(companyData, sanctionsResult);
 
-    console.log(`[kyc-clouseau] Starting investigation: ${targetNumber}`);
-
-    const companyData = await getCompanyData(targetNumber);
-
-    let ownershipChain = null;
+  // Download & summarise the latest statutory accounts PDF in parallel with AI analysis.
+  // Scanned-only accounts (no text layer) return null and we degrade gracefully.
+  let accountsAnalysis: InvestigationResult["accountsAnalysis"] = null;
+  const accountsPromise = (async () => {
     try {
-      ownershipChain = await discoverUltimateParent(targetNumber);
-    } catch {}
+      const accounts = await fetchLatestAccountsText(companyData.filings || []);
+      if (!accounts) return null;
+      const subjectName = companyData.profile?.company_name || companyName || targetNumber!;
+      const summary = await summariseAccounts(subjectName, accounts);
+      if (!summary) return null;
+      console.log(`[kyc-clouseau] accounts summarised for ${targetNumber} (${accounts.date})`);
+      return {
+        filingDate: accounts.date,
+        description: accounts.description,
+        documentId: accounts.documentId,
+        summary,
+      };
+    } catch (err: any) {
+      console.warn(`[kyc-clouseau] accounts pipeline failed for ${targetNumber}:`, err?.message);
+      return null;
+    }
+  })();
 
-    const namesToScreen: string[] = [];
-    if (companyData.profile?.company_name) namesToScreen.push(companyData.profile.company_name);
-    const activeOfficers = (companyData.officers || []).filter((o: any) => !o.resigned_on);
-    activeOfficers.forEach((o: any) => { if (o.name) namesToScreen.push(o.name); });
-    const activePscs = (companyData.pscs || []).filter((p: any) => !p.ceased_on);
-    activePscs.forEach((p: any) => { if (p.name) namesToScreen.push(p.name); });
-
-    const sanctionsResult = await screenSanctions(namesToScreen);
-    const risk = assessRisk(companyData, sanctionsResult);
-
-    let aiAnalysis = "";
+  let aiAnalysis = "";
+  if (!skipAi) {
     try {
-      const aiPromise = runAiAnalysis(companyData, risk.flags, ownershipChain, propertyContext);
-      const timeoutPromise = new Promise<string>((_, reject) => setTimeout(() => reject(new Error("AI analysis timed out")), 90000));
+      // Wait for accounts first (capped) so the main analysis can fold in real figures.
+      const accountsTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 45000));
+      accountsAnalysis = await Promise.race([accountsPromise, accountsTimeout]);
+      const aiPromise = runAiAnalysis(companyData, risk.flags, ownershipChain, propertyContext, accountsAnalysis?.summary);
+      // Complex UBO walks (multi-level ownership chains + accounts summary) can run
+      // close to or past 90s on Anthropic's side. 180s matches the background-AI
+      // pathway at runPropertyIntelligenceAi().
+      const timeoutPromise = new Promise<string>((_, reject) => setTimeout(() => reject(new Error("AI analysis timed out after 180s")), 180000));
       aiAnalysis = await Promise.race([aiPromise, timeoutPromise]);
     } catch (aiErr: any) {
       aiAnalysis = `AI analysis unavailable (${aiErr.message}). Structured data and risk scoring are shown below.`;
     }
+  } else {
+    // Still resolve accounts even when skipping AI narrative so the summary is persisted.
+    accountsAnalysis = await Promise.race([
+      accountsPromise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 30000)),
+    ]);
+  }
 
-    const result: InvestigationResult = {
-      subject: {
-        name: companyData.profile?.company_name || companyName || targetNumber,
-        companyNumber: targetNumber,
-        type: type as "company" | "individual",
-      },
-      companyProfile: companyData.profile,
-      officers: activeOfficers,
-      pscs: activePscs,
-      ownershipChain,
-      filingHistory: (companyData.filings || []).slice(0, 20),
-      insolvencyHistory: companyData.insolvency,
-      sanctionsScreening: sanctionsResult,
-      aiAnalysis,
-      riskScore: risk.score,
-      riskLevel: risk.level as any,
-      flags: risk.flags,
-      charges: companyData.charges || [],
-      propertyContext: propertyContext || null,
-      timestamp: new Date().toISOString(),
-    };
+  const result: InvestigationResult = {
+    subject: {
+      name: companyData.profile?.company_name || companyName || targetNumber!,
+      companyNumber: targetNumber,
+      type: "company",
+    },
+    companyProfile: companyData.profile,
+    officers: activeOfficers,
+    pscs: activePscs,
+    ownershipChain,
+    filingHistory: (companyData.filings || []).slice(0, 20),
+    insolvencyHistory: companyData.insolvency,
+    sanctionsScreening: sanctionsResult,
+    aiAnalysis,
+    accountsAnalysis,
+    riskScore: risk.score,
+    riskLevel: risk.level as any,
+    flags: risk.flags,
+    charges: companyData.charges || [],
+    propertyContext: propertyContext || null,
+    timestamp: new Date().toISOString(),
+  };
 
-    // PropertyData pipeline — fetch properties owned by this company
-    if (targetNumber && process.env.PROPERTYDATA_API_KEY) {
-      try {
-        const pdRes = await fetch(
-          `https://api.propertydata.co.uk/freeholds?company_number=${encodeURIComponent(targetNumber)}&key=${process.env.PROPERTYDATA_API_KEY}`
-        );
-        if (pdRes.ok) {
-          const pdData = await pdRes.json();
-          (result as any).propertiesOwned = pdData;
-        }
-      } catch (pdErr: any) {
-        console.warn("[kyc-clouseau] PropertyData fetch failed:", pdErr.message);
-      }
-    }
-
-    // Save to kyc_investigations
-    const userId = (req as any).user?.id || null;
-    const hasSanctionsMatch = sanctionsResult
-      ? sanctionsResult.some((s: any) => s.status === "strong_match" || s.status === "potential_match")
-      : false;
+  if (targetNumber && process.env.PROPERTYDATA_API_KEY) {
     try {
-      const insertResult = await pool.query(
-        `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, risk_level, risk_score, sanctions_match, result, conducted_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id`,
-        [
-          "company",
-          result.subject.name,
-          targetNumber,
-          req.body.crmCompanyId || null,
-          risk.level,
-          risk.score,
-          hasSanctionsMatch,
-          JSON.stringify(result),
-          userId,
-        ]
+      const pdRes = await fetch(
+        `https://api.propertydata.co.uk/freeholds?company_number=${encodeURIComponent(targetNumber)}&key=${process.env.PROPERTYDATA_API_KEY}`
       );
-      const investigationId = insertResult.rows[0]?.id;
-      if (investigationId) {
-        await logKycAudit(investigationId, "created", userId, `Company investigation: ${result.subject.name}`);
+      if (pdRes.ok) {
+        const pdData = await pdRes.json();
+        (result as any).propertiesOwned = pdData;
       }
-    } catch (dbErr: any) {
-      console.warn("[kyc-clouseau] Failed to save investigation:", dbErr.message);
+    } catch (pdErr: any) {
+      console.warn("[kyc-clouseau] PropertyData fetch failed:", pdErr.message);
     }
+  }
 
-    console.log(`[kyc-clouseau] Investigation complete: ${result.subject.name} — risk: ${risk.level} (${risk.score})`);
-    res.json(result);
+  const hasSanctionsMatch = sanctionsResult
+    ? sanctionsResult.some((s: any) => s.status === "strong_match" || s.status === "potential_match")
+    : false;
+
+  let investigationId: number | null = null;
+  try {
+    const insertResult = await pool.query(
+      `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, risk_level, risk_score, sanctions_match, result, conducted_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [
+        "company",
+        result.subject.name,
+        targetNumber,
+        crmCompanyId || null,
+        risk.level,
+        risk.score,
+        hasSanctionsMatch,
+        JSON.stringify(result),
+        userId,
+      ]
+    );
+    investigationId = insertResult.rows[0]?.id ?? null;
+    if (investigationId) {
+      await logKycAudit(investigationId, "created", userId, `Company investigation: ${result.subject.name}`);
+    }
+  } catch (dbErr: any) {
+    console.warn("[kyc-clouseau] Failed to save investigation:", dbErr.message);
+  }
+
+  console.log(`[kyc-clouseau] Investigation complete: ${result.subject.name} — risk: ${risk.level} (${risk.score})`);
+  return { result, investigationId };
+}
+
+router.post("/api/kyc-clouseau/investigate", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { companyNumber, companyName, propertyContext } = req.body;
+    const userId = (req as any).user?.id || null;
+    const { result, investigationId } = await runCompanyInvestigation({
+      companyNumber,
+      companyName,
+      propertyContext,
+      crmCompanyId: req.body.crmCompanyId || null,
+      userId,
+    });
+    res.json({ ...result, investigationId });
   } catch (err: any) {
     console.error("[kyc-clouseau] Investigation error:", err.message);
+    if (/No company found matching/i.test(err.message)) {
+      return res.status(404).json({ error: err.message });
+    }
+    if (/^Provide/i.test(err.message)) {
+      return res.status(400).json({ error: err.message });
+    }
     const userMessage = sanitizeErrorMessage(err.message, "Investigation failed");
     res.status(500).json({ error: userMessage });
   }
@@ -644,12 +890,81 @@ router.get("/api/kyc-clouseau/investigation/:id", requireAuth, async (req: Reque
   }
 });
 
+// Re-runs just the AI narrative for a saved company investigation. Used when the
+// original synchronous AI call timed out (complex UBO walks can run long) — the
+// structured data and risk score stay intact; we only regenerate aiAnalysis.
+router.post("/api/kyc-clouseau/investigation/:id/regenerate-ai", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const row = await pool.query(
+      `SELECT * FROM kyc_investigations WHERE id = $1`,
+      [id]
+    );
+    if (row.rows.length === 0) return res.status(404).json({ error: "Investigation not found" });
+
+    const inv = row.rows[0];
+    if (inv.subject_type !== "company") {
+      return res.status(400).json({ error: "Regenerate is only supported for company investigations" });
+    }
+    const existing = inv.result || {};
+    const companyNumber = inv.company_number || existing?.subject?.companyNumber;
+    if (!companyNumber) return res.status(400).json({ error: "No company number on this investigation" });
+
+    // Mark pending so the client UI can show a spinner while the rerun runs.
+    await pool.query(
+      `UPDATE kyc_investigations SET result = jsonb_set(COALESCE(result, '{}'::jsonb), '{aiStatus}', '"pending"'::jsonb) WHERE id = $1`,
+      [id]
+    );
+    res.json({ ok: true, investigationId: Number(id), aiStatus: "pending" });
+
+    // Fire-and-forget re-run. Pulls fresh CH data (so the rerun also catches
+    // officer/PSC changes) and replaces aiAnalysis on the stored row.
+    (async () => {
+      try {
+        const companyData = await getCompanyData(companyNumber);
+        let ownershipChain: any = null;
+        try { ownershipChain = await discoverUltimateParent(companyNumber); } catch {}
+        const risk = assessRisk(companyData, existing?.sanctionsScreening || { matches: [], screened: [] });
+        const accountsSummary = existing?.accountsAnalysis?.summary;
+        const propertyContext = existing?.propertyContext || null;
+        const aiPromise = runAiAnalysis(companyData, risk.flags, ownershipChain, propertyContext, accountsSummary);
+        const timeoutPromise = new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error("AI analysis timed out after 180s")), 180000)
+        );
+        let aiAnalysis = "";
+        let aiStatus: "complete" | "failed" = "complete";
+        try {
+          aiAnalysis = await Promise.race([aiPromise, timeoutPromise]);
+        } catch (aiErr: any) {
+          aiAnalysis = `AI analysis unavailable (${aiErr?.message || "unknown error"}). Structured data and risk scoring are shown below.`;
+          aiStatus = "failed";
+        }
+        const merged = { ...existing, aiAnalysis, aiStatus };
+        await pool.query(
+          `UPDATE kyc_investigations SET result = $1 WHERE id = $2`,
+          [JSON.stringify(merged), id]
+        );
+        console.log(`[kyc-clouseau] Regenerate AI ${aiStatus} for investigation ${id}`);
+      } catch (err: any) {
+        console.warn(`[kyc-clouseau] Regenerate AI crashed for ${id}:`, err?.message);
+        try {
+          const failed = { ...existing, aiAnalysis: `AI analysis unavailable (${err?.message || "unknown error"}). Structured data and risk scoring are shown below.`, aiStatus: "failed" };
+          await pool.query(`UPDATE kyc_investigations SET result = $1 WHERE id = $2`, [JSON.stringify(failed), id]);
+        } catch {}
+      }
+    })();
+  } catch (err: any) {
+    console.error("[kyc-clouseau] Regenerate AI error:", err.message);
+    res.status(500).json({ error: "Failed to queue AI regeneration" });
+  }
+});
+
 // Global recent searches — powers the "Recent searches" panel at the top of
 // the Clouseau page so the team can see (and reopen) everything that's been
 // run across company / individual / property intelligence modes.
 router.get("/api/kyc-clouseau/recent", requireAuth, async (req: Request, res: Response) => {
   try {
-    const limit = Math.min(parseInt(String(req.query.limit || "50"), 10) || 50, 200);
+    const limit = Math.min(parseInt(String(req.query.limit || "200"), 10) || 200, 1000);
     const typeFilter = String(req.query.type || "").trim();
     const mineOnly = String(req.query.mine || "").toLowerCase() === "true";
     const search = String(req.query.q || "").trim();

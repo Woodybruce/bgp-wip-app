@@ -1,11 +1,10 @@
 import { lazy, Suspense, useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Building2, MapPin, Globe } from "lucide-react";
+import { Building2, MapPin } from "lucide-react";
 
 const Properties = lazy(() => import("@/pages/properties"));
 const PropertyMap = lazy(() => import("@/pages/property-map"));
-const EdozoMap = lazy(() => import("@/pages/edozo-map"));
 
 function PageLoader() {
   return (
@@ -21,21 +20,19 @@ export default function PropertiesHub() {
 
   const getInitialTab = () => {
     if (location.startsWith("/map")) return "map" as const;
-    if (location.startsWith("/edozo")) return "edozo" as const;
     return "list" as const;
   };
 
-  const [tab, setTab] = useState<"list" | "map" | "edozo">(getInitialTab);
+  const [tab, setTab] = useState<"list" | "map">(getInitialTab);
 
   useEffect(() => {
     if (location.startsWith("/map")) setTab("map");
-    else if (location.startsWith("/edozo")) setTab("edozo");
     else if (location.startsWith("/properties")) setTab("list");
   }, [location]);
 
-  const switchTab = (t: "list" | "map" | "edozo") => {
+  const switchTab = (t: "list" | "map") => {
     setTab(t);
-    const routes = { list: "/properties", map: "/map", edozo: "/edozo" };
+    const routes = { list: "/properties", map: "/map" };
     const target = routes[t];
     if (!location.startsWith(target)) setLocation(target);
   };
@@ -43,10 +40,9 @@ export default function PropertiesHub() {
   const allTabs = [
     { key: "list" as const, label: "Properties", icon: Building2 },
     { key: "map" as const, label: "Map", icon: MapPin },
-    { key: "edozo" as const, label: "Intelligence", icon: Globe },
   ];
 
-  const isFullHeight = tab === "edozo" || tab === "map";
+  const isFullHeight = tab === "map";
 
   return (
     <div className={isFullHeight ? "relative h-[calc(100vh-48px)] flex flex-col" : ""}>
@@ -72,7 +68,7 @@ export default function PropertiesHub() {
       <Suspense fallback={<PageLoader />}>
         {isFullHeight ? (
           <div className="flex-1 min-h-0 overflow-hidden">
-            {tab === "map" ? <PropertyMap /> : <EdozoMap />}
+            <PropertyMap />
           </div>
         ) : (
           <Properties />

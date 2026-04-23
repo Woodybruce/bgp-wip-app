@@ -15,6 +15,7 @@ import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, Handshake, ShieldCheck,
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
+  MapPin, Activity, Target, Briefcase, PoundSterling, Search,
 } from "lucide-react";
 
 interface BrandProfile {
@@ -24,11 +25,13 @@ interface BrandProfile {
     description: string | null;
     company_type: string | null;
     companies_house_number: string | null;
+    companies_house_data: any;
     domain: string | null;
     domain_url: string | null;
     is_tracked_brand: boolean;
     tracking_reason: string | null;
     brand_group_id: string | null;
+    parent_company_id: string | null;
     concept_pitch: string | null;
     store_count: number | null;
     rollout_status: string | null;
@@ -41,6 +44,7 @@ interface BrandProfile {
     kyc_expires_at: string | null;
     aml_risk_level: string | null;
     aml_pep_status: string | null;
+    bgp_contact_crm: string | null;
   };
   signals: Array<any>;
   representedBy: Array<any>;
@@ -48,6 +52,8 @@ interface BrandProfile {
   kyc: { doc_count: number; last_uploaded_at: string | null };
   images: Array<any>;
   deals: Array<any>;
+  completedDeals: Array<any>;
+  activeDeals: Array<any>;
   parentGroup: { id: string; name: string; store_count: number | null } | null;
   siblings: Array<any>;
   news: Array<{
@@ -61,6 +67,22 @@ interface BrandProfile {
     published_at: string | null;
     category: string | null;
   }>;
+  requirements: Array<{ id: string; size_min: string | null; size_max: string | null; budget: string | null; use_class: string | null; status: string | null; location_notes: string | null; updated_at: string | null }>;
+  pitchedTo: Array<{ id: string; unit_name: string | null; target_brands: string | null; status: string | null; priority: string | null; property_id: string; property_name: string; property_address: string | null; updated_at: string | null }>;
+  contacts: Array<{ id: string; name: string; role: string | null; email: string | null; phone: string | null; linkedin_url: string | null; avatar_url: string | null; last_contacted_at: string | null; enrichment_source: string | null }>;
+  stores: Array<{ id: string; name: string; address: string | null; lat: number | null; lng: number | null; place_id: string | null; status: string | null; store_type: string | null; source_type: string | null; researched_at: string | null }>;
+  turnover: Array<{ period: string | null; turnover: number | null; turnover_per_sqft: number | null; confidence: string | null; source: string | null }>;
+  covenant: {
+    companyStatus: string | null;
+    accountsOverdue: boolean;
+    confirmationStatementOverdue: boolean;
+    hasInsolvencyHistory: boolean;
+    hasCharges: boolean;
+    lastAccountsMadeUpTo: string | null;
+    dateOfCreation: string | null;
+    checkedAt: string | null;
+    trafficLight: "green" | "amber" | "red";
+  } | null;
 }
 
 const ROLLOUT_OPTIONS = [
@@ -153,6 +175,30 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Enrichment failed", description: e.message, variant: "destructive" }),
   });
 
+  const researchStoresMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`, {});
+      return res.json();
+    },
+    onSuccess: (out: { found: number; openCount: number }) => {
+      toast({ title: `Found ${out.found} stores (${out.openCount} open)`, description: "Synced from Google Places." });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Store research failed", description: e.message, variant: "destructive" }),
+  });
+
+  const findUkEntityMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/companies-house/find-uk-entity/${companyId}`, {});
+      return res.json();
+    },
+    onSuccess: (out: any) => {
+      const msg = `${out.ukStores?.length || 0} UK stores found · ${out.activeChCandidates?.length || 0} active CH candidates`;
+      toast({ title: "UK entity search complete", description: msg });
+    },
+    onError: (e: any) => toast({ title: "UK entity search failed", description: e.message, variant: "destructive" }),
+  });
+
   // All companies, used by the representation picker (autocomplete)
   const { data: allCompaniesForPicker = [] } = useQuery<Array<{ id: string; name: string; agent_type: string | null; is_tracked_brand: boolean }>>({
     queryKey: ["/api/crm/companies"],
@@ -188,6 +234,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   if (isLoading || !data) return null;
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
+  // Defensive defaults — older cached responses may lack new fields
+  const stores = stores || [];
+  const pitchedTo = pitchedTo || [];
+  const requirements = requirements || [];
+  const completedDeals = completedDeals || [];
+  const activeDeals = activeDeals || [];
+  const turnover = turnover || [];
+  const covenant = covenant || null;
 
   // Only render on companies that are brands, agents, or have any brand data.
   // Gives users an easy "promote this company into the Brand Bible" button if not yet flagged.
@@ -567,13 +621,191 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
             )}
 
+            {/* Covenant strip — CH financials + traffic light */}
+            {covenant && (
+              <div className="border-t pt-2">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                    <Activity className="w-3 h-3" /> Covenant &amp; CH health
+                  </div>
+                  <Badge className={
+                    covenant.trafficLight === "green" ? "bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]" :
+                    covenant.trafficLight === "amber" ? "bg-amber-100 text-amber-700 border-amber-200 text-[10px]" :
+                    "bg-red-100 text-red-700 border-red-200 text-[10px]"
+                  }>
+                    {covenant.trafficLight === "green" ? "Strong" : covenant.trafficLight === "amber" ? "Verify" : "At risk"}
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                  <div>
+                    <div className="text-[10px] text-muted-foreground">Status</div>
+                    <div className="font-medium capitalize">{covenant.companyStatus || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground">Last accounts</div>
+                    <div className="font-medium">{covenant.lastAccountsMadeUpTo ? new Date(covenant.lastAccountsMadeUpTo).toLocaleDateString("en-GB") : "—"}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground">Insolvency</div>
+                    <div className={`font-medium ${covenant.hasInsolvencyHistory ? "text-red-600" : ""}`}>
+                      {covenant.hasInsolvencyHistory ? "Yes" : "None"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-muted-foreground">Charges</div>
+                    <div className={`font-medium ${covenant.hasCharges ? "text-amber-600" : ""}`}>
+                      {covenant.hasCharges ? "Yes" : "None"}
+                    </div>
+                  </div>
+                </div>
+                {covenant.companyStatus && covenant.companyStatus !== "active" && (
+                  <div className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-start gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <div>
+                      Linked CH entity is <b>{covenant.companyStatus}</b>. This may be an old holding company.
+                      <Button
+                        size="sm"
+                        variant="link"
+                        className="h-auto px-1 py-0 text-[11px] text-amber-700 underline"
+                        onClick={() => findUkEntityMutation.mutate()}
+                        disabled={findUkEntityMutation.isPending}
+                      >
+                        Find active UK entity
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {turnover.length > 0 && (
+                  <div className="mt-2 flex items-center gap-2 text-xs">
+                    <PoundSterling className="w-3 h-3 text-muted-foreground" />
+                    <span className="text-muted-foreground">Turnover trend:</span>
+                    {turnover.slice(0, 3).reverse().map((t: any) => (
+                      <Badge key={t.period} variant="outline" className="text-[10px]">
+                        {t.period}: £{(t.turnover / 1_000_000).toFixed(1)}m
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Deal ledger + active pipeline */}
+            {(completedDeals?.length > 0 || activeDeals?.length > 0 || requirements.length > 0) && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                  <Briefcase className="w-3 h-3" /> Deal ledger &amp; pipeline
+                </div>
+                <div className="flex gap-2 text-xs flex-wrap">
+                  {completedDeals?.length > 0 && (
+                    <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">
+                      {completedDeals.length} completed
+                    </Badge>
+                  )}
+                  {activeDeals?.length > 0 && (
+                    <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[10px]">
+                      {activeDeals.length} active
+                    </Badge>
+                  )}
+                  {requirements.filter(r => r.status === "Active").length > 0 && (
+                    <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px]">
+                      {requirements.filter(r => r.status === "Active").length} active req
+                    </Badge>
+                  )}
+                </div>
+                {data.deals.slice(0, 5).length > 0 && (
+                  <div className="mt-1.5 space-y-0.5">
+                    {data.deals.slice(0, 5).map((d: any) => (
+                      <Link key={d.id} href={`/deals/${d.id}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5">
+                        <Badge variant="outline" className="text-[9px] shrink-0">{d.role}</Badge>
+                        <span className="truncate flex-1">{d.name}</span>
+                        <span className="text-[10px] text-muted-foreground shrink-0">{d.stage || d.status}</span>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Pitched-to history */}
+            {pitchedTo.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                  <Target className="w-3 h-3" /> Pitched into ({pitchedTo.length})
+                </div>
+                <div className="space-y-0.5">
+                  {pitchedTo.slice(0, 6).map((p) => (
+                    <Link key={p.id} href={`/properties/${p.property_id}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5">
+                      <span className="truncate flex-1 font-medium">{p.property_name}</span>
+                      {p.unit_name && <span className="text-[10px] text-muted-foreground shrink-0">{p.unit_name}</span>}
+                      {p.status && <Badge variant="outline" className="text-[9px] shrink-0">{p.status}</Badge>}
+                    </Link>
+                  ))}
+                  {pitchedTo.length > 6 && (
+                    <p className="text-[10px] text-muted-foreground pl-1">+{pitchedTo.length - 6} more</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Stores — Google Places list */}
+            <div className="border-t pt-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <MapPin className="w-3 h-3" /> Stores ({stores.length}{c.store_count && stores.length !== c.store_count ? ` of ~${c.store_count}` : ""})
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-5 px-1.5 text-[10px]"
+                  onClick={() => researchStoresMutation.mutate()}
+                  disabled={researchStoresMutation.isPending}
+                  data-testid="button-research-stores"
+                >
+                  <Search className={`w-3 h-3 mr-0.5 ${researchStoresMutation.isPending ? "animate-pulse" : ""}`} />
+                  {stores.length === 0 ? "Find stores" : "Refresh"}
+                </Button>
+              </div>
+              {stores.length > 0 ? (
+                <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                  {stores.slice(0, 10).map((s) => (
+                    <div key={s.id} className="text-xs flex items-center gap-1.5 px-1 py-0.5">
+                      <MapPin className={`w-3 h-3 shrink-0 ${s.status === "closed" ? "text-red-500" : s.status === "open" ? "text-emerald-500" : "text-muted-foreground"}`} />
+                      <span className="truncate flex-1">{s.name}</span>
+                      {s.address && <span className="text-[10px] text-muted-foreground truncate max-w-[200px]">{s.address.split(",").slice(-3, -2)[0]?.trim()}</span>}
+                      {s.place_id && (
+                        <a
+                          href={`https://www.google.com/maps/place/?q=place_id:${s.place_id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="shrink-0 text-muted-foreground hover:text-primary"
+                          title="View on Google Maps"
+                        >
+                          <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                  {stores.length > 10 && (
+                    <p className="text-[10px] text-muted-foreground pl-1">+{stores.length - 10} more stores</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-muted-foreground italic">
+                  No stores cached. Click "Find stores" to pull live from Google Places.
+                </p>
+              )}
+            </div>
+
             {/* KYC tile */}
             {(c.kyc_status || data.kyc.doc_count > 0 || c.aml_risk_level) && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground border-t pt-2">
                 <ShieldCheck className="w-3 h-3" />
                 {c.kyc_status === "approved" && <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">KYC approved</Badge>}
+                {c.kyc_status === "pass" && <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">KYC passed</Badge>}
+                {c.kyc_status === "warning" && <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]">Verify entity</Badge>}
                 {c.kyc_status === "in_review" && <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]">KYC in review</Badge>}
                 {c.kyc_status === "rejected" && <Badge variant="destructive" className="text-[10px]">KYC rejected</Badge>}
+                {c.kyc_status === "fail" && <Badge variant="destructive" className="text-[10px]">KYC fail — insolvency</Badge>}
                 {!c.kyc_status && <Badge variant="secondary" className="text-[10px]">KYC pending</Badge>}
                 {c.aml_risk_level && <span>· {c.aml_risk_level} risk</span>}
                 <span>· {data.kyc.doc_count} doc{data.kyc.doc_count === 1 ? "" : "s"}</span>

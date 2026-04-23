@@ -27,6 +27,7 @@ import {
 import { discoverUltimateParent } from "./companies-house";
 import { createVeriffSession } from "./veriff";
 import { adverseMediaSearch, isPerplexityConfigured } from "./perplexity";
+import { screenNames as complyAdvantageScreen, isComplyAdvantageConfigured } from "./comply-advantage";
 
 const router = Router();
 
@@ -285,6 +286,7 @@ export async function runAllAmlChecks(
   let risk: { level: string; score: number } | null = null;
   let sanctionsMatch = false;
   let investigationResult: any = null;
+  let complyAdvantageResult: any[] = [];
 
   // 1. Companies House + UBO + Sanctions (Clouseau)
   if (company.companies_house_number) {
@@ -305,6 +307,7 @@ export async function runAllAmlChecks(
       activePscs.forEach((p: any) => { if (p.name) namesToScreen.push(p.name); });
 
       const sanctionsResult = await screenSanctions(namesToScreen);
+
       const assessed = assessRisk(companyData, sanctionsResult);
       risk = { level: assessed.level, score: assessed.score };
       sanctionsMatch = (sanctionsResult || []).some(
@@ -357,6 +360,81 @@ export async function runAllAmlChecks(
     }
   } else {
     warnings.push("Company has no Companies House number — skipped Clouseau + sanctions");
+  }
+
+  // 1b. ComplyAdvantage PEP/sanctions screening — runs even without CH number
+  if (isComplyAdvantageConfigured()) {
+    try {
+      const namesToScreenCA: Array<{ name: string; role?: string }> = [];
+      // Use company name + any contacts as screening subjects
+      if (company.name) namesToScreenCA.push({ name: company.name, role: "company" });
+      const contactsForCA = await pool.query(
+        `SELECT name, role FROM crm_contacts WHERE company_id = $1 AND name IS NOT NULL`,
+        [companyId],
+      );
+      for (const c of contactsForCA.rows) {
+        if (c.name) namesToScreenCA.push({ name: c.name, role: c.role || "contact" });
+      }
+      // Also add officers/PSCs if we have them from CH
+      if (investigationResult?.officers) {
+        for (const o of investigationResult.officers) {
+          if (o.name && !namesToScreenCA.some(n => n.name === o.name)) {
+            namesToScreenCA.push({ name: o.name, role: "officer" });
+          }
+        }
+      }
+      if (investigationResult?.pscs) {
+        for (const p of investigationResult.pscs) {
+          if (p.name && !namesToScreenCA.some(n => n.name === p.name)) {
+            namesToScreenCA.push({ name: p.name, role: "psc" });
+          }
+        }
+      }
+
+      if (namesToScreenCA.length > 0) {
+        complyAdvantageResult = await complyAdvantageScreen(namesToScreenCA);
+
+        // Check for any matches
+        for (const car of complyAdvantageResult) {
+          if (car.status === "strong_match" || car.status === "potential_match") {
+            sanctionsMatch = true;
+          }
+        }
+
+        // Auto-set PEP status from ComplyAdvantage results
+        const pepMatches = complyAdvantageResult.flatMap(r =>
+          r.matches?.filter((m: any) => m.matchType === "pep") || []
+        );
+        if (pepMatches.length > 0) {
+          // Found PEP hits — set status to the strongest match type
+          await pool.query(
+            `UPDATE crm_companies SET aml_pep_status = $1 WHERE id = $2`,
+            ["pep_domestic", companyId],
+          );
+        } else if (complyAdvantageResult.length > 0 && complyAdvantageResult.every(r => r.status === "clear")) {
+          // All clear — auto-set PEP status to clear
+          await pool.query(
+            `UPDATE crm_companies SET aml_pep_status = $1 WHERE id = $2 AND (aml_pep_status IS NULL OR aml_pep_status = '')`,
+            ["clear", companyId],
+          );
+        }
+
+        // Store results in investigation if we have one
+        if (investigationResult) {
+          investigationResult.complyAdvantageScreening = complyAdvantageResult;
+          if (investigationId) {
+            await pool.query(
+              `UPDATE kyc_investigations SET result = $1 WHERE id = $2`,
+              [JSON.stringify(investigationResult), investigationId],
+            );
+          }
+        }
+      }
+    } catch (e: any) {
+      warnings.push(`ComplyAdvantage screening failed: ${e?.message || "unknown"}`);
+    }
+  } else {
+    warnings.push("ComplyAdvantage not configured — skipped PEP/sanctions screening");
   }
 
   // 2. Veriff — fire one session per contact on the company, if configured
@@ -471,6 +549,34 @@ export async function runAllAmlChecks(
       },
     });
     checklistTicked = [...checklistTicked, ...adverseTicked];
+  }
+
+  // ComplyAdvantage ticks — if all names screened clear, auto-tick sanctions + PEP
+  if (complyAdvantageResult.length > 0) {
+    const allClear = complyAdvantageResult.every(r => r.status === "clear");
+    if (allClear) {
+      const caTicked = await tickChecklistItems(companyId, {
+        sanctions_clear: {
+          source: "comply_advantage",
+          tickedBy: userId,
+          evidence: {
+            screened: complyAdvantageResult.map(r => r.name),
+            provider: "ComplyAdvantage Mesh",
+          },
+          notes: `${complyAdvantageResult.length} names screened clear via ComplyAdvantage`,
+        },
+        pep_checked: {
+          source: "comply_advantage",
+          tickedBy: userId,
+          evidence: {
+            screened: complyAdvantageResult.map(r => r.name),
+            provider: "ComplyAdvantage Mesh",
+          },
+          notes: `PEP screening clear via ComplyAdvantage for ${complyAdvantageResult.length} names`,
+        },
+      });
+      checklistTicked = [...checklistTicked, ...caTicked];
+    }
   }
 
   // 5. Deal event trail — so the audit log carries the whole sweep

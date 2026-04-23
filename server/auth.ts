@@ -388,6 +388,7 @@ export function setupAuth(app: Express) {
     "Mail.Send",
     "Notes.Read",
     "Notes.Read.All",
+    "Notes.ReadWrite.All",
   ];
   const SSO_SCOPES_BASIC = [
     "User.Read",

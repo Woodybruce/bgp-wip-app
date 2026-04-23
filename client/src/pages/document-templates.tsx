@@ -52,6 +52,7 @@ import {
   LayoutTemplate,
   Image,
   RefreshCw,
+  Bell,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -2850,10 +2851,92 @@ function DesignPreview({ design, scale = 0.35, allPages = false }: { design: str
   }
 }
 
+// Simple markdown-to-styled-JSX renderer for document previews
+function MarkdownPreview({ content }: { content: string }) {
+  const lines = content.split("\n");
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+
+  function parseInline(text: string): React.ReactNode {
+    const parts: React.ReactNode[] = [];
+    const regex = /(\*\*\*(.*?)\*\*\*|\*\*(.*?)\*\*|\*(.*?)\*|`(.*?)`)/g;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    let key = 0;
+    while ((m = regex.exec(text)) !== null) {
+      if (m.index > last) parts.push(text.slice(last, m.index));
+      if (m[2] !== undefined) parts.push(<strong key={key++}><em>{m[2]}</em></strong>);
+      else if (m[3] !== undefined) parts.push(<strong key={key++}>{m[3]}</strong>);
+      else if (m[4] !== undefined) parts.push(<em key={key++}>{m[4]}</em>);
+      else if (m[5] !== undefined) parts.push(<code key={key++} className="bg-muted px-1 rounded text-xs font-mono">{m[5]}</code>);
+      last = regex.lastIndex;
+    }
+    if (last < text.length) parts.push(text.slice(last));
+    return parts.length === 1 ? parts[0] : parts;
+  }
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed) { elements.push(<div key={i} className="h-3" />); i++; continue; }
+
+    if (trimmed.startsWith("# ")) {
+      elements.push(<h1 key={i} className="text-2xl font-bold mt-6 mb-2 text-foreground border-b pb-2">{parseInline(trimmed.slice(2))}</h1>);
+      i++; continue;
+    }
+    if (trimmed.startsWith("## ")) {
+      elements.push(<h2 key={i} className="text-lg font-semibold mt-5 mb-2 text-foreground">{parseInline(trimmed.slice(3))}</h2>);
+      i++; continue;
+    }
+    if (trimmed.startsWith("### ")) {
+      elements.push(<h3 key={i} className="text-base font-semibold mt-4 mb-1.5 text-foreground">{parseInline(trimmed.slice(4))}</h3>);
+      i++; continue;
+    }
+    if (trimmed === "---" || trimmed === "***") {
+      elements.push(<hr key={i} className="my-4 border-border" />);
+      i++; continue;
+    }
+    // Bullet list block
+    if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+      const items: React.ReactNode[] = [];
+      while (i < lines.length && (lines[i].trim().startsWith("- ") || lines[i].trim().startsWith("* "))) {
+        items.push(<li key={i} className="ml-4">{parseInline(lines[i].trim().slice(2))}</li>);
+        i++;
+      }
+      elements.push(<ul key={`ul-${i}`} className="list-disc list-inside space-y-1 my-2 text-sm">{items}</ul>);
+      continue;
+    }
+    // Numbered list block
+    if (/^\d+\.\s/.test(trimmed)) {
+      const items: React.ReactNode[] = [];
+      while (i < lines.length && /^\d+\.\s/.test(lines[i].trim())) {
+        items.push(<li key={i} className="ml-4">{parseInline(lines[i].trim().replace(/^\d+\.\s/, ""))}</li>);
+        i++;
+      }
+      elements.push(<ol key={`ol-${i}`} className="list-decimal list-inside space-y-1 my-2 text-sm">{items}</ol>);
+      continue;
+    }
+    elements.push(<p key={i} className="text-sm leading-relaxed">{parseInline(trimmed)}</p>);
+    i++;
+  }
+  return <div className="space-y-1 px-1">{elements}</div>;
+}
+
 function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void }) {
   const { toast } = useToast();
   const [previewRun, setPreviewRun] = useState<string | null>(null);
   const [filterCategory, setFilterCategory] = useState<string>("all");
+  const [refineMessages, setRefineMessages] = useState<Array<{ role: "user" | "assistant"; content: string }>>([]);
+  const [refineInput, setRefineInput] = useState("");
+  const [refining, setRefining] = useState(false);
+  const refineEndRef = useRef<HTMLDivElement>(null);
+
+  // Reset refine chat when switching documents
+  useEffect(() => {
+    setRefineMessages([]);
+    setRefineInput("");
+  }, [previewRun]);
 
   const { data: runs, isLoading } = useQuery<DocumentRun[]>({
     queryKey: ["/api/doc-runs"],
@@ -2872,6 +2955,34 @@ function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     toast({ title: "Copied to clipboard" });
+  };
+
+  const sendRefine = async (runId: string) => {
+    const msg = refineInput.trim();
+    if (!msg || refining) return;
+    const newMessages = [...refineMessages, { role: "user" as const, content: msg }];
+    setRefineMessages(newMessages);
+    setRefineInput("");
+    setRefining(true);
+    try {
+      const res = await apiRequest("POST", `/api/doc-runs/${runId}/refine`, {
+        message: msg,
+        history: refineMessages,
+      });
+      const data = await res.json();
+      if (data.content) {
+        queryClient.invalidateQueries({ queryKey: ["/api/doc-runs"] });
+        setRefineMessages([...newMessages, { role: "assistant" as const, content: "Done — document updated. You can see the changes in the preview above." }]);
+      } else {
+        throw new Error(data.message || "No content returned");
+      }
+    } catch (err: any) {
+      toast({ title: "Refine failed", description: err?.message || "Something went wrong", variant: "destructive" });
+      setRefineMessages([...newMessages, { role: "assistant" as const, content: "Sorry, something went wrong. Please try again." }]);
+    } finally {
+      setRefining(false);
+      setTimeout(() => refineEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    }
   };
 
   // Category tag mapping for document_type
@@ -2989,13 +3100,79 @@ function DocumentRunsTab({ onEditRun }: { onEditRun?: (run: DocumentRun) => void
             <Card>
               <CardContent className="py-6">
                 <ScrollArea className="max-h-[600px]">
-                  <div className="whitespace-pre-wrap text-sm leading-relaxed" data-testid={`text-doc-preview-content-${run.id}`}>
-                    {run.content}
+                  <div data-testid={`text-doc-preview-content-${run.id}`}>
+                    <MarkdownPreview content={run.content} />
                   </div>
                 </ScrollArea>
               </CardContent>
             </Card>
           )}
+
+          {/* Refinement chat panel */}
+          <Card className="border-primary/20 bg-gradient-to-br from-background to-muted/20">
+            <CardHeader className="pb-3 pt-4">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-primary" />
+                <CardTitle className="text-sm font-medium">Refine with AI</CardTitle>
+                <Badge variant="secondary" className="text-[10px] h-4 px-1.5">Opus</Badge>
+                {refineMessages.length > 0 && (
+                  <button
+                    className="ml-auto text-[10px] text-muted-foreground hover:text-foreground"
+                    onClick={() => setRefineMessages([])}
+                  >
+                    Clear chat
+                  </button>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0 space-y-3">
+              {refineMessages.length > 0 && (
+                <ScrollArea className="max-h-48 pr-1">
+                  <div className="space-y-3 pb-1">
+                    {refineMessages.map((m, idx) => (
+                      <div key={idx} className={`flex gap-2 ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                        {m.role === "assistant" && (
+                          <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+                            <Bot className="w-3 h-3 text-primary" />
+                          </div>
+                        )}
+                        <div className={`rounded-lg px-3 py-2 text-xs max-w-[85%] leading-relaxed ${m.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted text-foreground"}`}>
+                          {m.content}
+                        </div>
+                      </div>
+                    ))}
+                    {refining && (
+                      <div className="flex gap-2 justify-start">
+                        <div className="w-5 h-5 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+                          <Bot className="w-3 h-3 text-primary" />
+                        </div>
+                        <div className="bg-muted rounded-lg px-3 py-2">
+                          <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
+                        </div>
+                      </div>
+                    )}
+                    <div ref={refineEndRef} />
+                  </div>
+                </ScrollArea>
+              )}
+              <div className="flex gap-2">
+                <Input
+                  placeholder="e.g. Make the executive summary more concise, add a risk section…"
+                  value={refineInput}
+                  onChange={e => setRefineInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendRefine(run.id); } }}
+                  disabled={refining}
+                  className="text-xs h-9"
+                />
+                <Button size="sm" className="h-9 px-3 shrink-0" onClick={() => sendRefine(run.id)} disabled={refining || !refineInput.trim()}>
+                  {refining ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                </Button>
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Ask Claude to add, remove, rewrite, or restructure any part of this document. The original is automatically saved.
+              </p>
+            </CardContent>
+          </Card>
         </div>
       );
     }
@@ -3481,7 +3658,10 @@ function DesignTemplateView({
             <div className="flex gap-2">
               <Button variant="outline" onClick={onCancel} data-testid="button-cancel-design">Cancel</Button>
               <Button
-                onClick={async () => { setSaving(true); await onSave(design); setSaving(false); }}
+                onClick={async () => {
+                  setSaving(true);
+                  try { await onSave(design); } finally { setSaving(false); }
+                }}
                 disabled={saving}
                 data-testid="button-save-design"
               >
@@ -3926,9 +4106,10 @@ function SeverityBadge({ severity }: { severity: string }) {
   return <Badge className="bg-green-500 text-white border-0 text-[10px]" data-testid="badge-severity-green"><ShieldCheck className="w-3 h-3 mr-1" />Green</Badge>;
 }
 
-function RiskBadge({ risk }: { risk: string }) {
-  const classes = risk === "high" ? "bg-red-500/10 text-red-600 border-red-500/30" : risk === "medium" ? "bg-amber-500/10 text-amber-600 border-amber-500/30" : "bg-green-500/10 text-green-600 border-green-500/30";
-  return <Badge variant="outline" className={`${classes} text-xs`} data-testid="badge-risk">{risk.charAt(0).toUpperCase() + risk.slice(1)} Risk</Badge>;
+function RiskBadge({ risk }: { risk: string | null | undefined }) {
+  const safe = (risk || "medium").toString();
+  const classes = safe === "high" ? "bg-red-500/10 text-red-600 border-red-500/30" : safe === "medium" ? "bg-amber-500/10 text-amber-600 border-amber-500/30" : "bg-green-500/10 text-green-600 border-green-500/30";
+  return <Badge variant="outline" className={`${classes} text-xs`} data-testid="badge-risk">{safe.charAt(0).toUpperCase() + safe.slice(1)} Risk</Badge>;
 }
 
 function IssueCard({ issue, index }: { issue: LegalIssue; index: number }) {
@@ -3968,6 +4149,8 @@ function LegalDDTab() {
   const [ddTeam, setDdTeam] = useState("Investment");
   const [legalResults, setLegalResults] = useState<LegalAnalysisResult[] | null>(null);
   const [ddResult, setDdResult] = useState<DDResult | null>(null);
+  const [ddClassifiedFiles, setDdClassifiedFiles] = useState<Array<{ fileId?: string; originalName: string; displayName: string; size: number; sourceArchive?: string; mimeType?: string; classification: { primaryType: string; subType: string; confidence: string; propertyAddress?: string; tenantName?: string; landlordName?: string; notes?: string }; enrichment?: any }>>([]);
+  const [ddAnalysisId, setDdAnalysisId] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [projectCreated, setProjectCreated] = useState<string | null>(null);
@@ -3995,11 +4178,164 @@ function LegalDDTab() {
     }
   };
 
+  const [ddEnrichProgress, setDdEnrichProgress] = useState<{ total: number; done: number; running: number; errors: number } | null>(null);
+  const [expandedDataRoomFile, setExpandedDataRoomFile] = useState<number | null>(null);
+  const ddEnrichTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [ddReconciliation, setDdReconciliation] = useState<any | null>(null);
+  const [dispatching, setDispatching] = useState<string | null>(null);
+  const [dispatchResults, setDispatchResults] = useState<Record<string, string>>({});
+
+  const fetchReconciliation = async (analysisId: string) => {
+    try {
+      const r = await fetch(`/api/legal-dd/analyses/${analysisId}/reconciliation`, {
+        headers: { ...getAuthHeaders() },
+        credentials: "include",
+      });
+      if (!r.ok) return;
+      const data = await r.json();
+      setDdReconciliation(data);
+    } catch {}
+  };
+
+  const dispatchTo = async (target: "lease-events" | "land-registry", analysisId: string, label: string) => {
+    if (!analysisId) return;
+    setDispatching(target);
+    try {
+      const r = await fetch(`/api/legal-dd/analyses/${analysisId}/dispatch/${target}`, {
+        method: "POST",
+        headers: { ...getAuthHeaders() },
+        credentials: "include",
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.message || "Dispatch failed");
+      const summary = target === "lease-events"
+        ? `${data.inserted || 0} lease event(s) added`
+        : `${data.inserted || 0} title(s) saved to Land Registry board`;
+      setDispatchResults(prev => ({ ...prev, [target]: summary }));
+      toast({ title: `${label} dispatched`, description: summary });
+    } catch (err: any) {
+      toast({ title: `${label} failed`, description: err?.message, variant: "destructive" });
+    } finally {
+      setDispatching(null);
+    }
+  };
+
+  // Poll enrichment progress every 4s. Stops when done === total or errors
+  // remain static for 3 cycles.
+  const startEnrichmentPolling = (analysisId: string) => {
+    if (ddEnrichTimerRef.current) clearInterval(ddEnrichTimerRef.current);
+    let staleCount = 0;
+    let lastDone = -1;
+    ddEnrichTimerRef.current = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/legal-dd/analyses/${analysisId}/files`, {
+          headers: { ...getAuthHeaders() },
+          credentials: "include",
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        setDdEnrichProgress(data.progress);
+        // Merge enrichment into classified file list for UI rendering.
+        setDdClassifiedFiles(prev => {
+          const byName = new Map(prev.map(p => [p.originalName, p] as const));
+          return (data.files || []).map((f: any) => ({
+            fileId: f.id,
+            originalName: f.file_name,
+            displayName: f.display_name,
+            size: f.file_size || 0,
+            sourceArchive: f.archive_name || undefined,
+            mimeType: f.mime_type || undefined,
+            classification: f.classification || byName.get(f.file_name)?.classification || { primaryType: f.primary_type || "Other", subType: f.sub_type || "", confidence: "low" },
+            enrichment: f.enrichment || null,
+          }));
+        });
+        if (data.progress.done + data.progress.errors >= data.progress.total) {
+          if (ddEnrichTimerRef.current) clearInterval(ddEnrichTimerRef.current);
+          // Enrichment complete — fetch reconciliation + portfolio roll-up.
+          fetchReconciliation(analysisId);
+        }
+        if (data.progress.done === lastDone) staleCount++; else { lastDone = data.progress.done; staleCount = 0; }
+        if (staleCount > 30) { if (ddEnrichTimerRef.current) clearInterval(ddEnrichTimerRef.current); }
+      } catch {}
+    }, 4000);
+  };
+
+  // Poll /api/legal-dd/analyses/:id every 3s until status leaves "processing".
+  // Big data rooms (300+ files) can take 10+ minutes of background work;
+  // the HTTP POST just returns 202 immediately, we poll for progress.
+  const pollAnalysisStatus = (analysisId: string) => {
+    let cycles = 0;
+    const timer = setInterval(async () => {
+      cycles++;
+      try {
+        const r = await fetch(`/api/legal-dd/analyses/${analysisId}`, {
+          headers: { ...getAuthHeaders() }, credentials: "include",
+        });
+        if (!r.ok) return;
+        const data = await r.json();
+        const a = data.analysis || {};
+        const pct = a.progress_total > 0 ? Math.round((a.progress_classified / a.progress_total) * 100) : 0;
+        setDdEnrichProgress({ total: a.progress_total || 0, done: a.progress_classified || 0, running: 0, errors: 0 });
+
+        if (a.status === "done" || a.status === "error") {
+          clearInterval(timer);
+          setAnalyzing(false);
+          if (a.status === "error") {
+            toast({ title: "DD analysis failed", description: a.error_message || "Unknown error", variant: "destructive" });
+            return;
+          }
+          setDdResult(a.analysis || {
+            dealName: a.deal_name || "",
+            overallSummary: a.overall_summary || "Analysis complete.",
+            overallRisk: (a.overall_risk as "high" | "medium" | "low") || "medium",
+            redFlags: a.red_flags || 0,
+            amberFlags: a.amber_flags || 0,
+            greenFlags: a.green_flags || 0,
+            fileAnalyses: [],
+            folderMapping: [],
+            keyRisks: [],
+            recommendations: [],
+          });
+          setDdClassifiedFiles((data.files || []).map((f: any) => ({
+            fileId: f.id,
+            originalName: f.file_name,
+            displayName: f.display_name,
+            size: f.file_size || 0,
+            sourceArchive: f.archive_name || undefined,
+            mimeType: f.mime_type || undefined,
+            classification: f.classification || { primaryType: f.primary_type || "Other", subType: f.sub_type || "", confidence: "low" },
+          })));
+          toast({
+            title: "Due Diligence complete",
+            description: `${data.files?.length || 0} files analysed. Starting enrichment...`,
+          });
+          // Kick off Push 2 enrichment.
+          try {
+            await fetch(`/api/legal-dd/enrich/${analysisId}`, {
+              method: "POST", headers: { ...getAuthHeaders() }, credentials: "include",
+            });
+            setDdEnrichProgress({ total: data.files?.length || 0, done: 0, running: 0, errors: 0 });
+            startEnrichmentPolling(analysisId);
+          } catch {}
+        }
+        // Safety: give up after 30 minutes (600 cycles × 3s)
+        if (cycles > 600) { clearInterval(timer); setAnalyzing(false); toast({ title: "DD analysis timed out", description: "Still processing — check back shortly.", variant: "destructive" }); }
+      } catch {}
+    }, 3000);
+    return timer;
+  };
+
   const handleDealDD = async () => {
     if (ddFiles.length === 0 || !dealName.trim()) return;
     setAnalyzing(true);
     setDdResult(null);
+    setDdClassifiedFiles([]);
+    setDdAnalysisId(null);
+    setDdEnrichProgress(null);
+    setDdReconciliation(null);
+    setDispatchResults({});
     setProjectCreated(null);
+    if (ddEnrichTimerRef.current) { clearInterval(ddEnrichTimerRef.current); ddEnrichTimerRef.current = null; }
     try {
       const formData = new FormData();
       ddFiles.forEach(f => formData.append("files", f));
@@ -4008,11 +4344,25 @@ function LegalDDTab() {
       const res = await fetch("/api/legal-dd/deal-dd", { method: "POST", headers: { ...getAuthHeaders() }, body: formData, credentials: "include" });
       if (!res.ok) { let errMsg = "DD analysis failed"; try { const t = await res.text(); errMsg = JSON.parse(t).message || errMsg; } catch {} throw new Error(errMsg); }
       const data = await res.json();
-      setDdResult(data.analysis);
-      toast({ title: "Due Diligence complete", description: `${data.analysis.fileAnalyses?.length || 0} files analysed` });
+      // Server returns 202 { analysisId, status: "processing", total } —
+      // kick off polling for progress + completion.
+      if (data.analysisId && data.status === "processing") {
+        setDdAnalysisId(data.analysisId);
+        setDdEnrichProgress({ total: data.total || 0, done: 0, running: 0, errors: 0 });
+        toast({
+          title: "DD analysis started",
+          description: `Processing ${data.total || "your"} files in the background...`,
+        });
+        pollAnalysisStatus(data.analysisId);
+      } else {
+        // Backwards compat — direct result (shouldn't happen with new server).
+        setDdResult(data.analysis);
+        setDdClassifiedFiles(data.files || []);
+        setDdAnalysisId(data.analysisId || null);
+        setAnalyzing(false);
+      }
     } catch (err: any) {
       toast({ title: "DD analysis failed", description: err.message, variant: "destructive" });
-    } finally {
       setAnalyzing(false);
     }
   };
@@ -4261,7 +4611,7 @@ function LegalDDTab() {
               >
                 <UploadCloud className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
                 <p className="text-sm font-medium">Drop data room files here or click to browse</p>
-                <p className="text-xs text-muted-foreground mt-1">PDF, DOCX, DOC, TXT, XLSX — up to 30 files</p>
+                <p className="text-xs text-muted-foreground mt-1">PDF, DOCX, XLSX, TXT — or a whole .zip data room (up to 500MB each)</p>
                 <input
                   id="dd-files-input"
                   type="file"
@@ -4300,6 +4650,37 @@ function LegalDDTab() {
             </CardContent>
           </Card>
 
+          {/* Visible background-processing card — shows from the moment the
+              POST returns 202 until the DD summary completes. Without this
+              the user sees the same form + same file list for 5-10 minutes
+              while classification runs and thinks nothing happened. */}
+          {analyzing && ddAnalysisId && !ddResult && (
+            <Card className="border-primary/40 bg-primary/5">
+              <CardContent className="p-6">
+                <div className="flex items-start gap-4">
+                  <Loader2 className="w-6 h-6 text-primary animate-spin shrink-0 mt-1" />
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-base font-semibold mb-1">Analysing data room in background</h3>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      {ddEnrichProgress && ddEnrichProgress.total > 0
+                        ? <>Classified <span className="font-semibold text-foreground">{ddEnrichProgress.done}</span> of <span className="font-semibold text-foreground">{ddEnrichProgress.total}</span> files. This runs server-side so you can close this tab and come back — results are saved.</>
+                        : <>Expanding ZIP and preparing files. This can take 5-10 minutes for large data rooms.</>}
+                    </p>
+                    {ddEnrichProgress && ddEnrichProgress.total > 0 && (
+                      <div className="h-2 bg-background rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-primary transition-all duration-500"
+                          style={{ width: `${Math.min(100, Math.round((ddEnrichProgress.done / ddEnrichProgress.total) * 100))}%` }}
+                        />
+                      </div>
+                    )}
+                    <p className="text-[11px] text-muted-foreground mt-2 font-mono truncate">Analysis ID: {ddAnalysisId}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {ddResult && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -4329,9 +4710,486 @@ function LegalDDTab() {
                 </Card>
               </div>
 
+              {ddClassifiedFiles.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center justify-between">
+                      <span>Files in Data Room ({ddClassifiedFiles.length})</span>
+                      <div className="flex items-center gap-2">
+                        {ddEnrichProgress && ddEnrichProgress.total > 0 && ddEnrichProgress.done + ddEnrichProgress.errors < ddEnrichProgress.total && (
+                          <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">
+                            <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                            Enriching {ddEnrichProgress.done}/{ddEnrichProgress.total}
+                          </Badge>
+                        )}
+                        {ddEnrichProgress && ddEnrichProgress.total > 0 && ddEnrichProgress.done + ddEnrichProgress.errors >= ddEnrichProgress.total && (
+                          <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">
+                            Enrichment complete · {ddEnrichProgress.done} ok{ddEnrichProgress.errors > 0 ? ` · ${ddEnrichProgress.errors} errors` : ""}
+                          </Badge>
+                        )}
+                        {ddClassifiedFiles.some(f => f.sourceArchive) && (
+                          <Badge variant="outline" className="text-[10px]">
+                            Expanded from {new Set(ddClassifiedFiles.map(f => f.sourceArchive).filter(Boolean)).size} ZIP archive(s)
+                          </Badge>
+                        )}
+                      </div>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-1.5 max-h-[320px] overflow-y-auto">
+                    {ddClassifiedFiles.map((f, i) => {
+                      const cls = f.classification || {} as any;
+                      const typeColors: Record<string, string> = {
+                        "Lease": "bg-blue-50 text-blue-700 border-blue-200",
+                        "Licence": "bg-blue-50 text-blue-700 border-blue-200",
+                        "HoT": "bg-indigo-50 text-indigo-700 border-indigo-200",
+                        "Title Register": "bg-purple-50 text-purple-700 border-purple-200",
+                        "Title Plan": "bg-purple-50 text-purple-700 border-purple-200",
+                        "Rent Roll": "bg-emerald-50 text-emerald-700 border-emerald-200",
+                        "Financial Model": "bg-amber-50 text-amber-700 border-amber-200",
+                        "Management Accounts": "bg-amber-50 text-amber-700 border-amber-200",
+                        "Trade Accounts": "bg-amber-50 text-amber-700 border-amber-200",
+                        "Premises Licence": "bg-rose-50 text-rose-700 border-rose-200",
+                        "Tied Lease": "bg-rose-50 text-rose-700 border-rose-200",
+                        "MRO Notice": "bg-rose-50 text-rose-700 border-rose-200",
+                        "Valuation": "bg-cyan-50 text-cyan-700 border-cyan-200",
+                        "IM": "bg-slate-50 text-slate-700 border-slate-200",
+                        "Marketing Particulars": "bg-slate-50 text-slate-700 border-slate-200",
+                        "Other": "bg-gray-50 text-gray-600 border-gray-200",
+                      };
+                      const pill = typeColors[cls.primaryType] || typeColors.Other;
+                      const isExpanded = expandedDataRoomFile === i;
+                      return (
+                        <div key={i} className="border rounded-md overflow-hidden">
+                        <div
+                          className="flex items-start gap-2 p-2 hover:bg-muted/40 cursor-pointer"
+                          onClick={() => setExpandedDataRoomFile(isExpanded ? null : i)}
+                        >
+                          <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium truncate">{f.displayName}</span>
+                              <Badge variant="outline" className={`text-[10px] ${pill}`}>{cls.primaryType || "Other"}</Badge>
+                              {cls.confidence === "low" && <Badge variant="outline" className="text-[10px] bg-gray-50 text-gray-500">low confidence</Badge>}
+                              <div className="ml-auto flex items-center gap-2">
+                                {f.fileId && (
+                                  <a
+                                    href={`/api/legal-dd/files/${f.fileId}/raw`}
+                                    target="_blank"
+                                    rel="noopener"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="text-[11px] text-primary hover:underline"
+                                  >
+                                    Open ↗
+                                  </a>
+                                )}
+                                <span className="text-muted-foreground text-xs">{isExpanded ? "−" : "+"}</span>
+                              </div>
+                            </div>
+                            <div className="text-[11px] text-muted-foreground mt-0.5 flex items-center gap-2 flex-wrap">
+                              {cls.subType && <span>{cls.subType}</span>}
+                              {cls.propertyAddress && <span>• {cls.propertyAddress}</span>}
+                              {cls.tenantName && <span>• Tenant: {cls.tenantName}</span>}
+                              {cls.landlordName && <span>• LL: {cls.landlordName}</span>}
+                              {f.sourceArchive && <span className="text-muted-foreground/60">• from {f.sourceArchive}</span>}
+                            </div>
+                            {(f as any).enrichment && (f as any).enrichment.status === "done" && (() => {
+                              const enr = (f as any).enrichment.enrichment || {};
+                              const spec = (f as any).enrichment.specialist;
+                              const chStatusBadge = (m: any, label: string) => {
+                                if (!m) return null;
+                                const colour = m.status === "active"
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                  : m.status === "dissolved" || m.status === "liquidation"
+                                  ? "bg-red-50 text-red-700 border-red-200"
+                                  : "bg-gray-50 text-gray-600 border-gray-200";
+                                return <Badge variant="outline" className={`text-[10px] ${colour}`}>{label}: {m.status}</Badge>;
+                              };
+                              const fsa = enr.fsaHygiene;
+                              const fsaColour = fsa?.rating === "5" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : fsa?.rating === "4" ? "bg-emerald-50 text-emerald-600 border-emerald-200"
+                                : fsa?.rating === "3" ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : fsa ? "bg-red-50 text-red-700 border-red-200" : "";
+                              return (
+                                <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                                  {chStatusBadge(enr.tenant, "Tenant")}
+                                  {chStatusBadge(enr.landlord, "LL")}
+                                  {enr.voa && <Badge variant="outline" className="text-[10px] bg-cyan-50 text-cyan-700 border-cyan-200">RV £{Number(enr.voa.rateable_value || 0).toLocaleString()}</Badge>}
+                                  {enr.landRegistry?.title_number && <Badge variant="outline" className="text-[10px] bg-purple-50 text-purple-700 border-purple-200">Title {enr.landRegistry.title_number}</Badge>}
+                                  {fsa && <Badge variant="outline" className={`text-[10px] ${fsaColour}`}>FHR {fsa.rating}</Badge>}
+                                  {spec?.waultYears != null && <Badge variant="outline" className="text-[10px] bg-indigo-50 text-indigo-700 border-indigo-200">WAULT {spec.waultYears}y</Badge>}
+                                  {spec?.passingRent != null && <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-700 border-slate-200">£{Number(spec.passingRent).toLocaleString()}pa</Badge>}
+                                  {spec?.totalPassingRent != null && <Badge variant="outline" className="text-[10px] bg-slate-50 text-slate-700 border-slate-200">Total £{Number(spec.totalPassingRent).toLocaleString()}pa</Badge>}
+                                  {spec?.ebitdar != null && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">EBITDAR £{Number(spec.ebitdar).toLocaleString()}</Badge>}
+                                  {spec?.exitYieldPercent != null && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">Exit {spec.exitYieldPercent}%</Badge>}
+                                  {spec?.flags?.some?.((x: any) => x.severity === "red") && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">{spec.flags.filter((x: any) => x.severity === "red").length} red flag</Badge>}
+                                </div>
+                              );
+                            })()}
+                            {(f as any).enrichment?.status === "running" && (
+                              <div className="mt-1 text-[10px] text-muted-foreground flex items-center gap-1">
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                Enriching...
+                              </div>
+                            )}
+                            {(f as any).enrichment?.status === "error" && (
+                              <div className="mt-1 text-[10px] text-red-600">
+                                Enrichment failed: {(f as any).enrichment.error}
+                              </div>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground shrink-0">{(f.size / 1024).toFixed(0)} KB</span>
+                        </div>
+
+                        {/* Expandable drill-down: full specialist + enrichment detail */}
+                        {isExpanded && (() => {
+                          const enr = (f as any).enrichment?.enrichment || {};
+                          const spec = (f as any).enrichment?.specialist || null;
+                          return (
+                            <div className="border-t bg-muted/20 p-3 space-y-3 text-xs">
+                              {!spec && !(f as any).enrichment && (
+                                <p className="text-muted-foreground italic">Enrichment hasn't run on this file yet — still processing.</p>
+                              )}
+
+                              {spec && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Extracted data</p>
+                                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                                    {Object.entries(spec).slice(0, 40).map(([k, v]) => {
+                                      if (v == null || v === "") return null;
+                                      const display = Array.isArray(v) ? (v.length === 0 ? "—" : v.length > 5 ? `${v.length} items` : v.map(x => typeof x === "object" ? JSON.stringify(x) : String(x)).join(", ")) : typeof v === "object" ? JSON.stringify(v).slice(0, 200) : String(v);
+                                      return (
+                                        <div key={k} className="flex gap-2 py-0.5 border-b border-muted/30 last:border-0">
+                                          <span className="text-muted-foreground w-1/3 shrink-0 capitalize">{k.replace(/([A-Z])/g, " $1").toLowerCase()}</span>
+                                          <span className="font-medium truncate" title={display}>{display}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  {Array.isArray((spec as any).flags) && (spec as any).flags.length > 0 && (
+                                    <div className="mt-2 space-y-1">
+                                      <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground">Flags</p>
+                                      {(spec as any).flags.map((fl: any, j: number) => (
+                                        <div key={j} className="flex items-start gap-2">
+                                          <SeverityBadge severity={fl.severity || "green"} />
+                                          <div className="flex-1">
+                                            <p className="font-medium">{fl.title}</p>
+                                            {fl.detail && <p className="text-muted-foreground">{fl.detail}</p>}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              {(enr.tenant || enr.landlord) && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Companies House</p>
+                                  {["tenant", "landlord"].map((role) => {
+                                    const m = enr[role];
+                                    if (!m) return null;
+                                    return (
+                                      <div key={role} className="mb-2">
+                                        <p className="font-medium capitalize">{role}: {m.name} <span className="text-[10px] font-normal text-muted-foreground">· {m.number}</span></p>
+                                        <p className="text-[10px] text-muted-foreground">Status: <span className={m.status === "active" ? "text-emerald-700" : "text-red-600"}>{m.status}</span>{m.kind ? ` · ${m.kind}` : ""}{m.lastAccountsDate ? ` · Last accounts: ${m.lastAccountsDate}` : ""}</p>
+                                        {m.address && <p className="text-[10px] text-muted-foreground">{m.address}</p>}
+                                        {m.sicCodes?.length > 0 && <p className="text-[10px] text-muted-foreground">SIC: {m.sicCodes.join(", ")}</p>}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {enr.voa && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">VOA rateable value</p>
+                                  <p className="font-medium">{enr.voa.firm_name || "Unknown occupier"} — £{Number(enr.voa.rateable_value || 0).toLocaleString()}</p>
+                                  <p className="text-[10px] text-muted-foreground">{enr.voa.description}</p>
+                                  <p className="text-[10px] text-muted-foreground">{enr.voa.full_address}</p>
+                                </div>
+                              )}
+
+                              {enr.landRegistry && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Land Registry (PropertyData)</p>
+                                  {enr.landRegistry.title_number && <p className="font-medium">Title {enr.landRegistry.title_number} · {enr.landRegistry.tenure || "unknown tenure"}</p>}
+                                  {enr.landRegistry.proprietor_name_1 && <p className="text-[11px]">Proprietor: {enr.landRegistry.proprietor_name_1}</p>}
+                                  {enr.landRegistry.price_paid && <p className="text-[10px] text-muted-foreground">Price paid: £{Number(enr.landRegistry.price_paid).toLocaleString()}{enr.landRegistry.date_proprietor_added ? ` · ${enr.landRegistry.date_proprietor_added}` : ""}</p>}
+                                </div>
+                              )}
+
+                              {enr.fsaHygiene && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Food Hygiene Rating (FSA)</p>
+                                  <p className="font-medium">{enr.fsaHygiene.name} — rating {enr.fsaHygiene.rating}</p>
+                                  <p className="text-[10px] text-muted-foreground">{enr.fsaHygiene.businessType} · inspected {enr.fsaHygiene.ratingDate?.slice(0, 10)}</p>
+                                </div>
+                              )}
+
+                              {enr.partyWebSearch && Object.keys(enr.partyWebSearch).length > 0 && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Web intelligence on parties</p>
+                                  {Object.entries(enr.partyWebSearch).map(([partyName, result]: [string, any]) => (
+                                    <div key={partyName} className="mb-1.5">
+                                      <p className="font-medium">{partyName}</p>
+                                      <p className="text-[11px] text-muted-foreground">{result?.summary || "—"}</p>
+                                      {result?.citations?.length > 0 && (
+                                        <p className="text-[9px] text-muted-foreground/70 mt-0.5">
+                                          Sources: {result.citations.slice(0, 3).map((c: any, k: number) => (
+                                            <a key={k} href={typeof c === "string" ? c : c.url} target="_blank" rel="noopener" className="underline hover:text-foreground mr-1">[{k + 1}]</a>
+                                          ))}
+                                        </p>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {cls.notes && (
+                                <div>
+                                  <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground mb-1.5">Classifier note</p>
+                                  <p className="text-[11px] italic">{cls.notes}</p>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
+
+                        </div>
+                      );
+                    })}
+                  </CardContent>
+                </Card>
+              )}
+
+              {ddReconciliation?.portfolio && ((ddReconciliation.portfolio.propertyCount || 0) > 0) && (() => {
+                // Defensive destructure — a malformed server response
+                // should not crash the whole DD tab. Every field has a
+                // sensible default so React never sees undefined + math.
+                const p = ddReconciliation.portfolio || {};
+                const tenure = p.tenureCounts || { let: 0, managed: 0, tied: 0, freeOfTie: 0, unknown: 0 };
+                const status = p.tenantStatusCounts || { active: 0, dissolved: 0, liquidation: 0, unknown: 0 };
+                const fsa = p.fsaRatingCounts || {};
+                const propertyCount = p.propertyCount || 0;
+                return (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center justify-between">
+                      <span>Portfolio Summary</span>
+                      <Badge variant="outline" className="text-[10px]">{propertyCount} propert{propertyCount === 1 ? "y" : "ies"}</Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      {(p.totalPassingRentLeases || 0) > 0 && (
+                        <div className="rounded-md border p-2.5">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Passing rent (leases)</p>
+                          <p className="text-sm font-semibold">£{Number(p.totalPassingRentLeases).toLocaleString()}pa</p>
+                        </div>
+                      )}
+                      {(p.totalPassingRentRentRoll || 0) > 0 && (
+                        <div className="rounded-md border p-2.5">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Passing rent (rent roll)</p>
+                          <p className="text-sm font-semibold">£{Number(p.totalPassingRentRentRoll).toLocaleString()}pa</p>
+                        </div>
+                      )}
+                      {(p.totalRateableValue || 0) > 0 && (
+                        <div className="rounded-md border p-2.5">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total RV</p>
+                          <p className="text-sm font-semibold">£{Number(p.totalRateableValue).toLocaleString()}</p>
+                          {p.rentToRvRatio != null && (
+                            <p className="text-[10px] text-muted-foreground">Rent/RV: {p.rentToRvRatio}×</p>
+                          )}
+                        </div>
+                      )}
+                      {(p.totalEbitdar || 0) > 0 && (
+                        <div className="rounded-md border p-2.5">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total EBITDAR (managed)</p>
+                          <p className="text-sm font-semibold">£{Number(p.totalEbitdar).toLocaleString()}</p>
+                        </div>
+                      )}
+                      {p.weightedWaultYears != null && (
+                        <div className="rounded-md border p-2.5">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Weighted WAULT</p>
+                          <p className="text-sm font-semibold">{p.weightedWaultYears} years</p>
+                        </div>
+                      )}
+                      {p.topTenant && p.topTenant.name && (
+                        <div className="rounded-md border p-2.5">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Top tenant</p>
+                          <p className="text-sm font-semibold truncate">{p.topTenant.name}</p>
+                          <p className="text-[10px] text-muted-foreground">{p.topTenant.sharePercent || 0}% of income</p>
+                        </div>
+                      )}
+                      {((tenure.managed || 0) + (tenure.tied || 0) + (tenure.freeOfTie || 0) + (tenure.let || 0)) > 0 && (
+                        <div className="rounded-md border p-2.5 col-span-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Tenure split</p>
+                          <div className="flex gap-2 flex-wrap mt-1">
+                            {(tenure.let || 0) > 0 && <Badge variant="outline" className="text-[10px]">Let: {tenure.let}</Badge>}
+                            {(tenure.managed || 0) > 0 && <Badge variant="outline" className="text-[10px]">Managed: {tenure.managed}</Badge>}
+                            {(tenure.tied || 0) > 0 && <Badge variant="outline" className="text-[10px]">Tied: {tenure.tied}</Badge>}
+                            {(tenure.freeOfTie || 0) > 0 && <Badge variant="outline" className="text-[10px]">Free-of-tie: {tenure.freeOfTie}</Badge>}
+                          </div>
+                        </div>
+                      )}
+                      {((status.active || 0) + (status.dissolved || 0) + (status.liquidation || 0)) > 0 && (
+                        <div className="rounded-md border p-2.5 col-span-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Tenant company status</p>
+                          <div className="flex gap-2 flex-wrap mt-1">
+                            {(status.active || 0) > 0 && <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">{status.active} active</Badge>}
+                            {(status.dissolved || 0) > 0 && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">{status.dissolved} dissolved</Badge>}
+                            {(status.liquidation || 0) > 0 && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">{status.liquidation} liquidation</Badge>}
+                          </div>
+                        </div>
+                      )}
+                      {Object.keys(fsa).length > 0 && (
+                        <div className="rounded-md border p-2.5 col-span-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Food Hygiene Ratings</p>
+                          <div className="flex gap-2 flex-wrap mt-1">
+                            {["5","4","3","2","1","0"].map(k => {
+                              const n = fsa[k];
+                              if (!n) return null;
+                              const colour = k === "5" || k === "4" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : k === "3" ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : "bg-red-50 text-red-700 border-red-200";
+                              return <Badge key={k} variant="outline" className={`text-[10px] ${colour}`}>{k}: {n}</Badge>;
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+                );
+              })()}
+
+              {ddReconciliation?.flags && ddReconciliation.flags.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Reconciliation & Cross-Checks</CardTitle>
+                    <CardDescription>Automatic validation across the rent roll, model, leases and Land Registry</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {ddReconciliation.flags.map((flag: any, i: number) => (
+                      <div key={i} className="flex items-start gap-2 p-2 rounded-md border">
+                        <SeverityBadge severity={flag.severity} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium">{flag.title}</p>
+                          <p className="text-[11px] text-muted-foreground">{flag.detail}</p>
+                        </div>
+                        <Badge variant="outline" className="text-[10px]">{flag.category}</Badge>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+
+              {ddAnalysisId && (ddReconciliation?.portfolio?.propertyCount || 0) > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Push Findings Across the Platform</CardTitle>
+                    <CardDescription>Send the DD output to the boards the rest of the business uses</CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={dispatching === "lease-events"}
+                      onClick={() => dispatchTo("lease-events", ddAnalysisId, "Lease Events")}
+                    >
+                      {dispatching === "lease-events" ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <Bell className="w-3.5 h-3.5 mr-2" />}
+                      Push break/expiry/review dates to Lease Events
+                      {dispatchResults["lease-events"] && <span className="ml-2 text-[10px] text-emerald-600">· {dispatchResults["lease-events"]}</span>}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={dispatching === "land-registry"}
+                      onClick={() => dispatchTo("land-registry", ddAnalysisId, "Land Registry")}
+                    >
+                      {dispatching === "land-registry" ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <FileText className="w-3.5 h-3.5 mr-2" />}
+                      Save titles to Land Registry board
+                      {dispatchResults["land-registry"] && <span className="ml-2 text-[10px] text-emerald-600">· {dispatchResults["land-registry"]}</span>}
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
+              {ddReconciliation?.properties && ddReconciliation.properties.length > 10 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center justify-between">
+                      <span>Per-Property Drill-Down</span>
+                      <Badge variant="outline" className="text-[10px]">{ddReconciliation.properties.length} rows</Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="text-left py-1.5 px-2 font-medium">Property</th>
+                          <th className="text-left py-1.5 px-2 font-medium">Tenant</th>
+                          <th className="text-right py-1.5 px-2 font-medium">Rent</th>
+                          <th className="text-right py-1.5 px-2 font-medium">RV</th>
+                          <th className="text-left py-1.5 px-2 font-medium">Status</th>
+                          <th className="text-left py-1.5 px-2 font-medium">FHR</th>
+                          <th className="text-left py-1.5 px-2 font-medium">Title</th>
+                          <th className="text-left py-1.5 px-2 font-medium">Flags</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ddReconciliation.properties.map((p: any, i: number) => (
+                          <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
+                            <td className="py-1 px-2 truncate max-w-[220px]" title={p.address || p.fileName}>{p.address || p.fileName}</td>
+                            <td className="py-1 px-2 truncate max-w-[160px]">{p.tenant || "—"}</td>
+                            <td className="py-1 px-2 text-right">{p.passingRent ? `£${Number(p.passingRent).toLocaleString()}` : "—"}</td>
+                            <td className="py-1 px-2 text-right">{p.rateableValue ? `£${Number(p.rateableValue).toLocaleString()}` : "—"}</td>
+                            <td className="py-1 px-2">{p.tenantCompanyStatus ? <span className={p.tenantCompanyStatus === "active" ? "text-emerald-600" : "text-red-600"}>{p.tenantCompanyStatus}</span> : "—"}</td>
+                            <td className="py-1 px-2">{p.fsaRating || "—"}</td>
+                            <td className="py-1 px-2 font-mono text-[10px]">{p.titleNumber || "—"}</td>
+                            <td className="py-1 px-2">
+                              {p.landlordMismatch && <Badge variant="outline" className="text-[10px] bg-red-50 text-red-700 border-red-200">LL mismatch</Badge>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </CardContent>
+                </Card>
+              )}
+
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Executive Summary</CardTitle>
+                  <CardTitle className="text-base flex items-center justify-between">
+                    <span>Executive Summary</span>
+                    {ddResult.overallSummary?.includes("summary generation failed") && ddAnalysisId && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={dispatching === "retry-summary"}
+                        onClick={async () => {
+                          if (!ddAnalysisId) return;
+                          setDispatching("retry-summary");
+                          try {
+                            const r = await fetch(`/api/legal-dd/analyses/${ddAnalysisId}/retry-summary`, {
+                              method: "POST", headers: { ...getAuthHeaders() }, credentials: "include",
+                            });
+                            const d = await r.json();
+                            if (!r.ok) throw new Error(d.message || "Retry failed");
+                            setDdResult(d.analysis);
+                            toast({ title: "DD summary generated", description: `${d.analysis.redFlags || 0} red · ${d.analysis.amberFlags || 0} amber · ${d.analysis.greenFlags || 0} green` });
+                          } catch (err: any) {
+                            toast({ title: "Retry failed", description: err?.message, variant: "destructive" });
+                          } finally {
+                            setDispatching(null);
+                          }
+                        }}
+                      >
+                        {dispatching === "retry-summary" ? <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-2" />}
+                        Retry summary
+                      </Button>
+                    )}
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm leading-relaxed">{ddResult.overallSummary}</p>

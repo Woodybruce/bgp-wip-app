@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Sparkles, Search, Linkedin, Mail } from "lucide-react";
+import { Loader2, Sparkles, Search, Linkedin, Mail, Building2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -19,6 +19,13 @@ interface ApolloPerson {
   linkedin_url: string | null;
   avatar_url: string | null;
   location: string | null;
+  source: "direct" | "name_search" | "parent_group";
+  source_company_name?: string;
+}
+
+interface DiscoverResult {
+  people: ApolloPerson[];
+  parentCompany: { id: string; name: string } | null;
 }
 
 export function ApolloContactsDialog({ companyId, companyName, open, onOpenChange }: {
@@ -29,16 +36,18 @@ export function ApolloContactsDialog({ companyId, companyName, open, onOpenChang
 }) {
   const { toast } = useToast();
   const [people, setPeople] = useState<ApolloPerson[]>([]);
+  const [parentCompany, setParentCompany] = useState<{ id: string; name: string } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [ran, setRan] = useState(false);
 
   const discover = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/brand/${companyId}/apollo/discover`, {});
-      return res.json() as Promise<{ people: ApolloPerson[] }>;
+      return res.json() as Promise<DiscoverResult>;
     },
     onSuccess: (out) => {
       setPeople(out.people || []);
+      setParentCompany(out.parentCompany || null);
       setSelected(new Set(out.people?.map(p => p.apollo_id) || []));
       setRan(true);
       if (!out.people?.length) toast({ title: "No new contacts found" });
@@ -57,6 +66,7 @@ export function ApolloContactsDialog({ companyId, companyName, open, onOpenChang
       queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       onOpenChange(false);
       setPeople([]);
+      setParentCompany(null);
       setSelected(new Set());
       setRan(false);
     },
@@ -69,6 +79,9 @@ export function ApolloContactsDialog({ companyId, companyName, open, onOpenChang
     setSelected(next);
   };
 
+  const directCount = people.filter(p => p.source === "direct" || p.source === "name_search").length;
+  const parentCount = people.filter(p => p.source === "parent_group").length;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
@@ -80,6 +93,12 @@ export function ApolloContactsDialog({ companyId, companyName, open, onOpenChang
           <DialogDescription>
             Pulls likely key people (founders, property directors, heads of retail) from Apollo.
             Nothing is saved until you click Import.
+            {ran && parentCompany && parentCount > 0 && (
+              <span className="block mt-1 text-amber-600">
+                <Building2 className="w-3 h-3 inline mr-1" />
+                {parentCount} result{parentCount === 1 ? "" : "s"} found via parent company {parentCompany.name} — expansion decisions are often made at group level.
+              </span>
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -88,6 +107,9 @@ export function ApolloContactsDialog({ companyId, companyName, open, onOpenChang
             <Button onClick={() => discover.mutate()} disabled={discover.isPending}>
               <Search className="w-4 h-4 mr-2" /> Search Apollo
             </Button>
+            <p className="text-xs text-muted-foreground text-center max-w-sm">
+              Will search directly, then by brand name, then by parent group if needed.
+            </p>
           </div>
         )}
 
@@ -104,7 +126,12 @@ export function ApolloContactsDialog({ companyId, companyName, open, onOpenChang
                 No new contacts — Apollo returned nobody we don't already have.
               </div>
             )}
-            {people.map(p => (
+            {directCount > 0 && parentCount > 0 && (
+              <div className="text-[11px] text-muted-foreground font-medium px-2 pt-1 pb-0.5">
+                Direct matches ({directCount})
+              </div>
+            )}
+            {people.filter(p => p.source !== "parent_group").map(p => (
               <label key={p.apollo_id} className="flex items-center gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer">
                 <Checkbox checked={selected.has(p.apollo_id)} onCheckedChange={() => toggle(p.apollo_id)} />
                 <div className="w-8 h-8 rounded-full bg-muted overflow-hidden shrink-0">
@@ -123,6 +150,33 @@ export function ApolloContactsDialog({ companyId, companyName, open, onOpenChang
                 </div>
               </label>
             ))}
+            {parentCount > 0 && (
+              <>
+                <div className="text-[11px] text-amber-600 font-medium px-2 pt-2 pb-0.5 flex items-center gap-1">
+                  <Building2 className="w-3 h-3" /> Via {parentCompany?.name} (parent group)
+                </div>
+                {people.filter(p => p.source === "parent_group").map(p => (
+                  <label key={p.apollo_id} className="flex items-center gap-3 p-2 rounded hover:bg-amber-50/50 cursor-pointer border-l-2 border-amber-200 ml-2">
+                    <Checkbox checked={selected.has(p.apollo_id)} onCheckedChange={() => toggle(p.apollo_id)} />
+                    <div className="w-8 h-8 rounded-full bg-muted overflow-hidden shrink-0">
+                      {p.avatar_url && <img src={p.avatar_url} alt="" className="w-full h-full object-cover" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-sm truncate">{p.name}</span>
+                        {p.role && <Badge variant="outline" className="text-[10px]">{p.role}</Badge>}
+                        <Badge className="text-[9px] bg-amber-100 text-amber-700 border-amber-200">group</Badge>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        {p.email && <span className="flex items-center gap-0.5"><Mail className="w-3 h-3" />{p.email}</span>}
+                        {p.linkedin_url && <a href={p.linkedin_url} target="_blank" rel="noreferrer" className="flex items-center gap-0.5 hover:underline" onClick={(e) => e.stopPropagation()}><Linkedin className="w-3 h-3" />LinkedIn</a>}
+                        {p.location && <span>· {p.location}</span>}
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </>
+            )}
           </div>
         )}
 
