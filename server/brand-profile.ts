@@ -801,6 +801,44 @@ export async function researchBrandStores(companyId: string): Promise<{
   return { found: allResults.length, upserted, openCount, companyName: company.name };
 }
 
+// Street View image of the brand's flagship store — picks the first cached
+// Google Places store with coords and proxies Google's Street View Static
+// API. Cached 24h client-side. Returns 204 when no suitable store exists.
+router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const apiKey = process.env.GOOGLE_API_KEY;
+    if (!apiKey) return res.status(204).end();
+
+    const { rows } = await pool.query(
+      `SELECT lat, lng, name FROM brand_stores
+        WHERE brand_company_id = $1 AND lat IS NOT NULL AND lng IS NOT NULL
+          AND status = 'open'
+        ORDER BY researched_at DESC NULLS LAST LIMIT 1`,
+      [req.params.companyId]
+    );
+    const store = rows[0];
+    if (!store) return res.status(204).end();
+
+    const params = new URLSearchParams({
+      size: "800x280",
+      location: `${store.lat},${store.lng}`,
+      fov: "80",
+      pitch: "0",
+      key: apiKey,
+    });
+    const resp = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params.toString()}`);
+    if (!resp.ok) return res.status(204).end();
+
+    const buf = Buffer.from(await resp.arrayBuffer());
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.send(buf);
+  } catch (err: any) {
+    console.error("[brand-flagship]", err.message);
+    res.status(500).end();
+  }
+});
+
 router.post("/api/brand/:companyId/research-stores", requireAuth, async (req: Request, res: Response) => {
   try {
     const companyId = String(req.params.companyId);

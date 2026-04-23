@@ -17,6 +17,7 @@ import {
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
   MapPin, Activity, Target, Briefcase, PoundSterling, Search,
 } from "lucide-react";
+import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 
 interface BrandProfile {
   company: {
@@ -489,6 +490,11 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
                 <p className="text-xs leading-snug text-foreground/90">{c.brand_analysis}</p>
               </div>
+            )}
+
+            {/* Flagship store street view — silently hides if no geocoded open store */}
+            {stores.some(s => typeof s.lat === "number" && typeof s.lng === "number") && (
+              <FlagshipImage companyId={companyId} />
             )}
 
             {/* Key facts row */}
@@ -1190,6 +1196,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
                   <MapPin className="w-3 h-3" /> Stores ({stores.length}{c.store_count && c.store_count > 0 && stores.length !== c.store_count ? ` of ~${c.store_count}` : ""})
                 </div>
+                <div className="mb-1.5">
+                  <BrandPortfolioMap stores={stores as any} />
+                </div>
                 <div className="space-y-0.5 max-h-40 overflow-y-auto">
                   {stores.slice(0, 10).map((s) => (
                     <div key={s.id} className="text-xs flex items-center gap-1.5 px-1 py-0.5">
@@ -1358,5 +1367,21 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function FlagshipImage({ companyId }: { companyId: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return (
+    <div className="rounded-md overflow-hidden border bg-muted/40">
+      <img
+        src={`/api/brand/${companyId}/flagship-image`}
+        alt="Flagship store street view"
+        className="w-full object-cover"
+        style={{ height: 140 }}
+        onError={() => setFailed(true)}
+      />
+    </div>
   );
 }
