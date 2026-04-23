@@ -1786,8 +1786,308 @@ function PropertyAddressInput({ value, propertyOptions, onSelectProperty, onSele
             </>
           )}
         </div>
-      )}
-    </div>
+      </TabsContent>
+
+      {/* ── ITZA tab (A1 retail analysis) ── */}
+      <TabsContent value="itza">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Address</label>
+              <Input value={itzaAddress} onChange={e => setItzaAddress(e.target.value)} placeholder="e.g. 12 High Street, London" className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Rate ITZA (£ psf)</label>
+              <Input type="number" value={itzaRate} onChange={e => setItzaRate(e.target.value)} placeholder="100" className="h-9" />
+            </div>
+          </div>
+
+          {/* Ground floor zones */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Ground Floor Zones</p>
+            <div className="rounded-lg border overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/60">
+                  <tr>
+                    <th className="text-left px-2 py-1.5 font-medium">Zone</th>
+                    <th className="text-left px-2 py-1.5 font-medium">Divisor</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Area (sq ft)</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Rate (£ psf)</th>
+                    <th className="text-right px-2 py-1.5 font-medium">ERV (£)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {groundZoneCalcs.map(z => (
+                    <tr key={z.key} className="hover:bg-muted/20">
+                      <td className="px-2 py-1">{z.label}</td>
+                      <td className="px-2 py-1 text-muted-foreground">A/{z.div}</td>
+                      <td className="px-2 py-1">
+                        <Input
+                          type="number"
+                          value={itzaZoneAreas[z.key]}
+                          onChange={e => setItzaZoneAreas(prev => ({ ...prev, [z.key]: e.target.value }))}
+                          placeholder="0"
+                          className="h-7 text-xs text-right w-24 ml-auto"
+                        />
+                      </td>
+                      <td className="px-2 py-1 text-right text-muted-foreground">
+                        {itzaRateVal > 0 ? `£${(itzaRateVal / z.div).toFixed(2)}` : "—"}
+                      </td>
+                      <td className="px-2 py-1 text-right font-medium">
+                        {z.erv > 0 ? `£${Math.round(z.erv).toLocaleString()}` : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="bg-muted/30 font-semibold">
+                    <td className="px-2 py-1.5 text-muted-foreground" colSpan={2}>Ground sub-total</td>
+                    <td className="px-2 py-1.5 text-right">{groundZoneCalcs.reduce((s, z) => s + z.area, 0) > 0 ? `${groundZoneCalcs.reduce((s, z) => s + z.area, 0).toLocaleString()} sq ft` : "—"}</td>
+                    <td />
+                    <td className="px-2 py-1.5 text-right">{groundSubTotal > 0 ? `£${Math.round(groundSubTotal).toLocaleString()}` : "—"}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Ground adjustments */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Discount % (frontage to depth etc)</label>
+              <Input type="number" value={itzaDiscount1} onChange={e => setItzaDiscount1(e.target.value)} placeholder="0" className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Addition % (return frontage etc)</label>
+              <Input type="number" value={itzaAddition1} onChange={e => setItzaAddition1(e.target.value)} placeholder="0" className="h-9" />
+            </div>
+          </div>
+
+          {/* Other floors */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Other Floors</p>
+            <div className="rounded-lg border overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/60">
+                  <tr>
+                    <th className="text-left px-2 py-1.5 font-medium">Floor / Use</th>
+                    <th className="text-left px-2 py-1.5 font-medium">Divisor</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Area (sq ft)</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Rate (£ psf)</th>
+                    <th className="text-right px-2 py-1.5 font-medium">ERV (£)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  <tr className="hover:bg-muted/20">
+                    <td className="px-2 py-1">Basement – Storage</td>
+                    <td className="px-2 py-1 text-muted-foreground">A/20</td>
+                    <td className="px-2 py-1">
+                      <Input
+                        type="number"
+                        value={itzaZoneAreas.basStorage}
+                        onChange={e => setItzaZoneAreas(prev => ({ ...prev, basStorage: e.target.value }))}
+                        placeholder="0"
+                        className="h-7 text-xs text-right w-24 ml-auto"
+                      />
+                    </td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 ? `£${(itzaRateVal / 20).toFixed(2)}` : "—"}</td>
+                    <td className="px-2 py-1 text-right font-medium">{basStorageERV > 0 ? `£${Math.round(basStorageERV).toLocaleString()}` : "—"}</td>
+                  </tr>
+                  <tr className="hover:bg-muted/20">
+                    <td className="px-2 py-1">First – Trading</td>
+                    <td className="px-2 py-1 text-muted-foreground">A/10</td>
+                    <td className="px-2 py-1">
+                      <Input
+                        type="number"
+                        value={itzaZoneAreas.firstTrading}
+                        onChange={e => setItzaZoneAreas(prev => ({ ...prev, firstTrading: e.target.value }))}
+                        placeholder="0"
+                        className="h-7 text-xs text-right w-24 ml-auto"
+                      />
+                    </td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 ? `£${(itzaRateVal / 10).toFixed(2)}` : "—"}</td>
+                    <td className="px-2 py-1 text-right font-medium">{firstTradingERV > 0 ? `£${Math.round(firstTradingERV).toLocaleString()}` : "—"}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* End adjustments */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">End Discount % (short term etc)</label>
+              <Input type="number" value={itzaEndDiscount} onChange={e => setItzaEndDiscount(e.target.value)} placeholder="0" className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">End Addition % (breaks, outside Act etc)</label>
+              <Input type="number" value={itzaEndAddition} onChange={e => setItzaEndAddition(e.target.value)} placeholder="0" className="h-9" />
+            </div>
+          </div>
+
+          {/* Results */}
+          {itzaRateVal > 0 && (
+            <div className="bg-muted/50 rounded-xl p-4 space-y-3">
+              <h4 className="text-sm font-semibold flex items-center gap-2"><Calculator className="w-4 h-4" /> Results</h4>
+              <div className="grid grid-cols-3 gap-y-2 gap-x-4">
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">GIA</p>
+                  <p className="text-sm font-semibold">{itzaGIA > 0 ? `${itzaGIA.toLocaleString()} sq ft` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">ITZA</p>
+                  <p className="text-sm font-semibold">{itzaITZA > 0 ? `${itzaITZA.toFixed(1)} sq ft` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Rate ITZA</p>
+                  <p className="text-sm font-semibold">£{itzaRateVal.toFixed(2)} psf</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total ERV</p>
+                  <p className="text-sm font-bold text-green-600">{itzaTotal > 0 ? `£${Math.round(itzaTotal).toLocaleString()} pa` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Say</p>
+                  <p className="text-sm font-bold text-green-600">{itzaSay > 0 ? `£${itzaSay.toLocaleString()} pa` : "—"}</p>
+                </div>
+              </div>
+              <div className="pt-2 border-t flex items-center justify-between">
+                <p className="text-[10px] text-muted-foreground">RICS Code of Measuring Practice 6th Edition — Zone A depth 6.1m (20ft).</p>
+                <Button variant="outline" size="sm" onClick={downloadItzaExcel} className="h-7 text-xs gap-1.5">
+                  <Download className="w-3 h-3" /> Download Excel
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </TabsContent>
+
+      {/* ── GIA tab (A3 restaurant/gym analysis) ── */}
+      <TabsContent value="gia">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Address</label>
+              <Input value={giaAddress} onChange={e => setGiaAddress(e.target.value)} placeholder="e.g. 5 Kings Road, London" className="h-9" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Rate ITGF (£ psf)</label>
+              <Input type="number" value={giaRate} onChange={e => setGiaRate(e.target.value)} placeholder="50" className="h-9" />
+            </div>
+          </div>
+
+          {/* Floor areas */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Floor Areas &amp; Weightings</p>
+            <div className="rounded-lg border overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/60">
+                  <tr>
+                    <th className="text-left px-2 py-1.5 font-medium">Floor / Use</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Weight</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Area (sq ft)</th>
+                    <th className="text-right px-2 py-1.5 font-medium">Rate (£ psf)</th>
+                    <th className="text-right px-2 py-1.5 font-medium">ERV (£)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {giaFloorCalcs.map(f => (
+                    <tr key={f.key} className="hover:bg-muted/20">
+                      <td className="px-2 py-1">{f.label}</td>
+                      <td className="px-2 py-1 text-right text-muted-foreground">{(f.weight * 100).toFixed(1)}%</td>
+                      <td className="px-2 py-1">
+                        <Input
+                          type="number"
+                          value={giaAreas[f.key]}
+                          onChange={e => setGiaAreas(prev => ({ ...prev, [f.key]: e.target.value }))}
+                          placeholder="0"
+                          className="h-7 text-xs text-right w-24 ml-auto"
+                        />
+                      </td>
+                      <td className="px-2 py-1 text-right text-muted-foreground">
+                        {giaRateVal > 0 ? `£${f.rate.toFixed(2)}` : "—"}
+                      </td>
+                      <td className="px-2 py-1 text-right font-medium">
+                        {f.erv > 0 ? `£${Math.round(f.erv).toLocaleString()}` : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="bg-muted/30 font-semibold">
+                    <td className="px-2 py-1.5 text-muted-foreground" colSpan={2}>GIA total</td>
+                    <td className="px-2 py-1.5 text-right">{giaTotalArea > 0 ? `${giaTotalArea.toLocaleString()} sq ft` : "—"}</td>
+                    <td />
+                    <td className="px-2 py-1.5 text-right">{giaSubTotal > 0 ? `£${Math.round(giaSubTotal).toLocaleString()}` : "—"}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Adjustments */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Adjustments (steps, prominence, configuration etc)</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Adjustment 1 (%)</label>
+                <Input type="number" value={giaAdj1} onChange={e => setGiaAdj1(e.target.value)} placeholder="0" className="h-9" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Adjustment 2 (%)</label>
+                <Input type="number" value={giaAdj2} onChange={e => setGiaAdj2(e.target.value)} placeholder="0" className="h-9" />
+              </div>
+            </div>
+          </div>
+
+          {/* Lease adjustments */}
+          <div>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Lease Adjustments (breaks, fully fitted, term etc)</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Lease Adjustment 1 (%)</label>
+                <Input type="number" value={giaLease1} onChange={e => setGiaLease1(e.target.value)} placeholder="0" className="h-9" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Lease Adjustment 2 (%)</label>
+                <Input type="number" value={giaLease2} onChange={e => setGiaLease2(e.target.value)} placeholder="0" className="h-9" />
+              </div>
+            </div>
+          </div>
+
+          {/* Results */}
+          {giaRateVal > 0 && (
+            <div className="bg-muted/50 rounded-xl p-4 space-y-3">
+              <h4 className="text-sm font-semibold flex items-center gap-2"><Calculator className="w-4 h-4" /> Results</h4>
+              <div className="grid grid-cols-3 gap-y-2 gap-x-4">
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">GIA</p>
+                  <p className="text-sm font-semibold">{giaTotalArea > 0 ? `${giaTotalArea.toLocaleString()} sq ft` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Rate ITGF</p>
+                  <p className="text-sm font-semibold">£{giaRateVal.toFixed(2)} psf</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Sub-total ERV</p>
+                  <p className="text-sm font-semibold">{giaSubTotal > 0 ? `£${Math.round(giaSubTotal).toLocaleString()}` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total ERV</p>
+                  <p className="text-sm font-bold text-green-600">{giaTotal > 0 ? `£${Math.round(giaTotal).toLocaleString()} pa` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Say</p>
+                  <p className="text-sm font-bold text-green-600">{giaSay > 0 ? `£${giaSay.toLocaleString()} pa` : "—"}</p>
+                </div>
+              </div>
+              <div className="pt-2 border-t flex items-center justify-between">
+                <p className="text-[10px] text-muted-foreground">GIA weighted by floor and use type per RICS Property Measurement 2nd Edition.</p>
+                <Button variant="outline" size="sm" onClick={downloadGiaExcel} className="h-7 text-xs gap-1.5">
+                  <Download className="w-3 h-3" /> Download Excel
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </TabsContent>
+    </Tabs>
   );
 }
 
