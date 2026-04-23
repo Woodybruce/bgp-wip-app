@@ -1961,6 +1961,8 @@ export default function LeasingSchedulePage() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importStep, setImportStep] = useState<"pick" | "parsing" | "preview" | "importing">("pick");
   const [importPreview, setImportPreview] = useState<{ sheetName: string; units: any[] } | null>(null);
+  // Multi-scheme: each scheme from the xlsx gets its own property mapping
+  const [multiSchemes, setMultiSchemes] = useState<Array<{ sheetName: string; schemeHint: string; units: any[]; propertyId: string }> | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
 
   const { data: properties = [], isLoading } = useQuery<LeasingProperty[]>({
@@ -1985,15 +1987,19 @@ export default function LeasingSchedulePage() {
     setImportFile(null);
     setImportStep("pick");
     setImportPreview(null);
+    setMultiSchemes(null);
   };
 
+  // Parse: always calls the multi endpoint. If it returns one scheme we drop
+  // back to the single-property preview; if it returns several we go into the
+  // scheme→property mapping view.
   const runBoardParse = async () => {
-    if (!importPropertyId || !importFile) return;
+    if (!importFile) return;
     setImportStep("parsing");
     try {
       const fd = new FormData();
       fd.append("file", importFile);
-      const r = await fetch(`/api/leasing-schedule/property/${importPropertyId}/parse-excel`, {
+      const r = await fetch(`/api/leasing-schedule/parse-excel-multi`, {
         method: "POST", headers: getAuthHeaders(), body: fd,
       });
       if (!r.ok) {
@@ -2003,12 +2009,31 @@ export default function LeasingSchedulePage() {
         return;
       }
       const data = await r.json();
-      if (!data.units?.length) {
-        toast({ title: "No units found", description: "AI could not extract rows from that sheet", variant: "destructive" });
+      const schemes: Array<{ sheetName: string; schemeHint?: string; units: any[] }> = Array.isArray(data.schemes) ? data.schemes : [];
+      const usable = schemes.filter(s => Array.isArray(s.units) && s.units.length > 0);
+
+      if (usable.length === 0) {
+        toast({ title: "No units found", description: "AI could not extract rows from any sheet", variant: "destructive" });
         setImportStep("pick");
         return;
       }
-      setImportPreview(data);
+
+      if (usable.length === 1) {
+        // Single-scheme workbook: fall back to the simple preview flow.
+        setImportPreview({ sheetName: usable[0].sheetName, units: usable[0].units });
+        setMultiSchemes(null);
+        setImportStep("preview");
+        return;
+      }
+
+      // Multi-scheme workbook: the user needs to map each to a property.
+      setMultiSchemes(usable.map(s => ({
+        sheetName: s.sheetName,
+        schemeHint: s.schemeHint || s.sheetName,
+        units: s.units,
+        propertyId: importPropertyId || "",
+      })));
+      setImportPreview(null);
       setImportStep("preview");
     } catch (e: any) {
       toast({ title: "Parse failed", description: e.message, variant: "destructive" });
@@ -2017,7 +2042,37 @@ export default function LeasingSchedulePage() {
   };
 
   const runBoardImport = async () => {
-    if (!importPreview?.units?.length || !importPropertyId) return;
+    // Multi path
+    if (multiSchemes && multiSchemes.length > 0) {
+      const mapped = multiSchemes.filter(s => s.propertyId && s.units.length > 0);
+      if (mapped.length === 0) {
+        toast({ title: "Pick a property for at least one scheme", variant: "destructive" });
+        return;
+      }
+      setImportStep("importing");
+      try {
+        const r = await fetch(`/api/leasing-schedule/import-multi`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ imports: mapped.map(s => ({ property_id: s.propertyId, units: s.units })) }),
+        });
+        if (!r.ok) { toast({ title: "Import failed", variant: "destructive" }); setImportStep("preview"); return; }
+        const data = await r.json();
+        toast({ title: `${data.totalImported} units imported across ${mapped.length} scheme${mapped.length === 1 ? "" : "s"}` });
+        queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/properties"] });
+        resetImport();
+      } catch (e: any) {
+        toast({ title: "Import failed", description: e.message, variant: "destructive" });
+        setImportStep("preview");
+      }
+      return;
+    }
+
+    // Single path
+    if (!importPreview?.units?.length || !importPropertyId) {
+      toast({ title: "Pick a property for this schedule", variant: "destructive" });
+      return;
+    }
     setImportStep("importing");
     try {
       const r = await fetch(`/api/leasing-schedule/import`, {
@@ -2307,30 +2362,17 @@ export default function LeasingSchedulePage() {
 
       {/* Board-level Import Excel dialog */}
       <Dialog open={importOpen} onOpenChange={(o) => { if (!o) resetImport(); else setImportOpen(true); }}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className={multiSchemes ? "max-w-3xl" : "max-w-lg"}>
           <DialogHeader>
             <DialogTitle>Import Leasing Schedule from Excel</DialogTitle>
           </DialogHeader>
           {importStep === "pick" && (
             <div className="space-y-4">
+              <p className="text-xs text-muted-foreground">
+                Drop an Excel file. If it contains <strong>multiple schemes</strong> (one per tab), you'll be able to map each one to a property after parsing.
+              </p>
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">1. Which property is this schedule for?</label>
-                <Select value={importPropertyId} onValueChange={setImportPropertyId}>
-                  <SelectTrigger className="h-9 text-sm" data-testid="select-import-property">
-                    <SelectValue placeholder="Pick a property…" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-[300px]">
-                    {crmProperties.map(p => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {crmProperties.length === 0 && (
-                  <p className="text-[11px] text-amber-600 mt-1">No CRM properties yet — add one from the CRM first.</p>
-                )}
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">2. Drop or pick the Excel file (.xlsx / .xls / .csv)</label>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Excel file (.xlsx / .xls / .csv)</label>
                 <input
                   ref={importFileRef}
                   type="file"
@@ -2364,9 +2406,24 @@ export default function LeasingSchedulePage() {
                   )}
                 </div>
               </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                  Default property <span className="text-[10px] opacity-70">(used when the file has only one scheme; for multi-scheme files you'll map each scheme individually next)</span>
+                </label>
+                <Select value={importPropertyId} onValueChange={setImportPropertyId}>
+                  <SelectTrigger className="h-9 text-sm" data-testid="select-import-property">
+                    <SelectValue placeholder="Pick a property (optional for multi-scheme files)…" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[300px]">
+                    {crmProperties.map(p => (
+                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="flex justify-end gap-2 pt-2">
                 <Button variant="outline" size="sm" onClick={resetImport}>Cancel</Button>
-                <Button size="sm" onClick={runBoardParse} disabled={!importPropertyId || !importFile} data-testid="btn-import-parse">
+                <Button size="sm" onClick={runBoardParse} disabled={!importFile} data-testid="btn-import-parse">
                   Parse file
                 </Button>
               </div>
@@ -2379,11 +2436,26 @@ export default function LeasingSchedulePage() {
               <p className="text-[11px] text-muted-foreground mt-1">This can take 10-30 seconds for large schedules.</p>
             </div>
           )}
-          {importStep === "preview" && importPreview && (
+          {importStep === "preview" && importPreview && !multiSchemes && (
             <div className="space-y-3">
               <div className="text-sm">
                 Detected <strong>{importPreview.units.length}</strong> units on sheet <strong>{importPreview.sheetName}</strong>.
               </div>
+              {!importPropertyId && (
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Which property is this schedule for?</label>
+                  <Select value={importPropertyId} onValueChange={setImportPropertyId}>
+                    <SelectTrigger className="h-9 text-sm">
+                      <SelectValue placeholder="Pick a property…" />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-[300px]">
+                      {crmProperties.map(p => (
+                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="max-h-[300px] overflow-auto border rounded text-xs">
                 <table className="w-full">
                   <thead className="bg-muted/50 sticky top-0">
@@ -2398,8 +2470,8 @@ export default function LeasingSchedulePage() {
                   <tbody>
                     {importPreview.units.slice(0, 50).map((u: any, i: number) => (
                       <tr key={i} className="border-t">
-                        <td className="p-2">{u.unit || "—"}</td>
-                        <td className="p-2">{u.tenant || u.current_tenant || "—"}</td>
+                        <td className="p-2">{u.unit_name || u.unit || "—"}</td>
+                        <td className="p-2">{u.tenant_name || u.tenant || "—"}</td>
                         <td className="p-2">{u.rent_pa || u.rent || "—"}</td>
                         <td className="p-2">{u.sqft || u.area || "—"}</td>
                         <td className="p-2">{u.lease_expiry || u.expiry || "—"}</td>
@@ -2413,9 +2485,68 @@ export default function LeasingSchedulePage() {
               </div>
               <div className="flex justify-end gap-2 pt-1">
                 <Button variant="outline" size="sm" onClick={() => setImportStep("pick")}>Back</Button>
-                <Button size="sm" onClick={runBoardImport} data-testid="btn-import-confirm">
+                <Button size="sm" onClick={runBoardImport} disabled={!importPropertyId} data-testid="btn-import-confirm">
                   Import {importPreview.units.length} units
                 </Button>
+              </div>
+            </div>
+          )}
+          {importStep === "preview" && multiSchemes && (
+            <div className="space-y-3">
+              <div className="text-sm">
+                Detected <strong>{multiSchemes.length}</strong> schemes across {multiSchemes.reduce((s, x) => s + x.units.length, 0)} units. Map each sheet to a property, or leave blank to skip.
+              </div>
+              <div className="max-h-[420px] overflow-auto border rounded divide-y">
+                {multiSchemes.map((scheme, idx) => (
+                  <div key={idx} className="p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{scheme.schemeHint}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          Sheet "{scheme.sheetName}" · {scheme.units.length} units
+                        </p>
+                      </div>
+                      <div className="w-[260px] shrink-0">
+                        <Select
+                          value={scheme.propertyId}
+                          onValueChange={(v) => {
+                            setMultiSchemes(prev => prev ? prev.map((s, i) => i === idx ? { ...s, propertyId: v } : s) : prev);
+                          }}
+                        >
+                          <SelectTrigger className="h-8 text-xs" data-testid={`select-scheme-${idx}`}>
+                            <SelectValue placeholder="Map to property…" />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-[260px]">
+                            {crmProperties.map(p => (
+                              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Preview:{" "}
+                      {scheme.units.slice(0, 3).map((u: any) => u.tenant_name || u.unit_name || "?").join(" · ")}
+                      {scheme.units.length > 3 && ` · +${scheme.units.length - 3} more`}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between pt-1">
+                <p className="text-[11px] text-muted-foreground">
+                  {multiSchemes.filter(s => s.propertyId).length} of {multiSchemes.length} schemes mapped
+                </p>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => setImportStep("pick")}>Back</Button>
+                  <Button
+                    size="sm"
+                    onClick={runBoardImport}
+                    disabled={multiSchemes.every(s => !s.propertyId)}
+                    data-testid="btn-import-multi-confirm"
+                  >
+                    Import {multiSchemes.filter(s => s.propertyId).reduce((s, x) => s + x.units.length, 0)} units
+                  </Button>
+                </div>
               </div>
             </div>
           )}

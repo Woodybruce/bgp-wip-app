@@ -450,6 +450,169 @@ ${csvPreview}`;
   },
 );
 
+// Parse a workbook that contains multiple schemes (one per sheet) — no property ID
+// required at this stage. Returns a preview list; client maps each sheet to a
+// property then POSTs /import-multi to commit.
+router.post(
+  "/api/leasing-schedule/parse-excel-multi",
+  requireAuth,
+  xlsxUpload.single("file"),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "file required" });
+
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load(req.file.buffer as any);
+
+      const sheets: { name: string; rows: string[][] }[] = [];
+      wb.eachSheet((ws) => {
+        const rows: string[][] = [];
+        ws.eachRow({ includeEmpty: false }, (row) => {
+          const vals: string[] = [];
+          row.eachCell({ includeEmpty: true }, (cell) => {
+            const v = cell.value;
+            if (v == null) vals.push("");
+            else if (typeof v === "object" && "text" in (v as any)) vals.push(String((v as any).text || ""));
+            else if (v instanceof Date) vals.push((v as Date).toISOString().slice(0, 10));
+            else vals.push(String(v));
+          });
+          rows.push(vals);
+        });
+        // Skip sheets that are clearly not a schedule (fewer than 3 non-empty rows)
+        if (rows.length >= 3) sheets.push({ name: ws.name, rows });
+      });
+
+      if (sheets.length === 0) return res.status(400).json({ error: "No sheets with schedule data" });
+
+      // Parse every qualifying sheet in parallel — each gets Haiku'd to map columns.
+      const schemes = await Promise.all(sheets.map(async (sheet) => {
+        const capped = sheet.rows.slice(0, 250);
+        const csvPreview = capped.map((r) => r.join(" | ")).join("\n").slice(0, 18000);
+
+        const prompt = `You will receive a landlord leasing schedule exported from Excel. Map each data row to our unit schema.
+
+Columns in our schema (all optional except unit_name):
+- unit_name: short label like "Unit 1", "G-01", "Suite 4B"
+- tenant_name: current occupier (or "Vacant" / blank if void)
+- sqft: numeric, convert sq m to sq ft if needed (1 sqm = 10.7639 sqft)
+- rent_pa: annual rent in £ (numeric, no £ sign)
+- lease_expiry: ISO date YYYY-MM-DD
+- lease_break: ISO date YYYY-MM-DD (tenant break)
+- rent_review: ISO date YYYY-MM-DD
+- landlord_break: ISO date YYYY-MM-DD
+- status: "Occupied" | "Vacant" | "Under Offer" | "In Solicitors"
+- zone: floor/level/zone (e.g. "Ground", "L1", "Mall")
+- positioning: category (e.g. "F&B", "Fashion", "Beauty")
+- updates: short note on any special terms
+
+Rules:
+- Skip header rows, subtotals, blank rows, "Total" rows.
+- If a column doesn't exist in the source, leave it null.
+- Dates may be UK format (DD/MM/YYYY) — convert to ISO.
+- Currency strings like "£125,000" → 125000.
+- "Sq ft", "sqm", "NIA", "GIA" all map to sqft (convert sqm).
+- If a row has a tenant name but no unit label, synthesise one (e.g. "Unit 1", "Unit 2" in order).
+- Also try to infer a scheme/property name from the header rows or sheet title — return as scheme_hint.
+
+Return JSON only:
+{"scheme_hint":"optional scheme name from the sheet","units":[{"unit_name":"...","tenant_name":"...","sqft":123,"rent_pa":125000,"lease_expiry":"2028-06-24",...}]}
+
+Spreadsheet (tab: "${sheet.name}"), pipe-separated:
+${csvPreview}`;
+
+        try {
+          const ai = await callClaude({
+            model: CHATBGP_HELPER_MODEL,
+            max_completion_tokens: 6000,
+            temperature: 0,
+            messages: [{ role: "user", content: prompt }],
+          });
+          const raw = ai.choices?.[0]?.message?.content || "";
+          const parsed = safeParseJSON(raw);
+          const units = Array.isArray(parsed?.units) ? parsed.units : [];
+          return {
+            sheetName: sheet.name,
+            schemeHint: typeof parsed?.scheme_hint === "string" ? parsed.scheme_hint : sheet.name,
+            rowsScanned: capped.length,
+            units,
+          };
+        } catch (e: any) {
+          return { sheetName: sheet.name, schemeHint: sheet.name, rowsScanned: capped.length, units: [], error: e.message };
+        }
+      }));
+
+      // Drop sheets where the model returned zero units (usually cover pages / summaries).
+      const schemesWithUnits = schemes.filter(s => s.units.length > 0);
+
+      res.json({
+        sheetCount: sheets.length,
+        schemes: schemesWithUnits.length > 0 ? schemesWithUnits : schemes,
+      });
+    } catch (e: any) {
+      console.error("[leasing-schedule] parse-excel-multi error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  },
+);
+
+// Commit multiple scheme → property mappings in one transaction-ish pass.
+// Each mapping: { property_id, units }. Skips mappings where property_id is blank.
+router.post("/api/leasing-schedule/import-multi", requireAuth, async (req, res) => {
+  try {
+    const pool = await getPool();
+    const imports: Array<{ property_id: string; units: any[] }> = Array.isArray(req.body?.imports) ? req.body.imports : [];
+    if (imports.length === 0) return res.status(400).json({ error: "imports[] required" });
+
+    const results: Array<{ property_id: string; imported: number; error?: string }> = [];
+    let grandTotal = 0;
+
+    for (const imp of imports) {
+      if (!imp.property_id || !Array.isArray(imp.units) || imp.units.length === 0) continue;
+
+      const { allowed, user } = await checkPropertyAccess(pool, req, imp.property_id);
+      if (!allowed) {
+        results.push({ property_id: imp.property_id, imported: 0, error: "Access denied" });
+        continue;
+      }
+
+      try {
+        let count = 0;
+        for (const u of imp.units) {
+          await pool.query(`
+            INSERT INTO leasing_schedule_units
+              (property_id, zone, positioning, unit_name, tenant_name, agent_initials, lease_expiry,
+               lease_break, rent_review, landlord_break, rent_pa, sqft, mat_psqft, lfl_percent,
+               occ_cost_percent, financial_notes, target_brands, optimum_target, priority, status,
+               updates, sort_order)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+          `, [imp.property_id, u.zone, u.positioning, u.unit_name, u.tenant_name || u.unit_name,
+            u.agent_initials, u.lease_expiry || null, u.lease_break || null, u.rent_review || null,
+            u.landlord_break || null, u.rent_pa ?? null, u.sqft ?? null, u.mat_psqft, u.lfl_percent,
+            u.occ_cost_percent, u.financial_notes || null, u.target_brands, u.optimum_target,
+            u.priority, u.status || 'Occupied', u.updates, u.sort_order || count]);
+          count++;
+        }
+        await logAudit(pool, {
+          propertyId: imp.property_id,
+          userId: user!.id,
+          userName: user!.username,
+          action: "import",
+          newValue: `${count} units imported (multi-scheme)`,
+        });
+        grandTotal += count;
+        results.push({ property_id: imp.property_id, imported: count });
+      } catch (e: any) {
+        results.push({ property_id: imp.property_id, imported: 0, error: e.message });
+      }
+    }
+
+    res.json({ success: true, totalImported: grandTotal, results });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.put("/api/leasing-schedule/property/:propertyId/privacy", requireAuth, async (req, res) => {
   try {
     const pool = await getPool();
