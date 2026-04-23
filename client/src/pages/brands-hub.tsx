@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getCompanyLogoUrl } from "@/lib/company-logos";
+import { extractDomain, guessDomain } from "@/lib/company-logos";
 import {
   Store, TrendingUp, Flame, Star, Search, ChevronRight,
   MapPin, Maximize2, Zap, BarChart3, RefreshCw, Building2,
@@ -95,21 +95,33 @@ function formatSize(min: number | null, max: number | null): string {
 }
 
 function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string | null; size?: number }) {
-  const url = getCompanyLogoUrl(domain, name, size);
-  const [err, setErr] = useState(false);
-  if (!err && url) {
+  const [failCount, setFailCount] = useState(0);
+
+  const d = extractDomain(domain ?? null);
+  const guessed = guessDomain(name);
+
+  const sources: string[] = [];
+  if (d) {
+    sources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
+    sources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
+  }
+  if (guessed && guessed !== d) {
+    sources.push(`https://logo.clearbit.com/${guessed}?size=${Math.min(size * 3, 512)}`);
+    sources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${guessed}&size=128`);
+  }
+
+  if (failCount < sources.length) {
     return (
       <img
-        src={url}
+        src={sources[failCount]}
         alt={name}
-        width={size}
-        height={size}
         className="rounded object-contain bg-white"
         style={{ width: size, height: size }}
-        onError={() => setErr(true)}
+        onError={() => setFailCount(c => c + 1)}
       />
     );
   }
+
   const initial = name.charAt(0).toUpperCase();
   const colours = ["bg-pink-600","bg-rose-600","bg-purple-600","bg-orange-600","bg-yellow-600","bg-teal-600","bg-sky-600","bg-emerald-600"];
   const colour = colours[name.charCodeAt(0) % colours.length];
