@@ -130,6 +130,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               kyc_status, kyc_expires_at, aml_risk_level, aml_pep_status,
               is_tracked_brand, tracking_reason, brand_group_id, parent_company_id,
               concept_pitch, store_count, rollout_status, backers, instagram_handle,
+              tiktok_handle, dept_store_presence, franchise_activity, hunter_flag,
               agent_type, ai_generated_fields, last_enriched_at,
               bgp_contact_crm, bgp_contact_user_ids,
               brand_analysis, brand_analysis_at,
@@ -573,7 +574,8 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
     const allowed = [
       "is_tracked_brand", "tracking_reason", "brand_group_id",
       "concept_pitch", "store_count", "rollout_status", "backers",
-      "instagram_handle", "agent_type",
+      "instagram_handle", "tiktok_handle", "dept_store_presence",
+      "franchise_activity", "hunter_flag", "agent_type",
     ];
     const sets: string[] = [];
     const vals: any[] = [];

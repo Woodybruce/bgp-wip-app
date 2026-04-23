@@ -4823,6 +4823,161 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
+  // ── Brand Hunter — ranked list of brands most likely to expand into UK ──
+  app.get("/api/brands/hunter", requireAuth, async (_req, res) => {
+    try {
+      // Fetch all tracked brands + any manually hunter-flagged brands
+      const brands = await pool.query(`
+        SELECT
+          c.id, c.name, c.company_type, c.domain, c.description,
+          c.rollout_status, c.store_count,
+          c.backers, c.instagram_handle, c.tiktok_handle,
+          c.dept_store_presence, c.franchise_activity,
+          c.hunter_flag, c.concept_pitch,
+          c.brand_analysis,
+          c.created_at
+        FROM crm_companies c
+        WHERE (c.is_tracked_brand = true OR c.hunter_flag = true)
+          AND c.merged_into_id IS NULL
+        ORDER BY c.name
+      `).then(r => r.rows);
+
+      // Fetch recent brand signals for all these brands (last 365 days)
+      const ids = brands.map((b: any) => b.id);
+      let signals: any[] = [];
+      if (ids.length > 0) {
+        signals = await pool.query(`
+          SELECT brand_company_id, signal_type, headline, magnitude, sentiment, signal_date
+          FROM brand_signals
+          WHERE brand_company_id = ANY($1)
+            AND signal_date > NOW() - INTERVAL '365 days'
+          ORDER BY signal_date DESC
+        `, [ids]).then(r => r.rows);
+      }
+
+      // Build signal map
+      const signalMap = new Map<string, any[]>();
+      for (const s of signals) {
+        if (!signalMap.has(s.brand_company_id)) signalMap.set(s.brand_company_id, []);
+        signalMap.get(s.brand_company_id)!.push(s);
+      }
+
+      const EUROPE_KEYWORDS = ["paris", "milan", "berlin", "amsterdam", "dubai", "new york", "nyc", "tokyo", "sydney", "los angeles"];
+      const DTC_KEYWORDS = ["online only", "dtc", "direct to consumer", "direct-to-consumer", "e-commerce", "ecommerce", "no stores"];
+
+      // Score each brand
+      const scored = brands.map((b: any) => {
+        let score = 0;
+        const flags: string[] = [];
+
+        // Manual signals (highest weight)
+        if (b.hunter_flag) { score += 25; flags.push("Hunter Pick"); }
+
+        // Rollout status (strongest structural signal)
+        if (b.rollout_status === "entering_uk") { score += 30; flags.push("Entering UK"); }
+        else if (b.rollout_status === "scaling") { score += 20; flags.push("Scaling"); }
+        else if (b.rollout_status === "rumoured") { score += 10; flags.push("Rumoured"); }
+
+        // Dept store / franchise (strong proof of physical expansion intent)
+        if (b.dept_store_presence) { score += 20; flags.push("Dept Store Entry"); }
+        if (b.franchise_activity) { score += 15; flags.push("Franchise Abroad"); }
+
+        // Funding (capital to expand)
+        if (b.backers) { score += 10; flags.push("Funded"); }
+
+        // Social presence (brand awareness without physical footprint)
+        if (b.tiktok_handle) { score += 5; flags.push("TikTok"); }
+        if (b.instagram_handle) { score += 5; flags.push("Instagram"); }
+
+        // Has stores elsewhere (proven format, just not in UK yet)
+        if (b.store_count && b.store_count > 0) { score += 5; flags.push("Has Stores"); }
+
+        // DTC / online-only brand — strong candidate for first store
+        const pitchLower = (b.concept_pitch || "").toLowerCase();
+        const descLower = (b.description || "").toLowerCase();
+        if (DTC_KEYWORDS.some(k => pitchLower.includes(k) || descLower.includes(k))) {
+          score += 10; flags.push("DTC / Online-only");
+        }
+
+        // Recent brand signals analysis
+        const recentSignals = signalMap.get(b.id) || [];
+
+        // Funding raised — money to expand
+        const fundingSignals = recentSignals.filter((s: any) => s.signal_type === "funding");
+        if (fundingSignals.length > 0) { score += 15; flags.push("Funding Raised"); }
+
+        // New openings in non-UK markets (opening signals)
+        const openingSignals = recentSignals.filter((s: any) => s.signal_type === "opening" && s.sentiment !== "negative");
+        if (openingSignals.length > 0) {
+          const boost = Math.min(openingSignals.length * 8, 16);
+          score += boost;
+          flags.push(`${openingSignals.length} New Opening${openingSignals.length > 1 ? "s" : ""}`);
+        }
+
+        // Exec change — new CEO/CCO with retail/expansion background
+        const execSignals = recentSignals.filter((s: any) => s.signal_type === "exec_change" && s.sentiment === "positive");
+        if (execSignals.length > 0) { score += 8; flags.push("New Leadership"); }
+
+        // European city presence mentioned in signals or concept_pitch
+        const allText = [b.concept_pitch, b.description, b.franchise_activity, b.dept_store_presence,
+          ...recentSignals.map((s: any) => s.headline)].filter(Boolean).join(" ").toLowerCase();
+        const euroMatches = EUROPE_KEYWORDS.filter(city => allText.includes(city));
+        if (euroMatches.length > 0) {
+          score += Math.min(euroMatches.length * 5, 15);
+          flags.push("European Presence");
+        }
+
+        // Pop-up activity (low commitment physical test before full rollout)
+        const popUpSignals = recentSignals.filter((s: any) =>
+          (s.headline || "").toLowerCase().includes("pop-up") ||
+          (s.headline || "").toLowerCase().includes("popup") ||
+          (s.signal_type === "opening" && (s.headline || "").toLowerCase().includes("temporary"))
+        );
+        if (popUpSignals.length > 0) { score += 10; flags.push("Pop-up Activity"); }
+
+        // Press coverage spike (newsworthy brands attract retail interest)
+        const newsSignals = recentSignals.filter((s: any) => s.signal_type === "news" && s.sentiment === "positive");
+        if (newsSignals.length >= 3) { score += 8; flags.push("Press Momentum"); }
+        else if (newsSignals.length >= 1) { score += 3; }
+
+        // Sector move / concept pivot (entering new format)
+        const sectorSignals = recentSignals.filter((s: any) => s.signal_type === "sector_move");
+        if (sectorSignals.length > 0) { score += 5; flags.push("Format Pivot"); }
+
+        return {
+          ...b,
+          expansionScore: Math.min(score, 100),
+          expansionFlags: flags,
+          recentSignals: recentSignals.slice(0, 4),
+        };
+      });
+
+      // Sort by score desc
+      scored.sort((a: any, b: any) => b.expansionScore - a.expansionScore);
+
+      res.json(scored);
+    } catch (err: any) {
+      console.error("[brands/hunter]", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Toggle hunter_flag on a brand ────────────────────────────────────────
+  app.post("/api/brands/:id/hunter-flag", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const result = await pool.query(
+        `UPDATE crm_companies SET hunter_flag = NOT COALESCE(hunter_flag, false), updated_at = NOW()
+         WHERE id = $1 RETURNING id, hunter_flag`,
+        [id]
+      );
+      if (!result.rows[0]) return res.status(404).json({ error: "Not found" });
+      res.json(result.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Research turnover for a brand via AI ──────────────────────────────
   app.post("/api/brands/research-turnover/:id", requireAuth, async (req: any, res) => {
     try {

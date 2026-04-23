@@ -457,6 +457,11 @@ export const crmCompanies = pgTable("crm_companies", {
   rolloutStatus: text("rollout_status"), // scaling | stable | contracting | entering_uk | rumoured
   backers: text("backers"), // free-text: "Sequoia, Index Ventures" etc.
   instagramHandle: text("instagram_handle"),
+  tiktokHandle: text("tiktok_handle"),
+  // ── Brand Hunter expansion signals ───────────────────────────────────────
+  deptStorePresence: text("dept_store_presence"), // e.g. "Selfridges (popup 2024), Harvey Nichols"
+  franchiseActivity: text("franchise_activity"),  // e.g. "UAE master franchise 2023, France 2024"
+  hunterFlag: boolean("hunter_flag").default(false), // manually flagged as a hot expansion target
   agentType: text("agent_type"), // tenant_rep | landlord_rep | investment | null (for non-agents)
   // AI-enrichment provenance — which fields were auto-written vs human
   aiGeneratedFields: jsonb("ai_generated_fields"),

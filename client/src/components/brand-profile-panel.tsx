@@ -15,7 +15,7 @@ import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, Handshake, ShieldCheck,
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
-  MapPin, Activity, Target, Briefcase, PoundSterling, Search,
+  MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
 } from "lucide-react";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 
@@ -38,6 +38,10 @@ interface BrandProfile {
     rollout_status: string | null;
     backers: string | null;
     instagram_handle: string | null;
+    tiktok_handle: string | null;
+    dept_store_presence: string | null;
+    franchise_activity: string | null;
+    hunter_flag: boolean;
     agent_type: string | null;
     ai_generated_fields: Record<string, string> | null;
     last_enriched_at: string | null;
@@ -364,6 +368,10 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
       rollout_status: c.rollout_status || "",
       backers: c.backers || "",
       instagram_handle: c.instagram_handle || "",
+      tiktok_handle: c.tiktok_handle || "",
+      dept_store_presence: c.dept_store_presence || "",
+      franchise_activity: c.franchise_activity || "",
+      hunter_flag: c.hunter_flag ?? false,
       tracking_reason: c.tracking_reason || "",
       agent_type: c.agent_type || "",
       is_tracked_brand: c.is_tracked_brand,
@@ -454,9 +462,33 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <Label className="text-xs">Backers / investors</Label>
               <Input value={(form.backers as string) || ""} onChange={(e) => setForm({ ...form, backers: e.target.value })} placeholder="e.g. Sequoia, Index Ventures" />
             </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label className="text-xs">Instagram handle</Label>
+                <Input value={(form.instagram_handle as string) || ""} onChange={(e) => setForm({ ...form, instagram_handle: e.target.value })} placeholder="@brandname" />
+              </div>
+              <div>
+                <Label className="text-xs">TikTok handle</Label>
+                <Input value={(form.tiktok_handle as string) || ""} onChange={(e) => setForm({ ...form, tiktok_handle: e.target.value })} placeholder="@brandname" />
+              </div>
+            </div>
             <div>
-              <Label className="text-xs">Instagram handle</Label>
-              <Input value={(form.instagram_handle as string) || ""} onChange={(e) => setForm({ ...form, instagram_handle: e.target.value })} placeholder="@brandname" />
+              <Label className="text-xs">Dept store presence</Label>
+              <Input value={(form.dept_store_presence as string) || ""} onChange={(e) => setForm({ ...form, dept_store_presence: e.target.value })} placeholder="e.g. Selfridges (popup 2024), Harvey Nichols concession" />
+            </div>
+            <div>
+              <Label className="text-xs">Franchise activity abroad</Label>
+              <Input value={(form.franchise_activity as string) || ""} onChange={(e) => setForm({ ...form, franchise_activity: e.target.value })} placeholder="e.g. UAE master franchise 2023, France 2024" />
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="checkbox"
+                id="hunter_flag"
+                checked={!!(form.hunter_flag)}
+                onChange={(e) => setForm({ ...form, hunter_flag: e.target.checked })}
+                className="rounded"
+              />
+              <Label htmlFor="hunter_flag" className="text-xs cursor-pointer">Flag as Hunter Pick (manual watchlist)</Label>
             </div>
             <div className="flex items-center gap-2 pt-2">
               <Button size="sm" onClick={() => patchMutation.mutate(form)} disabled={patchMutation.isPending}>
@@ -561,6 +593,42 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   >
                     <Instagram className="w-3 h-3" /> {c.instagram_handle}
                   </a>
+                </div>
+              )}
+              {c.tiktok_handle && (
+                <div>
+                  <a
+                    href={`https://tiktok.com/@${c.tiktok_handle.replace(/^@/, "")}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm text-primary hover:underline flex items-center gap-1"
+                  >
+                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.27 8.27 0 004.84 1.55V6.79a4.86 4.86 0 01-1.07-.1z" /></svg>
+                    {c.tiktok_handle}
+                  </a>
+                </div>
+              )}
+              {c.dept_store_presence && (
+                <div className="col-span-2">
+                  <div className="text-[11px] text-muted-foreground flex items-center gap-1 mb-1">
+                    <Building2 className="w-3 h-3" /> Dept store presence
+                  </div>
+                  <div className="text-sm">{c.dept_store_presence}</div>
+                </div>
+              )}
+              {c.franchise_activity && (
+                <div className="col-span-2">
+                  <div className="text-[11px] text-muted-foreground flex items-center gap-1 mb-1">
+                    <MapPin className="w-3 h-3" /> Franchise activity
+                  </div>
+                  <div className="text-sm">{c.franchise_activity}</div>
+                </div>
+              )}
+              {c.hunter_flag && (
+                <div className="col-span-2">
+                  <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px] flex items-center gap-1 w-fit">
+                    <Flame className="w-2.5 h-2.5" /> Hunter Pick
+                  </Badge>
                 </div>
               )}
             </div>

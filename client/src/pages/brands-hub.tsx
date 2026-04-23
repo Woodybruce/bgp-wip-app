@@ -18,10 +18,11 @@ import {
   UtensilsCrossed, Soup, Diamond, Car, Wifi, BookOpen, Smartphone,
   Flower2, Clapperboard, Tv, Gamepad2, Baby, Palette, PartyPopper,
   HeartPulse, Bath, Dumbbell, Tag, Wrench, Watch, Gem, Footprints,
-  ShoppingCart,
+  ShoppingCart, Crosshair,
 } from "lucide-react";
 
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
+const BrandHunterBoard = lazy(() => import("@/components/brand-hunter-board"));
 
 interface HubData {
   stats: {
@@ -138,13 +139,13 @@ function confidenceColour(c: string) {
   return "bg-slate-400";
 }
 
-type HubTab = "overview" | "explorer" | "turnover";
+type HubTab = "overview" | "explorer" | "turnover" | "hunter";
 
 export default function BrandsHub() {
   const { toast } = useToast();
   const searchParams = useSearch();
   const rawTab = new URLSearchParams(searchParams).get("tab");
-  const initialTab: HubTab = rawTab && ["overview", "explorer", "turnover"].includes(rawTab) ? rawTab as HubTab : "overview";
+  const initialTab: HubTab = rawTab && ["overview", "explorer", "turnover", "hunter"].includes(rawTab) ? rawTab as HubTab : "overview";
   const [activeTab, setActiveTab] = useState<HubTab>(initialTab);
   const [search, setSearch] = useState("");
   const [researchingId, setResearchingId] = useState<string | null>(null);
@@ -226,6 +227,7 @@ export default function BrandsHub() {
           { key: "overview", label: "Overview", icon: BarChart3 },
           { key: "explorer", label: "Brand Explorer", icon: LayoutGrid },
           { key: "turnover", label: "Turnover Board", icon: TrendingUp },
+          { key: "hunter",  label: "Brand Hunter",   icon: Crosshair },
         ] as { key: HubTab; label: string; icon: any }[]).map(t => (
           <button
             key={t.key}
@@ -461,6 +463,12 @@ export default function BrandsHub() {
       {activeTab === "turnover" && (
         <Suspense fallback={<Skeleton className="h-64 w-full" />}>
           <TurnoverBoard embedded={true} />
+        </Suspense>
+      )}
+
+      {activeTab === "hunter" && (
+        <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+          <BrandHunterBoard />
         </Suspense>
       )}
 
