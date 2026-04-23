@@ -235,13 +235,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
   // Defensive defaults — older cached responses may lack new fields
-  const stores = stores || [];
-  const pitchedTo = pitchedTo || [];
-  const requirements = requirements || [];
-  const completedDeals = completedDeals || [];
-  const activeDeals = activeDeals || [];
-  const turnover = turnover || [];
-  const covenant = covenant || null;
+  const stores = data.stores || [];
+  const pitchedTo = data.pitchedTo || [];
+  const requirements = data.requirements || [];
+  const completedDeals = data.completedDeals || [];
+  const activeDeals = data.activeDeals || [];
+  const turnover = data.turnover || [];
+  const covenant = data.covenant || null;
 
   // Only render on companies that are brands, agents, or have any brand data.
   // Gives users an easy "promote this company into the Brand Bible" button if not yet flagged.
@@ -665,7 +665,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       Linked CH entity is <b>{covenant.companyStatus}</b>. This may be an old holding company.
                       <Button
                         size="sm"
-                        variant="link"
+                        variant="ghost"
                         className="h-auto px-1 py-0 text-[11px] text-amber-700 underline"
                         onClick={() => findUkEntityMutation.mutate()}
                         disabled={findUkEntityMutation.isPending}
