@@ -24,6 +24,13 @@ const DEFAULT_SOURCES = [
   { name: "London Property News", url: "https://www.londonpropertynews.co.uk", feedUrl: "https://www.londonpropertynews.co.uk/feed/", type: "rss", category: "Property" },
   { name: "Property Investor Today", url: "https://www.propertyinvestortoday.co.uk", feedUrl: "https://www.propertyinvestortoday.co.uk/rss.xml", type: "rss", category: "Investment" },
   { name: "Drapers", url: "https://www.drapersonline.com", feedUrl: "https://www.drapersonline.com/rss", type: "rss", category: "Retail" },
+  // Brand / fashion / retail press — added for Tenant Rep + Leasing brand-hunting
+  { name: "Vogue Business", url: "https://www.voguebusiness.com", feedUrl: "https://www.voguebusiness.com/feed", type: "rss", category: "Retail" },
+  { name: "Highsnobiety", url: "https://www.highsnobiety.com", feedUrl: "https://www.highsnobiety.com/feed/", type: "rss", category: "Retail" },
+  { name: "The New Yorker — Business", url: "https://www.newyorker.com/business", feedUrl: "https://www.newyorker.com/feed/business", type: "rss", category: "Retail" },
+  // Google News searches for topics without a direct RSS feed
+  { name: "Industry of Fashion (Google News)", url: "https://news.google.com/search?q=%22industry+of+fashion%22", feedUrl: "https://news.google.com/rss/search?q=%22industry+of+fashion%22&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
+  { name: "Industry of Beauty (Google News)", url: "https://news.google.com/search?q=%22industry+of+beauty%22", feedUrl: "https://news.google.com/rss/search?q=%22industry+of+beauty%22&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
 ];
 
 const TEAM_PROFILES: Record<string, { focus: string; keywords: string[] }> = {
@@ -32,20 +39,20 @@ const TEAM_PROFILES: Record<string, { focus: string; keywords: string[] }> = {
     keywords: ["investment", "acquisition", "yield", "capital", "transaction", "portfolio", "fund", "IRR", "disposal", "buyer", "seller", "REIT", "valuation"],
   },
   "London Leasing": {
-    focus: "London commercial leasing, letting activity, new lettings, rent reviews, lease terms in Belgravia, Mayfair, Chelsea, Knightsbridge, West End",
-    keywords: ["letting", "lease", "tenant", "rent", "Belgravia", "Mayfair", "Chelsea", "Knightsbridge", "West End", "Kensington", "retail unit", "prime pitch", "flagship"],
+    focus: "London commercial leasing, letting activity, new lettings, rent reviews, lease terms in Belgravia, Mayfair, Chelsea, Knightsbridge, West End. Also: brand expansion, new store openings, flagships, new UK operators, DTC brands opening physical retail, fashion and wellness expansion, high street repositioning — these identify prospective tenants for London instructions.",
+    keywords: ["letting", "lease", "tenant", "rent", "Belgravia", "Mayfair", "Chelsea", "Knightsbridge", "West End", "Kensington", "retail unit", "prime pitch", "flagship", "new opening", "new store", "first UK store", "London flagship", "DTC", "direct to consumer", "digital native", "brand expansion", "new operator", "wellness", "fashion brand", "brand performance", "global retail"],
   },
   "Lease Advisory": {
     focus: "Lease consultancy, rent reviews, lease renewals, dilapidations, break options, service charges",
     keywords: ["rent review", "lease renewal", "dilapidation", "break clause", "service charge", "arbitration", "lease term", "covenant"],
   },
   "National Leasing": {
-    focus: "UK-wide commercial leasing outside London, regional retail and office markets, out-of-town, shopping centres",
-    keywords: ["regional", "national", "Birmingham", "Manchester", "Leeds", "Bristol", "Edinburgh", "shopping centre", "retail park", "high street", "provincial"],
+    focus: "UK-wide commercial leasing outside London, regional retail and office markets, out-of-town, shopping centres. Also: brand expansion into regional cities, new store openings, flagships, new UK operators, rollout programmes, high street brand activity — these identify prospective tenants for regional instructions.",
+    keywords: ["regional", "national", "Birmingham", "Manchester", "Leeds", "Bristol", "Edinburgh", "shopping centre", "retail park", "high street", "provincial", "new opening", "new store", "rollout", "brand expansion", "new operator", "flagship", "global retail", "fashion"],
   },
   "Tenant Rep": {
-    focus: "Tenant representation, occupier requirements, search and acquisition, fit-out, relocations",
-    keywords: ["occupier", "tenant requirement", "relocation", "fit-out", "requirement", "search", "representation", "workspace", "office move"],
+    focus: "Tenant representation, occupier requirements, search and acquisition, fit-out, relocations. Primary angle: spotting brands that are expanding, opening new stores or flagships, entering new markets (UK / London / US), DTC brands moving into physical retail, strong brand performance, wellness operators, high street repositioning — all are signals of brands who may need an acquiring agent.",
+    keywords: ["occupier", "tenant requirement", "relocation", "fit-out", "requirement", "search", "representation", "workspace", "office move", "new opening", "new store", "flagship", "first UK store", "expansion", "entering UK", "DTC", "direct to consumer", "digital native", "brand expansion", "new operator", "wellness", "fashion", "global retail", "brand performance", "high street", "US expansion", "opening in London", "opening in Paris", "opening in New York", "rollout"],
   },
   "Development": {
     focus: "Property development, repurposing, planning applications, construction, change of use, mixed-use schemes",
@@ -55,12 +62,15 @@ const TEAM_PROFILES: Record<string, { focus: string; keywords: string[] }> = {
 
 async function seedNewsSources() {
   const existing = await db.select().from(newsSources);
-  if (existing.length === 0) {
-    for (const source of DEFAULT_SOURCES) {
+  const existingNames = new Set(existing.map(s => s.name));
+  let added = 0;
+  for (const source of DEFAULT_SOURCES) {
+    if (!existingNames.has(source.name)) {
       await db.insert(newsSources).values(source);
+      added++;
     }
-    console.log(`Seeded ${DEFAULT_SOURCES.length} news sources`);
   }
+  if (added > 0) console.log(`Seeded ${added} new news sources (${existing.length + added} total)`);
 }
 
 async function fetchRssFeeds(): Promise<{ fetched: number; errors: number }> {

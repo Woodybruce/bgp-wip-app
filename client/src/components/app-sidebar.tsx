@@ -42,6 +42,7 @@ import {
   GraduationCap,
   Store,
   Globe,
+  Target,
 } from "lucide-react";
 import {
   Sidebar,
@@ -81,6 +82,7 @@ const coreNavBase = [
   { title: "Deals", url: "/deals", icon: BarChart3 },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
   { title: "Requirements", url: "/requirements", icon: FileText },
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "People Hub", url: "/contacts", icon: Users },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
@@ -376,6 +378,7 @@ const mobileOverlayItems = [
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Requirements", url: "/requirements", icon: FileText },
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "People Hub", url: "/contacts", icon: Users },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
