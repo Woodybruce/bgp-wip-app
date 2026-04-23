@@ -158,7 +158,7 @@ function Sparkline({ values, width = 60, height = 16 }: { values: number[]; widt
 
 function AiChip() {
   return (
-    <span title="AI-generated — any edit makes it ground truth" className="inline-flex items-center gap-0.5 text-[9px] text-purple-600 ml-1">
+    <span title="AI-generated — any edit makes it ground truth" className="inline-flex items-center gap-0.5 text-[10px] text-purple-600 ml-1">
       <Sparkles className="w-2.5 h-2.5" /> ai
     </span>
   );
@@ -303,7 +303,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
   return (
     <Card data-testid="brand-profile-panel">
-      <CardHeader className="pb-2 flex flex-row items-center justify-between">
+      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
         <CardTitle className="text-sm flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-purple-500" />
           Brand Profile
@@ -336,7 +336,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
         </div>
       </CardHeader>
 
-      <CardContent className="space-y-3">
+      <CardContent className="p-3 pt-0 space-y-2.5">
         {editing ? (
           <div className="space-y-3">
             <div>
@@ -400,7 +400,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Concept pitch */}
             {c.concept_pitch && (
               <div>
-                <div className="flex items-center gap-1 text-[11px] text-muted-foreground mb-0.5">
+                <div className="flex items-center gap-1 text-[11px] text-muted-foreground mb-1">
                   <FileText className="w-3 h-3" /> Concept {aiFields.concept_pitch && <AiChip />}
                 </div>
                 <p className="text-sm leading-snug">{c.concept_pitch}</p>
@@ -434,7 +434,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               )}
               {c.rollout_status && (
                 <div>
-                  <div className="text-[11px] text-muted-foreground mb-0.5">Rollout {aiFields.rollout_status && <AiChip />}</div>
+                  <div className="text-[11px] text-muted-foreground mb-1">Rollout {aiFields.rollout_status && <AiChip />}</div>
                   <RolloutBadge status={c.rollout_status} />
                 </div>
               )}
@@ -450,7 +450,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                           <span className="text-muted-foreground shrink-0 mt-0.5">•</span>
                           <div className="min-w-0">
                             <span className="font-medium">{b.name}</span>
-                            {b.type && <Badge variant="outline" className="ml-1.5 text-[9px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
+                            {b.type && <Badge variant="outline" className="ml-1.5 text-[10px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
                             {b.description && <p className="text-[11px] text-muted-foreground leading-snug">{b.description}</p>}
                           </div>
                         </div>
@@ -589,7 +589,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                             {addRep === "agent" && <Handshake className="w-3 h-3 text-blue-500" />}
                             {addRep === "brand" && <Sparkles className="w-3 h-3 text-purple-500" />}
                             <span className="truncate">{co.name}</span>
-                            {co.agent_type && <Badge variant="outline" className="text-[9px] ml-auto">{co.agent_type.replace(/_/g, " ")}</Badge>}
+                            {co.agent_type && <Badge variant="outline" className="text-[10px] ml-auto">{co.agent_type.replace(/_/g, " ")}</Badge>}
                           </button>
                         ))}
                     </div>
@@ -772,7 +772,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 : null;
               return (
                 <div className="border-t pt-2">
-                  <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                  <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
                     <Handshake className="w-3 h-3" /> Relationship
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
@@ -814,7 +814,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Deal ledger + active pipeline */}
             {(completedDeals?.length > 0 || activeDeals?.length > 0 || requirements.length > 0) && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
                   <Briefcase className="w-3 h-3" /> Deal ledger &amp; pipeline
                 </div>
                 <div className="flex gap-2 text-xs flex-wrap">
@@ -838,7 +838,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <div className="mt-1.5 space-y-0.5">
                     {data.deals.slice(0, 5).map((d: any) => (
                       <Link key={d.id} href={`/deals/${d.id}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5">
-                        <Badge variant="outline" className="text-[9px] shrink-0">{d.role}</Badge>
+                        <Badge variant="outline" className="text-[10px] shrink-0">{d.role}</Badge>
                         <span className="truncate flex-1">{d.name}</span>
                         <span className="text-[10px] text-muted-foreground shrink-0">{d.stage || d.status}</span>
                       </Link>
@@ -851,7 +851,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Active requirements — what this brand is looking for */}
             {requirements.filter(r => r.status === "Active").length > 0 && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center justify-between">
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1">
                     <FileText className="w-3 h-3" /> Active requirements ({requirements.filter(r => r.status === "Active").length})
                   </span>
@@ -874,7 +874,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                         href={`/requirements?companyId=${c.id}`}
                         className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5"
                       >
-                        {r.use_class && <Badge variant="outline" className="text-[9px] shrink-0">{r.use_class}</Badge>}
+                        {r.use_class && <Badge variant="outline" className="text-[10px] shrink-0">{r.use_class}</Badge>}
                         {size && <span className="font-medium shrink-0">{size}</span>}
                         {r.location_notes && <span className="truncate text-muted-foreground">{r.location_notes}</span>}
                         {r.budget && <span className="text-[10px] text-muted-foreground shrink-0 ml-auto">£{r.budget}</span>}
@@ -888,7 +888,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Pitched-to history */}
             {pitchedTo.length > 0 && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
                   <Target className="w-3 h-3" /> Pitched into ({pitchedTo.length})
                 </div>
                 <div className="space-y-0.5">
@@ -896,7 +896,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     <Link key={p.id} href={`/properties/${p.property_id}`} className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5">
                       <span className="truncate flex-1 font-medium">{p.property_name}</span>
                       {p.unit_name && <span className="text-[10px] text-muted-foreground shrink-0">{p.unit_name}</span>}
-                      {p.status && <Badge variant="outline" className="text-[9px] shrink-0">{p.status}</Badge>}
+                      {p.status && <Badge variant="outline" className="text-[10px] shrink-0">{p.status}</Badge>}
                     </Link>
                   ))}
                   {pitchedTo.length > 6 && (
@@ -910,7 +910,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 enrichment scheduler; no manual trigger. */}
             {stores.length > 0 && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
                   <MapPin className="w-3 h-3" /> Stores ({stores.length}{c.store_count && c.store_count > 0 && stores.length !== c.store_count ? ` of ~${c.store_count}` : ""})
                 </div>
                 <div className="space-y-0.5 max-h-40 overflow-y-auto">
