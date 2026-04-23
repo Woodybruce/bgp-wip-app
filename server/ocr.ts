@@ -1,8 +1,16 @@
-import DocumentIntelligence, {
+import DocumentIntelligenceMod, {
   isUnexpected,
   getLongRunningPoller,
   type AnalyzeOperationOutput,
 } from "@azure-rest/ai-document-intelligence";
+
+// esbuild's CJS interop wraps the module so the real `createClient` lives at
+// .default.default in production. Unwrap defensively so both dev (tsx, native
+// ESM) and prod (esbuild CJS bundle) resolve to the actual factory function.
+const DocumentIntelligence: any =
+  typeof DocumentIntelligenceMod === "function"
+    ? DocumentIntelligenceMod
+    : (DocumentIntelligenceMod as any)?.default || DocumentIntelligenceMod;
 
 const OCR_MIN_INTERVAL_MS = 500;
 let lastOcrCallAt = 0;
