@@ -212,6 +212,7 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS dept_store_presence TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS franchise_activity TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS hunter_flag BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS stock_ticker TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS agent_type TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS ai_generated_fields JSONB`,
     `CREATE INDEX IF NOT EXISTS idx_crm_companies_is_tracked_brand ON crm_companies(is_tracked_brand) WHERE is_tracked_brand = true`,
