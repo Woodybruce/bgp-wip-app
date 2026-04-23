@@ -310,16 +310,18 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
+    const empty = { rows: [] };
+    const safe = (p: Promise<any>) => p.catch((e: any) => { console.error("[brand-profile] query failed:", e?.message); return empty; });
     const [
       company, signals, repsForBrand, brandsForAgent,
       kyc, images, deals, parentGroup, siblings, news,
       requirements, pitchedTo, contacts, stores, turnover,
       rolloutVelocityRow, rentComps,
     ] = await Promise.all([
-      companyQ, signalsQ, repsForBrandQ, brandsForAgentQ,
-      kycQ, imagesQ, dealsQ, parentGroupQ, siblingsQ, newsQ,
-      requirementsQ, pitchedToQ, contactsQ, storesQ, turnoverQ,
-      rolloutVelocityQ, rentCompsQ,
+      companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
+      safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
+      safe(requirementsQ), safe(pitchedToQ), safe(contactsQ), safe(storesQ), safe(turnoverQ),
+      safe(rolloutVelocityQ), safe(rentCompsQ),
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });

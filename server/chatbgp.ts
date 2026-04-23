@@ -9445,9 +9445,12 @@ export function setupChatBGPRoutes(app: Express) {
         }
       }
 
-      const { tools } = await getAvailableTools();
+      let tools: any[] = [];
+      try { ({ tools } = await getAvailableTools()); } catch (e: any) {
+        console.error("[ChatBGP file-chat] getAvailableTools failed:", e?.message);
+      }
 
-      const fileUserId = req.session.userId!;
+      const fileUserId = req.session.userId || (req as any).tokenUserId || "unknown";
       const [knowledgeContext, fileMemoryContext, fileEmailCalContext, fileCrmCtx, businessLearnings] = await Promise.all([
         withTimeout(getKnowledgeContext(), 8000, ""),
         withTimeout(getMemoryContext(fileUserId), 8000, ""),
@@ -9500,14 +9503,27 @@ export function setupChatBGPRoutes(app: Express) {
           model: CHATBGP_MODEL,
           messages: convMessages,
           max_completion_tokens: 8192,
-          thinking: true, // extended thinking for quality
+          thinking: true,
         };
         if (!isLastLoop) {
           loopOpts.tools = tools;
           loopOpts.tool_choice = "auto";
         }
 
-        const completion = await callClaude(loopOpts);
+        let completion: any;
+        try {
+          completion = await callClaude(loopOpts);
+        } catch (thinkErr: any) {
+          // If thinking mode is rejected (e.g. proxy doesn't support it), retry plain
+          const isModelErr = thinkErr?.status === 400 || thinkErr?.status === 422;
+          if (isModelErr && loopCountFile === 1) {
+            console.warn("[ChatBGP file-chat] thinking mode failed, retrying plain:", thinkErr?.message);
+            const plainOpts = { ...loopOpts, thinking: false };
+            completion = await callClaude(plainOpts);
+          } else {
+            throw thinkErr;
+          }
+        }
         const message = completion.choices[0]?.message;
         if (!message) break;
 
@@ -9557,7 +9573,7 @@ export function setupChatBGPRoutes(app: Express) {
       const lastAMsg = convMessages.filter((m: any) => m.role === "assistant" && m.content).pop();
       res.json({ reply: lastAMsg?.content || "I've processed your request. Please ask a follow-up for more details.", ...(lastActionFile ? { action: lastActionFile } : {}) });
     } catch (err: any) {
-      console.error("ChatBGP file chat error:", err?.message || err);
+      console.error("ChatBGP file chat error:", err?.status, err?.message || err, err?.error || "");
       const errMsg = String(err?.message || err || "");
       if (errMsg.includes("Could not process image")) {
         try {
