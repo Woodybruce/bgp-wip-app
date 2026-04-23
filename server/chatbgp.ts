@@ -589,7 +589,13 @@ function convertMessagesForClaude(messages: any[]): { system: string; messages: 
         claudeMessages.push({ role: "user", content: [toolResult] });
       }
     } else if (msg.role === "assistant") {
-      if (msg.tool_calls && msg.tool_calls.length > 0) {
+      // If we preserved the raw Anthropic content blocks (thinking/text/tool_use with
+      // signatures), replay them verbatim. Extended thinking requires the signed
+      // thinking block to travel with the next assistant turn, or the API 400s with
+      // "thinking block missing".
+      if (Array.isArray((msg as any)._rawContentBlocks) && (msg as any)._rawContentBlocks.length > 0) {
+        claudeMessages.push({ role: "assistant", content: (msg as any)._rawContentBlocks });
+      } else if (msg.tool_calls && msg.tool_calls.length > 0) {
         const content: any[] = [];
         if (msg.content) content.push({ type: "text", text: msg.content });
         for (const tc of msg.tool_calls) {
@@ -772,6 +778,10 @@ export async function callClaude(params: any): Promise<any> {
         role: "assistant",
         content: textContent || null,
         tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+        // Preserve raw Anthropic content blocks (thinking, text, tool_use with signatures)
+        // so that when this message is pushed back into convMessages for a follow-up
+        // turn, extended-thinking signatures survive and the API doesn't 400.
+        _rawContentBlocks: response.content,
       },
     }],
   };
@@ -855,6 +865,7 @@ export async function callClaudeStreaming(
             role: "assistant",
             content: fullText || null,
             tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+            _rawContentBlocks: finalMessage.content,
           },
         }],
       };

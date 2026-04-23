@@ -1955,10 +1955,86 @@ export default function LeasingSchedulePage() {
   }, [search]);
   const [exporting, setExporting] = useState(false);
 
+  // ─── Board-level import (xlsx → pick a CRM property → parse → import) ───
+  const [importOpen, setImportOpen] = useState(false);
+  const [importPropertyId, setImportPropertyId] = useState<string>("");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importStep, setImportStep] = useState<"pick" | "parsing" | "preview" | "importing">("pick");
+  const [importPreview, setImportPreview] = useState<{ sheetName: string; units: any[] } | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
+
   const { data: properties = [], isLoading } = useQuery<LeasingProperty[]>({
     queryKey: ["/api/leasing-schedule/properties"],
     enabled: !propertyId,
   });
+
+  const { data: crmPropertiesResp } = useQuery<any>({
+    queryKey: ["/api/crm/properties", "for-leasing-import"],
+    queryFn: () => fetch(`/api/crm/properties?limit=2000`, { headers: getAuthHeaders() }).then(r => r.json()),
+    enabled: !propertyId,
+  });
+  const crmProperties: { id: string; name: string; address?: string }[] = useMemo(() => {
+    const raw = Array.isArray(crmPropertiesResp) ? crmPropertiesResp : (crmPropertiesResp?.data || []);
+    return raw.map((p: any) => ({ id: p.id, name: p.name || p.address || "(unnamed)", address: p.address }))
+      .sort((a: any, b: any) => a.name.localeCompare(b.name));
+  }, [crmPropertiesResp]);
+
+  const resetImport = () => {
+    setImportOpen(false);
+    setImportPropertyId("");
+    setImportFile(null);
+    setImportStep("pick");
+    setImportPreview(null);
+  };
+
+  const runBoardParse = async () => {
+    if (!importPropertyId || !importFile) return;
+    setImportStep("parsing");
+    try {
+      const fd = new FormData();
+      fd.append("file", importFile);
+      const r = await fetch(`/api/leasing-schedule/property/${importPropertyId}/parse-excel`, {
+        method: "POST", headers: getAuthHeaders(), body: fd,
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        toast({ title: "Parse failed", description: err.error || "Could not read file", variant: "destructive" });
+        setImportStep("pick");
+        return;
+      }
+      const data = await r.json();
+      if (!data.units?.length) {
+        toast({ title: "No units found", description: "AI could not extract rows from that sheet", variant: "destructive" });
+        setImportStep("pick");
+        return;
+      }
+      setImportPreview(data);
+      setImportStep("preview");
+    } catch (e: any) {
+      toast({ title: "Parse failed", description: e.message, variant: "destructive" });
+      setImportStep("pick");
+    }
+  };
+
+  const runBoardImport = async () => {
+    if (!importPreview?.units?.length || !importPropertyId) return;
+    setImportStep("importing");
+    try {
+      const r = await fetch(`/api/leasing-schedule/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ property_id: importPropertyId, units: importPreview.units }),
+      });
+      if (!r.ok) { toast({ title: "Import failed", variant: "destructive" }); setImportStep("preview"); return; }
+      const data = await r.json();
+      toast({ title: `${data.imported} units imported` });
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/properties"] });
+      resetImport();
+    } catch (e: any) {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+      setImportStep("preview");
+    }
+  };
 
   const handleExportAll = async () => {
     if (properties.length === 0) return;
@@ -2050,6 +2126,10 @@ export default function LeasingSchedulePage() {
             <Search className="absolute left-2.5 top-2 w-3.5 h-3.5 text-gray-400" />
             <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search properties..." className="pl-8 h-8 text-xs w-[200px]" data-testid="search-properties" />
           </div>
+          <Button size="sm" className="h-8 text-xs gap-1.5" onClick={() => setImportOpen(true)} data-testid="btn-import-board">
+            <Upload className="w-3.5 h-3.5" />
+            Import Excel
+          </Button>
           {properties.length > 0 && (
             <>
               <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" onClick={handleDownloadExcel} disabled={downloadingExcel} data-testid="btn-download-excel">
@@ -2195,10 +2275,7 @@ export default function LeasingSchedulePage() {
             </Table>
           </div>
           {filtered.length === 0 && (
-            <div className="text-center py-12 text-gray-400">
-              <Building2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No leasing schedules found</p>
-            </div>
+            <EmptyBoardImport onImportClick={() => setImportOpen(true)} />
           )}
         </Card>
       ) : (
@@ -2223,14 +2300,154 @@ export default function LeasingSchedulePage() {
             );
           })}
           {filtered.length === 0 && (
-            <div className="text-center py-12 text-gray-400">
-              <Building2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">No leasing schedules found</p>
-              <p className="text-xs mt-1">Properties with leasing instruction data will appear here</p>
-            </div>
+            <EmptyBoardImport onImportClick={() => setImportOpen(true)} />
           )}
         </div>
       )}
+
+      {/* Board-level Import Excel dialog */}
+      <Dialog open={importOpen} onOpenChange={(o) => { if (!o) resetImport(); else setImportOpen(true); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Import Leasing Schedule from Excel</DialogTitle>
+          </DialogHeader>
+          {importStep === "pick" && (
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">1. Which property is this schedule for?</label>
+                <Select value={importPropertyId} onValueChange={setImportPropertyId}>
+                  <SelectTrigger className="h-9 text-sm" data-testid="select-import-property">
+                    <SelectValue placeholder="Pick a property…" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[300px]">
+                    {crmProperties.map(p => (
+                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {crmProperties.length === 0 && (
+                  <p className="text-[11px] text-amber-600 mt-1">No CRM properties yet — add one from the CRM first.</p>
+                )}
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">2. Drop or pick the Excel file (.xlsx / .xls / .csv)</label>
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  className="hidden"
+                  onChange={e => setImportFile(e.target.files?.[0] || null)}
+                  data-testid="input-import-file"
+                />
+                <div
+                  role="button"
+                  onClick={() => importFileRef.current?.click()}
+                  onDragOver={e => { e.preventDefault(); }}
+                  onDrop={e => {
+                    e.preventDefault();
+                    const f = e.dataTransfer.files?.[0];
+                    if (f) setImportFile(f);
+                  }}
+                  className="border-2 border-dashed rounded-md p-6 text-center cursor-pointer hover:bg-muted/40 transition"
+                >
+                  <Upload className="w-6 h-6 mx-auto mb-2 text-muted-foreground" />
+                  {importFile ? (
+                    <>
+                      <p className="text-sm font-medium">{importFile.name}</p>
+                      <p className="text-[11px] text-muted-foreground">{(importFile.size / 1024).toFixed(0)} KB · click to change</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-sm">Drop your schedule here</p>
+                      <p className="text-[11px] text-muted-foreground">or click to browse</p>
+                    </>
+                  )}
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" size="sm" onClick={resetImport}>Cancel</Button>
+                <Button size="sm" onClick={runBoardParse} disabled={!importPropertyId || !importFile} data-testid="btn-import-parse">
+                  Parse file
+                </Button>
+              </div>
+            </div>
+          )}
+          {importStep === "parsing" && (
+            <div className="py-10 text-center">
+              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-muted-foreground" />
+              <p className="text-sm">Reading workbook — AI is extracting the rows…</p>
+              <p className="text-[11px] text-muted-foreground mt-1">This can take 10-30 seconds for large schedules.</p>
+            </div>
+          )}
+          {importStep === "preview" && importPreview && (
+            <div className="space-y-3">
+              <div className="text-sm">
+                Detected <strong>{importPreview.units.length}</strong> units on sheet <strong>{importPreview.sheetName}</strong>.
+              </div>
+              <div className="max-h-[300px] overflow-auto border rounded text-xs">
+                <table className="w-full">
+                  <thead className="bg-muted/50 sticky top-0">
+                    <tr>
+                      <th className="text-left p-2">Unit</th>
+                      <th className="text-left p-2">Tenant</th>
+                      <th className="text-left p-2">Rent pa</th>
+                      <th className="text-left p-2">Sqft</th>
+                      <th className="text-left p-2">Expiry</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importPreview.units.slice(0, 50).map((u: any, i: number) => (
+                      <tr key={i} className="border-t">
+                        <td className="p-2">{u.unit || "—"}</td>
+                        <td className="p-2">{u.tenant || u.current_tenant || "—"}</td>
+                        <td className="p-2">{u.rent_pa || u.rent || "—"}</td>
+                        <td className="p-2">{u.sqft || u.area || "—"}</td>
+                        <td className="p-2">{u.lease_expiry || u.expiry || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {importPreview.units.length > 50 && (
+                  <p className="text-[11px] text-muted-foreground p-2">Showing first 50 of {importPreview.units.length} rows.</p>
+                )}
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button variant="outline" size="sm" onClick={() => setImportStep("pick")}>Back</Button>
+                <Button size="sm" onClick={runBoardImport} data-testid="btn-import-confirm">
+                  Import {importPreview.units.length} units
+                </Button>
+              </div>
+            </div>
+          )}
+          {importStep === "importing" && (
+            <div className="py-10 text-center">
+              <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-muted-foreground" />
+              <p className="text-sm">Writing units to the schedule…</p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function EmptyBoardImport({ onImportClick }: { onImportClick: () => void }) {
+  return (
+    <div className="text-center py-14 px-4">
+      <div className="mx-auto w-14 h-14 rounded-full bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center mb-3">
+        <Building2 className="w-7 h-7 text-blue-500" />
+      </div>
+      <h3 className="text-base font-semibold mb-1">No leasing schedules yet</h3>
+      <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
+        Import a landlord's Excel schedule — AI will extract units, tenants, rents, breaks and expiries into the board.
+      </p>
+      <Button onClick={onImportClick} className="gap-1.5" data-testid="btn-empty-import">
+        <Upload className="w-4 h-4" />
+        Import Excel schedule
+      </Button>
+      <p className="text-[11px] text-muted-foreground mt-3">
+        Supports .xlsx, .xls, .csv — any landlord format.
+      </p>
     </div>
   );
 }
