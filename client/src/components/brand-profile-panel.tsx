@@ -272,21 +272,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   });
 
   if (isLoading) return null;
-  if (isError || !data) {
-    return (
-      <Card>
-        <CardContent className="p-3 flex items-center justify-between gap-2 flex-wrap">
-          <div className="text-sm text-muted-foreground flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-purple-500" />
-            Brand Bible
-          </div>
-          <Button size="sm" variant="outline" onClick={() => patchMutation.mutate({ is_tracked_brand: true } as any)} disabled={patchMutation.isPending}>
-            <Plus className="w-3.5 h-3.5 mr-1" /> Track as brand
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
+
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
   // Defensive defaults — older cached responses may lack new fields
@@ -300,42 +286,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const rolloutVelocity = data.rolloutVelocity || null;
   const rentAffordability = data.rentAffordability || null;
 
-  // Only render on companies that are brands, agents, or have any brand data.
-  // Gives users an easy "promote this company into the Brand Bible" button if not yet flagged.
-  const isBrand = c.is_tracked_brand;
-  const isAgent = !!c.agent_type;
-  const hasData = isBrand || isAgent || c.concept_pitch || c.store_count || c.rollout_status || c.backers
-    || data.representedBy.length > 0 || data.representing.length > 0 || data.signals.length > 0;
-
-  if (!hasData && !editing) {
-    return (
-      <Card data-testid="brand-profile-empty">
-        <CardContent className="p-3 flex items-center justify-between gap-2 flex-wrap">
-          <div className="text-sm text-muted-foreground flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-purple-500" />
-            No Brand Bible data yet.
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => patchMutation.mutate({ is_tracked_brand: true } as any)}
-              disabled={patchMutation.isPending}
-            >
-              <Plus className="w-3.5 h-3.5 mr-1" /> Track as brand
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => { setForm({ agent_type: "tenant_rep" }); setEditing(true); }}
-            >
-              <Handshake className="w-3.5 h-3.5 mr-1" /> Mark as agent
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
 
   const startEdit = () => {
     setForm({
@@ -389,20 +339,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
       <CardContent className="space-y-3">
         {editing ? (
           <div className="space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <Label htmlFor="is_tracked_brand" className="text-xs">Track this as a brand in the Brand Bible</Label>
-              <Switch
-                id="is_tracked_brand"
-                checked={!!form.is_tracked_brand}
-                onCheckedChange={(v) => setForm({ ...form, is_tracked_brand: v })}
-              />
-            </div>
-            {form.is_tracked_brand && (
-              <div>
-                <Label className="text-xs">Why are we tracking this brand?</Label>
-                <Input value={(form.tracking_reason as string) || ""} onChange={(e) => setForm({ ...form, tracking_reason: e.target.value })} placeholder="e.g. Client Grosvenor asked about them" />
-              </div>
-            )}
             <div>
               <Label className="text-xs">Agent type (leave blank if this isn't an agent)</Label>
               <Select value={(form.agent_type as string) || "none"} onValueChange={(v) => setForm({ ...form, agent_type: v === "none" ? "" : v })}>
