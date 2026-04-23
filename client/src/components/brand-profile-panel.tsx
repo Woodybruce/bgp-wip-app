@@ -42,6 +42,7 @@ interface BrandProfile {
     dept_store_presence: string | null;
     franchise_activity: string | null;
     hunter_flag: boolean;
+    stock_ticker: string | null;
     agent_type: string | null;
     ai_generated_fields: Record<string, string> | null;
     last_enriched_at: string | null;
@@ -372,6 +373,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
       dept_store_presence: c.dept_store_presence || "",
       franchise_activity: c.franchise_activity || "",
       hunter_flag: c.hunter_flag ?? false,
+      stock_ticker: c.stock_ticker || "",
       tracking_reason: c.tracking_reason || "",
       agent_type: c.agent_type || "",
       is_tracked_brand: c.is_tracked_brand,
@@ -479,6 +481,17 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <div>
               <Label className="text-xs">Franchise activity abroad</Label>
               <Input value={(form.franchise_activity as string) || ""} onChange={(e) => setForm({ ...form, franchise_activity: e.target.value })} placeholder="e.g. UAE master franchise 2023, France 2024" />
+            </div>
+            <div>
+              <Label className="text-xs">Stock ticker (if listed)</Label>
+              <Input
+                value={(form.stock_ticker as string) || ""}
+                onChange={(e) => setForm({ ...form, stock_ticker: e.target.value.toUpperCase() })}
+                placeholder="e.g. JD.L, NXT.L, NKE, LULU"
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Yahoo Finance ticker — LSE suffix with .L (JD.L, MKS.L), US no suffix (NKE, LULU), Paris .PA (MC.PA).
+              </p>
             </div>
             <div className="flex items-center gap-2 pt-1">
               <input
@@ -629,6 +642,11 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px] flex items-center gap-1 w-fit">
                     <Flame className="w-2.5 h-2.5" /> Hunter Pick
                   </Badge>
+                </div>
+              )}
+              {c.stock_ticker && (
+                <div className="col-span-2">
+                  <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
                 </div>
               )}
             </div>
@@ -1450,6 +1468,57 @@ function FlagshipImage({ companyId }: { companyId: string }) {
         style={{ height: 140 }}
         onError={() => setFailed(true)}
       />
+    </div>
+  );
+}
+
+// ─── Stock snapshot card (Yahoo Finance) ────────────────────────────────
+function StockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: string }) {
+  const { data } = useQuery<{ snapshot: any | null }>({
+    queryKey: ["/api/brand", companyId, "stock"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/brand/${companyId}/stock`);
+      return res.json();
+    },
+    staleTime: 6 * 60 * 60 * 1000,
+  });
+
+  const s = data?.snapshot;
+  if (!s) {
+    return (
+      <div className="rounded border bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground flex items-center gap-1">
+        <TrendingUp className="w-3 h-3" /> {ticker} — loading…
+      </div>
+    );
+  }
+
+  const chg = s.fiftyTwoWeekChange != null ? s.fiftyTwoWeekChange * 100 : null;
+  const chgColor = chg == null ? "text-muted-foreground" : chg >= 20 ? "text-emerald-600" : chg >= 0 ? "text-green-600" : "text-red-600";
+  const capLabel = s.marketCapGBP == null ? null
+    : s.marketCapGBP >= 1_000_000_000 ? `£${(s.marketCapGBP / 1_000_000_000).toFixed(1)}bn`
+    : s.marketCapGBP >= 1_000_000 ? `£${(s.marketCapGBP / 1_000_000).toFixed(0)}m`
+    : `£${(s.marketCapGBP / 1_000).toFixed(0)}k`;
+  const priceLabel = s.price != null ? `${s.currency === "GBp" ? "p" : s.currency === "GBP" ? "£" : s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : ""}${s.price.toFixed(2)}` : "—";
+
+  return (
+    <div className="rounded border bg-muted/30 px-2.5 py-1.5 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <TrendingUp className="w-3 h-3 text-muted-foreground shrink-0" />
+          <span className="font-mono font-semibold">{s.ticker}</span>
+          {s.exchange && <span className="text-[10px] text-muted-foreground truncate">· {s.exchange}</span>}
+        </div>
+        <span className="font-medium">{priceLabel}</span>
+      </div>
+      <div className="flex items-center gap-3 mt-1 text-[11px]">
+        {chg != null && (
+          <span className={chgColor}>
+            {chg >= 0 ? "+" : ""}{chg.toFixed(1)}% YoY
+          </span>
+        )}
+        {capLabel && <span className="text-muted-foreground">Cap: {capLabel}</span>}
+        {typeof s.peRatio === "number" && <span className="text-muted-foreground">P/E: {s.peRatio.toFixed(1)}</span>}
+      </div>
     </div>
   );
 }

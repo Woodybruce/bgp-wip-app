@@ -4826,6 +4826,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
   // ── Brand Hunter — ranked list of brands most likely to expand into UK ──
   app.get("/api/brands/hunter", requireAuth, async (_req, res) => {
     try {
+      const { getStockSnapshots } = await import("./stock-price");
+
       // Fetch all tracked brands + any manually hunter-flagged brands
       const brands = await pool.query(`
         SELECT
@@ -4833,7 +4835,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           c.rollout_status, c.store_count,
           c.backers, c.instagram_handle, c.tiktok_handle,
           c.dept_store_presence, c.franchise_activity,
-          c.hunter_flag, c.concept_pitch,
+          c.hunter_flag, c.concept_pitch, c.stock_ticker,
           c.brand_analysis,
           c.created_at
         FROM crm_companies c
@@ -4861,6 +4863,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         if (!signalMap.has(s.brand_company_id)) signalMap.set(s.brand_company_id, []);
         signalMap.get(s.brand_company_id)!.push(s);
       }
+
+      // Fetch stock snapshots for listed brands in one batch (cached 6h)
+      const tickers = Array.from(new Set(
+        brands.map((b: any) => b.stock_ticker).filter((t: any) => typeof t === "string" && t.trim())
+      ));
+      const stockMap = tickers.length > 0 ? await getStockSnapshots(tickers as string[]) : new Map();
 
       const EUROPE_KEYWORDS = ["paris", "milan", "berlin", "amsterdam", "dubai", "new york", "nyc", "tokyo", "sydney", "los angeles"];
       const DTC_KEYWORDS = ["online only", "dtc", "direct to consumer", "direct-to-consumer", "e-commerce", "ecommerce", "no stores"];
@@ -4944,11 +4952,22 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const sectorSignals = recentSignals.filter((s: any) => s.signal_type === "sector_move");
         if (sectorSignals.length > 0) { score += 5; flags.push("Format Pivot"); }
 
+        // Stock market signals (listed brands only)
+        const stockTicker = b.stock_ticker ? String(b.stock_ticker).trim().toUpperCase() : null;
+        const stock = stockTicker ? stockMap.get(stockTicker) : null;
+        if (stock) {
+          if (stock.signals.strongMomentum) { score += 15; flags.push("Stock +40% YoY"); }
+          else if (stock.signals.stockMomentum) { score += 10; flags.push("Stock Momentum"); }
+          if (stock.signals.largeCap) { score += 5; flags.push("Large Cap"); }
+          else if (stock.signals.midCap) { score += 3; flags.push("Mid Cap"); }
+        }
+
         return {
           ...b,
           expansionScore: Math.min(score, 100),
           expansionFlags: flags,
           recentSignals: recentSignals.slice(0, 4),
+          stock: stock || null,
         };
       });
 

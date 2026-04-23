@@ -41,6 +41,7 @@ interface HunterBrand {
   hunter_flag: boolean;
   concept_pitch: string | null;
   brand_analysis: string | null;
+  stock_ticker: string | null;
   expansionScore: number;
   expansionFlags: string[];
   recentSignals: Array<{
@@ -50,6 +51,15 @@ interface HunterBrand {
     sentiment: string | null;
     signal_date: string;
   }>;
+  stock: {
+    ticker: string;
+    price: number | null;
+    currency: string | null;
+    marketCapGBP: number | null;
+    fiftyTwoWeekChange: number | null;
+    peRatio: number | null;
+    exchange: string | null;
+  } | null;
 }
 
 const FLAG_META: Record<string, { color: string; icon: any }> = {
@@ -70,7 +80,36 @@ const FLAG_META: Record<string, { color: string; icon: any }> = {
   "New Leadership":     { color: "bg-teal-100 text-teal-700 border-teal-200",      icon: Users },
   "Press Momentum":     { color: "bg-cyan-100 text-cyan-700 border-cyan-200",      icon: Newspaper },
   "Format Pivot":       { color: "bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200", icon: Shuffle },
+  "Stock Momentum":     { color: "bg-lime-100 text-lime-700 border-lime-200",      icon: TrendingUp },
+  "Stock +40% YoY":     { color: "bg-lime-100 text-lime-800 border-lime-300",      icon: TrendingUp },
+  "Large Cap":          { color: "bg-stone-100 text-stone-700 border-stone-200",   icon: Trophy },
+  "Mid Cap":            { color: "bg-stone-100 text-stone-700 border-stone-200",   icon: Trophy },
 };
+
+function formatCap(gbp: number | null): string | null {
+  if (gbp == null) return null;
+  if (gbp >= 1_000_000_000) return `£${(gbp / 1_000_000_000).toFixed(1)}bn`;
+  if (gbp >= 1_000_000) return `£${(gbp / 1_000_000).toFixed(0)}m`;
+  return `£${(gbp / 1_000).toFixed(0)}k`;
+}
+
+function StockLine({ s }: { s: NonNullable<HunterBrand["stock"]> }) {
+  const chg = s.fiftyTwoWeekChange != null ? s.fiftyTwoWeekChange * 100 : null;
+  const chgColor = chg == null ? "text-muted-foreground" : chg >= 20 ? "text-emerald-600" : chg >= 0 ? "text-green-600" : "text-red-600";
+  const cap = formatCap(s.marketCapGBP);
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <TrendingUp className="w-3 h-3 shrink-0" />
+      <span className="font-mono font-medium">{s.ticker}</span>
+      {chg != null && (
+        <span className={chgColor}>
+          {chg >= 0 ? "+" : ""}{chg.toFixed(1)}% YoY
+        </span>
+      )}
+      {cap && <span className="text-muted-foreground">Cap {cap}</span>}
+    </div>
+  );
+}
 
 function scoreBand(score: number): { label: string; color: string } {
   if (score >= 70) return { label: "Very Hot", color: "text-red-600" };
@@ -106,7 +145,8 @@ function BrandLogo({ name, domain, size = 28 }: { name: string; domain?: string 
 const ALL_FILTERS = [
   "All", "Hunter Pick", "Entering UK", "Scaling",
   "Dept Store Entry", "Franchise Abroad", "DTC / Online-only",
-  "European Presence", "Funding Raised", "Pop-up Activity", "New Leadership",
+  "European Presence", "Funding Raised", "Pop-up Activity",
+  "New Leadership", "Stock Momentum",
 ] as const;
 
 export default function BrandHunterBoard() {
@@ -335,6 +375,7 @@ export default function BrandHunterBoard() {
                             )}
                           </div>
                         )}
+                        {brand.stock && <StockLine s={brand.stock} /> }
                       </div>
 
                       {/* Recent signals */}
@@ -386,6 +427,10 @@ export default function BrandHunterBoard() {
               ["TikTok / Instagram handle", "+5 ea"],
               ["Has stores elsewhere", "+5"],
               ["Format / sector pivot", "+5"],
+              ["Stock +40% YoY (listed)", "+15"],
+              ["Stock +20% YoY (listed)", "+10"],
+              ["Large cap (£500m+)", "+5"],
+              ["Mid cap (£50–500m)", "+3"],
             ].map(([label, pts]) => (
               <div key={label} className="flex justify-between gap-2">
                 <span>{label}</span>
@@ -394,7 +439,7 @@ export default function BrandHunterBoard() {
             ))}
           </div>
           <p className="pt-1 text-[11px]">
-            Flag any brand as a "Hunter Pick" with the bookmark icon. Fill in Dept Store / Franchise / TikTok fields in the brand profile to boost the score. Brand signals (openings, funding, exec changes) are auto-detected from the news feed.
+            Flag any brand as a "Hunter Pick" with the bookmark icon. Fill in Dept Store / Franchise / TikTok / stock ticker fields in the brand profile to boost the score. Brand signals (openings, funding, exec changes) are auto-detected from the news feed; stock data comes from Yahoo Finance (6h cache).
           </p>
         </CardContent>
       </Card>

@@ -131,7 +131,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               is_tracked_brand, tracking_reason, brand_group_id, parent_company_id,
               concept_pitch, store_count, rollout_status, backers, instagram_handle,
               tiktok_handle, dept_store_presence, franchise_activity, hunter_flag,
-              agent_type, ai_generated_fields, last_enriched_at,
+              stock_ticker, agent_type, ai_generated_fields, last_enriched_at,
               bgp_contact_crm, bgp_contact_user_ids,
               brand_analysis, brand_analysis_at,
               ai_disabled,
@@ -575,7 +575,7 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
       "is_tracked_brand", "tracking_reason", "brand_group_id",
       "concept_pitch", "store_count", "rollout_status", "backers",
       "instagram_handle", "tiktok_handle", "dept_store_presence",
-      "franchise_activity", "hunter_flag", "agent_type",
+      "franchise_activity", "hunter_flag", "stock_ticker", "agent_type",
     ];
     const sets: string[] = [];
     const vals: any[] = [];
@@ -683,6 +683,24 @@ router.delete("/api/brand/signals/:id", requireAuth, async (req: Request, res: R
   try {
     await pool.query(`DELETE FROM brand_signals WHERE id = $1`, [req.params.id]);
     res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Stock snapshot for a brand (via Yahoo Finance) ──────────────────────
+router.get("/api/brand/:companyId/stock", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { companyId } = req.params;
+    const { rows } = await pool.query(
+      `SELECT stock_ticker FROM crm_companies WHERE id = $1`,
+      [companyId]
+    );
+    const ticker = rows[0]?.stock_ticker;
+    if (!ticker) return res.json({ snapshot: null });
+    const { getStockSnapshot } = await import("./stock-price");
+    const snapshot = await getStockSnapshot(ticker);
+    res.json({ snapshot });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
