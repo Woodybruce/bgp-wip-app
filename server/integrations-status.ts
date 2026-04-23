@@ -41,7 +41,19 @@ const KEYS: KeyDef[] = [
 
   // CRM enrichment
   { name: "APOLLO_API_KEY", label: "Apollo.io", group: "CRM" },
+  { name: "ROCKETREACH_API_KEY", label: "RocketReach", group: "CRM" },
   { name: "COMPANIES_HOUSE_API_KEY", label: "Companies House", group: "CRM" },
+
+  // Commercial credit / KYB
+  { name: "EXPERIAN_CLIENT_ID", label: "Experian Client ID", group: "KYC" },
+  { name: "EXPERIAN_CLIENT_SECRET", label: "Experian Client Secret", group: "KYC" },
+  { name: "EXPERIAN_USERNAME", label: "Experian Username", group: "KYC" },
+  { name: "EXPERIAN_PASSWORD", label: "Experian Password", group: "KYC" },
+
+  // Scraping / proxy
+  { name: "WEBSHARE_PROXY_USERNAME", label: "Webshare proxy username", group: "Scraping" },
+  { name: "WEBSHARE_PROXY_PASSWORD", label: "Webshare proxy password", group: "Scraping" },
+  { name: "SCRAPERAPI_KEY", label: "ScraperAPI (fallback)", group: "Scraping" },
 
   // Accounting
   { name: "XERO_CLIENT_ID", label: "Xero Client ID", group: "Accounting" },

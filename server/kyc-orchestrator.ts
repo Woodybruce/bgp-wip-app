@@ -314,6 +314,17 @@ export async function runAllAmlChecks(
         (s: any) => s.status === "strong_match" || s.status === "potential_match",
       );
 
+      // Experian commercial credit — non-fatal, augments the investigation
+      let experianReport: any = null;
+      try {
+        const { fetchCommercialCredit, isExperianConfigured } = await import("./experian");
+        if (isExperianConfigured()) {
+          experianReport = await fetchCommercialCredit(company.companies_house_number);
+        }
+      } catch (e: any) {
+        warnings.push(`Experian credit lookup failed: ${e?.message || "unknown"}`);
+      }
+
       investigationResult = {
         subject: {
           name: companyData.profile?.company_name || company.name,
@@ -327,6 +338,7 @@ export async function runAllAmlChecks(
         filingHistory: (companyData.filings || []).slice(0, 20),
         insolvencyHistory: companyData.insolvency,
         sanctionsScreening: sanctionsResult,
+        experian: experianReport,
         riskScore: assessed.score,
         riskLevel: assessed.level,
         flags: assessed.flags,

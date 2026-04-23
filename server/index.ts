@@ -425,6 +425,8 @@ import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
 import apolloContactsRouter from "./apollo-contacts";
+import rocketreachContactsRouter, { rocketreachHealth } from "./rocketreach-contacts";
+import { experianHealth, fetchCommercialCredit, isExperianConfigured } from "./experian";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
 import dealDocsRouter from "./deal-docs";
@@ -689,6 +691,27 @@ app.use("/api/branding/assets", express.static(
   app.use(brandProfileRouter);
   app.use(brandEnrichmentRouter);
   app.use(apolloContactsRouter);
+  app.use(rocketreachContactsRouter);
+
+  // Health + lookup endpoints for the two new data providers.
+  app.get("/api/rocketreach/health", async (_req, res) => {
+    res.json(await rocketreachHealth());
+  });
+  app.get("/api/experian/health", async (_req, res) => {
+    res.json(await experianHealth());
+  });
+  app.post("/api/experian/credit-report", async (req, res) => {
+    try {
+      if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
+      const companyNumber = String(req.body?.companyNumber || "").trim();
+      if (!companyNumber) return res.status(400).json({ error: "companyNumber required" });
+      const report = await fetchCommercialCredit(companyNumber);
+      if (!report) return res.status(404).json({ error: "No Experian credit report found for that company" });
+      res.json(report);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Unknown error" });
+    }
+  });
   app.use(propertyGapAnalysisRouter);
   app.use(brandPackRouter);
   app.use(dealDocsRouter);
