@@ -13,7 +13,14 @@
  *
  * No auth, no keys — public site, but we keep the request volume low,
  * throttle between councils, and cache results for 12h.
+ *
+ * Tiered fetch: direct → Webshare residential proxy.
+ * Westminster and some other councils TCP-block Railway's egress IP.
+ * When direct fetch times out we retry via Webshare (env vars
+ * WEBSHARE_PROXY_USERNAME / WEBSHARE_PROXY_PASSWORD / WEBSHARE_PROXY_ENDPOINT).
  */
+
+import { webshareF, isProxyConfigured, isConnectionError, type FetchLike } from "./proxy-fetch";
 
 const LPA_REGISTRY: Array<{ prefixes: string[]; name: string; host: string }> = [
   { prefixes: ["W1", "SW1", "WC1", "WC2", "NW1", "NW8"], name: "Westminster", host: "idoxpa.westminster.gov.uk" },
@@ -156,12 +163,8 @@ try {
   }
 } catch {}
 
-async function idoxFetch(url: string, init: RequestInit): Promise<Response> {
-  return fetch(url, init);
-}
-
-async function getCsrfAndCookie(host: string): Promise<{ csrf: string; cookie: string }> {
-  const resp = await idoxFetch(`https://${host}/online-applications/search.do?action=simple`, {
+async function getCsrfAndCookie(host: string, fetchFn: FetchLike): Promise<{ csrf: string; cookie: string }> {
+  const resp = await fetchFn(`https://${host}/online-applications/search.do?action=simple`, {
     headers: {
       "User-Agent": BROWSER_UA,
       Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -178,15 +181,15 @@ async function getCsrfAndCookie(host: string): Promise<{ csrf: string; cookie: s
   return { csrf: csrfMatch[1], cookie };
 }
 
-async function fetchIdoxResults(host: string, searchTerm: string): Promise<string> {
-  const { csrf, cookie } = await getCsrfAndCookie(host);
+async function fetchIdoxResults(host: string, searchTerm: string, fetchFn: FetchLike): Promise<string> {
+  const { csrf, cookie } = await getCsrfAndCookie(host, fetchFn);
   const body = new URLSearchParams({
     _csrf: csrf,
     searchType: "Application",
     "searchCriteria.simpleSearchString": searchTerm,
     "searchCriteria.simpleSearch": "true",
   });
-  const resp = await idoxFetch(`https://${host}/online-applications/simpleSearchResults.do?action=firstPage`, {
+  const resp = await fetchFn(`https://${host}/online-applications/simpleSearchResults.do?action=firstPage`, {
     method: "POST",
     headers: {
       "User-Agent": BROWSER_UA,
@@ -203,6 +206,25 @@ async function fetchIdoxResults(host: string, searchTerm: string): Promise<strin
   });
   if (!resp.ok) throw new Error(`Idox ${host} search POST ${resp.status}`);
   return await resp.text();
+}
+
+// Tiered fetch: direct → Webshare proxy. Returns HTML or throws.
+async function fetchIdoxResultsTiered(host: string, searchTerm: string): Promise<string> {
+  // When proxy is configured, use a short timeout for direct so we fail fast
+  // and escalate to proxy rather than hanging for 30 s on blocked councils.
+  const directTimeout = isProxyConfigured() ? 8000 : 30000;
+  const directFn: FetchLike = (url, init) =>
+    fetch(url, { ...init, signal: AbortSignal.timeout(directTimeout) });
+
+  try {
+    return await fetchIdoxResults(host, searchTerm, directFn);
+  } catch (err: unknown) {
+    if (!isConnectionError(err)) throw err;
+    console.log(`[idox] ${host} direct fetch blocked/timed-out — retrying via Webshare proxy`);
+  }
+
+  if (!isProxyConfigured()) throw new Error(`${host}: direct blocked, proxy not configured`);
+  return fetchIdoxResults(host, searchTerm, webshareF);
 }
 
 const cache = new Map<string, { at: number; data: IdoxPlanningApp[] }>();
@@ -243,7 +265,7 @@ export async function fetchIdoxPlanning(
   let lastError: string | null = null;
   for (const term of attempts) {
     try {
-      const html = await fetchIdoxResults(lpa.host, term);
+      const html = await fetchIdoxResultsTiered(lpa.host, term);
       const parsed = parseResultsHtml(html, lpa.host, lpa.name);
       console.log(`[idox] ${lpa.name} "${term}" → ${parsed.length} applications`);
       if (parsed.length > 0) {

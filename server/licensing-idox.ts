@@ -28,6 +28,11 @@
 
 const SCRAPERAPI_ENDPOINT = "https://api.scraperapi.com/";
 
+import { webshareF, isProxyConfigured, isConnectionError } from "./proxy-fetch";
+
+const BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
 export interface LicensingApp {
   reference: string;
   premises: string;
@@ -211,17 +216,75 @@ function buildSearchUrl(cfg: BoroughConfig, postcode: string): string {
   return `https://${host}/online-applications/search.do?${params.toString()}`;
 }
 
+async function fetchLicensingHtml(cfg: BoroughConfig, searchUrl: string): Promise<string | null> {
+  const baseInit = {
+    headers: {
+      "User-Agent": BROWSER_UA,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-GB,en;q=0.9",
+    },
+    redirect: "follow" as const,
+  };
+
+  // Tier 1: direct (short timeout if proxy is standing by)
+  try {
+    const res = await fetch(searchUrl, {
+      ...baseInit,
+      signal: AbortSignal.timeout(isProxyConfigured() ? 8000 : 30000),
+    });
+    if (res.ok) return await res.text();
+    if (res.status >= 400 && res.status < 500) {
+      // Client error — proxy won't help
+      console.warn(`[licensing] ${cfg.lpa} direct ${res.status}`);
+      return null;
+    }
+    console.warn(`[licensing] ${cfg.lpa} direct ${res.status} — trying next tier`);
+  } catch (err: unknown) {
+    if (!isConnectionError(err)) {
+      console.warn(`[licensing] ${cfg.lpa} direct error: ${(err as any)?.message}`);
+      return null;
+    }
+    console.log(`[licensing] ${cfg.lpa} direct blocked — escalating to proxy`);
+  }
+
+  // Tier 2: Webshare residential proxy
+  if (isProxyConfigured()) {
+    try {
+      const res = await webshareF(searchUrl, {
+        ...baseInit,
+        signal: AbortSignal.timeout(30000),
+      });
+      if (res.ok) {
+        console.log(`[licensing] ${cfg.lpa} via Webshare proxy`);
+        return await res.text();
+      }
+      console.warn(`[licensing] ${cfg.lpa} proxy ${res.status}`);
+    } catch (err: unknown) {
+      console.warn(`[licensing] ${cfg.lpa} proxy failed: ${(err as any)?.message}`);
+    }
+  }
+
+  // Tier 3: ScraperAPI fallback
+  const apiKey = process.env.SCRAPERAPI_KEY;
+  if (!apiKey) return null;
+  try {
+    const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(searchUrl)}&country_code=uk&render=false`;
+    const res = await fetch(proxied, { signal: AbortSignal.timeout(45000) });
+    if (res.ok) {
+      console.log(`[licensing] ${cfg.lpa} via ScraperAPI`);
+      return await res.text();
+    }
+    console.warn(`[licensing] ${cfg.lpa} ScraperAPI ${res.status}`);
+    return null;
+  } catch (err: unknown) {
+    console.warn(`[licensing] ${cfg.lpa} ScraperAPI failed: ${(err as any)?.message}`);
+    return null;
+  }
+}
+
 export async function fetchLicensingForBorough(cfg: BoroughConfig, postcode: string): Promise<LicensingApp[]> {
   const pc = (postcode || "").trim();
   if (!pc) return [];
-  const apiKey = process.env.SCRAPERAPI_KEY;
-  if (!apiKey) {
-    if (!(globalThis as any).__licensingKeyWarned) {
-      console.warn("[licensing] SCRAPERAPI_KEY not set — scraping disabled");
-      (globalThis as any).__licensingKeyWarned = true;
-    }
-    return [];
-  }
 
   const searchUrl = buildSearchUrl(cfg, pc);
   const cacheKey = `${cfg.lpa}::${pc}`;
@@ -231,13 +294,8 @@ export async function fetchLicensingForBorough(cfg: BoroughConfig, postcode: str
   }
 
   try {
-    const proxied = `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(searchUrl)}&country_code=uk&render=false`;
-    const res = await fetch(proxied, { signal: AbortSignal.timeout(45000) });
-    if (!res.ok) {
-      console.warn(`[licensing] ${cfg.lpa} ScraperAPI ${res.status}`);
-      return [];
-    }
-    const html = await res.text();
+    const html = await fetchLicensingHtml(cfg, searchUrl);
+    if (!html) return [];
     const apps = parseIdoxLicensingHtml(html, searchUrl, cfg.lpa);
     cache.set(cacheKey, { fetchedAt: Date.now(), apps });
     console.log(`[licensing] ${cfg.lpa} ${pc} → ${apps.length} apps`);
