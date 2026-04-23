@@ -890,6 +890,23 @@ app.use("/api/branding/assets", express.static(
               AND LOWER(company_type) LIKE '%tenant%'
           `));
 
+          // Remove duplicate contacts (same name + company_id) keeping the oldest row.
+          await db.execute(sql.raw(`
+            DELETE FROM crm_contacts
+            WHERE id IN (
+              SELECT id FROM (
+                SELECT id,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY LOWER(name), company_id
+                    ORDER BY created_at ASC
+                  ) AS rn
+                FROM crm_contacts
+                WHERE company_id IS NOT NULL AND name IS NOT NULL
+              ) ranked
+              WHERE rn > 1
+            )
+          `));
+
           await db.execute(sql.raw(`
             UPDATE users SET additional_teams = ARRAY['Landsec']
             WHERE LOWER(email) IN (

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { queryClient, apiRequest } from "@/lib/queryClient";
+import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -170,10 +170,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [repForm, setRepForm] = useState<RepForm>(EMPTY_REP_FORM);
   const [repSearch, setRepSearch] = useState("");
 
-  const { data, isLoading } = useQuery<BrandProfile>({
+  const { data, isLoading, isError } = useQuery<BrandProfile>({
     queryKey: ["/api/brand", companyId, "profile"],
     queryFn: async () => {
-      const res = await fetch(`/api/brand/${companyId}/profile`, { credentials: "include" });
+      const res = await fetch(`/api/brand/${companyId}/profile`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
@@ -268,7 +271,22 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  if (isLoading || !data) return null;
+  if (isLoading) return null;
+  if (isError || !data) {
+    return (
+      <Card>
+        <CardContent className="p-3 flex items-center justify-between gap-2 flex-wrap">
+          <div className="text-sm text-muted-foreground flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-500" />
+            Brand Bible
+          </div>
+          <Button size="sm" variant="outline" onClick={() => patchMutation.mutate({ is_tracked_brand: true } as any)} disabled={patchMutation.isPending}>
+            <Plus className="w-3.5 h-3.5 mr-1" /> Track as brand
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
   // Defensive defaults — older cached responses may lack new fields

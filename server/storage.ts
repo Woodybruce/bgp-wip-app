@@ -823,7 +823,18 @@ export class DatabaseStorage implements IStorage {
       const data = await db.select().from(crmContacts).where(where).orderBy(crmContacts.name).limit(filters.limit).offset(offset);
       return { data, total: countResult.count };
     }
-    return db.select().from(crmContacts).where(where).orderBy(crmContacts.name);
+    const rows = await db.select().from(crmContacts).where(where).orderBy(crmContacts.name);
+    // Deduplicate within a company scope: keep the most-recently-updated row per (name, companyId).
+    if (filters?.companyId) {
+      const seen = new Map<string, typeof rows[0]>();
+      for (const r of rows) {
+        const key = `${(r.name || "").toLowerCase()}__${r.companyId || ""}`;
+        const existing = seen.get(key);
+        if (!existing || (r.updatedAt && (!existing.updatedAt || r.updatedAt > existing.updatedAt))) seen.set(key, r);
+      }
+      return Array.from(seen.values()).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    }
+    return rows;
   }
 
   async getCrmContact(id: string): Promise<CrmContact | undefined> {
