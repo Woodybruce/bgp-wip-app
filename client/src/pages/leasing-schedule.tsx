@@ -1962,7 +1962,15 @@ export default function LeasingSchedulePage() {
   const [importStep, setImportStep] = useState<"pick" | "parsing" | "preview" | "importing">("pick");
   const [importPreview, setImportPreview] = useState<{ sheetName: string; units: any[] } | null>(null);
   // Multi-scheme: each scheme from the xlsx gets its own property mapping
-  const [multiSchemes, setMultiSchemes] = useState<Array<{ sheetName: string; schemeHint: string; units: any[]; propertyId: string }> | null>(null);
+  const [multiSchemes, setMultiSchemes] = useState<Array<{
+    sheetName: string;
+    schemeHint: string;
+    units: any[];
+    propertyId: string;
+    skipped?: boolean;
+    skipReason?: string;
+    error?: string;
+  }> | null>(null);
   const importFileRef = useRef<HTMLInputElement>(null);
 
   const { data: properties = [], isLoading } = useQuery<LeasingProperty[]>({
@@ -2009,29 +2017,48 @@ export default function LeasingSchedulePage() {
         return;
       }
       const data = await r.json();
-      const schemes: Array<{ sheetName: string; schemeHint?: string; units: any[] }> = Array.isArray(data.schemes) ? data.schemes : [];
-      const usable = schemes.filter(s => Array.isArray(s.units) && s.units.length > 0);
+      const schemes: Array<{ sheetName: string; schemeHint?: string; units: any[]; skipped?: boolean; skipReason?: string; error?: string }> =
+        Array.isArray(data.schemes) ? data.schemes : [];
 
-      if (usable.length === 0) {
-        toast({ title: "No units found", description: "AI could not extract rows from any sheet", variant: "destructive" });
+      if (schemes.length === 0) {
+        toast({ title: "No sheets found", description: "The workbook appears to be empty", variant: "destructive" });
         setImportStep("pick");
         return;
       }
 
-      if (usable.length === 1) {
-        // Single-scheme workbook: fall back to the simple preview flow.
-        setImportPreview({ sheetName: usable[0].sheetName, units: usable[0].units });
+      const usableCount = schemes.filter(s => Array.isArray(s.units) && s.units.length > 0).length;
+
+      if (usableCount === 0) {
+        toast({
+          title: "No unit rows extracted",
+          description: `Read ${schemes.length} sheet${schemes.length === 1 ? "" : "s"} but AI couldn't find unit rows on any of them`,
+          variant: "destructive",
+        });
+        setImportStep("pick");
+        return;
+      }
+
+      // If exactly one sheet has units AND it's the only sheet full-stop,
+      // use the simple single-scheme preview. Otherwise always show the multi
+      // view so the user can see every sheet including skipped ones.
+      if (usableCount === 1 && schemes.length === 1) {
+        const only = schemes.find(s => s.units.length > 0)!;
+        setImportPreview({ sheetName: only.sheetName, units: only.units });
         setMultiSchemes(null);
         setImportStep("preview");
         return;
       }
 
-      // Multi-scheme workbook: the user needs to map each to a property.
-      setMultiSchemes(usable.map(s => ({
+      // Multi-scheme workbook: keep all sheets — including skipped/errored —
+      // so the user can see and debug why a particular tab wasn't parsed.
+      setMultiSchemes(schemes.map(s => ({
         sheetName: s.sheetName,
         schemeHint: s.schemeHint || s.sheetName,
-        units: s.units,
+        units: s.units || [],
         propertyId: importPropertyId || "",
+        skipped: s.skipped,
+        skipReason: s.skipReason,
+        error: s.error,
       })));
       setImportPreview(null);
       setImportStep("preview");
@@ -2491,65 +2518,88 @@ export default function LeasingSchedulePage() {
               </div>
             </div>
           )}
-          {importStep === "preview" && multiSchemes && (
-            <div className="space-y-3">
-              <div className="text-sm">
-                Detected <strong>{multiSchemes.length}</strong> schemes across {multiSchemes.reduce((s, x) => s + x.units.length, 0)} units. Map each sheet to a property, or leave blank to skip.
-              </div>
-              <div className="max-h-[420px] overflow-auto border rounded divide-y">
-                {multiSchemes.map((scheme, idx) => (
-                  <div key={idx} className="p-3 space-y-2">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium truncate">{scheme.schemeHint}</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          Sheet "{scheme.sheetName}" · {scheme.units.length} units
-                        </p>
+          {importStep === "preview" && multiSchemes && (() => {
+            const mapable = multiSchemes.filter(s => s.units.length > 0);
+            const skippedCount = multiSchemes.length - mapable.length;
+            const mappedReady = mapable.filter(s => s.propertyId);
+            return (
+              <div className="space-y-3">
+                <div className="text-sm">
+                  Found <strong>{multiSchemes.length}</strong> sheet{multiSchemes.length === 1 ? "" : "s"}.
+                  {" "}<strong>{mapable.length}</strong> with unit rows
+                  ({mapable.reduce((s, x) => s + x.units.length, 0)} units total)
+                  {skippedCount > 0 && <>, <strong>{skippedCount}</strong> skipped</>}.
+                </div>
+                <div className="max-h-[420px] overflow-auto border rounded divide-y">
+                  {multiSchemes.map((scheme, idx) => {
+                    const hasUnits = scheme.units.length > 0;
+                    const showError = !!scheme.error;
+                    const showSkipped = !hasUnits && !showError;
+                    return (
+                      <div key={idx} className={`p-3 space-y-2 ${!hasUnits ? "bg-muted/20" : ""}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm font-medium truncate">{scheme.schemeHint}</p>
+                              {showError && <Badge variant="destructive" className="text-[10px]">error</Badge>}
+                              {showSkipped && <Badge variant="secondary" className="text-[10px]">skipped</Badge>}
+                              {hasUnits && <Badge variant="outline" className="text-[10px] border-emerald-500 text-emerald-700">{scheme.units.length} units</Badge>}
+                            </div>
+                            <p className="text-[11px] text-muted-foreground">
+                              Sheet "{scheme.sheetName}"
+                              {scheme.skipReason && <> · {scheme.skipReason}</>}
+                              {scheme.error && <> · {scheme.error}</>}
+                            </p>
+                          </div>
+                          <div className="w-[260px] shrink-0">
+                            <Select
+                              value={scheme.propertyId}
+                              onValueChange={(v) => {
+                                setMultiSchemes(prev => prev ? prev.map((s, i) => i === idx ? { ...s, propertyId: v } : s) : prev);
+                              }}
+                              disabled={!hasUnits}
+                            >
+                              <SelectTrigger className="h-8 text-xs" data-testid={`select-scheme-${idx}`}>
+                                <SelectValue placeholder={hasUnits ? "Map to property…" : "No units to import"} />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-[260px]">
+                                {crmProperties.map(p => (
+                                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        {hasUnits && (
+                          <div className="text-[11px] text-muted-foreground">
+                            Preview:{" "}
+                            {scheme.units.slice(0, 3).map((u: any) => u.tenant_name || u.unit_name || "?").join(" · ")}
+                            {scheme.units.length > 3 && ` · +${scheme.units.length - 3} more`}
+                          </div>
+                        )}
                       </div>
-                      <div className="w-[260px] shrink-0">
-                        <Select
-                          value={scheme.propertyId}
-                          onValueChange={(v) => {
-                            setMultiSchemes(prev => prev ? prev.map((s, i) => i === idx ? { ...s, propertyId: v } : s) : prev);
-                          }}
-                        >
-                          <SelectTrigger className="h-8 text-xs" data-testid={`select-scheme-${idx}`}>
-                            <SelectValue placeholder="Map to property…" />
-                          </SelectTrigger>
-                          <SelectContent className="max-h-[260px]">
-                            {crmProperties.map(p => (
-                              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div className="text-[11px] text-muted-foreground">
-                      Preview:{" "}
-                      {scheme.units.slice(0, 3).map((u: any) => u.tenant_name || u.unit_name || "?").join(" · ")}
-                      {scheme.units.length > 3 && ` · +${scheme.units.length - 3} more`}
-                    </div>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <p className="text-[11px] text-muted-foreground">
+                    {mappedReady.length} of {mapable.length} mappable schemes ready
+                  </p>
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setImportStep("pick")}>Back</Button>
+                    <Button
+                      size="sm"
+                      onClick={runBoardImport}
+                      disabled={mappedReady.length === 0}
+                      data-testid="btn-import-multi-confirm"
+                    >
+                      Import {mappedReady.reduce((s, x) => s + x.units.length, 0)} units
+                    </Button>
                   </div>
-                ))}
-              </div>
-              <div className="flex items-center justify-between pt-1">
-                <p className="text-[11px] text-muted-foreground">
-                  {multiSchemes.filter(s => s.propertyId).length} of {multiSchemes.length} schemes mapped
-                </p>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => setImportStep("pick")}>Back</Button>
-                  <Button
-                    size="sm"
-                    onClick={runBoardImport}
-                    disabled={multiSchemes.every(s => !s.propertyId)}
-                    data-testid="btn-import-multi-confirm"
-                  >
-                    Import {multiSchemes.filter(s => s.propertyId).reduce((s, x) => s + x.units.length, 0)} units
-                  </Button>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
           {importStep === "importing" && (
             <div className="py-10 text-center">
               <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-muted-foreground" />

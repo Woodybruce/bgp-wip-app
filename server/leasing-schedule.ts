@@ -465,7 +465,7 @@ router.post(
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(req.file.buffer as any);
 
-      const sheets: { name: string; rows: string[][] }[] = [];
+      const sheets: { name: string; rows: string[][]; state: string }[] = [];
       wb.eachSheet((ws) => {
         const rows: string[][] = [];
         ws.eachRow({ includeEmpty: false }, (row) => {
@@ -475,20 +475,55 @@ router.post(
             if (v == null) vals.push("");
             else if (typeof v === "object" && "text" in (v as any)) vals.push(String((v as any).text || ""));
             else if (v instanceof Date) vals.push((v as Date).toISOString().slice(0, 10));
-            else vals.push(String(v));
+            else if (typeof v === "object" && "result" in (v as any)) vals.push(String((v as any).result ?? ""));
+            else if (typeof v === "object" && "richText" in (v as any)) {
+              vals.push(((v as any).richText || []).map((r: any) => r.text).join(""));
+            } else vals.push(String(v));
           });
           rows.push(vals);
         });
-        // Skip sheets that are clearly not a schedule (fewer than 3 non-empty rows)
-        if (rows.length >= 3) sheets.push({ name: ws.name, rows });
+        // Keep every non-empty sheet — even 1-2 row sheets. Filtering here was
+        // silently hiding tabs the user expects to see.
+        if (rows.length >= 1) sheets.push({ name: ws.name, rows, state: (ws as any).state || "visible" });
       });
 
-      if (sheets.length === 0) return res.status(400).json({ error: "No sheets with schedule data" });
+      console.log(`[leasing-schedule] parse-excel-multi: workbook has ${sheets.length} non-empty sheet(s): ${sheets.map(s => `${s.name}(${s.rows.length}r,${s.state})`).join(", ")}`);
 
-      // Parse every qualifying sheet in parallel — each gets Haiku'd to map columns.
-      const schemes = await Promise.all(sheets.map(async (sheet) => {
+      if (sheets.length === 0) return res.status(400).json({ error: "No sheets with data" });
+
+      // Process sheets with bounded concurrency — firing 20 parallel Claude calls
+      // hits rate limits and some come back empty/429. A cap of 3 is plenty
+      // fast (most workbooks finish in 5-15s) without tripping limits.
+      const CONCURRENCY = 3;
+      type SchemeResult = {
+        sheetName: string;
+        schemeHint: string;
+        rowsScanned: number;
+        units: any[];
+        skipped?: boolean;
+        skipReason?: string;
+        error?: string;
+      };
+      const schemes: SchemeResult[] = new Array(sheets.length);
+
+      async function processOne(index: number): Promise<void> {
+        const sheet = sheets[index];
         const capped = sheet.rows.slice(0, 250);
         const csvPreview = capped.map((r) => r.join(" | ")).join("\n").slice(0, 18000);
+
+        // Very small sheets rarely hold a schedule — keep them in the list but
+        // mark as skipped so the user can still see them.
+        if (sheet.rows.length < 2) {
+          schemes[index] = {
+            sheetName: sheet.name,
+            schemeHint: sheet.name,
+            rowsScanned: capped.length,
+            units: [],
+            skipped: true,
+            skipReason: "Sheet has fewer than 2 rows — likely a cover page",
+          };
+          return;
+        }
 
         const prompt = `You will receive a landlord leasing schedule exported from Excel. Map each data row to our unit schema.
 
@@ -514,9 +549,12 @@ Rules:
 - "Sq ft", "sqm", "NIA", "GIA" all map to sqft (convert sqm).
 - If a row has a tenant name but no unit label, synthesise one (e.g. "Unit 1", "Unit 2" in order).
 - Also try to infer a scheme/property name from the header rows or sheet title — return as scheme_hint.
+- Be generous: if the sheet contains ANY list of tenants/units/rents, extract them. Err on the side of returning rows rather than an empty list.
 
 Return JSON only:
 {"scheme_hint":"optional scheme name from the sheet","units":[{"unit_name":"...","tenant_name":"...","sqft":123,"rent_pa":125000,"lease_expiry":"2028-06-24",...}]}
+
+If the sheet is a cover page / contents / summary with no unit list, return {"scheme_hint":"${sheet.name}","units":[]}.
 
 Spreadsheet (tab: "${sheet.name}"), pipe-separated:
 ${csvPreview}`;
@@ -529,25 +567,55 @@ ${csvPreview}`;
             messages: [{ role: "user", content: prompt }],
           });
           const raw = ai.choices?.[0]?.message?.content || "";
-          const parsed = safeParseJSON(raw);
+          let parsed: any = null;
+          try {
+            parsed = safeParseJSON(raw);
+          } catch (pe: any) {
+            console.warn(`[leasing-schedule] parse-excel-multi: sheet "${sheet.name}" returned unparseable JSON: ${pe.message}. Raw head: ${raw.slice(0, 200)}`);
+          }
           const units = Array.isArray(parsed?.units) ? parsed.units : [];
-          return {
+          const schemeHint = typeof parsed?.scheme_hint === "string" && parsed.scheme_hint.trim()
+            ? parsed.scheme_hint.trim()
+            : sheet.name;
+          schemes[index] = {
             sheetName: sheet.name,
-            schemeHint: typeof parsed?.scheme_hint === "string" ? parsed.scheme_hint : sheet.name,
+            schemeHint,
             rowsScanned: capped.length,
             units,
+            ...(units.length === 0 ? { skipped: true, skipReason: "AI found no unit rows on this sheet" } : {}),
           };
+          console.log(`[leasing-schedule] parse-excel-multi: sheet "${sheet.name}" → ${units.length} unit(s)`);
         } catch (e: any) {
-          return { sheetName: sheet.name, schemeHint: sheet.name, rowsScanned: capped.length, units: [], error: e.message };
+          console.error(`[leasing-schedule] parse-excel-multi: sheet "${sheet.name}" errored:`, e?.message);
+          schemes[index] = {
+            sheetName: sheet.name,
+            schemeHint: sheet.name,
+            rowsScanned: capped.length,
+            units: [],
+            error: e?.message || "Unknown error",
+          };
         }
-      }));
+      }
 
-      // Drop sheets where the model returned zero units (usually cover pages / summaries).
-      const schemesWithUnits = schemes.filter(s => s.units.length > 0);
+      // Worker pool
+      let nextIndex = 0;
+      const workers: Promise<void>[] = [];
+      for (let w = 0; w < Math.min(CONCURRENCY, sheets.length); w++) {
+        workers.push((async () => {
+          while (true) {
+            const i = nextIndex++;
+            if (i >= sheets.length) return;
+            await processOne(i);
+          }
+        })());
+      }
+      await Promise.all(workers);
 
+      // Return EVERY sheet — including skipped/errored ones — so the user can
+      // see what happened. The client decides what to show as mappable.
       res.json({
         sheetCount: sheets.length,
-        schemes: schemesWithUnits.length > 0 ? schemesWithUnits : schemes,
+        schemes,
       });
     } catch (e: any) {
       console.error("[leasing-schedule] parse-excel-multi error:", e.message);
