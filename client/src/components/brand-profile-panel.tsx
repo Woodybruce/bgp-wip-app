@@ -226,18 +226,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Enrichment failed", description: e.message, variant: "destructive" }),
   });
 
-  const researchStoresMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`, {});
-      return res.json();
-    },
-    onSuccess: (out: { found: number; openCount: number }) => {
-      toast({ title: `Found ${out.found} stores (${out.openCount} open)`, description: "Synced from Google Places." });
-      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
-    },
-    onError: (e: any) => toast({ title: "Store research failed", description: e.message, variant: "destructive" }),
-  });
-
   const findUkEntityMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/companies-house/find-uk-entity/${companyId}`, {});
@@ -918,25 +906,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
             )}
 
-            {/* Stores — Google Places list */}
-            <div className="border-t pt-2">
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+            {/* Stores — Google Places list. Auto-researched by the background
+                enrichment scheduler; no manual trigger. */}
+            {stores.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
                   <MapPin className="w-3 h-3" /> Stores ({stores.length}{c.store_count && c.store_count > 0 && stores.length !== c.store_count ? ` of ~${c.store_count}` : ""})
                 </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-5 px-1.5 text-[10px]"
-                  onClick={() => researchStoresMutation.mutate()}
-                  disabled={researchStoresMutation.isPending}
-                  data-testid="button-research-stores"
-                >
-                  <Search className={`w-3 h-3 mr-0.5 ${researchStoresMutation.isPending ? "animate-pulse" : ""}`} />
-                  {stores.length === 0 ? "Find stores" : "Refresh"}
-                </Button>
-              </div>
-              {stores.length > 0 ? (
                 <div className="space-y-0.5 max-h-40 overflow-y-auto">
                   {stores.slice(0, 10).map((s) => (
                     <div key={s.id} className="text-xs flex items-center gap-1.5 px-1 py-0.5">
@@ -960,12 +936,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     <p className="text-[10px] text-muted-foreground pl-1">+{stores.length - 10} more stores</p>
                   )}
                 </div>
-              ) : (
-                <p className="text-[11px] text-muted-foreground italic">
-                  No stores cached. Click "Find stores" to pull live from Google Places.
-                </p>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* KYC tile */}
             {(c.kyc_status || data.kyc.doc_count > 0 || c.aml_risk_level) && (

@@ -6071,15 +6071,54 @@ async function runAutoEnrichmentCycle() {
       }
     }
 
+    // Auto store research — find Google Places stores for tracked brands that
+    // either have no stores cached or were last researched >30 days ago.
+    // Skip brands with AI disabled.
+    if (process.env.GOOGLE_API_KEY) {
+      try {
+        const brandsNeedingStores = await pool.query(`
+          SELECT c.id, c.name
+          FROM crm_companies c
+          LEFT JOIN (
+            SELECT brand_company_id, MAX(researched_at) AS last_researched
+            FROM brand_stores
+            WHERE source_type = 'google_places'
+            GROUP BY brand_company_id
+          ) s ON s.brand_company_id = c.id
+          WHERE c.is_tracked_brand = true
+            AND (c.ai_disabled IS NULL OR c.ai_disabled = FALSE)
+            AND c.merged_into_id IS NULL
+            AND (s.last_researched IS NULL OR s.last_researched < NOW() - INTERVAL '30 days')
+          ORDER BY s.last_researched ASC NULLS FIRST
+          LIMIT 3
+        `).then(r => r.rows);
+
+        let researched = 0;
+        for (const b of brandsNeedingStores) {
+          try {
+            const { researchBrandStores } = await import("./brand-profile");
+            const out = await researchBrandStores(b.id);
+            if (out.found > 0) researched++;
+          } catch (err: any) {
+            console.error(`[auto-enrich] Store research error for ${b.name}:`, err.message);
+          }
+        }
+        result.stores = { processed: brandsNeedingStores.length, researched };
+        if (brandsNeedingStores.length > 0) console.log(`[auto-enrich] Stores: researched ${researched}/${brandsNeedingStores.length} brands`);
+      } catch (err: any) {
+        result.stores = { error: err.message };
+      }
+    }
+
     autoEnrichLastRun = new Date();
     autoEnrichLastResult = result;
 
-    const hasActivity = (result.apollo?.processed > 0 || result.aiCompanies?.processed > 0 || result.aiContacts?.processed > 0 || result.typeClassify?.processed > 0);
+    const hasActivity = (result.apollo?.processed > 0 || result.aiCompanies?.processed > 0 || result.aiContacts?.processed > 0 || result.typeClassify?.processed > 0 || result.stores?.processed > 0);
     if (hasActivity) {
-      console.log(`[auto-enrich] Cycle complete — Apollo: ${result.apollo?.enriched || 0}, AI Companies: ${result.aiCompanies?.enriched || 0}, AI Contacts: ${result.aiContacts?.enriched || 0}, Type Classification: ${result.typeClassify?.classified || 0}`);
-      const totalEnriched = (result.apollo?.enriched || 0) + (result.aiCompanies?.enriched || 0) + (result.aiContacts?.enriched || 0) + (result.typeClassify?.classified || 0);
+      console.log(`[auto-enrich] Cycle complete — Apollo: ${result.apollo?.enriched || 0}, AI Companies: ${result.aiCompanies?.enriched || 0}, AI Contacts: ${result.aiContacts?.enriched || 0}, Type Classification: ${result.typeClassify?.classified || 0}, Stores: ${result.stores?.researched || 0}`);
+      const totalEnriched = (result.apollo?.enriched || 0) + (result.aiCompanies?.enriched || 0) + (result.aiContacts?.enriched || 0) + (result.typeClassify?.classified || 0) + (result.stores?.researched || 0);
       const { logActivity } = await import("./activity-logger");
-      await logActivity("auto-enrich", "enrichment_cycle", `${result.apollo?.enriched || 0} contacts via Apollo, ${result.aiCompanies?.enriched || 0} companies via AI, ${result.aiContacts?.enriched || 0} contact roles via AI`, totalEnriched);
+      await logActivity("auto-enrich", "enrichment_cycle", `${result.apollo?.enriched || 0} contacts via Apollo, ${result.aiCompanies?.enriched || 0} companies via AI, ${result.aiContacts?.enriched || 0} contact roles via AI, ${result.stores?.researched || 0} brands got stores`, totalEnriched);
     }
   } catch (err: any) {
     console.error("[auto-enrich] Cycle error:", err.message);

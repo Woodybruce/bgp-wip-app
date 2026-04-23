@@ -552,107 +552,98 @@ router.get("/api/brand/:companyId/stores", requireAuth, async (req: Request, res
 // ─── Brand stores: research via Google Places ────────────────────────────
 // Uses Google Places Text Search to find all UK stores for a brand, then
 // geocodes and upserts them into brand_stores.
+// Look up UK stores for a brand via Google Places. Upserts into brand_stores
+// and updates store_count. Used both by the manual endpoint and the
+// auto-enrichment scheduler. Throws if GOOGLE_API_KEY is missing.
+export async function researchBrandStores(companyId: string): Promise<{
+  found: number; upserted: number; openCount: number; companyName: string;
+}> {
+  const googleKey = process.env.GOOGLE_API_KEY;
+  if (!googleKey) throw new Error("GOOGLE_API_KEY not configured");
+
+  const { rows } = await pool.query(
+    `SELECT id, name, domain FROM crm_companies WHERE id = $1`,
+    [companyId]
+  );
+  if (!rows[0]) throw new Error("Company not found");
+  const company = rows[0];
+
+  const queries = [`${company.name} store London`, `${company.name} UK`];
+  const allResults: any[] = [];
+  const seenPlaceIds = new Set<string>();
+
+  for (const q of queries) {
+    let nextPage: string | null = null;
+    let page = 0;
+    do {
+      const url = nextPage
+        ? `https://maps.googleapis.com/maps/api/place/textsearch/json?pagetoken=${nextPage}&key=${googleKey}`
+        : `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(q)}&region=uk&key=${googleKey}`;
+      const r = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      if (!r.ok) break;
+      const data: any = await r.json();
+      for (const p of (data.results || [])) {
+        if (!seenPlaceIds.has(p.place_id) && p.formatted_address?.includes("UK")) {
+          seenPlaceIds.add(p.place_id);
+          allResults.push(p);
+        }
+      }
+      nextPage = data.next_page_token || null;
+      page++;
+      if (nextPage && page < 3) await new Promise(r => setTimeout(r, 2000));
+    } while (nextPage && page < 3);
+  }
+
+  let upserted = 0;
+  for (const p of allResults) {
+    const businessStatus = p.business_status || "OPERATIONAL";
+    const status = businessStatus === "OPERATIONAL" ? "open"
+      : businessStatus === "CLOSED_PERMANENTLY" ? "closed"
+      : "unconfirmed";
+    await pool.query(
+      `INSERT INTO brand_stores (brand_company_id, name, address, lat, lng, place_id, status, source_type, researched_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'google_places', now(), now())
+       ON CONFLICT (brand_company_id, place_id) DO UPDATE SET
+         name = EXCLUDED.name, address = EXCLUDED.address,
+         lat = EXCLUDED.lat, lng = EXCLUDED.lng,
+         status = EXCLUDED.status, researched_at = now(), updated_at = now()`,
+      [company.id, p.name, p.formatted_address, p.geometry?.location?.lat, p.geometry?.location?.lng, p.place_id, status]
+    ).catch(async () => {
+      const exists = await pool.query(
+        `SELECT id FROM brand_stores WHERE brand_company_id = $1 AND place_id = $2`,
+        [company.id, p.place_id]
+      );
+      if (exists.rowCount === 0) {
+        await pool.query(
+          `INSERT INTO brand_stores (brand_company_id, name, address, lat, lng, place_id, status, source_type, researched_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'google_places', now())`,
+          [company.id, p.name, p.formatted_address, p.geometry?.location?.lat, p.geometry?.location?.lng, p.place_id, status]
+        );
+      }
+    });
+    upserted++;
+  }
+
+  const openCount = allResults.filter(p => (p.business_status || "OPERATIONAL") === "OPERATIONAL").length;
+  if (allResults.length > 0) {
+    await pool.query(
+      `UPDATE crm_companies SET store_count = $1, updated_at = now() WHERE id = $2 AND (store_count IS NULL OR store_count < $1)`,
+      [openCount, company.id]
+    );
+  }
+
+  return { found: allResults.length, upserted, openCount, companyName: company.name };
+}
+
 router.post("/api/brand/:companyId/research-stores", requireAuth, async (req: Request, res: Response) => {
   try {
-    const googleKey = process.env.GOOGLE_API_KEY;
-    if (!googleKey) return res.status(400).json({ error: "GOOGLE_API_KEY not configured" });
-
-    const { rows } = await pool.query(
-      `SELECT id, name, domain FROM crm_companies WHERE id = $1`,
-      [req.params.companyId]
-    );
-    if (!rows[0]) return res.status(404).json({ error: "Company not found" });
-    const company = rows[0];
-
-    // Google Places Text Search — search for the brand in the UK
-    const queries = [
-      `${company.name} store London`,
-      `${company.name} UK`,
-    ];
-
-    const allResults: any[] = [];
-    const seenPlaceIds = new Set<string>();
-
-    for (const q of queries) {
-      let nextPage: string | null = null;
-      let page = 0;
-      do {
-        const url = nextPage
-          ? `https://maps.googleapis.com/maps/api/place/textsearch/json?pagetoken=${nextPage}&key=${googleKey}`
-          : `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(q)}&region=uk&key=${googleKey}`;
-        const r = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-        if (!r.ok) break;
-        const data: any = await r.json();
-        for (const p of (data.results || [])) {
-          if (!seenPlaceIds.has(p.place_id) && p.formatted_address?.includes("UK")) {
-            seenPlaceIds.add(p.place_id);
-            allResults.push(p);
-          }
-        }
-        nextPage = data.next_page_token || null;
-        page++;
-        if (nextPage && page < 3) {
-          // Brief pause required by Places API between paginated requests
-          await new Promise(r => setTimeout(r, 2000));
-        }
-      } while (nextPage && page < 3);
-    }
-
-    // Upsert into brand_stores
-    let upserted = 0;
-    for (const p of allResults) {
-      const name = p.name;
-      const address = p.formatted_address;
-      const lat = p.geometry?.location?.lat;
-      const lng = p.geometry?.location?.lng;
-      const placeId = p.place_id;
-      const businessStatus = p.business_status || "OPERATIONAL";
-      const status = businessStatus === "OPERATIONAL" ? "open"
-        : businessStatus === "CLOSED_PERMANENTLY" ? "closed"
-        : "unconfirmed";
-
-      await pool.query(
-        `INSERT INTO brand_stores (brand_company_id, name, address, lat, lng, place_id, status, source_type, researched_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'google_places', now(), now())
-         ON CONFLICT (brand_company_id, place_id) DO UPDATE SET
-           name = EXCLUDED.name, address = EXCLUDED.address,
-           lat = EXCLUDED.lat, lng = EXCLUDED.lng,
-           status = EXCLUDED.status, researched_at = now(), updated_at = now()`,
-        [company.id, name, address, lat, lng, placeId, status]
-      ).catch(async () => {
-        // If no unique constraint yet, do a manual check
-        const exists = await pool.query(
-          `SELECT id FROM brand_stores WHERE brand_company_id = $1 AND place_id = $2`,
-          [company.id, placeId]
-        );
-        if (exists.rowCount === 0) {
-          await pool.query(
-            `INSERT INTO brand_stores (brand_company_id, name, address, lat, lng, place_id, status, source_type, researched_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'google_places', now())`,
-            [company.id, name, address, lat, lng, placeId, status]
-          );
-        }
-      });
-      upserted++;
-    }
-
-    // Update store_count on the company
-    if (allResults.length > 0) {
-      await pool.query(
-        `UPDATE crm_companies SET store_count = $1, updated_at = now() WHERE id = $2 AND (store_count IS NULL OR store_count < $1)`,
-        [allResults.filter(p => (p.business_status || "OPERATIONAL") === "OPERATIONAL").length, company.id]
-      );
-    }
-
-    res.json({
-      found: allResults.length,
-      upserted,
-      openCount: allResults.filter(p => (p.business_status || "OPERATIONAL") === "OPERATIONAL").length,
-      company: { id: company.id, name: company.name },
-    });
+    const companyId = String(req.params.companyId);
+    const out = await researchBrandStores(companyId);
+    res.json({ ...out, company: { id: companyId, name: out.companyName } });
   } catch (err: any) {
     console.error("[research-stores]", err.message);
-    res.status(500).json({ error: err.message });
+    const status = err.message === "Company not found" ? 404 : err.message.includes("GOOGLE_API_KEY") ? 400 : 500;
+    res.status(status).json({ error: err.message });
   }
 });
 
