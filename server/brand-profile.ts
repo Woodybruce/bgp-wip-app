@@ -259,10 +259,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // Recent contacts — emails/meetings linked to this company
     const contactsQ = pool.query(
       `SELECT ct.id, ct.name, ct.role, ct.email, ct.phone, ct.linkedin_url, ct.avatar_url,
-              ct.last_contacted_at, ct.enrichment_source, ct.last_enriched_at
+              ct.enrichment_source, ct.last_enriched_at
          FROM crm_contacts ct
-        WHERE ct.company_id = $1 AND ct.deleted_at IS NULL
-        ORDER BY ct.last_contacted_at DESC NULLS LAST, ct.name ASC
+        WHERE ct.company_id = $1
+        ORDER BY ct.name ASC
         LIMIT 20`,
       [companyId]
     );
