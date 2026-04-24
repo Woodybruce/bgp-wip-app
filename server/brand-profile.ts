@@ -441,6 +441,12 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     // Extract covenant data from Companies House JSONB
     const chData = c.companies_house_data;
     const chProfile = chData?.profile || {};
+    const chAddress = chProfile.registered_office_address || chProfile.registeredOfficeAddress || null;
+    const chAddressStr = chAddress
+      ? [chAddress.address_line_1, chAddress.address_line_2, chAddress.locality, chAddress.region, chAddress.postal_code]
+          .filter(Boolean).join(", ")
+      : null;
+
     const covenant = chData ? {
       companyStatus: chProfile.companyStatus || null,
       accountsOverdue: chProfile.accountsOverdue || false,
@@ -450,6 +456,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       lastAccountsMadeUpTo: chProfile.lastAccountsMadeUpTo || null,
       dateOfCreation: chProfile.dateOfCreation || null,
       checkedAt: chData.checkedAt || null,
+      registeredAddress: chAddressStr,
       // Derive traffic light: green = active + no issues, amber = warning, red = insolvency/dissolved
       trafficLight: chProfile.hasInsolvencyHistory
         ? "red"

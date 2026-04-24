@@ -16,7 +16,7 @@ import {
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
   MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
-  Globe, Linkedin, Calendar, BadgeInfo,
+  Globe, Linkedin, Calendar, BadgeInfo, Phone,
 } from "lucide-react";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 
@@ -31,6 +31,7 @@ interface BrandProfile {
     domain: string | null;
     domain_url: string | null;
     linkedin_url: string | null;
+    phone: string | null;
     industry: string | null;
     employee_count: number | null;
     annual_revenue: number | null;
@@ -95,6 +96,7 @@ interface BrandProfile {
     lastAccountsMadeUpTo: string | null;
     dateOfCreation: string | null;
     checkedAt: string | null;
+    registeredAddress: string | null;
     trafficLight: "green" | "amber" | "red";
   } | null;
   rolloutVelocity: {
@@ -538,8 +540,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <p className="text-sm leading-snug text-foreground/85">{c.description}</p>
             )}
 
-            {/* Quick meta row: website · founded · employees · industry */}
-            {(c.domain_url || c.domain || c.founded_year || c.employee_count || c.industry || c.linkedin_url) && (
+            {/* Quick meta row: website · phone · founded · employees · industry */}
+            {(c.domain_url || c.domain || c.phone || c.founded_year || c.employee_count || c.industry || c.linkedin_url) && (
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                 {(c.domain_url || c.domain) && (
                   <a
@@ -550,6 +552,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   >
                     <Globe className="w-3 h-3" />
                     {c.domain || c.domain_url}
+                  </a>
+                )}
+                {c.phone && (
+                  <a
+                    href={`tel:${c.phone}`}
+                    className="flex items-center gap-1 hover:text-primary transition-colors"
+                  >
+                    <Phone className="w-3 h-3" /> {c.phone}
                   </a>
                 )}
                 {c.linkedin_url && (
@@ -909,7 +919,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <div className="border-t pt-2">
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <Activity className="w-3 h-3" /> Covenant &amp; CH health
+                    <Activity className="w-3 h-3" /> UK entity &amp; covenant
                   </div>
                   <Badge className={
                     covenant.trafficLight === "green" ? "bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]" :
@@ -919,6 +929,32 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     {covenant.trafficLight === "green" ? "Strong" : covenant.trafficLight === "amber" ? "Verify" : "At risk"}
                   </Badge>
                 </div>
+                {/* Registered address + CH number */}
+                {(c.companies_house_number || covenant.registeredAddress) && (
+                  <div className="mb-2 text-xs text-muted-foreground space-y-0.5">
+                    {c.companies_house_number && (
+                      <div className="flex items-center gap-1.5">
+                        <Building2 className="w-3 h-3 shrink-0" />
+                        <span className="text-foreground/70">Reg no.</span>
+                        <a
+                          href={`https://find-and-update.company-information.service.gov.uk/company/${c.companies_house_number}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-mono text-primary hover:underline"
+                        >
+                          {c.companies_house_number}
+                        </a>
+                        <ExternalLink className="w-2.5 h-2.5 text-muted-foreground" />
+                      </div>
+                    )}
+                    {covenant.registeredAddress && (
+                      <div className="flex items-start gap-1.5">
+                        <MapPin className="w-3 h-3 shrink-0 mt-0.5" />
+                        <span>{covenant.registeredAddress}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                   <div>
                     <div className="text-[10px] text-muted-foreground">Status</div>
