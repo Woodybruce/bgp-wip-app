@@ -1615,34 +1615,19 @@ router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async
     const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, req.params.companyId)).limit(1);
     if (!company) return res.status(404).json({ error: "Company not found" });
 
-    const googleKey = process.env.GOOGLE_API_KEY;
-    if (!googleKey) return res.status(400).json({ error: "GOOGLE_API_KEY not configured" });
+    // Companies House search — prefer uk_entity_name if set (e.g. "AFH Stores UK Limited"),
+    // fall back to brand name. Run both if uk_entity_name differs from brand name.
+    const ukEntityName = (company as any).ukEntityName as string | null;
+    const chSearchTerms = ukEntityName && ukEntityName !== company.name
+      ? [ukEntityName, company.name]
+      : [company.name];
 
-    // Google Places Text Search for UK stores
-    const query = `${company.name} store UK`;
-    const placesUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&region=uk&key=${googleKey}`;
-    const placesRes = await fetch(placesUrl, { signal: AbortSignal.timeout(10_000) });
-    if (!placesRes.ok) return res.status(500).json({ error: "Places API error" });
-    const placesData: any = await placesRes.json();
-
-    const stores = (placesData.results || []).slice(0, 10).map((p: any) => ({
-      name: p.name,
-      address: p.formatted_address,
-      lat: p.geometry?.location?.lat,
-      lng: p.geometry?.location?.lng,
-      placeId: p.place_id,
-      businessStatus: p.business_status || "OPERATIONAL",
-      types: p.types || [],
-    }));
-
-    // Use the first London store address to search CH for possible entities
-    const londonStores = stores.filter((s: any) => s.address?.includes("London"));
     const chSuggestions: any[] = [];
-
-    if (company.name) {
+    for (const term of chSearchTerms) {
+      if (!term) continue;
       try {
-        const chSearch = await chFetch(`/search/companies?q=${encodeURIComponent(company.name)}&items_per_page=10`);
-        const chMatches = (chSearch.items || [])
+        const chSearch = await chFetch(`/search/companies?q=${encodeURIComponent(term)}&items_per_page=10`);
+        const matches = (chSearch.items || [])
           .filter((i: any) => i.company_status === "active")
           .slice(0, 5)
           .map((i: any) => ({
@@ -1652,16 +1637,42 @@ router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async
             type: i.company_type,
             address: i.address_snippet,
             dateOfCreation: i.date_of_creation,
+            searchedAs: term,
           }));
-        chSuggestions.push(...chMatches);
+        chSuggestions.push(...matches.filter((m: any) =>
+          !chSuggestions.some((e: any) => e.companyNumber === m.companyNumber)
+        ));
       } catch {
         // CH search failure is non-fatal
       }
     }
 
+    // Google Places Text Search for UK stores (only if GOOGLE_API_KEY set)
+    const googleKey = process.env.GOOGLE_API_KEY;
+    let stores: any[] = [];
+    if (googleKey) {
+      const query = `${ukEntityName || company.name} store UK`;
+      const placesUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(query)}&region=uk&key=${googleKey}`;
+      const placesRes = await fetch(placesUrl, { signal: AbortSignal.timeout(10_000) });
+      if (placesRes.ok) {
+        const placesData: any = await placesRes.json();
+        stores = (placesData.results || []).slice(0, 10).map((p: any) => ({
+          name: p.name,
+          address: p.formatted_address,
+          lat: p.geometry?.location?.lat,
+          lng: p.geometry?.location?.lng,
+          placeId: p.place_id,
+          businessStatus: p.business_status || "OPERATIONAL",
+          types: p.types || [],
+        }));
+      }
+    }
+
+    const londonStores = stores.filter((s: any) => s.address?.includes("London"));
+
     const chData = company.companiesHouseData as any;
     res.json({
-      brand: { id: company.id, name: company.name },
+      brand: { id: company.id, name: company.name, ukEntityName },
       currentChNumber: company.companiesHouseNumber,
       currentChStatus: chData?.profile?.companyStatus || null,
       ukStores: stores,

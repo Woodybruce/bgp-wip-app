@@ -332,6 +332,7 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS merged_into_id VARCHAR`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS merged_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS merged_by TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS uk_entity_name TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_crm_companies_merged_into ON crm_companies(merged_into_id) WHERE merged_into_id IS NOT NULL`,
 
     `CREATE TABLE IF NOT EXISTS dedupe_candidates (

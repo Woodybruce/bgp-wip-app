@@ -463,6 +463,7 @@ export const crmCompanies = pgTable("crm_companies", {
   franchiseActivity: text("franchise_activity"),  // e.g. "UAE master franchise 2023, France 2024"
   hunterFlag: boolean("hunter_flag").default(false), // manually flagged as a hot expansion target
   stockTicker: text("stock_ticker"), // e.g. "JD.L", "NKE", "LULU" — Yahoo Finance ticker for listed brands
+  ukEntityName: text("uk_entity_name"), // UK contracting/operating entity, e.g. "AFH Stores UK Limited"
   agentType: text("agent_type"), // tenant_rep | landlord_rep | investment | null (for non-agents)
   // AI-enrichment provenance — which fields were auto-written vs human
   aiGeneratedFields: jsonb("ai_generated_fields"),

@@ -50,6 +50,7 @@ interface BrandProfile {
     franchise_activity: string | null;
     hunter_flag: boolean;
     stock_ticker: string | null;
+    uk_entity_name: string | null;
     agent_type: string | null;
     ai_generated_fields: Record<string, string> | null;
     last_enriched_at: string | null;
@@ -399,6 +400,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
       franchise_activity: c.franchise_activity || "",
       hunter_flag: c.hunter_flag ?? false,
       stock_ticker: c.stock_ticker || "",
+      uk_entity_name: c.uk_entity_name || "",
       tracking_reason: c.tracking_reason || "",
       agent_type: c.agent_type || "",
       is_tracked_brand: c.is_tracked_brand,
@@ -506,6 +508,18 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <div>
               <Label className="text-xs">Franchise activity abroad</Label>
               <Input value={(form.franchise_activity as string) || ""} onChange={(e) => setForm({ ...form, franchise_activity: e.target.value })} placeholder="e.g. UAE master franchise 2023, France 2024" />
+            </div>
+            <div>
+              <Label className="text-xs">UK contracting entity</Label>
+              <Input
+                value={(form.uk_entity_name as string) || ""}
+                onChange={(e) => setForm({ ...form, uk_entity_name: e.target.value })}
+                placeholder="e.g. AFH Stores UK Limited, Next Retail Ltd"
+              />
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                The legal entity that signs UK leases — often differs from the brand name.
+                Used to search Companies House correctly.
+              </p>
             </div>
             <div>
               <Label className="text-xs">Stock ticker (if listed)</Label>
@@ -906,12 +920,28 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     {covenant.trafficLight === "green" ? "Strong" : covenant.trafficLight === "amber" ? "Verify" : "At risk"}
                   </Badge>
                 </div>
-                {/* Registered address + CH number */}
-                {(c.companies_house_number || covenant.registeredAddress) && (
+                {/* UK entity name + registered address + CH number */}
+                {(c.uk_entity_name || c.companies_house_number || covenant.registeredAddress) && (
                   <div className="mb-2 text-xs text-muted-foreground space-y-0.5">
-                    {c.companies_house_number && (
+                    {c.uk_entity_name && (
                       <div className="flex items-center gap-1.5">
                         <Building2 className="w-3 h-3 shrink-0" />
+                        <span className="font-medium text-foreground/80">{c.uk_entity_name}</span>
+                        <a
+                          href={`https://find-and-update.company-information.service.gov.uk/search?q=${encodeURIComponent(c.uk_entity_name)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[10px] text-primary hover:underline ml-auto"
+                          title="Search Companies House"
+                        >
+                          CH search →
+                        </a>
+                      </div>
+                    )}
+                    {c.companies_house_number && (
+                      <div className="flex items-center gap-1.5">
+                        {!c.uk_entity_name && <Building2 className="w-3 h-3 shrink-0" />}
+                        {c.uk_entity_name && <span className="w-3 h-3 shrink-0" />}
                         <span className="text-foreground/70">Reg no.</span>
                         <a
                           href={`https://find-and-update.company-information.service.gov.uk/company/${c.companies_house_number}`}
@@ -929,6 +959,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                         <MapPin className="w-3 h-3 shrink-0 mt-0.5" />
                         <span>{covenant.registeredAddress}</span>
                       </div>
+                    )}
+                    {!c.uk_entity_name && !c.companies_house_number && (
+                      <button
+                        type="button"
+                        onClick={startEdit}
+                        className="text-[10px] text-amber-600 hover:text-amber-700 hover:underline"
+                      >
+                        + Add UK contracting entity name
+                      </button>
                     )}
                   </div>
                 )}
