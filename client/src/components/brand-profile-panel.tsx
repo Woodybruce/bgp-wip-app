@@ -305,6 +305,21 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "UK entity search failed", description: e.message, variant: "destructive" }),
   });
 
+  const researchStoresMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`);
+      return res.json();
+    },
+    onSuccess: (out: any) => {
+      toast({
+        title: "Store search complete",
+        description: out.found != null ? `${out.found} stores found` : "Finished",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Store search failed", description: e.message, variant: "destructive" }),
+  });
+
   // All companies, used by the representation picker (autocomplete)
   const { data: allCompaniesForPicker = [] } = useQuery<Array<{ id: string; name: string; agent_type: string | null; is_tracked_brand: boolean }>>({
     queryKey: ["/api/crm/companies"],
@@ -1276,40 +1291,59 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             )}
 
             {/* Stores — Google Places list. Auto-researched by the background
-                enrichment scheduler; no manual trigger. */}
-            {stores.length > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                enrichment scheduler; manual trigger available when empty. */}
+            <div className="border-t pt-2">
+              <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-1">
+                <span className="flex items-center gap-1">
                   <MapPin className="w-3 h-3" /> Stores ({stores.length}{c.store_count && c.store_count > 0 && stores.length !== c.store_count ? ` of ~${c.store_count}` : ""})
-                </div>
-                <div className="mb-1.5">
-                  <BrandPortfolioMap stores={stores as any} />
-                </div>
-                <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                  {stores.slice(0, 10).map((s) => (
-                    <div key={s.id} className="text-xs flex items-center gap-1.5 px-1 py-0.5">
-                      <MapPin className={`w-3 h-3 shrink-0 ${s.status === "closed" ? "text-red-500" : s.status === "open" ? "text-emerald-500" : "text-muted-foreground"}`} />
-                      <span className="truncate flex-1">{s.name}</span>
-                      {s.address && <span className="text-[10px] text-muted-foreground truncate max-w-[200px]">{s.address.split(",").slice(-3, -2)[0]?.trim()}</span>}
-                      {s.place_id && (
-                        <a
-                          href={`https://www.google.com/maps/place/?q=place_id:${s.place_id}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="shrink-0 text-muted-foreground hover:text-primary"
-                          title="View on Google Maps"
-                        >
-                          <ExternalLink className="w-2.5 h-2.5" />
-                        </a>
-                      )}
-                    </div>
-                  ))}
-                  {stores.length > 10 && (
-                    <p className="text-[10px] text-muted-foreground pl-1">+{stores.length - 10} more stores</p>
-                  )}
-                </div>
+                </span>
+                <button
+                  onClick={() => researchStoresMutation.mutate()}
+                  disabled={researchStoresMutation.isPending}
+                  className="text-[10px] text-primary hover:underline disabled:opacity-50 flex items-center gap-0.5"
+                  title="Research stores via Google Places"
+                >
+                  <Search className={`w-2.5 h-2.5 ${researchStoresMutation.isPending ? "animate-spin" : ""}`} />
+                  {stores.length === 0 ? "Find stores" : "Re-scan"}
+                </button>
               </div>
-            )}
+              {stores.length > 0 ? (
+                <>
+                  <div className="mb-1.5">
+                    <BrandPortfolioMap stores={stores as any} />
+                  </div>
+                  <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                    {stores.slice(0, 10).map((s) => (
+                      <div key={s.id} className="text-xs flex items-center gap-1.5 px-1 py-0.5">
+                        <MapPin className={`w-3 h-3 shrink-0 ${s.status === "closed" ? "text-red-500" : s.status === "open" ? "text-emerald-500" : "text-muted-foreground"}`} />
+                        <span className="truncate flex-1">{s.name}</span>
+                        {s.address && <span className="text-[10px] text-muted-foreground truncate max-w-[200px]">{s.address.split(",").slice(-3, -2)[0]?.trim()}</span>}
+                        {s.place_id && (
+                          <a
+                            href={`https://www.google.com/maps/place/?q=place_id:${s.place_id}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="shrink-0 text-muted-foreground hover:text-primary"
+                            title="View on Google Maps"
+                          >
+                            <ExternalLink className="w-2.5 h-2.5" />
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                    {stores.length > 10 && (
+                      <p className="text-[10px] text-muted-foreground pl-1">+{stores.length - 10} more stores</p>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="text-xs text-muted-foreground italic px-1 py-1">
+                  {researchStoresMutation.isPending
+                    ? "Searching Google Places…"
+                    : "No stores researched yet. Click Find stores to search now, or wait for the background enrichment cycle."}
+                </div>
+              )}
+            </div>
 
             {/* KYC tile */}
             {(c.kyc_status || data.kyc.doc_count > 0 || c.aml_risk_level) && (
