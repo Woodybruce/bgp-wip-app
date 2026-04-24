@@ -380,6 +380,28 @@ import { pool } from "./db";
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS formatted_address TEXT`,
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION`,
     `ALTER TABLE property_pathway_runs ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION`,
+
+    // Tenant Rep status board
+    `CREATE TABLE IF NOT EXISTS tenant_rep_searches (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      client_name TEXT NOT NULL,
+      company_id VARCHAR,
+      contact_id VARCHAR,
+      deal_id VARCHAR,
+      status TEXT NOT NULL DEFAULT 'Brief Received',
+      target_use TEXT[],
+      size_min INTEGER,
+      size_max INTEGER,
+      target_locations TEXT[],
+      budget_min INTEGER,
+      budget_max INTEGER,
+      next_action TEXT,
+      next_action_date TEXT,
+      notes TEXT,
+      assigned_to TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
   ];
 
   let ok = 0, skipped = 0;
