@@ -1604,9 +1604,112 @@ Format your response as JSON:
   }
 });
 
+// ─── Scrape UK legal entity from brand website ────────────────────────────
+// UK law (Companies Act 2006) requires all businesses to display their
+// registered company name on their website — usually footer, terms, or
+// legal pages. We try those pages in order and extract the entity name
+// and/or Companies House number using pattern matching.
+async function scrapeUkEntityFromWebsite(domain: string): Promise<{
+  entityName: string | null;
+  chNumber: string | null;
+  sourceUrl: string | null;
+}> {
+  const base = domain.startsWith("http") ? domain.replace(/\/$/, "") : `https://${domain}`;
+
+  // Pages most likely to contain legal boilerplate, in priority order
+  const pages = [
+    "",                         // homepage footer
+    "/terms",
+    "/terms-and-conditions",
+    "/terms-of-use",
+    "/terms-of-service",
+    "/legal",
+    "/legal-notices",
+    "/legal-information",
+    "/privacy",
+    "/privacy-policy",
+    "/contact",
+    "/contact-us",
+    "/about",
+    "/about-us",
+    "/help",
+    "/sitemap",
+  ];
+
+  // Patterns that match "XXX Limited/Ltd/plc/LLP registered in England/Wales"
+  const ENTITY_PATTERNS: RegExp[] = [
+    /([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))\s+(?:is\s+)?(?:a\s+company\s+)?registered\s+in\s+England/i,
+    /contracting\s+party:?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s+\((?:company\s+)?(?:registered\s+)?(?:number|no\.?)/i,
+    /registered\s+company(?:\s+name)?:?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /©\s*(?:\d{4}[-–]\d{2,4}|\d{4})\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    /trading\s+(?:as|name):?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+  ];
+
+  const CH_PATTERNS: RegExp[] = [
+    /company\s+(?:registration\s+)?(?:number|no\.?|#):?\s*(0?\d{7,8})/i,
+    /registered\s+(?:company\s+)?(?:number|no\.?):?\s*(0?\d{7,8})/i,
+    /\((?:company\s+)?(?:number|no\.?)\s*(0?\d{7,8})\)/i,
+    /(?:CRN|CRN:)\s*(0?\d{7,8})/i,
+  ];
+
+  for (const page of pages) {
+    const url = `${base}${page}`;
+    try {
+      const resp = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; BGP-Dashboard/1.0; legal-entity-lookup)" },
+        signal: AbortSignal.timeout(6000),
+        redirect: "follow",
+      });
+      if (!resp.ok) continue;
+      const ct = resp.headers.get("content-type") || "";
+      if (!ct.includes("html") && !ct.includes("text")) continue;
+
+      const html = await resp.text();
+      // Strip scripts/styles, collapse tags to spaces, decode basic entities
+      const text = html
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/&copy;/g, "©")
+        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+        .replace(/&[a-z]+;/g, " ")
+        .replace(/\s+/g, " ");
+
+      let entityName: string | null = null;
+      let chNumber: string | null = null;
+
+      for (const pat of ENTITY_PATTERNS) {
+        const m = text.match(pat);
+        if (m?.[1]) {
+          entityName = m[1].trim().replace(/\s+/g, " ");
+          // Sanity-check: shouldn't be longer than 80 chars or contain obvious junk
+          if (entityName.length > 80 || /[\[\]<>{}|]/.test(entityName)) entityName = null;
+          else break;
+        }
+      }
+      for (const pat of CH_PATTERNS) {
+        const m = text.match(pat);
+        if (m?.[1]) {
+          chNumber = m[1].trim().padStart(8, "0");
+          break;
+        }
+      }
+
+      if (entityName || chNumber) {
+        console.log(`[find-uk-entity] scraped from ${url}: "${entityName}" / ${chNumber}`);
+        return { entityName, chNumber, sourceUrl: url };
+      }
+    } catch (err: any) {
+      // Timeout or fetch error — try next page
+      console.log(`[find-uk-entity] scrape failed ${url}: ${err.message}`);
+    }
+  }
+
+  return { entityName: null, chNumber: null, sourceUrl: null };
+}
+
 // ─── Find active UK operating entity for a brand ───────────────────────────
-// For international brands where the linked CH entity is dissolved or wrong,
-// searches Google Places for UK stores to identify the correct operating entity.
 router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async (req, res) => {
   try {
     const { db } = await import("./db");
@@ -1615,9 +1718,24 @@ router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async
     const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, req.params.companyId)).limit(1);
     if (!company) return res.status(404).json({ error: "Company not found" });
 
-    // Companies House search — prefer uk_entity_name if set (e.g. "AFH Stores UK Limited"),
-    // fall back to brand name. Run both if uk_entity_name differs from brand name.
-    const ukEntityName = (company as any).ukEntityName as string | null;
+    // Step 1: Scrape the brand's website for UK legal entity name
+    let ukEntityName = (company as any).ukEntityName as string | null;
+    let scraped: { entityName: string | null; chNumber: string | null; sourceUrl: string | null } = { entityName: null, chNumber: null, sourceUrl: null };
+
+    const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
+    if (domain) {
+      scraped = await scrapeUkEntityFromWebsite(domain);
+      // Auto-save scraped entity name if we don't already have one stored
+      if (scraped.entityName && !ukEntityName) {
+        ukEntityName = scraped.entityName;
+        await db.update(crmCompanies)
+          .set({ ukEntityName } as any)
+          .where(eq(crmCompanies.id, company.id))
+          .catch(() => {});
+      }
+    }
+
+    // Companies House search — use scraped/saved uk_entity_name first, then brand name
     const chSearchTerms = ukEntityName && ukEntityName !== company.name
       ? [ukEntityName, company.name]
       : [company.name];
@@ -1673,6 +1791,7 @@ router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async
     const chData = company.companiesHouseData as any;
     res.json({
       brand: { id: company.id, name: company.name, ukEntityName },
+      scraped,
       currentChNumber: company.companiesHouseNumber,
       currentChStatus: chData?.profile?.companyStatus || null,
       ukStores: stores,
