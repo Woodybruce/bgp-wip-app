@@ -16,6 +16,7 @@ import {
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
   MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
+  Globe, Linkedin, Calendar, BadgeInfo,
 } from "lucide-react";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 
@@ -29,6 +30,11 @@ interface BrandProfile {
     companies_house_data: any;
     domain: string | null;
     domain_url: string | null;
+    linkedin_url: string | null;
+    industry: string | null;
+    employee_count: number | null;
+    annual_revenue: number | null;
+    founded_year: number | null;
     is_tracked_brand: boolean;
     tracking_reason: string | null;
     brand_group_id: string | null;
@@ -527,6 +533,59 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           </div>
         ) : (
           <>
+            {/* Company description — shown when concept pitch is absent or as supplement */}
+            {c.description && !c.concept_pitch && (
+              <p className="text-sm leading-snug text-foreground/85">{c.description}</p>
+            )}
+
+            {/* Quick meta row: website · founded · employees · industry */}
+            {(c.domain_url || c.domain || c.founded_year || c.employee_count || c.industry || c.linkedin_url) && (
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                {(c.domain_url || c.domain) && (
+                  <a
+                    href={c.domain_url || `https://${c.domain}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 hover:text-primary transition-colors"
+                  >
+                    <Globe className="w-3 h-3" />
+                    {c.domain || c.domain_url}
+                  </a>
+                )}
+                {c.linkedin_url && (
+                  <a
+                    href={c.linkedin_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 hover:text-primary transition-colors"
+                    title="LinkedIn"
+                  >
+                    <Linkedin className="w-3 h-3" /> LinkedIn
+                  </a>
+                )}
+                {c.founded_year && (
+                  <span className="flex items-center gap-1">
+                    <Calendar className="w-3 h-3" /> Est. {c.founded_year}
+                  </span>
+                )}
+                {c.employee_count && (
+                  <span className="flex items-center gap-1">
+                    <Users className="w-3 h-3" />
+                    {c.employee_count >= 10000
+                      ? `${Math.round(c.employee_count / 1000)}k+ employees`
+                      : c.employee_count >= 1000
+                        ? `${(c.employee_count / 1000).toFixed(1)}k employees`
+                        : `${c.employee_count} employees`}
+                  </span>
+                )}
+                {c.industry && (
+                  <span className="flex items-center gap-1">
+                    <BadgeInfo className="w-3 h-3" /> {c.industry}
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* Concept pitch */}
             {c.concept_pitch && (
               <div>
@@ -534,6 +593,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <FileText className="w-3 h-3" /> Concept {aiFields.concept_pitch && <AiChip />}
                 </div>
                 <p className="text-sm leading-snug">{c.concept_pitch}</p>
+                {c.description && (
+                  <p className="text-xs text-muted-foreground mt-1 leading-snug">{c.description}</p>
+                )}
               </div>
             )}
 
@@ -652,6 +714,18 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <div className="text-sm">{c.franchise_activity}</div>
                 </div>
               )}
+              {c.annual_revenue && c.annual_revenue > 0 && (
+                <div>
+                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                    <PoundSterling className="w-3 h-3" /> Revenue
+                  </div>
+                  <div className="font-semibold">
+                    {c.annual_revenue >= 1_000_000_000
+                      ? `$${(c.annual_revenue / 1_000_000_000).toFixed(1)}B`
+                      : `$${(c.annual_revenue / 1_000_000).toFixed(0)}M`}
+                  </div>
+                </div>
+              )}
               {c.hunter_flag && (
                 <div className="col-span-2">
                   <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-[10px] flex items-center gap-1 w-fit">
@@ -659,11 +733,21 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   </Badge>
                 </div>
               )}
-              {c.stock_ticker && (
+              {c.stock_ticker ? (
                 <div className="col-span-2">
                   <StockSnapshotCard companyId={c.id} ticker={c.stock_ticker} />
                 </div>
-              )}
+              ) : c.is_tracked_brand ? (
+                <div className="col-span-2">
+                  <button
+                    type="button"
+                    onClick={startEdit}
+                    className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-0.5 underline-offset-2 hover:underline"
+                  >
+                    + Add stock ticker (e.g. ANF, NKE, JD.L)
+                  </button>
+                </div>
+              ) : null}
             </div>
 
             {c.tracking_reason && (
@@ -1337,10 +1421,24 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   </div>
                 </>
               ) : (
-                <div className="text-xs text-muted-foreground italic px-1 py-1">
-                  {researchStoresMutation.isPending
-                    ? "Searching Google Places…"
-                    : "No stores researched yet. Click Find stores to search now, or wait for the background enrichment cycle."}
+                <div className="text-xs text-muted-foreground px-1 py-1">
+                  {researchStoresMutation.isPending ? (
+                    <span className="italic">Searching Google Places…</span>
+                  ) : c.store_count && c.store_count > 0 ? (
+                    <span>
+                      Brand has ~{c.store_count.toLocaleString()} stores globally. Click{" "}
+                      <button
+                        type="button"
+                        onClick={() => researchStoresMutation.mutate()}
+                        className="text-primary hover:underline"
+                      >
+                        Find stores
+                      </button>{" "}
+                      to pull UK locations from Google Places.
+                    </span>
+                  ) : (
+                    <span className="italic">No stores researched yet. Click Find stores to search now.</span>
+                  )}
                 </div>
               )}
             </div>

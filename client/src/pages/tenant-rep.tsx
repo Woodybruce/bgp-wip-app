@@ -345,15 +345,17 @@ export default function TenantRep() {
     queryFn: () => fetch("/api/tenant-rep/searches", { headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` } }).then(r => r.json()),
   });
 
-  const { data: companies = [] } = useQuery<CrmCompany[]>({
-    queryKey: ["/api/companies"],
-    queryFn: () => fetch("/api/companies", { headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` } }).then(r => r.json()),
+  const { data: companiesRes } = useQuery<{ data: CrmCompany[] } | CrmCompany[]>({
+    queryKey: ["/api/crm/companies"],
+    queryFn: () => fetch("/api/crm/companies?limit=500", { headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` } }).then(r => r.json()),
   });
+  const companies: CrmCompany[] = Array.isArray(companiesRes) ? companiesRes : (companiesRes as any)?.data ?? [];
 
-  const { data: contacts = [] } = useQuery<CrmContact[]>({
-    queryKey: ["/api/contacts"],
-    queryFn: () => fetch("/api/contacts", { headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` } }).then(r => r.json()),
+  const { data: contactsRes } = useQuery<{ data: CrmContact[] } | CrmContact[]>({
+    queryKey: ["/api/crm/contacts"],
+    queryFn: () => fetch("/api/crm/contacts?limit=500", { headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` } }).then(r => r.json()),
   });
+  const contacts: CrmContact[] = Array.isArray(contactsRes) ? contactsRes : (contactsRes as any)?.data ?? [];
 
   const createMutation = useMutation({
     mutationFn: (data: Partial<FormState>) => apiRequest("POST", "/api/tenant-rep/searches", data),
