@@ -29,13 +29,32 @@ export interface StockSnapshot {
   };
 }
 
+export interface TickerSuggestion {
+  symbol: string;
+  shortName: string | null;
+  exchange: string | null;
+  quoteType: string | null;
+}
+
+export interface PricePoint {
+  date: string;   // ISO date
+  close: number;
+}
+
 interface CacheEntry {
   data: StockSnapshot | null;
   expiresAt: number;
 }
 
+interface HistoryCacheEntry {
+  data: PricePoint[];
+  expiresAt: number;
+}
+
 const CACHE = new Map<string, CacheEntry>();
+const HISTORY_CACHE = new Map<string, HistoryCacheEntry>();
 const TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const HISTORY_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 // Rough FX — close enough for bucketing by cap size
 const FX_TO_GBP: Record<string, number> = {
@@ -55,13 +74,9 @@ function fxToGBP(amount: number | null, currency: string | null): number | null 
 
 async function fetchFromYahoo(ticker: string): Promise<StockSnapshot | null> {
   try {
-    // Yahoo v7 quote endpoint — fastest, returns everything we need
     const url = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(ticker)}`;
     const resp = await fetch(url, {
-      headers: {
-        // Yahoo sometimes blocks requests without a UA
-        "User-Agent": "Mozilla/5.0 (compatible; BGP-Dashboard/1.0)",
-      },
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; BGP-Dashboard/1.0)" },
     });
     if (!resp.ok) {
       console.warn(`[stock-price] Yahoo returned ${resp.status} for ${ticker}`);
@@ -123,8 +138,7 @@ export async function getStockSnapshot(ticker: string): Promise<StockSnapshot | 
 }
 
 /**
- * Batch lookup. Fetches up to 50 tickers per Yahoo call (its symbols param
- * accepts comma-separated). Still honours the per-ticker cache.
+ * Batch lookup. Fetches up to 50 tickers per Yahoo call.
  */
 export async function getStockSnapshots(tickers: string[]): Promise<Map<string, StockSnapshot>> {
   const result = new Map<string, StockSnapshot>();
@@ -143,7 +157,6 @@ export async function getStockSnapshots(tickers: string[]): Promise<Map<string, 
     }
   }
 
-  // Chunks of 50
   for (let i = 0; i < toFetch.length; i += 50) {
     const chunk = toFetch.slice(i, i + 50);
     try {
@@ -153,7 +166,6 @@ export async function getStockSnapshots(tickers: string[]): Promise<Map<string, 
       });
       if (!resp.ok) {
         console.warn(`[stock-price] batch ${i}-${i + chunk.length} returned ${resp.status}`);
-        // Cache misses as null for shorter period so we retry sooner
         chunk.forEach(k => CACHE.set(k, { data: null, expiresAt: now + 10 * 60 * 1000 }));
         continue;
       }
@@ -205,4 +217,83 @@ export async function getStockSnapshots(tickers: string[]): Promise<Map<string, 
   }
 
   return result;
+}
+
+/**
+ * Search Yahoo Finance for ticker suggestions by company name.
+ * Returns up to 6 EQUITY results — enough to show a small picker.
+ */
+export async function searchTicker(name: string): Promise<TickerSuggestion[]> {
+  if (!name || !name.trim()) return [];
+  try {
+    const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(name)}&quotesCount=8&newsCount=0&enableFuzzyQuery=false`;
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; BGP-Dashboard/1.0)" },
+    });
+    if (!resp.ok) return [];
+    const json: any = await resp.json();
+    const quotes: any[] = json?.quotes ?? [];
+    return quotes
+      .filter((q: any) => q.quoteType === "EQUITY")
+      .slice(0, 6)
+      .map((q: any) => ({
+        symbol: q.symbol,
+        shortName: q.shortname ?? q.longname ?? null,
+        exchange: q.exchange ?? null,
+        quoteType: q.quoteType ?? null,
+      }));
+  } catch (err: any) {
+    console.warn(`[stock-price] search failed for "${name}": ${err.message}`);
+    return [];
+  }
+}
+
+/**
+ * Fetch 3-month daily closing prices for a ticker.
+ * Used to render a mini price chart in the brand profile.
+ * Cached 4h.
+ */
+export async function getHistoricalPrices(ticker: string): Promise<PricePoint[]> {
+  if (!ticker || !ticker.trim()) return [];
+  const key = ticker.trim().toUpperCase();
+  const now = Date.now();
+
+  const cached = HISTORY_CACHE.get(key);
+  if (cached && cached.expiresAt > now) return cached.data;
+
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(key)}?range=3mo&interval=1d&includePrePost=false`;
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; BGP-Dashboard/1.0)" },
+    });
+    if (!resp.ok) {
+      console.warn(`[stock-price] history ${resp.status} for ${key}`);
+      HISTORY_CACHE.set(key, { data: [], expiresAt: now + 15 * 60 * 1000 });
+      return [];
+    }
+    const json: any = await resp.json();
+    const result = json?.chart?.result?.[0];
+    if (!result) {
+      HISTORY_CACHE.set(key, { data: [], expiresAt: now + 15 * 60 * 1000 });
+      return [];
+    }
+    const timestamps: number[] = result.timestamp ?? [];
+    const closes: number[] = result.indicators?.quote?.[0]?.close ?? [];
+    const points: PricePoint[] = [];
+    for (let i = 0; i < timestamps.length; i++) {
+      const c = closes[i];
+      if (typeof c === "number" && isFinite(c)) {
+        points.push({
+          date: new Date(timestamps[i] * 1000).toISOString().slice(0, 10),
+          close: c,
+        });
+      }
+    }
+    HISTORY_CACHE.set(key, { data: points, expiresAt: now + HISTORY_TTL_MS });
+    return points;
+  } catch (err: any) {
+    console.warn(`[stock-price] history fetch failed for ${key}: ${err.message}`);
+    HISTORY_CACHE.set(key, { data: [], expiresAt: now + 15 * 60 * 1000 });
+    return [];
+  }
 }

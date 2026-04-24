@@ -695,7 +695,7 @@ router.delete("/api/brand/signals/:id", requireAuth, async (req: Request, res: R
   }
 });
 
-// ─── Stock snapshot for a brand (via Yahoo Finance) ──────────────────────
+// ─── Stock snapshot + 3-month price history for a brand ─────────────────
 router.get("/api/brand/:companyId/stock", requireAuth, async (req: Request, res: Response) => {
   try {
     const { companyId } = req.params;
@@ -704,10 +704,31 @@ router.get("/api/brand/:companyId/stock", requireAuth, async (req: Request, res:
       [companyId]
     );
     const ticker = rows[0]?.stock_ticker;
-    if (!ticker) return res.json({ snapshot: null });
-    const { getStockSnapshot } = await import("./stock-price");
-    const snapshot = await getStockSnapshot(ticker);
-    res.json({ snapshot });
+    if (!ticker) return res.json({ snapshot: null, history: [] });
+    const { getStockSnapshot, getHistoricalPrices } = await import("./stock-price");
+    const [snapshot, history] = await Promise.all([
+      getStockSnapshot(ticker),
+      getHistoricalPrices(ticker),
+    ]);
+    res.json({ snapshot, history });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Ticker auto-suggest by brand name ───────────────────────────────────
+router.get("/api/brand/:companyId/ticker-suggest", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { companyId } = req.params;
+    const { rows } = await pool.query(
+      `SELECT name FROM crm_companies WHERE id = $1`,
+      [companyId]
+    );
+    const name = rows[0]?.name;
+    if (!name) return res.json({ suggestions: [] });
+    const { searchTicker } = await import("./stock-price");
+    const suggestions = await searchTicker(name);
+    res.json({ suggestions });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

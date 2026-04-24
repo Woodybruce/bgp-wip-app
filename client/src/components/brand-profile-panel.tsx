@@ -749,13 +749,10 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
               ) : c.is_tracked_brand ? (
                 <div className="col-span-2">
-                  <button
-                    type="button"
-                    onClick={startEdit}
-                    className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-0.5 underline-offset-2 hover:underline"
-                  >
-                    + Add stock ticker (e.g. ANF, NKE, JD.L)
-                  </button>
+                  <TickerSuggestPicker
+                    companyId={c.id}
+                    onSelect={(ticker) => patchMutation.mutate({ stock_ticker: ticker })}
+                  />
                 </div>
               ) : null}
             </div>
@@ -1640,22 +1637,57 @@ function FlagshipImage({ companyId }: { companyId: string }) {
   );
 }
 
-// ─── Stock snapshot card (Yahoo Finance) ────────────────────────────────
+// ─── Mini SVG price chart ────────────────────────────────────────────────
+function MiniPriceChart({ points, width = 280, height = 56 }: { points: Array<{ close: number }>; width?: number; height?: number }) {
+  if (points.length < 2) return null;
+  const closes = points.map(p => p.close);
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const span = max - min || 1;
+  const pad = 4;
+  const w = width - pad * 2;
+  const h = height - pad * 2;
+  const step = w / (closes.length - 1);
+  const toX = (i: number) => pad + i * step;
+  const toY = (v: number) => pad + h - ((v - min) / span) * h;
+  const pathD = closes.map((v, i) => `${i === 0 ? "M" : "L"} ${toX(i).toFixed(1)} ${toY(v).toFixed(1)}`).join(" ");
+  const areaD = `${pathD} L ${toX(closes.length - 1).toFixed(1)} ${(pad + h).toFixed(1)} L ${pad} ${(pad + h).toFixed(1)} Z`;
+  const isUp = closes[closes.length - 1] >= closes[0];
+  const stroke = isUp ? "#10b981" : "#ef4444";
+  const fillStart = isUp ? "#10b98122" : "#ef444422";
+
+  return (
+    <svg width="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="block">
+      <defs>
+        <linearGradient id="chart-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={fillStart} />
+          <stop offset="100%" stopColor="transparent" />
+        </linearGradient>
+      </defs>
+      <path d={areaD} fill="url(#chart-fill)" />
+      <path d={pathD} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// ─── Stock snapshot card (Yahoo Finance) with price chart ────────────────
 function StockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: string }) {
-  const { data } = useQuery<{ snapshot: any | null }>({
+  const { data, isLoading } = useQuery<{ snapshot: any | null; history: Array<{ date: string; close: number }> }>({
     queryKey: ["/api/brand", companyId, "stock"],
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/brand/${companyId}/stock`);
       return res.json();
     },
-    staleTime: 6 * 60 * 60 * 1000,
+    staleTime: 4 * 60 * 60 * 1000,
   });
 
   const s = data?.snapshot;
-  if (!s) {
+  const history = data?.history ?? [];
+
+  if (isLoading || !s) {
     return (
-      <div className="rounded border bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground flex items-center gap-1">
-        <TrendingUp className="w-3 h-3" /> {ticker} — loading…
+      <div className="rounded border bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground flex items-center gap-1 animate-pulse">
+        <TrendingUp className="w-3 h-3" /> {ticker} — fetching…
       </div>
     );
   }
@@ -1666,27 +1698,102 @@ function StockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: s
     : s.marketCapGBP >= 1_000_000_000 ? `£${(s.marketCapGBP / 1_000_000_000).toFixed(1)}bn`
     : s.marketCapGBP >= 1_000_000 ? `£${(s.marketCapGBP / 1_000_000).toFixed(0)}m`
     : `£${(s.marketCapGBP / 1_000).toFixed(0)}k`;
-  const priceLabel = s.price != null ? `${s.currency === "GBp" ? "p" : s.currency === "GBP" ? "£" : s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : ""}${s.price.toFixed(2)}` : "—";
+  const currencySymbol = s.currency === "GBp" ? "p" : s.currency === "GBP" ? "£" : s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "";
+  const priceLabel = s.price != null ? `${currencySymbol}${s.price.toFixed(2)}` : "—";
 
   return (
-    <div className="rounded border bg-muted/30 px-2.5 py-1.5 text-xs">
-      <div className="flex items-center justify-between gap-2">
+    <div className="rounded border bg-muted/30 overflow-hidden text-xs">
+      {/* Header row */}
+      <div className="flex items-center justify-between gap-2 px-2.5 pt-2 pb-1">
         <div className="flex items-center gap-1.5 min-w-0">
           <TrendingUp className="w-3 h-3 text-muted-foreground shrink-0" />
           <span className="font-mono font-semibold">{s.ticker}</span>
           {s.exchange && <span className="text-[10px] text-muted-foreground truncate">· {s.exchange}</span>}
         </div>
-        <span className="font-medium">{priceLabel}</span>
+        <span className="font-semibold tabular-nums">{priceLabel}</span>
       </div>
-      <div className="flex items-center gap-3 mt-1 text-[11px]">
+      {/* Stats row */}
+      <div className="flex items-center gap-3 px-2.5 pb-1.5 text-[11px]">
         {chg != null && (
-          <span className={chgColor}>
+          <span className={`font-medium ${chgColor}`}>
             {chg >= 0 ? "+" : ""}{chg.toFixed(1)}% YoY
           </span>
         )}
-        {capLabel && <span className="text-muted-foreground">Cap: {capLabel}</span>}
-        {typeof s.peRatio === "number" && <span className="text-muted-foreground">P/E: {s.peRatio.toFixed(1)}</span>}
+        {capLabel && <span className="text-muted-foreground">Cap {capLabel}</span>}
+        {typeof s.peRatio === "number" && <span className="text-muted-foreground">P/E {s.peRatio.toFixed(1)}</span>}
+        {s.fiftyTwoWeekHigh != null && s.fiftyTwoWeekLow != null && (
+          <span className="text-muted-foreground ml-auto text-[10px]">
+            {currencySymbol}{s.fiftyTwoWeekLow.toFixed(0)}–{currencySymbol}{s.fiftyTwoWeekHigh.toFixed(0)} 52w
+          </span>
+        )}
       </div>
+      {/* Price chart */}
+      {history.length >= 5 && (
+        <div className="px-1 pb-1">
+          <MiniPriceChart points={history} height={52} />
+          <div className="flex justify-between text-[9px] text-muted-foreground px-1 mt-0.5">
+            <span>{history[0]?.date?.slice(5)}</span>
+            <span>3 months</span>
+            <span>{history[history.length - 1]?.date?.slice(5)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Ticker auto-suggest picker ───────────────────────────────────────────
+function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSelect: (ticker: string) => void }) {
+  const [open, setOpen] = useState(false);
+
+  const { data, isLoading } = useQuery<{ suggestions: Array<{ symbol: string; shortName: string | null; exchange: string | null }> }>({
+    queryKey: ["/api/brand", companyId, "ticker-suggest"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/brand/${companyId}/ticker-suggest`);
+      return res.json();
+    },
+    enabled: open,
+    staleTime: 30 * 60 * 1000,
+  });
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1 underline-offset-2 hover:underline"
+      >
+        <Search className="w-2.5 h-2.5" /> Find stock ticker
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded border bg-background shadow-sm p-1.5 space-y-0.5">
+      <div className="text-[10px] text-muted-foreground px-1 pb-0.5">Select the correct listing:</div>
+      {isLoading && <div className="text-[11px] text-muted-foreground px-1 py-0.5 animate-pulse">Searching Yahoo Finance…</div>}
+      {!isLoading && data?.suggestions?.length === 0 && (
+        <div className="text-[11px] text-muted-foreground px-1 italic">No public listings found</div>
+      )}
+      {data?.suggestions?.map((s) => (
+        <button
+          key={s.symbol}
+          type="button"
+          onClick={() => { onSelect(s.symbol); setOpen(false); }}
+          className="w-full text-left flex items-center gap-2 px-1.5 py-1 rounded hover:bg-muted text-xs"
+        >
+          <span className="font-mono font-semibold text-primary">{s.symbol}</span>
+          <span className="truncate text-muted-foreground flex-1">{s.shortName}</span>
+          {s.exchange && <span className="text-[10px] text-muted-foreground shrink-0">{s.exchange}</span>}
+        </button>
+      ))}
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        className="text-[10px] text-muted-foreground hover:text-foreground px-1 pt-0.5"
+      >
+        Cancel
+      </button>
     </div>
   );
 }
