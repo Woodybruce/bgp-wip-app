@@ -342,29 +342,42 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
-    // Decision-maker contacts — anyone with a senior or property-focused role.
+    // Decision-maker contacts — all contacts with enrichment_source, role, tier ranking.
+    // Returned unsorted limit 20; client tiers into Store Dev / C-suite / Other.
     const decisionMakersQ = pool.query(
-      `SELECT id, name, role, email, phone, linkedin_url, avatar_url, last_enriched_at
+      `SELECT id, name, role, email, phone, linkedin_url, avatar_url, last_enriched_at, enrichment_source,
+              CASE
+                WHEN role ILIKE '%property%' OR role ILIKE '%real estate%' OR role ILIKE '%estates%'
+                  OR role ILIKE '%acquisition%' OR role ILIKE '%expansion%' OR role ILIKE '%store%'
+                  OR role ILIKE '%uk director%' OR role ILIKE '%uk manager%' OR role ILIKE '%country manager%'
+                THEN 1
+                WHEN role ILIKE '%ceo%' OR role ILIKE '%chief executive%' OR role ILIKE '%managing director%'
+                  OR role ILIKE '%coo%' OR role ILIKE '%cfo%' OR role ILIKE '%cmo%'
+                  OR role ILIKE '%chief operat%' OR role ILIKE '%chief financial%' OR role ILIKE '%chief marketing%'
+                  OR role ILIKE '%founder%' OR role ILIKE '%president%'
+                THEN 2
+                WHEN role ILIKE '%director%' OR role ILIKE '%head of%' OR role ILIKE '%vp %' OR role ILIKE '%vice president%'
+                THEN 3
+                ELSE 4
+              END AS tier
          FROM crm_contacts
         WHERE company_id = $1
-          AND role IS NOT NULL
-          AND (
-            role ILIKE '%property%' OR role ILIKE '%real estate%' OR role ILIKE '%estates%'
-            OR role ILIKE '%acquisition%' OR role ILIKE '%development%' OR role ILIKE '%retail%'
-            OR role ILIKE '%chief%' OR role ILIKE '%ceo%' OR role ILIKE '%coo%' OR role ILIKE '%cfo%'
-            OR role ILIKE '%director%' OR role ILIKE '%head of%' OR role ILIKE '%vp %' OR role ILIKE '%president%'
-          )
         ORDER BY
           CASE
-            WHEN role ILIKE '%head of%property%' OR role ILIKE '%property director%' THEN 1
-            WHEN role ILIKE '%property%' OR role ILIKE '%estates%' OR role ILIKE '%acquisition%' THEN 2
-            WHEN role ILIKE '%ceo%' OR role ILIKE '%chief executive%' THEN 3
-            WHEN role ILIKE '%coo%' OR role ILIKE '%chief operat%' THEN 4
-            WHEN role ILIKE '%cfo%' OR role ILIKE '%chief financial%' THEN 5
-            ELSE 9
+            WHEN role ILIKE '%property%' OR role ILIKE '%real estate%' OR role ILIKE '%estates%'
+              OR role ILIKE '%acquisition%' OR role ILIKE '%expansion%' OR role ILIKE '%store%'
+              OR role ILIKE '%uk director%' OR role ILIKE '%uk manager%' OR role ILIKE '%country manager%'
+            THEN 1
+            WHEN role ILIKE '%ceo%' OR role ILIKE '%chief executive%' OR role ILIKE '%managing director%'
+              OR role ILIKE '%founder%' OR role ILIKE '%president%'
+            THEN 2
+            WHEN role ILIKE '%director%' OR role ILIKE '%head of%' OR role ILIKE '%vp %'
+            THEN 3
+            ELSE 4
           END,
+          last_enriched_at DESC NULLS LAST,
           name ASC
-        LIMIT 6`,
+        LIMIT 20`,
       [companyId]
     );
 

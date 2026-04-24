@@ -1609,12 +1609,11 @@ Format your response as JSON:
 // searches Google Places for UK stores to identify the correct operating entity.
 router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT id, name, domain, companies_house_number, companies_house_data FROM crm_companies WHERE id = $1`,
-      [req.params.companyId]
-    );
-    if (!rows[0]) return res.status(404).json({ error: "Company not found" });
-    const company = rows[0];
+    const { db } = await import("./db");
+    const { crmCompanies } = await import("../shared/schema");
+    const { eq } = await import("drizzle-orm");
+    const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, req.params.companyId)).limit(1);
+    if (!company) return res.status(404).json({ error: "Company not found" });
 
     const googleKey = process.env.GOOGLE_API_KEY;
     if (!googleKey) return res.status(400).json({ error: "GOOGLE_API_KEY not configured" });
@@ -1660,10 +1659,11 @@ router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async
       }
     }
 
+    const chData = company.companiesHouseData as any;
     res.json({
       brand: { id: company.id, name: company.name },
-      currentChNumber: company.companies_house_number,
-      currentChStatus: company.companies_house_data?.profile?.companyStatus || null,
+      currentChNumber: company.companiesHouseNumber,
+      currentChStatus: chData?.profile?.companyStatus || null,
       ukStores: stores,
       londonStoreCount: londonStores.length,
       activeChCandidates: chSuggestions,

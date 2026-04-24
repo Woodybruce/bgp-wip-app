@@ -158,6 +158,8 @@ interface BrandProfile {
     linkedin_url: string | null;
     avatar_url: string | null;
     last_enriched_at: string | null;
+    enrichment_source: string | null;
+    tier: number;
   }>;
   leaseEvents: Array<{
     id: string;
@@ -535,92 +537,70 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           </div>
         ) : (
           <>
-            {/* Company description — shown when concept pitch is absent or as supplement */}
-            {c.description && !c.concept_pitch && (
-              <p className="text-sm leading-snug text-foreground/85">{c.description}</p>
-            )}
-
-            {/* Quick meta row: website · phone · founded · employees · industry */}
-            {(c.domain_url || c.domain || c.phone || c.founded_year || c.employee_count || c.industry || c.linkedin_url) && (
-              <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-                {(c.domain_url || c.domain) && (
-                  <a
-                    href={c.domain_url || `https://${c.domain}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1 hover:text-primary transition-colors"
-                  >
-                    <Globe className="w-3 h-3" />
-                    {c.domain || c.domain_url}
-                  </a>
-                )}
-                {c.phone && (
-                  <a
-                    href={`tel:${c.phone}`}
-                    className="flex items-center gap-1 hover:text-primary transition-colors"
-                  >
-                    <Phone className="w-3 h-3" /> {c.phone}
-                  </a>
-                )}
-                {c.linkedin_url && (
-                  <a
-                    href={c.linkedin_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1 hover:text-primary transition-colors"
-                    title="LinkedIn"
-                  >
-                    <Linkedin className="w-3 h-3" /> LinkedIn
-                  </a>
-                )}
-                {c.founded_year && (
-                  <span className="flex items-center gap-1">
-                    <Calendar className="w-3 h-3" /> Est. {c.founded_year}
-                  </span>
-                )}
-                {c.employee_count && (
-                  <span className="flex items-center gap-1">
-                    <Users className="w-3 h-3" />
-                    {c.employee_count >= 10000
-                      ? `${Math.round(c.employee_count / 1000)}k+ employees`
-                      : c.employee_count >= 1000
-                        ? `${(c.employee_count / 1000).toFixed(1)}k employees`
-                        : `${c.employee_count} employees`}
-                  </span>
-                )}
-                {c.industry && (
-                  <span className="flex items-center gap-1">
-                    <BadgeInfo className="w-3 h-3" /> {c.industry}
-                  </span>
-                )}
-              </div>
-            )}
-
-            {/* Concept pitch */}
-            {c.concept_pitch && (
-              <div>
-                <div className="flex items-center gap-1 text-[11px] text-muted-foreground mb-1">
-                  <FileText className="w-3 h-3" /> Concept {aiFields.concept_pitch && <AiChip />}
-                </div>
-                <p className="text-sm leading-snug">{c.concept_pitch}</p>
-                {c.description && (
-                  <p className="text-xs text-muted-foreground mt-1 leading-snug">{c.description}</p>
-                )}
-              </div>
-            )}
-
-            {/* AI brand analysis — auto-generated briefing */}
-            {c.brand_analysis && (
-              <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2">
-                <div className="flex items-center gap-1 text-[11px] text-purple-700 dark:text-purple-300 mb-1">
-                  <Sparkles className="w-3 h-3" /> Brand analysis
-                  {c.brand_analysis_at && (
-                    <span className="text-[10px] text-muted-foreground ml-auto">
-                      {new Date(c.brand_analysis_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
-                    </span>
+            {/* ── Global brand ─────────────────────────────────────────── */}
+            <div className="space-y-2">
+              {/* Single description — prefer brand_analysis (more detailed), fall back to description */}
+              {(c.brand_analysis || c.description) && (
+                <div>
+                  {c.brand_analysis ? (
+                    <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2">
+                      <div className="flex items-center gap-1 text-[11px] text-purple-700 dark:text-purple-300 mb-1">
+                        <Sparkles className="w-3 h-3" /> Global overview
+                        {c.brand_analysis_at && (
+                          <span className="text-[10px] text-muted-foreground ml-auto">
+                            {new Date(c.brand_analysis_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs leading-snug text-foreground/90">{c.brand_analysis}</p>
+                    </div>
+                  ) : (
+                    <p className="text-sm leading-snug text-foreground/85">{c.description}</p>
                   )}
                 </div>
-                <p className="text-xs leading-snug text-foreground/90">{c.brand_analysis}</p>
+              )}
+
+              {/* Meta row: website · phone · founded · employees · industry */}
+              {(c.domain_url || c.domain || c.phone || c.founded_year || c.employee_count || c.industry || c.linkedin_url) && (
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                  {(c.domain_url || c.domain) && (
+                    <a href={c.domain_url || `https://${c.domain}`} target="_blank" rel="noreferrer"
+                      className="flex items-center gap-1 hover:text-primary transition-colors">
+                      <Globe className="w-3 h-3" />{c.domain || c.domain_url}
+                    </a>
+                  )}
+                  {c.phone && (
+                    <a href={`tel:${c.phone}`} className="flex items-center gap-1 hover:text-primary transition-colors">
+                      <Phone className="w-3 h-3" /> {c.phone}
+                    </a>
+                  )}
+                  {c.linkedin_url && (
+                    <a href={c.linkedin_url} target="_blank" rel="noreferrer"
+                      className="flex items-center gap-1 hover:text-primary transition-colors">
+                      <Linkedin className="w-3 h-3" /> LinkedIn
+                    </a>
+                  )}
+                  {c.founded_year && <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> Est. {c.founded_year}</span>}
+                  {c.employee_count && (
+                    <span className="flex items-center gap-1">
+                      <Users className="w-3 h-3" />
+                      {c.employee_count >= 10000 ? `${Math.round(c.employee_count / 1000)}k+ employees`
+                        : c.employee_count >= 1000 ? `${(c.employee_count / 1000).toFixed(1)}k employees`
+                        : `${c.employee_count} employees`}
+                    </span>
+                  )}
+                  {c.industry && <span className="flex items-center gap-1"><BadgeInfo className="w-3 h-3" /> {c.industry}</span>}
+                </div>
+              )}
+            </div>
+
+            {/* BGP pitch — only shown if distinct from description */}
+            {c.concept_pitch && c.concept_pitch !== c.description && (
+              <div className="border-l-2 border-blue-300 dark:border-blue-700 pl-2">
+                <div className="flex items-center gap-1 text-[10px] text-blue-700 dark:text-blue-400 mb-0.5 font-medium uppercase tracking-wide">
+                  <FileText className="w-2.5 h-2.5" /> BGP pitch {aiFields.concept_pitch && <AiChip />}
+                </div>
+                <p className="text-xs leading-snug">{c.concept_pitch}</p>
               </div>
             )}
 
@@ -1119,45 +1099,81 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               );
             })()}
 
-            {/* Decision-makers — Property, C-suite */}
-            {decisionMakers.length > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
-                  <Users className="w-3 h-3" /> Decision-makers ({decisionMakers.length})
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                  {decisionMakers.slice(0, 6).map((dm) => (
-                    <Link key={dm.id} href={`/contacts/${dm.id}`}>
-                      <div className="flex items-center gap-1.5 text-xs rounded px-1.5 py-1 hover:bg-muted/50 cursor-pointer group">
-                        {dm.avatar_url ? (
-                          <img src={dm.avatar_url} alt={dm.name} className="w-6 h-6 rounded-full bg-muted shrink-0" />
-                        ) : (
-                          <div className="w-6 h-6 rounded-full bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300 shrink-0">
-                            {dm.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium truncate group-hover:text-primary transition-colors">{dm.name}</div>
-                          {dm.role && <div className="text-[10px] text-muted-foreground truncate">{dm.role}</div>}
-                        </div>
-                        {dm.linkedin_url && (
-                          <a
-                            href={dm.linkedin_url}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-muted-foreground hover:text-primary shrink-0"
-                            title="LinkedIn"
-                          >
-                            <ExternalLink className="w-2.5 h-2.5" />
-                          </a>
-                        )}
-                      </div>
-                    </Link>
-                  ))}
-                </div>
+            {/* Decision-makers — tiered: Store Dev → C-suite → Other → Apollo */}
+            <div className="border-t pt-2">
+              <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center justify-between gap-1">
+                <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Key contacts</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // open Apollo dialog via window event (avoids prop drilling)
+                    window.dispatchEvent(new CustomEvent("bgp:open-apollo", { detail: { companyId } }));
+                  }}
+                  className="text-[10px] text-purple-600 hover:text-purple-700 flex items-center gap-0.5"
+                >
+                  <Sparkles className="w-2.5 h-2.5" /> Find via Apollo
+                </button>
               </div>
-            )}
+              {/* UK registered address as contact detail */}
+              {covenant?.registeredAddress && (
+                <div className="text-[11px] text-muted-foreground flex items-start gap-1 mb-1.5 bg-blue-50/60 dark:bg-blue-950/20 rounded px-1.5 py-1">
+                  <MapPin className="w-3 h-3 shrink-0 mt-0.5 text-blue-600" />
+                  <span><span className="text-blue-700 dark:text-blue-400 font-medium">UK office:</span> {covenant.registeredAddress}</span>
+                </div>
+              )}
+              {decisionMakers.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic">No contacts yet. Use Apollo to discover key people.</p>
+              ) : (
+                <div className="space-y-2.5">
+                  {/* Tier 1 — Store development / property / UK */}
+                  {decisionMakers.filter(d => d.tier === 1).length > 0 && (
+                    <div>
+                      <div className="text-[10px] font-medium text-emerald-700 dark:text-emerald-400 uppercase tracking-wide mb-1 flex items-center gap-1">
+                        <Store className="w-2.5 h-2.5" /> Store development &amp; property
+                      </div>
+                      <div className="space-y-0.5">
+                        {decisionMakers.filter(d => d.tier === 1).map(dm => (
+                          <ContactRow key={dm.id} dm={dm} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Tier 2 — C-suite */}
+                  {decisionMakers.filter(d => d.tier === 2).length > 0 && (
+                    <div>
+                      <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">C-suite &amp; leadership</div>
+                      <div className="space-y-0.5">
+                        {decisionMakers.filter(d => d.tier === 2).map(dm => (
+                          <ContactRow key={dm.id} dm={dm} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Tier 3 — Directors / VP */}
+                  {decisionMakers.filter(d => d.tier === 3).length > 0 && (
+                    <div>
+                      <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Directors &amp; VPs</div>
+                      <div className="space-y-0.5">
+                        {decisionMakers.filter(d => d.tier === 3).slice(0, 4).map(dm => (
+                          <ContactRow key={dm.id} dm={dm} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {/* Tier 4 — other contacts, scrollable */}
+                  {decisionMakers.filter(d => d.tier === 4).length > 0 && (
+                    <div>
+                      <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Other contacts</div>
+                      <div className="max-h-28 overflow-y-auto space-y-0.5 pr-1">
+                        {decisionMakers.filter(d => d.tier === 4).map(dm => (
+                          <ContactRow key={dm.id} dm={dm} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* BGP relationship history */}
             {bgpSummary && (bgpSummary.totalDeals > 0 || bgpSummary.interactionsTotal > 0) && (
@@ -1667,6 +1683,44 @@ function MiniPriceChart({ points, width = 280, height = 56 }: { points: Array<{ 
       <path d={areaD} fill="url(#chart-fill)" />
       <path d={pathD} fill="none" stroke={stroke} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+// ─── Contact row ──────────────────────────────────────────────────────────
+function ContactRow({ dm }: { dm: { id: string; name: string; role: string | null; email: string | null; phone: string | null; linkedin_url: string | null; avatar_url: string | null; enrichment_source: string | null } }) {
+  return (
+    <Link href={`/contacts/${dm.id}`}>
+      <div className="flex items-center gap-1.5 text-xs rounded px-1.5 py-1 hover:bg-muted/50 cursor-pointer group">
+        {dm.avatar_url ? (
+          <img src={dm.avatar_url} alt={dm.name} className="w-6 h-6 rounded-full bg-muted shrink-0 object-cover" />
+        ) : (
+          <div className="w-6 h-6 rounded-full bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300 shrink-0">
+            {dm.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="font-medium truncate group-hover:text-primary transition-colors">{dm.name}</div>
+          {dm.role && <div className="text-[10px] text-muted-foreground truncate">{dm.role}</div>}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {dm.enrichment_source === "apollo-search" && (
+            <span title="Found via Apollo" className="text-[9px] text-purple-500 font-medium">A</span>
+          )}
+          {dm.phone && (
+            <a href={`tel:${dm.phone}`} onClick={e => e.stopPropagation()} title={dm.phone}
+              className="text-muted-foreground hover:text-primary">
+              <Phone className="w-2.5 h-2.5" />
+            </a>
+          )}
+          {dm.linkedin_url && (
+            <a href={dm.linkedin_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+              className="text-muted-foreground hover:text-primary">
+              <ExternalLink className="w-2.5 h-2.5" />
+            </a>
+          )}
+        </div>
+      </div>
+    </Link>
   );
 }
 
