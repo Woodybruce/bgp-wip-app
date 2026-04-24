@@ -460,6 +460,16 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
           .filter(Boolean).join(", ")
       : null;
 
+    const chOfficers: any[] = (chData?.officers || [])
+      .filter((o: any) => !o.resignedOn && !o.resigned_on)
+      .map((o: any) => ({
+        name: o.name,
+        role: o.officerRole || o.officer_role || null,
+        appointedOn: o.appointedOn || o.appointed_on || null,
+        nationality: o.nationality || null,
+        occupation: o.occupation || null,
+      }));
+
     const covenant = chData ? {
       companyStatus: chProfile.companyStatus || null,
       accountsOverdue: chProfile.accountsOverdue || false,
@@ -470,6 +480,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       dateOfCreation: chProfile.dateOfCreation || null,
       checkedAt: chData.checkedAt || null,
       registeredAddress: chAddressStr,
+      officers: chOfficers,
       // Derive traffic light: green = active + no issues, amber = warning, red = insolvency/dissolved
       trafficLight: chProfile.hasInsolvencyHistory
         ? "red"

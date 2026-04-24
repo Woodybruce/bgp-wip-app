@@ -99,6 +99,7 @@ interface BrandProfile {
     checkedAt: string | null;
     registeredAddress: string | null;
     trafficLight: "green" | "amber" | "red";
+    officers: { name: string; role: string | null; appointedOn: string | null; nationality: string | null; occupation: string | null }[];
   } | null;
   rolloutVelocity: {
     openings12m: number;
@@ -993,6 +994,22 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     </div>
                   </div>
                 </div>
+                {covenant.officers && covenant.officers.length > 0 && (
+                  <div className="mt-2 pt-2 border-t">
+                    <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Officers</div>
+                    <div className="space-y-1">
+                      {covenant.officers.map((o, i) => (
+                        <div key={i} className="flex items-baseline justify-between gap-2 text-[11px]">
+                          <span className="font-medium text-foreground/90 truncate">{o.name}</span>
+                          <span className="text-muted-foreground whitespace-nowrap shrink-0 capitalize">
+                            {o.role?.replace(/-/g, " ") || "Officer"}
+                            {o.appointedOn && <span className="ml-1 text-[10px]">· {new Date(o.appointedOn).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</span>}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {covenant.companyStatus && covenant.companyStatus !== "active" && (
                   <div className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-start gap-1.5">
                     <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
