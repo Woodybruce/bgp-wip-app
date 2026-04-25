@@ -58,7 +58,6 @@ import { EntityPicker } from "@/components/entity-picker";
 import { InlineAddress } from "@/components/address-autocomplete";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schema";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
-import { ApolloContactsDialog } from "@/components/apollo-contacts-dialog";
 
 interface CHSearchResult {
   companyNumber: string;
@@ -925,8 +924,6 @@ function getCompanyBgpContacts(company: CrmCompany): string[] {
 function CompanyDetail({ id }: { id: string }) {
   const { toast } = useToast();
   const [editOpen, setEditOpen] = useState(false);
-  const [apolloOpen, setApolloOpen] = useState(false);
-
   const { data: company, isLoading } = useQuery<CrmCompany>({
     queryKey: ["/api/crm/companies", id],
   });
@@ -936,15 +933,6 @@ function CompanyDetail({ id }: { id: string }) {
   });
 
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
-
-  const { data: relatedContacts } = useQuery<CrmContact[]>({
-    queryKey: ["/api/crm/contacts", { companyId: id }],
-    queryFn: async () => {
-      const res = await fetch(`/api/crm/contacts?companyId=${id}`, { credentials: "include", headers: getAuthHeaders() });
-      if (!res.ok) throw new Error("Failed to fetch contacts");
-      return res.json();
-    },
-  });
 
   const { data: allDeals } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
@@ -1250,12 +1238,6 @@ function CompanyDetail({ id }: { id: string }) {
                 )}
                 <KycInlineSummary company={company} />
               </div>
-              {company.description && (
-                <div className="pt-2 border-t">
-                  <p className="text-xs text-muted-foreground mb-1">Description</p>
-                  <p className="text-sm" data-testid="text-company-description">{company.description}</p>
-                </div>
-              )}
             </CardContent>
           </Card>
 
@@ -1309,59 +1291,7 @@ function CompanyDetail({ id }: { id: string }) {
         </div>
 
         <div className="space-y-3 flex flex-col">
-          <Card className="flex-1">
-            <CardContent className="p-3 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="font-semibold text-xs flex items-center gap-1.5">
-                  <Users className="w-3.5 h-3.5 text-teal-500" />
-                  Contacts ({relatedContacts?.length || 0})
-                </h3>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-[10px]"
-                  onClick={() => setApolloOpen(true)}
-                  data-testid="button-apollo-find-contacts"
-                >
-                  <Sparkles className="w-3 h-3 mr-1 text-purple-500" /> Find via Apollo
-                </Button>
-              </div>
-              <ApolloContactsDialog
-                companyId={id}
-                companyName={company.name}
-                open={apolloOpen}
-                onOpenChange={setApolloOpen}
-              />
-              {relatedContacts && relatedContacts.length > 0 ? (
-                <ScrollArea className="max-h-[400px] overflow-y-auto">
-                  <div className="space-y-0.5 pr-2">
-                    {relatedContacts.map((contact) => (
-                      <Link key={contact.id} href={`/contacts/${contact.id}`}>
-                        <div className="flex items-center gap-2 px-2 py-1 rounded hover:bg-teal-50 dark:hover:bg-teal-900/20 transition-colors cursor-pointer" data-testid={`link-contact-${contact.id}`}>
-                          {contact.avatarUrl ? (
-                            <img src={contact.avatarUrl} alt={contact.name} className="w-6 h-6 rounded-full flex-shrink-0 bg-muted" />
-                          ) : (
-                            <div className="w-6 h-6 rounded-full flex-shrink-0 bg-teal-100 dark:bg-teal-900 flex items-center justify-center text-[10px] font-semibold text-teal-700 dark:text-teal-300">
-                              {contact.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase()}
-                            </div>
-                          )}
-                          <div>
-                            <p className="text-xs font-medium text-teal-700 dark:text-teal-300">{contact.name}</p>
-                            <p className="text-[10px] text-muted-foreground">{contact.role || contact.email}</p>
-                          </div>
-                        </div>
-                      </Link>
-                    ))}
-                  </div>
-                </ScrollArea>
-              ) : (
-                <p className="text-xs text-muted-foreground">No contacts linked</p>
-              )}
-            </CardContent>
-          </Card>
-
           <CompaniesHouseCard company={company} />
-
           <CompanyFoldersCard companyName={company.name} linkedProperties={linkedProperties} />
         </div>
 

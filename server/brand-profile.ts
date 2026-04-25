@@ -873,6 +873,35 @@ export async function researchBrandStores(companyId: string): Promise<{
   return { found: allResults.length, upserted, openCount, companyName: company.name };
 }
 
+// Gallery image by ID — serves image from local disk for authenticated users.
+// (The image-studio full route is admin-only; this one is for brand profile panel.)
+router.get("/api/brand/gallery-image/:imageId", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT local_path, mime_type, thumbnail_data FROM image_studio_images WHERE id = $1`,
+      [req.params.imageId]
+    );
+    const img = rows[0];
+    if (!img) return res.status(404).end();
+
+    const fs = await import("fs");
+    if (img.local_path && fs.existsSync(img.local_path)) {
+      res.setHeader("Content-Type", img.mime_type || "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.sendFile(img.local_path);
+    }
+    if (img.thumbnail_data) {
+      const buf = Buffer.from(img.thumbnail_data, "base64");
+      res.setHeader("Content-Type", img.mime_type || "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.send(buf);
+    }
+    res.status(404).end();
+  } catch (err: any) {
+    res.status(500).end();
+  }
+});
+
 // Street View image of the brand's flagship store — picks the first cached
 // Google Places store with coords and proxies Google's Street View Static
 // API. Cached 24h client-side. Returns 204 when no suitable store exists.

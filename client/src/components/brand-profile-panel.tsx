@@ -555,7 +555,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* ── Global brand ─────────────────────────────────────────── */}
             <div className="space-y-2">
               {/* Single description — prefer brand_analysis (more detailed), fall back to description */}
-              {(c.brand_analysis || c.description) && (
+              {(c.brand_analysis || c.description) ? (
                 <div>
                   {c.brand_analysis ? (
                     <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2">
@@ -572,6 +572,20 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   ) : (
                     <p className="text-sm leading-snug text-foreground/85">{c.description}</p>
                   )}
+                </div>
+              ) : (
+                <div className="rounded-md border border-dashed border-muted-foreground/30 p-3 text-center">
+                  <p className="text-xs text-muted-foreground mb-2">No brand summary yet</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-[11px]"
+                    onClick={() => enrichMutation.mutate()}
+                    disabled={enrichMutation.isPending}
+                  >
+                    <Sparkles className={`w-3 h-3 mr-1 text-purple-500 ${enrichMutation.isPending ? "animate-pulse" : ""}`} />
+                    {enrichMutation.isPending ? "Generating…" : "Auto-generate summary"}
+                  </Button>
                 </div>
               )}
 
@@ -1573,12 +1587,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
                 <div className="flex gap-1 flex-wrap">
                   {data.images.slice(0, 8).map((img: any) => (
-                    <div key={img.id} className="w-12 h-12 rounded border border-border/60 overflow-hidden bg-muted">
-                      {img.thumbnail_data ? (
-                        <img src={`data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`} alt={img.file_name} className="w-full h-full object-cover" />
-                      ) : (
-                        <ImageIcon className="w-4 h-4 text-muted-foreground m-auto mt-4" />
-                      )}
+                    <div key={img.id} className="w-16 h-16 rounded border border-border/60 overflow-hidden bg-muted">
+                      <img
+                        src={img.thumbnail_data
+                          ? `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`
+                          : `/api/brand/gallery-image/${img.id}`}
+                        alt={img.file_name}
+                        className="w-full h-full object-cover"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                      />
                     </div>
                   ))}
                 </div>
@@ -1638,7 +1655,11 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <Newspaper className="w-3 h-3" /> News ({data.news.length})
                 </div>
                 <div className="space-y-1.5">
-                  {data.news.slice(0, 5).map((article) => (
+                  {data.news.slice(0, 5).map((article) => {
+                    const isGoogleProxy = /google\.com|gstatic\.com|googleusercontent\.com\/.*\/proxy/i.test(article.image_url || "");
+                    const hasRealImage = article.image_url && !isGoogleProxy;
+                    const articleDomain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
+                    return (
                     <a
                       key={article.id}
                       href={article.url}
@@ -1646,23 +1667,34 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       rel="noopener noreferrer"
                       className="flex items-start gap-2 text-xs group hover:bg-muted/40 rounded-md p-1.5 -mx-1.5 transition-colors"
                     >
-                      {article.image_url && !/google\.com|gstatic\.com|googleusercontent\.com\/.*\/proxy/i.test(article.image_url) ? (
+                      {hasRealImage ? (
                         <img
-                          src={article.image_url}
+                          src={article.image_url!}
                           alt=""
-                          className="w-10 h-10 rounded object-cover shrink-0 border"
-                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                          className="w-14 h-14 rounded object-cover shrink-0 border"
+                          onError={(e) => {
+                            const el = e.target as HTMLImageElement;
+                            if (articleDomain) el.src = `https://${articleDomain}/favicon.ico`;
+                            else el.style.display = "none";
+                          }}
+                        />
+                      ) : articleDomain ? (
+                        <img
+                          src={`https://${articleDomain}/favicon.ico`}
+                          alt=""
+                          className="w-8 h-8 rounded mt-0.5 object-contain shrink-0 border bg-white p-1"
+                          onError={(e) => { (e.target as HTMLImageElement).replaceWith(Object.assign(document.createElement("div"), { className: "w-8 h-8 rounded mt-0.5 shrink-0 border bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground", textContent: (article.source_name || articleDomain || "?")[0].toUpperCase() })); }}
                         />
                       ) : (
-                        <div className="w-10 h-10 rounded shrink-0 border bg-muted flex items-center justify-center">
-                          <Newspaper className="w-4 h-4 text-muted-foreground" />
+                        <div className="w-8 h-8 rounded mt-0.5 shrink-0 border bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground">
+                          {(article.source_name || "?")[0].toUpperCase()}
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{article.title}</p>
                         <div className="flex items-center gap-1.5 mt-0.5">
                           {article.source_name && (
-                            <span className="text-[10px] text-muted-foreground">{article.source_name}</span>
+                            <span className="text-[10px] text-muted-foreground font-medium">{article.source_name}</span>
                           )}
                           {article.published_at && (
                             <span className="text-[10px] text-muted-foreground">
@@ -1673,7 +1705,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                         </div>
                       </div>
                     </a>
-                  ))}
+                    );
+                  })}
                   {data.news.length > 5 && (
                     <p className="text-[10px] text-muted-foreground pl-1.5">+{data.news.length - 5} more articles</p>
                   )}
