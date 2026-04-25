@@ -264,6 +264,8 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [aiSummaryError, setAiSummaryError] = useState(false);
   const [noTitleData, setNoTitleData] = useState(false);
+  const [pdErrors, setPdErrors] = useState<Array<{ endpoint: string; status?: number; body?: string }>>([]);
+  const [manualTitleInput, setManualTitleInput] = useState("");
   const [showAllTitles, setShowAllTitles] = useState(false);
   const [activeSection, setActiveSection] = useState<string>("overview");
   const requestIdRef = useRef(0);
@@ -471,6 +473,8 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
     setAiSummary(null);
     setAiSummaryError(false);
     setNoTitleData(false);
+    setPdErrors([]);
+    setManualTitleInput("");
     setShowAllTitles(false);
     setActiveSection("overview");
 
@@ -576,9 +580,11 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
 
         if (fetchedFreeholds.length > 0 || fetchedLeaseholds.length > 0) {
           setNoTitleData(false);
+          setPdErrors([]);
           fetchAiSummary(thisReqId, addr.label, pc, fetchedFreeholds, fetchedLeaseholds, intel);
         } else {
           setNoTitleData(true);
+          setPdErrors(resolvedPayload?.pdErrors || []);
           setAiSummaryLoading(false);
         }
       } catch {} finally {
@@ -635,6 +641,8 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
     setIntelligence({});
     setAiSummary(null);
     setNoTitleData(false);
+    setPdErrors([]);
+    setManualTitleInput("");
     setShowAllTitles(false);
   };
 
@@ -1105,17 +1113,60 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
 
           {noTitleData && !freeholdsLoading && (
             <Card className="border-amber-200 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20">
-              <CardContent className="p-4">
+              <CardContent className="p-4 space-y-3">
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-                  <div className="space-y-1.5">
-                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">No Land Registry title data found</p>
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">No Land Registry title data found via PropertyData</p>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      PropertyData returned no freeholds or leaseholds for this address. This is common for large commercial properties in Central London where aggregated title data may not be available.
-                      Use the <strong>Order Title Register</strong> buttons above to purchase the official title documents directly from HMLR, or search by title number if known.
+                      Common for large commercial and mixed-use properties in Central London. If you know the title number (e.g. from a previous search or a solicitor), enter it below to order directly from HMLR.
                     </p>
                   </div>
                 </div>
+                {pdErrors.length > 0 && (
+                  <div className="space-y-0.5">
+                    {pdErrors.slice(0, 3).map((e, i) => (
+                      <p key={i} className="text-[10px] font-mono text-red-600 dark:text-red-400 truncate">
+                        {e.endpoint}{e.status ? ` HTTP ${e.status}` : ""} — {e.body || "unknown error"}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Input
+                    className="h-8 text-xs font-mono uppercase"
+                    placeholder="Title number e.g. LN59572"
+                    value={manualTitleInput}
+                    onChange={e => setManualTitleInput(e.target.value.toUpperCase())}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && manualTitleInput.trim()) {
+                        purchaseDocuments(manualTitleInput.trim(), "both");
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    className="h-8 text-xs shrink-0"
+                    disabled={!manualTitleInput.trim() || docPurchasing[manualTitleInput.trim() + "both"]}
+                    onClick={() => purchaseDocuments(manualTitleInput.trim(), "both")}
+                  >
+                    {docPurchasing[manualTitleInput.trim() + "both"] ? <Loader2 className="w-3 h-3 animate-spin" /> : "Order Title"}
+                  </Button>
+                </div>
+                {(() => {
+                  const tn = manualTitleInput.trim();
+                  const result = docResults[tn + "both"];
+                  const url = result?.data?.document_url || result?.document_url;
+                  if (!url) return null;
+                  return (
+                    <a href={url} target="_blank" rel="noopener noreferrer">
+                      <Button variant="outline" size="sm" className="h-8 text-xs gap-1 text-emerald-600">
+                        <Download className="w-3 h-3" />
+                        Download Register &amp; Plan
+                      </Button>
+                    </a>
+                  );
+                })()}
               </CardContent>
             </Card>
           )}
@@ -1604,7 +1655,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                     </div>
                   )}
 
-                  {freeholds && freeholds.length === 0 && (!leaseholds || leaseholds.length === 0) && (
+                  {freeholds && freeholds.length === 0 && (!leaseholds || leaseholds.length === 0) && !noTitleData && (
                     <Card>
                       <CardContent className="p-6 text-center text-sm text-muted-foreground">
                         <Landmark className="w-8 h-8 mx-auto mb-2 opacity-40" />
