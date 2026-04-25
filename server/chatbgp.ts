@@ -10268,12 +10268,44 @@ export function setupChatBGPRoutes(app: Express) {
         if (useStreaming) {
           // Stream with deltas — if tool_calls come back, deltas were just partial text (rare)
           sendProgress("Composing response...");
-          completion = await callClaudeStreaming(loopOpts, (token) => {
-            sendDelta(token);
-          });
+          try {
+            completion = await callClaudeStreaming(loopOpts, (token) => {
+              sendDelta(token);
+            });
+          } catch (streamErr: any) {
+            // Context-length error mid-loop: trim oldest non-system messages and retry once
+            const errStr = JSON.stringify(streamErr?.error || streamErr?.body || streamErr?.message || "").toLowerCase();
+            const isContextErr = streamErr?.status === 400 && (errStr.includes("too long") || errStr.includes("context_length") || errStr.includes("prompt is too long"));
+            if (isContextErr && conversationMessages.length > 4) {
+              console.warn("[ChatBGP] Context too long mid-stream — trimming history and retrying");
+              // Keep system + first user message + last 6 messages
+              const sys = conversationMessages.filter((m: any) => m.role === "system");
+              const rest = conversationMessages.filter((m: any) => m.role !== "system");
+              conversationMessages = [...sys, ...rest.slice(0, 1), ...rest.slice(-6)];
+              loopOpts.messages = conversationMessages;
+              completion = await callClaudeStreaming(loopOpts, (token) => { sendDelta(token); });
+            } else {
+              throw streamErr;
+            }
+          }
           streamedFinal = true;
         } else {
-          completion = await callClaude(loopOpts);
+          try {
+            completion = await callClaude(loopOpts);
+          } catch (callErr: any) {
+            const errStr = JSON.stringify(callErr?.error || callErr?.body || callErr?.message || "").toLowerCase();
+            const isContextErr = callErr?.status === 400 && (errStr.includes("too long") || errStr.includes("context_length") || errStr.includes("prompt is too long"));
+            if (isContextErr && conversationMessages.length > 4) {
+              console.warn("[ChatBGP] Context too long in tool loop — trimming history and retrying");
+              const sys = conversationMessages.filter((m: any) => m.role === "system");
+              const rest = conversationMessages.filter((m: any) => m.role !== "system");
+              conversationMessages = [...sys, ...rest.slice(0, 1), ...rest.slice(-6)];
+              loopOpts.messages = conversationMessages;
+              completion = await callClaude(loopOpts);
+            } else {
+              throw callErr;
+            }
+          }
         }
 
         const message = completion.choices[0]?.message;
@@ -10355,12 +10387,13 @@ export function setupChatBGPRoutes(app: Express) {
       else if (err?.status === 429) errorMsg = "Hit the API rate limit. Please wait a minute and try again.";
       else if (err?.status === 400) {
         const errBody = errBodyRaw.toLowerCase();
-        if (errBody.includes("too long") || errBody.includes("token") || errBody.includes("max_tokens") || errBody.includes("context")) {
+        const isContextLen = errBody.includes("too long") || errBody.includes("context_length") || errBody.includes("prompt is too long") || errBody.includes("max_tokens_to_sample");
+        const isThinkingMode = errBody.includes("thinking.type") || errBody.includes("thinking type") || errBody.includes("budget_tokens") || errBody.includes("output_config");
+        if (isContextLen && !isThinkingMode) {
           errorMsg = "That conversation got too long for me to process. Try starting a new thread or asking a simpler question.";
         } else if (errBody.includes("image") || errBody.includes("media")) {
           errorMsg = "Problem with an attached image or file. Try removing it or sending a different format.";
         } else {
-          // Don't pretend the assistant is confused — surface that it was a technical error and include a hint if we can
           errorMsg = `Technical error from the AI API (400). Server logs have the full details. ${errBodyRaw.slice(0, 180)}`;
         }
       } else if (err?.status === 500 || err?.status === 502 || err?.status === 503 || err?.status === 504) {
