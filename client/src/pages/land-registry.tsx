@@ -263,6 +263,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
   const [aiSummary, setAiSummary] = useState<PropertySummaryData | null>(null);
   const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
   const [aiSummaryError, setAiSummaryError] = useState(false);
+  const [noTitleData, setNoTitleData] = useState(false);
   const [showAllTitles, setShowAllTitles] = useState(false);
   const [activeSection, setActiveSection] = useState<string>("overview");
   const requestIdRef = useRef(0);
@@ -469,6 +470,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
     setIntelligence({});
     setAiSummary(null);
     setAiSummaryError(false);
+    setNoTitleData(false);
     setShowAllTitles(false);
     setActiveSection("overview");
 
@@ -572,7 +574,13 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
         }
         setIntelligence(intel);
 
-        fetchAiSummary(thisReqId, addr.label, pc, fetchedFreeholds, fetchedLeaseholds, intel);
+        if (fetchedFreeholds.length > 0 || fetchedLeaseholds.length > 0) {
+          setNoTitleData(false);
+          fetchAiSummary(thisReqId, addr.label, pc, fetchedFreeholds, fetchedLeaseholds, intel);
+        } else {
+          setNoTitleData(true);
+          setAiSummaryLoading(false);
+        }
       } catch {} finally {
         setFreeholdsLoading(false);
         setIntelLoading(false);
@@ -626,6 +634,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
     setDocResults({});
     setIntelligence({});
     setAiSummary(null);
+    setNoTitleData(false);
     setShowAllTitles(false);
   };
 
@@ -1068,7 +1077,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
             </Card>
           )}
 
-          {aiSummaryError && !aiSummaryLoading && !aiSummary && (
+          {aiSummaryError && !aiSummaryLoading && !aiSummary && !noTitleData && (
             <Card className="border-red-200 dark:border-red-800">
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
@@ -1089,6 +1098,23 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
                   >
                     Retry
                   </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {noTitleData && !freeholdsLoading && (
+            <Card className="border-amber-200 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20">
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                  <div className="space-y-1.5">
+                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">No Land Registry title data found</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      PropertyData returned no freeholds or leaseholds for this address. This is common for large commercial properties in Central London where aggregated title data may not be available.
+                      Use the <strong>Order Title Register</strong> buttons above to purchase the official title documents directly from HMLR, or search by title number if known.
+                    </p>
+                  </div>
                 </div>
               </CardContent>
             </Card>
