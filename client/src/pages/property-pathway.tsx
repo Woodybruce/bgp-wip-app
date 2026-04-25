@@ -2090,7 +2090,7 @@ function PlanningDocsCard({
                 {app.docs.slice(0, 40).map((d, di) => (
                   <a
                     key={di}
-                    href={planningPdfProxy(d.url)}
+                    href={planningPdfProxy(d.url, app.docsUrl)}
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-start gap-1.5 py-1 px-2 hover:bg-muted/30 text-[11px]"

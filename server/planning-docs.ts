@@ -387,6 +387,7 @@ export function getPlanningDownloadLastError(): string { return lastDownloadErro
 
 export async function downloadPlanningPdf(url: string, refererUrl?: string): Promise<Buffer | null> {
   lastDownloadError = "";
+  const apiKey = process.env.SCRAPERAPI_KEY;
 
   const isPdfBuffer = (buf: Buffer): boolean =>
     buf.length >= 1024 && buf.slice(0, 4).toString("latin1") === "%PDF";
@@ -449,7 +450,50 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
     }
   }
 
-  const apiKey = process.env.SCRAPERAPI_KEY;
+  // Strategy 0b: ScraperAPI sticky-session two-step.
+  // Uses session_number to pin both requests to the same egress IP, avoiding
+  // the rotating-proxy problem that breaks Webshare for Idox JSESSIONID flows.
+  if (apiKey && refererUrl) {
+    try {
+      const sessionNum = Math.floor(Math.random() * 999999);
+      const step1 = await fetch(
+        `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(refererUrl)}&session_number=${sessionNum}&country_code=uk&render=false`,
+        { signal: AbortSignal.timeout(20000), redirect: "follow" },
+      );
+      const h1 = (step1 as any).headers;
+      let cookies = "";
+      if (typeof h1?.getSetCookie === "function") {
+        cookies = h1.getSetCookie().map((c: string) => c.split(";")[0].trim()).filter(Boolean).join("; ");
+      } else {
+        const raw = h1?.get?.("set-cookie") || "";
+        cookies = raw.split(/,(?=\s*[A-Za-z0-9_-]+=)/).map((c: string) => c.split(";")[0].trim()).filter(Boolean).join("; ");
+      }
+      console.log(`[planning-docs] ScraperAPI session ${sessionNum}: referer cookies="${cookies}"`);
+      if (cookies) {
+        const step2 = await fetch(
+          `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&session_number=${sessionNum}&country_code=uk&keep_headers=true&render=false`,
+          {
+            headers: { Cookie: cookies, Referer: refererUrl, "User-Agent": BROWSER_UA },
+            signal: AbortSignal.timeout(30000),
+            redirect: "follow",
+          },
+        );
+        if (step2.ok) {
+          const buf = Buffer.from(await step2.arrayBuffer());
+          if (isPdfBuffer(buf)) {
+            console.log(`[planning-docs] ScraperAPI session download OK: ${url}`);
+            return buf;
+          }
+          console.warn(`[planning-docs] ScraperAPI session got non-PDF (${buf.length}B)`);
+        } else {
+          console.warn(`[planning-docs] ScraperAPI session PDF fetch ${step2.status}`);
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[planning-docs] ScraperAPI session strategy failed: ${err?.message}`);
+    }
+  }
+
   if (!apiKey) {
     lastDownloadError = "SCRAPERAPI_KEY not configured and Webshare session failed";
     return null;
