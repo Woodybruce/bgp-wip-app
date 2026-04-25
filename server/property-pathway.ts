@@ -4614,7 +4614,7 @@ export function registerPropertyPathwayRoutes(app: Express) {
   app.post("/api/property-pathway/:runId/advance", requireAuth, async (req: Request, res: Response) => {
     const runId = String(req.params.runId);
     try {
-      const { stage, async: asyncMode } = req.body as { stage?: number; async?: boolean };
+      const { stage, async: asyncMode, autoChainTo } = req.body as { stage?: number; async?: boolean; autoChainTo?: number };
       const run = await getRun(runId);
       if (!run) return res.status(404).json({ error: "Run not found" });
       const targetStage = stage ?? run.currentStage;
@@ -4638,11 +4638,42 @@ export function registerPropertyPathwayRoutes(app: Express) {
       // Async mode: kick off stage in background, return immediately.
       // Client polls /api/property-pathway/:runId to watch for completion.
       // Avoids Railway's 45s edge timeout for heavy stages.
-      if (asyncMode || targetStage === 1) {
-        runStage(runId, targetStage, req).catch((err: any) => {
-          console.error(`[pathway advance async] stage ${targetStage} error:`, err?.message);
+      //
+      // autoChainTo (optional): after the target stage completes, keep
+      // running stage+1, stage+2 ... until we hit `autoChainTo` exclusive
+      // (so autoChainTo=6 chains through 1,2,3,4,5 then stops). Stops on
+      // the first stage that doesn't end "completed" or "skipped".
+      // The chain runs entirely in the background — client polls currentStage
+      // to watch progress.
+      if (asyncMode || targetStage === 1 || autoChainTo) {
+        (async () => {
+          const chainCap = typeof autoChainTo === "number" ? autoChainTo : (targetStage + 1);
+          let cur = targetStage;
+          while (cur < chainCap) {
+            console.log(`[pathway advance auto-chain] running stage ${cur} (chain to <${chainCap})`);
+            try {
+              await runStage(runId, cur, req);
+            } catch (err: any) {
+              console.error(`[pathway advance auto-chain] stage ${cur} threw:`, err?.message);
+              break;
+            }
+            // Inspect the saved status — only chain forward if the stage
+            // genuinely completed/was skipped. Halt on failure so the user
+            // can intervene rather than blindly running downstream stages on
+            // bad data.
+            const updatedRun = await getRun(runId).catch(() => null);
+            const status = (updatedRun?.stageStatus as any)?.[`stage${cur}`];
+            if (status !== "completed" && status !== "skipped") {
+              console.warn(`[pathway advance auto-chain] halting at stage ${cur}, status=${status}`);
+              break;
+            }
+            cur++;
+          }
+          console.log(`[pathway advance auto-chain] chain ended at stage ${cur - 1}`);
+        })().catch((err: any) => {
+          console.error(`[pathway advance auto-chain] outer error:`, err?.message);
         });
-        return res.status(202).json({ success: true, async: true, runId, targetStage });
+        return res.status(202).json({ success: true, async: true, runId, targetStage, autoChainTo: typeof autoChainTo === "number" ? autoChainTo : null });
       }
 
       const updated = await runStage(runId, targetStage, req);

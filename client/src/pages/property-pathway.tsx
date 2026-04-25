@@ -210,6 +210,12 @@ export default function PropertyPathway() {
   async function advanceRun(runId: string, stage?: number) {
     setAdvancing(true);
     try {
+      const currentRun = selectedRun?.id === runId ? selectedRun : null;
+      const targetStage = stage ?? (currentRun?.currentStage ?? 1);
+      // Auto-chain through stages 1-5; stop at Stage 6 (Business Plan) since
+      // that's where the user's commercial input is needed. Re-runs of
+      // stages 6+ stay single-stage.
+      const autoChainTo = targetStage < 6 ? 6 : undefined;
       const res = await fetch(`/api/property-pathway/${runId}/advance`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -217,7 +223,7 @@ export default function PropertyPathway() {
         // Always async: Railway's HTTP edge timeout is 45s; stages 2/4/6/7 can
         // take 2-3 minutes (Claude analysis + Companies House + Idox scrape +
         // accounts PDF). Server returns 202 immediately and the client polls.
-        body: JSON.stringify({ ...(stage ? { stage } : {}), async: true }),
+        body: JSON.stringify({ ...(stage ? { stage } : {}), async: true, ...(autoChainTo ? { autoChainTo } : {}) }),
       });
       if (!res.ok) {
         let errMsg = "";
@@ -235,15 +241,24 @@ export default function PropertyPathway() {
 
       const body = await res.json();
 
-      // Async mode: stage is running in background, poll for completion
+      // Async mode: stage(s) running in background — poll until done.
       if (body.async) {
-        const targetStage = body.targetStage;
-        const stageKey = `stage${targetStage}`;
-        toast({ title: `Stage ${targetStage} running in background`, description: "This usually takes 30-90 seconds. Watching for completion..." });
+        const targetStageResp: number = body.targetStage;
+        const chainEnd: number | null = body.autoChainTo ?? null;
+        const stageKey = `stage${targetStageResp}`;
+
+        if (chainEnd) {
+          toast({ title: `Running stages ${targetStageResp}–${chainEnd - 1}`, description: "Each stage flips to completed as it finishes. Stops before Business Plan." });
+        } else {
+          toast({ title: `Stage ${targetStageResp} running in background`, description: "Usually 30–90 seconds. Watching for completion…" });
+        }
 
         const pollStart = Date.now();
-        const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+        // Chains of 5 stages can take 5–10 minutes; single stage caps at 5.
+        const POLL_TIMEOUT_MS = chainEnd ? 15 * 60 * 1000 : 5 * 60 * 1000;
+        let lastPolled: any = null;
         let lastStatus: string | undefined;
+        let failedStage: number | null = null;
 
         while (Date.now() - pollStart < POLL_TIMEOUT_MS) {
           await new Promise((r) => setTimeout(r, 3000));
@@ -252,23 +267,43 @@ export default function PropertyPathway() {
             if (!pollRes.ok) continue;
             const polled = await pollRes.json();
             setSelectedRun(polled);
-            lastStatus = polled.stageStatus?.[stageKey];
-            if (lastStatus === "completed" || lastStatus === "failed" || lastStatus === "skipped") {
-              break;
+            lastPolled = polled;
+
+            // Check for failure on any stage in the chain range — abort if so
+            if (chainEnd) {
+              for (let s = targetStageResp; s < chainEnd; s++) {
+                if (polled.stageStatus?.[`stage${s}`] === "failed") {
+                  failedStage = s;
+                  break;
+                }
+              }
+              if (failedStage) break;
+              if (polled.currentStage >= chainEnd) break;
+            } else {
+              lastStatus = polled.stageStatus?.[stageKey];
+              if (lastStatus === "completed" || lastStatus === "failed" || lastStatus === "skipped") break;
             }
           } catch {}
         }
 
         loadRuns();
-        const finalResults = (selectedRun as any)?.stageResults?.[stageKey] || {};
-        if (lastStatus === "skipped") {
-          toast({ title: `Stage ${targetStage} skipped`, description: finalResults?.reason || "Stage was skipped — see board for details." });
-        } else if (lastStatus === "failed") {
-          toast({ title: `Stage ${targetStage} failed`, description: finalResults?.reason || finalResults?.summary || "See server logs.", variant: "destructive" });
-        } else if (lastStatus === "completed") {
-          toast({ title: `Stage ${targetStage} complete`, description: finalResults?.summary ? String(finalResults.summary).slice(0, 200) : "Findings added to board." });
+        if (failedStage) {
+          const fr = lastPolled?.stageResults?.[`stage${failedStage}`];
+          toast({ title: `Stage ${failedStage} failed`, description: fr?.reason || fr?.summary || "Chain halted — see server logs.", variant: "destructive" });
+        } else if (chainEnd) {
+          const reached = lastPolled?.currentStage ?? targetStageResp;
+          toast({ title: `Stages ${targetStageResp}–${Math.min(reached - 1, chainEnd - 1)} complete`, description: "Ready for the Business Plan when you are." });
         } else {
-          toast({ title: "Still running", description: "Stage is taking longer than usual. Check the board in a minute.", variant: "destructive" });
+          const finalResults = lastPolled?.stageResults?.[stageKey] || {};
+          if (lastStatus === "skipped") {
+            toast({ title: `Stage ${targetStageResp} skipped`, description: finalResults?.reason || "Stage was skipped — see board for details." });
+          } else if (lastStatus === "failed") {
+            toast({ title: `Stage ${targetStageResp} failed`, description: finalResults?.reason || finalResults?.summary || "See server logs.", variant: "destructive" });
+          } else if (lastStatus === "completed") {
+            toast({ title: `Stage ${targetStageResp} complete`, description: finalResults?.summary ? String(finalResults.summary).slice(0, 200) : "Findings added to board." });
+          } else {
+            toast({ title: "Still running", description: "Stage is taking longer than usual. Check the board in a minute.", variant: "destructive" });
+          }
         }
         return;
       }
@@ -442,12 +477,18 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           <Button onClick={() => onAdvance(nextStage)} disabled={advancing || run.currentStage > 9} className="gap-1.5">
             {advancing ? <Clock className="w-4 h-4" /> : <ArrowRight className="w-4 h-4" />}
             {(() => {
+              // Stages 1–5 auto-chain to Business Plan, so the button label
+              // reflects the chain rather than a single stage.
+              if (nextStage < 6) {
+                switch (nextStage) {
+                  case 1: return "Run Investigation → Business Plan";
+                  case 2: return "Continue → Business Plan";
+                  case 3: return "Continue → Business Plan";
+                  case 4: return "Continue → Business Plan";
+                  case 5: return "Continue → Business Plan";
+                }
+              }
               switch (nextStage) {
-                case 1: return "Run Initial Search";
-                case 2: return "Run Brand Intelligence";
-                case 3: return "Review & Confirm";
-                case 4: return "Purchase Property Intelligence";
-                case 5: return "Build Investigation Board";
                 case 6: return "Draft Business Plan";
                 case 7: return "Generate Model Studio";
                 case 8: return "Run Studio Time";
