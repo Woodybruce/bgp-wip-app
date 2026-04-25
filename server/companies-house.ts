@@ -352,186 +352,238 @@ router.get("/api/companies-house/document/:id", requireAuth, async (req, res) =>
   }
 });
 
-router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req, res) => {
-  try {
-    const { db } = await import("./db");
-    const { crmCompanies } = await import("@shared/schema");
-    const { eq } = await import("drizzle-orm");
+// ─── Core KYC logic — shared between the single-company route and batch runner ──
+async function performAutoKyc(companyId: string): Promise<{
+  success: boolean;
+  kycStatus: string;
+  profile?: any;
+  officers?: any[];
+  pscs?: any[];
+  filings?: any[];
+  filingsTotal?: number;
+  companyNumber?: string | null;
+  message?: string;
+}> {
+  const { db } = await import("./db");
+  const { crmCompanies } = await import("@shared/schema");
+  const { eq } = await import("drizzle-orm");
 
-    const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, req.params.companyId)).limit(1);
-    if (!company) {
-      return res.status(404).json({ error: "Company not found" });
-    }
+  const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, companyId)).limit(1);
+  if (!company) throw new Error("Company not found");
 
-    let chNumber = company.companiesHouseNumber;
+  let chNumber = company.companiesHouseNumber;
 
-    // Check if the existing entity is dissolved — if so, treat as if we have no number
-    // and re-search so we can find an active replacement.
-    const existingChData = company.companiesHouseData as any;
-    const existingStatus = existingChData?.profile?.companyStatus;
-    const isExistingDissolved = existingStatus && existingStatus !== "active";
+  const existingChData = company.companiesHouseData as any;
+  const existingStatus = existingChData?.profile?.companyStatus;
+  const isExistingDissolved = existingStatus && existingStatus !== "active";
 
-    if (!chNumber || isExistingDissolved) {
-      // Use manually stored uk_entity_name first — never overwrite a manual entry with a scrape
-      const storedEntityName = (company as any).ukEntityName as string | null;
-      let searchName = storedEntityName || company.name;
-      const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
+  if (!chNumber || isExistingDissolved) {
+    const storedEntityName = (company as any).ukEntityName as string | null;
+    let searchName = storedEntityName || company.name;
+    const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
 
-      // Only scrape if no uk_entity_name has been set (avoids overwriting manual corrections)
-      if (!storedEntityName && domain) {
-        try {
-          const scraped = await scrapeUkEntityFromWebsite(domain);
-          if (scraped.entityName) {
-            searchName = scraped.entityName;
-            await db.update(crmCompanies).set({ ukEntityName: scraped.entityName } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
-            console.log(`[auto-kyc] Scraped UK entity from website: "${scraped.entityName}"`);
-          }
-          if (scraped.chNumber) {
-            chNumber = scraped.chNumber;
-          }
-        } catch {
-          // Scrape failure is non-fatal
+    if (!storedEntityName && domain) {
+      try {
+        const scraped = await scrapeUkEntityFromWebsite(domain);
+        if (scraped.entityName) {
+          searchName = scraped.entityName;
+          await db.update(crmCompanies).set({ ukEntityName: scraped.entityName } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+          console.log(`[auto-kyc] Scraped UK entity from website: "${scraped.entityName}"`);
         }
+        if (scraped.chNumber) chNumber = scraped.chNumber;
+      } catch { /* non-fatal */ }
+    }
+
+    if (!chNumber) {
+      const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=10`);
+      const items = searchData.items || [];
+      if (items.length === 0) {
+        return { success: false, kycStatus: "not_found", message: `No Companies House match found for "${searchName}".` };
       }
-
-      if (!chNumber) {
-        const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=10`);
-        const items = searchData.items || [];
-        if (items.length === 0) {
-          return res.json({
-            success: false,
-            kycStatus: "not_found",
-            message: `No Companies House match found for "${searchName}". Manual search may be needed.`,
-          });
-        }
-        const nameLower = searchName.toLowerCase().trim();
-        // Strongly prefer active companies — only fall back to dissolved if nothing else found
-        const activeItems = items.filter((i: any) => i.company_status === "active");
-        const candidatePool = activeItems.length > 0 ? activeItems : items;
-        const bestMatch = candidatePool.find((i: any) => i.title?.toLowerCase().trim() === nameLower)
-          || candidatePool.find((i: any) => i.title?.toLowerCase().includes(nameLower) || nameLower.includes(i.title?.toLowerCase()))
-          || candidatePool[0];
-        chNumber = bestMatch.company_number;
-      }
+      const nameLower = searchName.toLowerCase().trim();
+      const activeItems = items.filter((i: any) => i.company_status === "active");
+      const candidatePool = activeItems.length > 0 ? activeItems : items;
+      const bestMatch = candidatePool.find((i: any) => i.title?.toLowerCase().trim() === nameLower)
+        || candidatePool.find((i: any) => i.title?.toLowerCase().includes(nameLower) || nameLower.includes(i.title?.toLowerCase()))
+        || candidatePool[0];
+      chNumber = bestMatch.company_number;
     }
+  }
 
-    const profileData = await chFetch(`/company/${encodeURIComponent(chNumber!)}`);
-    const profile = {
-      companyNumber: profileData.company_number,
-      companyName: profileData.company_name,
-      companyStatus: profileData.company_status,
-      companyType: profileData.type,
-      dateOfCreation: profileData.date_of_creation,
-      registeredOfficeAddress: profileData.registered_office_address,
-      sicCodes: profileData.sic_codes,
-      hasCharges: profileData.has_charges,
-      hasInsolvencyHistory: profileData.has_insolvency_history,
-      canFile: profileData.can_file,
-      jurisdiction: profileData.jurisdiction,
-      accountsOverdue: profileData.accounts?.overdue,
-      confirmationStatementOverdue: profileData.confirmation_statement?.overdue,
-      lastAccountsMadeUpTo: profileData.accounts?.last_accounts?.made_up_to,
-    };
+  const profileData = await chFetch(`/company/${encodeURIComponent(chNumber!)}`);
+  const profile = {
+    companyNumber: profileData.company_number,
+    companyName: profileData.company_name,
+    companyStatus: profileData.company_status,
+    companyType: profileData.type,
+    dateOfCreation: profileData.date_of_creation,
+    registeredOfficeAddress: profileData.registered_office_address,
+    sicCodes: profileData.sic_codes,
+    hasCharges: profileData.has_charges,
+    hasInsolvencyHistory: profileData.has_insolvency_history,
+    canFile: profileData.can_file,
+    jurisdiction: profileData.jurisdiction,
+    accountsOverdue: profileData.accounts?.overdue,
+    confirmationStatementOverdue: profileData.confirmation_statement?.overdue,
+    lastAccountsMadeUpTo: profileData.accounts?.last_accounts?.made_up_to,
+  };
 
-    let officers: any[] = [];
-    let pscs: any[] = [];
-    let filings: any[] = [];
-    let filingsTotal = 0;
+  let officers: any[] = [];
+  let pscs: any[] = [];
+  let filings: any[] = [];
+  let filingsTotal = 0;
 
-    const [officerResult, pscResult, filingResult] = await Promise.allSettled([
-      chFetch(`/company/${encodeURIComponent(chNumber!)}/officers`),
-      chFetch(`/company/${encodeURIComponent(chNumber!)}/persons-with-significant-control`),
-      chFetch(`/company/${encodeURIComponent(chNumber!)}/filing-history?items_per_page=10`),
-    ]);
+  const [officerResult, pscResult, filingResult] = await Promise.allSettled([
+    chFetch(`/company/${encodeURIComponent(chNumber!)}/officers`),
+    chFetch(`/company/${encodeURIComponent(chNumber!)}/persons-with-significant-control`),
+    chFetch(`/company/${encodeURIComponent(chNumber!)}/filing-history?items_per_page=10`),
+  ]);
 
-    if (officerResult.status === "fulfilled") {
-      officers = (officerResult.value.items || []).map((o: any) => ({
-        name: o.name,
-        officerRole: o.officer_role,
-        appointedOn: o.appointed_on,
-        resignedOn: o.resigned_on,
-        nationality: o.nationality,
-        occupation: o.occupation,
-        address: o.address,
-        dateOfBirth: o.date_of_birth ? `${o.date_of_birth.month}/${o.date_of_birth.year}` : null,
-      }));
-    }
+  if (officerResult.status === "fulfilled") {
+    officers = (officerResult.value.items || []).map((o: any) => ({
+      name: o.name,
+      officerRole: o.officer_role,
+      appointedOn: o.appointed_on,
+      resignedOn: o.resigned_on,
+      nationality: o.nationality,
+      occupation: o.occupation,
+      address: o.address,
+      dateOfBirth: o.date_of_birth ? `${o.date_of_birth.month}/${o.date_of_birth.year}` : null,
+    }));
+  }
 
-    if (pscResult.status === "fulfilled") {
-      pscs = (pscResult.value.items || []).map((p: any) => ({
-        name: p.name || (p.name_elements ? [p.name_elements?.title, p.name_elements?.forename, p.name_elements?.surname].filter(Boolean).join(" ") : "Unknown"),
-        kind: p.kind,
-        naturesOfControl: p.natures_of_control || [],
-        nationality: p.nationality,
-        countryOfResidence: p.country_of_residence,
-        notifiedOn: p.notified_on,
-        ceasedOn: p.ceased_on,
-        address: p.address,
-        dateOfBirth: p.date_of_birth ? `${p.date_of_birth.month}/${p.date_of_birth.year}` : null,
-      }));
-    }
+  if (pscResult.status === "fulfilled") {
+    pscs = (pscResult.value.items || []).map((p: any) => ({
+      name: p.name || (p.name_elements ? [p.name_elements?.title, p.name_elements?.forename, p.name_elements?.surname].filter(Boolean).join(" ") : "Unknown"),
+      kind: p.kind,
+      naturesOfControl: p.natures_of_control || [],
+      nationality: p.nationality,
+      countryOfResidence: p.country_of_residence,
+      notifiedOn: p.notified_on,
+      ceasedOn: p.ceased_on,
+      address: p.address,
+      dateOfBirth: p.date_of_birth ? `${p.date_of_birth.month}/${p.date_of_birth.year}` : null,
+    }));
+  }
 
-    if (filingResult.status === "fulfilled") {
-      filings = (filingResult.value.items || []).map((f: any) => ({
-        date: f.date,
-        category: f.category,
-        type: f.type,
-        description: f.description,
-      }));
-      filingsTotal = filingResult.value.total_count || 0;
-    }
+  if (filingResult.status === "fulfilled") {
+    filings = (filingResult.value.items || []).map((f: any) => ({
+      date: f.date,
+      category: f.category,
+      type: f.type,
+      description: f.description,
+    }));
+    filingsTotal = filingResult.value.total_count || 0;
+  }
 
-    // Dissolved entity = warning (may be old holding co, not necessarily the trading entity).
-    // Only hard-fail on actual insolvency history.
-    const kycStatus = profile.hasInsolvencyHistory
-      ? "fail"
-      : profile.companyStatus === "active" && !profile.accountsOverdue
-        ? "pass"
-        : "warning";
+  const kycStatus = profile.hasInsolvencyHistory
+    ? "fail"
+    : profile.companyStatus === "active" && !profile.accountsOverdue
+      ? "pass"
+      : "warning";
 
-    const fetchStatus = {
+  const kycReport = {
+    profile,
+    officers,
+    pscs,
+    filings,
+    filingsTotal,
+    fetchStatus: {
       officers: officerResult.status === "fulfilled" ? "ok" : "failed",
       pscs: pscResult.status === "fulfilled" ? "ok" : "failed",
       filings: filingResult.status === "fulfilled" ? "ok" : "failed",
-    };
+    },
+    checkedAt: new Date().toISOString(),
+  };
 
-    const kycReport = {
-      profile,
-      officers,
-      pscs,
-      filings,
-      filingsTotal,
-      fetchStatus,
-      checkedAt: new Date().toISOString(),
-    };
+  await db.update(crmCompanies).set({
+    companiesHouseNumber: chNumber,
+    companiesHouseData: kycReport,
+    companiesHouseOfficers: officers,
+    kycStatus,
+    kycCheckedAt: new Date(),
+  }).where(eq(crmCompanies.id, company.id));
 
-    await db.update(crmCompanies).set({
-      companiesHouseNumber: chNumber,
-      companiesHouseData: kycReport,
-      companiesHouseOfficers: officers,
-      kycStatus,
-      kycCheckedAt: new Date(),
-    }).where(eq(crmCompanies.id, company.id));
+  console.log(`[companies-house] Auto-KYC for "${company.name}" → ${kycStatus} (CH: ${chNumber})`);
 
-    console.log(`[companies-house] Auto-KYC for "${company.name}" → ${kycStatus} (CH: ${chNumber})`);
+  return {
+    success: true,
+    kycStatus,
+    profile,
+    officers: officers.filter(o => !o.resignedOn),
+    pscs: pscs.filter(p => !p.ceasedOn),
+    filings,
+    filingsTotal,
+    companyNumber: chNumber,
+  };
+}
 
-    res.json({
-      success: true,
-      kycStatus,
-      profile,
-      officers: officers.filter(o => !o.resignedOn),
-      pscs: pscs.filter(p => !p.ceasedOn),
-      filings,
-      filingsTotal,
-      companyNumber: chNumber,
-    });
+// ─── Batch re-KYC — finds stale/dissolved companies and re-runs KYC on them ──
+export async function runBatchReKyc({ limit = 40, forceAll = false }: { limit?: number; forceAll?: boolean } = {}) {
+  const { db } = await import("./db");
+  const { sql } = await import("drizzle-orm");
+
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+  const result = await db.execute(sql`
+    SELECT id, name FROM crm_companies
+    WHERE ${forceAll ? sql`TRUE` : sql`(
+      kyc_checked_at IS NULL
+      OR kyc_checked_at < ${thirtyDaysAgo.toISOString()}
+      OR kyc_status IS NULL
+      OR kyc_status != 'pass'
+      OR (companies_house_data IS NOT NULL
+          AND companies_house_data->'profile'->>'companyStatus' IS NOT NULL
+          AND companies_house_data->'profile'->>'companyStatus' != 'active')
+    )`}
+    ORDER BY kyc_checked_at ASC NULLS FIRST
+    LIMIT ${limit}
+  `);
+
+  const rows: any[] = (result as any).rows ?? result;
+  console.log(`[batch-rekyc] Queued ${rows.length} companies for KYC refresh`);
+
+  let success = 0, failed = 0;
+  for (const row of rows) {
+    try {
+      await performAutoKyc(row.id);
+      success++;
+    } catch (err: any) {
+      console.error(`[batch-rekyc] "${row.name}": ${err.message}`);
+      failed++;
+    }
+    // Respect CH API rate limits (~600 req/min, we use ~3 req per company)
+    await new Promise(r => setTimeout(r, 700));
+  }
+
+  console.log(`[batch-rekyc] Done: ${success} updated, ${failed} failed`);
+  return { success, failed, total: rows.length };
+}
+
+router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req, res) => {
+  try {
+    const result = await performAutoKyc(req.params.companyId);
+    if (!result.success && result.kycStatus === "not_found") {
+      return res.json(result);
+    }
+    res.json(result);
   } catch (err: any) {
     if (err.message?.includes("not configured")) {
       return res.status(503).json({ error: "Companies House API key not configured. Add COMPANIES_HOUSE_API_KEY to your environment secrets." });
     }
+    if (err.message === "Company not found") return res.status(404).json({ error: err.message });
     console.error("[companies-house] auto-kyc error:", err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+router.post("/api/companies-house/batch-rekyc", requireAuth, async (req, res) => {
+  const { limit = 40, forceAll = false } = req.body || {};
+  // Kick off in background and return immediately
+  runBatchReKyc({ limit, forceAll }).catch(err =>
+    console.error("[batch-rekyc] background run failed:", err.message)
+  );
+  res.json({ success: true, message: `Batch re-KYC started (limit: ${limit}, forceAll: ${forceAll})` });
 });
 
 router.post("/api/companies-house/property-kyc/:propertyId", requireAuth, async (req, res) => {

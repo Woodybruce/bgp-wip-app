@@ -439,7 +439,7 @@ import { registerLegalDDRoutes } from "./legal-dd";
 import { setupSharedMailboxRoutes } from "./shared-mailbox";
 import { registerInteractionRoutes } from "./interactions";
 import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
-import companiesHouseRouter from "./companies-house";
+import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
 import { registerRetailContextPlanRoutes } from "./retail-context-plan";
 import { registerMapLayerRoutes } from "./map-layers";
@@ -853,6 +853,19 @@ app.use("/api/branding/assets", express.static(
           if (now.getHours() === 2) {
             runPeriodicAmlReScreening().catch(err =>
               console.error("[kyc-orch-cron] Periodic re-screening failed:", err?.message)
+            );
+          }
+        }, 60 * 60 * 1000);
+      }
+
+      // Nightly KYC refresh — re-runs Companies House KYC for stale/dissolved companies.
+      // Runs at 1am every night (production only). Processes up to 40 companies per run.
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 1 && now.getMinutes() < 60) {
+            runBatchReKyc({ limit: 40 }).catch(err =>
+              console.error("[kyc-refresh] nightly run failed:", err?.message)
             );
           }
         }, 60 * 60 * 1000);
