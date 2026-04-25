@@ -219,16 +219,35 @@ function parseIdoxDocsHtml(html: string, baseUrl: string): PlanningDoc[] {
     }
 
     const cells = cellMatches.map((m) => stripHtml(m[1]));
-    const [c0, c1, c2, c3] = cells;
 
-    // Cells aren't always in the same order. Heuristics: date cell matches
-    // date-like text; description is the longest non-date cell.
-    const pickDate = cells.find((c) => /^\s*\d{1,2}[\s\/-][A-Za-z0-9]{2,10}[\s\/-]\d{2,4}\s*$|^\s*\d{4}-\d{2}-\d{2}\s*$/.test(c));
-    const date = parseDate(pickDate || c0 || "");
-    const descCell = cells.find((c) => c && c !== pickDate && c.length > 3 && !/^view$/i.test(c)) || c1 || "";
-    const description = descCell;
-    const type = (cells.find((c) => c && c !== description && c !== pickDate && c.length < 40 && !/^view$/i.test(c)) || c2 || "").slice(0, 80);
-    const drawingNumber = (c3 && c3 !== description && c3 !== type && c3.length < 40) ? c3 : undefined;
+    // Idox documents tables follow a standard layout:
+    //   [Checkbox, DatePublished, DocType, Description, DrawingNumber, View]
+    // The <input type="checkbox"> gets stripped to its label text
+    // ("Select this document" / "Select all"), and the View link cell
+    // collapses to "View". Filter those out before doing positional/length
+    // heuristics, otherwise the description picker locks onto the checkbox
+    // label and the real description gets pushed into the type slot.
+    const isCheckboxLabel = (c: string) => /^\s*select\s+(this|all|none)\b/i.test(c);
+    const isViewLink = (c: string) => /^\s*view\s*$/i.test(c);
+    const isDateLike = (c: string) => /^\s*\d{1,2}[\s\/-][A-Za-z0-9]{2,10}[\s\/-]\d{2,4}\s*$|^\s*\d{4}-\d{2}-\d{2}\s*$/.test(c);
+
+    const pickDate = cells.find((c) => isDateLike(c));
+    const date = parseDate(pickDate || "");
+
+    // Candidates for type/description/drawingNumber — anything that's not
+    // a checkbox label, View link, or the date cell.
+    const candidates = cells.filter((c) => c && c !== pickDate && !isCheckboxLabel(c) && !isViewLink(c));
+
+    // The description is reliably the LONGEST free-text cell (typical Idox
+    // descriptions run 30-150 chars: "Proposed elevation drawing — west
+    // facade rev B"). The type is a fixed-vocabulary short label
+    // ("Plans", "Decision Notice", "Site Plan"). The drawing number is a
+    // short ref like "SP-001 Rev B".
+    const sortedByLen = [...candidates].sort((a, b) => b.length - a.length);
+    const description = sortedByLen[0] || "";
+    const remaining = candidates.filter((c) => c !== description);
+    const type = (remaining.find((c) => c.length <= 40) || remaining[0] || "").slice(0, 80);
+    const drawingNumber = remaining.find((c) => c !== type && c.length <= 40 && c.length > 0);
 
     if (!description) continue;
 
