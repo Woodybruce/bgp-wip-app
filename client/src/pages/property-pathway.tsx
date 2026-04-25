@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { useLocation, Link } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1066,47 +1066,70 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
 
           </div>
 
-          {/* Emails — raw list with optional AI organisation */}
+          {/* Emails — AI-triaged commentary with inline [E#] links into the
+              in-app email viewer. The raw email list is hidden by default
+              (collapsible expander) since 80+ noisy hits aren't useful;
+              the analyst wants the synthesis, not the list. */}
           {s1.emailHits && s1.emailHits.length > 0 && (
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-2">
-                  <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Emails ({s1.emailHits.length})</CardTitle>
-                  <div className="flex gap-1">
-                    {emailSortSummary && (
-                      <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setEmailSortSummary(null)}>Show list</Button>
-                    )}
-                    <Button
-                      variant="outline" size="sm"
-                      className="h-6 text-[10px] gap-1"
-                      disabled={emailSorting}
-                      onClick={async () => {
-                        setEmailSorting(true);
-                        setEmailSortSummary(null);
-                        try {
-                          const r = await fetch("/api/pathway/email-sort", {
-                            method: "POST", credentials: "include",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ address: run?.address, emailHits: s1.emailHits }),
-                          });
-                          const d = await r.json();
-                          setEmailSortSummary(d.summary || "No summary returned.");
-                        } catch { setEmailSortSummary("Failed to analyse emails."); }
-                        finally { setEmailSorting(false); }
-                      }}
-                    >
-                      {emailSorting ? "Analysing…" : "AI sort"}
-                    </Button>
-                  </div>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Search className="w-4 h-4" /> Emails ({s1.emailHits.length})
+                  </CardTitle>
+                  <Button
+                    variant="outline" size="sm"
+                    className="h-6 text-[10px] gap-1"
+                    disabled={emailSorting}
+                    onClick={async () => {
+                      setEmailSorting(true);
+                      try {
+                        const r = await fetch("/api/pathway/email-sort", {
+                          method: "POST", credentials: "include",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ address: run?.address, emailHits: s1.emailHits }),
+                        });
+                        const d = await r.json();
+                        setEmailSortSummary(d.markdown || d.summary || "No summary returned.");
+                      } catch { setEmailSortSummary("Failed to analyse emails."); }
+                      finally { setEmailSorting(false); }
+                    }}
+                  >
+                    {emailSorting ? "Analysing…" : "Re-analyse"}
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent className="pb-2">
-                {emailSortSummary ? (
-                  <div className="text-[11px] prose prose-sm max-w-none max-h-[400px] overflow-y-auto [&_h1]:text-sm [&_h2]:text-xs [&_h3]:text-xs [&_h2]:mt-2 [&_h3]:mt-1.5 [&_p]:my-0.5 [&_ul]:my-0.5 [&_li]:my-0 [&_table]:text-[10px]">
-                    <div dangerouslySetInnerHTML={{ __html: emailSortSummary.replace(/\n/g, "<br/>").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/^## (.+)$/gm, "<h2>$1</h2>").replace(/^### (.+)$/gm, "<h3>$1</h3>").replace(/^# (.+)$/gm, "<h1>$1</h1>") }} />
-                  </div>
-                ) : (
-                  <div className="text-[11px] grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 max-h-[250px] overflow-y-auto">
+                {(() => {
+                  // Prefer the freshly re-analysed result if the user clicked
+                  // the button; otherwise show the auto-generated one saved
+                  // with the run; otherwise prompt to generate.
+                  const md = emailSortSummary || s1.emailCommentary?.markdown;
+                  if (!md) {
+                    return (
+                      <p className="text-[11px] text-muted-foreground italic">
+                        No AI commentary yet — click <strong>Re-analyse</strong> to summarise these {s1.emailHits.length} email hits.
+                      </p>
+                    );
+                  }
+                  return (
+                    <div className="max-h-[420px] overflow-y-auto pr-1">
+                      <EmailCommentary
+                        markdown={md}
+                        emailHits={s1.emailHits}
+                        onOpenEmail={(h) => setOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail })}
+                      />
+                    </div>
+                  );
+                })()}
+
+                {/* Power-user fallback: see the raw subject list if the AI
+                    triage missed something. Collapsed by default. */}
+                <details className="mt-3 text-[11px]">
+                  <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
+                    Show raw list of all {s1.emailHits.length} email subjects
+                  </summary>
+                  <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 max-h-[250px] overflow-y-auto">
                     {s1.emailHits.map((h: any, i: number) => (
                       <button
                         key={i}
@@ -1120,7 +1143,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                       </button>
                     ))}
                   </div>
-                )}
+                </details>
               </CardContent>
             </Card>
           )}
@@ -2431,6 +2454,110 @@ interface EmailDetail {
   hasAttachments: boolean;
   webLink: string | null;
   attachments: Array<{ id: string; name: string; size: number; contentType: string }>;
+}
+
+/**
+ * Renders the AI-generated email triage markdown with inline [E#] tokens
+ * turned into clickable buttons that open the in-app EmailViewerDialog
+ * for that exact message. Supports a small subset of markdown (h1/h2/h3,
+ * bold, lists, blockquotes) — written inline rather than pulling
+ * react-markdown to avoid a new dependency.
+ */
+function EmailCommentary({
+  markdown,
+  emailHits,
+  onOpenEmail,
+}: {
+  markdown: string;
+  emailHits: Array<{ msgId: string; mailboxEmail?: string; subject?: string; from?: string }>;
+  onOpenEmail: (h: { msgId: string; mailboxEmail: string }) => void;
+}) {
+  const handleOpen = (oneBasedIdx: number) => {
+    const h = emailHits[oneBasedIdx - 1];
+    if (h?.mailboxEmail && h?.msgId) onOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail });
+  };
+
+  // Inline parser — splits a line into [E#] buttons, **bold**, and plain text spans.
+  let keyCounter = 0;
+  const parseInline = (text: string): ReactNode[] => {
+    const out: ReactNode[] = [];
+    const re = /(\[E(\d+)\])|(\*\*([^*]+)\*\*)|(`([^`]+)`)/g;
+    let cursor = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > cursor) {
+        out.push(<span key={`s-${keyCounter++}`}>{text.slice(cursor, m.index)}</span>);
+      }
+      if (m[1]) {
+        const idx = parseInt(m[2], 10);
+        const h = emailHits[idx - 1];
+        const title = h ? `${h.subject || ""} — ${h.from || ""}` : `Email #${idx}`;
+        const disabled = !h?.mailboxEmail || !h?.msgId;
+        out.push(
+          <button
+            key={`e-${keyCounter++}`}
+            type="button"
+            disabled={disabled}
+            onClick={() => handleOpen(idx)}
+            title={title}
+            className={`inline-flex items-center text-[10px] font-mono px-1 py-0 mx-0.5 rounded border ${
+              disabled
+                ? "bg-muted/40 text-muted-foreground border-muted cursor-not-allowed"
+                : "bg-primary/10 text-primary border-primary/30 hover:bg-primary/20 cursor-pointer"
+            }`}
+          >
+            E{idx}
+          </button>
+        );
+      } else if (m[3]) {
+        out.push(<strong key={`b-${keyCounter++}`}>{m[4]}</strong>);
+      } else if (m[5]) {
+        out.push(<code key={`c-${keyCounter++}`} className="text-[10px] bg-muted px-1 py-px rounded">{m[6]}</code>);
+      }
+      cursor = m.index + m[0].length;
+    }
+    if (cursor < text.length) {
+      out.push(<span key={`s-${keyCounter++}`}>{text.slice(cursor)}</span>);
+    }
+    return out;
+  };
+
+  // Block-level parser — line-by-line, batches consecutive bullets into <ul>.
+  const lines = markdown.split("\n");
+  const blocks: ReactNode[] = [];
+  let listBuffer: ReactNode[] = [];
+  const flushList = () => {
+    if (listBuffer.length) {
+      blocks.push(<ul key={`ul-${blocks.length}`} className="list-disc ml-5 my-1 space-y-0.5">{listBuffer}</ul>);
+      listBuffer = [];
+    }
+  };
+
+  lines.forEach((line, i) => {
+    if (/^### /.test(line)) {
+      flushList();
+      blocks.push(<h3 key={i} className="text-[12px] font-semibold mt-2 mb-0.5">{parseInline(line.slice(4))}</h3>);
+    } else if (/^## /.test(line)) {
+      flushList();
+      blocks.push(<h2 key={i} className="text-[13px] font-semibold mt-3 mb-1">{parseInline(line.slice(3))}</h2>);
+    } else if (/^# /.test(line)) {
+      flushList();
+      blocks.push(<h1 key={i} className="text-sm font-semibold mt-3 mb-1">{parseInline(line.slice(2))}</h1>);
+    } else if (/^> /.test(line)) {
+      flushList();
+      blocks.push(<blockquote key={i} className="border-l-2 border-primary/40 pl-2 py-0.5 my-1 text-muted-foreground italic">{parseInline(line.slice(2))}</blockquote>);
+    } else if (/^[-*] /.test(line)) {
+      listBuffer.push(<li key={i}>{parseInline(line.slice(2))}</li>);
+    } else if (line.trim() === "") {
+      flushList();
+    } else {
+      flushList();
+      blocks.push(<p key={i} className="my-1 leading-relaxed">{parseInline(line)}</p>);
+    }
+  });
+  flushList();
+
+  return <div className="text-[11px]">{blocks}</div>;
 }
 
 function EmailViewerDialog({ msgId, mailboxEmail, onClose }: { msgId: string; mailboxEmail: string; onClose: () => void }) {

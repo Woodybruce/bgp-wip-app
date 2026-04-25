@@ -140,6 +140,15 @@ interface StageResults {
     // transaction comps (PropertyData doesn't expose those for commercial) but
     // anchors the business plan with a defensible market-tone number.
     pdMarket?: import("./propertydata-market").PropertyDataMarketTone;
+    // AI-triaged commentary on the emailHits — replaces the raw email list
+    // in the UI. Markdown body cites emails inline as `[E5]` tokens (1-based
+    // index into emailHits) which the client renders as clickable links to
+    // the in-app email viewer. Generated automatically at end of Stage 1;
+    // re-run on demand via /api/pathway/email-sort.
+    emailCommentary?: {
+      markdown: string;
+      generatedAt: string;
+    };
     // Retail leasing comps extracted from Stage 1 emails by Claude Haiku.
     // Stored in `retail_leasing_comps` (NOT the CRM) so Woody can curate.
     // This field is the trimmed view shown on the Comps card.
@@ -1026,6 +1035,66 @@ async function runStage1(runId: string, req: Request): Promise<void> {
   }
 }
 
+/**
+ * Auto-run AI email triage on the gathered emailHits. Returns a markdown
+ * commentary that cites individual emails using `[E5]` notation (1-based
+ * index into the original emailHits array). The client parses these
+ * citations and turns them into clickable buttons that open the in-app
+ * email viewer for that exact message.
+ *
+ * Returns null if the AI key isn't configured or there are no emails.
+ * Never throws — Stage 1 must complete even if email triage fails.
+ */
+async function runEmailSort(address: string, emailHits: any[]): Promise<{ markdown: string } | null> {
+  if (!emailHits || emailHits.length === 0) return null;
+  if (!process.env.ANTHROPIC_API_KEY) return null;
+
+  try {
+    const Anthropic = (await import("@anthropic-ai/sdk")).default;
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const list = emailHits.slice(0, 80).map((e: any, i: number) => {
+      const date = e.date ? new Date(e.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "?";
+      return `E${i + 1}. [${date}] From: ${e.from} | Subject: ${String(e.subject || "").replace(" · via .*", "").trim()} | Preview: ${String(e.preview || "").slice(0, 140)}`;
+    }).join("\n");
+
+    const msg = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 1500,
+      messages: [{
+        role: "user",
+        content: `You are analysing emails found in a property investment firm's (Bruce Gillingham Pollard) inboxes for the property at: ${address || "unknown address"}.
+
+Here are the ${emailHits.length} email hits indexed E1, E2, …:
+
+${list}
+
+Output **clean markdown commentary** for the analyst. Rules:
+
+1. **Filter aggressively.** Most of these will be unrelated noise — newsletters, emails about *other* properties that share a word with this address, generic firm-wide alerts. Mention only emails that are genuinely about THIS property.
+2. **Cite emails inline using [E#] notation** (e.g. "[E5]" or "[E12]"), referencing their original index. This is critical — the UI uses these tokens to deep-link to the source email. Cite every email you mention.
+3. **Group by topic / thread**, ordered chronologically. Use ## headers for each thread.
+4. **Each citation gets a one-line takeaway** — date, who it's from, what it reveals. Don't dump full subject lines.
+5. **Note gaps** in passing if obvious (e.g. "no introduction email is in the inbox").
+6. **End with 1-2 suggested actions** in a "## Next steps" section.
+7. **Be concise — under 350 words total.**
+
+If after filtering NONE of the emails are about this property, just output:
+> No emails in the BGP inboxes are about this property.
+
+Don't apologise or hedge — just write the commentary.`
+      }],
+    });
+
+    const markdown = (msg.content[0] as any)?.text || "";
+    if (!markdown.trim()) return null;
+    return { markdown: markdown.trim() };
+  } catch (err: any) {
+    console.warn("[pathway email-sort] auto-run failed:", err?.message);
+    return null;
+  }
+}
+
 // Autonomous investigator wrapper — delegates Stage 1 to Claude+tools
 async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   const run = await getRun(runId);
@@ -1350,6 +1419,23 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     }
   } catch (err: any) {
     console.warn(`[pathway stage1 autonomous] tenancy extractor failed: ${err?.message}`);
+  }
+
+  // AI email triage — replaces the noisy raw email list in the UI with a
+  // narrative grouped/filtered commentary. Cites individual emails inline
+  // as [E5] tokens that the client renders as clickable links into the
+  // in-app email viewer. Best-effort: never blocks Stage 1 completion.
+  try {
+    const commentary = await runEmailSort(run.address, stage1Payload.emailHits || []);
+    if (commentary) {
+      stage1Payload.emailCommentary = {
+        markdown: commentary.markdown,
+        generatedAt: new Date().toISOString(),
+      };
+      console.log(`[pathway stage1 autonomous] email commentary generated (${commentary.markdown.length} chars from ${stage1Payload.emailHits?.length || 0} hits)`);
+    }
+  } catch (err: any) {
+    console.warn(`[pathway stage1 autonomous] email commentary failed: ${err?.message}`);
   }
 
   console.log(`[pathway stage1 autonomous] Completed in ${((Date.now() - started) / 1000).toFixed(1)}s — ${stage1Payload.emailHits.length} emails, ${stage1Payload.brochureFiles.length} brochures, ${stage1Payload.sharepointHits.length} sharepoint`);
@@ -2818,11 +2904,26 @@ Return STRICT JSON only, no prose, no code fences:
     console.warn("[pathway stage1] retail comps extraction failed:", err?.message);
   }
 
+  // AI email triage — replaces the raw email list in the UI with grouped,
+  // filtered commentary that cites individual emails inline as [E5] tokens.
+  // Best-effort; never blocks Stage 1 completion.
+  let emailCommentary: { markdown: string; generatedAt: string } | undefined;
+  try {
+    const commentary = await runEmailSort(run.address, emailHits);
+    if (commentary) {
+      emailCommentary = { markdown: commentary.markdown, generatedAt: new Date().toISOString() };
+      console.log(`[pathway stage1] email commentary generated (${commentary.markdown.length} chars from ${emailHits.length} hits)`);
+    }
+  } catch (err: any) {
+    console.warn(`[pathway stage1] email commentary failed: ${err?.message}`);
+  }
+
   console.log(`[pathway stage1] Completing after ${((Date.now() - stage1Start) / 1000).toFixed(1)}s — ${emailHits.length} emails, ${brochureFiles.length} brochures, ${sharepointHits.length} sharepoint, ${deals.length} deals, ${comps.length} comps, ${retailComps?.length || 0} retail comps, ${rates?.assessmentCount || 0} rates`);
 
   await setStageStatus(runId, "stage1", "completed", {
     stage1: {
       emailHits,
+      emailCommentary,
       sharepointHits,
       crmHits,
       initialOwnership,
@@ -4366,40 +4467,10 @@ export function registerPropertyPathwayRoutes(app: Express) {
   app.post("/api/pathway/email-sort", requireAuth, async (req: Request, res: Response) => {
     try {
       const { address, emailHits } = req.body as { address?: string; emailHits?: any[] };
-      if (!emailHits?.length) return res.json({ summary: "No emails to analyse." });
-
-      const Anthropic = (await import("@anthropic-ai/sdk")).default;
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-      const emailList = emailHits.slice(0, 80).map((e: any, i: number) => {
-        const date = e.date ? new Date(e.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "?";
-        return `${i + 1}. [${date}] From: ${e.from} | Subject: ${String(e.subject || "").replace(" · via .*", "").trim()} | Preview: ${String(e.preview || "").slice(0, 120)}`;
-      }).join("\n");
-
-      const msg = await client.messages.create({
-        model: "claude-sonnet-4-6",
-        max_tokens: 1500,
-        messages: [{
-          role: "user",
-          content: `You are analysing emails found in a property investment firm's (Bruce Gillingham Pollard) inboxes related to the property at: ${address || "unknown address"}.
-
-Here are the ${emailHits.length} email hits (subject, from, date, preview):
-
-${emailList}
-
-Please:
-1. Filter out any that are clearly NOT about this property (newsletters, other properties, unrelated topics)
-2. Group the genuine hits into logical threads or topics, ordered chronologically
-3. For each email note the date, who it's from/to, subject, and what it reveals
-4. Note any obvious gaps (e.g. "the original introduction email isn't here")
-5. End with 1-2 suggested actions
-
-Format as clean markdown with headers. Be concise and professional. Focus on what's commercially useful.`
-        }],
-      });
-
-      const summary = (msg.content[0] as any)?.text || "No summary generated.";
-      res.json({ summary });
+      if (!emailHits?.length) return res.json({ summary: "No emails to analyse.", markdown: "No emails to analyse." });
+      const result = await runEmailSort(address || "", emailHits);
+      // Keep `summary` for legacy callers; new callers should read `markdown`.
+      res.json({ summary: result.markdown, markdown: result.markdown });
     } catch (err: any) {
       console.error("[pathway/email-sort]", err?.message);
       res.status(500).json({ error: err?.message || "AI analysis failed" });
