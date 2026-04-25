@@ -366,20 +366,47 @@ router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req,
     let chNumber = company.companiesHouseNumber;
 
     if (!chNumber) {
-      const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(company.name)}&items_per_page=5`);
-      const items = searchData.items || [];
-      if (items.length === 0) {
-        return res.json({
-          success: false,
-          kycStatus: "not_found",
-          message: `No Companies House match found for "${company.name}". Manual search may be needed.`,
-        });
+      // Step 1: prefer stored uk_entity_name, otherwise try scraping the website
+      let searchName = (company as any).ukEntityName as string | null || company.name;
+      const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
+
+      if (!(company as any).ukEntityName && domain) {
+        try {
+          const scraped = await scrapeUkEntityFromWebsite(domain);
+          if (scraped.entityName) {
+            searchName = scraped.entityName;
+            // Auto-save scraped entity name
+            await db.update(crmCompanies).set({ ukEntityName: scraped.entityName } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+            console.log(`[auto-kyc] Scraped UK entity from website: "${scraped.entityName}"`);
+          }
+          // If we got a direct CH number from the website, use it immediately
+          if (scraped.chNumber) {
+            chNumber = scraped.chNumber;
+          }
+        } catch {
+          // Scrape failure is non-fatal
+        }
       }
-      const nameLower = company.name.toLowerCase().trim();
-      const bestMatch = items.find((i: any) => i.title?.toLowerCase().trim() === nameLower)
-        || items.find((i: any) => i.title?.toLowerCase().includes(nameLower) || nameLower.includes(i.title?.toLowerCase()))
-        || items[0];
-      chNumber = bestMatch.company_number;
+
+      if (!chNumber) {
+        const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=5`);
+        const items = searchData.items || [];
+        if (items.length === 0) {
+          return res.json({
+            success: false,
+            kycStatus: "not_found",
+            message: `No Companies House match found for "${searchName}". Manual search may be needed.`,
+          });
+        }
+        const nameLower = searchName.toLowerCase().trim();
+        // Prefer active companies; prefer exact name matches
+        const activeItems = items.filter((i: any) => i.company_status === "active");
+        const pool = activeItems.length > 0 ? activeItems : items;
+        const bestMatch = pool.find((i: any) => i.title?.toLowerCase().trim() === nameLower)
+          || pool.find((i: any) => i.title?.toLowerCase().includes(nameLower) || nameLower.includes(i.title?.toLowerCase()))
+          || pool[0];
+        chNumber = bestMatch.company_number;
+      }
     }
 
     const profileData = await chFetch(`/company/${encodeURIComponent(chNumber!)}`);
