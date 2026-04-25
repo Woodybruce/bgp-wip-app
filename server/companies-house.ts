@@ -372,11 +372,13 @@ router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req,
     const isExistingDissolved = existingStatus && existingStatus !== "active";
 
     if (!chNumber || isExistingDissolved) {
-      // Step 1: prefer stored uk_entity_name, otherwise try scraping the website
-      let searchName = (company as any).ukEntityName as string | null || company.name;
+      // Use manually stored uk_entity_name first — never overwrite a manual entry with a scrape
+      const storedEntityName = (company as any).ukEntityName as string | null;
+      let searchName = storedEntityName || company.name;
       const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
 
-      if (domain) {
+      // Only scrape if no uk_entity_name has been set (avoids overwriting manual corrections)
+      if (!storedEntityName && domain) {
         try {
           const scraped = await scrapeUkEntityFromWebsite(domain);
           if (scraped.entityName) {
@@ -1649,11 +1651,13 @@ async function scrapeUkEntityFromWebsite(domain: string): Promise<{
 
   // Pages most likely to contain legal boilerplate, in priority order
   const pages = [
-    "",                         // homepage footer
+    "",                                    // homepage footer
     "/terms",
     "/terms-and-conditions",
     "/terms-of-use",
     "/terms-of-service",
+    "/policies/terms-of-service",          // Shopify
+    "/policies/privacy-policy",            // Shopify
     "/legal",
     "/legal-notices",
     "/legal-information",
@@ -1665,10 +1669,14 @@ async function scrapeUkEntityFromWebsite(domain: string): Promise<{
     "/about-us",
     "/help",
     "/sitemap",
+    "/cookies",
+    "/cookie-policy",
+    "/impressum",                          // EU/German legal page
   ];
 
   // Patterns that match "XXX Limited/Ltd/plc/LLP registered in England/Wales"
   const ENTITY_PATTERNS: RegExp[] = [
+    /refers\s+to\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))/i,
     /([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP|LP))\s+(?:is\s+)?(?:a\s+company\s+)?registered\s+in\s+England/i,
     /contracting\s+party:?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
     /([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s+\((?:company\s+)?(?:registered\s+)?(?:number|no\.?)/i,
