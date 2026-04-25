@@ -704,7 +704,7 @@ export async function callClaude(params: any): Promise<any> {
   // Requires temperature=1 (SDK default when unset). budget_tokens must be < max_tokens.
   // Opt-in: only enabled when params.thinking === true, to avoid the token cost on helper calls.
   if (params.thinking === true) {
-    claudeParams.thinking = { type: "enabled", budget_tokens: params.thinkingBudget || 6000 };
+    claudeParams.thinking = { type: "adaptive", budget_tokens: params.thinkingBudget || 6000 };
   }
   // Support structured system prompt (array with cache_control) for prompt caching
   if (params.systemArray) {
@@ -809,7 +809,7 @@ export async function callClaudeStreaming(
   };
   // Extended thinking — opt-in per callsite (see callClaude comment).
   if (params.thinking === true) {
-    claudeParams.thinking = { type: "enabled", budget_tokens: params.thinkingBudget || 6000 };
+    claudeParams.thinking = { type: "adaptive", budget_tokens: params.thinkingBudget || 6000 };
   }
 
   // Support structured system prompt (array with cache_control)
