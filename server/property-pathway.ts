@@ -1713,16 +1713,22 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
         if (fromAddr.includes(n) || fromName.includes(n)) return false;
       }
 
-      // 3) Trusted phrase match — Graph found the address phrase somewhere in
-      //    the email body, but that includes signatures. Still require the
-      //    distinctive address word or postcode to appear in SUBJECT or PREVIEW
-      //    (first 200 chars, before signatures). This stops e.g. "22 King St,
-      //    Sandwich" emails slipping through because Michelle's signature
-      //    mentions "18-22 Haymarket".
+      // 3) Trusted phrase match — Graph found the address phrase in the body.
+      //    Keep by default (the phrase match is strong evidence), but drop if
+      //    the subject explicitly names a DIFFERENT street — that's the
+      //    signature-bleed problem (e.g. "22 King Street, Sandwich" matching
+      //    because Michelle's sig contains "18-22 Haymarket").
       if (trustedPhrase) {
-        if (postcodeLc && hayNoSpaces.includes(postcodeLc)) return true;
-        if (addressWords.some((w) => hay.includes(w))) return true;
-        return false;
+        // Drop if subject has a different postcode (already handled above, belt+braces)
+        if (postcodesInSubject.length > 0 && postcodeLc && !postcodesInSubject.includes(postcodeLc)) {
+          return false;
+        }
+        // Drop if subject contains a road-type word (Street/Road/etc.) but none
+        // of our distinctive address words — clear sign it's about a different address.
+        const hasStreetWord = /\b(street|road|avenue|lane|gardens?|place|crescent|terrace|close|drive|court|walk)\b/i.test(subject);
+        const hasOurWord = addressWords.some((w) => subject.includes(w));
+        if (hasStreetWord && !hasOurWord) return false;
+        return true;
       }
 
       // 4) Postcode in subject/preview → keep (strong signal)
