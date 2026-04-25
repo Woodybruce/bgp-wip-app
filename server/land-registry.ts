@@ -830,41 +830,62 @@ export function registerLandRegistryRoutes(app: Express) {
       console.log(`[land-registry/resolve] UPRNs — OS: [${osUprns.join(",")}] PD: [${pdUprns.join(",")}] merged: [${matchedUprns.join(",")}]`);
 
       // Step 3: fetch exact titles via uprn-title (for each UPRN) AND the
-      // wider postcode context in parallel so the MLRO sees both.
+      // wider postcode context. PropertyData throttles aggressively (X14:
+      // "more than 6 calls in 10 seconds"), so we sequence the uprn-title
+      // calls with a small stagger and retry once on 429. There is no
+      // /leaseholds?postcode endpoint on PD (X01: "Invalid API endpoint") —
+      // leaseholds come back inside uprn-title results instead.
       const pdErrors: Array<{ endpoint: string; status?: number; body?: string }> = [];
+      const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
       const pdFetch = async (endpoint: string, params: Record<string, string>): Promise<any> => {
         const qs = new URLSearchParams({ key: PD_KEY, ...params }).toString();
-        try {
-          const r = await fetch(`https://api.propertydata.co.uk/${endpoint}?${qs}`, { signal: AbortSignal.timeout(15000) });
-          if (!r.ok) {
-            const body = await r.text().catch(() => "");
-            pdErrors.push({ endpoint, status: r.status, body: body.slice(0, 300) });
-            console.warn(`[land-registry/resolve] PropertyData ${endpoint} HTTP ${r.status}: ${body.slice(0, 200)}`);
+        const url = `https://api.propertydata.co.uk/${endpoint}?${qs}`;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+            if (r.status === 429 && attempt === 0) {
+              console.warn(`[land-registry/resolve] PropertyData ${endpoint} throttled (429), backing off 5s`);
+              await sleep(5000);
+              continue;
+            }
+            if (!r.ok) {
+              const body = await r.text().catch(() => "");
+              pdErrors.push({ endpoint, status: r.status, body: body.slice(0, 300) });
+              console.warn(`[land-registry/resolve] PropertyData ${endpoint} HTTP ${r.status}: ${body.slice(0, 200)}`);
+              return null;
+            }
+            const data = await r.json() as any;
+            // PropertyData returns HTTP 200 with { status: "error", message: "..." } for
+            // rate limits and plan-denied calls. The throttle code is X14; retry once.
+            if (data?.status === "error") {
+              if (data.code === "X14" && attempt === 0) {
+                console.warn(`[land-registry/resolve] PropertyData ${endpoint} X14 throttle, backing off 5s`);
+                await sleep(5000);
+                continue;
+              }
+              pdErrors.push({ endpoint, status: 200, body: String(data.message || data.error || "status:error") });
+              console.warn(`[land-registry/resolve] PropertyData ${endpoint} returned status=error: ${data.message || data.error}`);
+            }
+            return data;
+          } catch (e: any) {
+            pdErrors.push({ endpoint, body: e?.message || "fetch threw" });
+            console.warn(`[land-registry/resolve] PropertyData ${endpoint} threw:`, e?.message);
             return null;
           }
-          const data = await r.json() as any;
-          // PropertyData returns HTTP 200 with { status: "error", message: "..." } for
-          // rate limits and plan-denied calls. Log those so we can tell the difference
-          // between "no titles at this postcode" and "API call failed silently".
-          if (data?.status === "error") {
-            pdErrors.push({ endpoint, status: 200, body: String(data.message || data.error || "status:error") });
-            console.warn(`[land-registry/resolve] PropertyData ${endpoint} returned status=error: ${data.message || data.error}`);
-          }
-          return data;
-        } catch (e: any) {
-          pdErrors.push({ endpoint, body: e?.message || "fetch threw" });
-          console.warn(`[land-registry/resolve] PropertyData ${endpoint} threw:`, e?.message);
-          return null;
         }
+        return null;
       };
 
-      const [uprnTitleResults, postcodeFreeholds, postcodeLeaseholds] = await Promise.all([
-        matchedUprns.length > 0
-          ? Promise.all(matchedUprns.slice(0, 8).map(uprn => pdFetch("uprn-title", { uprn })))
-          : Promise.resolve([]),
-        cleanPc ? pdFetch("freeholds", { postcode: cleanPc }) : Promise.resolve(null),
-        cleanPc ? pdFetch("leaseholds", { postcode: cleanPc }) : Promise.resolve(null),
-      ]);
+      // Run uprn-title calls sequentially with a small gap so the burst stays
+      // under PD's 6-calls-per-10-seconds limit (combined with the address-
+      // match-uprn call above and the freeholds call below).
+      const uprnTitleResults: any[] = [];
+      const uprnsToQuery = matchedUprns.slice(0, 4);
+      for (let i = 0; i < uprnsToQuery.length; i++) {
+        if (i > 0) await sleep(300);
+        uprnTitleResults.push(await pdFetch("uprn-title", { uprn: uprnsToQuery[i] }));
+      }
+      const postcodeFreeholds = cleanPc ? await pdFetch("freeholds", { postcode: cleanPc }) : null;
 
       // Flatten uprn-title results — each may return { data: { freeholds: [], leaseholds: [] } }
       const matchedFreeholds: any[] = [];
@@ -888,7 +909,9 @@ export function registerLandRegistryRoutes(app: Express) {
       ]);
 
       const contextFreeholds = ((postcodeFreeholds as any)?.data || []).filter((f: any) => !matchedTitleNumbers.has(f.title_number));
-      const contextLeaseholds = ((postcodeLeaseholds as any)?.data || []).filter((l: any) => !matchedTitleNumbers.has(l.title_number));
+      // PropertyData has no postcode-level leaseholds endpoint, so context
+      // leaseholds are limited to whatever uprn-title surfaced.
+      const contextLeaseholds: any[] = [];
 
       // Fallback: if UPRN match failed but Google gave us a street number,
       // prioritise postcode titles whose address field starts with that
@@ -907,7 +930,9 @@ export function registerLandRegistryRoutes(app: Express) {
           return numParts.some(n => joined.includes(n + " ") || joined.includes(n + ",") || joined.includes(n + "-"));
         });
         fallbackFreeholds = pickByStreet(((postcodeFreeholds as any)?.data || []));
-        fallbackLeaseholds = pickByStreet(((postcodeLeaseholds as any)?.data || []));
+        // No postcode-leaseholds source; leaseholds-by-street fallback isn't
+        // possible without per-title lookups. Leave empty.
+        fallbackLeaseholds = [];
       }
 
       // Persist this resolve to the unified Land Registry history. The board
@@ -968,7 +993,10 @@ export function registerLandRegistryRoutes(app: Express) {
       if (!PD_KEY) return res.status(503).json({ error: "PropertyData API key not configured" });
 
       const endpoint = req.params.endpoint;
-      const ALLOWED = new Set(["freeholds", "leaseholds", "uprn", "uprn-title", "address-match-uprn", "flood-risk", "planning-applications", "energy-efficiency", "floor-areas", "demographics", "postcode-key-stats", "sold-prices", "rents-commercial", "yields", "growth", "demand", "ptal", "crime", "conservation-area", "listed-buildings", "land-registry-documents", "analyse-buildings", "rebuild-cost", "valuation-commercial-sale", "valuation-commercial-rent"]);
+      // Note: "leaseholds" is intentionally absent — PropertyData has no
+      // postcode-level leaseholds endpoint (returns X01 "Invalid API endpoint").
+      // Use "uprn-title" or per-freehold "title" lookups instead.
+      const ALLOWED = new Set(["freeholds", "uprn", "uprn-title", "address-match-uprn", "flood-risk", "planning-applications", "energy-efficiency", "floor-areas", "demographics", "postcode-key-stats", "sold-prices", "rents-commercial", "yields", "growth", "demand", "ptal", "crime", "conservation-area", "listed-buildings", "land-registry-documents", "analyse-buildings", "rebuild-cost", "valuation-commercial-sale", "valuation-commercial-rent"]);
       if (!ALLOWED.has(endpoint)) return res.status(400).json({ error: `Endpoint "${endpoint}" not allowed` });
 
       const params = new URLSearchParams({ key: PD_KEY });
