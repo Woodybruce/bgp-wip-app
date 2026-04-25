@@ -385,13 +385,62 @@ export function sortDocsByPriority(docs: PlanningDoc[]): PlanningDoc[] {
 let lastDownloadError = "";
 export function getPlanningDownloadLastError(): string { return lastDownloadError; }
 
-export async function downloadPlanningPdf(url: string): Promise<Buffer | null> {
-  const apiKey = process.env.SCRAPERAPI_KEY;
-  if (!apiKey) { lastDownloadError = "SCRAPERAPI_KEY not configured"; return null; }
+export async function downloadPlanningPdf(url: string, refererUrl?: string): Promise<Buffer | null> {
   lastDownloadError = "";
 
   const isPdfBuffer = (buf: Buffer): boolean =>
     buf.length >= 1024 && buf.slice(0, 4).toString("latin1") === "%PDF";
+
+  // Strategy 0: Webshare two-step session — establish JSESSIONID by browsing
+  // the app documents tab first, then fetch the PDF with that cookie.
+  // This mirrors what a human browser does and is required by Westminster Idox.
+  if (isProxyConfigured() && refererUrl) {
+    try {
+      // Step 1: GET the documents tab page via Webshare — Idox sets JSESSIONID
+      const sessionRes = await webshareF(refererUrl, {
+        headers: {
+          "User-Agent": BROWSER_UA,
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-GB,en;q=0.9",
+        },
+        signal: AbortSignal.timeout(20000),
+        redirect: "follow",
+      });
+      const cookieHeader = (sessionRes as any).headers?.get?.("set-cookie") || "";
+      const sessionCookie = cookieHeader.split(/,(?=\s*[A-Za-z0-9_-]+=)/)
+        .map((p: string) => p.split(";")[0].trim()).filter(Boolean).join("; ");
+
+      if (sessionCookie) {
+        // Step 2: GET the PDF with the session cookie + Referer
+        const pdfRes = await webshareF(url, {
+          headers: {
+            "User-Agent": BROWSER_UA,
+            Accept: "application/pdf,*/*;q=0.8",
+            "Accept-Language": "en-GB,en;q=0.9",
+            Referer: refererUrl,
+            Cookie: sessionCookie,
+          },
+          signal: AbortSignal.timeout(30000),
+          redirect: "follow",
+        });
+        if (pdfRes.ok) {
+          const buf = Buffer.from(await pdfRes.arrayBuffer());
+          if (isPdfBuffer(buf)) {
+            console.log(`[planning-docs] Webshare session download: ${url}`);
+            return buf;
+          }
+        }
+      }
+    } catch (err: any) {
+      console.warn(`[planning-docs] Webshare session strategy failed: ${err?.message}`);
+    }
+  }
+
+  const apiKey = process.env.SCRAPERAPI_KEY;
+  if (!apiKey) {
+    lastDownloadError = "SCRAPERAPI_KEY not configured and Webshare session failed";
+    return null;
+  }
 
   const tryFetch = async (label: string, scraperUrl: string, timeoutMs: number): Promise<Buffer | null> => {
     try {
@@ -430,18 +479,15 @@ export async function downloadPlanningPdf(url: string): Promise<Buffer | null> {
   const s1 = await tryFetch("no-render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=false`, 25000);
   if (s1) return s1;
 
-  // Strategy 2: premium proxy (residential IPs) — often enough on its own
-  // to get past Idox IP-block lists without needing JS render.
+  // Strategy 2: premium proxy (residential IPs).
   const s2 = await tryFetch("premium", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=false`, 30000);
   if (s2) return s2;
 
-  // Strategy 3: enable JS rendering. Some Idox endpoints fire a JS
-  // redirect from the viewer page to the actual PDF stream.
+  // Strategy 3: JS rendering for viewer-page redirects.
   const s3 = await tryFetch("render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=true`, 45000);
   if (s3) return s3;
 
-  // Strategy 4: premium + render. Last resort — slow but handles
-  // JS-gated + IP-gated Idox the same way a human browser does.
+  // Strategy 4: premium + render. Slow but handles JS-gated + IP-gated Idox.
   const s4 = await tryFetch("premium+render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=true`, 60000);
   if (s4) return s4;
 

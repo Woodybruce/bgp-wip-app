@@ -4551,10 +4551,11 @@ export function registerPropertyPathwayRoutes(app: Express) {
   // to the user's browser reliably.
   app.get("/api/planning-docs/download", requireAuth, async (req: Request, res: Response) => {
     const url = String(req.query.url || "");
+    const referer = String(req.query.referer || "");
     if (!/^https?:\/\//i.test(url)) return res.status(400).send("invalid url");
     try {
       const { downloadPlanningPdf, getPlanningDownloadLastError } = await import("./planning-docs");
-      const buf = await downloadPlanningPdf(url);
+      const buf = await downloadPlanningPdf(url, referer || undefined);
       if (!buf) {
         const detail = getPlanningDownloadLastError();
         console.warn(`[planning-docs/download] all strategies failed for ${url}: ${detail}`);

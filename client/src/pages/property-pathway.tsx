@@ -1947,9 +1947,10 @@ function PropertyDataMarketCard({ tone }: { tone: any }) {
 // file via a UK residential IP — Idox (Westminster and similar) blocks direct
 // browser fetches via referer/IP checks and the raw URL often returns an HTML
 // viewer rather than the PDF bytes.
-function planningPdfProxy(rawUrl: string): string {
+function planningPdfProxy(rawUrl: string, refererUrl?: string): string {
   if (!rawUrl) return rawUrl;
-  return `/api/planning-docs/download?url=${encodeURIComponent(rawUrl)}`;
+  const base = `/api/planning-docs/download?url=${encodeURIComponent(rawUrl)}`;
+  return refererUrl ? `${base}&referer=${encodeURIComponent(refererUrl)}` : base;
 }
 
 function classifyDocType(text: string): { label: string; tone: string } {
@@ -2197,7 +2198,7 @@ function PlanningDocsDialog({
                 {app.docs.map((d, di) => (
                   <a
                     key={di}
-                    href={planningPdfProxy(d.url)}
+                    href={planningPdfProxy(d.url, app.docsUrl)}
                     target="_blank"
                     rel="noreferrer"
                     className="flex items-start gap-2 py-1.5 px-3 hover:bg-muted/30 text-[12px]"
