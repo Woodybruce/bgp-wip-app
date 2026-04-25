@@ -3328,9 +3328,25 @@ async function runStage4(runId: string, req: Request): Promise<void> {
     console.log(`[pathway stage4] planning: idox=${idoxApps.length} planit=${planitApps.length} gov=${govApps.length} pd=${pdAppsArr.length} merged=${merged.length} strict=${strict.length} street=${streetApps.length} area=${area.length} shown=${planningApplications.length} (${parseLog})`);
 
     // Pull the full PDF list off each application's Idox documents tab, via
-    // ScraperAPI so Westminster's Railway IP block doesn't matter. Cap at 10
-    // apps (most-recent-first — they're already date-sorted) to keep credit
-    // spend predictable: ~10 ScraperAPI requests per pathway run.
+    // ScraperAPI so Westminster's Railway IP block doesn't matter. We
+    // prioritise SUBSTANTIVE applications (FULL/OUTLINE/LBC/REM/COU/HSE)
+    // over technical changes (NMA/MIN/S96/S106/VAR) over signage and
+    // highway furniture (ADV/TCH/TELCOM/HWY). Within each band, apps stay
+    // most-recent-first. Cap is configurable via PLANNING_DOCS_SCRAPE_CAP
+    // (default 20). PDF results are cached for 30 days so repeat opens
+    // hit zero ScraperAPI cost.
+    const APP_TYPE_PRIORITY = (ref: string): number => {
+      const r = (ref || "").toUpperCase();
+      // 0 = substantive change of use / new build / listed building consent
+      if (/\b(FULL|OUT|OUTLINE|LBC|REM|COU|HSE|MAJ)\b/.test(r)) return 0;
+      // 1 = technical / amendment / discharge of conditions
+      if (/\b(NMA|MIN|S96|S96A|S106|VAR|VOC|CND|EU|PA|PD|PRI|DOC)\b/.test(r)) return 1;
+      // 2 = signage, tables/chairs, telecoms, highway furniture
+      if (/\b(ADV|TCH|TELCOM|HWY|TPN|XRAYS|PN)\b/.test(r)) return 2;
+      // 3 = anything else (unknown suffix) — sort to end so substantive wins
+      return 3;
+    };
+    const SCRAPE_CAP = Number(process.env.PLANNING_DOCS_SCRAPE_CAP) || 20;
     const planningDocs: Array<{
       ref: string;
       lpa: string;
@@ -3341,7 +3357,13 @@ async function runStage4(runId: string, req: Request): Promise<void> {
     }> = [];
     try {
       const { fetchPlanningDocs, docsTabUrl, sortDocsByPriority } = await import("./planning-docs");
-      const toScrape = planningApplications.filter((a: any) => a.documentUrl).slice(0, 10);
+      const candidates = planningApplications.filter((a: any) => a.documentUrl);
+      const toScrape = candidates
+        .map((a: any, idx: number) => ({ app: a, originalIdx: idx, prio: APP_TYPE_PRIORITY(a.reference || "") }))
+        .sort((a, b) => a.prio !== b.prio ? a.prio - b.prio : a.originalIdx - b.originalIdx)
+        .slice(0, SCRAPE_CAP)
+        .map(x => x.app);
+      console.log(`[pathway stage4] planning-docs scrape: ${candidates.length} candidates → ${toScrape.length} selected (cap ${SCRAPE_CAP}, priority-sorted): ${toScrape.map((a: any) => a.reference).join(", ")}`);
       const results = await Promise.allSettled(
         toScrape.map(async (app: any) => {
           const url = docsTabUrl(app.documentUrl);
