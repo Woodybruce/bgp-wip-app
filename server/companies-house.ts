@@ -365,21 +365,25 @@ router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req,
 
     let chNumber = company.companiesHouseNumber;
 
-    if (!chNumber) {
+    // Check if the existing entity is dissolved — if so, treat as if we have no number
+    // and re-search so we can find an active replacement.
+    const existingChData = company.companiesHouseData as any;
+    const existingStatus = existingChData?.profile?.companyStatus;
+    const isExistingDissolved = existingStatus && existingStatus !== "active";
+
+    if (!chNumber || isExistingDissolved) {
       // Step 1: prefer stored uk_entity_name, otherwise try scraping the website
       let searchName = (company as any).ukEntityName as string | null || company.name;
       const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
 
-      if (!(company as any).ukEntityName && domain) {
+      if (domain) {
         try {
           const scraped = await scrapeUkEntityFromWebsite(domain);
           if (scraped.entityName) {
             searchName = scraped.entityName;
-            // Auto-save scraped entity name
             await db.update(crmCompanies).set({ ukEntityName: scraped.entityName } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
             console.log(`[auto-kyc] Scraped UK entity from website: "${scraped.entityName}"`);
           }
-          // If we got a direct CH number from the website, use it immediately
           if (scraped.chNumber) {
             chNumber = scraped.chNumber;
           }
@@ -389,7 +393,7 @@ router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req,
       }
 
       if (!chNumber) {
-        const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=5`);
+        const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=10`);
         const items = searchData.items || [];
         if (items.length === 0) {
           return res.json({
@@ -399,12 +403,12 @@ router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req,
           });
         }
         const nameLower = searchName.toLowerCase().trim();
-        // Prefer active companies; prefer exact name matches
+        // Strongly prefer active companies — only fall back to dissolved if nothing else found
         const activeItems = items.filter((i: any) => i.company_status === "active");
-        const pool = activeItems.length > 0 ? activeItems : items;
-        const bestMatch = pool.find((i: any) => i.title?.toLowerCase().trim() === nameLower)
-          || pool.find((i: any) => i.title?.toLowerCase().includes(nameLower) || nameLower.includes(i.title?.toLowerCase()))
-          || pool[0];
+        const candidatePool = activeItems.length > 0 ? activeItems : items;
+        const bestMatch = candidatePool.find((i: any) => i.title?.toLowerCase().trim() === nameLower)
+          || candidatePool.find((i: any) => i.title?.toLowerCase().includes(nameLower) || nameLower.includes(i.title?.toLowerCase()))
+          || candidatePool[0];
         chNumber = bestMatch.company_number;
       }
     }
