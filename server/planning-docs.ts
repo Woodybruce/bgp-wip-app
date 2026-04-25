@@ -406,9 +406,17 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
         signal: AbortSignal.timeout(20000),
         redirect: "follow",
       });
-      const cookieHeader = (sessionRes as any).headers?.get?.("set-cookie") || "";
-      const sessionCookie = cookieHeader.split(/,(?=\s*[A-Za-z0-9_-]+=)/)
-        .map((p: string) => p.split(";")[0].trim()).filter(Boolean).join("; ");
+      // undici uses getSetCookie() for multiple Set-Cookie headers (not .get())
+      const rawHeaders = (sessionRes as any).headers;
+      let sessionCookie = "";
+      if (typeof rawHeaders?.getSetCookie === "function") {
+        sessionCookie = rawHeaders.getSetCookie()
+          .map((h: string) => h.split(";")[0].trim()).filter(Boolean).join("; ");
+      } else {
+        const combined = rawHeaders?.get?.("set-cookie") || "";
+        sessionCookie = combined.split(/,(?=\s*[A-Za-z0-9_-]+=)/)
+          .map((p: string) => p.split(";")[0].trim()).filter(Boolean).join("; ");
+      }
 
       if (sessionCookie) {
         // Step 2: GET the PDF with the session cookie + Referer
@@ -426,10 +434,15 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
         if (pdfRes.ok) {
           const buf = Buffer.from(await pdfRes.arrayBuffer());
           if (isPdfBuffer(buf)) {
-            console.log(`[planning-docs] Webshare session download: ${url}`);
+            console.log(`[planning-docs] Webshare session download OK: ${url}`);
             return buf;
           }
+          console.warn(`[planning-docs] Webshare session got non-PDF (${buf.length}B)`);
+        } else {
+          console.warn(`[planning-docs] Webshare session PDF fetch ${pdfRes.status}`);
         }
+      } else {
+        console.warn(`[planning-docs] Webshare session: no JSESSIONID in Set-Cookie`);
       }
     } catch (err: any) {
       console.warn(`[planning-docs] Webshare session strategy failed: ${err?.message}`);

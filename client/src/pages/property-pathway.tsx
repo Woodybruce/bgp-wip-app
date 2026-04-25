@@ -420,6 +420,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
   const nextStage = Math.min(run.currentStage, 9);
   const [tenantInput, setTenantInput] = useState("");
   const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
+  const [emailSortSummary, setEmailSortSummary] = useState<string | null>(null);
+  const [emailSorting, setEmailSorting] = useState(false);
 
   return (
     <div className="max-w-6xl mx-auto p-6 space-y-4">
@@ -1064,27 +1066,61 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
 
           </div>
 
-          {/* Emails — full list at bottom, scrollable so all hits fit.
-              Click opens in-app viewer (dialog) so users can read the email
-              and download attachments without being bounced to Outlook Web. */}
+          {/* Emails — raw list with optional AI organisation */}
           {s1.emailHits && s1.emailHits.length > 0 && (
             <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Emails ({s1.emailHits.length})</CardTitle>
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Emails ({s1.emailHits.length})</CardTitle>
+                  <div className="flex gap-1">
+                    {emailSortSummary && (
+                      <Button variant="ghost" size="sm" className="h-6 text-[10px]" onClick={() => setEmailSortSummary(null)}>Show list</Button>
+                    )}
+                    <Button
+                      variant="outline" size="sm"
+                      className="h-6 text-[10px] gap-1"
+                      disabled={emailSorting}
+                      onClick={async () => {
+                        setEmailSorting(true);
+                        setEmailSortSummary(null);
+                        try {
+                          const r = await fetch("/api/pathway/email-sort", {
+                            method: "POST", credentials: "include",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ address: run?.address, emailHits: s1.emailHits }),
+                          });
+                          const d = await r.json();
+                          setEmailSortSummary(d.summary || "No summary returned.");
+                        } catch { setEmailSortSummary("Failed to analyse emails."); }
+                        finally { setEmailSorting(false); }
+                      }}
+                    >
+                      {emailSorting ? "Analysing…" : "AI sort"}
+                    </Button>
+                  </div>
+                </div>
               </CardHeader>
-              <CardContent className="text-[11px] grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 pb-2 max-h-[250px] overflow-y-auto">
-                {s1.emailHits.map((h: any, i: number) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => h.mailboxEmail ? setOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail }) : null}
-                    disabled={!h.mailboxEmail}
-                    className="text-left border-l-2 border-muted hover:border-primary pl-1.5 py-0.5 hover:bg-muted/50 rounded-r cursor-pointer disabled:cursor-default disabled:opacity-60"
-                  >
-                    <p className="font-medium truncate">{h.subject}{h.hasAttachments ? " 📎" : ""}</p>
-                    <p className="text-muted-foreground text-[10px]">{h.from} — {new Date(h.date).toLocaleDateString("en-GB")}</p>
-                  </button>
-                ))}
+              <CardContent className="pb-2">
+                {emailSortSummary ? (
+                  <div className="text-[11px] prose prose-sm max-w-none max-h-[400px] overflow-y-auto [&_h1]:text-sm [&_h2]:text-xs [&_h3]:text-xs [&_h2]:mt-2 [&_h3]:mt-1.5 [&_p]:my-0.5 [&_ul]:my-0.5 [&_li]:my-0 [&_table]:text-[10px]">
+                    <div dangerouslySetInnerHTML={{ __html: emailSortSummary.replace(/\n/g, "<br/>").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/^## (.+)$/gm, "<h2>$1</h2>").replace(/^### (.+)$/gm, "<h3>$1</h3>").replace(/^# (.+)$/gm, "<h1>$1</h1>") }} />
+                  </div>
+                ) : (
+                  <div className="text-[11px] grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 max-h-[250px] overflow-y-auto">
+                    {s1.emailHits.map((h: any, i: number) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => h.mailboxEmail ? setOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail }) : null}
+                        disabled={!h.mailboxEmail}
+                        className="text-left border-l-2 border-muted hover:border-primary pl-1.5 py-0.5 hover:bg-muted/50 rounded-r cursor-pointer disabled:cursor-default disabled:opacity-60"
+                      >
+                        <p className="font-medium truncate">{h.subject}{h.hasAttachments ? " 📎" : ""}</p>
+                        <p className="text-muted-foreground text-[10px]">{h.from} — {new Date(h.date).toLocaleDateString("en-GB")}</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

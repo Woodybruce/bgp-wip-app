@@ -4269,6 +4269,51 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
+  // AI email organiser — takes the email hit list from stage 1 and returns
+  // a Claude-organised summary: chronological threads, filtered noise, gaps.
+  app.post("/api/pathway/email-sort", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { address, emailHits } = req.body as { address?: string; emailHits?: any[] };
+      if (!emailHits?.length) return res.json({ summary: "No emails to analyse." });
+
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+      const emailList = emailHits.slice(0, 80).map((e: any, i: number) => {
+        const date = e.date ? new Date(e.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "?";
+        return `${i + 1}. [${date}] From: ${e.from} | Subject: ${String(e.subject || "").replace(" · via .*", "").trim()} | Preview: ${String(e.preview || "").slice(0, 120)}`;
+      }).join("\n");
+
+      const msg = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1500,
+        messages: [{
+          role: "user",
+          content: `You are analysing emails found in a property investment firm's (Bruce Gillingham Pollard) inboxes related to the property at: ${address || "unknown address"}.
+
+Here are the ${emailHits.length} email hits (subject, from, date, preview):
+
+${emailList}
+
+Please:
+1. Filter out any that are clearly NOT about this property (newsletters, other properties, unrelated topics)
+2. Group the genuine hits into logical threads or topics, ordered chronologically
+3. For each email note the date, who it's from/to, subject, and what it reveals
+4. Note any obvious gaps (e.g. "the original introduction email isn't here")
+5. End with 1-2 suggested actions
+
+Format as clean markdown with headers. Be concise and professional. Focus on what's commercially useful.`
+        }],
+      });
+
+      const summary = (msg.content[0] as any)?.text || "No summary generated.";
+      res.json({ summary });
+    } catch (err: any) {
+      console.error("[pathway/email-sort]", err?.message);
+      res.status(500).json({ error: err?.message || "AI analysis failed" });
+    }
+  });
+
   // Start a new pathway run — returns existing run for the same address+postcode if one exists (unless force=true)
   app.post("/api/property-pathway/start", requireAuth, async (req: Request, res: Response) => {
     try {
