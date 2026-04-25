@@ -1713,10 +1713,17 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
         if (fromAddr.includes(n) || fromName.includes(n)) return false;
       }
 
-      // 3) Trusted phrase match (Graph already matched a quoted multi-word
-      //    phrase like "22 Haymarket" against full body — don't re-filter it
-      //    against the 255-char bodyPreview or we drop real thread hits).
-      if (trustedPhrase) return true;
+      // 3) Trusted phrase match — Graph found the address phrase somewhere in
+      //    the email body, but that includes signatures. Still require the
+      //    distinctive address word or postcode to appear in SUBJECT or PREVIEW
+      //    (first 200 chars, before signatures). This stops e.g. "22 King St,
+      //    Sandwich" emails slipping through because Michelle's signature
+      //    mentions "18-22 Haymarket".
+      if (trustedPhrase) {
+        if (postcodeLc && hayNoSpaces.includes(postcodeLc)) return true;
+        if (addressWords.some((w) => hay.includes(w))) return true;
+        return false;
+      }
 
       // 4) Postcode in subject/preview → keep (strong signal)
       if (postcodeLc && hayNoSpaces.includes(postcodeLc)) return true;
