@@ -1271,29 +1271,8 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           </CardHeader>
           <CardContent className="text-sm space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-              {/* 01 Ownership — InfoTrack placeholder slots */}
-              <div className="border rounded p-2.5 bg-muted/10">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">01 Ownership</p>
-                <div className="space-y-1 text-[11px]">
-                  {[
-                    { label: "Title Register (OC1)", kind: "OC1" },
-                    { label: "Title Plan (OC2)", kind: "OC2" },
-                    { label: "Filed Leases", kind: "LEASES" },
-                  ].map((slot) => (
-                    <div key={slot.kind} className="flex items-center justify-between py-1 border-b last:border-b-0">
-                      <span className="text-muted-foreground truncate">{slot.label}</span>
-                      <button
-                        type="button"
-                        disabled
-                        title="InfoTrack credentials required"
-                        className="text-[10px] px-1.5 py-0.5 rounded border bg-muted/20 text-muted-foreground cursor-not-allowed"
-                      >
-                        Order
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              {/* 01 Ownership — order Title Register / Plan via PropertyData */}
+              <OwnershipCard titleNumber={s1?.initialOwnership?.titleNumber} />
 
               {/* 02 Companies House KYC — summary only; full report lives in Clouseau */}
               <div className="border rounded p-2.5 bg-muted/10">
@@ -1679,6 +1658,98 @@ function statusTone(status: string): string {
   return "bg-slate-100 text-slate-700";
 }
 
+function OwnershipCard({ titleNumber }: { titleNumber?: string | null }) {
+  const { toast } = useToast();
+  const [ordering, setOrdering] = useState<string | null>(null);
+
+  // Stage 1's AI sometimes stuffs commentary into titleNumber; pull the bare ref.
+  const cleanTitle = (raw?: string | null): string => {
+    if (!raw) return "";
+    const m = String(raw).match(/\b([A-Z]{1,3}\d{3,7})\b/);
+    return m ? m[1] : "";
+  };
+  const title = cleanTitle(titleNumber);
+
+  const orderDoc = async (docType: "register" | "plan") => {
+    if (!title) return;
+    setOrdering(docType);
+    try {
+      const res = await fetch("/api/title-search/download-document", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        credentials: "include",
+        body: JSON.stringify({ title, document: docType }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: "Order unavailable", description: data.error || "Could not order document", variant: "destructive" });
+        return;
+      }
+      if (data.documentUrl) {
+        window.open(data.documentUrl, "_blank");
+        const priceStr = data.price?.total_gbp ? ` (£${data.price.total_gbp} inc. VAT)` : "";
+        const docLabel = docType === "plan" ? "Title Plan" : "Title Register";
+        toast({ title: "Document ready", description: `${docLabel} for ${title} opened${priceStr}` });
+      } else {
+        toast({ title: "Document not ready", description: data.documentStatus || "Please try again shortly" });
+      }
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setOrdering(null);
+    }
+  };
+
+  const slots: Array<{ label: string; kind: "register" | "plan" | "leases" }> = [
+    { label: "Title Register (OC1)", kind: "register" },
+    { label: "Title Plan (OC2)", kind: "plan" },
+    { label: "Filed Leases", kind: "leases" },
+  ];
+
+  return (
+    <div className="border rounded p-2.5 bg-muted/10">
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-[10px] uppercase tracking-wide text-muted-foreground">01 Ownership</p>
+        {title && <span className="text-[10px] text-muted-foreground font-mono">{title}</span>}
+      </div>
+      <div className="space-y-1 text-[11px]">
+        {slots.map((slot) => {
+          const isOrderable = slot.kind === "register" || slot.kind === "plan";
+          const enabled = isOrderable && !!title && ordering === null;
+          const isLoading = ordering === slot.kind;
+          const tooltip = !title
+            ? "No title number resolved at Stage 1 yet"
+            : !isOrderable
+              ? "Filed leases not available via PropertyData"
+              : `Order ${slot.label} from PropertyData (£7.50 + VAT)`;
+          return (
+            <div key={slot.kind} className="flex items-center justify-between py-1 border-b last:border-b-0">
+              <span className="text-muted-foreground truncate">{slot.label}</span>
+              <button
+                type="button"
+                disabled={!enabled}
+                onClick={isOrderable ? () => orderDoc(slot.kind as "register" | "plan") : undefined}
+                title={tooltip}
+                className={`text-[10px] px-1.5 py-0.5 rounded border inline-flex items-center gap-1 ${
+                  enabled
+                    ? "bg-primary/10 text-primary border-primary/30 hover:bg-primary/20"
+                    : "bg-muted/20 text-muted-foreground cursor-not-allowed"
+                }`}
+              >
+                {isLoading && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                {isLoading ? "Ordering" : "Order"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {!title && (
+        <p className="mt-1.5 text-[10px] text-muted-foreground italic">Run Stage 1 to resolve a title number first.</p>
+      )}
+    </div>
+  );
+}
+
 function PlanningRow({ p }: { p: any }) {
   const [expanded, setExpanded] = useState(false);
   const dateStr = p.decidedAt || p.receivedAt || p.date || "";
@@ -1689,15 +1760,15 @@ function PlanningRow({ p }: { p: any }) {
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-start gap-1.5 py-1 px-0.5 hover:bg-muted/30 text-left"
+        className="w-full flex items-start gap-2 py-2 px-1 hover:bg-muted/30 text-left leading-relaxed"
       >
-        {expanded ? <ChevronDown className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground" />}
-        <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{dateStr ? dateStr.slice(0, 10) : ""}</span>
-        {lpa && <span className="text-[8px] px-1 py-px rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0 mt-px" title={p.lpa}>{lpa}</span>}
+        {expanded ? <ChevronDown className="w-3 h-3 mt-1 shrink-0 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 mt-1 shrink-0 text-muted-foreground" />}
+        <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-0.5">{dateStr ? dateStr.slice(0, 10) : ""}</span>
+        {lpa && <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0 mt-0.5" title={p.lpa}>{lpa}</span>}
         <span className="flex-1 min-w-0">
           <span className="font-medium break-all">{p.reference}</span>
-          {p.status && <span className={`ml-1 text-[9px] px-1 py-px rounded uppercase tracking-wide ${statusTone(p.status)}`}>{p.status}</span>}
-          <span className="block text-muted-foreground truncate">{p.description || ""}</span>
+          {p.status && <span className={`ml-1 text-[9px] px-1 py-0.5 rounded uppercase tracking-wide ${statusTone(p.status)}`}>{p.status}</span>}
+          <span className="block text-muted-foreground truncate mt-0.5">{p.description || ""}</span>
         </span>
       </button>
       {expanded && (
@@ -2080,11 +2151,11 @@ function PlanningDocsCard({
             <div key={ai} className="border rounded bg-background">
               {/* App-grouping header: one line to match the doc rows below.
                   Full description + long refs are available via Expand. */}
-              <div className="flex items-center gap-1.5 px-2 py-1 border-b bg-muted/30 text-[11px]">
+              <div className="flex items-center gap-2 px-2 py-1.5 border-b bg-muted/30 text-[11px]">
                 <span className="text-[10px] text-muted-foreground shrink-0 w-16">{app.appDate ? app.appDate.slice(0, 10) : ""}</span>
-                {app.lpa && <span className="text-[8px] px-1 py-px rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
+                {app.lpa && <span className="text-[8px] px-1 py-0.5 rounded bg-emerald-100 text-emerald-800 uppercase font-medium shrink-0" title={app.lpa}>{app.lpa.split(/[ &]/)[0]}</span>}
                 <a href={app.docsUrl} target="_blank" rel="noreferrer" className="font-medium text-primary hover:underline truncate min-w-0 flex-1" title={app.ref + (app.description ? ` — ${app.description}` : "")}>{app.ref}</a>
-                <span className="text-[9px] px-1 py-px rounded bg-sky-100 text-sky-800 shrink-0">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
+                <span className="text-[9px] px-1 py-0.5 rounded bg-sky-100 text-sky-800 shrink-0">{app.docs.length} PDF{app.docs.length === 1 ? "" : "s"}</span>
               </div>
               <div className="divide-y">
                 {app.docs.slice(0, 40).map((d, di) => (
@@ -2093,16 +2164,16 @@ function PlanningDocsCard({
                     href={planningPdfProxy(d.url, app.docsUrl)}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-start gap-1.5 py-1 px-2 hover:bg-muted/30 text-[11px]"
+                    className="flex items-start gap-2 py-2 px-2 hover:bg-muted/30 text-[11px] leading-relaxed"
                     title={d.description}
                   >
-                    <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{d.date ? d.date.slice(0, 10) : ""}</span>
-                    <span className={`text-[9px] px-1 py-px rounded uppercase tracking-wide shrink-0 mt-px ${docCategoryTone(d.category)}`}>{d.label}</span>
+                    <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-0.5">{d.date ? d.date.slice(0, 10) : ""}</span>
+                    <span className={`text-[9px] px-1 py-0.5 rounded uppercase tracking-wide shrink-0 mt-0.5 ${docCategoryTone(d.category)}`}>{d.label}</span>
                     <span className="flex-1 min-w-0">
                       <span className="block truncate">{d.description}</span>
-                      {d.drawingNumber && <span className="block text-muted-foreground text-[10px] truncate">Drawing {d.drawingNumber}</span>}
+                      {d.drawingNumber && <span className="block text-muted-foreground text-[10px] truncate mt-0.5">Drawing {d.drawingNumber}</span>}
                     </span>
-                    <Download className="w-3 h-3 shrink-0 text-muted-foreground mt-px" />
+                    <Download className="w-3 h-3 shrink-0 text-muted-foreground mt-1" />
                   </a>
                 ))}
                 {app.docs.length > 40 && (
@@ -2126,14 +2197,14 @@ function PlanningDocsCard({
                     href={p.documentUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-start gap-1.5 py-1 px-2 hover:bg-muted/30 text-[11px]"
+                    className="flex items-start gap-2 py-2 px-2 hover:bg-muted/30 text-[11px] leading-relaxed"
                   >
-                    <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10)}</span>
+                    <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-0.5">{(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10)}</span>
                     <span className="flex-1 min-w-0">
                       <span className="font-medium break-all text-primary">{p.reference}</span>
-                      {p.description && <span className="block text-muted-foreground text-[10px] truncate">{p.description}</span>}
+                      {p.description && <span className="block text-muted-foreground text-[10px] truncate mt-0.5">{p.description}</span>}
                     </span>
-                    <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground mt-px" />
+                    <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground mt-1" />
                   </a>
                 ))}
               </div>
@@ -2155,20 +2226,20 @@ function PlanningDocsCard({
                   href={p.documentUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="flex items-start gap-1.5 py-1 px-0.5 border-b last:border-b-0 hover:bg-muted/30"
+                  className="flex items-start gap-2 py-2 px-1 border-b last:border-b-0 hover:bg-muted/30 leading-relaxed"
                 >
-                  <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-px">{(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10)}</span>
-                  <span className={`text-[9px] px-1 py-px rounded uppercase tracking-wide shrink-0 mt-px ${cat.tone}`}>{cat.label}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0 w-16 mt-0.5">{(p.decidedAt || p.receivedAt || p.date || "").slice(0, 10)}</span>
+                  <span className={`text-[9px] px-1 py-0.5 rounded uppercase tracking-wide shrink-0 mt-0.5 ${cat.tone}`}>{cat.label}</span>
                   <span className="flex-1 min-w-0">
                     <span className="font-medium break-all text-primary">{p.reference}</span>
-                    {p.description && <span className="block text-muted-foreground text-[10px] truncate">{p.description}</span>}
+                    {p.description && <span className="block text-muted-foreground text-[10px] truncate mt-0.5">{p.description}</span>}
                   </span>
-                  <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground mt-px" />
+                  <ExternalLink className="w-2.5 h-2.5 shrink-0 text-muted-foreground mt-1" />
                 </a>
               );
             })}
             {legacyUrls.filter((u) => !apps.some((a: any) => a.documentUrl === u)).slice(0, 10).map((u, i) => (
-              <a key={`legacy-${i}`} href={u} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 py-1 px-0.5 border-b last:border-b-0 hover:bg-muted/30 text-[10px] text-muted-foreground">
+              <a key={`legacy-${i}`} href={u} target="_blank" rel="noreferrer" className="flex items-center gap-2 py-2 px-1 border-b last:border-b-0 hover:bg-muted/30 text-[10px] text-muted-foreground">
                 <ExternalLink className="w-2.5 h-2.5 shrink-0" />
                 <span className="truncate">{u}</span>
               </a>
