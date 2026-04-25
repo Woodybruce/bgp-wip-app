@@ -57,7 +57,7 @@ interface TenantRepSearch {
 }
 
 interface CrmCompany { id: string; name: string; domain: string | null; }
-interface CrmContact { id: string; first_name: string; last_name: string; role: string | null; company_id: string | null; }
+interface CrmContact { id: string; name: string; role: string | null; company_id: string | null; }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -617,7 +617,7 @@ export default function TenantRep() {
                   <SelectItem value="">— None —</SelectItem>
                   {filteredContacts.slice(0, 200).map(c => (
                     <SelectItem key={c.id} value={c.id}>
-                      {c.first_name} {c.last_name}{c.role ? ` · ${c.role}` : ""}
+                      {c.name}{c.role ? ` · ${c.role}` : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>

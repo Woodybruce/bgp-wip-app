@@ -701,10 +701,10 @@ export async function callClaude(params: any): Promise<any> {
     messages,
   };
   // Extended thinking — let the model reason before responding.
-  // Requires temperature=1 (SDK default when unset). budget_tokens must be < max_tokens.
   // Opt-in: only enabled when params.thinking === true, to avoid the token cost on helper calls.
+  // Note: adaptive type does not accept budget_tokens — model decides internally.
   if (params.thinking === true) {
-    claudeParams.thinking = { type: "adaptive", budget_tokens: params.thinkingBudget || 6000 };
+    claudeParams.thinking = { type: "adaptive" };
   }
   // Support structured system prompt (array with cache_control) for prompt caching
   if (params.systemArray) {
@@ -809,7 +809,7 @@ export async function callClaudeStreaming(
   };
   // Extended thinking — opt-in per callsite (see callClaude comment).
   if (params.thinking === true) {
-    claudeParams.thinking = { type: "adaptive", budget_tokens: params.thinkingBudget || 6000 };
+    claudeParams.thinking = { type: "adaptive" };
   }
 
   // Support structured system prompt (array with cache_control)

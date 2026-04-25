@@ -4787,7 +4787,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
           c.domain AS company_domain,
           c.rollout_status,
           c.store_count,
-          co.first_name || ' ' || co.last_name AS contact_name,
+          co.name AS contact_name,
           co.email AS contact_email,
           co.phone AS contact_phone,
           co.role AS contact_role,
