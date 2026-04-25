@@ -435,9 +435,11 @@ async function lookupTflNearby(postcode: string): Promise<any> {
   }
 }
 
+// PropertyData has no /leaseholds?postcode endpoint (returns X01
+// "Invalid API endpoint"). Leaseholds are merged in from /uprn-title results
+// when a UPRN is supplied — see mergeList below.
 const PROPERTYDATA_CORE_ENDPOINTS = [
   { key: "freeholds" },
-  { key: "leaseholds" },
   { key: "planning-applications", extra: { max_age: "7300" } },
 ];
 
@@ -509,15 +511,14 @@ async function lookupPropertyDataCoUk(postcode: string, layers?: PropertyDataLay
     const cleanPc = postcode.replace(/\s+/g, "");
     const activeLayers = layers || ["core"];
 
-    // Always query the postcode-wide /freeholds + /leaseholds when a
-    // postcode is available. Even when we have a UPRN, postcode context
-    // is essential: a business-name address like "Shell Recharge Charging
-    // Station" has a UPRN that often has no registered Land Registry
-    // title, so /uprn-title returns empty and the UI shows "no titles"
-    // even though the parent building and every neighbouring property in
-    // the postcode is registered. Running both gives us the UPRN-precise
-    // match (if any) + the postcode-wide context to fall back on.
-    const ownershipEndpoints = ["freeholds", "leaseholds"];
+    // Always query postcode-wide /freeholds when a postcode is available.
+    // Even when we have a UPRN, postcode context is useful: a business-name
+    // address like "Shell Recharge Charging Station" has a UPRN that often
+    // has no registered Land Registry title, so /uprn-title returns empty
+    // and the UI shows "no titles" even though the parent building is
+    // registered. Running both gives us the UPRN-precise match (if any)
+    // plus the postcode-wide context. Note: leaseholds are NOT available at
+    // postcode level — they come back inside /uprn-title results only.
 
     const endpoints: Array<{ key: string; extra?: Record<string, string> }> = [];
     for (const layer of activeLayers) {

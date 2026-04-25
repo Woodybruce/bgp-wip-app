@@ -600,21 +600,17 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
 
       if (!postcode) return res.json({ freeholds: [], leaseholds: [], postcode: null });
 
-      // Fetch freeholds + leaseholds for this postcode — cached 30 days
-      const [freeholds, leaseholds] = await Promise.all([
-        cached(`pd-fh:${postcode}`, async () => {
-          const url = `https://api.propertydata.co.uk/freeholds?key=${PD_KEY}&postcode=${encodeURIComponent(postcode)}`;
-          const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-          if (!r.ok) return null;
-          return await r.json();
-        }, 24 * 30),
-        cached(`pd-lh:${postcode}`, async () => {
-          const url = `https://api.propertydata.co.uk/leaseholds?key=${PD_KEY}&postcode=${encodeURIComponent(postcode)}`;
-          const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-          if (!r.ok) return null;
-          return await r.json();
-        }, 24 * 30),
-      ]);
+      // Fetch freeholds for this postcode — cached 30 days. PropertyData has
+      // no /leaseholds?postcode endpoint (returns X01 "Invalid API endpoint"),
+      // and per-UPRN lookups across a whole bbox would be far too expensive
+      // for a map view. Map shows freehold polygons only.
+      const freeholds = await cached(`pd-fh:${postcode}`, async () => {
+        const url = `https://api.propertydata.co.uk/freeholds?key=${PD_KEY}&postcode=${encodeURIComponent(postcode)}`;
+        const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (!r.ok) return null;
+        return await r.json();
+      }, 24 * 30);
+      const leaseholds = null;
 
       const extract = (payload: any): any[] => {
         const rows = payload?.data || payload?.freeholds?.data || payload?.leaseholds?.data || [];

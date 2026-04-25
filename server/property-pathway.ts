@@ -1334,16 +1334,24 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     const stage1UserId = (run as any).startedBy || null;
     const hasOwnership = !!stage1Payload.initialOwnership;
     if (stage1UserId) {
-      const { performPropertyLookup } = await import("./property-lookup");
-      const lookup = await performPropertyLookup({
+      // Use the building-title resolver so the persisted snapshot reflects the
+      // titles that ACTUALLY belong to this building, not every freehold in
+      // the postcode. Falls back to street-number-filtered context if no
+      // UPRN match is found.
+      const { resolveBuildingTitles } = await import("./land-registry");
+      const lr = await resolveBuildingTitles({
         address: run.address,
         postcode: run.postcode || "",
-        layers: ["core"],
+        skipPersist: true,
       }).catch(() => null);
-      const freeholds = lookup?.propertyDataCoUk?.freeholds?.data || [];
-      const leaseholds = (lookup?.propertyDataCoUk as any)?.leaseholds?.data || [];
+      const matchedFh = lr?.ok ? lr.matched.freeholds : [];
+      const matchedLh = lr?.ok ? lr.matched.leaseholds : [];
+      const fallbackFh = lr?.ok ? lr.fallback.freeholds : [];
+      const contextFh = lr?.ok ? lr.context.freeholds : [];
+      const freeholds = matchedFh.length > 0 ? matchedFh : (fallbackFh.length > 0 ? fallbackFh : contextFh);
+      const leaseholds = matchedLh;
       const hasLrData = freeholds.length > 0 || leaseholds.length > 0 || hasOwnership;
-      console.log(`[pathway stage1 autonomous] persist LR check: userId=set freeholds=${freeholds.length} leaseholds=${leaseholds.length} ownership=${hasOwnership ? "yes" : "no"}`);
+      console.log(`[pathway stage1 autonomous] persist LR check: userId=set freeholds=${freeholds.length} leaseholds=${leaseholds.length} ownership=${hasOwnership ? "yes" : "no"} source=${lr?.ok ? lr.source : "error"}`);
       if (hasLrData) {
         const { persistLandRegistrySearch } = await import("./land-registry");
         const saved = await persistLandRegistrySearch({
@@ -1427,7 +1435,14 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
     console.error("[pathway stage1] ensureCrmPropertyLink error:", err?.message);
   }
 
-  // 1b. Ownership — prefer CRM data if we already have it, fall back to PropertyData freeholds lookup
+  // 1b. Ownership — prefer CRM data if we already have it, fall back to the
+  // shared resolveBuildingTitles helper which does Google geocode → OS Places
+  // by lat/lng → PD address-match-uprn → PD uprn-title. Crucially we ONLY
+  // assert ownership from the building-matched titles (matched.freeholds) —
+  // never from the postcode-wide context list, because postcodes like
+  // SW1Y 4DG cover several buildings (e.g. 18-22 Haymarket + 4 Panton St
+  // behind it). Picking from the postcode list used to silently misattribute
+  // a neighbour's title to the queried building.
   let initialOwnership: NonNullable<StageResults["stage1"]>["initialOwnership"] = null;
   const crmMatch = crmHits.properties[0];
   if (crmMatch?.proprietorName || crmMatch?.titleNumber) {
@@ -1437,29 +1452,46 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
       proprietorCategory: crmMatch.proprietorType || undefined,
     };
   }
-  // Enrich with PropertyData lookup regardless, in case CRM is incomplete.
-  // Also picks up VOA rateable-value entries for rates/business-rates surface.
   let voaEntries: Array<{ firmName?: string; address?: string; postcode?: string; description?: string; rateableValue?: number | null; effectiveDate?: string; }> = [];
   let stage1FreeholdsData: any[] = [];
   let stage1LeaseholdsData: any[] = [];
   try {
-    const lookup = await performPropertyLookup({ address, postcode, layers: ["core"] });
-    const freeholds = lookup.propertyDataCoUk?.freeholds?.data || [];
-    stage1FreeholdsData = freeholds;
-    stage1LeaseholdsData = (lookup.propertyDataCoUk as any)?.leaseholds?.data || [];
-    if (freeholds.length > 0) {
-      // Prefer the first freehold with an actual proprietor name —
-      // postcode-wide LR queries can return a title with blank
-      // proprietor_name_1 first, which wipes the Ownership card.
-      const best = freeholds.find((f: any) => f?.proprietor_name_1?.trim()) || freeholds[0];
-      initialOwnership = {
-        titleNumber: best.title_number || best.title || initialOwnership?.titleNumber || "unknown",
-        proprietorName: best.proprietor_name_1 || initialOwnership?.proprietorName,
-        proprietorCategory: best.proprietor_category || initialOwnership?.proprietorCategory,
-        pricePaid: best.price_paid ? Number(best.price_paid) : initialOwnership?.pricePaid,
-        dateOfPurchase: best.date_proprietor_added || initialOwnership?.dateOfPurchase,
-      };
+    // Authoritative title resolution — UPRN-precise.
+    const { resolveBuildingTitles } = await import("./land-registry");
+    const lr = await resolveBuildingTitles({ address, postcode, skipPersist: true });
+    if (lr.ok) {
+      const matchedFh = lr.matched.freeholds || [];
+      const matchedLh = lr.matched.leaseholds || [];
+      const fallbackFh = lr.fallback.freeholds || [];
+      const contextFh = lr.context.freeholds || [];
+      // Persist matched first, then fallback (street-number filter) for
+      // visibility on the LR board, but keep context out of "ownership".
+      stage1FreeholdsData = matchedFh.length > 0
+        ? matchedFh
+        : fallbackFh.length > 0 ? fallbackFh : contextFh;
+      stage1LeaseholdsData = matchedLh;
+
+      const ownershipPool = matchedFh.length > 0 ? matchedFh : fallbackFh;
+      if (ownershipPool.length > 0) {
+        const best = ownershipPool.find((f: any) => f?.proprietor_name_1?.trim()) || ownershipPool[0];
+        initialOwnership = {
+          titleNumber: best.title_number || best.title || initialOwnership?.titleNumber || "unknown",
+          proprietorName: best.proprietor_name_1 || initialOwnership?.proprietorName,
+          proprietorCategory: best.proprietor_category || initialOwnership?.proprietorCategory,
+          pricePaid: best.price_paid ? Number(best.price_paid) : initialOwnership?.pricePaid,
+          dateOfPurchase: best.date_proprietor_added || initialOwnership?.dateOfPurchase,
+        };
+        console.log(`[pathway stage1] ownership resolved via ${lr.source} — title=${initialOwnership.titleNumber} owner=${initialOwnership.proprietorName || "?"}`);
+      } else {
+        console.log(`[pathway stage1] no UPRN-matched title for "${address}" in ${postcode} — leaving ownership null (postcode had ${contextFh.length} other titles)`);
+      }
+    } else {
+      console.warn(`[pathway stage1] resolveBuildingTitles failed (${lr.status}): ${lr.error}`);
     }
+
+    // Still run performPropertyLookup for non-LR layers (VOA, EPC, planning,
+    // market intel). LR responsibilities now sit with resolveBuildingTitles.
+    const lookup = await performPropertyLookup({ address, postcode, layers: ["core"] });
     if (Array.isArray((lookup as any).voaRatings)) {
       voaEntries = (lookup as any).voaRatings;
     }

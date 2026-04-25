@@ -374,26 +374,42 @@ export async function executeInvestigatorTool(toolName: string, input: any, req:
       }
 
       case "land_registry_lookup": {
-        const { performPropertyLookup } = await import("./property-lookup");
-        const result = await performPropertyLookup({
+        // Use the shared building-title resolver (Google → OS Places → PD
+        // address-match-uprn → uprn-title) so we only return titles that
+        // belong to the queried building, not every title in the postcode.
+        const { resolveBuildingTitles } = await import("./land-registry");
+        const lr = await resolveBuildingTitles({
           address: input.address,
           postcode: input.postcode,
-          layers: ["core"],
+          skipPersist: true,
         });
-        const freeholds = result.propertyDataCoUk?.freeholds?.data || [];
-        const leaseholds = result.propertyDataCoUk?.leaseholds?.data || [];
+        if (!lr.ok) {
+          return { postcode: input.postcode, error: lr.error, freeholds: [], leaseholds: [] };
+        }
+        const matchedFh = lr.matched.freeholds || [];
+        const matchedLh = lr.matched.leaseholds || [];
+        const fallbackFh = lr.fallback.freeholds || [];
+        const ownershipPool = matchedFh.length > 0 ? matchedFh : fallbackFh;
         return {
-          postcode: input.postcode,
-          freeholds: freeholds.slice(0, 5).map((f: any) => ({
+          postcode: lr.resolvedPostcode || input.postcode,
+          source: lr.source,
+          freeholds: ownershipPool.slice(0, 5).map((f: any) => ({
             titleNumber: f.title_number || f.title,
             proprietor: f.proprietor_name_1,
             category: f.proprietor_category,
             pricePaid: f.price_paid ? Number(f.price_paid) : null,
             dateOfPurchase: f.date_proprietor_added,
           })),
-          leaseholds: leaseholds.slice(0, 5).map((l: any) => ({
+          leaseholds: matchedLh.slice(0, 5).map((l: any) => ({
             titleNumber: l.title_number || l.title,
             proprietor: l.proprietor_name_1,
+          })),
+          // Postcode neighbours — labelled clearly so the AI doesn't claim
+          // they belong to the queried building.
+          postcodeNeighbours: (lr.context.freeholds || []).slice(0, 10).map((f: any) => ({
+            titleNumber: f.title_number || f.title,
+            proprietor: f.proprietor_name_1,
+            address: Array.isArray(f.property) ? f.property.join(", ") : f.property,
           })),
         };
       }

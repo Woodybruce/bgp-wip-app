@@ -148,6 +148,354 @@ function extractLabel(obj: any): string {
   return "";
 }
 
+/**
+ * Single source of truth for "given a UK address, what Land Registry titles
+ * actually belong to this building?". Uses the chain:
+ *   Google reverse-geocode (if only lat/lng given)
+ *     → OS Places by lat/lng (or by address) for authoritative UPRNs
+ *     → PropertyData address-match-uprn for building-level UPRNs that OS misses
+ *     → PropertyData uprn-title for the actual freehold/leasehold titles
+ *     → PropertyData freeholds(postcode) for context only
+ *
+ * IMPORTANT: callers should treat `matched.freeholds` as the only authoritative
+ * ownership for the queried address. `fallback` is a heuristic street-number
+ * filter (use with caution). `context` is the postcode-wide list — never assert
+ * ownership from `context` because SW1Y 4DG covers many buildings.
+ *
+ * Used by the Land Registry page route, Property Pathway Stage 1, and any
+ * other code path that needs to resolve titles for a specific building.
+ */
+export type ResolveBuildingTitlesInput = {
+  address?: string | null;
+  postcode?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  /** "clouseau" | "pathway" | "land-registry" — for persistence tagging */
+  source?: string | null;
+  pathwayRunId?: string | null;
+  userId?: string | null;
+  /** Skip writing to land_registry_searches (Stage 1 has its own persist step). */
+  skipPersist?: boolean;
+};
+
+export type ResolveBuildingTitlesResult =
+  | {
+      ok: true;
+      resolvedAddress: string;
+      resolvedPostcode: string;
+      buildingName: string;
+      lat: number | null;
+      lng: number | null;
+      uprns: string[];
+      pdErrors: Array<{ endpoint: string; status?: number; body?: string }>;
+      matched: { freeholds: any[]; leaseholds: any[]; exact: boolean };
+      fallback: { freeholds: any[]; leaseholds: any[]; usedStreetNumberMatch: boolean };
+      context: { freeholds: any[]; leaseholds: any[] };
+      source: "uprn" | "street_number" | "postcode_only";
+    }
+  | { ok: false; status: number; error: string };
+
+export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): Promise<ResolveBuildingTitlesResult> {
+  const { address: inputAddress, postcode: inputPostcode, lat, lng, source: callerSource, pathwayRunId: callerRunId, userId, skipPersist } = input;
+  const PD_KEY = process.env.PROPERTYDATA_API_KEY;
+  if (!PD_KEY) return { ok: false, status: 503, error: "PropertyData API key not configured" };
+
+  // Strip parenthetical annotations like "(formerly Thomas Exchange Global)"
+  // and "t/a ..." before sending to OS Places / PropertyData — these confuse
+  // every address matcher and are never part of the Land Registry record.
+  const stripAddressNoise = (s: string) =>
+    s.replace(/\s*\([^)]*\)/g, "")
+     .replace(/\bt\/a\b.*$/i, "")
+     .replace(/\bformerly\b.*$/i, "")
+     .replace(/,\s*,/g, ",").replace(/,\s*$/, "").trim();
+
+  let resolvedAddress: string = typeof inputAddress === "string" ? stripAddressNoise(inputAddress.trim()) : "";
+  let resolvedPostcode: string = typeof inputPostcode === "string" ? inputPostcode.trim().toUpperCase() : "";
+  let buildingName = "";
+
+  // Step 1: if no address was supplied but we have coordinates, reverse
+  // geocode with Google to get the formatted address + postcode.
+  if (!resolvedAddress && typeof lat === "number" && typeof lng === "number") {
+    if (!process.env.GOOGLE_API_KEY) return { ok: false, status: 503, error: "Google API key not configured" };
+    try {
+      const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${process.env.GOOGLE_API_KEY}&result_type=premise|street_address|subpremise|establishment`;
+      const gResp = await fetch(gUrl, { signal: AbortSignal.timeout(5000) });
+      if (gResp.ok) {
+        const gData = await gResp.json() as any;
+        const result = gData.results?.[0];
+        if (result) {
+          const components = result.address_components || [];
+          const getPart = (type: string) => components.find((c: any) => c.types?.includes(type))?.long_name || "";
+          if (!resolvedPostcode) resolvedPostcode = getPart("postal_code");
+          const premise = getPart("premise");
+          const streetNum = getPart("street_number");
+          const route = getPart("route");
+          buildingName = premise || "";
+          const streetParts = [streetNum, route].filter(Boolean).join(" ");
+          resolvedAddress = [premise, streetParts].filter(Boolean).join(", ") || (result.formatted_address || "").replace(/, UK$/i, "").replace(/, United Kingdom$/i, "");
+        }
+      }
+    } catch (e: any) {
+      console.error("[land-registry/resolve] reverse-geocode error:", e?.message);
+    }
+  }
+
+  if (!resolvedAddress && !resolvedPostcode) {
+    return { ok: false, status: 400, error: "Provide address, postcode, or lat+lng" };
+  }
+
+  // If the user typed the postcode inside the address field ("18-22 Haymarket,
+  // London SW1Y 4DG") pull it out so the downstream PropertyData calls,
+  // which all require a postcode, can still run.
+  if (!resolvedPostcode && resolvedAddress) {
+    const pcMatch = resolvedAddress.match(/\b([A-Z]{1,2}[0-9][A-Z0-9]?)\s*([0-9][A-Z]{2})\b/i);
+    if (pcMatch) {
+      resolvedPostcode = `${pcMatch[1]} ${pcMatch[2]}`.toUpperCase();
+      resolvedAddress = resolvedAddress.replace(pcMatch[0], "").replace(/,\s*$/, "").replace(/,\s*,/g, ",").trim();
+    }
+  }
+
+  if (!resolvedPostcode) {
+    return { ok: false, status: 400, error: "A postcode is required. Enter it in the postcode field or include it in the address (e.g. '18-22 Haymarket, London SW1Y 4DG')." };
+  }
+
+  const cleanPc = resolvedPostcode.replace(/\s+/g, "");
+
+  // Extract the first street-number-or-range from anywhere in the address
+  // ("Dover Street Market, 3rd floor, 18-22 Haymarket" → "18-22"). This is
+  // used both to narrow UPRN matching and as a fallback filter later.
+  const numberMatch = resolvedAddress.match(/\b(\d+[a-z]?(?:\s*-\s*\d+[a-z]?)?)\b/i);
+  const streetNumberRaw = numberMatch ? numberMatch[1].replace(/\s*-\s*/g, "-").toLowerCase() : null;
+  // Drop building-name prefix and floor clauses — PropertyData's address
+  // matcher does much better with "18-22 Haymarket" than with
+  // "Dover Street Market, 3rd floor, 18-22 Haymarket".
+  const cleanedAddressCandidates: string[] = [resolvedAddress];
+  if (numberMatch && numberMatch.index !== undefined && numberMatch.index > 0) {
+    const tail = resolvedAddress.slice(numberMatch.index).replace(/,\s*$/, "").trim();
+    if (tail && tail !== resolvedAddress) cleanedAddressCandidates.unshift(tail);
+  }
+
+  // Step 2a: ask OS AddressBase for the UPRN. Prefer lat/lng nearest-point
+  // when we have them (e.g. from a map click) — it bypasses address-string
+  // parsing entirely and resolves commercial/mixed-use buildings accurately
+  // even when Google reverse-geocoded them under a business name like
+  // "Steak and Company - Piccadilly Circus, 18 Haymarket". Fall through to
+  // OS find-by-address if no coords.
+  let osUprns: string[] = [];
+  try {
+    const { osPlacesNearest, osPlacesFind } = await import("./os-data");
+    if (typeof lat === "number" && typeof lng === "number") {
+      for (const radius of [20, 40, 80]) {
+        const nearest = await osPlacesNearest(lat, lng, radius);
+        const uprns = nearest.map(r => r.uprn).filter(Boolean) as string[];
+        if (uprns.length) {
+          osUprns = uprns.slice(0, 5);
+          break;
+        }
+      }
+    }
+    if (osUprns.length === 0) {
+      const queries = [
+        [resolvedAddress, resolvedPostcode].filter(Boolean).join(", "),
+        ...cleanedAddressCandidates.map(c => [c, resolvedPostcode].filter(Boolean).join(", ")),
+      ].filter((q, i, arr) => q && arr.indexOf(q) === i);
+      for (const q of queries) {
+        const os = await osPlacesFind(q, 5);
+        const uprns = os.map(r => r.uprn).filter(Boolean) as string[];
+        if (uprns.length) {
+          osUprns = uprns.slice(0, 5);
+          break;
+        }
+      }
+    }
+  } catch (e: any) {
+    console.warn("[land-registry/resolve] OS Places lookup failed:", e?.message);
+  }
+
+  // Step 2b: ALWAYS call PropertyData address-match-uprn in parallel with
+  // OS Places (not just as a fallback). OS Places finds sub-premise UPRNs
+  // (individual shop units) but misses the building-level UPRN that links
+  // to the freehold title. PropertyData's matcher is designed specifically
+  // for title lookup and often returns a different UPRN from OS Places.
+  // Merging both gives us the best coverage.
+  let pdUprns: string[] = [];
+  if (cleanPc) {
+    for (const candidate of cleanedAddressCandidates) {
+      if (!candidate) continue;
+      try {
+        const umUrl = `https://api.propertydata.co.uk/address-match-uprn?key=${PD_KEY}&address=${encodeURIComponent(candidate)}&postcode=${encodeURIComponent(cleanPc)}`;
+        const umResp = await fetch(umUrl, { signal: AbortSignal.timeout(8000) });
+        if (umResp.ok) {
+          const umData = await umResp.json() as any;
+          const d = umData?.data ?? umData;
+          if (Array.isArray(d?.uprns)) pdUprns = d.uprns.map(String);
+          else if (d?.uprn) pdUprns = [String(d.uprn)];
+          else if (Array.isArray(d)) pdUprns = d.map((x: any) => String(x?.uprn || x)).filter(Boolean);
+          if (pdUprns.length > 0) break;
+        }
+      } catch (e: any) {
+        console.warn("[land-registry/resolve] address-match-uprn failed:", e?.message);
+      }
+    }
+  }
+
+  // Merge OS Places and PropertyData UPRNs — deduplicated, OS first (more
+  // precise for map clicks), PD UPRNs appended. Cap at 8 to limit uprn-title calls.
+  const seenUprns = new Set<string>();
+  const matchedUprns: string[] = [];
+  for (const u of [...osUprns, ...pdUprns]) {
+    if (u && !seenUprns.has(u) && matchedUprns.length < 8) {
+      seenUprns.add(u);
+      matchedUprns.push(u);
+    }
+  }
+  console.log(`[land-registry/resolve] UPRNs — OS: [${osUprns.join(",")}] PD: [${pdUprns.join(",")}] merged: [${matchedUprns.join(",")}]`);
+
+  // Step 3: fetch exact titles via uprn-title (for each UPRN) AND the wider
+  // postcode context. PropertyData throttles aggressively (X14: "more than 6
+  // calls in 10 seconds"), so we sequence the uprn-title calls with a small
+  // stagger and retry once on 429. There is no /leaseholds?postcode endpoint
+  // on PD (X01: "Invalid API endpoint") — leaseholds come back inside
+  // uprn-title results instead.
+  const pdErrors: Array<{ endpoint: string; status?: number; body?: string }> = [];
+  const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+  const pdFetch = async (endpoint: string, params: Record<string, string>): Promise<any> => {
+    const qs = new URLSearchParams({ key: PD_KEY, ...params }).toString();
+    const url = `https://api.propertydata.co.uk/${endpoint}?${qs}`;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (r.status === 429 && attempt === 0) {
+          console.warn(`[land-registry/resolve] PropertyData ${endpoint} throttled (429), backing off 5s`);
+          await sleep(5000);
+          continue;
+        }
+        if (!r.ok) {
+          const body = await r.text().catch(() => "");
+          pdErrors.push({ endpoint, status: r.status, body: body.slice(0, 300) });
+          console.warn(`[land-registry/resolve] PropertyData ${endpoint} HTTP ${r.status}: ${body.slice(0, 200)}`);
+          return null;
+        }
+        const data = await r.json() as any;
+        if (data?.status === "error") {
+          if (data.code === "X14" && attempt === 0) {
+            console.warn(`[land-registry/resolve] PropertyData ${endpoint} X14 throttle, backing off 5s`);
+            await sleep(5000);
+            continue;
+          }
+          pdErrors.push({ endpoint, status: 200, body: String(data.message || data.error || "status:error") });
+          console.warn(`[land-registry/resolve] PropertyData ${endpoint} returned status=error: ${data.message || data.error}`);
+        }
+        return data;
+      } catch (e: any) {
+        pdErrors.push({ endpoint, body: e?.message || "fetch threw" });
+        console.warn(`[land-registry/resolve] PropertyData ${endpoint} threw:`, e?.message);
+        return null;
+      }
+    }
+    return null;
+  };
+
+  // Run uprn-title calls sequentially with a small gap so the burst stays
+  // under PD's 6-calls-per-10-seconds limit (combined with the address-
+  // match-uprn call above and the freeholds call below).
+  const uprnTitleResults: any[] = [];
+  const uprnsToQuery = matchedUprns.slice(0, 4);
+  for (let i = 0; i < uprnsToQuery.length; i++) {
+    if (i > 0) await sleep(300);
+    uprnTitleResults.push(await pdFetch("uprn-title", { uprn: uprnsToQuery[i] }));
+  }
+  const postcodeFreeholds = cleanPc ? await pdFetch("freeholds", { postcode: cleanPc }) : null;
+
+  // Flatten uprn-title results — each may return { data: { freeholds: [], leaseholds: [] } }
+  const matchedFreeholds: any[] = [];
+  const matchedLeaseholds: any[] = [];
+  for (const ut of uprnTitleResults as any[]) {
+    const d = ut?.data ?? ut;
+    if (!d) continue;
+    for (const fh of (d.freeholds || [])) matchedFreeholds.push(fh);
+    for (const lh of (d.leaseholds || [])) matchedLeaseholds.push(lh);
+    for (const t of (d.titles || [])) {
+      (t?.tenure === "L" || t?.tenure === "leasehold" ? matchedLeaseholds : matchedFreeholds).push(t);
+    }
+  }
+
+  const matchedTitleNumbers = new Set<string>([
+    ...matchedFreeholds.map(f => f.title_number).filter(Boolean),
+    ...matchedLeaseholds.map(l => l.title_number).filter(Boolean),
+  ]);
+
+  const contextFreeholds = ((postcodeFreeholds as any)?.data || []).filter((f: any) => !matchedTitleNumbers.has(f.title_number));
+  // PropertyData has no postcode-level leaseholds endpoint, so context
+  // leaseholds are limited to whatever uprn-title surfaced.
+  const contextLeaseholds: any[] = [];
+
+  // Fallback: if UPRN match failed but Google gave us a street number,
+  // prioritise postcode titles whose address field starts with that
+  // number. This is 'better than nothing' when PropertyData has no
+  // UPRN record for a quirky address.
+  let fallbackFreeholds: any[] = [];
+  let fallbackLeaseholds: any[] = [];
+  if (matchedFreeholds.length === 0 && matchedLeaseholds.length === 0 && streetNumberRaw) {
+    const numParts = streetNumberRaw.split("-").map(n => n.trim()).filter(Boolean);
+    const pickByStreet = (rows: any[]) => rows.filter((r: any) => {
+      const props: string[] = Array.isArray(r.property) ? r.property : (r.property ? [r.property] : []);
+      const joined = props.join(" | ").toLowerCase();
+      if (joined.includes(streetNumberRaw)) return true;
+      return numParts.some(n => joined.includes(n + " ") || joined.includes(n + ",") || joined.includes(n + "-"));
+    });
+    fallbackFreeholds = pickByStreet(((postcodeFreeholds as any)?.data || []));
+    fallbackLeaseholds = [];
+  }
+
+  // Persist this resolve to the unified Land Registry history.
+  if (!skipPersist) {
+    try {
+      if (userId && resolvedAddress) {
+        const persistFh = matchedFreeholds.length > 0 ? matchedFreeholds : fallbackFreeholds;
+        const persistLh = matchedLeaseholds.length > 0 ? matchedLeaseholds : fallbackLeaseholds;
+        await persistLandRegistrySearch({
+          userId,
+          address: resolvedAddress,
+          postcode: resolvedPostcode,
+          freeholds: persistFh,
+          leaseholds: persistLh,
+          source: callerSource || "clouseau",
+          pathwayRunId: callerRunId || null,
+        });
+      }
+    } catch (persistErr: any) {
+      console.warn("[land-registry/resolve] persist failed:", persistErr?.message);
+    }
+  }
+
+  return {
+    ok: true,
+    resolvedAddress,
+    resolvedPostcode,
+    buildingName,
+    lat: typeof lat === "number" ? lat : null,
+    lng: typeof lng === "number" ? lng : null,
+    uprns: matchedUprns,
+    pdErrors,
+    matched: {
+      freeholds: matchedFreeholds,
+      leaseholds: matchedLeaseholds,
+      exact: matchedFreeholds.length > 0 || matchedLeaseholds.length > 0,
+    },
+    fallback: {
+      freeholds: fallbackFreeholds,
+      leaseholds: fallbackLeaseholds,
+      usedStreetNumberMatch: fallbackFreeholds.length > 0 || fallbackLeaseholds.length > 0,
+    },
+    context: {
+      freeholds: contextFreeholds,
+      leaseholds: contextLeaseholds,
+    },
+    source: matchedFreeholds.length > 0 ? "uprn" : fallbackFreeholds.length > 0 ? "street_number" : "postcode_only",
+  };
+}
+
 export function registerLandRegistryRoutes(app: Express) {
   // Bootstrap: ensure columns exist
   db.execute(sql`ALTER TABLE land_registry_searches ADD COLUMN IF NOT EXISTS crm_property_id varchar`).catch(() => {});
@@ -672,319 +1020,19 @@ export function registerLandRegistryRoutes(app: Express) {
   });
 
   app.post("/api/land-registry/resolve", requireAuth, async (req: any, res) => {
-    try {
-      const { address: inputAddress, postcode: inputPostcode, lat, lng, source: callerSource, pathwayRunId: callerRunId } = req.body || {};
-      const PD_KEY = process.env.PROPERTYDATA_API_KEY;
-      if (!PD_KEY) return res.status(503).json({ error: "PropertyData API key not configured" });
-
-      // Strip parenthetical annotations like "(formerly Thomas Exchange Global)"
-      // and "t/a ..." before sending to OS Places / PropertyData — these confuse
-      // every address matcher and are never part of the Land Registry record.
-      const stripAddressNoise = (s: string) =>
-        s.replace(/\s*\([^)]*\)/g, "")         // remove anything in (brackets)
-         .replace(/\bt\/a\b.*$/i, "")           // remove "t/a <trading name>" suffix
-         .replace(/\bformerly\b.*$/i, "")       // remove "formerly ..." clause
-         .replace(/,\s*,/g, ",").replace(/,\s*$/, "").trim();
-
-      let resolvedAddress: string = typeof inputAddress === "string" ? stripAddressNoise(inputAddress.trim()) : "";
-      let resolvedPostcode: string = typeof inputPostcode === "string" ? inputPostcode.trim().toUpperCase() : "";
-      let buildingName = "";
-
-      // Step 1: if no address was supplied but we have coordinates, reverse
-      // geocode with Google to get the formatted address + postcode.
-      if (!resolvedAddress && typeof lat === "number" && typeof lng === "number") {
-        if (!process.env.GOOGLE_API_KEY) return res.status(503).json({ error: "Google API key not configured" });
-        try {
-          const gUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${process.env.GOOGLE_API_KEY}&result_type=premise|street_address|subpremise|establishment`;
-          const gResp = await fetch(gUrl, { signal: AbortSignal.timeout(5000) });
-          if (gResp.ok) {
-            const gData = await gResp.json() as any;
-            const result = gData.results?.[0];
-            if (result) {
-              const components = result.address_components || [];
-              const getPart = (type: string) => components.find((c: any) => c.types?.includes(type))?.long_name || "";
-              if (!resolvedPostcode) resolvedPostcode = getPart("postal_code");
-              const premise = getPart("premise");
-              const streetNum = getPart("street_number");
-              const route = getPart("route");
-              buildingName = premise || "";
-              const streetParts = [streetNum, route].filter(Boolean).join(" ");
-              resolvedAddress = [premise, streetParts].filter(Boolean).join(", ") || (result.formatted_address || "").replace(/, UK$/i, "").replace(/, United Kingdom$/i, "");
-            }
-          }
-        } catch (e: any) {
-          console.error("[land-registry/resolve] reverse-geocode error:", e?.message);
-        }
-      }
-
-      if (!resolvedAddress && !resolvedPostcode) {
-        return res.status(400).json({ error: "Provide address, postcode, or lat+lng" });
-      }
-
-      // If the user typed the postcode inside the address field ("18-22 Haymarket,
-      // London SW1Y 4DG") pull it out so the downstream PropertyData calls,
-      // which all require a postcode, can still run.
-      if (!resolvedPostcode && resolvedAddress) {
-        const pcMatch = resolvedAddress.match(/\b([A-Z]{1,2}[0-9][A-Z0-9]?)\s*([0-9][A-Z]{2})\b/i);
-        if (pcMatch) {
-          resolvedPostcode = `${pcMatch[1]} ${pcMatch[2]}`.toUpperCase();
-          resolvedAddress = resolvedAddress.replace(pcMatch[0], "").replace(/,\s*$/, "").replace(/,\s*,/g, ",").trim();
-        }
-      }
-
-      if (!resolvedPostcode) {
-        return res.status(400).json({ error: "A postcode is required. Enter it in the postcode field or include it in the address (e.g. '18-22 Haymarket, London SW1Y 4DG')." });
-      }
-
-      const cleanPc = resolvedPostcode.replace(/\s+/g, "");
-
-      // Extract the first street-number-or-range from anywhere in the address
-      // ("Dover Street Market, 3rd floor, 18-22 Haymarket" → "18-22"). This is
-      // used both to narrow UPRN matching and as a fallback filter later.
-      const numberMatch = resolvedAddress.match(/\b(\d+[a-z]?(?:\s*-\s*\d+[a-z]?)?)\b/i);
-      const streetNumberRaw = numberMatch ? numberMatch[1].replace(/\s*-\s*/g, "-").toLowerCase() : null;
-      // Drop building-name prefix and floor clauses — PropertyData's address
-      // matcher does much better with "18-22 Haymarket" than with
-      // "Dover Street Market, 3rd floor, 18-22 Haymarket".
-      const cleanedAddressCandidates: string[] = [resolvedAddress];
-      if (numberMatch && numberMatch.index !== undefined && numberMatch.index > 0) {
-        const tail = resolvedAddress.slice(numberMatch.index).replace(/,\s*$/, "").trim();
-        if (tail && tail !== resolvedAddress) cleanedAddressCandidates.unshift(tail);
-      }
-
-      // Step 2a: ask OS AddressBase for the UPRN. Prefer lat/lng nearest-point
-      // when we have them (e.g. from a map click) — it bypasses address-string
-      // parsing entirely and resolves commercial/mixed-use buildings
-      // accurately even when Google reverse-geocoded them under a business
-      // name like "Steak and Company - Piccadilly Circus, 18 Haymarket".
-      // Fall through to OS find-by-address if no coords.
-      let osUprns: string[] = [];
-      try {
-        const { osPlacesNearest, osPlacesFind } = await import("./os-data");
-        if (typeof lat === "number" && typeof lng === "number") {
-          for (const radius of [20, 40, 80]) {
-            const nearest = await osPlacesNearest(lat, lng, radius);
-            const uprns = nearest.map(r => r.uprn).filter(Boolean) as string[];
-            if (uprns.length) {
-              osUprns = uprns.slice(0, 5);
-              break;
-            }
-          }
-        }
-        if (osUprns.length === 0) {
-          const queries = [
-            [resolvedAddress, resolvedPostcode].filter(Boolean).join(", "),
-            ...cleanedAddressCandidates.map(c => [c, resolvedPostcode].filter(Boolean).join(", ")),
-          ].filter((q, i, arr) => q && arr.indexOf(q) === i);
-          for (const q of queries) {
-            const os = await osPlacesFind(q, 5);
-            const uprns = os.map(r => r.uprn).filter(Boolean) as string[];
-            if (uprns.length) {
-              osUprns = uprns.slice(0, 5);
-              break;
-            }
-          }
-        }
-      } catch (e: any) {
-        console.warn("[land-registry/resolve] OS Places lookup failed:", e?.message);
-      }
-
-      // Step 2b: ALWAYS call PropertyData address-match-uprn in parallel with
-      // OS Places (not just as a fallback). OS Places finds sub-premise UPRNs
-      // (individual shop units) but misses the building-level UPRN that links
-      // to the freehold title. PropertyData's matcher is designed specifically
-      // for title lookup and often returns a different UPRN from OS Places.
-      // Merging both gives us the best coverage.
-      let pdUprns: string[] = [];
-      if (cleanPc) {
-        for (const candidate of cleanedAddressCandidates) {
-          if (!candidate) continue;
-          try {
-            const umUrl = `https://api.propertydata.co.uk/address-match-uprn?key=${PD_KEY}&address=${encodeURIComponent(candidate)}&postcode=${encodeURIComponent(cleanPc)}`;
-            const umResp = await fetch(umUrl, { signal: AbortSignal.timeout(8000) });
-            if (umResp.ok) {
-              const umData = await umResp.json() as any;
-              const d = umData?.data ?? umData;
-              if (Array.isArray(d?.uprns)) pdUprns = d.uprns.map(String);
-              else if (d?.uprn) pdUprns = [String(d.uprn)];
-              else if (Array.isArray(d)) pdUprns = d.map((x: any) => String(x?.uprn || x)).filter(Boolean);
-              if (pdUprns.length > 0) break;
-            }
-          } catch (e: any) {
-            console.warn("[land-registry/resolve] address-match-uprn failed:", e?.message);
-          }
-        }
-      }
-
-      // Merge OS Places and PropertyData UPRNs — deduplicated, OS first (more
-      // precise for map clicks), PD UPRNs appended (catch building-level UPRNs
-      // that OS sub-premise results miss). Cap at 8 to limit uprn-title calls.
-      const seenUprns = new Set<string>();
-      const matchedUprns: string[] = [];
-      for (const u of [...osUprns, ...pdUprns]) {
-        if (u && !seenUprns.has(u) && matchedUprns.length < 8) {
-          seenUprns.add(u);
-          matchedUprns.push(u);
-        }
-      }
-      console.log(`[land-registry/resolve] UPRNs — OS: [${osUprns.join(",")}] PD: [${pdUprns.join(",")}] merged: [${matchedUprns.join(",")}]`);
-
-      // Step 3: fetch exact titles via uprn-title (for each UPRN) AND the
-      // wider postcode context. PropertyData throttles aggressively (X14:
-      // "more than 6 calls in 10 seconds"), so we sequence the uprn-title
-      // calls with a small stagger and retry once on 429. There is no
-      // /leaseholds?postcode endpoint on PD (X01: "Invalid API endpoint") —
-      // leaseholds come back inside uprn-title results instead.
-      const pdErrors: Array<{ endpoint: string; status?: number; body?: string }> = [];
-      const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-      const pdFetch = async (endpoint: string, params: Record<string, string>): Promise<any> => {
-        const qs = new URLSearchParams({ key: PD_KEY, ...params }).toString();
-        const url = `https://api.propertydata.co.uk/${endpoint}?${qs}`;
-        for (let attempt = 0; attempt < 2; attempt++) {
-          try {
-            const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-            if (r.status === 429 && attempt === 0) {
-              console.warn(`[land-registry/resolve] PropertyData ${endpoint} throttled (429), backing off 5s`);
-              await sleep(5000);
-              continue;
-            }
-            if (!r.ok) {
-              const body = await r.text().catch(() => "");
-              pdErrors.push({ endpoint, status: r.status, body: body.slice(0, 300) });
-              console.warn(`[land-registry/resolve] PropertyData ${endpoint} HTTP ${r.status}: ${body.slice(0, 200)}`);
-              return null;
-            }
-            const data = await r.json() as any;
-            // PropertyData returns HTTP 200 with { status: "error", message: "..." } for
-            // rate limits and plan-denied calls. The throttle code is X14; retry once.
-            if (data?.status === "error") {
-              if (data.code === "X14" && attempt === 0) {
-                console.warn(`[land-registry/resolve] PropertyData ${endpoint} X14 throttle, backing off 5s`);
-                await sleep(5000);
-                continue;
-              }
-              pdErrors.push({ endpoint, status: 200, body: String(data.message || data.error || "status:error") });
-              console.warn(`[land-registry/resolve] PropertyData ${endpoint} returned status=error: ${data.message || data.error}`);
-            }
-            return data;
-          } catch (e: any) {
-            pdErrors.push({ endpoint, body: e?.message || "fetch threw" });
-            console.warn(`[land-registry/resolve] PropertyData ${endpoint} threw:`, e?.message);
-            return null;
-          }
-        }
-        return null;
-      };
-
-      // Run uprn-title calls sequentially with a small gap so the burst stays
-      // under PD's 6-calls-per-10-seconds limit (combined with the address-
-      // match-uprn call above and the freeholds call below).
-      const uprnTitleResults: any[] = [];
-      const uprnsToQuery = matchedUprns.slice(0, 4);
-      for (let i = 0; i < uprnsToQuery.length; i++) {
-        if (i > 0) await sleep(300);
-        uprnTitleResults.push(await pdFetch("uprn-title", { uprn: uprnsToQuery[i] }));
-      }
-      const postcodeFreeholds = cleanPc ? await pdFetch("freeholds", { postcode: cleanPc }) : null;
-
-      // Flatten uprn-title results — each may return { data: { freeholds: [], leaseholds: [] } }
-      const matchedFreeholds: any[] = [];
-      const matchedLeaseholds: any[] = [];
-      for (const ut of uprnTitleResults as any[]) {
-        const d = ut?.data ?? ut;
-        if (!d) continue;
-        for (const fh of (d.freeholds || [])) matchedFreeholds.push(fh);
-        for (const lh of (d.leaseholds || [])) matchedLeaseholds.push(lh);
-        // Some tenants return a flat 'titles' array with title.tenure
-        for (const t of (d.titles || [])) {
-          (t?.tenure === "L" || t?.tenure === "leasehold" ? matchedLeaseholds : matchedFreeholds).push(t);
-        }
-      }
-
-      // De-duplicate by title number and tag matched rows so we can filter
-      // postcode-wide lists to 'other titles' on the client.
-      const matchedTitleNumbers = new Set<string>([
-        ...matchedFreeholds.map(f => f.title_number).filter(Boolean),
-        ...matchedLeaseholds.map(l => l.title_number).filter(Boolean),
-      ]);
-
-      const contextFreeholds = ((postcodeFreeholds as any)?.data || []).filter((f: any) => !matchedTitleNumbers.has(f.title_number));
-      // PropertyData has no postcode-level leaseholds endpoint, so context
-      // leaseholds are limited to whatever uprn-title surfaced.
-      const contextLeaseholds: any[] = [];
-
-      // Fallback: if UPRN match failed but Google gave us a street number,
-      // prioritise postcode titles whose address field starts with that
-      // number. This is 'better than nothing' when PropertyData has no
-      // UPRN record for a quirky address.
-      let fallbackFreeholds: any[] = [];
-      let fallbackLeaseholds: any[] = [];
-      if (matchedFreeholds.length === 0 && matchedLeaseholds.length === 0 && streetNumberRaw) {
-        // Break "18-22" into "18" and "22" so we match titles listing either number
-        // at the top of the range (LR often records just one number per title).
-        const numParts = streetNumberRaw.split("-").map(n => n.trim()).filter(Boolean);
-        const pickByStreet = (rows: any[]) => rows.filter((r: any) => {
-          const props: string[] = Array.isArray(r.property) ? r.property : (r.property ? [r.property] : []);
-          const joined = props.join(" | ").toLowerCase();
-          if (joined.includes(streetNumberRaw)) return true;
-          return numParts.some(n => joined.includes(n + " ") || joined.includes(n + ",") || joined.includes(n + "-"));
-        });
-        fallbackFreeholds = pickByStreet(((postcodeFreeholds as any)?.data || []));
-        // No postcode-leaseholds source; leaseholds-by-street fallback isn't
-        // possible without per-title lookups. Leave empty.
-        fallbackLeaseholds = [];
-      }
-
-      // Persist this resolve to the unified Land Registry history. The board
-      // shows entries from direct LR searches, Property Pathway Stage 1, and
-      // Clouseau property tab side-by-side, dedup'd by address+postcode.
-      try {
-        const userId = req.session?.userId || req.tokenUserId || null;
-        if (userId && resolvedAddress) {
-          const persistFh = matchedFreeholds.length > 0 ? matchedFreeholds : fallbackFreeholds;
-          const persistLh = matchedLeaseholds.length > 0 ? matchedLeaseholds : fallbackLeaseholds;
-          await persistLandRegistrySearch({
-            userId,
-            address: resolvedAddress,
-            postcode: resolvedPostcode,
-            freeholds: persistFh,
-            leaseholds: persistLh,
-            source: callerSource || "clouseau",
-            pathwayRunId: callerRunId || null,
-          });
-        }
-      } catch (persistErr: any) {
-        console.warn("[land-registry/resolve] persist failed:", persistErr?.message);
-      }
-
-      res.json({
-        resolvedAddress,
-        resolvedPostcode,
-        buildingName,
-        lat: typeof lat === "number" ? lat : null,
-        lng: typeof lng === "number" ? lng : null,
-        uprns: matchedUprns,
-        pdErrors,
-        matched: {
-          freeholds: matchedFreeholds,
-          leaseholds: matchedLeaseholds,
-          exact: matchedFreeholds.length > 0 || matchedLeaseholds.length > 0,
-        },
-        fallback: {
-          freeholds: fallbackFreeholds,
-          leaseholds: fallbackLeaseholds,
-          usedStreetNumberMatch: fallbackFreeholds.length > 0 || fallbackLeaseholds.length > 0,
-        },
-        context: {
-          freeholds: contextFreeholds,
-          leaseholds: contextLeaseholds,
-        },
-        source: matchedFreeholds.length > 0 ? "uprn" : fallbackFreeholds.length > 0 ? "street_number" : "postcode_only",
-      });
-    } catch (e: any) {
-      console.error("[land-registry/resolve] Error:", e?.message);
-      res.status(500).json({ error: e?.message || "resolver failed" });
-    }
+    const userId = req.session?.userId || req.tokenUserId || null;
+    const result = await resolveBuildingTitles({
+      address: req.body?.address,
+      postcode: req.body?.postcode,
+      lat: req.body?.lat,
+      lng: req.body?.lng,
+      source: req.body?.source,
+      pathwayRunId: req.body?.pathwayRunId,
+      userId,
+    });
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    const { ok: _ok, ...payload } = result;
+    res.json(payload);
   });
 
   app.get("/api/propertydata/:endpoint", requireAuth, async (req, res) => {
