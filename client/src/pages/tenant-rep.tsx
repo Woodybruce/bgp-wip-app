@@ -340,10 +340,12 @@ export default function TenantRep() {
   const [form, setForm] = useState<FormState>({ ...EMPTY_FORM });
   const [logoErrors, setLogoErrors] = useState<Set<string>>(new Set());
 
-  const { data: searches = [], isLoading } = useQuery<TenantRepSearch[]>({
+  const { data: rawSearches, isLoading, error: searchError } = useQuery({
     queryKey: ["/api/tenant-rep/searches"],
-    queryFn: () => fetch("/api/tenant-rep/searches", { headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` } }).then(r => r.json()),
+    queryFn: () => fetch("/api/tenant-rep/searches", { headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` } })
+      .then(r => r.ok ? r.json() : r.json().then((e: any) => { throw new Error(e.error || "Failed to load"); })),
   });
+  const searches: TenantRepSearch[] = Array.isArray(rawSearches) ? rawSearches : [];
 
   const { data: companiesRes } = useQuery<{ data: CrmCompany[] } | CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
@@ -449,6 +451,17 @@ export default function TenantRep() {
   const filteredContacts = form.companyId
     ? contacts.filter(c => c.company_id === form.companyId)
     : contacts;
+
+  if (searchError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
+        <AlertTriangle className="w-8 h-8 text-amber-500" />
+        <p className="text-sm font-medium">Failed to load tenant rep searches</p>
+        <p className="text-xs">{(searchError as Error).message}</p>
+        <Button size="sm" variant="outline" onClick={() => window.location.reload()}>Reload page</Button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">
