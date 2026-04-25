@@ -1236,9 +1236,41 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     toolTrace: result.toolTrace,
   };
 
-  // Fall back to prefetch data if Claude didn't extract ownership/rates
-  if (!stage1Payload.initialOwnership && partialPayload.initialOwnership) {
-    stage1Payload.initialOwnership = partialPayload.initialOwnership;
+  // Cross-validate AI ownership against the UPRN-precise resolver result.
+  // The autonomous investigator can hallucinate plausible-but-fictional title
+  // numbers (e.g. NGL939200) when it can't find a real one — those then fail
+  // when the user clicks "Order Title Register" because PropertyData has no
+  // record of them. The verified resolver (resolveBuildingTitles via
+  // land_registry_lookup → matched.freeholds) is authoritative; prefer it.
+  const verifiedOwnership = partialPayload.initialOwnership as any;
+  const verifiedTitle = verifiedOwnership?.titleNumber;
+  const aiOwnership = stage1Payload.initialOwnership as any;
+  const aiTitle = aiOwnership?.titleNumber;
+  if (verifiedTitle && verifiedTitle !== "unknown") {
+    if (aiTitle && aiTitle !== "unknown" && aiTitle !== verifiedTitle) {
+      console.log(`[pathway stage1] AI proposed title=${aiTitle} but UPRN-resolver returned ${verifiedTitle} — using verified (AI title may have been hallucinated)`);
+    }
+    // Verified resolver wins. Keep AI-derived enrichment fields (e.g. purchase
+    // price, proprietor company number from web research) where the resolver
+    // didn't fill them.
+    stage1Payload.initialOwnership = {
+      ...(aiOwnership || {}),
+      ...verifiedOwnership,
+      titleNumber: verifiedTitle,
+      proprietorName: verifiedOwnership.proprietorName || aiOwnership?.proprietorName,
+    };
+  } else if (!aiOwnership && verifiedOwnership) {
+    // No AI ownership and no verified title (resolver returned only enrichment) —
+    // take the prefetch as-is so we still surface what we have.
+    stage1Payload.initialOwnership = verifiedOwnership;
+  } else if (aiTitle && aiTitle !== "unknown" && !verifiedTitle) {
+    // AI gave a title but the resolver couldn't verify any UPRN. Keep the AI's
+    // answer (it may still be right — PropertyData/OS coverage isn't complete)
+    // but log clearly so we can trace title-not-found errors back to here.
+    console.warn(`[pathway stage1] AI title=${aiTitle} is unverified — UPRN resolver returned no matched freeholds for ${run.address} ${run.postcode || ""}. Order failures expected.`);
+  }
+  if (!stage1Payload.rates && partialPayload.rates) {
+    stage1Payload.rates = partialPayload.rates;
   }
   if (!stage1Payload.rates && partialPayload.rates) {
     stage1Payload.rates = partialPayload.rates;
