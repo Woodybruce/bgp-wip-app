@@ -1692,6 +1692,81 @@ async function scrapeUkEntityFromWebsite(domain: string): Promise<{
     /(?:CRN|CRN:)\s*(0?\d{7,8})/i,
   ];
 
+  // ── Helper: extract entity/CH from a block of plain text ─────────────────
+  function extractFromText(text: string, sourceUrl: string): { entityName: string | null; chNumber: string | null; sourceUrl: string } | null {
+    let entityName: string | null = null;
+    let chNumber: string | null = null;
+    for (const pat of ENTITY_PATTERNS) {
+      const m = text.match(pat);
+      if (m?.[1]) {
+        const candidate = m[1].trim().replace(/\s+/g, " ");
+        if (candidate.length <= 80 && !/[\[\]<>{}|]/.test(candidate)) {
+          entityName = candidate;
+          break;
+        }
+      }
+    }
+    for (const pat of CH_PATTERNS) {
+      const m = text.match(pat);
+      if (m?.[1]) { chNumber = m[1].trim().padStart(8, "0"); break; }
+    }
+    if (entityName || chNumber) return { entityName, chNumber, sourceUrl };
+    return null;
+  }
+
+  // ── Step 1: Shopify JSON API (works without JS) ───────────────────────────
+  // Shopify stores expose policy pages as plain JSON — bypasses SPA rendering.
+  const shopifyPolicies = [
+    "/policies/terms-of-service.json",
+    "/policies/privacy-policy.json",
+    "/policies/refund-policy.json",
+  ];
+  for (const path of shopifyPolicies) {
+    try {
+      const resp = await fetch(`${base}${path}`, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; BGP-Dashboard/1.0)" },
+        signal: AbortSignal.timeout(6000),
+        redirect: "follow",
+      });
+      if (!resp.ok) continue;
+      const ct = resp.headers.get("content-type") || "";
+      if (!ct.includes("json")) continue;
+      const json = await resp.json() as any;
+      const body: string = json?.policy?.body || json?.body || "";
+      if (!body) continue;
+      // Strip HTML tags from Shopify body
+      const text = body.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
+      const hit = extractFromText(text, `${base}${path}`);
+      if (hit) {
+        console.log(`[find-uk-entity] Shopify JSON ${path}: "${hit.entityName}" / ${hit.chNumber}`);
+        return hit;
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  // ── Step 2: WordPress REST API ────────────────────────────────────────────
+  const wpSlugs = ["terms-and-conditions", "terms-of-service", "terms", "privacy-policy", "legal"];
+  for (const slug of wpSlugs) {
+    try {
+      const resp = await fetch(`${base}/wp-json/wp/v2/pages?slug=${slug}&_fields=content`, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; BGP-Dashboard/1.0)" },
+        signal: AbortSignal.timeout(5000),
+        redirect: "follow",
+      });
+      if (!resp.ok) continue;
+      const json = await resp.json() as any[];
+      const body: string = json?.[0]?.content?.rendered || "";
+      if (!body) continue;
+      const text = body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+      const hit = extractFromText(text, `${base}/wp-json/wp/v2/pages?slug=${slug}`);
+      if (hit) {
+        console.log(`[find-uk-entity] WP REST ${slug}: "${hit.entityName}" / ${hit.chNumber}`);
+        return hit;
+      }
+    } catch { /* non-fatal */ }
+  }
+
+  // ── Step 3: Regular HTML pages (static sites / SSR) ──────────────────────
   for (const page of pages) {
     const url = `${base}${page}`;
     try {
@@ -1705,7 +1780,19 @@ async function scrapeUkEntityFromWebsite(domain: string): Promise<{
       if (!ct.includes("html") && !ct.includes("text")) continue;
 
       const html = await resp.text();
-      // Strip scripts/styles, collapse tags to spaces, decode basic entities
+
+      // Also check __NEXT_DATA__ / Next.js SSR JSON blobs embedded in the page
+      const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>(\{[\s\S]*?\})<\/script>/);
+      if (nextDataMatch) {
+        try {
+          const nd = JSON.parse(nextDataMatch[1]);
+          const ndText = JSON.stringify(nd);
+          const hit = extractFromText(ndText, url + "#next-data");
+          if (hit) { console.log(`[find-uk-entity] Next.js JSON blob at ${url}`); return hit; }
+        } catch { /* non-fatal */ }
+      }
+
+      // Strip scripts/styles, decode HTML entities
       const text = html
         .replace(/<script[\s\S]*?<\/script>/gi, " ")
         .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -1715,32 +1802,12 @@ async function scrapeUkEntityFromWebsite(domain: string): Promise<{
         .replace(/&[a-z]+;/g, " ")
         .replace(/\s+/g, " ");
 
-      let entityName: string | null = null;
-      let chNumber: string | null = null;
-
-      for (const pat of ENTITY_PATTERNS) {
-        const m = text.match(pat);
-        if (m?.[1]) {
-          entityName = m[1].trim().replace(/\s+/g, " ");
-          // Sanity-check: shouldn't be longer than 80 chars or contain obvious junk
-          if (entityName.length > 80 || /[\[\]<>{}|]/.test(entityName)) entityName = null;
-          else break;
-        }
-      }
-      for (const pat of CH_PATTERNS) {
-        const m = text.match(pat);
-        if (m?.[1]) {
-          chNumber = m[1].trim().padStart(8, "0");
-          break;
-        }
-      }
-
-      if (entityName || chNumber) {
-        console.log(`[find-uk-entity] scraped from ${url}: "${entityName}" / ${chNumber}`);
-        return { entityName, chNumber, sourceUrl: url };
+      const hit = extractFromText(text, url);
+      if (hit) {
+        console.log(`[find-uk-entity] scraped from ${url}: "${hit.entityName}" / ${hit.chNumber}`);
+        return hit;
       }
     } catch (err: any) {
-      // Timeout or fetch error — try next page
       console.log(`[find-uk-entity] scrape failed ${url}: ${err.message}`);
     }
   }
