@@ -758,7 +758,7 @@ export function registerLandRegistryRoutes(app: Express) {
       // accurately even when Google reverse-geocoded them under a business
       // name like "Steak and Company - Piccadilly Circus, 18 Haymarket".
       // Fall through to OS find-by-address if no coords.
-      let matchedUprns: string[] = [];
+      let osUprns: string[] = [];
       try {
         const { osPlacesNearest, osPlacesFind } = await import("./os-data");
         if (typeof lat === "number" && typeof lng === "number") {
@@ -766,12 +766,12 @@ export function registerLandRegistryRoutes(app: Express) {
             const nearest = await osPlacesNearest(lat, lng, radius);
             const uprns = nearest.map(r => r.uprn).filter(Boolean) as string[];
             if (uprns.length) {
-              matchedUprns = uprns.slice(0, 5);
+              osUprns = uprns.slice(0, 5);
               break;
             }
           }
         }
-        if (matchedUprns.length === 0) {
+        if (osUprns.length === 0) {
           const queries = [
             [resolvedAddress, resolvedPostcode].filter(Boolean).join(", "),
             ...cleanedAddressCandidates.map(c => [c, resolvedPostcode].filter(Boolean).join(", ")),
@@ -780,7 +780,7 @@ export function registerLandRegistryRoutes(app: Express) {
             const os = await osPlacesFind(q, 5);
             const uprns = os.map(r => r.uprn).filter(Boolean) as string[];
             if (uprns.length) {
-              matchedUprns = uprns.slice(0, 5);
+              osUprns = uprns.slice(0, 5);
               break;
             }
           }
@@ -789,27 +789,45 @@ export function registerLandRegistryRoutes(app: Express) {
         console.warn("[land-registry/resolve] OS Places lookup failed:", e?.message);
       }
 
-      // Step 2b: fall back to PropertyData's address-match-uprn if OS didn't
-      // return a UPRN. Try the cleaned candidate first — raw input as backup.
-      if (matchedUprns.length === 0) {
+      // Step 2b: ALWAYS call PropertyData address-match-uprn in parallel with
+      // OS Places (not just as a fallback). OS Places finds sub-premise UPRNs
+      // (individual shop units) but misses the building-level UPRN that links
+      // to the freehold title. PropertyData's matcher is designed specifically
+      // for title lookup and often returns a different UPRN from OS Places.
+      // Merging both gives us the best coverage.
+      let pdUprns: string[] = [];
+      if (cleanPc) {
         for (const candidate of cleanedAddressCandidates) {
-          if (!candidate || !cleanPc) continue;
+          if (!candidate) continue;
           try {
             const umUrl = `https://api.propertydata.co.uk/address-match-uprn?key=${PD_KEY}&address=${encodeURIComponent(candidate)}&postcode=${encodeURIComponent(cleanPc)}`;
             const umResp = await fetch(umUrl, { signal: AbortSignal.timeout(8000) });
             if (umResp.ok) {
               const umData = await umResp.json() as any;
               const d = umData?.data ?? umData;
-              if (Array.isArray(d?.uprns)) matchedUprns = d.uprns.map(String);
-              else if (d?.uprn) matchedUprns = [String(d.uprn)];
-              else if (Array.isArray(d)) matchedUprns = d.map((x: any) => String(x?.uprn || x)).filter(Boolean);
-              if (matchedUprns.length > 0) break;
+              if (Array.isArray(d?.uprns)) pdUprns = d.uprns.map(String);
+              else if (d?.uprn) pdUprns = [String(d.uprn)];
+              else if (Array.isArray(d)) pdUprns = d.map((x: any) => String(x?.uprn || x)).filter(Boolean);
+              if (pdUprns.length > 0) break;
             }
           } catch (e: any) {
             console.warn("[land-registry/resolve] address-match-uprn failed:", e?.message);
           }
         }
       }
+
+      // Merge OS Places and PropertyData UPRNs — deduplicated, OS first (more
+      // precise for map clicks), PD UPRNs appended (catch building-level UPRNs
+      // that OS sub-premise results miss). Cap at 8 to limit uprn-title calls.
+      const seenUprns = new Set<string>();
+      const matchedUprns: string[] = [];
+      for (const u of [...osUprns, ...pdUprns]) {
+        if (u && !seenUprns.has(u) && matchedUprns.length < 8) {
+          seenUprns.add(u);
+          matchedUprns.push(u);
+        }
+      }
+      console.log(`[land-registry/resolve] UPRNs — OS: [${osUprns.join(",")}] PD: [${pdUprns.join(",")}] merged: [${matchedUprns.join(",")}]`);
 
       // Step 3: fetch exact titles via uprn-title (for each UPRN) AND the
       // wider postcode context in parallel so the MLRO sees both.
@@ -842,7 +860,7 @@ export function registerLandRegistryRoutes(app: Express) {
 
       const [uprnTitleResults, postcodeFreeholds, postcodeLeaseholds] = await Promise.all([
         matchedUprns.length > 0
-          ? Promise.all(matchedUprns.slice(0, 5).map(uprn => pdFetch("uprn-title", { uprn })))
+          ? Promise.all(matchedUprns.slice(0, 8).map(uprn => pdFetch("uprn-title", { uprn })))
           : Promise.resolve([]),
         cleanPc ? pdFetch("freeholds", { postcode: cleanPc }) : Promise.resolve(null),
         cleanPc ? pdFetch("leaseholds", { postcode: cleanPc }) : Promise.resolve(null),
