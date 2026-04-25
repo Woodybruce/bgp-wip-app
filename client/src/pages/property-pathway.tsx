@@ -456,6 +456,10 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
   const [tenantInput, setTenantInput] = useState("");
   const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
   const [emailSortSummary, setEmailSortSummary] = useState<string | null>(null);
+  // Re-analyse via the focused investigator returns its own emailHits — keep
+  // them so [E#] citations in the fresh markdown reference the right messages
+  // (the saved s1.emailHits may be older / different).
+  const [emailSortHits, setEmailSortHits] = useState<any[] | null>(null);
   const [emailSorting, setEmailSorting] = useState(false);
 
   return (
@@ -1128,10 +1132,20 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                         const r = await fetch("/api/pathway/email-sort", {
                           method: "POST", credentials: "include",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ address: run?.address, emailHits: s1.emailHits }),
+                          body: JSON.stringify({
+                            address: run?.address,
+                            postcode: run?.postcode,
+                            emailHits: s1.emailHits,
+                            hints: {
+                              tenant: s1.tenant?.name || s1.aiFacts?.mainTenants?.[0],
+                              owner: s1.initialOwnership?.proprietorName,
+                              proprietorCompany: s1.initialOwnership?.proprietorCompanyNumber,
+                            },
+                          }),
                         });
                         const d = await r.json();
                         setEmailSortSummary(d.markdown || d.summary || "No summary returned.");
+                        if (Array.isArray(d.emailHits)) setEmailSortHits(d.emailHits);
                       } catch { setEmailSortSummary("Failed to analyse emails."); }
                       finally { setEmailSorting(false); }
                     }}
@@ -1144,8 +1158,12 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 {(() => {
                   // Prefer the freshly re-analysed result if the user clicked
                   // the button; otherwise show the auto-generated one saved
-                  // with the run; otherwise prompt to generate.
+                  // with the run; otherwise prompt to generate. Citations
+                  // ([E#] tokens) reference whichever emailHits set produced
+                  // that markdown — fresh hits when re-analyse just ran,
+                  // saved hits otherwise.
                   const md = emailSortSummary || s1.emailCommentary?.markdown;
+                  const hitsForCitations = emailSortHits ?? s1.emailHits;
                   if (!md) {
                     return (
                       <p className="text-[11px] text-muted-foreground italic">
@@ -1157,7 +1175,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                     <div className="max-h-[420px] overflow-y-auto pr-1">
                       <EmailCommentary
                         markdown={md}
-                        emailHits={s1.emailHits}
+                        emailHits={hitsForCitations}
                         onOpenEmail={(h) => setOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail })}
                       />
                     </div>

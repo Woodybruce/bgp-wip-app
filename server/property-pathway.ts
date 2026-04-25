@@ -1422,20 +1422,43 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   }
 
   // AI email triage — replaces the noisy raw email list in the UI with a
-  // narrative grouped/filtered commentary. Cites individual emails inline
-  // as [E5] tokens that the client renders as clickable links into the
-  // in-app email viewer. Best-effort: never blocks Stage 1 completion.
+  // narrative grouped/filtered commentary. Uses a focused Claude+search_emails
+  // agent loop (the same pattern ChatBGP uses) which picks smarter queries
+  // than the keyword sweep — including tenant/owner names, not just address
+  // tokens. Best-effort: never blocks Stage 1 completion. Falls back to
+  // legacy email-sort on the existing emailHits if the investigator fails.
   try {
-    const commentary = await runEmailSort(run.address, stage1Payload.emailHits || []);
-    if (commentary) {
+    const { runEmailInvestigator } = await import("./email-investigator");
+    const investigation = await runEmailInvestigator({
+      address: run.address,
+      postcode: run.postcode || undefined,
+      hints: {
+        tenant: stage1Payload.tenant?.name || stage1Payload.aiFacts?.mainTenants?.[0],
+        owner: stage1Payload.initialOwnership?.proprietorName,
+        proprietorCompany: stage1Payload.initialOwnership?.proprietorCompanyNumber,
+      },
+      req,
+    });
+    if (investigation) {
+      stage1Payload.emailHits = investigation.emailHits;
       stage1Payload.emailCommentary = {
-        markdown: commentary.markdown,
+        markdown: investigation.markdown,
         generatedAt: new Date().toISOString(),
       };
-      console.log(`[pathway stage1 autonomous] email commentary generated (${commentary.markdown.length} chars from ${stage1Payload.emailHits?.length || 0} hits)`);
+      console.log(`[pathway stage1 autonomous] email investigator returned ${investigation.emailHits.length} hits + ${investigation.markdown.length}-char commentary`);
+    } else {
+      // Fallback: classic email-sort on whatever the autonomous AI gathered.
+      const commentary = await runEmailSort(run.address, stage1Payload.emailHits || []);
+      if (commentary) {
+        stage1Payload.emailCommentary = {
+          markdown: commentary.markdown,
+          generatedAt: new Date().toISOString(),
+        };
+        console.log(`[pathway stage1 autonomous] email-sort fallback generated ${commentary.markdown.length} chars from ${stage1Payload.emailHits?.length || 0} hits`);
+      }
     }
   } catch (err: any) {
-    console.warn(`[pathway stage1 autonomous] email commentary failed: ${err?.message}`);
+    console.warn(`[pathway stage1 autonomous] email investigator failed: ${err?.message}`);
   }
 
   console.log(`[pathway stage1 autonomous] Completed in ${((Date.now() - started) / 1000).toFixed(1)}s — ${stage1Payload.emailHits.length} emails, ${stage1Payload.brochureFiles.length} brochures, ${stage1Payload.sharepointHits.length} sharepoint`);
@@ -2904,25 +2927,49 @@ Return STRICT JSON only, no prose, no code fences:
     console.warn("[pathway stage1] retail comps extraction failed:", err?.message);
   }
 
-  // AI email triage — replaces the raw email list in the UI with grouped,
-  // filtered commentary that cites individual emails inline as [E5] tokens.
-  // Best-effort; never blocks Stage 1 completion.
+  // AI email triage — replaces the noisy keyword sweep with a focused
+  // Claude+search_emails agent loop (same pattern ChatBGP uses). The
+  // investigator picks smarter queries (tenant brand names, owner names,
+  // postcode) than the address-derived sweep, and produces a grouped
+  // narrative with [E#] citations the client renders as clickable
+  // deep-links. The legacy `emailHits` from the keyword sweep is kept as
+  // input to retail-comps extraction above, but the saved emailHits and
+  // commentary come from the focused investigator. Falls back to
+  // runEmailSort on the legacy hits if the investigator fails.
+  let savedEmailHits: NonNullable<StageResults["stage1"]>["emailHits"] = emailHits;
   let emailCommentary: { markdown: string; generatedAt: string } | undefined;
   try {
-    const commentary = await runEmailSort(run.address, emailHits);
-    if (commentary) {
-      emailCommentary = { markdown: commentary.markdown, generatedAt: new Date().toISOString() };
-      console.log(`[pathway stage1] email commentary generated (${commentary.markdown.length} chars from ${emailHits.length} hits)`);
+    const { runEmailInvestigator } = await import("./email-investigator");
+    const investigation = await runEmailInvestigator({
+      address: run.address,
+      postcode: run.postcode || undefined,
+      hints: {
+        tenant: derivedTenant?.name || aiFacts?.mainTenants?.[0],
+        owner: initialOwnership?.proprietorName,
+        proprietorCompany: initialOwnership?.proprietorCompanyNumber,
+      },
+      req,
+    });
+    if (investigation) {
+      savedEmailHits = investigation.emailHits;
+      emailCommentary = { markdown: investigation.markdown, generatedAt: new Date().toISOString() };
+      console.log(`[pathway stage1] email investigator returned ${investigation.emailHits.length} hits + ${investigation.markdown.length}-char commentary`);
+    } else {
+      const commentary = await runEmailSort(run.address, emailHits);
+      if (commentary) {
+        emailCommentary = { markdown: commentary.markdown, generatedAt: new Date().toISOString() };
+        console.log(`[pathway stage1] email-sort fallback generated ${commentary.markdown.length} chars from ${emailHits.length} hits`);
+      }
     }
   } catch (err: any) {
-    console.warn(`[pathway stage1] email commentary failed: ${err?.message}`);
+    console.warn(`[pathway stage1] email investigator failed: ${err?.message}`);
   }
 
-  console.log(`[pathway stage1] Completing after ${((Date.now() - stage1Start) / 1000).toFixed(1)}s — ${emailHits.length} emails, ${brochureFiles.length} brochures, ${sharepointHits.length} sharepoint, ${deals.length} deals, ${comps.length} comps, ${retailComps?.length || 0} retail comps, ${rates?.assessmentCount || 0} rates`);
+  console.log(`[pathway stage1] Completing after ${((Date.now() - stage1Start) / 1000).toFixed(1)}s — ${savedEmailHits.length} emails, ${brochureFiles.length} brochures, ${sharepointHits.length} sharepoint, ${deals.length} deals, ${comps.length} comps, ${retailComps?.length || 0} retail comps, ${rates?.assessmentCount || 0} rates`);
 
   await setStageStatus(runId, "stage1", "completed", {
     stage1: {
-      emailHits,
+      emailHits: savedEmailHits,
       emailCommentary,
       sharepointHits,
       crmHits,
@@ -4466,11 +4513,33 @@ export function registerPropertyPathwayRoutes(app: Express) {
   // a Claude-organised summary: chronological threads, filtered noise, gaps.
   app.post("/api/pathway/email-sort", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { address, emailHits } = req.body as { address?: string; emailHits?: any[] };
+      const { address, postcode, emailHits, hints } = req.body as {
+        address?: string;
+        postcode?: string;
+        emailHits?: any[];
+        hints?: { tenant?: string; owner?: string; proprietorCompany?: string };
+      };
+
+      // When an address is supplied, run the focused email investigator —
+      // it picks smarter queries (tenant, owner, postcode) than the keyword
+      // sweep and produces a grouped narrative with [E#] citations.
+      if (address) {
+        const { runEmailInvestigator } = await import("./email-investigator");
+        const investigation = await runEmailInvestigator({ address, postcode, hints, req });
+        if (investigation) {
+          return res.json({
+            summary: investigation.markdown,
+            markdown: investigation.markdown,
+            emailHits: investigation.emailHits,
+          });
+        }
+        // Fall through to legacy email-sort on the supplied emailHits.
+      }
+
       if (!emailHits?.length) return res.json({ summary: "No emails to analyse.", markdown: "No emails to analyse." });
       const result = await runEmailSort(address || "", emailHits);
       // Keep `summary` for legacy callers; new callers should read `markdown`.
-      res.json({ summary: result.markdown, markdown: result.markdown });
+      res.json({ summary: result?.markdown || "No summary returned.", markdown: result?.markdown || "No summary returned." });
     } catch (err: any) {
       console.error("[pathway/email-sort]", err?.message);
       res.status(500).json({ error: err?.message || "AI analysis failed" });

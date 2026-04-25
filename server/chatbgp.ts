@@ -349,7 +349,10 @@ function setCache<T>(key: string, data: T, ttlMs: number): void {
 // - mailbox === "all": fans out across the shared inbox + every active BGP user's mailbox
 //   via the app-only token on /users/{email}/messages (requires Mail.Read Application).
 // - mailbox === specific email: uses the app-only token to search just that mailbox.
-async function runSearchEmailsTool(opts: { query: string; top: number; mailbox: string; req: any }):
+//
+// Exported so the property-pathway email investigator can reuse the same
+// fan-out semantics ChatBGP gets — searching across all 31 BGP mailboxes.
+export async function runSearchEmailsTool(opts: { query: string; top: number; mailbox: string; req: any }):
   Promise<{ messages: any[]; scope: string } | { error: string }> {
   const { query, top, mailbox, req } = opts;
   const mapMsg = (msg: any, via?: string, mailboxEmail?: string) => ({
