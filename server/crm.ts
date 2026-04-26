@@ -48,6 +48,82 @@ function parseAiJson(raw: string): any {
   }
 }
 
+/**
+ * Parse a Sage WIP Excel buffer and import it into wip_entries + sync to
+ * crm_deals. Used by:
+ *   - the direct file-upload route POST /api/wip/import
+ *   - the ChatBGP tool `import_wip_excel` (via chat-media filename)
+ *
+ * `append: false` (default) wipes wip_entries first, then loads. Use
+ * `append: true` only for incremental updates between full Sage exports.
+ *
+ * Sage exports are produced via the standard "WIP by deal" report and
+ * have these columns: Ref, Group, Project, Tenant, Team, Agent, Amt WIP,
+ * Amt invoice, Month, Deal status, Stage, InvoiceNo, ORDER_NUMBER. The
+ * Month is `Mmm-YY` (e.g. "Apr-26"); fiscal year is calculated assuming
+ * BGP's FY runs Apr–Mar, so anything Apr+ rolls into the *next* calendar
+ * year (Apr-26 → FY 2027).
+ *
+ * Throws on invalid input (no rows / unreadable file) so callers can
+ * surface a clear error.
+ */
+export async function importWipFromBuffer(
+  buffer: Buffer,
+  opts: { append?: boolean } = {},
+): Promise<{ success: true; imported: number; sync: any }> {
+  const XLSX = await import("xlsx");
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  const data: any[] = XLSX.utils.sheet_to_json(sheet);
+  if (data.length === 0) throw new Error("No data found in file");
+
+  const monthOrder = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const rows = data.filter((r: any) => {
+    const ref = r.Ref ? String(r.Ref) : "";
+    if (!ref || ref === "Total" || ref.startsWith("Applied filters")) return false;
+    if (!r.Group && !r.Project && !r.Tenant && !r.Team) return false;
+    return true;
+  }).map((r: any) => {
+    let fiscalYear: number | null = null;
+    if (r.Month) {
+      const parts = String(r.Month).split("-");
+      if (parts.length === 2) {
+        const mIdx = monthOrder.indexOf(parts[0]);
+        const yr = parseInt("20" + parts[1]);
+        if (mIdx >= 0 && !isNaN(yr)) fiscalYear = mIdx >= 3 ? yr + 1 : yr;
+      }
+    }
+    return {
+      ref: r.Ref ? String(r.Ref) : null,
+      groupName: r.Group || null,
+      project: r.Project || null,
+      tenant: r.Tenant || null,
+      team: r.Team || null,
+      agent: r.Agent || null,
+      amtWip: parseFloat(r["Amt WIP"]) || 0,
+      amtInvoice: parseFloat(r["Amt invoice"]) || 0,
+      month: r.Month || null,
+      dealStatus: r["Deal status"] || null,
+      stage: r.Stage || null,
+      invoiceNo: r.InvoiceNo ? String(r.InvoiceNo) : null,
+      orderNumber: r.ORDER_NUMBER ? String(r.ORDER_NUMBER) : null,
+      fiscalYear,
+    };
+  });
+
+  await db.transaction(async (tx) => {
+    if (!opts.append) {
+      await tx.delete(wipEntries);
+    }
+    for (let i = 0; i < rows.length; i += 100) {
+      await tx.insert(wipEntries).values(rows.slice(i, i + 100));
+    }
+  });
+
+  const syncResult = await syncWipToCrmDeals(pool);
+  return { success: true, imported: rows.length, sync: syncResult };
+}
+
 export async function syncWipToCrmDeals(dbPool: Pool) {
   const client = await dbPool.connect();
   try {
@@ -4159,59 +4235,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       try {
         if (!(await isWipSenior(req))) return res.status(403).json({ error: "Not authorised" });
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-        const XLSX = await import("xlsx");
-        const wb = XLSX.read(req.file.buffer, { type: "buffer" });
-        const sheet = wb.Sheets[wb.SheetNames[0]];
-        const data: any[] = XLSX.utils.sheet_to_json(sheet);
-        if (data.length === 0) return res.status(400).json({ error: "No data found in file" });
-
-        const monthOrder = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-        const rows = data.filter((r: any) => {
-          const ref = r.Ref ? String(r.Ref) : "";
-          if (!ref || ref === "Total" || ref.startsWith("Applied filters")) return false;
-          if (!r.Group && !r.Project && !r.Tenant && !r.Team) return false;
-          return true;
-        }).map((r: any) => {
-          let fiscalYear: number | null = null;
-          if (r.Month) {
-            const parts = String(r.Month).split("-");
-            if (parts.length === 2) {
-              const mIdx = monthOrder.indexOf(parts[0]);
-              const yr = parseInt("20" + parts[1]);
-              if (mIdx >= 0 && !isNaN(yr)) fiscalYear = mIdx >= 3 ? yr + 1 : yr;
-            }
-          }
-          return {
-            ref: r.Ref ? String(r.Ref) : null,
-            groupName: r.Group || null,
-            project: r.Project || null,
-            tenant: r.Tenant || null,
-            team: r.Team || null,
-            agent: r.Agent || null,
-            amtWip: parseFloat(r["Amt WIP"]) || 0,
-            amtInvoice: parseFloat(r["Amt invoice"]) || 0,
-            month: r.Month || null,
-            dealStatus: r["Deal status"] || null,
-            stage: r.Stage || null,
-            invoiceNo: r.InvoiceNo ? String(r.InvoiceNo) : null,
-            orderNumber: r.ORDER_NUMBER ? String(r.ORDER_NUMBER) : null,
-            fiscalYear,
-          };
-        });
-
-        const appendMode = req.query.append === "true";
-        await db.transaction(async (tx) => {
-          if (!appendMode) {
-            await tx.delete(wipEntries);
-          }
-          for (let i = 0; i < rows.length; i += 100) {
-            await tx.insert(wipEntries).values(rows.slice(i, i + 100));
-          }
-        });
-
-        const syncResult = await syncWipToCrmDeals(pool);
-
-        res.json({ success: true, imported: rows.length, sync: syncResult });
+        const result = await importWipFromBuffer(req.file.buffer, { append: req.query.append === "true" });
+        res.json(result);
       } catch (e: any) {
         res.status(500).json({ error: e.message });
       }

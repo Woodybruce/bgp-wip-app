@@ -3208,6 +3208,22 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
+      name: "import_wip_excel",
+      description: "Import a Sage WIP (Work-in-Progress) Excel export into the WIP report. Wipes wip_entries and reloads from the file (or appends with mode='append'), then auto-syncs the rows to crm_deals so every WIP entry is linked to a deal record. The Excel must be a Sage 'WIP by deal' export with columns: Ref, Group, Project, Tenant, Team, Agent, Amt WIP, Amt invoice, Month, Deal status, Stage, InvoiceNo, ORDER_NUMBER. The file must have been uploaded to this chat first (drag & drop). Use when the user asks to import / upload / load the WIP, or says they've dragged in a Sage WIP file. By default this REPLACES the existing WIP — use mode='append' only for incremental updates between full Sage exports.",
+      parameters: {
+        type: "object",
+        properties: {
+          chatMediaFilename: { type: "string", description: "The chat-media filename of the uploaded Excel (e.g. '1745689452345-abc123def.xlsx'). Must already be in chat-media." },
+          mode: { type: "string", enum: ["replace", "append"], description: "replace = wipe wip_entries and reload from file (default — what Sage gives you each quarter). append = keep existing rows and add new ones. Default: replace." },
+        },
+        required: ["chatMediaFilename"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "query_turnover",
       description: "Search the Turnover Data Board — brand/operator revenue intelligence. Use when the user asks about a brand's turnover, revenue, sales performance, £/sqft, or occupational cost data. Can filter by company/brand name, property, category (F&B, Retail, Leisure, etc.), or period.",
       parameters: {
@@ -6502,6 +6518,68 @@ Be thorough — include every unit row you can classify, across all properties i
       };
     } catch (err: any) {
       return { data: { error: `Leasing schedule import failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "import_wip_excel") {
+    try {
+      const chatMediaFilename = String(fnArgs.chatMediaFilename || "").trim();
+      const mode = (fnArgs.mode === "append" ? "append" : "replace") as "replace" | "append";
+      if (!chatMediaFilename) {
+        return { data: { error: "chatMediaFilename is required. The user must upload the Sage WIP Excel to chat first." } };
+      }
+      if (chatMediaFilename.includes("..") || chatMediaFilename.includes("/") || chatMediaFilename.includes("\\")) {
+        return { data: { error: "Invalid filename" } };
+      }
+
+      // Resolve the file: try disk first (multer-saved), then DB-backed
+      // chat-media storage, then a fallback by originalName lookup. Same
+      // pattern import_leasing_schedule uses.
+      let buffer: Buffer | null = null;
+      const diskPath = path.join(process.cwd(), "ChatBGP", "chat-media", chatMediaFilename);
+      if (fs.existsSync(diskPath)) {
+        buffer = fs.readFileSync(diskPath);
+      } else {
+        const dbFile = await getFile(`chat-media/${chatMediaFilename}`);
+        if (dbFile?.data) {
+          buffer = dbFile.data;
+        } else {
+          const byName = await findChatMediaByOriginalName(chatMediaFilename);
+          if (byName?.data) buffer = byName.data;
+        }
+      }
+      if (!buffer) {
+        return { data: { error: `Chat file not found: ${chatMediaFilename}. Ask the user to re-upload the file.` } };
+      }
+
+      const ext = path.extname(chatMediaFilename).toLowerCase();
+      if (ext !== ".xlsx" && ext !== ".xls") {
+        return { data: { error: `WIP import expects an Excel file (.xlsx / .xls). Got ${ext}.` } };
+      }
+
+      const { importWipFromBuffer } = await import("./crm");
+      const result = await importWipFromBuffer(buffer, { append: mode === "append" });
+
+      // Trim the sync result for the chat reply — the agent only needs
+      // headline numbers, not the full row-level breakdown.
+      const sync = result.sync || {};
+      return {
+        data: {
+          success: true,
+          imported: result.imported,
+          mode,
+          syncSummary: {
+            dealsCreated: sync.dealsCreated ?? sync.created ?? null,
+            dealsUpdated: sync.dealsUpdated ?? sync.updated ?? null,
+            dealsLinked: sync.dealsLinked ?? sync.linked ?? null,
+            unmatched: sync.unmatched ?? null,
+          },
+        },
+        action: { type: "wip_imported", imported: result.imported },
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] import_wip_excel error:", err?.message, err?.stack);
+      return { data: { error: `WIP import failed: ${err?.message || "unknown error"}` } };
     }
   }
 
