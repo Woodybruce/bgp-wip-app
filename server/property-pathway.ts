@@ -4645,7 +4645,12 @@ export function registerPropertyPathwayRoutes(app: Express) {
       const resolvedPostcode = postcode || address.match(UK_POSTCODE_RE)?.[1] || "";
       const normalisedPostcode = resolvedPostcode.trim().replace(/\s+/g, "").toUpperCase();
 
-      // Dedupe: look for an existing (non-deleted) run matching address±postcode
+      // Dedupe: only match when BOTH address and postcode line up. Postcode
+      // alone is far too loose — buildings on the same postcode (e.g. multiple
+      // properties sharing SW1Y 4DG) would otherwise share a single pathway
+      // run and CRM link, which has caused bad cross-linkage in the past
+      // (e.g. an 18-22 Haymarket run pointing at a 12-18 Moorgate CRM record
+      // because they once shared a postcode by mistake).
       if (!force) {
         const existing = await db
           .select()
@@ -4655,10 +4660,10 @@ export function registerPropertyPathwayRoutes(app: Express) {
         const match = existing.find((r) => {
           const rAddr = normaliseAddr(r.address || "");
           const rPostcode = (r.postcode || "").trim().replace(/\s+/g, "").toUpperCase();
-          if (normalisedPostcode && rPostcode) {
-            return rPostcode === normalisedPostcode;
-          }
-          return rAddr === normalisedAddr;
+          // Require address match. Postcode is a tie-breaker only.
+          if (rAddr !== normalisedAddr) return false;
+          if (normalisedPostcode && rPostcode && rPostcode !== normalisedPostcode) return false;
+          return true;
         });
         if (match) {
           return res.json({ success: true, run: match, existing: true });
@@ -4752,6 +4757,43 @@ export function registerPropertyPathwayRoutes(app: Express) {
     } catch (err: any) {
       console.error("[pathway delete] error:", err?.message);
       res.status(500).json({ error: err?.message || "Failed to delete pathway" });
+    }
+  });
+
+  // Re-point a pathway run at a different (or no) CRM property. Used when
+  // the auto-link picked the wrong property — e.g. dedupe matched on
+  // postcode and connected an 18-22 Haymarket run to a 12-18 Moorgate
+  // CRM record. Pass `propertyId: null` to break the link entirely (the
+  // next Stage 1 run will then auto-link or auto-create cleanly).
+  app.post("/api/property-pathway/:runId/relink-crm", requireAuth, async (req: Request, res: Response) => {
+    const runId = String(req.params.runId);
+    try {
+      const { propertyId } = req.body as { propertyId?: string | null };
+      const run = await getRun(runId);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+
+      let nextPropertyId: string | null = null;
+      if (propertyId) {
+        const [target] = await db
+          .select()
+          .from(crmProperties)
+          .where(eq(crmProperties.id, propertyId))
+          .limit(1);
+        if (!target) return res.status(404).json({ error: "Target CRM property not found" });
+        nextPropertyId = target.id;
+      }
+
+      await db
+        .update(propertyPathwayRuns)
+        .set({ propertyId: nextPropertyId })
+        .where(eq(propertyPathwayRuns.id, runId));
+
+      console.log(`[pathway relink-crm] run ${runId}: ${run.propertyId || "<none>"} -> ${nextPropertyId || "<unlinked>"}`);
+      const updated = await getRun(runId);
+      res.json({ success: true, run: updated });
+    } catch (err: any) {
+      console.error("[pathway relink-crm] error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to relink CRM" });
     }
   });
 

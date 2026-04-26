@@ -1751,9 +1751,11 @@ function statusTone(status: string): string {
  *    as the property detail page's "Set Up Folders" button.
  */
 function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
+  const { toast } = useToast();
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [unlinking, setUnlinking] = useState(false);
 
-  const { data: property, isLoading } = useQuery<any>({
+  const { data: property, isLoading, refetch: refetchProperty } = useQuery<any>({
     queryKey: ["/api/crm/properties", run.propertyId],
     queryFn: async () => {
       if (!run.propertyId) return null;
@@ -1766,6 +1768,49 @@ function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
     },
     enabled: !!run.propertyId,
   });
+
+  // Distinctive-word overlap test — if the linked CRM property's name
+  // shares no meaningful word with the run address, the auto-link probably
+  // matched the wrong building (e.g. dedupe by postcode picking up an
+  // unrelated property on the same street). Surface a clear warning so the
+  // user can unlink and let Stage 1 re-create / re-link correctly.
+  const STOPWORDS = new Set(["street", "road", "avenue", "lane", "place", "square", "house", "building", "floor", "suite", "unit", "the", "and", "london", "england", "uk"]);
+  const distinctiveWords = (s: string): Set<string> =>
+    new Set(
+      String(s || "")
+        .toLowerCase()
+        .match(/[a-z]+/g)
+        ?.filter((w) => w.length >= 4 && !STOPWORDS.has(w)) || []
+    );
+  const runWords = distinctiveWords(run.address);
+  const propWords = property ? distinctiveWords(`${property.name || ""} ${typeof property.address === "string" ? property.address : ""}`) : new Set<string>();
+  const sharedWords = [...runWords].filter((w) => propWords.has(w));
+  const looksMismatched = property && runWords.size > 0 && propWords.size > 0 && sharedWords.length === 0;
+
+  const unlinkCrm = async () => {
+    if (!confirm(`Unlink this investigation from "${property?.name}"?\n\nThe next time you run Stage 1, it'll auto-link to the correct CRM property (or create a new one).`)) return;
+    setUnlinking(true);
+    try {
+      const r = await fetch(`/api/property-pathway/${run.id}/relink-crm`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ propertyId: null }),
+      });
+      if (!r.ok) {
+        toast({ title: "Couldn't unlink", description: (await r.json().catch(() => ({}))).error || `HTTP ${r.status}`, variant: "destructive" });
+        return;
+      }
+      toast({ title: "CRM unlinked", description: "Re-run Stage 1 to relink correctly." });
+      // Force a fresh fetch of the run + property
+      await refetchProperty();
+      window.location.reload();
+    } catch (err: any) {
+      toast({ title: "Couldn't unlink", description: err.message, variant: "destructive" });
+    } finally {
+      setUnlinking(false);
+    }
+  };
 
   if (!run.propertyId) {
     return (
@@ -1808,7 +1853,7 @@ function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
       />
       <Card>
         <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-sm flex items-center gap-2">
+          <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
             <FolderOpen className="w-4 h-4" />
             <span>CRM & Folders</span>
             <Link href={`/properties/${property.id}`}>
@@ -1820,18 +1865,46 @@ function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
             {!hasFolderTree && (
               <Badge variant="outline" className="text-[9px] py-0">No folders yet</Badge>
             )}
+            {looksMismatched && (
+              <Badge variant="destructive" className="text-[9px] py-0">⚠ Wrong CRM?</Badge>
+            )}
           </CardTitle>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-[11px] gap-1"
-            onClick={() => setFolderDialogOpen(true)}
-          >
-            <FolderOpen className="w-3 h-3" />
-            {hasFolderTree ? "Manage folders" : "Set up folders"}
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px] text-muted-foreground hover:text-destructive"
+              onClick={unlinkCrm}
+              disabled={unlinking}
+              title="Break the link to this CRM property — useful if the auto-link picked the wrong building"
+            >
+              {unlinking ? "Unlinking…" : "Unlink"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[11px] gap-1"
+              onClick={() => setFolderDialogOpen(true)}
+            >
+              <FolderOpen className="w-3 h-3" />
+              {hasFolderTree ? "Manage folders" : "Set up folders"}
+            </Button>
+          </div>
         </CardHeader>
-        <CardContent className="pt-0">
+        <CardContent className="pt-0 space-y-2">
+          {looksMismatched && (
+            <div className="border border-destructive/30 bg-destructive/5 rounded-md p-2 text-[11px]">
+              <p className="font-medium text-destructive">This investigation looks linked to the wrong CRM property.</p>
+              <p className="text-muted-foreground mt-0.5">
+                Run address: <span className="font-mono text-foreground">{run.address}</span>
+                <br />
+                Linked CRM: <span className="font-mono text-foreground">{property.name}</span>
+              </p>
+              <p className="text-muted-foreground mt-1">
+                Click <strong>Unlink</strong> above, then re-run Stage 1 — it'll auto-link to the correct CRM record (or create a fresh one).
+              </p>
+            </div>
+          )}
           {hasFolderTree ? (
             <PropertyFoldersPanel propertyName={property.name} folderTeams={folderTeams} />
           ) : (
