@@ -1318,6 +1318,51 @@ export function PropertyLeasingSchedule({ propertyId }: { propertyId: string }) 
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [showAddUnit, setShowAddUnit] = useState(false);
   const [expandedZones, setExpandedZones] = useState<Set<string>>(new Set(["__all__"]));
+  // Excel import state — referenced by the "Import Excel" button + preview
+  // dialog rendered further down. These were missing in this component
+  // (only declared in the standalone PropertyScheduleView), which crashed
+  // the property detail page with `ReferenceError: importParsing is not
+  // defined` whenever the schedule was rendered.
+  const [importParsing, setImportParsing] = useState(false);
+  const [importPreview, setImportPreview] = useState<{ sheetName: string; sheetCount: number; rowsScanned: number; units: any[] } | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
+
+  const handleImportExcel = async (file: File) => {
+    setImportParsing(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch(`/api/leasing-schedule/property/${propertyId}/parse-excel`, {
+        method: "POST", headers: getAuthHeaders(), body: fd,
+      });
+      if (!r.ok) { toast({ title: "Parse failed", description: (await r.json()).error || "Could not read file", variant: "destructive" }); return; }
+      const data = await r.json();
+      if (!data.units?.length) { toast({ title: "No units found", description: "AI could not extract rows from that sheet", variant: "destructive" }); return; }
+      setImportPreview(data);
+    } catch (e: any) {
+      toast({ title: "Parse failed", description: e.message, variant: "destructive" });
+    } finally {
+      setImportParsing(false);
+    }
+  };
+
+  const confirmImport = async () => {
+    if (!importPreview?.units?.length) return;
+    try {
+      const r = await fetch(`/api/leasing-schedule/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ property_id: propertyId, units: importPreview.units }),
+      });
+      if (!r.ok) { toast({ title: "Import failed", variant: "destructive" }); return; }
+      const data = await r.json();
+      toast({ title: `${data.imported} units imported` });
+      setImportPreview(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule/property", propertyId] });
+    } catch (e: any) {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+    }
+  };
 
   const { data: units = [], isLoading, error: unitsError } = useQuery<LeasingUnit[]>({
     queryKey: ["/api/leasing-schedule/property", propertyId],
