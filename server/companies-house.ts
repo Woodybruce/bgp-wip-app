@@ -2257,6 +2257,37 @@ async function scrapeUkEntityFromWebsite(
         }
       }
     }
+    // Broad fallback — any "X Limited/Ltd/plc/LLP/LP" anywhere on the page,
+    // scored by UK-signal proximity, "UK"/"GB" in the name, and brand-token
+    // overlap. Catches disclosures phrased outside the specific templates
+    // above (e.g. "AFH Stores UK Limited is committed to..." in a modern
+    // slavery statement). Threshold ≥2 keeps drive-by mentions of unrelated
+    // Limited entities (Stripe, Klarna, Google Payment, etc.) from winning.
+    if (!entityName) {
+      const BROAD = /\b([A-Z][A-Za-z0-9&'.,()\-]+(?:\s+[A-Z0-9][A-Za-z0-9&'.,()\-]+){0,5}\s+(?:Limited|Ltd\.?|PLC|plc|LLP|LP))\b/g;
+      const scores = new Map<string, number>();
+      let m: RegExpExecArray | null;
+      while ((m = BROAD.exec(text)) !== null) {
+        const name = m[1].trim().replace(/\s+/g, " ");
+        if (name.length < 6 || name.length > 80) continue;
+        if (/[\[\]<>{}|]/.test(name)) continue;
+        if (/^(?:The|This|These|Our|Your|Their|All|Any|Some|Such|Other|Same|Both|Each|Every)\b/i.test(name)) continue;
+        const win = text.slice(Math.max(0, m.index - 200), m.index + name.length + 200);
+        let score = (scores.get(name) ?? 0) + 1;
+        if (/\b(?:England|Wales|Companies\s*House|company\s+(?:registration\s+)?(?:number|no\.?)|registered\s+office|registered\s+in\s+(?:England|Scotland))\b/i.test(win)) score += 3;
+        if (/\bUK\b|\bGB\b|\bGreat\s+Britain\b/.test(name)) score += 2;
+        if (brand?.name) {
+          const tokens = brand.name.toLowerCase().split(/\s+/).filter((t) => t.length > 2 && !/^(?:the|and|inc|ltd|llc|plc|limited|company|stores?)$/i.test(t));
+          const lower = name.toLowerCase();
+          for (const t of tokens) if (lower.includes(t)) score += 2;
+        }
+        scores.set(name, score);
+      }
+      if (scores.size) {
+        const best = [...scores.entries()].sort((a, b) => b[1] - a[1])[0];
+        if (best && best[1] >= 2) entityName = best[0];
+      }
+    }
     for (const pat of CH_PATTERNS) {
       const m = text.match(pat);
       if (m?.[1]) { chNumber = m[1].trim().padStart(8, "0"); break; }
