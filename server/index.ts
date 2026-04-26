@@ -822,12 +822,6 @@ app.use("/api/branding/assets", express.static(
           } catch (e: any) {
             console.error("[intel-cache] Failed to start:", e.message);
           }
-          try {
-            const { startPdfCachePurge } = await import("./utils/pdf-cache");
-            startPdfCachePurge();
-          } catch (e: any) {
-            console.error("[pdf-cache] Failed to start:", e.message);
-          }
         }, 120000);
         // VOA auto-import disabled — was OOM-killing the server. Admin can
         // run POST /api/voa/import manually (or hit GET /api/voa/status?import=1)

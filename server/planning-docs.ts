@@ -411,48 +411,6 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
   const isPdfBuffer = (buf: Buffer): boolean =>
     buf.length >= 1024 && buf.slice(0, 4).toString("latin1") === "%PDF";
 
-  // Helper: cache successful download (fire-and-forget — don't block the response).
-  const { getCachedPdf, setCachedPdf } = await import("./utils/pdf-cache");
-  const cacheAndReturn = (buf: Buffer): Buffer => {
-    setCachedPdf(url, buf).catch(() => {});
-    return buf;
-  };
-
-  // Strategy -1: cache hit. Avoids the entire ScraperAPI/Webshare round-trip
-  // for PDFs we've already downloaded. PDFs are immutable once an LPA
-  // publishes a decision so a 30-day TTL is safe.
-  const cached = await getCachedPdf(url);
-  if (cached && isPdfBuffer(cached)) {
-    return cached;
-  }
-
-  // Strategy 0a: direct fetch. Many LPAs (and most non-Idox systems) don't
-  // actually block direct downloads — try this first with a tight 5s budget
-  // before paying for ScraperAPI/Webshare. Idox session-gated URLs will fall
-  // through to the proxy strategies below.
-  try {
-    const directRes = await fetch(url, {
-      signal: AbortSignal.timeout(5000),
-      redirect: "follow",
-      headers: {
-        "User-Agent": BROWSER_UA,
-        Accept: "application/pdf,application/octet-stream,*/*;q=0.9",
-        "Accept-Language": "en-GB,en;q=0.9",
-        ...(refererUrl ? { Referer: refererUrl } : {}),
-      },
-    });
-    if (directRes.ok) {
-      const buf = Buffer.from(await directRes.arrayBuffer());
-      if (isPdfBuffer(buf)) {
-        console.log(`[planning-docs] direct fetch OK: ${url} (${buf.length}B)`);
-        return cacheAndReturn(buf);
-      }
-    }
-  } catch {
-    // Direct fetch failed — fall through to proxy strategies. This is normal
-    // for Idox session-gated URLs.
-  }
-
   // Strategy 0: Webshare two-step session — establish JSESSIONID by browsing
   // the app documents tab first, then fetch the PDF with that cookie.
   // This mirrors what a human browser does and is required by Westminster Idox.
@@ -497,7 +455,7 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
           const buf = Buffer.from(await pdfRes.arrayBuffer());
           if (isPdfBuffer(buf)) {
             console.log(`[planning-docs] Webshare session download OK: ${url}`);
-            return cacheAndReturn(buf);
+            return buf;
           }
           console.warn(`[planning-docs] Webshare session got non-PDF (${buf.length}B)`);
         } else {
@@ -543,7 +501,7 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
           const buf = Buffer.from(await step2.arrayBuffer());
           if (isPdfBuffer(buf)) {
             console.log(`[planning-docs] ScraperAPI session download OK: ${url}`);
-            return cacheAndReturn(buf);
+            return buf;
           }
           console.warn(`[planning-docs] ScraperAPI session got non-PDF (${buf.length}B)`);
         } else {
@@ -595,19 +553,19 @@ export async function downloadPlanningPdf(url: string, refererUrl?: string): Pro
 
   // Strategy 1: cheapest — no JS rendering. Works for direct .pdf URLs.
   const s1 = await tryFetch("no-render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=false`, 25000);
-  if (s1) return cacheAndReturn(s1);
+  if (s1) return s1;
 
   // Strategy 2: premium proxy (residential IPs).
   const s2 = await tryFetch("premium", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=false`, 30000);
-  if (s2) return cacheAndReturn(s2);
+  if (s2) return s2;
 
   // Strategy 3: JS rendering for viewer-page redirects.
   const s3 = await tryFetch("render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&render=true`, 45000);
-  if (s3) return cacheAndReturn(s3);
+  if (s3) return s3;
 
   // Strategy 4: premium + render. Slow but handles JS-gated + IP-gated Idox.
   const s4 = await tryFetch("premium+render", `${SCRAPERAPI_ENDPOINT}?api_key=${encodeURIComponent(apiKey)}&url=${encodeURIComponent(url)}&country_code=uk&premium=true&render=true`, 60000);
-  if (s4) return cacheAndReturn(s4);
+  if (s4) return s4;
 
   return null;
 }
