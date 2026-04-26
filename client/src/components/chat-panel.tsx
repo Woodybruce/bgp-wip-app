@@ -2866,6 +2866,10 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
                       }
                       className="resize-none min-h-[40px] max-h-[100px] text-[13px] rounded-xl"
                       rows={1}
+                      spellCheck
+                      autoCorrect="on"
+                      autoCapitalize="sentences"
+                      lang="en-GB"
                       data-testid="input-panel-chat-message"
                     />
                   </div>

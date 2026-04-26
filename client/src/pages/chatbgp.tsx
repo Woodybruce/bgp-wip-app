@@ -3901,6 +3901,10 @@ export default function ChatBGP() {
                   placeholder="Ask ChatBGP..."
                   className="flex-1 resize-none min-h-[44px] max-h-[200px] rounded-2xl bg-muted/50 border-0 px-4 py-3 text-[16px] focus-visible:ring-1 transition-colors"
                   rows={1}
+                  spellCheck
+                  autoCorrect="on"
+                  autoCapitalize="sentences"
+                  lang="en-GB"
                   data-testid="input-chat-message"
                 />
                 {sendMutation.isPending ? (
