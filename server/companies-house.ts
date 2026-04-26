@@ -417,6 +417,33 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
       } catch { /* non-fatal */ }
     }
 
+    // Perplexity fallback. SPAs (Supreme, AllSaints, etc.) hide their footer
+    // boilerplate behind JavaScript so the static scraper returns nothing.
+    // Ask Perplexity directly for the UK CH-registered entity name + CRN, then
+    // verify it via the Companies House API before trusting it.
+    if (!chNumber && domain) {
+      try {
+        const perp = await askPerplexityForUkEntity(company.name, domain);
+        if (perp?.chNumber) {
+          const verified = await verifyChNumber(perp.chNumber);
+          if (verified) {
+            chNumber = perp.chNumber;
+            resolvedFrom = "website";
+            websiteContext += `\nPerplexity match: ${perp.entityName || "?"} (CH ${perp.chNumber}) — verified active on CH.`;
+            console.log(`[auto-kyc] Perplexity yielded CH ${perp.chNumber} (${perp.entityName}) for "${company.name}"`);
+          } else {
+            console.warn(`[auto-kyc] Perplexity suggested CH ${perp.chNumber} for "${company.name}" but it failed CH verify`);
+          }
+        }
+        if (!chNumber && perp?.entityName) {
+          searchName = perp.entityName;
+          websiteContext += `\nPerplexity-suggested entity name: ${perp.entityName}`;
+        }
+      } catch (err: any) {
+        console.warn(`[auto-kyc] Perplexity fallback failed for "${company.name}":`, err?.message);
+      }
+    }
+
     if (!chNumber) {
       const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=10`);
       const items = searchData.items || [];
@@ -637,6 +664,57 @@ Reply with ONLY a JSON object on a single line, no prose, no code fence:
   } catch (err: any) {
     console.warn(`[auto-kyc] Claude CH picker failed:`, err?.message);
     return null;
+  }
+}
+
+// ─── Perplexity fallback ─────────────────────────────────────────────────
+// When the static website scraper finds nothing (Shopify/SPA sites hide
+// footer boilerplate behind JS), ask Perplexity for the UK CH-registered
+// trading entity. Perplexity returns a CRN string + entity name we can then
+// verify against CH proper.
+async function askPerplexityForUkEntity(brandName: string, domain: string): Promise<{ entityName: string | null; chNumber: string | null } | null> {
+  const { isPerplexityConfigured, askPerplexity } = await import("./perplexity");
+  if (!isPerplexityConfigured()) return null;
+
+  const prompt = `For the brand "${brandName}" (website ${domain}), what is the UK Companies House registered trading or operating entity?
+
+Return ONLY a JSON object on one line, no prose, no code fence:
+{"entityName": "<full registered name e.g. ALLSAINTS RETAIL LIMITED>", "chNumber": "<8-digit Companies House number, zero-padded>"}
+
+Use null for either field if you genuinely don't know. Do NOT guess. The entity must currently exist on Companies House (find-and-update.company-information.service.gov.uk). Prefer the operating UK entity over a holding company. If the brand is a UK subsidiary of a foreign group, return the UK subsidiary, not the parent.`;
+
+  try {
+    const r = await askPerplexity(prompt, { maxTokens: 200, temperature: 0 });
+    const match = r.answer.match(/\{[\s\S]*?\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]);
+    let chNumber: string | null = parsed?.chNumber || null;
+    if (chNumber) {
+      chNumber = String(chNumber).replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+      if (chNumber && /^[0-9]+$/.test(chNumber) && chNumber.length < 8) {
+        chNumber = chNumber.padStart(8, "0");
+      }
+      // Sanity: CH numbers are 8 chars total (numeric or letter-prefixed).
+      if (chNumber.length !== 8) chNumber = null;
+    }
+    const entityName = typeof parsed?.entityName === "string" ? parsed.entityName.trim() : null;
+    if (!chNumber && !entityName) return null;
+    return { entityName, chNumber };
+  } catch (err: any) {
+    console.warn(`[auto-kyc] Perplexity entity lookup failed:`, err?.message);
+    return null;
+  }
+}
+
+// Cheap verify — just confirms the CRN exists and isn't dissolved.
+async function verifyChNumber(chNumber: string): Promise<boolean> {
+  try {
+    const data = await chFetch(`/company/${encodeURIComponent(chNumber)}`);
+    if (!data?.company_number) return false;
+    if (data.company_status === "dissolved") return false;
+    return true;
+  } catch {
+    return false;
   }
 }
 

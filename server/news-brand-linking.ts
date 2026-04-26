@@ -72,36 +72,116 @@ function normalizeBrandName(name: string): string {
 }
 
 // Picks a Google News search query that minimises false positives.
-// Wraps brand in quotes and adds UK context.
-function googleNewsQueryForBrand(brandName: string): string {
+// Wraps brand in quotes, adds retail/UK context, and (for known ambiguous
+// names) negates obvious unrelated topics. "Supreme UK" was returning a sea
+// of US Supreme Court articles before this list was added.
+function googleNewsQueryForBrand(brandName: string, industry?: string | null): string {
   const trimmed = brandName.trim();
+  const lc = trimmed.toLowerCase();
+  // Brand tokens that collide with everyday English / institutional names —
+  // bolt on negative terms to keep Google News on-topic.
+  const collisionExclusions: Record<string, string> = {
+    supreme: ' -"supreme court" -justice -ruling -judge -judges',
+    apple: ' -iphone -tim cook -macbook -ipad -ios',
+    coach: ' -football -manager -hire -coachway -bus',
+    monsoon: ' -rain -weather -monsoon-season -india',
+    jigsaw: ' -puzzle -puzzles',
+    diesel: ' -fuel -engine -truck',
+    next: ' -week -year -month',
+    pandora: ' -spotify -streaming -radio',
+    boots: ' -football -wellington',
+    river: ' -thames -nile -flood',
+    mountain: ' -climbing -rescue',
+    hollister: ' -fire -california',
+    everlast: ' -boxing -mma -fight',
+    burger: ' -recipe',
+    base: ' -military -army',
+  };
+  const exclusion = collisionExclusions[lc] || "";
+  // Industry context bias — adds a positive term that Google's ranker uses to
+  // pick the retail/F&B sense of an ambiguous brand.
+  const ind = (industry || "").toLowerCase();
+  const industryHint = /fashion|apparel|retail|streetwear|luxury|denim/.test(ind) ? " (fashion OR retail OR store OR shop)"
+    : /food|restaurant|qsr|hospitality|coffee|cafe/.test(ind) ? " (restaurant OR cafe OR food OR menu)"
+    : /beauty|skincare|cosmetic/.test(ind) ? " (beauty OR skincare OR cosmetics)"
+    : /fitness|gym|wellness/.test(ind) ? " (gym OR fitness OR studio)"
+    : "";
   if (trimmed.length <= 3 || /^(ba|bp|hm|uk)$/i.test(trimmed)) {
-    return `"${trimmed}" (retail OR store OR UK)`;
+    return `"${trimmed}" (retail OR store OR UK)${exclusion}`;
   }
-  return `"${trimmed}" UK`;
+  return `"${trimmed}" UK${industryHint}${exclusion}`;
 }
 
-export async function ensureBrandGoogleNewsFeeds(): Promise<{ created: number; total: number }> {
+// Article-level relevance filter for per-brand Google News feeds. Returns
+// false for headlines that are obvious cross-topic noise (US Supreme Court
+// matched on "Supreme", football "Coach", etc.) so they don't end up in the
+// brand's signal list. Exported so the brand-profile API can re-apply it
+// at read time to historical signals without a migration.
+export function articleLooksRelevantForBrand(brandName: string, industry: string | null | undefined, title: string, summary: string | null): boolean {
+  const lcBrand = brandName.toLowerCase().trim();
+  const txt = `${title} ${summary || ""}`.toLowerCase();
+  const ind = (industry || "").toLowerCase();
+  const isFashionBrand = /fashion|apparel|retail|streetwear|luxury|denim|footwear|jewell|leather/.test(ind);
+  const isFnbBrand = /food|restaurant|qsr|hospitality|coffee|cafe|bar|pub/.test(ind);
+
+  // Hard exclusion lists per ambiguous token. If brand token matches AND text
+  // contains any of these phrases, drop the article.
+  const drop: Record<string, RegExp> = {
+    supreme: /\bsupreme court\b|\bjustice\b|\bjudge\b|\bjudges\b|\bruling\b|\bscotus\b|\bjudicial\b/,
+    apple: /\biphone\b|\bipad\b|\bmacbook\b|\bios\b|\btim cook\b/,
+    coach: /\bfootball\b|\bmanager\b|\bcoach hire\b|\bcoachway\b|\bbus\b/,
+    monsoon: /\bmonsoon season\b|\bindia\b.*\bweather\b|\brain\b.*\bforecast\b/,
+    next: /\bnext (week|month|year)\b|\bwhat'?s next\b/,
+    boots: /\bfootball boots\b|\bwellington boots\b|\bworking boots\b/,
+    pandora: /\bspotify\b|\bpandora radio\b|\bstreaming\b/,
+    river: /\bthames\b|\bnile\b|\bflood\b|\briverbank\b/,
+  };
+  const rx = drop[lcBrand];
+  if (rx && rx.test(txt)) return false;
+
+  // Soft positive bias for fashion/F&B brands: if the headline is clearly
+  // political/legal/sports and we're tracking a retail brand, drop it.
+  if (isFashionBrand || isFnbBrand) {
+    const hardOffTopic = /\b(parliament|congress|senate|supreme court|impeach|election|primary results|scotus|prime minister|president biden|president trump|world cup|premier league|uefa)\b/;
+    if (hardOffTopic.test(txt)) return false;
+  }
+
+  return true;
+}
+
+export async function ensureBrandGoogleNewsFeeds(): Promise<{ created: number; total: number; refreshed: number }> {
   const tracked = await db
-    .select({ id: crmCompanies.id, name: crmCompanies.name })
+    .select({ id: crmCompanies.id, name: crmCompanies.name, industry: crmCompanies.industry })
     .from(crmCompanies)
     .where(and(eq(crmCompanies.isTrackedBrand, true), sql`${crmCompanies.mergedIntoId} IS NULL`));
 
   let created = 0;
+  let refreshed = 0;
   for (const brand of tracked) {
     const categoryTag = `${BRAND_CATEGORY_PREFIX}${brand.id}`;
+    const query = googleNewsQueryForBrand(brand.name, brand.industry);
+    const feedUrl = googleNewsRssUrl(query);
+    const url = `https://news.google.com/search?q=${encodeURIComponent(query)}`;
     const existing = await db
-      .select({ id: newsSources.id })
+      .select({ id: newsSources.id, feedUrl: newsSources.feedUrl })
       .from(newsSources)
       .where(eq(newsSources.category, categoryTag))
       .limit(1);
-    if (existing.length > 0) continue;
-
-    const query = googleNewsQueryForBrand(brand.name);
-    const feedUrl = googleNewsRssUrl(query);
+    if (existing.length > 0) {
+      // Refresh URL when the query has changed (industry / collision-list
+      // updates). Without this, stale "Supreme UK" feeds keep returning
+      // Supreme Court articles forever.
+      if (existing[0].feedUrl !== feedUrl) {
+        await db.update(newsSources)
+          .set({ feedUrl, url })
+          .where(eq(newsSources.id, existing[0].id));
+        refreshed++;
+      }
+      continue;
+    }
     await db.insert(newsSources).values({
       name: `${brand.name} (Google News)`,
-      url: `https://news.google.com/search?q=${encodeURIComponent(query)}`,
+      url,
       feedUrl,
       type: "google_news",
       category: categoryTag,
@@ -109,7 +189,7 @@ export async function ensureBrandGoogleNewsFeeds(): Promise<{ created: number; t
     });
     created++;
   }
-  return { created, total: tracked.length };
+  return { created, total: tracked.length, refreshed };
 }
 
 // For a single article, decides which tracked brands it mentions and writes
@@ -172,12 +252,13 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
 
   // Load tracked brands for matching
   const brands = await db
-    .select({ id: crmCompanies.id, name: crmCompanies.name })
+    .select({ id: crmCompanies.id, name: crmCompanies.name, industry: crmCompanies.industry })
     .from(crmCompanies)
     .where(and(eq(crmCompanies.isTrackedBrand, true), sql`${crmCompanies.mergedIntoId} IS NULL`));
   const brandIndex = brands
-    .map((b) => ({ id: b.id, name: b.name, normalized: normalizeBrandName(b.name) }))
+    .map((b) => ({ id: b.id, name: b.name, industry: b.industry, normalized: normalizeBrandName(b.name) }))
     .filter((b) => b.normalized.length >= 3);
+  const brandIndustryById = new Map(brandIndex.map((b) => [b.id, b.industry]));
 
   // Load recent articles + source info
   const articles = await db
@@ -199,7 +280,14 @@ export async function linkRecentArticlesToBrands(opts?: { limit?: number }): Pro
     // Explicit brand feeds (Google News per-brand) — link directly by category tag
     if (src?.category?.startsWith(BRAND_CATEGORY_PREFIX)) {
       const brandId = src.category.slice(BRAND_CATEGORY_PREFIX.length);
-      await upsertBrandSignal(brandId, brandNameById.get(brandId) || "", {
+      const brandName = brandNameById.get(brandId) || "";
+      // Even though Google News was given a tighter query, RSS still slips in
+      // off-topic articles for ambiguous tokens like "Supreme". Reject the
+      // obvious noise before writing a brand_signals row.
+      if (brandName && !articleLooksRelevantForBrand(brandName, brandIndustryById.get(brandId), a.title, a.summary)) {
+        continue;
+      }
+      await upsertBrandSignal(brandId, brandName, {
         id: a.id,
         url: a.url,
         title: a.title,

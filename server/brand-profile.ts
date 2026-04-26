@@ -140,10 +140,13 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
+    // Pull a wider window than we'll display — the relevance filter below
+    // drops obvious false-positive news (Supreme Court for streetwear brand
+    // "Supreme", football "Coach", etc.) and we still want 20 real signals.
     const signalsQ = pool.query(
       `SELECT id, signal_type, headline, detail, source, signal_date, magnitude, sentiment, ai_generated, created_at
          FROM brand_signals WHERE brand_company_id = $1
-         ORDER BY COALESCE(signal_date, created_at) DESC LIMIT 20`,
+         ORDER BY COALESCE(signal_date, created_at) DESC LIMIT 80`,
       [companyId]
     );
 
@@ -572,9 +575,18 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       };
     })();
 
+    // Re-apply the news relevance filter at read time so historical noise
+    // (US Supreme Court articles, football coach articles, etc.) drops out
+    // even before the next news refresh runs to delete them properly.
+    const { articleLooksRelevantForBrand } = await import("./news-brand-linking");
+    const filteredSignals = signals.rows.filter((s: any) => {
+      if (s.signal_type !== "news") return true;
+      return articleLooksRelevantForBrand(c.name, c.industry, s.headline || "", s.detail || null);
+    }).slice(0, 20);
+
     res.json({
       company: c,
-      signals: signals.rows,
+      signals: filteredSignals,
       representedBy: repsForBrand.rows,
       representing: brandsForAgent.rows,
       kyc: kyc.rows[0] || { doc_count: 0, last_uploaded_at: null },
@@ -819,6 +831,42 @@ export async function researchBrandStores(companyId: string): Promise<{
   const allResults: any[] = [];
   const seenPlaceIds = new Set<string>();
 
+  // Name-similarity gate. For brands with generic names (Supreme, Apple, Coach)
+  // a Places search returns hundreds of unrelated businesses (Supreme Pizza,
+  // Coach Hire, etc.). Only keep results whose place name STARTS WITH the brand
+  // — allowing optional decoration after (Supreme Soho, Apple Regent Street).
+  const brandToken = company.name.toLowerCase().replace(/[^a-z0-9& ]+/g, "").trim();
+  const brandFirstWord = brandToken.split(" ")[0] || brandToken;
+  const isBrandMatch = (placeName: string) => {
+    const n = placeName.toLowerCase().replace(/[^a-z0-9& ]+/g, "").trim();
+    if (!n) return false;
+    if (n === brandToken) return true;
+    if (n.startsWith(brandToken + " ")) return true;
+    // Single-word brand: also accept "Brand <decoration>" but reject obvious
+    // unrelated compounds where the first word coincidentally matches.
+    if (!brandToken.includes(" ") && n.startsWith(brandFirstWord + " ")) {
+      const tail = n.slice(brandFirstWord.length + 1).split(" ")[0];
+      // Reject "<brand> pizza|tyres|cars|hire|cleaning|...": these are common
+      // false-positive compounds for short brand tokens. Allow normal store
+      // descriptors (store, shop, london, etc.).
+      const noiseWords = new Set([
+        "pizza","tyres","tyre","cars","car","hire","cleaning","plumbing",
+        "gym","fitness","kebab","chicken","fried","fish","chips","pharmacy",
+        "tile","tiles","blinds","carpet","carpets","windows","kitchens",
+        "construction","builders","scaffolding","bakery","barbers","salon",
+        "nails","beauty","dental","dentist","optician","physio","laundry",
+        "taxi","cabs","minicabs","limo","party","tools","plant","plants",
+        "garden","gardens","logistics","couriers","express","cash","loans",
+        "insurance","mortgages","accountants","solicitors","estates",
+        "lettings","properties","property","grocery","market","food","foods",
+        "supermarket","off-licence","newsagent","convenience","dry","wash",
+      ]);
+      if (noiseWords.has(tail)) return false;
+      return true;
+    }
+    return false;
+  };
+
   for (const q of queries) {
     let nextPage: string | null = null;
     let page = 0;
@@ -835,7 +883,7 @@ export async function researchBrandStores(companyId: string): Promise<{
         // result whose address ended in "United Kingdom" → 0 stores found.
         const addr: string = p.formatted_address || "";
         const inUk = /\b(UK|United Kingdom)\b/.test(addr);
-        if (!seenPlaceIds.has(p.place_id) && inUk) {
+        if (!seenPlaceIds.has(p.place_id) && inUk && isBrandMatch(p.name || "")) {
           seenPlaceIds.add(p.place_id);
           allResults.push(p);
         }
