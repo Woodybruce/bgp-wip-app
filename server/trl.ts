@@ -1,9 +1,26 @@
 import { db } from "./db";
 import { externalRequirements } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
+import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 
 const TRL_BASE = "https://www.therequirementlist.com";
 const MEMBERSTACK_SITE_ID = process.env.TRL_SITE_ID || "71a8cd36166fbac3ef4f574f428d449b";
+
+// Sticky ScraperAPI session for the entire TRL scrape — keeps the
+// Memberstack auth cookie + Webflow session valid across the directory
+// pagination + per-agency page loads. Without sticky sessions every
+// request would hit a different upstream IP and TRL's Webflow stack
+// would either re-issue a fresh anonymous session or rate-limit hard.
+let scraperSession: ScraperSession | null = null;
+function trlFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  if (!isScraperApiAvailable()) return fetch(url, init);
+  if (!scraperSession) scraperSession = new ScraperSession();
+  return scraperSession.fetch(url, init);
+}
+/** Reset between scrapes so a stale session number doesn't outlive the data. */
+export function resetTrlSession() {
+  scraperSession = null;
+}
 
 function getTrlToken(): string {
   const token = process.env.TRL_TOKEN;
@@ -71,7 +88,7 @@ export async function scrapeTrlPage(url: string): Promise<{
     }
     const token = getTrlToken();
     const cookie = `__ms_${MEMBERSTACK_SITE_ID}=${token}`;
-    const res = await fetch(url, {
+    const res = await trlFetch(url, {
       headers: { Cookie: cookie },
       redirect: "manual",
     });
@@ -336,7 +353,7 @@ export async function scrapeTrlOccupierDirectory(): Promise<TrlDirectoryCompany[
     const url = page === 1
       ? `${TRL_BASE}/features/occupier-directory`
       : `${TRL_BASE}/features/occupier-directory?${pageKey}=${page}`;
-    const res = await fetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
+    const res = await trlFetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
     if (!res.ok) break;
     const html = await res.text();
 
@@ -385,7 +402,7 @@ export async function scrapeTrlAgencyListing(): Promise<TrlDirectoryCompany[]> {
     const url = page === 1
       ? `${TRL_BASE}/features/agency-directory`
       : `${TRL_BASE}/features/agency-directory?${pageKey}=${page}`;
-    const res = await fetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
+    const res = await trlFetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
     if (!res.ok) break;
     const html = await res.text();
 
@@ -424,7 +441,7 @@ export async function scrapeTrlAgencyDetailPage(slug: string): Promise<{ name: s
   const url = `${TRL_BASE}/agency/${slug}`;
   const contacts: TrlAgencyContact[] = [];
 
-  const res = await fetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
+  const res = await trlFetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
   if (!res.ok) return { name: slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase()), contacts: [] };
   const html = await res.text();
 
@@ -493,7 +510,7 @@ export async function scrapeTrlRequirementSearch(): Promise<{ slug: string; url:
     const url = page === 1
       ? `${TRL_BASE}/features/requirement-search`
       : `${TRL_BASE}/features/requirement-search?${pageKey}=${page}`;
-    const res = await fetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
+    const res = await trlFetch(url, { headers: { Cookie: cookie }, redirect: "follow" });
     if (!res.ok) break;
     const html = await res.text();
 
@@ -543,7 +560,7 @@ export async function discoverTrlPages(): Promise<string[]> {
       let totalPages = 50;
       while (page <= totalPages) {
         const pageUrl = page === 1 ? sourceUrl : `${sourceUrl}?${pageKey}=${page}`;
-        const res = await fetch(pageUrl, {
+        const res = await trlFetch(pageUrl, {
           headers: { Cookie: cookie },
           redirect: "follow",
         });

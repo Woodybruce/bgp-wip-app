@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { externalRequirements } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
+import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 
 const PIPNET_URL = process.env.PIPNET_URL || "https://v1.pipnet.co.uk";
 const PIPNET_USERNAME = process.env.PIPNET_USERNAME || "helliott";
@@ -9,9 +10,24 @@ const PIPNET_EMAIL = process.env.PIPNET_EMAIL || "";
 
 let sessionCookie: string | null = null;
 
+// Sticky ScraperAPI session — every PIPnet call (login + every result-page
+// fetch) goes through the same upstream proxy IP, so the JSESSIONID cookie
+// PIPnet sets on login stays valid for the rest of the scrape. Without this
+// every fetch would rotate to a new IP and PIPnet would invalidate the
+// session. Reset between full scrapes via `resetSession()` below.
+let scraperSession: ScraperSession | null = null;
+function pipFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  // Fall back to direct fetch if ScraperAPI isn't configured (dev mode,
+  // tests, etc). PIPnet works fine direct from a dev laptop — this proxy
+  // detour is purely for Railway egress where pip's WAF blocks the IP.
+  if (!isScraperApiAvailable()) return fetch(url, init);
+  if (!scraperSession) scraperSession = new ScraperSession();
+  return scraperSession.fetch(url, init);
+}
+
 async function login(): Promise<string> {
   if (sessionCookie) {
-    const testRes = await fetch(`${PIPNET_URL}/reqSearch.jsp`, {
+    const testRes = await pipFetch(`${PIPNET_URL}/reqSearch.jsp`, {
       headers: { Cookie: sessionCookie },
       redirect: "manual",
     });
@@ -26,7 +42,7 @@ async function login(): Promise<string> {
     Submit: "Login",
   });
 
-  const res = await fetch(`${PIPNET_URL}/checkLogin.jsp`, {
+  const res = await pipFetch(`${PIPNET_URL}/checkLogin.jsp`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
@@ -125,7 +141,7 @@ export async function searchPipnetRequirements(params: {
     Search: "Search",
   });
 
-  const res = await fetch(`${PIPNET_URL}/reqfetch.jsp`, {
+  const res = await pipFetch(`${PIPNET_URL}/reqfetch.jsp`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -144,7 +160,7 @@ export async function searchPipnetRequirements(params: {
     for (let page = 2; page <= maxPages; page++) {
       const nextMatch = html.match(/href="(reqresults\.jsp\?action=next&hash=[^"]+)"/);
       if (!nextMatch) break;
-      const pageRes = await fetch(`${PIPNET_URL}/${nextMatch[1]}`, {
+      const pageRes = await pipFetch(`${PIPNET_URL}/${nextMatch[1]}`, {
         headers: { Cookie: cookie },
       });
       if (!pageRes.ok) break;
@@ -179,7 +195,7 @@ export async function searchPipnetProperties(params: {
     Search: "Search",
   });
 
-  const res = await fetch(`${PIPNET_URL}/detailsfetch.jsp`, {
+  const res = await pipFetch(`${PIPNET_URL}/detailsfetch.jsp`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -264,4 +280,5 @@ export async function importPipnetRequirements(params: {
 
 export function resetSession() {
   sessionCookie = null;
+  scraperSession = null;
 }
