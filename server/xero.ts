@@ -580,4 +580,140 @@ export function setupXeroRoutes(app: Express) {
       res.status(500).json({ message: err.message });
     }
   });
+
+  // Xero webhook receiver — invoked by Xero when configured events fire
+  // (Invoice.* / Contact.* / etc. depending on what's subscribed in the
+  // developer portal). This endpoint is PUBLIC (no requireAuth) because
+  // Xero servers call it directly. Auth happens via HMAC-SHA256 signature
+  // on the request body using XERO_WEBHOOK_KEY.
+  //
+  // Two phases:
+  //   1. "Intent to receive" — when you save the webhook config in the
+  //      developer portal, Xero sends a POST with empty body + signature.
+  //      We must respond 200 within 5s if the signature matches, 401 if
+  //      not. Until that handshake passes, the portal won't let you save.
+  //   2. Real events — POST with JSON body
+  //      `{ events: [{ resourceUrl, resourceId, eventType, eventCategory,
+  //         tenantId, eventDateUtc, ... }], firstEventSequence,
+  //         lastEventSequence }`. We acknowledge fast (200 immediately)
+  //      then process asynchronously per Xero's guidance — Xero retries on
+  //      timeout and we don't want duplicate writes.
+  //
+  // The endpoint is registered with `express.raw()` middleware in
+  // index.ts so we can compute the signature over the EXACT bytes Xero
+  // sent — express.json() would normalise whitespace and break HMAC.
+  app.post(
+    "/api/xero/webhook",
+    async (req: Request, res: Response) => {
+      const signingKey = process.env.XERO_WEBHOOK_KEY;
+      if (!signingKey) {
+        console.warn("[xero-webhook] XERO_WEBHOOK_KEY not configured — rejecting");
+        return res.status(401).end();
+      }
+
+      const sigHeader = (req.headers["x-xero-signature"] as string) || "";
+      // index.ts mounts express.json with a `verify` callback that stashes
+      // the raw bytes on req.rawBody — that's what we HMAC. Falling back
+      // to a stringified body would re-serialise (different whitespace)
+      // and the signature would never match.
+      const rawBody = (req as any).rawBody as Buffer | undefined;
+      const bodyBuf: Buffer = Buffer.isBuffer(rawBody)
+        ? rawBody
+        : (typeof req.body === "string"
+            ? Buffer.from(req.body, "utf-8")
+            : (req.body ? Buffer.from(JSON.stringify(req.body), "utf-8") : Buffer.from("", "utf-8")));
+
+      const expected = crypto.createHmac("sha256", signingKey).update(bodyBuf).digest("base64");
+
+      // Constant-time compare — short-circuit length differences first
+      // since timingSafeEqual throws on mismatched lengths.
+      const sigOk =
+        expected.length === sigHeader.length &&
+        crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sigHeader));
+      if (!sigOk) {
+        console.warn(`[xero-webhook] signature mismatch (got ${sigHeader.slice(0, 12)}…, expected ${expected.slice(0, 12)}…)`);
+        return res.status(401).end();
+      }
+
+      // Acknowledge immediately — Xero requires <5s and retries on timeout.
+      // Process events after responding so the work doesn't block the ACK.
+      res.status(200).end();
+
+      let payload: any = null;
+      try {
+        payload = bodyBuf.length > 0 ? JSON.parse(bodyBuf.toString("utf-8")) : null;
+      } catch (err: any) {
+        console.warn("[xero-webhook] body JSON parse failed:", err?.message);
+        return;
+      }
+
+      const events: any[] = Array.isArray(payload?.events) ? payload.events : [];
+      if (events.length === 0) {
+        // Intent-to-receive handshake (empty body) or empty event batch.
+        console.log(`[xero-webhook] handshake / empty batch acknowledged`);
+        return;
+      }
+
+      console.log(`[xero-webhook] received ${events.length} event(s): ${events.map(e => `${e.eventCategory}.${e.eventType}`).join(", ")}`);
+
+      for (const evt of events) {
+        try {
+          await processXeroWebhookEvent(evt);
+        } catch (err: any) {
+          console.error(`[xero-webhook] event processing failed for ${evt.eventCategory}.${evt.eventType} ${evt.resourceId}:`, err?.message);
+        }
+      }
+    }
+  );
+}
+
+/**
+ * Handle one event from a Xero webhook. We currently care about Invoice
+ * status flips (PAID, VOIDED, DELETED) and Contact updates so the local
+ * crm_companies/xero_invoices rows track what's in Xero without a manual
+ * sync. Other event types are logged and ignored — easy to extend later.
+ *
+ * Tenant context is on the event (`evt.tenantId`) but the existing
+ * xeroApi() helper reads its token from a session, not a tenantId. For
+ * now we update purely from the event payload (status + resourceId);
+ * if we need to fetch the full invoice/contact body, we'd refresh
+ * via stored tenant tokens (TODO once multi-tenant matters).
+ */
+async function processXeroWebhookEvent(evt: any): Promise<void> {
+  const category = String(evt?.eventCategory || "").toUpperCase();
+  const type = String(evt?.eventType || "").toUpperCase();
+  const resourceId = String(evt?.resourceId || "");
+  if (!resourceId) return;
+
+  if (category === "INVOICE") {
+    // We don't get the invoice status in the event itself — just that
+    // *something* changed. Mark our local row as needing a refresh; the
+    // sync-all path can pick it up, OR we can lazily fetch on the next
+    // request that touches this invoice. For now: log so we can see the
+    // signal landing and add fetching once we've validated the auth flow
+    // in production with a real test invoice.
+    const [row] = await db
+      .select()
+      .from(xeroInvoices)
+      .where(eq(xeroInvoices.xeroInvoiceId, resourceId))
+      .limit(1);
+    if (row) {
+      console.log(`[xero-webhook] invoice ${type} for known invoice ${resourceId} (deal ${row.dealId}) — flagged for sync`);
+      // Touch updatedAt so downstream queries see staleness.
+      await db
+        .update(xeroInvoices)
+        .set({ updatedAt: new Date() })
+        .where(eq(xeroInvoices.id, row.id));
+    } else {
+      console.log(`[xero-webhook] invoice ${type} for unknown ${resourceId} — ignored`);
+    }
+    return;
+  }
+
+  if (category === "CONTACT") {
+    console.log(`[xero-webhook] contact ${type} for ${resourceId} — no-op until contact sync ships`);
+    return;
+  }
+
+  console.log(`[xero-webhook] unhandled event ${category}.${type} for ${resourceId}`);
 }
