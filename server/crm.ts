@@ -5214,16 +5214,17 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       const topTurnover = [...turnoverRows].sort((a: any, b: any) => (b.turnover || 0) - (a.turnover || 0)).slice(0, 20);
 
-      // Active requirements
+      // Active requirements — note size/use/requirement_locations are text[] arrays,
+      // not numeric size_min/size_max columns.
       const reqRows = await pool.query(`
         SELECT rl.id, rl.company_id, c.name AS company_name, c.company_type, c.domain,
-               rl.size_min, rl.size_max, rl.locations, rl.use, rl.notes, rl.created_at,
+               rl.size, rl.use, rl.requirement_locations, rl.comments, rl.created_at,
                COUNT(ct.id) AS contact_count
         FROM crm_requirements_leasing rl
         JOIN crm_companies c ON c.id = rl.company_id
         LEFT JOIN crm_contacts ct ON ct.company_id = c.id
-        WHERE rl.status = 'Active' AND ${tenantFilter.replace('c.', 'c.')}
-        GROUP BY rl.id, rl.company_id, c.name, c.company_type, c.domain, rl.size_min, rl.size_max, rl.locations, rl.use, rl.notes, rl.created_at
+        WHERE rl.status = 'Active' AND ${tenantFilter}
+        GROUP BY rl.id, rl.company_id, c.name, c.company_type, c.domain, rl.size, rl.use, rl.requirement_locations, rl.comments, rl.created_at
         ORDER BY rl.created_at DESC
         LIMIT 30
       `).then(r => r.rows);

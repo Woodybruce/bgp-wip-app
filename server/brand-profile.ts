@@ -54,7 +54,9 @@ async function computeRentAffordability(
   let peerSampleSize = 0;
   if (topUseClass) {
     const { rows } = await pool.query(
-      `SELECT AVG(COALESCE(rent_psf_overall, rent_psf_nia, zone_a_rate))::float AS avg_psf,
+      // crm_comps stores rent/area as text (values may be "£25.50", "1,200 sqft" etc)
+      // so extract the leading numeric run before averaging.
+      `SELECT AVG(NULLIF(substring(COALESCE(rent_psf_overall, rent_psf_nia, zone_a_rate) from '[0-9]+(?:\\.[0-9]+)?'), '')::numeric)::float AS avg_psf,
               COUNT(*)::int AS n
          FROM crm_comps
         WHERE use_class = $1
@@ -248,8 +250,10 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     );
 
     // Active requirements / pipeline
+    // crm_requirements_leasing stores size/use/locations as text[] arrays
+    // (no size_min/size_max/budget/use_class/location_notes columns exist).
     const requirementsQ = pool.query(
-      `SELECT r.id, r.size_min, r.size_max, r.budget, r.use_class, r.status, r.location_notes,
+      `SELECT r.id, r.name, r.use, r.size, r.requirement_locations, r.status,
               r.created_at, r.updated_at
          FROM crm_requirements_leasing r
         WHERE r.company_id = $1

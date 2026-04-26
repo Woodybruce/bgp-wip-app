@@ -83,7 +83,7 @@ interface BrandProfile {
     published_at: string | null;
     category: string | null;
   }>;
-  requirements: Array<{ id: string; size_min: string | null; size_max: string | null; budget: string | null; use_class: string | null; status: string | null; location_notes: string | null; updated_at: string | null }>;
+  requirements: Array<{ id: string; name: string | null; use: string[] | null; size: string[] | null; requirement_locations: string[] | null; status: string | null; updated_at: string | null }>;
   pitchedTo: Array<{ id: string; unit_name: string | null; target_brands: string | null; status: string | null; priority: string | null; property_id: string; property_name: string; property_address: string | null; updated_at: string | null }>;
   contacts: Array<{ id: string; name: string; role: string | null; email: string | null; phone: string | null; linkedin_url: string | null; avatar_url: string | null; last_contacted_at: string | null; enrichment_source: string | null }>;
   stores: Array<{ id: string; name: string; address: string | null; lat: number | null; lng: number | null; place_id: string | null; status: string | null; store_type: string | null; source_type: string | null; researched_at: string | null }>;
@@ -994,6 +994,17 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                         >
                           CH search →
                         </a>
+                        {!c.companies_house_number && (
+                          <button
+                            type="button"
+                            onClick={() => reResolveKycMutation.mutate()}
+                            disabled={reResolveKycMutation.isPending}
+                            className="text-[10px] text-muted-foreground hover:text-primary hover:underline disabled:opacity-50"
+                            title="Re-derive Companies House match from the brand's website"
+                          >
+                            {reResolveKycMutation.isPending ? "Resolving…" : "Wrong company?"}
+                          </button>
+                        )}
                       </div>
                     )}
                     {c.companies_house_number && (
@@ -1503,20 +1514,18 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
                 <div className="space-y-0.5">
                   {requirements.filter(r => r.status === "Active").slice(0, 6).map((r) => {
-                    const size = r.size_min && r.size_max
-                      ? `${r.size_min}–${r.size_max} sqft`
-                      : r.size_max ? `≤${r.size_max} sqft`
-                      : r.size_min ? `≥${r.size_min} sqft` : null;
+                    const useClass = r.use?.[0] || null;
+                    const size = r.size?.length ? r.size.join(", ") : null;
+                    const locations = r.requirement_locations?.length ? r.requirement_locations.join(", ") : null;
                     return (
                       <Link
                         key={r.id}
                         href={`/requirements?companyId=${c.id}`}
                         className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5"
                       >
-                        {r.use_class && <Badge variant="outline" className="text-[10px] shrink-0">{r.use_class}</Badge>}
+                        {useClass && <Badge variant="outline" className="text-[10px] shrink-0">{useClass}</Badge>}
                         {size && <span className="font-medium shrink-0">{size}</span>}
-                        {r.location_notes && <span className="truncate text-muted-foreground">{r.location_notes}</span>}
-                        {r.budget && <span className="text-[10px] text-muted-foreground shrink-0 ml-auto">£{r.budget}</span>}
+                        {locations && <span className="truncate text-muted-foreground">{locations}</span>}
                       </Link>
                     );
                   })}
