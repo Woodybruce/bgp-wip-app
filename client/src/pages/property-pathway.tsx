@@ -1421,20 +1421,17 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                 )}
               </div>
 
-              {/* 03 Planning — hidden; the apps still feed PlanningDocsCard
-                  below, which surfaces the same applications alongside their
-                  scraped PDFs in a richer, wider view. */}
+              {/* 03 Planning — hidden by request (the apps feed PlanningDocsCard
+                  below which already surfaces the same data). */}
 
-              {/* 04 Planning Documents — double width to use the freed slot
-                  from hidden 03. Floor plans, drawings, decision notices and
-                  the underlying app metadata. */}
-              <div className="md:col-span-2 xl:col-span-2">
-                <PlanningDocsCard
-                  apps={s4.planningApplications || []}
-                  planningDocs={s4.planningDocs || []}
-                  legacyUrls={s4.floorPlanUrls || []}
-                />
-              </div>
+              {/* 04 Planning Documents — single column width, original layout.
+                  Floor plans, drawings, decision notices, and the underlying
+                  app metadata. */}
+              <PlanningDocsCard
+                apps={s4.planningApplications || []}
+                planningDocs={s4.planningDocs || []}
+                legacyUrls={s4.floorPlanUrls || []}
+              />
             </div>
           </CardContent>
         </Card>
