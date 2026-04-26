@@ -6561,12 +6561,15 @@ Be thorough — include every unit row you can classify, across all properties i
       const result = await importWipFromBuffer(buffer, { append: mode === "append" });
 
       // Trim the sync result for the chat reply — the agent only needs
-      // headline numbers, not the full row-level breakdown.
+      // headline numbers, not the full row-level breakdown. `layout`
+      // exposes which Sage export format was detected, useful for the
+      // analyst to know we're parsing what they uploaded.
       const sync = result.sync || {};
       return {
         data: {
           success: true,
           imported: result.imported,
+          layout: result.layout,
           mode,
           syncSummary: {
             dealsCreated: sync.dealsCreated ?? sync.created ?? null,
@@ -6575,7 +6578,7 @@ Be thorough — include every unit row you can classify, across all properties i
             unmatched: sync.unmatched ?? null,
           },
         },
-        action: { type: "wip_imported", imported: result.imported },
+        action: { type: "wip_imported", imported: result.imported, layout: result.layout },
       };
     } catch (err: any) {
       console.error("[chatbgp] import_wip_excel error:", err?.message, err?.stack);

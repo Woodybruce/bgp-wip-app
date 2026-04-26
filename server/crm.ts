@@ -57,12 +57,23 @@ function parseAiJson(raw: string): any {
  * `append: false` (default) wipes wip_entries first, then loads. Use
  * `append: true` only for incremental updates between full Sage exports.
  *
- * Sage exports are produced via the standard "WIP by deal" report and
- * have these columns: Ref, Group, Project, Tenant, Team, Agent, Amt WIP,
- * Amt invoice, Month, Deal status, Stage, InvoiceNo, ORDER_NUMBER. The
- * Month is `Mmm-YY` (e.g. "Apr-26"); fiscal year is calculated assuming
- * BGP's FY runs Apr–Mar, so anything Apr+ rolls into the *next* calendar
- * year (Apr-26 → FY 2027).
+ * Two Sage export layouts are supported:
+ *
+ * 1) **Legacy layout** ("WIP by deal" report):
+ *    Ref, Group, Project, Tenant, Team, Agent, Amt WIP, Amt invoice,
+ *    Month, Deal status, Stage, InvoiceNo, ORDER_NUMBER.
+ *
+ * 2) **Current Sage TransactionsExpo layout** (what BGP actually exports):
+ *    TRAN_NUMBER (often blank), HEADER_NUMBER (deal external ref),
+ *    Project, Tenant, Client, NAME, ADDRESS_*, Group, Team, Agent,
+ *    NetAmount, STOCK_CODE (CON049 = BGP House 10% slice), DealStatus,
+ *    MonthYear, DueDate_EOMonth, etc. Each row is a single fee slice;
+ *    multiple rows per HEADER_NUMBER sum to the total deal fee.
+ *
+ * The parser auto-detects which layout the workbook uses by sniffing
+ * the first data row's keys, then maps columns into the canonical
+ * wip_entries shape. Month strings (`Apr-26` or `2026-04`) are normalised
+ * into a fiscal year assuming BGP's FY runs Apr–Mar — Apr-26 → FY 2027.
  *
  * Throws on invalid input (no rows / unreadable file) so callers can
  * surface a clear error.
@@ -70,46 +81,128 @@ function parseAiJson(raw: string): any {
 export async function importWipFromBuffer(
   buffer: Buffer,
   opts: { append?: boolean } = {},
-): Promise<{ success: true; imported: number; sync: any }> {
+): Promise<{ success: true; imported: number; layout: "legacy" | "sage_transactionsexpo" | "unknown"; sync: any }> {
   const XLSX = await import("xlsx");
   const wb = XLSX.read(buffer, { type: "buffer" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
-  const data: any[] = XLSX.utils.sheet_to_json(sheet);
+  const data: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null });
   if (data.length === 0) throw new Error("No data found in file");
 
+  // Detect layout by inspecting the first non-empty row's keys.
+  const firstRow = data.find((r: any) => r && Object.values(r).some((v: any) => v !== null && v !== "")) || data[0];
+  const keys = new Set(Object.keys(firstRow || {}));
+  const isLegacy = keys.has("Ref") || keys.has("Amt WIP") || keys.has("Amt invoice");
+  const isSage = keys.has("HEADER_NUMBER") || keys.has("NetAmount");
+  const layout: "legacy" | "sage_transactionsexpo" | "unknown" =
+    isLegacy ? "legacy" : isSage ? "sage_transactionsexpo" : "unknown";
+
+  if (layout === "unknown") {
+    throw new Error(
+      `Could not recognise the WIP export format. Saw columns: ${Array.from(keys).slice(0, 12).join(", ")}. ` +
+      `Expected either legacy (Ref, Amt WIP, Amt invoice, …) or Sage TransactionsExpo (HEADER_NUMBER, NetAmount, …).`
+    );
+  }
+
   const monthOrder = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  // Parse a Sage month string into fiscal year. Handles "Apr-26", "2026-04",
+  // "Apr 2026", and plain ISO dates. BGP FY = Apr–Mar so months Apr+ roll
+  // into the *next* calendar year.
+  const parseFiscalYear = (raw: any): number | null => {
+    if (!raw) return null;
+    const s = String(raw).trim();
+    // "Apr-26" or "Apr-2026"
+    const mDash = s.match(/^([A-Za-z]{3})[-/ ]+(\d{2,4})$/);
+    if (mDash) {
+      const mIdx = monthOrder.indexOf(mDash[1].slice(0, 3));
+      const yrRaw = parseInt(mDash[2]);
+      const yr = mDash[2].length === 2 ? 2000 + yrRaw : yrRaw;
+      if (mIdx >= 0 && !isNaN(yr)) return mIdx >= 3 ? yr + 1 : yr;
+    }
+    // "2026-04" / "2026/04"
+    const mYearFirst = s.match(/^(\d{4})[-/](\d{1,2})/);
+    if (mYearFirst) {
+      const yr = parseInt(mYearFirst[1]);
+      const mIdx0 = parseInt(mYearFirst[2]) - 1;
+      if (!isNaN(yr) && mIdx0 >= 0 && mIdx0 < 12) return mIdx0 >= 3 ? yr + 1 : yr;
+    }
+    // Date-parseable as last resort
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      const mIdx0 = d.getUTCMonth();
+      const yr = d.getUTCFullYear();
+      return mIdx0 >= 3 ? yr + 1 : yr;
+    }
+    return null;
+  };
+
   const rows = data.filter((r: any) => {
-    const ref = r.Ref ? String(r.Ref) : "";
-    if (!ref || ref === "Total" || ref.startsWith("Applied filters")) return false;
-    if (!r.Group && !r.Project && !r.Tenant && !r.Team) return false;
+    if (!r) return false;
+    if (layout === "legacy") {
+      const ref = r.Ref ? String(r.Ref) : "";
+      if (!ref || ref === "Total" || ref.startsWith("Applied filters")) return false;
+      if (!r.Group && !r.Project && !r.Tenant && !r.Team) return false;
+      return true;
+    }
+    // Sage layout — primary key is HEADER_NUMBER, fee value is NetAmount
+    const headerNum = r.HEADER_NUMBER ? String(r.HEADER_NUMBER).trim() : "";
+    const net = parseFloat(r.NetAmount);
+    if (!headerNum && !r.Project && !r.Tenant) return false;
+    if (String(r.Project || "").toLowerCase() === "total") return false;
+    // Drop pure-zero rows that aren't deal slices (e.g. trailing blanks)
+    if (!headerNum && (!net || isNaN(net))) return false;
     return true;
   }).map((r: any) => {
-    let fiscalYear: number | null = null;
-    if (r.Month) {
-      const parts = String(r.Month).split("-");
-      if (parts.length === 2) {
-        const mIdx = monthOrder.indexOf(parts[0]);
-        const yr = parseInt("20" + parts[1]);
-        if (mIdx >= 0 && !isNaN(yr)) fiscalYear = mIdx >= 3 ? yr + 1 : yr;
-      }
+    if (layout === "legacy") {
+      return {
+        ref: r.Ref ? String(r.Ref) : null,
+        groupName: r.Group || null,
+        project: r.Project || null,
+        tenant: r.Tenant || null,
+        team: r.Team || null,
+        agent: r.Agent || null,
+        amtWip: parseFloat(r["Amt WIP"]) || 0,
+        amtInvoice: parseFloat(r["Amt invoice"]) || 0,
+        month: r.Month || null,
+        dealStatus: r["Deal status"] || null,
+        stage: r.Stage || null,
+        invoiceNo: r.InvoiceNo ? String(r.InvoiceNo) : null,
+        orderNumber: r.ORDER_NUMBER ? String(r.ORDER_NUMBER) : null,
+        fiscalYear: parseFiscalYear(r.Month),
+      };
     }
+    // Sage TransactionsExpo layout
+    const status = (r.DealStatus || r["Deal status"] || "").toString().toUpperCase();
+    const isInvoiced = status === "SOL" || status === "SOLD" || status === "INVOICED";
+    const net = parseFloat(r.NetAmount) || 0;
     return {
-      ref: r.Ref ? String(r.Ref) : null,
+      ref: r.HEADER_NUMBER ? String(r.HEADER_NUMBER).trim() : null,
       groupName: r.Group || null,
       project: r.Project || null,
-      tenant: r.Tenant || null,
+      tenant: r.Tenant || r.Client || null,
       team: r.Team || null,
       agent: r.Agent || null,
-      amtWip: parseFloat(r["Amt WIP"]) || 0,
-      amtInvoice: parseFloat(r["Amt invoice"]) || 0,
-      month: r.Month || null,
-      dealStatus: r["Deal status"] || null,
-      stage: r.Stage || null,
+      // For SOL/invoiced rows, NetAmount represents invoiced revenue;
+      // otherwise it's WIP. Splits across these two columns matches the
+      // legacy schema's amtWip / amtInvoice convention.
+      amtWip: isInvoiced ? 0 : net,
+      amtInvoice: isInvoiced ? net : 0,
+      month: r.MonthYear || r.Month || null,
+      dealStatus: r.DealStatus || r["Deal status"] || null,
+      stage: r.Stage || r.STOCK_CODE || null,
       invoiceNo: r.InvoiceNo ? String(r.InvoiceNo) : null,
       orderNumber: r.ORDER_NUMBER ? String(r.ORDER_NUMBER) : null,
-      fiscalYear,
+      fiscalYear: parseFiscalYear(r.MonthYear || r.Month || r.DueDate_EOMonth),
     };
   });
+
+  if (rows.length === 0) {
+    throw new Error(
+      `Recognised layout=${layout} but every row was filtered out. ` +
+      `Check that the export contains data rows (not just headers / "Applied filters" rows). ` +
+      `Sample first row keys: ${Array.from(keys).slice(0, 8).join(", ")}.`
+    );
+  }
 
   await db.transaction(async (tx) => {
     if (!opts.append) {
@@ -121,7 +214,7 @@ export async function importWipFromBuffer(
   });
 
   const syncResult = await syncWipToCrmDeals(pool);
-  return { success: true, imported: rows.length, sync: syncResult };
+  return { success: true, imported: rows.length, layout, sync: syncResult };
 }
 
 export async function syncWipToCrmDeals(dbPool: Pool) {
