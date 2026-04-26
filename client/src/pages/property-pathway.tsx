@@ -1118,16 +1118,24 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
 
           </div>
 
-          {/* Emails — AI-triaged commentary with inline [E#] links into the
-              in-app email viewer. The raw email list is hidden by default
-              (collapsible expander) since 80+ noisy hits aren't useful;
-              the analyst wants the synthesis, not the list. */}
-          {s1.emailHits && s1.emailHits.length > 0 && (
+          {/* Emails — ChatBGP-generated commentary. We hide the raw
+              `emailHits` list when commentary is present because those
+              hits come from the legacy keyword sweep (just words from
+              the address) — they don't match what ChatBGP actually found
+              and reading both side-by-side is misleading. The commentary
+              is the source of truth; for specifics, ask ChatBGP directly
+              via the chat panel. */}
+          {(s1.emailCommentary?.markdown || (s1.emailHits && s1.emailHits.length > 0)) && (
             <Card>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-2">
                   <CardTitle className="text-base flex items-center gap-2">
-                    <Search className="w-4 h-4" /> Emails ({s1.emailHits.length})
+                    <Search className="w-4 h-4" /> Emails
+                    {s1.emailCommentary?.generatedAt && (
+                      <span className="text-[10px] text-muted-foreground font-normal">
+                        — analysed {new Date(s1.emailCommentary.generatedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                      </span>
+                    )}
                   </CardTitle>
                   <Button
                     variant="outline" size="sm"
@@ -1163,23 +1171,17 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               </CardHeader>
               <CardContent className="pb-2">
                 {(() => {
-                  // Prefer the freshly re-analysed result if the user clicked
-                  // the button; otherwise show the auto-generated one saved
-                  // with the run; otherwise prompt to generate. Citations
-                  // ([E#] tokens) reference whichever emailHits set produced
-                  // that markdown — fresh hits when re-analyse just ran,
-                  // saved hits otherwise.
                   const md = emailSortSummary || s1.emailCommentary?.markdown;
-                  const hitsForCitations = emailSortHits ?? s1.emailHits;
+                  const hitsForCitations = emailSortHits ?? s1.emailHits ?? [];
                   if (!md) {
                     return (
                       <p className="text-[11px] text-muted-foreground italic">
-                        No AI commentary yet — click <strong>Re-analyse</strong> to summarise these {s1.emailHits.length} email hits.
+                        No AI commentary yet — click <strong>Re-analyse</strong> to ask ChatBGP what's in the inboxes for this property.
                       </p>
                     );
                   }
                   return (
-                    <div className="max-h-[420px] overflow-y-auto pr-1">
+                    <div className="max-h-[480px] overflow-y-auto pr-1">
                       <EmailCommentary
                         markdown={md}
                         emailHits={hitsForCitations}
@@ -1188,28 +1190,6 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                     </div>
                   );
                 })()}
-
-                {/* Power-user fallback: see the raw subject list if the AI
-                    triage missed something. Collapsed by default. */}
-                <details className="mt-3 text-[11px]">
-                  <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
-                    Show raw list of all {s1.emailHits.length} email subjects
-                  </summary>
-                  <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1 max-h-[250px] overflow-y-auto">
-                    {s1.emailHits.map((h: any, i: number) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => h.mailboxEmail ? setOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail }) : null}
-                        disabled={!h.mailboxEmail}
-                        className="text-left border-l-2 border-muted hover:border-primary pl-1.5 py-0.5 hover:bg-muted/50 rounded-r cursor-pointer disabled:cursor-default disabled:opacity-60"
-                      >
-                        <p className="font-medium truncate">{h.subject}{h.hasAttachments ? " 📎" : ""}</p>
-                        <p className="text-muted-foreground text-[10px]">{h.from} — {new Date(h.date).toLocaleDateString("en-GB")}</p>
-                      </button>
-                    ))}
-                  </div>
-                </details>
               </CardContent>
             </Card>
           )}
