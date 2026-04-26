@@ -72,11 +72,10 @@ interface ActiveReq {
   company_name: string;
   company_type: string | null;
   domain: string | null;
-  size_min: number | null;
-  size_max: number | null;
-  locations: string[] | null;
-  use: string | null;
-  notes: string | null;
+  size: string[] | null;
+  use: string[] | null;
+  requirement_locations: string[] | null;
+  comments: string | null;
   created_at: string;
   contact_count: string;
 }
@@ -88,11 +87,9 @@ function formatTurnover(val: number): string {
   return `£${val.toFixed(0)}`;
 }
 
-function formatSize(min: number | null, max: number | null): string {
-  if (!min && !max) return "—";
-  if (min && max) return `${min.toLocaleString()}–${max.toLocaleString()} sq ft`;
-  if (min) return `${min.toLocaleString()}+ sq ft`;
-  return `up to ${max!.toLocaleString()} sq ft`;
+function formatSize(sizes: string[] | null): string {
+  if (!sizes?.length) return "—";
+  return sizes.join(", ");
 }
 
 function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string | null; size?: number }) {
@@ -413,21 +410,21 @@ export default function BrandsHub() {
                       <p className="text-sm font-medium truncate">{r.company_name}</p>
                       <p className="text-[10px] text-muted-foreground truncate">{(r.company_type || "").replace("Tenant - ", "")}</p>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {r.size_min || r.size_max ? (
+                        {r.size?.length ? (
                           <Badge variant="outline" className="text-[9px] px-1.5 py-0">
                             <Maximize2 className="w-2.5 h-2.5 mr-0.5" />
-                            {formatSize(r.size_min, r.size_max)}
+                            {formatSize(r.size)}
                           </Badge>
                         ) : null}
-                        {r.locations && r.locations.length > 0 && (
+                        {r.requirement_locations && r.requirement_locations.length > 0 && (
                           <Badge variant="outline" className="text-[9px] px-1.5 py-0">
                             <MapPin className="w-2.5 h-2.5 mr-0.5" />
-                            {r.locations.slice(0, 2).join(", ")}
+                            {r.requirement_locations.slice(0, 2).join(", ")}
                           </Badge>
                         )}
-                        {r.use && (
-                          <Badge variant="outline" className="text-[9px] px-1.5 py-0">{r.use}</Badge>
-                        )}
+                        {r.use?.length ? (
+                          <Badge variant="outline" className="text-[9px] px-1.5 py-0">{r.use.join(", ")}</Badge>
+                        ) : null}
                       </div>
                     </div>
                   </div>

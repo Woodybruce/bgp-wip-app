@@ -38,8 +38,10 @@ export async function generateBrandAnalysis(companyId: string): Promise<string |
       [companyId]
     ),
     pool.query(
-      `SELECT AVG(COALESCE(rent_psf_overall, rent_psf_nia, zone_a_rate))::real AS avg_psf,
-              AVG(area_sqft)::real AS avg_sqft,
+      // crm_comps stores rent/area as text (values may be "£25.50", "1,200 sqft" etc)
+      // so extract the leading numeric run before averaging.
+      `SELECT AVG(NULLIF(substring(COALESCE(rent_psf_overall, rent_psf_nia, zone_a_rate) from '[0-9]+(?:\\.[0-9]+)?'), '')::numeric)::real AS avg_psf,
+              AVG(NULLIF(substring(area_sqft from '[0-9]+(?:\\.[0-9]+)?'), '')::numeric)::real AS avg_sqft,
               MODE() WITHIN GROUP (ORDER BY use_class) AS use_class,
               COUNT(*)::int AS n
          FROM crm_comps
