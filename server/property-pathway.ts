@@ -1045,6 +1045,25 @@ async function runStage1(runId: string, req: Request): Promise<void> {
  * Returns null if the AI key isn't configured or there are no emails.
  * Never throws — Stage 1 must complete even if email triage fails.
  */
+/**
+ * The exact question we ask ChatBGP for the email panel. Phrased as a
+ * normal analyst would phrase it, so ChatBGP applies its full context
+ * (tenant brand names, owner from CRM, deal history, etc.) when picking
+ * search terms — not just whatever address+postcode tokens we'd hard-code.
+ */
+function buildEmailQuestion(address: string, postcode?: string | null): string {
+  const where = postcode ? `${address}, ${postcode}` : address;
+  return [
+    `What emails do we have in the BGP mailboxes about ${where}?`,
+    ``,
+    `Search across all 31 inboxes. Pick smart distinctive terms — building name, current/historical tenant brands, owner / landlord names from CRM, postcode. Don't just search the literal full address.`,
+    ``,
+    `Filter aggressively — drop newsletters, unrelated properties, and emails that just happen to mention a word in the address. Group the genuine hits chronologically by phase / topic with ## headers. For each email give one line: date, sender, what it reveals. End with 1–2 suggested next steps.`,
+    ``,
+    `Be concise — under 400 words.`,
+  ].join("\n");
+}
+
 async function runEmailSort(address: string, emailHits: any[]): Promise<{ markdown: string } | null> {
   if (!emailHits || emailHits.length === 0) return null;
   // Same env-var pattern the rest of the codebase uses — prefer the
@@ -1428,33 +1447,25 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     console.warn(`[pathway stage1 autonomous] tenancy extractor failed: ${err?.message}`);
   }
 
-  // AI email triage — replaces the noisy raw email list in the UI with a
-  // narrative grouped/filtered commentary. Uses a focused Claude+search_emails
-  // agent loop (the same pattern ChatBGP uses) which picks smarter queries
-  // than the keyword sweep — including tenant/owner names, not just address
-  // tokens. Best-effort: never blocks Stage 1 completion. Falls back to
-  // legacy email-sort on the existing emailHits if the investigator fails.
+  // Email triage — delegate to ChatBGP itself (the same agent the chat
+  // panel runs) so the pathway gets exactly the same output the user
+  // sees when they ask ChatBGP directly. ChatBGP knows the full property
+  // context (tenant brand, owner, deals, comps) and picks much smarter
+  // search terms than a sidecar agent ever does. Best-effort: never
+  // blocks Stage 1 completion. Falls back to the legacy email-sort on
+  // the autonomous AI's already-gathered emailHits if ChatBGP can't
+  // be reached.
   try {
-    const { runEmailInvestigator } = await import("./email-investigator");
-    const investigation = await runEmailInvestigator({
-      address: run.address,
-      postcode: run.postcode || undefined,
-      hints: {
-        tenant: stage1Payload.tenant?.name || stage1Payload.aiFacts?.mainTenants?.[0],
-        owner: stage1Payload.initialOwnership?.proprietorName,
-        proprietorCompany: stage1Payload.initialOwnership?.proprietorCompanyNumber,
-      },
-      req,
-    });
-    if (investigation) {
-      stage1Payload.emailHits = investigation.emailHits;
+    const { askChatBgp } = await import("./chatbgp-internal");
+    const question = buildEmailQuestion(run.address, run.postcode);
+    const markdown = await askChatBgp(question, req);
+    if (markdown) {
       stage1Payload.emailCommentary = {
-        markdown: investigation.markdown,
+        markdown,
         generatedAt: new Date().toISOString(),
       };
-      console.log(`[pathway stage1 autonomous] email investigator returned ${investigation.emailHits.length} hits + ${investigation.markdown.length}-char commentary`);
+      console.log(`[pathway stage1 autonomous] ChatBGP returned ${markdown.length}-char email commentary`);
     } else {
-      // Fallback: classic email-sort on whatever the autonomous AI gathered.
       const commentary = await runEmailSort(run.address, stage1Payload.emailHits || []);
       if (commentary) {
         stage1Payload.emailCommentary = {
@@ -2934,33 +2945,22 @@ Return STRICT JSON only, no prose, no code fences:
     console.warn("[pathway stage1] retail comps extraction failed:", err?.message);
   }
 
-  // AI email triage — replaces the noisy keyword sweep with a focused
-  // Claude+search_emails agent loop (same pattern ChatBGP uses). The
-  // investigator picks smarter queries (tenant brand names, owner names,
-  // postcode) than the address-derived sweep, and produces a grouped
-  // narrative with [E#] citations the client renders as clickable
-  // deep-links. The legacy `emailHits` from the keyword sweep is kept as
-  // input to retail-comps extraction above, but the saved emailHits and
-  // commentary come from the focused investigator. Falls back to
-  // runEmailSort on the legacy hits if the investigator fails.
+  // Email triage — delegate to ChatBGP itself rather than a sidecar agent.
+  // Same path the user takes when they open the chat panel: ChatBGP picks
+  // smart queries (tenant brand, owner, deals, comps) and produces the
+  // grouped narrative the analyst expects. The legacy `emailHits` from
+  // the keyword sweep above is kept as input to retail-comps extraction
+  // and as a power-user fallback in the UI. Falls back to runEmailSort
+  // on those legacy hits if ChatBGP can't be reached.
   let savedEmailHits: NonNullable<StageResults["stage1"]>["emailHits"] = emailHits;
   let emailCommentary: { markdown: string; generatedAt: string } | undefined;
   try {
-    const { runEmailInvestigator } = await import("./email-investigator");
-    const investigation = await runEmailInvestigator({
-      address: run.address,
-      postcode: run.postcode || undefined,
-      hints: {
-        tenant: derivedTenant?.name || aiFacts?.mainTenants?.[0],
-        owner: initialOwnership?.proprietorName,
-        proprietorCompany: initialOwnership?.proprietorCompanyNumber,
-      },
-      req,
-    });
-    if (investigation) {
-      savedEmailHits = investigation.emailHits;
-      emailCommentary = { markdown: investigation.markdown, generatedAt: new Date().toISOString() };
-      console.log(`[pathway stage1] email investigator returned ${investigation.emailHits.length} hits + ${investigation.markdown.length}-char commentary`);
+    const { askChatBgp } = await import("./chatbgp-internal");
+    const question = buildEmailQuestion(run.address, run.postcode);
+    const markdown = await askChatBgp(question, req);
+    if (markdown) {
+      emailCommentary = { markdown, generatedAt: new Date().toISOString() };
+      console.log(`[pathway stage1] ChatBGP returned ${markdown.length}-char email commentary`);
     } else {
       const commentary = await runEmailSort(run.address, emailHits);
       if (commentary) {
@@ -4527,20 +4527,17 @@ export function registerPropertyPathwayRoutes(app: Express) {
         hints?: { tenant?: string; owner?: string; proprietorCompany?: string };
       };
 
-      // When an address is supplied, run the focused email investigator —
-      // it picks smarter queries (tenant, owner, postcode) than the keyword
-      // sweep and produces a grouped narrative with [E#] citations.
+      // Re-analyse path — when an address is supplied, ask ChatBGP itself
+      // (same agent the chat panel runs) to pull and group the relevant
+      // emails. Falls through to the legacy keyword-list email-sort if
+      // ChatBGP can't be reached.
       if (address) {
-        const { runEmailInvestigator } = await import("./email-investigator");
-        const investigation = await runEmailInvestigator({ address, postcode, hints, req });
-        if (investigation) {
-          return res.json({
-            summary: investigation.markdown,
-            markdown: investigation.markdown,
-            emailHits: investigation.emailHits,
-          });
+        const { askChatBgp } = await import("./chatbgp-internal");
+        const question = buildEmailQuestion(address, postcode);
+        const markdown = await askChatBgp(question, req);
+        if (markdown) {
+          return res.json({ summary: markdown, markdown });
         }
-        // Fall through to legacy email-sort on the supplied emailHits.
       }
 
       if (!emailHits?.length) return res.json({ summary: "No emails to analyse.", markdown: "No emails to analyse." });
