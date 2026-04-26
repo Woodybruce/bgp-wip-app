@@ -528,8 +528,12 @@ app.get("/api/scraperapi/ping", async (_req, res) => {
   const testUrl = "https://idoxpa.westminster.gov.uk/online-applications/applicationDetails.do?activeTab=documents&keyVal=PEH1KFRPIVX00";
   try {
     const t0 = Date.now();
+    // No country_code — current plan doesn't include geotargeting (returns
+    // 403 "Your plan does not include geotargeting"). Default IPs are
+    // fine for Westminster IDOX; the residential rotation handles the
+    // IP-block issue without needing UK-specific routing.
     const tRes = await fetch(
-      `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&url=${encodeURIComponent(testUrl)}&country_code=uk&render=false`,
+      `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&url=${encodeURIComponent(testUrl)}&render=false`,
       { signal: AbortSignal.timeout(25000) }
     );
     const elapsed = Date.now() - t0;
