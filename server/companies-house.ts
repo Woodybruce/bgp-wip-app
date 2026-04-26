@@ -353,7 +353,13 @@ router.get("/api/companies-house/document/:id", requireAuth, async (req, res) =>
 });
 
 // ─── Core KYC logic — shared between the single-company route and batch runner ──
-async function performAutoKyc(companyId: string): Promise<{
+//
+// `forceFromWebsite` (re-resolve button): ignore any stored CH number and
+// re-derive it from the brand's website. Without this flag we still re-scrape
+// when the website is present but only OVERWRITE an existing number when the
+// website yields a different one — protects against single-page scraper hits
+// while letting us correct historical wrong matches.
+async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: boolean } = {}): Promise<{
   success: boolean;
   kycStatus: string;
   profile?: any;
@@ -363,6 +369,7 @@ async function performAutoKyc(companyId: string): Promise<{
   filingsTotal?: number;
   companyNumber?: string | null;
   message?: string;
+  resolvedFrom?: "stored" | "website" | "ai_picker" | "name_match";
 }> {
   const { db } = await import("./db");
   const { crmCompanies } = await import("@shared/schema");
@@ -371,26 +378,42 @@ async function performAutoKyc(companyId: string): Promise<{
   const [company] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, companyId)).limit(1);
   if (!company) throw new Error("Company not found");
 
-  let chNumber = company.companiesHouseNumber;
+  let chNumber = opts.forceFromWebsite ? null : company.companiesHouseNumber;
+  let resolvedFrom: "stored" | "website" | "ai_picker" | "name_match" = "stored";
 
   const existingChData = company.companiesHouseData as any;
   const existingStatus = existingChData?.profile?.companyStatus;
   const isExistingDissolved = existingStatus && existingStatus !== "active";
+  const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
 
-  if (!chNumber || isExistingDissolved) {
+  // Always run the website-entity check when we have a domain. Even if a CH
+  // number is already stored, we use the website as the source of truth — too
+  // many wrong matches got cemented because the original lookup was a blind
+  // CH name search. We still skip if there's no domain at all.
+  if (!chNumber || isExistingDissolved || (opts.forceFromWebsite && domain)) {
     const storedEntityName = (company as any).ukEntityName as string | null;
     let searchName = storedEntityName || company.name;
-    const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
+    let websiteContext = "";
 
-    if (!storedEntityName && domain) {
+    if (domain) {
       try {
         const scraped = await scrapeUkEntityFromWebsite(domain);
         if (scraped.entityName) {
           searchName = scraped.entityName;
-          await db.update(crmCompanies).set({ ukEntityName: scraped.entityName } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+          if (!storedEntityName) {
+            await db.update(crmCompanies).set({ ukEntityName: scraped.entityName } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+          }
           console.log(`[auto-kyc] Scraped UK entity from website: "${scraped.entityName}"`);
+          websiteContext = `Website-derived legal entity name: ${scraped.entityName}`;
         }
-        if (scraped.chNumber) chNumber = scraped.chNumber;
+        if (scraped.chNumber) {
+          chNumber = scraped.chNumber;
+          resolvedFrom = "website";
+          console.log(`[auto-kyc] Website yielded CH number ${scraped.chNumber} for "${company.name}"`);
+        }
+        if (scraped.sourceUrl) {
+          websiteContext += `\nSource: ${scraped.sourceUrl}`;
+        }
       } catch { /* non-fatal */ }
     }
 
@@ -403,10 +426,36 @@ async function performAutoKyc(companyId: string): Promise<{
       const nameLower = searchName.toLowerCase().trim();
       const activeItems = items.filter((i: any) => i.company_status === "active");
       const candidatePool = activeItems.length > 0 ? activeItems : items;
-      const bestMatch = candidatePool.find((i: any) => i.title?.toLowerCase().trim() === nameLower)
-        || candidatePool.find((i: any) => i.title?.toLowerCase().includes(nameLower) || nameLower.includes(i.title?.toLowerCase()))
-        || candidatePool[0];
-      chNumber = bestMatch.company_number;
+
+      // Try Claude-based picker when there's a website to ground the choice
+      // and there are multiple plausible candidates (more than one active
+      // result, or no exact-name match). Falls back to the old nearest-name
+      // heuristic if the AI call fails or isn't applicable.
+      const exactNameHit = candidatePool.find((i: any) => i.title?.toLowerCase().trim() === nameLower);
+      const needsAiPicker = !exactNameHit && candidatePool.length > 1 && (domain || websiteContext);
+      let aiPicked: string | null = null;
+      if (needsAiPicker) {
+        try {
+          aiPicked = await pickChCandidateWithAi({
+            brandName: company.name,
+            domain,
+            websiteContext,
+            candidates: candidatePool.slice(0, 8),
+          });
+        } catch (err: any) {
+          console.warn(`[auto-kyc] AI picker failed for "${company.name}":`, err?.message);
+        }
+      }
+      if (aiPicked) {
+        chNumber = aiPicked;
+        resolvedFrom = "ai_picker";
+      } else {
+        const bestMatch = exactNameHit
+          || candidatePool.find((i: any) => i.title?.toLowerCase().includes(nameLower) || nameLower.includes(i.title?.toLowerCase()))
+          || candidatePool[0];
+        chNumber = bestMatch.company_number;
+        resolvedFrom = "name_match";
+      }
     }
   }
 
@@ -504,7 +553,7 @@ async function performAutoKyc(companyId: string): Promise<{
     kycCheckedAt: new Date(),
   }).where(eq(crmCompanies.id, company.id));
 
-  console.log(`[companies-house] Auto-KYC for "${company.name}" → ${kycStatus} (CH: ${chNumber})`);
+  console.log(`[companies-house] Auto-KYC for "${company.name}" → ${kycStatus} (CH: ${chNumber}, resolvedFrom: ${resolvedFrom})`);
 
   return {
     success: true,
@@ -515,7 +564,80 @@ async function performAutoKyc(companyId: string): Promise<{
     filings,
     filingsTotal,
     companyNumber: chNumber,
+    resolvedFrom,
   };
+}
+
+// ─── Claude-based CH candidate picker ───────────────────────────────────
+//
+// Given a brand and a list of CH search hits, ask Claude which is most
+// likely the operating UK entity for the brand. The website-scraping pass
+// failed to extract a CH number directly (often the case for SPA-only sites
+// like AllSaints), so we lean on the brand name + domain + any scraped
+// boilerplate plus the candidate metadata (status, type, incorporation date,
+// registered office) to pick.
+//
+// Returns the picked company_number as a string, or null if Claude refuses
+// to pick (e.g. none look like a real match) or the call fails.
+async function pickChCandidateWithAi(input: {
+  brandName: string;
+  domain: string | null;
+  websiteContext: string;
+  candidates: Array<{
+    company_number: string;
+    title: string;
+    company_status?: string;
+    date_of_creation?: string;
+    address_snippet?: string;
+    company_type?: string;
+  }>;
+}): Promise<string | null> {
+  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const client = new Anthropic({ apiKey });
+
+  const candidatesBlock = input.candidates.map((c, i) =>
+    `${i + 1}. ${c.title} (CH ${c.company_number})\n   Status: ${c.company_status || "?"}, Type: ${c.company_type || "?"}, Incorporated: ${c.date_of_creation || "?"}\n   Office: ${c.address_snippet || "?"}`
+  ).join("\n\n");
+
+  const prompt = `You are matching a UK retail brand to its operating Companies House entity.
+
+Brand: ${input.brandName}
+Brand website: ${input.domain || "(none)"}
+${input.websiteContext ? input.websiteContext + "\n" : ""}
+Candidates from Companies House:
+${candidatesBlock}
+
+Pick the candidate most likely to be the brand's UK trading/operating entity (or its UK holding company). Use these signals in order:
+1. Exact match on the website-derived legal entity name (if given).
+2. An "active" status, registered office in a real commercial location, incorporation old enough to plausibly run a multi-store retailer.
+3. Reject candidates that look like dormant single-director Ltds at a residential address — those almost never run real high-street brands.
+
+If none of the candidates plausibly match the brand, output null.
+
+Reply with ONLY a JSON object on a single line, no prose, no code fence:
+{"pick": "<company_number>" or null, "reason": "<one short sentence>"}`;
+
+  try {
+    const msg = await client.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 200,
+      messages: [{ role: "user", content: prompt }],
+    });
+    const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
+    const match = txt.match(/\{[\s\S]*?\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]);
+    const pick = parsed?.pick;
+    if (!pick || typeof pick !== "string") return null;
+    if (!input.candidates.some(c => c.company_number === pick)) return null;
+    console.log(`[auto-kyc] AI picked CH ${pick} for "${input.brandName}" — ${parsed?.reason || "no reason given"}`);
+    return pick;
+  } catch (err: any) {
+    console.warn(`[auto-kyc] Claude CH picker failed:`, err?.message);
+    return null;
+  }
 }
 
 // ─── Batch re-KYC — finds stale/dissolved companies and re-runs KYC on them ──
@@ -562,7 +684,11 @@ export async function runBatchReKyc({ limit = 40, forceAll = false }: { limit?: 
 
 router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req, res) => {
   try {
-    const result = await performAutoKyc(req.params.companyId);
+    // ?force=1 (or { forceFromWebsite: true }) clears any cached CH number and
+    // re-derives from the website. Used by the "Re-resolve from website"
+    // button on the brand panel when an existing match is wrong.
+    const forceFromWebsite = req.query.force === "1" || req.body?.forceFromWebsite === true;
+    const result = await performAutoKyc(req.params.companyId, { forceFromWebsite });
     if (!result.success && result.kycStatus === "not_found") {
       return res.json(result);
     }

@@ -317,6 +317,30 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "UK entity search failed", description: e.message, variant: "destructive" }),
   });
 
+  // "Wrong company?" — re-derive the CH match from the brand website,
+  // overwriting whatever's stored. Used when the original auto-KYC picked
+  // the nearest name match rather than the real operating entity.
+  const reResolveKycMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/companies-house/auto-kyc/${companyId}?force=1`, {});
+      return res.json();
+    },
+    onSuccess: (out: any) => {
+      if (out?.kycStatus === "not_found") {
+        toast({ title: "No match found", description: out.message || "Couldn't resolve a CH entity from the website.", variant: "destructive" });
+      } else {
+        const via = out?.resolvedFrom === "website" ? "website footer"
+          : out?.resolvedFrom === "ai_picker" ? "AI picker"
+          : out?.resolvedFrom === "name_match" ? "name match (no website hit)"
+          : "stored";
+        toast({ title: "KYC re-resolved", description: `CH ${out?.companyNumber || "?"} (${via}) — ${out?.kycStatus || "?"}` });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
+    },
+    onError: (e: any) => toast({ title: "Re-resolve failed", description: e.message, variant: "destructive" }),
+  });
+
   const researchStoresMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`);
@@ -967,6 +991,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                           {c.companies_house_number}
                         </a>
                         <ExternalLink className="w-2.5 h-2.5 text-muted-foreground" />
+                        <button
+                          type="button"
+                          onClick={() => reResolveKycMutation.mutate()}
+                          disabled={reResolveKycMutation.isPending}
+                          className="ml-auto text-[10px] text-muted-foreground hover:text-primary hover:underline disabled:opacity-50"
+                          title="Re-derive Companies House match from the brand's website"
+                        >
+                          {reResolveKycMutation.isPending ? "Re-resolving…" : "Wrong company?"}
+                        </button>
                       </div>
                     )}
                     {covenant.registeredAddress && (

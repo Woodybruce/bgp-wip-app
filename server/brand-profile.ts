@@ -830,7 +830,12 @@ export async function researchBrandStores(companyId: string): Promise<{
       if (!r.ok) break;
       const data: any = await r.json();
       for (const p of (data.results || [])) {
-        if (!seenPlaceIds.has(p.place_id) && p.formatted_address?.includes("UK")) {
+        // Google Places returns either ", UK" or ", United Kingdom" depending
+        // on the place. Older code only matched "UK", silently dropping every
+        // result whose address ended in "United Kingdom" → 0 stores found.
+        const addr: string = p.formatted_address || "";
+        const inUk = /\b(UK|United Kingdom)\b/.test(addr);
+        if (!seenPlaceIds.has(p.place_id) && inUk) {
           seenPlaceIds.add(p.place_id);
           allResults.push(p);
         }
