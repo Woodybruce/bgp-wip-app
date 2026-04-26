@@ -2358,10 +2358,22 @@ Return both null if the page doesn't disclose a UK trading entity.`;
   const hasUkSignal = (text: string) =>
     /\b(england|wales|companies house|company\s+(?:registration\s+)?number|registered\s+(?:office|in\s+england))\b/i.test(text);
 
+  // Decode-and-strip helper used by every fetched HTML body.
+  const htmlToText = (html: string) =>
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/&copy;/g, "©")
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+      .replace(/&[a-z]+;/g, " ")
+      .replace(/\s+/g, " ");
+
   for (const base of baseUrls) {
-    // Probe — skip a base URL entirely if its host doesn't resolve. Avoids
-    // 30 wasted requests per dead subdomain.
+    // Probe + discover — fetch homepage, confirm it's alive, capture HTML so
+    // we can harvest legal links from the footer (Step 0 below).
     let probeOk = false;
+    let homepageHtml: string | null = null;
     try {
       const probe = await fetch(base, {
         method: "GET",
@@ -2370,8 +2382,72 @@ Return both null if the page doesn't disclose a UK trading entity.`;
         redirect: "follow",
       });
       probeOk = probe.status > 0; // any HTTP response = host alive
+      if (probe.ok && (probe.headers.get("content-type") || "").includes("html")) {
+        homepageHtml = await probe.text();
+      }
     } catch { probeOk = false; }
     if (!probeOk) continue;
+
+    // ── Step 0: homepage + footer-link harvest ────────────────────────────────
+    // UK Companies Act 2006 requires every business to disclose its registered
+    // entity on its website. Retailers put it in the footer, T&Cs, or modern
+    // slavery statement — but the URLs vary wildly by CMS (Shopify
+    // /pages/terms, Salesforce Commerce /terms, IBM WebSphere
+    // /shop/CustomerService?pageName=*). Rather than guess every CMS's path
+    // shape, scrape the homepage's <a href> tags and follow anything legal-ish.
+    if (homepageHtml) {
+      // First check the homepage itself — many sites put "© X Limited,
+      // registered in England..." straight in the footer.
+      const homeText = htmlToText(homepageHtml);
+      const homeHit = extractFromText(homeText, base);
+      if (homeHit) {
+        console.log(`[find-uk-entity] homepage ${base}: "${homeHit.entityName}" / ${homeHit.chNumber}`);
+        return homeHit;
+      }
+
+      const LEGAL_RE = /\b(terms|privacy|legal|imprint|cookie[s]?|policy|policies|modern[\s\-]?slavery|conditions|disclosure|customerservice|customer-service)\b/i;
+      const discovered = new Set<string>();
+      const linkRe = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+      let lm: RegExpExecArray | null;
+      const baseUrl = new URL(base);
+      while ((lm = linkRe.exec(homepageHtml)) !== null && discovered.size < 12) {
+        const href = lm[1].trim();
+        const anchor = lm[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:") || href.startsWith("javascript:")) continue;
+        if (!LEGAL_RE.test(href) && !LEGAL_RE.test(anchor)) continue;
+        try {
+          const abs = new URL(href, base);
+          // Same-host only — don't chase external cookie banners or social links
+          if (abs.host !== baseUrl.host) continue;
+          discovered.add(abs.toString());
+        } catch { /* malformed href */ }
+      }
+
+      for (const url of discovered) {
+        try {
+          const resp = await fetch(url, {
+            headers: { "User-Agent": UA },
+            signal: AbortSignal.timeout(6000),
+            redirect: "follow",
+          });
+          if (!resp.ok) continue;
+          const ct = resp.headers.get("content-type") || "";
+          if (!ct.includes("html") && !ct.includes("text")) continue;
+          const text = htmlToText(await resp.text());
+          const hit = extractFromText(text, url);
+          if (hit) {
+            console.log(`[find-uk-entity] discovered ${url}: "${hit.entityName}" / ${hit.chNumber}`);
+            return hit;
+          }
+          // Discovered links were filtered by legal-keyword anchor/URL, so any
+          // page with UK signals is fair game for the AI fallback.
+          if (text.length > 200 && hasUkSignal(text)) {
+            const aiHit = await aiExtract(text, url);
+            if (aiHit) return aiHit;
+          }
+        } catch { /* non-fatal */ }
+      }
+    }
 
     // ── Step 1: Shopify JSON API (works without JS) ───────────────────────────
     const shopifyPolicies = [
@@ -2457,15 +2533,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
           } catch { /* non-fatal */ }
         }
 
-        // Strip scripts/styles, decode HTML entities
-        const text = html
-          .replace(/<script[\s\S]*?<\/script>/gi, " ")
-          .replace(/<style[\s\S]*?<\/style>/gi, " ")
-          .replace(/<[^>]+>/g, " ")
-          .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/&copy;/g, "©")
-          .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-          .replace(/&[a-z]+;/g, " ")
-          .replace(/\s+/g, " ");
+        const text = htmlToText(html);
 
         const hit = extractFromText(text, url);
         if (hit) {
