@@ -158,9 +158,22 @@ export async function importWipFromBuffer(
     client: string | null;
   };
   const enrichments = new Map<string, SageEnrichment>();
+  // Sage's TransactionsExpo export sometimes leaves HEADER_NUMBER blank and
+  // puts the deal reference (4975, 5144, …) in `Document` instead — column
+  // drift from Sage. We also see a duplicate `Document*` column at the end
+  // of the export. Pick HEADER_NUMBER first, fall back to either Document
+  // variant.
+  const pickDealRef = (kr: Record<string, any>): string => {
+    const raw = pick(kr, "HEADER_NUMBER", "HeaderNumber", "Header Number")
+      ?? pick(kr, "Document", "Document*", "DocumentNumber", "Document Number");
+    if (raw == null) return "";
+    const s = String(raw).trim();
+    // Skip totals/footer rows ("Total", empty, etc.) — those aren't deals.
+    if (!s || s.toLowerCase() === "total") return "";
+    return s;
+  };
   const upsertEnrichment = (kr: Record<string, any>) => {
-    const headerNumRaw = pick(kr, "HEADER_NUMBER", "HeaderNumber", "Header Number");
-    const headerNum = headerNumRaw != null ? String(headerNumRaw).trim() : "";
+    const headerNum = pickDealRef(kr);
     if (!headerNum) return;
     let e = enrichments.get(headerNum);
     if (!e) {
@@ -253,8 +266,7 @@ export async function importWipFromBuffer(
       if (!pick(kr, "Group") && !pick(kr, "Project") && !pick(kr, "Tenant") && !pick(kr, "Team")) return false;
       return true;
     }
-    const headerNumRaw = pick(kr, "HEADER_NUMBER", "HeaderNumber", "Header Number");
-    const headerNum = headerNumRaw != null ? String(headerNumRaw).trim() : "";
+    const headerNum = pickDealRef(kr);
     const net = parseFloat(pick(kr, "NetAmount", "Net Amount", "Amount") || NaN);
     if (headerNum) diagnostics.rowsWithHeaderNumber++;
     if (!isNaN(net)) diagnostics.rowsWithNetAmount++;
@@ -290,9 +302,9 @@ export async function importWipFromBuffer(
     const status = String(pick(kr, "DealStatus", "Deal Status", "Deal status") || "").toUpperCase();
     const isInvoiced = status === "SOL" || status === "SOLD" || status === "INVOICED";
     const net = parseFloat(pick(kr, "NetAmount", "Net Amount", "Amount") || 0) || 0;
-    const headerNumRaw = pick(kr, "HEADER_NUMBER", "HeaderNumber", "Header Number");
+    const headerNum = pickDealRef(kr);
     return {
-      ref: headerNumRaw != null ? String(headerNumRaw).trim() : null,
+      ref: headerNum || null,
       groupName: pick(kr, "Group") || null,
       project: pick(kr, "Project") || null,
       tenant: pick(kr, "Tenant") || pick(kr, "Client") || null,
@@ -325,10 +337,10 @@ export async function importWipFromBuffer(
 
   if (layout === "sage_transactionsexpo" && (diagnostics as any).rowsWithRefAfterMap === 0) {
     throw new Error(
-      `Imported ${rows.length} rows but every row has a null \`ref\` (HEADER_NUMBER missing). ` +
+      `Imported ${rows.length} rows but every row has a null \`ref\` (neither HEADER_NUMBER nor Document populated). ` +
       `This means syncWipToCrmDeals would create 0 deals. Sample raw column keys we saw: ` +
       `${rawKeys.slice(0, 20).join(", ")}. ` +
-      `If your Sage export uses a different column name for the deal reference, tell the dev — the parser is case-insensitive on HEADER_NUMBER / HeaderNumber / Header Number but won't catch a totally different name.`
+      `Parser tries HEADER_NUMBER → Document → Document* (case-insensitive). If the deal ref is in a different column, tell the dev which one.`
     );
   }
 
