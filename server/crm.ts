@@ -441,21 +441,29 @@ async function enrichWipDealsFromSage(
         let billingId = compByName.get(key);
         if (!billingId) {
           billingId = randomUUID();
+          // crm_companies stores address as a single JSONB blob — there's no
+          // top-level postcode column, the postcode goes inside the JSON.
+          // Earlier INSERT had `postcode = $4` and crashed every WIP import
+          // with `column "postcode" of relation "crm_companies" does not exist`.
           const addressParts = [
             enrich.billingEntity.addressLine1,
             enrich.billingEntity.addressLine2,
             enrich.billingEntity.city,
             enrich.billingEntity.postcode,
           ].filter(Boolean).join(", ");
+          const addressBlob = (addressParts || enrich.billingEntity.postcode)
+            ? JSON.stringify({
+                address: addressParts || null,
+                line1: enrich.billingEntity.addressLine1 || null,
+                line2: enrich.billingEntity.addressLine2 || null,
+                city: enrich.billingEntity.city || null,
+                postcode: enrich.billingEntity.postcode || null,
+              })
+            : null;
           await client.query(
-            `INSERT INTO crm_companies (id, name, company_type, head_office_address, postcode, created_at, updated_at)
-             VALUES ($1, $2, 'Billing', $3, $4, NOW(), NOW())`,
-            [
-              billingId,
-              billingName,
-              addressParts ? JSON.stringify({ address: addressParts }) : null,
-              enrich.billingEntity.postcode || null,
-            ],
+            `INSERT INTO crm_companies (id, name, company_type, head_office_address, created_at, updated_at)
+             VALUES ($1, $2, 'Billing', $3, NOW(), NOW())`,
+            [billingId, billingName, addressBlob],
           );
           compByName.set(key, billingId);
           result.billingEntitiesCreated++;

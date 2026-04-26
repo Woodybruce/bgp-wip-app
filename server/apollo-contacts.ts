@@ -57,8 +57,9 @@ interface DiscoveredPerson {
 }
 
 async function searchApollo(opts: {
-  domain?: string;
+  domains?: string[];
   organizationName?: string;
+  locations?: string[];
   apolloKey: string;
 }): Promise<ApolloPerson[]> {
   const body: Record<string, any> = {
@@ -66,8 +67,9 @@ async function searchApollo(opts: {
     per_page: 25,
     person_titles: ROLE_TITLES,
   };
-  if (opts.domain) body.q_organization_domains_list = [opts.domain];
+  if (opts.domains && opts.domains.length > 0) body.q_organization_domains_list = opts.domains;
   else if (opts.organizationName) body.organization_names = [opts.organizationName];
+  if (opts.locations && opts.locations.length > 0) body.person_locations = opts.locations;
 
   const res = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
     method: "POST",
@@ -86,10 +88,63 @@ async function searchApollo(opts: {
   return (data.people || data.contacts || []) as ApolloPerson[];
 }
 
+function cleanDomain(raw: string | null | undefined): string | undefined {
+  if (!raw) return undefined;
+  const cleaned = String(raw)
+    .replace(/^https?:\/\//, "")
+    .replace(/\/.*$/, "")
+    .replace(/^www\./, "")
+    .toLowerCase()
+    .trim();
+  return cleaned || undefined;
+}
+
 function extractDomain(company: any): string | undefined {
-  const d = company?.domain || company?.domain_url;
-  if (!d) return undefined;
-  return String(d).replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/^www\./, "").toLowerCase();
+  return cleanDomain(company?.domain || company?.domain_url);
+}
+
+// Build the full candidate-domains list for an Apollo search. Apollo's
+// `q_organization_domains_list` accepts multiple values, so a single call
+// can match the brand's global TLD AND any UK localisation. Without this,
+// brands like Supreme (single-domain on .com but UK staff) miss entirely
+// because Apollo's UK contacts are tagged to a different domain than the
+// .com that we have stored.
+function candidateDomainsFor(company: any): string[] {
+  const seen = new Set<string>();
+  const add = (d: string | null | undefined) => {
+    const cleaned = cleanDomain(d);
+    if (cleaned) seen.add(cleaned);
+  };
+  add(company?.domain);
+  add(company?.domain_url);
+
+  const primary = cleanDomain(company?.domain || company?.domain_url);
+  if (primary) {
+    // Strip the TLD and add common UK-localised variants.
+    const parts = primary.split(".");
+    if (parts.length >= 2) {
+      const sld = parts.slice(0, -1).join(".");
+      const tld = parts[parts.length - 1];
+      const baseSecondLevel = parts.length === 2 ? parts[0] : parts.slice(0, -2).join(".");
+      if (tld === "com") {
+        add(`${baseSecondLevel}.co.uk`);
+        add(`${baseSecondLevel}.uk`);
+      }
+      if (tld !== "uk" && tld !== "co.uk" && parts.length === 2) {
+        add(`${parts[0]}.co.uk`);
+      }
+      // SLD-prefixed UK variant (e.g. supremenewyork.com → supremenewyorkuk.com)
+      // is too specific to be worth guessing — leave it.
+      // Subdomain-based UK split (uk.brand.com / brand.com/uk) — Apollo
+      // doesn't see these as separate domains, so don't bother.
+      // Keep stripping a leading "shop." or "store." common on retail SPAs.
+      if (sld.startsWith("shop.") || sld.startsWith("store.")) {
+        const stripped = sld.replace(/^(shop|store)\./, "");
+        add(`${stripped}.${tld}`);
+      }
+    }
+  }
+  return Array.from(seen);
 }
 
 function mapPerson(p: ApolloPerson, source: DiscoveredPerson["source"], sourceCompanyName?: string): DiscoveredPerson {
@@ -132,22 +187,55 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
     const company = await fetchCompany(String(req.params.companyId));
     if (!company) return res.status(404).json({ error: "Company not found" });
 
-    const domain = extractDomain(company);
     const seenIds = new Set<string>();
     const people: DiscoveredPerson[] = [];
+    const diagnostics: { step: string; matched: number; details?: string }[] = [];
 
-    // 1. Primary: search by domain
-    if (domain) {
-      const byDomain = await searchApollo({ domain, apolloKey });
-      for (const p of byDomain) {
-        if (!seenIds.has(p.id)) {
-          seenIds.add(p.id);
-          people.push(mapPerson(p, "direct"));
+    // 1. Primary: every plausible brand domain in one Apollo call.
+    // Includes the stored .com, .co.uk / .uk localisations, and shop./store.
+    // strips so global brands with UK staff get matched even if we only have
+    // their global domain on file.
+    const brandDomains = candidateDomainsFor(company);
+    if (brandDomains.length > 0) {
+      try {
+        const byDomain = await searchApollo({ domains: brandDomains, apolloKey });
+        for (const p of byDomain) {
+          if (!seenIds.has(p.id)) {
+            seenIds.add(p.id);
+            people.push(mapPerson(p, "direct"));
+          }
         }
+        diagnostics.push({ step: "brand_domains", matched: byDomain.length, details: brandDomains.join(", ") });
+      } catch (err: any) {
+        diagnostics.push({ step: "brand_domains", matched: 0, details: `error: ${err.message}` });
       }
     }
 
-    // 2. If < 3 results, also try by company name
+    // 2. If < 3 results, search Apollo by organisation name with a UK
+    // location filter. This catches brands whose UK staff are tagged on a
+    // domain Apollo holds but we don't know about (e.g. franchise operator
+    // domain). Country filter avoids picking up unrelated "Supreme Pizza"
+    // employees.
+    if (people.length < 3) {
+      try {
+        const byName = await searchApollo({
+          organizationName: company.name,
+          locations: ["United Kingdom"],
+          apolloKey,
+        });
+        for (const p of byName) {
+          if (!seenIds.has(p.id)) {
+            seenIds.add(p.id);
+            people.push(mapPerson(p, "name_search"));
+          }
+        }
+        diagnostics.push({ step: "name_uk", matched: byName.length, details: `name="${company.name}" location=United Kingdom` });
+      } catch (err: any) {
+        diagnostics.push({ step: "name_uk", matched: 0, details: `error: ${err.message}` });
+      }
+    }
+
+    // 3. If still < 3, broaden to organisation name without location filter.
     if (people.length < 3) {
       try {
         const byName = await searchApollo({ organizationName: company.name, apolloKey });
@@ -157,21 +245,23 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
             people.push(mapPerson(p, "name_search"));
           }
         }
-      } catch {
-        // Non-fatal
+        diagnostics.push({ step: "name_global", matched: byName.length });
+      } catch (err: any) {
+        diagnostics.push({ step: "name_global", matched: 0, details: `error: ${err.message}` });
       }
     }
 
-    // 3. If still < 3, cascade to parent group
+    // 4. If still < 3, cascade to parent group with the same multi-domain
+    // strategy.
     let parentCompany: any = null;
     if (people.length < 3) {
       parentCompany = await fetchParentCompany(company);
       if (parentCompany) {
         try {
-          const parentDomain = extractDomain(parentCompany);
+          const parentDomains = candidateDomainsFor(parentCompany);
           const byParent = await searchApollo({
-            domain: parentDomain,
-            organizationName: parentDomain ? undefined : parentCompany.name,
+            domains: parentDomains.length > 0 ? parentDomains : undefined,
+            organizationName: parentDomains.length > 0 ? undefined : parentCompany.name,
             apolloKey,
           });
           for (const p of byParent) {
@@ -180,8 +270,9 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
               people.push(mapPerson(p, "parent_group", parentCompany.name));
             }
           }
-        } catch {
-          // Non-fatal
+          diagnostics.push({ step: "parent_group", matched: byParent.length, details: parentDomains.join(", ") || parentCompany.name });
+        } catch (err: any) {
+          diagnostics.push({ step: "parent_group", matched: 0, details: `error: ${err.message}` });
         }
       }
     }
@@ -200,9 +291,10 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
       .filter(p => !(p.linkedin_url && existingLinkedIn.has(p.linkedin_url.toLowerCase())));
 
     res.json({
-      company: { id: company.id, name: company.name, domain },
+      company: { id: company.id, name: company.name, domain: extractDomain(company), triedDomains: brandDomains },
       parentCompany: parentCompany ? { id: parentCompany.id, name: parentCompany.name } : null,
       people: fresh,
+      diagnostics,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

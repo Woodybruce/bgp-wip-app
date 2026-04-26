@@ -23,9 +23,17 @@ interface ApolloPerson {
   source_company_name?: string;
 }
 
+interface DiscoverDiagnostic {
+  step: string;
+  matched: number;
+  details?: string;
+}
+
 interface DiscoverResult {
   people: ApolloPerson[];
   parentCompany: { id: string; name: string } | null;
+  company?: { triedDomains?: string[] };
+  diagnostics?: DiscoverDiagnostic[];
 }
 
 export function ApolloContactsDialog({ companyId, companyName, open, onOpenChange }: {
@@ -39,6 +47,8 @@ export function ApolloContactsDialog({ companyId, companyName, open, onOpenChang
   const [parentCompany, setParentCompany] = useState<{ id: string; name: string } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [ran, setRan] = useState(false);
+  const [triedDomains, setTriedDomains] = useState<string[]>([]);
+  const [diagnostics, setDiagnostics] = useState<DiscoverDiagnostic[]>([]);
 
   const discover = useMutation({
     mutationFn: async () => {
@@ -48,6 +58,8 @@ export function ApolloContactsDialog({ companyId, companyName, open, onOpenChang
     onSuccess: (out) => {
       setPeople(out.people || []);
       setParentCompany(out.parentCompany || null);
+      setTriedDomains(out.company?.triedDomains || []);
+      setDiagnostics(out.diagnostics || []);
       setSelected(new Set(out.people?.map(p => p.apollo_id) || []));
       setRan(true);
       if (!out.people?.length) toast({ title: "No new contacts found" });
@@ -122,8 +134,21 @@ export function ApolloContactsDialog({ companyId, companyName, open, onOpenChang
         {ran && !discover.isPending && (
           <div className="max-h-[500px] overflow-y-auto space-y-1">
             {people.length === 0 && (
-              <div className="text-sm text-muted-foreground text-center py-6">
-                No new contacts — Apollo returned nobody we don't already have.
+              <div className="text-sm text-muted-foreground text-center py-6 space-y-2">
+                <div>No new contacts — Apollo returned nobody we don't already have.</div>
+                {(triedDomains.length > 0 || diagnostics.length > 0) && (
+                  <div className="text-[11px] text-left bg-muted/40 rounded p-2 max-w-md mx-auto space-y-1">
+                    {triedDomains.length > 0 && (
+                      <div><span className="font-medium">Domains tried:</span> {triedDomains.join(", ")}</div>
+                    )}
+                    {diagnostics.map((d, i) => (
+                      <div key={i}>
+                        <span className="font-medium">{d.step}:</span> {d.matched} match{d.matched === 1 ? "" : "es"}
+                        {d.details ? ` — ${d.details}` : ""}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             {directCount > 0 && parentCount > 0 && (
