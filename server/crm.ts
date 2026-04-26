@@ -81,27 +81,62 @@ function parseAiJson(raw: string): any {
 export async function importWipFromBuffer(
   buffer: Buffer,
   opts: { append?: boolean } = {},
-): Promise<{ success: true; imported: number; layout: "legacy" | "sage_transactionsexpo" | "unknown"; sync: any; enrichment: any }> {
+): Promise<{ success: true; imported: number; layout: "legacy" | "sage_transactionsexpo" | "unknown"; sync: any; enrichment: any; diagnostics?: any }> {
   const XLSX = await import("xlsx");
   const wb = XLSX.read(buffer, { type: "buffer" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const data: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null });
   if (data.length === 0) throw new Error("No data found in file");
 
-  // Detect layout by inspecting the first non-empty row's keys.
+  // Build a case- and punctuation-insensitive key map per row, so column
+  // names like "HEADER_NUMBER" / "Header Number" / "headerNumber" all
+  // resolve to the same value. Sage exports sometimes change punctuation
+  // between report versions and we want the importer to keep working.
+  const normaliseKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const buildKeyMap = (row: any): Record<string, any> => {
+    const out: Record<string, any> = {};
+    if (!row) return out;
+    for (const k of Object.keys(row)) out[normaliseKey(k)] = row[k];
+    return out;
+  };
+  /** Look up a column value by trying multiple aliases case/punctuation-insensitively. */
+  const pick = (row: Record<string, any>, ...aliases: string[]): any => {
+    for (const a of aliases) {
+      const v = row[normaliseKey(a)];
+      if (v !== undefined && v !== null && v !== "") return v;
+    }
+    return null;
+  };
+
   const firstRow = data.find((r: any) => r && Object.values(r).some((v: any) => v !== null && v !== "")) || data[0];
-  const keys = new Set(Object.keys(firstRow || {}));
-  const isLegacy = keys.has("Ref") || keys.has("Amt WIP") || keys.has("Amt invoice");
-  const isSage = keys.has("HEADER_NUMBER") || keys.has("NetAmount");
+  const rawKeys = Object.keys(firstRow || {});
+  const normKeys = new Set(rawKeys.map(normaliseKey));
+  const isLegacy = normKeys.has("ref") || normKeys.has("amtwip") || normKeys.has("amtinvoice");
+  const isSage = normKeys.has("headernumber") || normKeys.has("netamount");
   const layout: "legacy" | "sage_transactionsexpo" | "unknown" =
     isLegacy ? "legacy" : isSage ? "sage_transactionsexpo" : "unknown";
 
   if (layout === "unknown") {
     throw new Error(
-      `Could not recognise the WIP export format. Saw columns: ${Array.from(keys).slice(0, 12).join(", ")}. ` +
+      `Could not recognise the WIP export format. Saw columns: ${rawKeys.slice(0, 12).join(", ")}. ` +
       `Expected either legacy (Ref, Amt WIP, Amt invoice, …) or Sage TransactionsExpo (HEADER_NUMBER, NetAmount, …).`
     );
   }
+
+  // Diagnostics: how many rows have each critical column populated. Helps
+  // diagnose "0 deals created" symptoms when the source layout drifts.
+  const diagnostics = {
+    layout,
+    totalDataRows: data.length,
+    rowsWithHeaderNumber: 0,
+    rowsWithNetAmount: 0,
+    rowsWithProject: 0,
+    rowsWithTenant: 0,
+    rowsWithName: 0,
+    rowsWithAgent: 0,
+    rawKeys: rawKeys.slice(0, 30),
+    sampleFirstRow: firstRow,
+  };
 
   // Sage rows are fee SLICES — multiple rows per HEADER_NUMBER, each with a
   // different Agent and a slice of the total fee. Aggregate them per deal so
@@ -123,8 +158,9 @@ export async function importWipFromBuffer(
     client: string | null;
   };
   const enrichments = new Map<string, SageEnrichment>();
-  const upsertEnrichment = (r: any) => {
-    const headerNum = r.HEADER_NUMBER ? String(r.HEADER_NUMBER).trim() : "";
+  const upsertEnrichment = (kr: Record<string, any>) => {
+    const headerNumRaw = pick(kr, "HEADER_NUMBER", "HeaderNumber", "Header Number");
+    const headerNum = headerNumRaw != null ? String(headerNumRaw).trim() : "";
     if (!headerNum) return;
     let e = enrichments.get(headerNum);
     if (!e) {
@@ -139,26 +175,40 @@ export async function importWipFromBuffer(
       };
       enrichments.set(headerNum, e);
     }
-    // First non-empty wins for header-level fields
-    if (!e.status && r.DealStatus) e.status = String(r.DealStatus).trim();
-    if (!e.project && r.Project) e.project = String(r.Project).trim();
-    if (!e.tenant && r.Tenant) e.tenant = String(r.Tenant).trim();
-    if (!e.client && r.Client) e.client = String(r.Client).trim();
-    if (!e.billingEntity && r.NAME) {
-      e.billingEntity = {
-        name: String(r.NAME).trim(),
-        addressLine1: r.ADDRESS_LINE1 ? String(r.ADDRESS_LINE1).trim() : undefined,
-        addressLine2: r.ADDRESS_LINE2 ? String(r.ADDRESS_LINE2).trim() : undefined,
-        city: r.ADDRESS_CITY ? String(r.ADDRESS_CITY).trim() : undefined,
-        postcode: r.ADDRESS_POSTCODE ? String(r.ADDRESS_POSTCODE).trim() : undefined,
-      };
+    if (!e.status) {
+      const s = pick(kr, "DealStatus", "Deal Status", "Deal status");
+      if (s) e.status = String(s).trim();
     }
-    const agent = r.Agent ? String(r.Agent).trim() : "";
-    const amount = parseFloat(r.NetAmount) || 0;
+    if (!e.project) {
+      const p = pick(kr, "Project");
+      if (p) e.project = String(p).trim();
+    }
+    if (!e.tenant) {
+      const t = pick(kr, "Tenant");
+      if (t) e.tenant = String(t).trim();
+    }
+    if (!e.client) {
+      const c = pick(kr, "Client");
+      if (c) e.client = String(c).trim();
+    }
+    if (!e.billingEntity) {
+      const name = pick(kr, "NAME", "Name", "BillingName", "ClientName");
+      if (name) {
+        e.billingEntity = {
+          name: String(name).trim(),
+          addressLine1: pick(kr, "ADDRESS_LINE1", "AddressLine1", "Address Line 1") || undefined,
+          addressLine2: pick(kr, "ADDRESS_LINE2", "AddressLine2", "Address Line 2") || undefined,
+          city: pick(kr, "ADDRESS_CITY", "City", "AddressCity", "Address City") || undefined,
+          postcode: pick(kr, "ADDRESS_POSTCODE", "Postcode", "PostalCode", "AddressPostcode", "Post Code") || undefined,
+        };
+      }
+    }
+    const agent = pick(kr, "Agent");
+    const amount = parseFloat(pick(kr, "NetAmount", "Net Amount", "Amount") || 0) || 0;
     if (agent && amount !== 0) {
-      const stockCode = (r.STOCK_CODE || "").toString().toUpperCase();
+      const stockCode = String(pick(kr, "STOCK_CODE", "StockCode", "Stock Code") || "").toUpperCase();
       e.feeSlices.push({
-        agent,
+        agent: String(agent).trim(),
         amount,
         isBgpHouse: stockCode === "CON049",
       });
@@ -166,10 +216,6 @@ export async function importWipFromBuffer(
   };
 
   const monthOrder = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-
-  // Parse a Sage month string into fiscal year. Handles "Apr-26", "2026-04",
-  // "Apr 2026", and plain ISO dates. BGP FY = Apr–Mar so months Apr+ roll
-  // into the *next* calendar year.
   const parseFiscalYear = (raw: any): number | null => {
     if (!raw) return null;
     const s = String(raw).trim();
@@ -197,65 +243,90 @@ export async function importWipFromBuffer(
 
   const rows = data.filter((r: any) => {
     if (!r) return false;
+    const kr = buildKeyMap(r);
     if (layout === "legacy") {
-      const ref = r.Ref ? String(r.Ref) : "";
+      const refRaw = pick(kr, "Ref");
+      const ref = refRaw != null ? String(refRaw) : "";
       if (!ref || ref === "Total" || ref.startsWith("Applied filters")) return false;
-      if (!r.Group && !r.Project && !r.Tenant && !r.Team) return false;
+      if (!pick(kr, "Group") && !pick(kr, "Project") && !pick(kr, "Tenant") && !pick(kr, "Team")) return false;
       return true;
     }
-    const headerNum = r.HEADER_NUMBER ? String(r.HEADER_NUMBER).trim() : "";
-    const net = parseFloat(r.NetAmount);
-    if (!headerNum && !r.Project && !r.Tenant) return false;
-    if (String(r.Project || "").toLowerCase() === "total") return false;
+    const headerNumRaw = pick(kr, "HEADER_NUMBER", "HeaderNumber", "Header Number");
+    const headerNum = headerNumRaw != null ? String(headerNumRaw).trim() : "";
+    const net = parseFloat(pick(kr, "NetAmount", "Net Amount", "Amount") || NaN);
+    if (headerNum) diagnostics.rowsWithHeaderNumber++;
+    if (!isNaN(net)) diagnostics.rowsWithNetAmount++;
+    if (pick(kr, "Project")) diagnostics.rowsWithProject++;
+    if (pick(kr, "Tenant")) diagnostics.rowsWithTenant++;
+    if (pick(kr, "NAME", "Name")) diagnostics.rowsWithName++;
+    if (pick(kr, "Agent")) diagnostics.rowsWithAgent++;
+    if (!headerNum && !pick(kr, "Project") && !pick(kr, "Tenant")) return false;
+    if (String(pick(kr, "Project") || "").toLowerCase() === "total") return false;
     if (!headerNum && (!net || isNaN(net))) return false;
     return true;
   }).map((r: any) => {
+    const kr = buildKeyMap(r);
     if (layout === "legacy") {
       return {
-        ref: r.Ref ? String(r.Ref) : null,
-        groupName: r.Group || null,
-        project: r.Project || null,
-        tenant: r.Tenant || null,
-        team: r.Team || null,
-        agent: r.Agent || null,
-        amtWip: parseFloat(r["Amt WIP"]) || 0,
-        amtInvoice: parseFloat(r["Amt invoice"]) || 0,
-        month: r.Month || null,
-        dealStatus: r["Deal status"] || null,
-        stage: r.Stage || null,
-        invoiceNo: r.InvoiceNo ? String(r.InvoiceNo) : null,
-        orderNumber: r.ORDER_NUMBER ? String(r.ORDER_NUMBER) : null,
-        fiscalYear: parseFiscalYear(r.Month),
+        ref: pick(kr, "Ref") ? String(pick(kr, "Ref")) : null,
+        groupName: pick(kr, "Group") || null,
+        project: pick(kr, "Project") || null,
+        tenant: pick(kr, "Tenant") || null,
+        team: pick(kr, "Team") || null,
+        agent: pick(kr, "Agent") || null,
+        amtWip: parseFloat(pick(kr, "Amt WIP", "AmtWIP")) || 0,
+        amtInvoice: parseFloat(pick(kr, "Amt invoice", "AmtInvoice")) || 0,
+        month: pick(kr, "Month") || null,
+        dealStatus: pick(kr, "Deal status", "DealStatus") || null,
+        stage: pick(kr, "Stage") || null,
+        invoiceNo: pick(kr, "InvoiceNo") ? String(pick(kr, "InvoiceNo")) : null,
+        orderNumber: pick(kr, "ORDER_NUMBER", "OrderNumber") ? String(pick(kr, "ORDER_NUMBER", "OrderNumber")) : null,
+        fiscalYear: parseFiscalYear(pick(kr, "Month")),
       };
     }
-    // Sage TransactionsExpo layout — also capture for post-import enrichment.
-    upsertEnrichment(r);
-    const status = (r.DealStatus || r["Deal status"] || "").toString().toUpperCase();
+    upsertEnrichment(kr);
+    const status = String(pick(kr, "DealStatus", "Deal Status", "Deal status") || "").toUpperCase();
     const isInvoiced = status === "SOL" || status === "SOLD" || status === "INVOICED";
-    const net = parseFloat(r.NetAmount) || 0;
+    const net = parseFloat(pick(kr, "NetAmount", "Net Amount", "Amount") || 0) || 0;
+    const headerNumRaw = pick(kr, "HEADER_NUMBER", "HeaderNumber", "Header Number");
     return {
-      ref: r.HEADER_NUMBER ? String(r.HEADER_NUMBER).trim() : null,
-      groupName: r.Group || null,
-      project: r.Project || null,
-      tenant: r.Tenant || r.Client || null,
-      team: r.Team || null,
-      agent: r.Agent || null,
+      ref: headerNumRaw != null ? String(headerNumRaw).trim() : null,
+      groupName: pick(kr, "Group") || null,
+      project: pick(kr, "Project") || null,
+      tenant: pick(kr, "Tenant") || pick(kr, "Client") || null,
+      team: pick(kr, "Team") || null,
+      agent: pick(kr, "Agent") || null,
       amtWip: isInvoiced ? 0 : net,
       amtInvoice: isInvoiced ? net : 0,
-      month: r.MonthYear || r.Month || null,
-      dealStatus: r.DealStatus || r["Deal status"] || null,
-      stage: r.Stage || r.STOCK_CODE || null,
-      invoiceNo: r.InvoiceNo ? String(r.InvoiceNo) : null,
-      orderNumber: r.ORDER_NUMBER ? String(r.ORDER_NUMBER) : null,
-      fiscalYear: parseFiscalYear(r.MonthYear || r.Month || r.DueDate_EOMonth),
+      month: pick(kr, "MonthYear", "Month Year", "Month") || null,
+      dealStatus: pick(kr, "DealStatus", "Deal Status", "Deal status") || null,
+      stage: pick(kr, "Stage") || pick(kr, "STOCK_CODE", "StockCode") || null,
+      invoiceNo: pick(kr, "InvoiceNo") ? String(pick(kr, "InvoiceNo")) : null,
+      orderNumber: pick(kr, "ORDER_NUMBER", "OrderNumber") ? String(pick(kr, "ORDER_NUMBER", "OrderNumber")) : null,
+      fiscalYear: parseFiscalYear(pick(kr, "MonthYear", "Month Year", "Month") || pick(kr, "DueDate_EOMonth", "DueDate")),
     };
   });
+
+  // Final diagnostic: how many of the rows we'll insert have a non-null
+  // ref. If this is 0 the syncWipToCrmDeals step will create no deals,
+  // which is the symptom the user was seeing.
+  (diagnostics as any).rowsWithRefAfterMap = rows.filter((r: any) => r.ref).length;
+  console.log(`[WIP Import] diagnostics: ${JSON.stringify(diagnostics)}`);
 
   if (rows.length === 0) {
     throw new Error(
       `Recognised layout=${layout} but every row was filtered out. ` +
       `Check that the export contains data rows (not just headers / "Applied filters" rows). ` +
-      `Sample first row keys: ${Array.from(keys).slice(0, 8).join(", ")}.`
+      `Sample first row keys: ${rawKeys.slice(0, 8).join(", ")}.`
+    );
+  }
+
+  if (layout === "sage_transactionsexpo" && (diagnostics as any).rowsWithRefAfterMap === 0) {
+    throw new Error(
+      `Imported ${rows.length} rows but every row has a null \`ref\` (HEADER_NUMBER missing). ` +
+      `This means syncWipToCrmDeals would create 0 deals. Sample raw column keys we saw: ` +
+      `${rawKeys.slice(0, 20).join(", ")}. ` +
+      `If your Sage export uses a different column name for the deal reference, tell the dev — the parser is case-insensitive on HEADER_NUMBER / HeaderNumber / Header Number but won't catch a totally different name.`
     );
   }
 
@@ -269,16 +340,11 @@ export async function importWipFromBuffer(
   });
 
   const syncResult = await syncWipToCrmDeals(pool);
-
-  // Sage-only post-pass: now that crm_deals exist (created/updated by sync),
-  // upsert billing entities (NAME + ADDRESS_*), per-agent fee allocations
-  // (NetAmount slices, with BGP House CON049 tagged), and tenant_rep_searches
-  // for any NEG status. Idempotent — safe to re-run.
   const enrichmentResult = layout === "sage_transactionsexpo"
     ? await enrichWipDealsFromSage(pool, enrichments)
     : { skipped: "legacy layout — no per-agent slice / billing entity data in this format" };
 
-  return { success: true, imported: rows.length, layout, sync: syncResult, enrichment: enrichmentResult };
+  return { success: true, imported: rows.length, layout, sync: syncResult, enrichment: enrichmentResult, diagnostics };
 }
 
 /**
