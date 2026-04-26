@@ -317,6 +317,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "UK entity search failed", description: e.message, variant: "destructive" }),
   });
 
+  // "Ask for help" form — surfaced when the auto-resolver fails. Lets the
+  // user paste the brand's T&Cs URL, type the UK entity name, or paste the
+  // CH number directly. UK law (Companies Act 2006) requires this to be
+  // displayed on the brand's website, so failing means we couldn't read it
+  // — not that it doesn't exist.
+  const [helpForm, setHelpForm] = useState<{ tcsUrl: string; entityName: string; chNumber: string } | null>(null);
+
   // "Wrong company?" — re-derive the CH match from the brand website,
   // overwriting whatever's stored. Used when the original auto-KYC picked
   // the nearest name match rather than the real operating entity.
@@ -339,6 +346,11 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           variant: "destructive",
           duration: 30_000,
         });
+        // Surface the inline help form so the user can paste the T&Cs URL or
+        // enter the entity name / CH number directly. We always show it on
+        // not_found, not just when the server flags needsHelp — gives the
+        // user agency on every failure.
+        setHelpForm({ tcsUrl: "", entityName: "", chNumber: "" });
       } else {
         const via = out?.resolvedFrom === "website" ? "website / Perplexity"
           : out?.resolvedFrom === "ai_picker" ? "AI picker"
@@ -358,6 +370,41 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
     },
     onError: (e: any) => toast({ title: "Re-resolve failed", description: e.message, variant: "destructive" }),
+  });
+
+  // Replays the resolver with user-supplied overrides (T&Cs URL / entity
+  // name / CH number). Same endpoint as auto-resolve — server picks the
+  // highest-confidence override available.
+  const manualResolveMutation = useMutation({
+    mutationFn: async (override: { tcsUrl?: string; entityName?: string; chNumber?: string }) => {
+      const res = await apiRequest("POST", `/api/companies-house/auto-kyc/${companyId}?force=1`, override);
+      return res.json();
+    },
+    onSuccess: (out: any) => {
+      const trace = Array.isArray(out?.diagnostics)
+        ? out.diagnostics.map((d: any) => `• ${d.step}: ${d.outcome}${d.detail ? ` — ${d.detail}` : ""}`).join("\n")
+        : "";
+      if (out?.kycStatus === "not_found") {
+        toast({
+          title: "Still no match",
+          description: (out.message || "Manual override didn't resolve.") + (trace ? `\n\n${trace}` : ""),
+          variant: "destructive",
+          duration: 30_000,
+        });
+      } else {
+        toast({
+          title: `KYC resolved · CH ${out?.companyNumber || "?"}`,
+          description: trace || "Resolved from manual input.",
+          duration: 30_000,
+        });
+        setHelpForm(null);
+      }
+      // eslint-disable-next-line no-console
+      console.log("[manual-resolve KYC]", out);
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
+    },
+    onError: (e: any) => toast({ title: "Manual resolve failed", description: e.message, variant: "destructive" }),
   });
 
   const researchStoresMutation = useMutation({
@@ -1038,7 +1085,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                         <span>{covenant.registeredAddress}</span>
                       </div>
                     )}
-                    {!c.uk_entity_name && !c.companies_house_number && (
+                    {!c.uk_entity_name && !c.companies_house_number && !helpForm && (
                       <button
                         type="button"
                         onClick={startEdit}
@@ -1046,6 +1093,80 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       >
                         + Add UK contracting entity name
                       </button>
+                    )}
+                    {helpForm && (
+                      <div className="mt-2 p-2.5 rounded border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 space-y-2">
+                        <div className="flex items-start gap-1.5 text-[11px] text-amber-900 dark:text-amber-100">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                          <span>
+                            Couldn't find {c.name}'s UK trading entity automatically. Under the Companies Act 2006 it must be on their website — usually in the T&amp;Cs. Help us find it (any one of the three is enough):
+                          </span>
+                        </div>
+                        <div className="space-y-1.5">
+                          <div>
+                            <label className="text-[10px] text-muted-foreground">T&amp;Cs URL (we'll scrape it)</label>
+                            <Input
+                              type="url"
+                              placeholder="https://uk.brand.com/pages/terms"
+                              value={helpForm.tcsUrl}
+                              onChange={(e) => setHelpForm({ ...helpForm, tcsUrl: e.target.value })}
+                              className="h-7 text-xs"
+                              disabled={manualResolveMutation.isPending}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-muted-foreground">UK entity name (we'll search Companies House)</label>
+                            <Input
+                              type="text"
+                              placeholder="e.g. ALLSAINTS RETAIL LIMITED"
+                              value={helpForm.entityName}
+                              onChange={(e) => setHelpForm({ ...helpForm, entityName: e.target.value })}
+                              className="h-7 text-xs"
+                              disabled={manualResolveMutation.isPending}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-muted-foreground">Companies House number (we'll verify)</label>
+                            <Input
+                              type="text"
+                              placeholder="e.g. 04096157"
+                              value={helpForm.chNumber}
+                              onChange={(e) => setHelpForm({ ...helpForm, chNumber: e.target.value })}
+                              className="h-7 text-xs font-mono"
+                              disabled={manualResolveMutation.isPending}
+                            />
+                          </div>
+                          <div className="flex gap-1.5 pt-1">
+                            <Button
+                              size="sm"
+                              className="h-7 text-[11px]"
+                              onClick={() => {
+                                const override: { tcsUrl?: string; entityName?: string; chNumber?: string } = {};
+                                if (helpForm.chNumber.trim()) override.chNumber = helpForm.chNumber.trim();
+                                else if (helpForm.entityName.trim()) override.entityName = helpForm.entityName.trim();
+                                else if (helpForm.tcsUrl.trim()) override.tcsUrl = helpForm.tcsUrl.trim();
+                                if (Object.keys(override).length === 0) {
+                                  toast({ title: "Nothing to submit", description: "Fill in at least one field.", variant: "destructive" });
+                                  return;
+                                }
+                                manualResolveMutation.mutate(override);
+                              }}
+                              disabled={manualResolveMutation.isPending || (!helpForm.tcsUrl.trim() && !helpForm.entityName.trim() && !helpForm.chNumber.trim())}
+                            >
+                              {manualResolveMutation.isPending ? "Resolving…" : "Try this"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-[11px]"
+                              onClick={() => setHelpForm(null)}
+                              disabled={manualResolveMutation.isPending}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}

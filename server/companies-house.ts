@@ -359,9 +359,18 @@ router.get("/api/companies-house/document/:id", requireAuth, async (req, res) =>
 // when the website is present but only OVERWRITE an existing number when the
 // website yields a different one — protects against single-page scraper hits
 // while letting us correct historical wrong matches.
-async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: boolean } = {}): Promise<{
+async function performAutoKyc(companyId: string, opts: {
+  forceFromWebsite?: boolean;
+  // Manual user-provided overrides for the "ask for help" UX — surfaced when
+  // auto-resolution fails. Highest-confidence one wins (chNumber > entityName
+  // > tcsUrl).
+  manualChNumber?: string | null;
+  manualEntityName?: string | null;
+  manualTcsUrl?: string | null;
+} = {}): Promise<{
   success: boolean;
   kycStatus: string;
+  needsHelp?: boolean;
   profile?: any;
   officers?: any[];
   pscs?: any[];
@@ -391,14 +400,132 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
   const isExistingDissolved = existingStatus && existingStatus !== "active";
   const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
 
+  // Parent-group context — used by every AI step downstream so the system can
+  // resolve foreign-owned brands (Supreme/EssilorLuxottica, Off-White/LVMH)
+  // via the parent's UK arm rather than blind-picking a name match.
+  let parentGroup: string | null = (company as any).backers || null;
+  const formerParent: string | null = null; // not separately tracked; backers field carries history
+  const parentCompanyId = (company as any).parentCompanyId as string | null;
+  if (parentCompanyId) {
+    try {
+      const [parent] = await db.select({ name: crmCompanies.name }).from(crmCompanies).where(eq(crmCompanies.id, parentCompanyId)).limit(1);
+      if (parent?.name) parentGroup = parentGroup ? `${parent.name} (${parentGroup})` : parent.name;
+    } catch { /* non-fatal */ }
+  }
+  const brandContext = { name: company.name, parentGroup };
+
   if (!chNumber || isExistingDissolved || (opts.forceFromWebsite && domain)) {
     const storedEntityName = (company as any).ukEntityName as string | null;
     let searchName = storedEntityName || company.name;
     let websiteContext = "";
 
-    if (domain) {
+    // ── User-provided override (highest priority) ────────────────────────
+    // When auto-resolve fails, the brand panel surfaces an "ask for help"
+    // form letting the user paste the T&Cs URL, type the UK entity name, or
+    // paste the CH number directly. Apply those here before falling back to
+    // automatic discovery.
+    if (opts.manualChNumber) {
+      const cleaned = String(opts.manualChNumber).replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+      const padded = /^[0-9]+$/.test(cleaned) && cleaned.length < 8 ? cleaned.padStart(8, "0") : cleaned;
+      const verified = await verifyChNumber(padded);
+      if (verified) {
+        chNumber = padded;
+        resolvedFrom = "website";
+        diagnostics.push({ step: "manual_ch_number", outcome: "verified", detail: `User-provided CH ${padded} verified active.` });
+      } else {
+        diagnostics.push({ step: "manual_ch_number", outcome: "failed_verify", detail: `User-provided CH ${padded} did not verify on Companies House.` });
+        return {
+          success: false,
+          kycStatus: "not_found",
+          message: `The CH number you provided (${padded}) doesn't exist on Companies House or is dissolved. Double-check the number?`,
+          diagnostics,
+          needsHelp: true,
+        } as any;
+      }
+    } else if (opts.manualEntityName) {
+      searchName = opts.manualEntityName.trim();
+      websiteContext = `User-provided UK entity name: ${searchName}`;
+      diagnostics.push({ step: "manual_entity_name", outcome: "accepted", detail: `Searching CH for "${searchName}".` });
+    } else if (opts.manualTcsUrl) {
       try {
-        const scraped = await scrapeUkEntityFromWebsite(domain);
+        const r = await fetch(opts.manualTcsUrl, {
+          headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" },
+          signal: AbortSignal.timeout(10_000),
+          redirect: "follow",
+        });
+        if (!r.ok) {
+          diagnostics.push({ step: "manual_tcs_url", outcome: "fetch_failed", detail: `${r.status} ${r.statusText} for ${opts.manualTcsUrl}` });
+        } else {
+          const html = await r.text();
+          const text = html
+            .replace(/<script[\s\S]*?<\/script>/gi, " ")
+            .replace(/<style[\s\S]*?<\/style>/gi, " ")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
+          // Try AI extraction first since user has flagged this URL as the T&Cs
+          const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+          let extractedEntity: string | null = null;
+          let extractedCh: string | null = null;
+          if (apiKey) {
+            try {
+              const Anthropic = (await import("@anthropic-ai/sdk")).default;
+              const client = new Anthropic({ apiKey });
+              const aiPrompt = `Extract the UK Companies House registered entity that operates the brand "${company.name}" from this T&Cs page provided by the user.${parentGroup ? ` Parent group: ${parentGroup}.` : ""}
+
+Page URL: ${opts.manualTcsUrl}
+Page text (first 8KB):
+"""
+${text.slice(0, 8000)}
+"""
+
+Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/PLC/LLP>" or null, "chNumber": "<8-digit CH number>" or null}`;
+              const msg = await client.messages.create({
+                model: "claude-haiku-4-5-20251001",
+                max_tokens: 200,
+                messages: [{ role: "user", content: aiPrompt }],
+              });
+              const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
+              const match = txt.match(/\{[\s\S]*?\}/);
+              if (match) {
+                const parsed = JSON.parse(match[0]);
+                extractedEntity = typeof parsed?.entityName === "string" && parsed.entityName.trim() ? parsed.entityName.trim() : null;
+                let ch = parsed?.chNumber || null;
+                if (ch) {
+                  ch = String(ch).replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+                  if (ch && /^[0-9]+$/.test(ch) && ch.length < 8) ch = ch.padStart(8, "0");
+                  if (ch.length === 8) extractedCh = ch;
+                }
+              }
+            } catch { /* fall through */ }
+          }
+          if (extractedCh) {
+            const verified = await verifyChNumber(extractedCh);
+            if (verified) {
+              chNumber = extractedCh;
+              resolvedFrom = "website";
+              diagnostics.push({ step: "manual_tcs_url", outcome: "ch_found", detail: `Extracted CH ${extractedCh} (${extractedEntity || "?"}) from ${opts.manualTcsUrl} — verified.` });
+            } else {
+              diagnostics.push({ step: "manual_tcs_url", outcome: "ch_failed_verify", detail: `Extracted CH ${extractedCh} from ${opts.manualTcsUrl} but it didn't verify.` });
+            }
+          }
+          if (!chNumber && extractedEntity) {
+            searchName = extractedEntity;
+            websiteContext = `T&Cs URL (${opts.manualTcsUrl}) extraction → ${extractedEntity}`;
+            await db.update(crmCompanies).set({ ukEntityName: extractedEntity } as any).where(eq(crmCompanies.id, company.id)).catch(() => {});
+            diagnostics.push({ step: "manual_tcs_url", outcome: "entity_only", detail: `Extracted entity name "${extractedEntity}" from user-supplied T&Cs URL.` });
+          }
+          if (!extractedEntity && !extractedCh) {
+            diagnostics.push({ step: "manual_tcs_url", outcome: "nothing", detail: `Could not extract a UK entity from ${opts.manualTcsUrl}.` });
+          }
+        }
+      } catch (err: any) {
+        diagnostics.push({ step: "manual_tcs_url", outcome: "error", detail: err?.message || "fetch failed" });
+      }
+    }
+
+    if (!chNumber && domain && !opts.manualEntityName && !opts.manualTcsUrl) {
+      try {
+        const scraped = await scrapeUkEntityFromWebsite(domain, brandContext);
         if (scraped.entityName) {
           searchName = scraped.entityName;
           if (!storedEntityName) {
@@ -433,7 +560,7 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
         diagnostics.push({ step: "perplexity", outcome: "not_configured", detail: "PERPLEXITY_API_KEY not set on Railway — fallback skipped" });
       } else {
         try {
-          const perp = await askPerplexityForUkEntity(company.name, domain);
+          const perp = await askPerplexityForUkEntity(company.name, domain, { parentGroup, formerParent });
           if (perp?.chNumber) {
             const verified = await verifyChNumber(perp.chNumber);
             if (verified) {
@@ -485,7 +612,33 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
       });
 
       const exactNameHit = candidatePool.find((i: any) => i.title?.toLowerCase().trim() === nameLower);
-      const hasContext = !!(domain || websiteContext);
+      // hasContext = we have a real grounded signal (scraped entity name OR
+      // Perplexity-suggested name OR website-derived URL evidence). A bare
+      // domain alone is NOT context — without a successful scrape/Perplexity
+      // result, the AI picker is choosing from a fuzzy name search with
+      // nothing to ground it, and will land on the wrong company every time.
+      const hasContext = !!websiteContext;
+
+      // If the brand has a website but BOTH the scraper and Perplexity
+      // returned nothing, refuse to blind-pick from a name-only CH search.
+      // UK law (Companies Act 2006) requires brands to display their
+      // trading entity on their website — if we couldn't find it, ask the
+      // user for help rather than silently picking the wrong company.
+      if (!hasContext && domain) {
+        diagnostics.push({
+          step: "ai_picker",
+          outcome: "skipped",
+          detail: `No grounded signal (website scrape + Perplexity both returned nothing). Refusing to pick from name-only CH search to avoid landing on the wrong company.`,
+        });
+        return {
+          success: false,
+          kycStatus: "not_found",
+          message: `Couldn't ground a Companies House match for "${company.name}". The website T&Cs scraper found nothing on ${domain} (UK trading entities are legally required to be displayed there), and Perplexity didn't resolve a UK entity either${parentGroup ? ` despite knowing the parent group (${parentGroup})` : ""}. Refusing to pick from a generic name search — that's how brands get matched to unrelated companies. To fix: paste the brand's UK T&Cs URL, or enter the UK entity name / Companies House number directly.`,
+          diagnostics,
+          needsHelp: true,
+        } as any;
+      }
+
       const needsAiPicker = hasContext
         ? candidatePool.length > 1
         : !exactNameHit && candidatePool.length > 1;
@@ -497,6 +650,8 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
             brandName: company.name,
             domain,
             websiteContext,
+            parentGroup,
+            formerParent,
             candidates: candidatePool.slice(0, 8),
           });
         } catch (err: any) {
@@ -522,9 +677,10 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
         return {
           success: false,
           kycStatus: "not_found",
-          message: `No CH candidate matched "${company.name}" (${domain || "no domain"}). The website-entity scraper found nothing usable, Perplexity didn't resolve a UK entity, and Claude rejected all ${candidatePool.length} CH search hits as wrong matches. Add the correct CH number manually or set the UK entity name on the brand profile.`,
+          message: `No CH candidate matched "${company.name}" (${domain || "no domain"}). The website-entity scraper found nothing usable, Perplexity didn't resolve a UK entity, and Claude rejected all ${candidatePool.length} CH search hits as wrong matches. Paste the T&Cs URL or enter the entity name / CH number directly.`,
           diagnostics,
-        };
+          needsHelp: true,
+        } as any;
       } else {
         const bestMatch = exactNameHit
           || candidatePool.find((i: any) => i.title?.toLowerCase().includes(nameLower) || nameLower.includes(i.title?.toLowerCase()))
@@ -665,6 +821,8 @@ async function pickChCandidateWithAi(input: {
   brandName: string;
   domain: string | null;
   websiteContext: string;
+  parentGroup?: string | null;
+  formerParent?: string | null;
   candidates: Array<{
     company_number: string;
     title: string;
@@ -683,20 +841,27 @@ async function pickChCandidateWithAi(input: {
     `${i + 1}. ${c.title} (CH ${c.company_number})\n   Status: ${c.company_status || "?"}, Type: ${c.company_type || "?"}, Incorporated: ${c.date_of_creation || "?"}\n   Office: ${c.address_snippet || "?"}`
   ).join("\n\n");
 
+  const ownershipLines: string[] = [];
+  if (input.parentGroup) ownershipLines.push(`Currently owned by: ${input.parentGroup}`);
+  if (input.formerParent) ownershipLines.push(`Previously owned by: ${input.formerParent}`);
+  const ownershipBlock = ownershipLines.length ? ownershipLines.join("\n") + "\n" : "";
+
   const prompt = `You are matching a UK retail brand to its operating Companies House entity.
 
 Brand: ${input.brandName}
 Brand website: ${input.domain || "(none)"}
-${input.websiteContext ? input.websiteContext + "\n" : ""}
+${ownershipBlock}${input.websiteContext ? input.websiteContext + "\n" : ""}
 Candidates from Companies House:
 ${candidatesBlock}
 
 Pick the candidate most likely to be the brand's UK trading/operating entity (or its UK holding company). Use these signals in order:
 1. Exact match on the website-derived legal entity name (if given).
-2. An "active" status, registered office in a real commercial location, incorporation old enough to plausibly run a multi-store retailer.
-3. Reject candidates that look like dormant single-director Ltds at a residential address — those almost never run real high-street brands.
+2. If the brand has a known parent group, prefer candidates whose names reference that group, or candidates registered at the parent group's UK office.
+3. An "active" status, registered office in a real commercial location, incorporation old enough to plausibly run a multi-store retailer.
+4. Reject candidates that look like dormant single-director Ltds at a residential address — those almost never run real high-street brands.
+5. Reject candidates whose name only superficially matches (e.g. "SUPREME PLC" for a streetwear brand owned by EssilorLuxottica) when there's no website/ownership signal pointing to them.
 
-If none of the candidates plausibly match the brand, output null.
+If none of the candidates plausibly match the brand, output null. **It is far better to pick null than to guess** — picking the wrong CH entity poisons every downstream system (KYC, news, Apollo, financial covenant).
 
 Reply with ONLY a JSON object on a single line, no prose, no code fence:
 {"pick": "<company_number>" or null, "reason": "<one short sentence>"}`;
@@ -727,16 +892,30 @@ Reply with ONLY a JSON object on a single line, no prose, no code fence:
 // footer boilerplate behind JS), ask Perplexity for the UK CH-registered
 // trading entity. Perplexity returns a CRN string + entity name we can then
 // verify against CH proper.
-async function askPerplexityForUkEntity(brandName: string, domain: string): Promise<{ entityName: string | null; chNumber: string | null } | null> {
+async function askPerplexityForUkEntity(
+  brandName: string,
+  domain: string,
+  context?: { parentGroup?: string | null; formerParent?: string | null; sector?: string | null },
+): Promise<{ entityName: string | null; chNumber: string | null } | null> {
   const { isPerplexityConfigured, askPerplexity } = await import("./perplexity");
   if (!isPerplexityConfigured()) return null;
 
-  const prompt = `For the brand "${brandName}" (website ${domain}), what is the UK Companies House registered trading or operating entity?
+  // Parent group context dramatically improves accuracy for foreign-owned UK
+  // retailers. Without it, Perplexity returns null for brands like Supreme
+  // (owned by EssilorLuxottica) because there's no "Supreme UK Limited" —
+  // they trade through the parent group's UK arm.
+  const contextLines: string[] = [];
+  if (context?.parentGroup) contextLines.push(`Currently owned by: ${context.parentGroup}`);
+  if (context?.formerParent) contextLines.push(`Previously owned by: ${context.formerParent}`);
+  if (context?.sector) contextLines.push(`Sector: ${context.sector}`);
+  const contextBlock = contextLines.length ? `\n\nContext:\n${contextLines.join("\n")}` : "";
+
+  const prompt = `For the brand "${brandName}" (website ${domain}), what is the UK Companies House registered trading or operating entity?${contextBlock}
 
 Return ONLY a JSON object on one line, no prose, no code fence:
 {"entityName": "<full registered name e.g. ALLSAINTS RETAIL LIMITED>", "chNumber": "<8-digit Companies House number, zero-padded>"}
 
-Use null for either field if you genuinely don't know. Do NOT guess. The entity must currently exist on Companies House (find-and-update.company-information.service.gov.uk). Prefer the operating UK entity over a holding company. If the brand is a UK subsidiary of a foreign group, return the UK subsidiary, not the parent.`;
+Use null for either field if you genuinely don't know. Do NOT guess. The entity must currently exist on Companies House (find-and-update.company-information.service.gov.uk). Prefer the operating UK entity over a holding company. If the brand is a UK subsidiary of a foreign group, return the UK subsidiary (the entity that signs UK leases and pays UK rent), not the parent group's overseas HQ.`;
 
   try {
     const r = await askPerplexity(prompt, { maxTokens: 200, temperature: 0 });
@@ -821,7 +1000,18 @@ router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req,
     // re-derives from the website. Used by the "Re-resolve from website"
     // button on the brand panel when an existing match is wrong.
     const forceFromWebsite = req.query.force === "1" || req.body?.forceFromWebsite === true;
-    const result = await performAutoKyc(req.params.companyId, { forceFromWebsite });
+    // Optional manual overrides — surfaced when auto-resolution fails. The
+    // brand panel asks the user for the T&Cs URL, the UK entity name, or the
+    // CH number directly, and replays the resolve with those signals.
+    const manualChNumber = (req.body?.chNumber as string | null | undefined) || null;
+    const manualEntityName = (req.body?.entityName as string | null | undefined) || null;
+    const manualTcsUrl = (req.body?.tcsUrl as string | null | undefined) || null;
+    const result = await performAutoKyc(req.params.companyId, {
+      forceFromWebsite,
+      manualChNumber,
+      manualEntityName,
+      manualTcsUrl,
+    });
     if (!result.success && result.kycStatus === "not_found") {
       return res.json(result);
     }
@@ -1952,23 +2142,56 @@ Format your response as JSON:
 // UK law (Companies Act 2006) requires all businesses to display their
 // registered company name on their website — usually footer, terms, or
 // legal pages. We try those pages in order and extract the entity name
-// and/or Companies House number using pattern matching.
-async function scrapeUkEntityFromWebsite(domain: string): Promise<{
+// and/or Companies House number using pattern matching, with an AI fallback
+// for legal pages where regex misses (e.g. unusual phrasing in T&Cs).
+async function scrapeUkEntityFromWebsite(
+  domain: string,
+  brand?: { name: string; parentGroup?: string | null },
+): Promise<{
   entityName: string | null;
   chNumber: string | null;
   sourceUrl: string | null;
 }> {
-  const base = domain.startsWith("http") ? domain.replace(/\/$/, "") : `https://${domain}`;
+  // Bare host (no protocol, no path, no www. prefix) for building variants
+  const rawHost = domain
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/^www\./i, "");
 
-  // Pages most likely to contain legal boilerplate, in priority order
+  // UK retail brands often hide their UK trading entity behind a regional
+  // subdomain (e.g. uk.supreme.com/pages/terms exists, supreme.com only
+  // discloses the US entity). Try regional subdomains FIRST, then bare host.
+  const baseUrls: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of [
+    `https://uk.${rawHost}`,
+    `https://gb.${rawHost}`,
+    `https://www.${rawHost}`,
+    `https://${rawHost}`,
+  ]) {
+    if (!seen.has(candidate)) { seen.add(candidate); baseUrls.push(candidate); }
+  }
+
+  // Pages most likely to contain legal boilerplate, in priority order.
+  // Shopify-style /pages/* paths come first because many UK retailers run
+  // their UK regional site on Shopify (Supreme UK, Aimé Leon Dore, Palace,
+  // KITH UK, etc.) and the legal entity is on those CMS pages.
   const pages = [
-    "",                                    // homepage footer
+    "",                                       // homepage footer
+    "/pages/terms",                           // Shopify CMS — common UK pattern
+    "/pages/terms-of-service",
+    "/pages/terms-and-conditions",
+    "/pages/terms-of-sale",
+    "/pages/privacy",
+    "/pages/privacy-policy",
+    "/pages/legal",
+    "/pages/imprint",
     "/terms",
     "/terms-and-conditions",
     "/terms-of-use",
     "/terms-of-service",
-    "/policies/terms-of-service",          // Shopify
-    "/policies/privacy-policy",            // Shopify
+    "/policies/terms-of-service",             // Shopify policies
+    "/policies/privacy-policy",
     "/legal",
     "/legal-notices",
     "/legal-information",
@@ -1982,8 +2205,13 @@ async function scrapeUkEntityFromWebsite(domain: string): Promise<{
     "/sitemap",
     "/cookies",
     "/cookie-policy",
-    "/impressum",                          // EU/German legal page
+    "/impressum",                             // EU/German legal page
   ];
+
+  // Chrome UA — many retail sites (Supreme, Hermès, Off-White) sit behind
+  // Cloudflare and 403 anything that looks like a bot. A real browser UA
+  // is far more likely to get through, and we're hitting public legal pages.
+  const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
   // Patterns that match "XXX Limited/Ltd/plc/LLP registered in England/Wales"
   const ENTITY_PATTERNS: RegExp[] = [
@@ -2025,101 +2253,191 @@ async function scrapeUkEntityFromWebsite(domain: string): Promise<{
     return null;
   }
 
-  // ── Step 1: Shopify JSON API (works without JS) ───────────────────────────
-  // Shopify stores expose policy pages as plain JSON — bypasses SPA rendering.
-  const shopifyPolicies = [
-    "/policies/terms-of-service.json",
-    "/policies/privacy-policy.json",
-    "/policies/refund-policy.json",
-  ];
-  for (const path of shopifyPolicies) {
+  // AI fallback used when regex misses on a fetched legal page that clearly
+  // contains UK signals (England/Wales/Companies House). Cheaper than missing
+  // a real entity disclosure due to unusual phrasing.
+  async function aiExtract(text: string, sourceUrl: string): Promise<{ entityName: string | null; chNumber: string | null; sourceUrl: string } | null> {
+    if (!brand) return null;
+    const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return null;
     try {
-      const resp = await fetch(`${base}${path}`, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; BGP-Dashboard/1.0)" },
-        signal: AbortSignal.timeout(6000),
-        redirect: "follow",
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const client = new Anthropic({ apiKey });
+      const prompt = `Extract the UK Companies House registered entity that operates the brand "${brand.name}" from this T&Cs/legal/privacy page.${brand.parentGroup ? ` Parent group: ${brand.parentGroup}.` : ""}
+
+Page URL: ${sourceUrl}
+
+Page text (first 8KB):
+"""
+${text.slice(0, 8000)}
+"""
+
+Look for phrases like:
+- "These Terms are a contract between you and X Limited"
+- "X is a company registered in England and Wales under company number 1234567"
+- "© X Limited" / "Registered office: ..."
+- "trading name of X Limited"
+
+If the brand operates via a UK subsidiary of a parent group, return the UK subsidiary, NOT the parent group.
+
+Reply with ONLY a JSON object on a single line, no prose, no code fence:
+{"entityName": "<full UK entity name with Limited/Ltd/PLC/LLP suffix>" or null, "chNumber": "<8-digit CH number, zero-padded>" or null}
+
+Return both null if the page doesn't disclose a UK trading entity.`;
+      const msg = await client.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 200,
+        messages: [{ role: "user", content: prompt }],
       });
-      if (!resp.ok) continue;
-      const ct = resp.headers.get("content-type") || "";
-      if (!ct.includes("json")) continue;
-      const json = await resp.json() as any;
-      const body: string = json?.policy?.body || json?.body || "";
-      if (!body) continue;
-      // Strip HTML tags from Shopify body
-      const text = body.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
-      const hit = extractFromText(text, `${base}${path}`);
-      if (hit) {
-        console.log(`[find-uk-entity] Shopify JSON ${path}: "${hit.entityName}" / ${hit.chNumber}`);
-        return hit;
+      const txt = msg.content.map((b: any) => (b.type === "text" ? b.text : "")).join("");
+      const match = txt.match(/\{[\s\S]*?\}/);
+      if (!match) return null;
+      const parsed = JSON.parse(match[0]);
+      const entityName = typeof parsed?.entityName === "string" && parsed.entityName.trim() ? parsed.entityName.trim() : null;
+      let chNumber: string | null = parsed?.chNumber || null;
+      if (chNumber) {
+        chNumber = String(chNumber).replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+        if (chNumber && /^[0-9]+$/.test(chNumber) && chNumber.length < 8) chNumber = chNumber.padStart(8, "0");
+        if (chNumber.length !== 8) chNumber = null;
       }
-    } catch { /* non-fatal */ }
+      if (!entityName && !chNumber) return null;
+      console.log(`[find-uk-entity] AI extracted from ${sourceUrl}: "${entityName}" / ${chNumber}`);
+      return { entityName, chNumber, sourceUrl };
+    } catch (err: any) {
+      console.warn(`[find-uk-entity] AI extraction failed:`, err?.message);
+      return null;
+    }
   }
 
-  // ── Step 2: WordPress REST API ────────────────────────────────────────────
-  const wpSlugs = ["terms-and-conditions", "terms-of-service", "terms", "privacy-policy", "legal"];
-  for (const slug of wpSlugs) {
+  const isLegalPath = (path: string) =>
+    /\/(terms|legal|privacy|policies|impressum|cookies|policy|conditions)/i.test(path) ||
+    /\/pages\/(terms|privacy|legal|imprint)/i.test(path);
+  const hasUkSignal = (text: string) =>
+    /\b(england|wales|companies house|company\s+(?:registration\s+)?number|registered\s+(?:office|in\s+england))\b/i.test(text);
+
+  for (const base of baseUrls) {
+    // Probe — skip a base URL entirely if its host doesn't resolve. Avoids
+    // 30 wasted requests per dead subdomain.
+    let probeOk = false;
     try {
-      const resp = await fetch(`${base}/wp-json/wp/v2/pages?slug=${slug}&_fields=content`, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; BGP-Dashboard/1.0)" },
+      const probe = await fetch(base, {
+        method: "GET",
+        headers: { "User-Agent": UA, "Accept": "text/html,*/*" },
         signal: AbortSignal.timeout(5000),
         redirect: "follow",
       });
-      if (!resp.ok) continue;
-      const json = await resp.json() as any[];
-      const body: string = json?.[0]?.content?.rendered || "";
-      if (!body) continue;
-      const text = body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
-      const hit = extractFromText(text, `${base}/wp-json/wp/v2/pages?slug=${slug}`);
-      if (hit) {
-        console.log(`[find-uk-entity] WP REST ${slug}: "${hit.entityName}" / ${hit.chNumber}`);
-        return hit;
+      probeOk = probe.status > 0; // any HTTP response = host alive
+    } catch { probeOk = false; }
+    if (!probeOk) continue;
+
+    // ── Step 1: Shopify JSON API (works without JS) ───────────────────────────
+    const shopifyPolicies = [
+      "/policies/terms-of-service.json",
+      "/policies/privacy-policy.json",
+      "/policies/refund-policy.json",
+    ];
+    for (const path of shopifyPolicies) {
+      try {
+        const resp = await fetch(`${base}${path}`, {
+          headers: { "User-Agent": UA },
+          signal: AbortSignal.timeout(6000),
+          redirect: "follow",
+        });
+        if (!resp.ok) continue;
+        const ct = resp.headers.get("content-type") || "";
+        if (!ct.includes("json")) continue;
+        const json = await resp.json() as any;
+        const body: string = json?.policy?.body || json?.body || "";
+        if (!body) continue;
+        const text = body.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
+        const hit = extractFromText(text, `${base}${path}`);
+        if (hit) {
+          console.log(`[find-uk-entity] Shopify JSON ${base}${path}: "${hit.entityName}" / ${hit.chNumber}`);
+          return hit;
+        }
+        if (hasUkSignal(text)) {
+          const aiHit = await aiExtract(text, `${base}${path}`);
+          if (aiHit) return aiHit;
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    // ── Step 2: WordPress REST API ────────────────────────────────────────────
+    const wpSlugs = ["terms-and-conditions", "terms-of-service", "terms", "privacy-policy", "legal"];
+    for (const slug of wpSlugs) {
+      try {
+        const resp = await fetch(`${base}/wp-json/wp/v2/pages?slug=${slug}&_fields=content`, {
+          headers: { "User-Agent": UA },
+          signal: AbortSignal.timeout(5000),
+          redirect: "follow",
+        });
+        if (!resp.ok) continue;
+        const json = await resp.json() as any[];
+        const body: string = json?.[0]?.content?.rendered || "";
+        if (!body) continue;
+        const text = body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+        const hit = extractFromText(text, `${base}/wp-json/wp/v2/pages?slug=${slug}`);
+        if (hit) {
+          console.log(`[find-uk-entity] WP REST ${slug}: "${hit.entityName}" / ${hit.chNumber}`);
+          return hit;
+        }
+        if (hasUkSignal(text)) {
+          const aiHit = await aiExtract(text, `${base}/wp-json/wp/v2/pages?slug=${slug}`);
+          if (aiHit) return aiHit;
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    // ── Step 3: Regular HTML pages (static sites / SSR) ──────────────────────
+    for (const page of pages) {
+      const url = `${base}${page}`;
+      try {
+        const resp = await fetch(url, {
+          headers: { "User-Agent": UA },
+          signal: AbortSignal.timeout(6000),
+          redirect: "follow",
+        });
+        if (!resp.ok) continue;
+        const ct = resp.headers.get("content-type") || "";
+        if (!ct.includes("html") && !ct.includes("text")) continue;
+
+        const html = await resp.text();
+
+        // Also check __NEXT_DATA__ / Next.js SSR JSON blobs embedded in the page
+        const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>(\{[\s\S]*?\})<\/script>/);
+        if (nextDataMatch) {
+          try {
+            const nd = JSON.parse(nextDataMatch[1]);
+            const ndText = JSON.stringify(nd);
+            const hit = extractFromText(ndText, url + "#next-data");
+            if (hit) { console.log(`[find-uk-entity] Next.js JSON blob at ${url}`); return hit; }
+          } catch { /* non-fatal */ }
+        }
+
+        // Strip scripts/styles, decode HTML entities
+        const text = html
+          .replace(/<script[\s\S]*?<\/script>/gi, " ")
+          .replace(/<style[\s\S]*?<\/style>/gi, " ")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/&copy;/g, "©")
+          .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+          .replace(/&[a-z]+;/g, " ")
+          .replace(/\s+/g, " ");
+
+        const hit = extractFromText(text, url);
+        if (hit) {
+          console.log(`[find-uk-entity] scraped from ${url}: "${hit.entityName}" / ${hit.chNumber}`);
+          return hit;
+        }
+        // AI fallback when regex misses on a legal-looking page that has
+        // clear UK signals — catches retailers with non-standard T&Cs phrasing.
+        if (isLegalPath(page) && text.length > 200 && hasUkSignal(text)) {
+          const aiHit = await aiExtract(text, url);
+          if (aiHit) return aiHit;
+        }
+      } catch (err: any) {
+        console.log(`[find-uk-entity] scrape failed ${url}: ${err.message}`);
       }
-    } catch { /* non-fatal */ }
-  }
-
-  // ── Step 3: Regular HTML pages (static sites / SSR) ──────────────────────
-  for (const page of pages) {
-    const url = `${base}${page}`;
-    try {
-      const resp = await fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; BGP-Dashboard/1.0; legal-entity-lookup)" },
-        signal: AbortSignal.timeout(6000),
-        redirect: "follow",
-      });
-      if (!resp.ok) continue;
-      const ct = resp.headers.get("content-type") || "";
-      if (!ct.includes("html") && !ct.includes("text")) continue;
-
-      const html = await resp.text();
-
-      // Also check __NEXT_DATA__ / Next.js SSR JSON blobs embedded in the page
-      const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>(\{[\s\S]*?\})<\/script>/);
-      if (nextDataMatch) {
-        try {
-          const nd = JSON.parse(nextDataMatch[1]);
-          const ndText = JSON.stringify(nd);
-          const hit = extractFromText(ndText, url + "#next-data");
-          if (hit) { console.log(`[find-uk-entity] Next.js JSON blob at ${url}`); return hit; }
-        } catch { /* non-fatal */ }
-      }
-
-      // Strip scripts/styles, decode HTML entities
-      const text = html
-        .replace(/<script[\s\S]*?<\/script>/gi, " ")
-        .replace(/<style[\s\S]*?<\/style>/gi, " ")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/&copy;/g, "©")
-        .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-        .replace(/&[a-z]+;/g, " ")
-        .replace(/\s+/g, " ");
-
-      const hit = extractFromText(text, url);
-      if (hit) {
-        console.log(`[find-uk-entity] scraped from ${url}: "${hit.entityName}" / ${hit.chNumber}`);
-        return hit;
-      }
-    } catch (err: any) {
-      console.log(`[find-uk-entity] scrape failed ${url}: ${err.message}`);
     }
   }
 
@@ -2141,7 +2459,8 @@ router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async
 
     const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
     if (domain) {
-      scraped = await scrapeUkEntityFromWebsite(domain);
+      const parentGroup = (company as any).backers as string | null;
+      scraped = await scrapeUkEntityFromWebsite(domain, { name: company.name, parentGroup });
       // Auto-save scraped entity name if we don't already have one stored
       if (scraped.entityName && !ukEntityName) {
         ukEntityName = scraped.entityName;
