@@ -370,6 +370,7 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
   companyNumber?: string | null;
   message?: string;
   resolvedFrom?: "stored" | "website" | "ai_picker" | "name_match";
+  diagnostics?: Array<{ step: string; outcome: string; detail?: string }>;
 }> {
   const { db } = await import("./db");
   const { crmCompanies } = await import("@shared/schema");
@@ -380,16 +381,16 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
 
   let chNumber = opts.forceFromWebsite ? null : company.companiesHouseNumber;
   let resolvedFrom: "stored" | "website" | "ai_picker" | "name_match" = "stored";
+  // Per-step trace so the brand panel can show why a re-resolve picked what
+  // it picked (or why it picked nothing). Without this the "Wrong company?"
+  // button feels like a black box when it lands the same wrong CH again.
+  const diagnostics: Array<{ step: string; outcome: string; detail?: string }> = [];
 
   const existingChData = company.companiesHouseData as any;
   const existingStatus = existingChData?.profile?.companyStatus;
   const isExistingDissolved = existingStatus && existingStatus !== "active";
   const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
 
-  // Always run the website-entity check when we have a domain. Even if a CH
-  // number is already stored, we use the website as the source of truth — too
-  // many wrong matches got cemented because the original lookup was a blind
-  // CH name search. We still skip if there's no domain at all.
   if (!chNumber || isExistingDissolved || (opts.forceFromWebsite && domain)) {
     const storedEntityName = (company as any).ukEntityName as string | null;
     let searchName = storedEntityName || company.name;
@@ -414,33 +415,56 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
         if (scraped.sourceUrl) {
           websiteContext += `\nSource: ${scraped.sourceUrl}`;
         }
-      } catch { /* non-fatal */ }
+        diagnostics.push({
+          step: "website_scrape",
+          outcome: scraped.chNumber ? "ch_found" : scraped.entityName ? "entity_only" : "nothing",
+          detail: [scraped.entityName, scraped.chNumber, scraped.sourceUrl].filter(Boolean).join(" · ") || `tried ${domain}`,
+        });
+      } catch (err: any) {
+        diagnostics.push({ step: "website_scrape", outcome: "error", detail: err?.message || "fetch failed" });
+      }
+    } else {
+      diagnostics.push({ step: "website_scrape", outcome: "skipped", detail: "no domain on company" });
     }
 
-    // Perplexity fallback. SPAs (Supreme, AllSaints, etc.) hide their footer
-    // boilerplate behind JavaScript so the static scraper returns nothing.
-    // Ask Perplexity directly for the UK CH-registered entity name + CRN, then
-    // verify it via the Companies House API before trusting it.
     if (!chNumber && domain) {
-      try {
-        const perp = await askPerplexityForUkEntity(company.name, domain);
-        if (perp?.chNumber) {
-          const verified = await verifyChNumber(perp.chNumber);
-          if (verified) {
-            chNumber = perp.chNumber;
-            resolvedFrom = "website";
-            websiteContext += `\nPerplexity match: ${perp.entityName || "?"} (CH ${perp.chNumber}) — verified active on CH.`;
-            console.log(`[auto-kyc] Perplexity yielded CH ${perp.chNumber} (${perp.entityName}) for "${company.name}"`);
+      const { isPerplexityConfigured } = await import("./perplexity");
+      if (!isPerplexityConfigured()) {
+        diagnostics.push({ step: "perplexity", outcome: "not_configured", detail: "PERPLEXITY_API_KEY not set on Railway — fallback skipped" });
+      } else {
+        try {
+          const perp = await askPerplexityForUkEntity(company.name, domain);
+          if (perp?.chNumber) {
+            const verified = await verifyChNumber(perp.chNumber);
+            if (verified) {
+              chNumber = perp.chNumber;
+              resolvedFrom = "website";
+              websiteContext += `\nPerplexity match: ${perp.entityName || "?"} (CH ${perp.chNumber}) — verified active on CH.`;
+              console.log(`[auto-kyc] Perplexity yielded CH ${perp.chNumber} (${perp.entityName}) for "${company.name}"`);
+              diagnostics.push({
+                step: "perplexity",
+                outcome: "ch_found",
+                detail: `${perp.entityName || "?"} → CH ${perp.chNumber} (verified active)`,
+              });
+            } else {
+              console.warn(`[auto-kyc] Perplexity suggested CH ${perp.chNumber} for "${company.name}" but it failed CH verify`);
+              diagnostics.push({
+                step: "perplexity",
+                outcome: "ch_failed_verify",
+                detail: `Perplexity said CH ${perp.chNumber} but Companies House didn't recognise it (or it's dissolved)`,
+              });
+            }
+          } else if (perp?.entityName) {
+            searchName = perp.entityName;
+            websiteContext += `\nPerplexity-suggested entity name: ${perp.entityName}`;
+            diagnostics.push({ step: "perplexity", outcome: "entity_only", detail: `name: ${perp.entityName}` });
           } else {
-            console.warn(`[auto-kyc] Perplexity suggested CH ${perp.chNumber} for "${company.name}" but it failed CH verify`);
+            diagnostics.push({ step: "perplexity", outcome: "nothing", detail: "Perplexity returned null" });
           }
+        } catch (err: any) {
+          console.warn(`[auto-kyc] Perplexity fallback failed for "${company.name}":`, err?.message);
+          diagnostics.push({ step: "perplexity", outcome: "error", detail: err?.message || "request failed" });
         }
-        if (!chNumber && perp?.entityName) {
-          searchName = perp.entityName;
-          websiteContext += `\nPerplexity-suggested entity name: ${perp.entityName}`;
-        }
-      } catch (err: any) {
-        console.warn(`[auto-kyc] Perplexity fallback failed for "${company.name}":`, err?.message);
       }
     }
 
@@ -448,25 +472,25 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
       const searchData = await chFetch(`/search/companies?q=${encodeURIComponent(searchName)}&items_per_page=10`);
       const items = searchData.items || [];
       if (items.length === 0) {
-        return { success: false, kycStatus: "not_found", message: `No Companies House match found for "${searchName}".` };
+        diagnostics.push({ step: "ch_search", outcome: "no_results", detail: `query: "${searchName}"` });
+        return { success: false, kycStatus: "not_found", message: `No Companies House match found for "${searchName}".`, diagnostics };
       }
       const nameLower = searchName.toLowerCase().trim();
       const activeItems = items.filter((i: any) => i.company_status === "active");
       const candidatePool = activeItems.length > 0 ? activeItems : items;
+      diagnostics.push({
+        step: "ch_search",
+        outcome: "candidates",
+        detail: `query: "${searchName}" → ${items.length} hits (${activeItems.length} active). Top: ${candidatePool.slice(0, 5).map((i: any) => `${i.title}#${i.company_number}`).join(", ")}`,
+      });
 
-      // Run the Claude picker whenever we have a domain or website context —
-      // even if there's a candidate whose name exactly matches the brand. For
-      // generic brand names like "Supreme", "Apple", "Coach", the exact-name
-      // hit is almost never the actual operating entity (it's some random
-      // unrelated ltd that happens to share the word). The picker uses the
-      // domain + scraped boilerplate + each candidate's address & age to
-      // reject those decoys.
       const exactNameHit = candidatePool.find((i: any) => i.title?.toLowerCase().trim() === nameLower);
       const hasContext = !!(domain || websiteContext);
       const needsAiPicker = hasContext
         ? candidatePool.length > 1
         : !exactNameHit && candidatePool.length > 1;
       let aiPicked: string | null = null;
+      let aiError: string | null = null;
       if (needsAiPicker) {
         try {
           aiPicked = await pickChCandidateWithAi({
@@ -476,21 +500,30 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
             candidates: candidatePool.slice(0, 8),
           });
         } catch (err: any) {
+          aiError = err?.message || "unknown";
           console.warn(`[auto-kyc] AI picker failed for "${company.name}":`, err?.message);
         }
       }
       if (aiPicked) {
         chNumber = aiPicked;
         resolvedFrom = "ai_picker";
+        const picked = candidatePool.find((i: any) => i.company_number === aiPicked);
+        diagnostics.push({
+          step: "ai_picker",
+          outcome: "picked",
+          detail: picked ? `${picked.title} (CH ${aiPicked})` : `CH ${aiPicked}`,
+        });
       } else if (hasContext) {
-        // Picker ran and returned null = none of the candidates match this
-        // brand. Don't blindly fall back to nearest-name; report not_found so
-        // the caller knows to investigate. Better than committing to a wrong
-        // CH number that then sticks for another six months.
+        diagnostics.push({
+          step: "ai_picker",
+          outcome: aiError ? "error" : "rejected_all",
+          detail: aiError ? aiError : `Claude rejected all ${candidatePool.length} candidates as not matching "${company.name}" (${domain})`,
+        });
         return {
           success: false,
           kycStatus: "not_found",
           message: `No CH candidate matched "${company.name}" (${domain || "no domain"}). The website-entity scraper found nothing usable, Perplexity didn't resolve a UK entity, and Claude rejected all ${candidatePool.length} CH search hits as wrong matches. Add the correct CH number manually or set the UK entity name on the brand profile.`,
+          diagnostics,
         };
       } else {
         const bestMatch = exactNameHit
@@ -498,6 +531,11 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
           || candidatePool[0];
         chNumber = bestMatch.company_number;
         resolvedFrom = "name_match";
+        diagnostics.push({
+          step: "name_match",
+          outcome: "picked",
+          detail: `${bestMatch.title} (CH ${bestMatch.company_number}) — fallback nearest-name; no domain to verify`,
+        });
       }
     }
   }
@@ -608,6 +646,7 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
     filingsTotal,
     companyNumber: chNumber,
     resolvedFrom,
+    diagnostics,
   };
 }
 

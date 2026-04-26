@@ -326,15 +326,34 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
       return res.json();
     },
     onSuccess: (out: any) => {
+      // Build a step-by-step trace so the user can see WHY each resolve
+      // landed (or failed). Without this the button is a black box and
+      // every wrong outcome looks identical.
+      const trace = Array.isArray(out?.diagnostics)
+        ? out.diagnostics.map((d: any) => `• ${d.step}: ${d.outcome}${d.detail ? ` — ${d.detail}` : ""}`).join("\n")
+        : "";
       if (out?.kycStatus === "not_found") {
-        toast({ title: "No match found", description: out.message || "Couldn't resolve a CH entity from the website.", variant: "destructive" });
+        toast({
+          title: "No match found",
+          description: (out.message || "Couldn't resolve a CH entity from the website.") + (trace ? `\n\n${trace}` : ""),
+          variant: "destructive",
+          duration: 30_000,
+        });
       } else {
-        const via = out?.resolvedFrom === "website" ? "website footer"
+        const via = out?.resolvedFrom === "website" ? "website / Perplexity"
           : out?.resolvedFrom === "ai_picker" ? "AI picker"
           : out?.resolvedFrom === "name_match" ? "name match (no website hit)"
           : "stored";
-        toast({ title: "KYC re-resolved", description: `CH ${out?.companyNumber || "?"} (${via}) — ${out?.kycStatus || "?"}` });
+        toast({
+          title: `KYC re-resolved · CH ${out?.companyNumber || "?"} (${via})`,
+          description: trace || `${out?.kycStatus || "?"}`,
+          duration: 30_000,
+        });
       }
+      // Surface the full trace in the console so it's also reproducible
+      // without taking a screenshot of an ephemeral toast.
+      // eslint-disable-next-line no-console
+      console.log("[re-resolve KYC]", out);
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", companyId] });
     },
