@@ -81,7 +81,7 @@ function parseAiJson(raw: string): any {
 export async function importWipFromBuffer(
   buffer: Buffer,
   opts: { append?: boolean } = {},
-): Promise<{ success: true; imported: number; layout: "legacy" | "sage_transactionsexpo" | "unknown"; sync: any }> {
+): Promise<{ success: true; imported: number; layout: "legacy" | "sage_transactionsexpo" | "unknown"; sync: any; enrichment: any }> {
   const XLSX = await import("xlsx");
   const wb = XLSX.read(buffer, { type: "buffer" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
@@ -103,6 +103,68 @@ export async function importWipFromBuffer(
     );
   }
 
+  // Sage rows are fee SLICES — multiple rows per HEADER_NUMBER, each with a
+  // different Agent and a slice of the total fee. Aggregate them per deal so
+  // we can later upsert billing entity + per-agent allocations + tenant-rep
+  // searches in a single post-process step. Empty for legacy layout.
+  type SageEnrichment = {
+    headerNumber: string;
+    billingEntity: {
+      name: string;
+      addressLine1?: string;
+      addressLine2?: string;
+      city?: string;
+      postcode?: string;
+    } | null;
+    feeSlices: Array<{ agent: string; amount: number; isBgpHouse: boolean }>;
+    status: string | null;
+    project: string | null;
+    tenant: string | null;
+    client: string | null;
+  };
+  const enrichments = new Map<string, SageEnrichment>();
+  const upsertEnrichment = (r: any) => {
+    const headerNum = r.HEADER_NUMBER ? String(r.HEADER_NUMBER).trim() : "";
+    if (!headerNum) return;
+    let e = enrichments.get(headerNum);
+    if (!e) {
+      e = {
+        headerNumber: headerNum,
+        billingEntity: null,
+        feeSlices: [],
+        status: null,
+        project: null,
+        tenant: null,
+        client: null,
+      };
+      enrichments.set(headerNum, e);
+    }
+    // First non-empty wins for header-level fields
+    if (!e.status && r.DealStatus) e.status = String(r.DealStatus).trim();
+    if (!e.project && r.Project) e.project = String(r.Project).trim();
+    if (!e.tenant && r.Tenant) e.tenant = String(r.Tenant).trim();
+    if (!e.client && r.Client) e.client = String(r.Client).trim();
+    if (!e.billingEntity && r.NAME) {
+      e.billingEntity = {
+        name: String(r.NAME).trim(),
+        addressLine1: r.ADDRESS_LINE1 ? String(r.ADDRESS_LINE1).trim() : undefined,
+        addressLine2: r.ADDRESS_LINE2 ? String(r.ADDRESS_LINE2).trim() : undefined,
+        city: r.ADDRESS_CITY ? String(r.ADDRESS_CITY).trim() : undefined,
+        postcode: r.ADDRESS_POSTCODE ? String(r.ADDRESS_POSTCODE).trim() : undefined,
+      };
+    }
+    const agent = r.Agent ? String(r.Agent).trim() : "";
+    const amount = parseFloat(r.NetAmount) || 0;
+    if (agent && amount !== 0) {
+      const stockCode = (r.STOCK_CODE || "").toString().toUpperCase();
+      e.feeSlices.push({
+        agent,
+        amount,
+        isBgpHouse: stockCode === "CON049",
+      });
+    }
+  };
+
   const monthOrder = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
   // Parse a Sage month string into fiscal year. Handles "Apr-26", "2026-04",
@@ -111,7 +173,6 @@ export async function importWipFromBuffer(
   const parseFiscalYear = (raw: any): number | null => {
     if (!raw) return null;
     const s = String(raw).trim();
-    // "Apr-26" or "Apr-2026"
     const mDash = s.match(/^([A-Za-z]{3})[-/ ]+(\d{2,4})$/);
     if (mDash) {
       const mIdx = monthOrder.indexOf(mDash[1].slice(0, 3));
@@ -119,14 +180,12 @@ export async function importWipFromBuffer(
       const yr = mDash[2].length === 2 ? 2000 + yrRaw : yrRaw;
       if (mIdx >= 0 && !isNaN(yr)) return mIdx >= 3 ? yr + 1 : yr;
     }
-    // "2026-04" / "2026/04"
     const mYearFirst = s.match(/^(\d{4})[-/](\d{1,2})/);
     if (mYearFirst) {
       const yr = parseInt(mYearFirst[1]);
       const mIdx0 = parseInt(mYearFirst[2]) - 1;
       if (!isNaN(yr) && mIdx0 >= 0 && mIdx0 < 12) return mIdx0 >= 3 ? yr + 1 : yr;
     }
-    // Date-parseable as last resort
     const d = new Date(s);
     if (!isNaN(d.getTime())) {
       const mIdx0 = d.getUTCMonth();
@@ -144,12 +203,10 @@ export async function importWipFromBuffer(
       if (!r.Group && !r.Project && !r.Tenant && !r.Team) return false;
       return true;
     }
-    // Sage layout — primary key is HEADER_NUMBER, fee value is NetAmount
     const headerNum = r.HEADER_NUMBER ? String(r.HEADER_NUMBER).trim() : "";
     const net = parseFloat(r.NetAmount);
     if (!headerNum && !r.Project && !r.Tenant) return false;
     if (String(r.Project || "").toLowerCase() === "total") return false;
-    // Drop pure-zero rows that aren't deal slices (e.g. trailing blanks)
     if (!headerNum && (!net || isNaN(net))) return false;
     return true;
   }).map((r: any) => {
@@ -171,7 +228,8 @@ export async function importWipFromBuffer(
         fiscalYear: parseFiscalYear(r.Month),
       };
     }
-    // Sage TransactionsExpo layout
+    // Sage TransactionsExpo layout — also capture for post-import enrichment.
+    upsertEnrichment(r);
     const status = (r.DealStatus || r["Deal status"] || "").toString().toUpperCase();
     const isInvoiced = status === "SOL" || status === "SOLD" || status === "INVOICED";
     const net = parseFloat(r.NetAmount) || 0;
@@ -182,9 +240,6 @@ export async function importWipFromBuffer(
       tenant: r.Tenant || r.Client || null,
       team: r.Team || null,
       agent: r.Agent || null,
-      // For SOL/invoiced rows, NetAmount represents invoiced revenue;
-      // otherwise it's WIP. Splits across these two columns matches the
-      // legacy schema's amtWip / amtInvoice convention.
       amtWip: isInvoiced ? 0 : net,
       amtInvoice: isInvoiced ? net : 0,
       month: r.MonthYear || r.Month || null,
@@ -214,7 +269,174 @@ export async function importWipFromBuffer(
   });
 
   const syncResult = await syncWipToCrmDeals(pool);
-  return { success: true, imported: rows.length, layout, sync: syncResult };
+
+  // Sage-only post-pass: now that crm_deals exist (created/updated by sync),
+  // upsert billing entities (NAME + ADDRESS_*), per-agent fee allocations
+  // (NetAmount slices, with BGP House CON049 tagged), and tenant_rep_searches
+  // for any NEG status. Idempotent — safe to re-run.
+  const enrichmentResult = layout === "sage_transactionsexpo"
+    ? await enrichWipDealsFromSage(pool, enrichments)
+    : { skipped: "legacy layout — no per-agent slice / billing entity data in this format" };
+
+  return { success: true, imported: rows.length, layout, sync: syncResult, enrichment: enrichmentResult };
+}
+
+/**
+ * Post-import enrichment for Sage TransactionsExpo WIP exports.
+ *
+ * Each Sage row is a single fee slice (Agent + NetAmount); multiple rows per
+ * HEADER_NUMBER aggregate to one deal. The basic `syncWipToCrmDeals` step
+ * has already created the deal records. This step layers on the
+ * billing-entity / fee-split / tenant-rep relationships that Sage carries
+ * but the legacy WIP report didn't expose:
+ *
+ *   - **Billing entity** (`NAME` + `ADDRESS_*`) → upserts a `crm_companies`
+ *     row of type "Billing" and stamps it as `crm_deals.invoicing_entity_id`.
+ *     Dedup by lower-cased name. The Xero contact sync layer will later
+ *     populate `xero_contact_id` on these rows.
+ *   - **Per-agent allocations** (`Agent` + `NetAmount`, with `STOCK_CODE`
+ *     CON049 tagged as BGP House) → wipes existing `deal_fee_allocations`
+ *     for the deal, then inserts one row per slice as `allocationType=fixed`
+ *     `fixedAmount=NetAmount`. BGP House slices are name-tagged so the UI
+ *     can colour them differently.
+ *   - **Tenant-rep searches** for NEG status → upserts a `tenant_rep_searches`
+ *     row keyed by dealId so each NEG deal has a kanban entry. Dedup by
+ *     dealId so re-runs don't double-up.
+ */
+async function enrichWipDealsFromSage(
+  dbPool: Pool,
+  enrichments: Map<string, {
+    headerNumber: string;
+    billingEntity: { name: string; addressLine1?: string; addressLine2?: string; city?: string; postcode?: string } | null;
+    feeSlices: Array<{ agent: string; amount: number; isBgpHouse: boolean }>;
+    status: string | null;
+    project: string | null;
+    tenant: string | null;
+    client: string | null;
+  }>,
+) {
+  const result = {
+    dealsEnriched: 0,
+    billingEntitiesCreated: 0,
+    billingEntitiesLinked: 0,
+    allocationsCreated: 0,
+    tenantRepSearchesCreated: 0,
+    skippedNoDeal: 0,
+  };
+  if (enrichments.size === 0) return result;
+
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+
+    // Map deals by their WIP Ref (stamped into `comments` by syncWipToCrmDeals).
+    const { rows: deals } = await client.query(
+      `SELECT id, comments, tenant_id FROM crm_deals WHERE comments LIKE '%WIP Ref:%'`,
+    );
+    const refToDeal = new Map<string, { id: string; tenantId: string | null }>();
+    for (const d of deals) {
+      const m = d.comments?.match(/WIP Ref:\s*(\d+)/);
+      if (m) refToDeal.set(m[1], { id: d.id, tenantId: d.tenant_id });
+    }
+
+    // Cache existing companies for billing-entity dedup.
+    const { rows: companies } = await client.query(
+      `SELECT id, LOWER(TRIM(name)) AS name_lower FROM crm_companies`,
+    );
+    const compByName = new Map<string, string>();
+    for (const c of companies) compByName.set(c.name_lower, c.id);
+
+    for (const [headerNum, enrich] of enrichments) {
+      const deal = refToDeal.get(headerNum);
+      if (!deal) {
+        result.skippedNoDeal++;
+        continue;
+      }
+      result.dealsEnriched++;
+
+      // 1) Billing entity ----------------------------------------------------
+      if (enrich.billingEntity?.name) {
+        const billingName = enrich.billingEntity.name;
+        const key = billingName.toLowerCase();
+        let billingId = compByName.get(key);
+        if (!billingId) {
+          billingId = randomUUID();
+          const addressParts = [
+            enrich.billingEntity.addressLine1,
+            enrich.billingEntity.addressLine2,
+            enrich.billingEntity.city,
+            enrich.billingEntity.postcode,
+          ].filter(Boolean).join(", ");
+          await client.query(
+            `INSERT INTO crm_companies (id, name, company_type, head_office_address, postcode, created_at, updated_at)
+             VALUES ($1, $2, 'Billing', $3, $4, NOW(), NOW())`,
+            [
+              billingId,
+              billingName,
+              addressParts ? JSON.stringify({ address: addressParts }) : null,
+              enrich.billingEntity.postcode || null,
+            ],
+          );
+          compByName.set(key, billingId);
+          result.billingEntitiesCreated++;
+        }
+        await client.query(
+          `UPDATE crm_deals SET invoicing_entity_id = $1, updated_at = NOW() WHERE id = $2`,
+          [billingId, deal.id],
+        );
+        result.billingEntitiesLinked++;
+      }
+
+      // 2) Fee allocations ---------------------------------------------------
+      // Wipe-and-replace so re-imports don't accumulate duplicates. BGP House
+      // CON049 slices are tagged in the agent name so the UI can call them
+      // out (the agent decode UI already handles the " (BGP House)" suffix).
+      await client.query(`DELETE FROM deal_fee_allocations WHERE deal_id = $1`, [deal.id]);
+      for (const slice of enrich.feeSlices) {
+        if (!slice.agent || slice.amount === 0) continue;
+        await client.query(
+          `INSERT INTO deal_fee_allocations (id, deal_id, agent_name, allocation_type, fixed_amount, created_at)
+           VALUES (gen_random_uuid(), $1, $2, 'fixed', $3, NOW())`,
+          [
+            deal.id,
+            slice.isBgpHouse ? `${slice.agent} (BGP House)` : slice.agent,
+            slice.amount,
+          ],
+        );
+        result.allocationsCreated++;
+      }
+
+      // 3) Tenant rep searches for NEG status --------------------------------
+      // Only seed once per deal; deal lead can edit downstream without us
+      // overwriting on the next import.
+      const isNeg = (enrich.status || "").toUpperCase() === "NEG";
+      if (isNeg) {
+        const { rows: existing } = await client.query(
+          `SELECT id FROM tenant_rep_searches WHERE deal_id = $1 LIMIT 1`,
+          [deal.id],
+        );
+        if (existing.length === 0) {
+          const clientName = (enrich.tenant || enrich.client || enrich.project || "Unknown").trim();
+          await client.query(
+            `INSERT INTO tenant_rep_searches (id, client_name, company_id, deal_id, status, created_at, updated_at)
+             VALUES (gen_random_uuid(), $1, $2, $3, 'In Progress', NOW(), NOW())`,
+            [clientName, deal.tenantId || null, deal.id],
+          );
+          result.tenantRepSearchesCreated++;
+        }
+      }
+    }
+
+    await client.query("COMMIT");
+    console.log(`[WIP Enrich] ${JSON.stringify(result)}`);
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[WIP Enrich] Error:", err);
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function syncWipToCrmDeals(dbPool: Pool) {

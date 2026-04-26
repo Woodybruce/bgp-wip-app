@@ -3209,7 +3209,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "import_wip_excel",
-      description: "Import a Sage WIP (Work-in-Progress) Excel export into the WIP report. Wipes wip_entries and reloads from the file (or appends with mode='append'), then auto-syncs the rows to crm_deals so every WIP entry is linked to a deal record. The Excel must be a Sage 'WIP by deal' export with columns: Ref, Group, Project, Tenant, Team, Agent, Amt WIP, Amt invoice, Month, Deal status, Stage, InvoiceNo, ORDER_NUMBER. The file must have been uploaded to this chat first (drag & drop). Use when the user asks to import / upload / load the WIP, or says they've dragged in a Sage WIP file. By default this REPLACES the existing WIP — use mode='append' only for incremental updates between full Sage exports.",
+      description: "Import a Sage WIP (Work-in-Progress) Excel export end-to-end. Auto-detects either Sage layout: legacy 'WIP by deal' (Ref, Amt WIP, Amt invoice, …) or current Sage TransactionsExpo (HEADER_NUMBER, NetAmount, NAME, ADDRESS_*, STOCK_CODE, DealStatus, …). Wipes wip_entries and reloads (or appends with mode='append'), then on the TransactionsExpo layout ALSO populates: (1) crm_deals via syncWipToCrmDeals, (2) crm_companies billing entities from NAME + ADDRESS_*, with `invoicing_entity_id` stamped on each deal, (3) deal_fee_allocations from per-Agent NetAmount slices (CON049 STOCK_CODE tagged as BGP House), (4) tenant_rep_searches kanban entries for any NEG-status deals. Idempotent — safe to re-run on each Sage export. The file must have been uploaded to this chat first (drag & drop). By default REPLACES wip_entries — use mode='append' only for incremental updates between full Sage exports.",
       parameters: {
         type: "object",
         properties: {
@@ -6565,6 +6565,7 @@ Be thorough — include every unit row you can classify, across all properties i
       // exposes which Sage export format was detected, useful for the
       // analyst to know we're parsing what they uploaded.
       const sync = result.sync || {};
+      const enrich = result.enrichment || {};
       return {
         data: {
           success: true,
@@ -6572,10 +6573,18 @@ Be thorough — include every unit row you can classify, across all properties i
           layout: result.layout,
           mode,
           syncSummary: {
-            dealsCreated: sync.dealsCreated ?? sync.created ?? null,
-            dealsUpdated: sync.dealsUpdated ?? sync.updated ?? null,
-            dealsLinked: sync.dealsLinked ?? sync.linked ?? null,
-            unmatched: sync.unmatched ?? null,
+            dealsCreated: sync.created ?? sync.dealsCreated ?? null,
+            dealsUpdated: sync.updated ?? sync.dealsUpdated ?? null,
+            propertiesCreated: sync.propertiesCreated ?? null,
+            companiesCreated: sync.companiesCreated ?? null,
+          },
+          enrichment: {
+            dealsEnriched: enrich.dealsEnriched ?? null,
+            billingEntitiesCreated: enrich.billingEntitiesCreated ?? null,
+            billingEntitiesLinked: enrich.billingEntitiesLinked ?? null,
+            allocationsCreated: enrich.allocationsCreated ?? null,
+            tenantRepSearchesCreated: enrich.tenantRepSearchesCreated ?? null,
+            skipped: enrich.skipped ?? null,
           },
         },
         action: { type: "wip_imported", imported: result.imported, layout: result.layout },
