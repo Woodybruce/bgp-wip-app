@@ -454,12 +454,18 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
       const activeItems = items.filter((i: any) => i.company_status === "active");
       const candidatePool = activeItems.length > 0 ? activeItems : items;
 
-      // Try Claude-based picker when there's a website to ground the choice
-      // and there are multiple plausible candidates (more than one active
-      // result, or no exact-name match). Falls back to the old nearest-name
-      // heuristic if the AI call fails or isn't applicable.
+      // Run the Claude picker whenever we have a domain or website context —
+      // even if there's a candidate whose name exactly matches the brand. For
+      // generic brand names like "Supreme", "Apple", "Coach", the exact-name
+      // hit is almost never the actual operating entity (it's some random
+      // unrelated ltd that happens to share the word). The picker uses the
+      // domain + scraped boilerplate + each candidate's address & age to
+      // reject those decoys.
       const exactNameHit = candidatePool.find((i: any) => i.title?.toLowerCase().trim() === nameLower);
-      const needsAiPicker = !exactNameHit && candidatePool.length > 1 && (domain || websiteContext);
+      const hasContext = !!(domain || websiteContext);
+      const needsAiPicker = hasContext
+        ? candidatePool.length > 1
+        : !exactNameHit && candidatePool.length > 1;
       let aiPicked: string | null = null;
       if (needsAiPicker) {
         try {
@@ -476,6 +482,16 @@ async function performAutoKyc(companyId: string, opts: { forceFromWebsite?: bool
       if (aiPicked) {
         chNumber = aiPicked;
         resolvedFrom = "ai_picker";
+      } else if (hasContext) {
+        // Picker ran and returned null = none of the candidates match this
+        // brand. Don't blindly fall back to nearest-name; report not_found so
+        // the caller knows to investigate. Better than committing to a wrong
+        // CH number that then sticks for another six months.
+        return {
+          success: false,
+          kycStatus: "not_found",
+          message: `No CH candidate matched "${company.name}" (${domain || "no domain"}). The website-entity scraper found nothing usable, Perplexity didn't resolve a UK entity, and Claude rejected all ${candidatePool.length} CH search hits as wrong matches. Add the correct CH number manually or set the UK entity name on the brand profile.`,
+        };
       } else {
         const bestMatch = exactNameHit
           || candidatePool.find((i: any) => i.title?.toLowerCase().includes(nameLower) || nameLower.includes(i.title?.toLowerCase()))
