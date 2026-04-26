@@ -398,7 +398,12 @@ async function performAutoKyc(companyId: string, opts: {
   const existingChData = company.companiesHouseData as any;
   const existingStatus = existingChData?.profile?.companyStatus;
   const isExistingDissolved = existingStatus && existingStatus !== "active";
-  const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
+  // Brand records populate `website` from enrichment but `domainUrl`/`domain`
+  // are only set by older flows. Fall back to `website` so the scraper actually
+  // runs on tracked brands (otherwise we'd skip with "no domain on company").
+  const domain = (company as any).domainUrl as string | null
+    || (company as any).domain as string | null
+    || (company as any).website as string | null;
 
   // Parent-group context — used by every AI step downstream so the system can
   // resolve foreign-owned brands (Supreme/EssilorLuxottica, Off-White/LVMH)
@@ -551,7 +556,14 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
         diagnostics.push({ step: "website_scrape", outcome: "error", detail: err?.message || "fetch failed" });
       }
     } else {
-      diagnostics.push({ step: "website_scrape", outcome: "skipped", detail: "no domain on company" });
+      const reason = chNumber
+        ? "already resolved upstream"
+        : opts.manualTcsUrl
+        ? "user supplied T&Cs URL — using that instead"
+        : opts.manualEntityName
+        ? "user supplied UK entity name — skipping scrape"
+        : "no domain/website on company";
+      diagnostics.push({ step: "website_scrape", outcome: "skipped", detail: reason });
     }
 
     if (!chNumber && domain) {
@@ -2457,7 +2469,9 @@ router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async
     let ukEntityName = (company as any).ukEntityName as string | null;
     let scraped: { entityName: string | null; chNumber: string | null; sourceUrl: string | null } = { entityName: null, chNumber: null, sourceUrl: null };
 
-    const domain = (company as any).domainUrl as string | null || (company as any).domain as string | null;
+    const domain = (company as any).domainUrl as string | null
+      || (company as any).domain as string | null
+      || (company as any).website as string | null;
     if (domain) {
       const parentGroup = (company as any).backers as string | null;
       scraped = await scrapeUkEntityFromWebsite(domain, { name: company.name, parentGroup });
