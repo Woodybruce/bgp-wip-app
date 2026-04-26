@@ -1375,12 +1375,13 @@ Respond with ONLY a JSON object (no markdown, no backticks):
 
   app.get("/api/land-registry/searches", requireAuth, async (req: any, res) => {
     try {
-      const userId = req.session?.userId || req.tokenUserId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      // Land Registry is a shared team board — every user sees every search
+      // (regardless of who ran it) so the team can collaborate on the same
+      // research without duplicating work. Each row keeps its userId so the
+      // UI can show "searched by X" if useful.
       const rows = await db.select().from(landRegistrySearches)
-        .where(eq(landRegistrySearches.userId, userId))
         .orderBy(desc(landRegistrySearches.createdAt))
-        .limit(50);
+        .limit(200);
       res.json(rows);
     } catch (e: any) {
       console.error("[land-registry-searches] Error:", e);
@@ -1502,12 +1503,11 @@ Respond with ONLY a JSON object (no markdown, no backticks):
     }
   });
 
-  // GET /api/land-registry/searches/recent — Return the 20 most recent searches with linked CRM property info
+  // GET /api/land-registry/searches/recent — Return the most recent
+  // searches with linked CRM property info AND the searcher's name so the
+  // team board can show "searched by X". Shared across all users.
   app.get("/api/land-registry/searches/recent", requireAuth, async (req: any, res) => {
     try {
-      const userId = req.session?.userId || req.tokenUserId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-
       const rows = await db.execute(sql`
         SELECT
           lrs.id,
@@ -1520,6 +1520,8 @@ Respond with ONLY a JSON object (no markdown, no backticks):
           lrs.crm_property_id,
           lrs.created_at,
           lrs.user_id,
+          u.name AS searched_by_name,
+          u.email AS searched_by_email,
           (
             SELECT json_build_object(
               'id', p.id,
@@ -1533,9 +1535,9 @@ Respond with ONLY a JSON object (no markdown, no backticks):
             LIMIT 1
           ) AS linked_property
         FROM land_registry_searches lrs
-        WHERE lrs.user_id = ${userId}
+        LEFT JOIN users u ON u.id = lrs.user_id
         ORDER BY lrs.created_at DESC
-        LIMIT 20
+        LIMIT 100
       `);
 
       res.json(rows.rows || rows);
