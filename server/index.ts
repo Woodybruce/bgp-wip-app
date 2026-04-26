@@ -481,6 +481,83 @@ const httpServer = createServer(app);
 // Railway health check — unauthenticated, before all middleware
 app.get("/api/ping", (_req, res) => res.json({ status: "ok" }));
 
+/**
+ * ScraperAPI status check — confirms the key is set + valid, reports the
+ * remaining credit balance and plan, and runs a single test fetch through
+ * the proxy to verify end-to-end. Auth-light (require any session) so it
+ * can be hit from the browser quickly. Three pieces:
+ *   1) ENV: is SCRAPERAPI_KEY set
+ *   2) Account: hit api.scraperapi.com/account → plan + credits
+ *   3) Test fetch: pull a known-good Westminster IDOX docs page through
+ *      the proxy and check we get HTML back (not a block / 503)
+ */
+app.get("/api/scraperapi/ping", async (_req, res) => {
+  const key = process.env.SCRAPERAPI_KEY;
+  const out: any = { keySet: !!key, keyLength: key?.length || 0 };
+  if (!key) {
+    out.error = "SCRAPERAPI_KEY env var is not set on this deployment.";
+    return res.status(503).json(out);
+  }
+  // 1) Account info — credit balance, plan name, request count
+  try {
+    const accRes = await fetch(`https://api.scraperapi.com/account?api_key=${encodeURIComponent(key)}`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (accRes.ok) {
+      const account = await accRes.json() as any;
+      out.account = {
+        plan: account.subscriptionPlan || account.plan || "unknown",
+        creditsLeft: account.requestLimit != null && account.requestCount != null
+          ? account.requestLimit - account.requestCount
+          : null,
+        requestLimit: account.requestLimit ?? null,
+        requestCount: account.requestCount ?? null,
+        concurrencyLimit: account.concurrencyLimit ?? null,
+        failedRequestCount: account.failedRequestCount ?? null,
+      };
+    } else {
+      out.account = { error: `Account endpoint returned ${accRes.status}`, body: (await accRes.text().catch(() => "")).slice(0, 200) };
+    }
+  } catch (err: any) {
+    out.account = { error: err?.message || "fetch threw" };
+  }
+
+  // 2) Test fetch — known Westminster docs-tab URL (a real planning app on
+  // 18-22 Haymarket). If this comes back as HTML > 1KB the proxy is
+  // working end-to-end.
+  const testUrl = "https://idoxpa.westminster.gov.uk/online-applications/applicationDetails.do?activeTab=documents&keyVal=PEH1KFRPIVX00";
+  try {
+    const t0 = Date.now();
+    const tRes = await fetch(
+      `https://api.scraperapi.com/?api_key=${encodeURIComponent(key)}&url=${encodeURIComponent(testUrl)}&country_code=uk&render=false`,
+      { signal: AbortSignal.timeout(25000) }
+    );
+    const elapsed = Date.now() - t0;
+    if (tRes.ok) {
+      const body = await tRes.text();
+      out.testFetch = {
+        ok: true,
+        status: tRes.status,
+        elapsedMs: elapsed,
+        bodyBytes: body.length,
+        looksLikeIdoxPage: /applicationDocumentsTable|Documents tab|application reference/i.test(body),
+        firstLine: body.slice(0, 200).replace(/\s+/g, " ").trim(),
+      };
+    } else {
+      out.testFetch = {
+        ok: false,
+        status: tRes.status,
+        elapsedMs: elapsed,
+        body: (await tRes.text().catch(() => "")).slice(0, 300),
+      };
+    }
+  } catch (err: any) {
+    out.testFetch = { ok: false, error: err?.message || "fetch threw" };
+  }
+
+  res.json(out);
+});
+
 const MAINTENANCE_MODE = false;
 const MAINTENANCE_ALLOWED_EMAILS = new Set([
   "woody@brucegillinghampollard.com",
