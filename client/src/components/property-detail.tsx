@@ -2,6 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import PathwayIntelStrip from "@/components/pathway-intel-strip";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Users,
@@ -382,31 +383,49 @@ export function PropertyDetail({ id }: { id: string }) {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardContent className="p-4">
-                <PropertyTenancySchedule propertyId={property.id} />
-              </CardContent>
-            </Card>
+            <ErrorBoundary compact name="Tenancy schedule">
+              <Card>
+                <CardContent className="p-4">
+                  <PropertyTenancySchedule propertyId={property.id} />
+                </CardContent>
+              </Card>
+            </ErrorBoundary>
 
-            <PathwayIntelStrip
-              propertyId={property.id}
-              address={typeof property.address === "string" ? property.address : (property.address as any)?.line1 || property.name}
-              postcode={(property as any).postcode || (property.address as any)?.postcode}
-            />
+            <ErrorBoundary compact name="Pathway intel strip">
+              <PathwayIntelStrip
+                propertyId={property.id}
+                address={typeof property.address === "string" ? property.address : (property.address as any)?.line1 || property.name}
+                postcode={(property as any).postcode || (property.address as any)?.postcode}
+              />
+            </ErrorBoundary>
 
-            <Property360Panel propertyId={property.id} />
+            <ErrorBoundary compact name="Property 360">
+              <Property360Panel propertyId={property.id} />
+            </ErrorBoundary>
 
-            <PropertyKycPanel property={property} />
+            <ErrorBoundary compact name="KYC panel">
+              <PropertyKycPanel property={property} />
+            </ErrorBoundary>
 
-            <PropertyIntelligencePanel property={property} />
+            <ErrorBoundary compact name="Property intelligence (Land Registry / planning)">
+              <PropertyIntelligencePanel property={property} />
+            </ErrorBoundary>
 
-            <LeasingPitchPanel propertyId={property.id} />
+            <ErrorBoundary compact name="Leasing pitch">
+              <LeasingPitchPanel propertyId={property.id} />
+            </ErrorBoundary>
 
-            <BrandGapPanel propertyId={property.id} />
+            <ErrorBoundary compact name="Brand gap">
+              <BrandGapPanel propertyId={property.id} />
+            </ErrorBoundary>
 
-            <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
+            <ErrorBoundary compact name="Property news">
+              <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
+            </ErrorBoundary>
 
-            <LinkedContactsPanel propertyId={property.id} />
+            <ErrorBoundary compact name="Linked contacts">
+              <LinkedContactsPanel propertyId={property.id} />
+            </ErrorBoundary>
 
             <div className="md:hidden space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

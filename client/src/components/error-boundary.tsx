@@ -5,6 +5,10 @@ import { Button } from "@/components/ui/button";
 interface Props {
   children: ReactNode;
   fallbackMessage?: string;
+  /** Label for the section being protected — shown in the fallback so users can identify which panel broke. */
+  name?: string;
+  /** Render a compact one-line fallback instead of the full-screen one. Use when wrapping individual panels. */
+  compact?: boolean;
 }
 
 interface State {
@@ -23,7 +27,8 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: { componentStack?: string | null }) {
-    console.error("[ErrorBoundary] Caught rendering error:", error, info.componentStack);
+    const label = this.props.name ? ` in "${this.props.name}"` : "";
+    console.error(`[ErrorBoundary] Caught rendering error${label}:`, error, info.componentStack);
   }
 
   handleReset = () => {
@@ -36,6 +41,30 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
+      if (this.props.compact) {
+        // Compact inline fallback: keeps the rest of the page rendering and
+        // surfaces the actual error message so it can be triaged without
+        // opening DevTools. Only the broken panel is taken out.
+        const msg = this.state.error?.message || "Unknown error";
+        const label = this.props.name || "This panel";
+        return (
+          <div className="border border-destructive/30 bg-destructive/5 rounded-md p-3 my-2 text-xs" data-testid="error-boundary-fallback">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-destructive">{label} couldn't render</p>
+                <p className="text-muted-foreground font-mono break-all mt-0.5">{msg}</p>
+                {this.props.fallbackMessage && (
+                  <p className="text-muted-foreground mt-0.5">{this.props.fallbackMessage}</p>
+                )}
+              </div>
+              <Button variant="ghost" size="sm" className="h-6 text-[10px] shrink-0" onClick={this.handleReset}>
+                <RefreshCw className="w-3 h-3 mr-1" /> Retry
+              </Button>
+            </div>
+          </div>
+        );
+      }
       return (
         <div className="flex items-center justify-center min-h-[300px] p-8" data-testid="error-boundary-fallback">
           <div className="text-center space-y-4 max-w-md">
@@ -43,11 +72,16 @@ export class ErrorBoundary extends Component<Props, State> {
               <AlertTriangle className="w-6 h-6 text-destructive" />
             </div>
             <h2 className="text-lg font-semibold text-foreground">
-              Something went wrong
+              {this.props.name ? `${this.props.name} — something went wrong` : "Something went wrong"}
             </h2>
             <p className="text-sm text-muted-foreground">
               {this.props.fallbackMessage || "This section encountered an unexpected error. You can try again or reload the page."}
             </p>
+            {this.state.error?.message && (
+              <p className="text-xs font-mono text-destructive/80 bg-destructive/5 border border-destructive/20 rounded p-2 max-w-md mx-auto break-all text-left">
+                {this.state.error.message}
+              </p>
+            )}
             <div className="flex items-center justify-center gap-3">
               <Button
                 variant="outline"
