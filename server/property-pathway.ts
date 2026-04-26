@@ -1050,6 +1050,11 @@ async function runStage1(runId: string, req: Request): Promise<void> {
  * normal analyst would phrase it, so ChatBGP applies its full context
  * (tenant brand names, owner from CRM, deal history, etc.) when picking
  * search terms — not just whatever address+postcode tokens we'd hard-code.
+ *
+ * The trailing <email-refs> JSON block is what lets the UI bind [E#] chips
+ * back to specific messages in the in-app email viewer. ChatBGP's
+ * search_emails tool returns msgId + mailboxEmail per hit; we just ask
+ * the agent to copy those values into a small appendix at the bottom.
  */
 function buildEmailQuestion(address: string, postcode?: string | null): string {
   const where = postcode ? `${address}, ${postcode}` : address;
@@ -1058,10 +1063,66 @@ function buildEmailQuestion(address: string, postcode?: string | null): string {
     ``,
     `Search across all 31 inboxes. Pick smart distinctive terms — building name, current/historical tenant brands, owner / landlord names from CRM, postcode. Don't just search the literal full address.`,
     ``,
-    `Filter aggressively — drop newsletters, unrelated properties, and emails that just happen to mention a word in the address. Group the genuine hits chronologically by phase / topic with ## headers. For each email give one line: date, sender, what it reveals. End with 1–2 suggested next steps.`,
+    `Filter aggressively — drop newsletters, unrelated properties, and emails that just happen to mention a word in the address. Group the genuine hits chronologically by phase / topic with ## headers. For each email give one line: date, sender, what it reveals.`,
     ``,
-    `Be concise — under 400 words.`,
+    `Cite every email you mention inline using [E1], [E2], [E3], … notation in the order you introduce them. End with 1–2 suggested next steps. Be concise — under 400 words for the prose.`,
+    ``,
+    `IMPORTANT — at the very end of your response, after a blank line, output a structured appendix wrapping a single JSON array. Use this exact format with the fenced markers so the UI can parse it:`,
+    ``,
+    `<email-refs>`,
+    `[`,
+    `  {"id":"E1","msgId":"<message id from search_emails>","mailbox":"<mailbox email>","subject":"<subject>","from":"<from name>","date":"<ISO or human date>"},`,
+    `  {"id":"E2", ...}`,
+    `]`,
+    `</email-refs>`,
+    ``,
+    `One object per [E#] cited in the prose. Use the exact msgId and mailboxEmail values returned by search_emails — they are required for the deep-link to work. If you didn't cite any emails (none relevant), output an empty array \`[]\` between the tags.`,
   ].join("\n");
+}
+
+/**
+ * Parse ChatBGP's response into clean markdown + structured email refs.
+ * Strips the <email-refs>…</email-refs> appendix from the visible
+ * markdown and returns the parsed citation array. Tolerant of formatting
+ * drift — falls back to empty refs if the JSON is malformed.
+ */
+function parseEmailChatBgpResponse(raw: string): {
+  markdown: string;
+  emailHits: Array<{ msgId: string; mailboxEmail?: string; subject: string; from: string; date: string; preview: string; hasAttachments: boolean }>;
+} {
+  if (!raw) return { markdown: "", emailHits: [] };
+
+  const refsMatch = raw.match(/<email-refs>\s*([\s\S]*?)\s*<\/email-refs>/i);
+  let emailHits: any[] = [];
+  let markdown = raw;
+
+  if (refsMatch) {
+    // Strip the appendix from the visible markdown
+    markdown = raw.replace(refsMatch[0], "").trim();
+
+    const jsonText = refsMatch[1].trim();
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (Array.isArray(parsed)) {
+        emailHits = parsed
+          .filter((r) => r && (r.msgId || r.id))
+          .map((r) => ({
+            msgId: String(r.msgId || ""),
+            mailboxEmail: r.mailbox || r.mailboxEmail || undefined,
+            subject: String(r.subject || ""),
+            from: String(r.from || ""),
+            date: String(r.date || ""),
+            preview: String(r.preview || ""),
+            hasAttachments: !!r.hasAttachments,
+          }))
+          .filter((r) => r.msgId);
+      }
+    } catch (err: any) {
+      console.warn(`[email-refs] JSON parse failed (${err?.message}) — falling back to no refs. Body: ${jsonText.slice(0, 200)}`);
+    }
+  }
+
+  return { markdown, emailHits };
 }
 
 async function runEmailSort(address: string, emailHits: any[]): Promise<{ markdown: string } | null> {
@@ -1458,13 +1519,19 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   try {
     const { askChatBgp } = await import("./chatbgp-internal");
     const question = buildEmailQuestion(run.address, run.postcode);
-    const markdown = await askChatBgp(question, req);
-    if (markdown) {
+    const raw = await askChatBgp(question, req);
+    if (raw) {
+      const { markdown, emailHits: refs } = parseEmailChatBgpResponse(raw);
       stage1Payload.emailCommentary = {
         markdown,
         generatedAt: new Date().toISOString(),
       };
-      console.log(`[pathway stage1 autonomous] ChatBGP returned ${markdown.length}-char email commentary`);
+      // Replace the noisy keyword-sweep emailHits with what ChatBGP
+      // actually cited — these are the messages [E#] chips deep-link to.
+      if (refs.length > 0) {
+        stage1Payload.emailHits = refs;
+      }
+      console.log(`[pathway stage1 autonomous] ChatBGP returned ${markdown.length}-char commentary + ${refs.length} cited emails`);
     } else {
       const commentary = await runEmailSort(run.address, stage1Payload.emailHits || []);
       if (commentary) {
@@ -2957,10 +3024,14 @@ Return STRICT JSON only, no prose, no code fences:
   try {
     const { askChatBgp } = await import("./chatbgp-internal");
     const question = buildEmailQuestion(run.address, run.postcode);
-    const markdown = await askChatBgp(question, req);
-    if (markdown) {
+    const raw = await askChatBgp(question, req);
+    if (raw) {
+      const { markdown, emailHits: refs } = parseEmailChatBgpResponse(raw);
       emailCommentary = { markdown, generatedAt: new Date().toISOString() };
-      console.log(`[pathway stage1] ChatBGP returned ${markdown.length}-char email commentary`);
+      if (refs.length > 0) {
+        savedEmailHits = refs;
+      }
+      console.log(`[pathway stage1] ChatBGP returned ${markdown.length}-char commentary + ${refs.length} cited emails`);
     } else {
       const commentary = await runEmailSort(run.address, emailHits);
       if (commentary) {
@@ -4534,9 +4605,10 @@ export function registerPropertyPathwayRoutes(app: Express) {
       if (address) {
         const { askChatBgp } = await import("./chatbgp-internal");
         const question = buildEmailQuestion(address, postcode);
-        const markdown = await askChatBgp(question, req);
-        if (markdown) {
-          return res.json({ summary: markdown, markdown });
+        const raw = await askChatBgp(question, req);
+        if (raw) {
+          const { markdown, emailHits: refs } = parseEmailChatBgpResponse(raw);
+          return res.json({ summary: markdown, markdown, emailHits: refs });
         }
       }
 
