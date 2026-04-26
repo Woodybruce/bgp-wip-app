@@ -194,12 +194,14 @@ export async function importWipFromBuffer(
     if (!e.billingEntity) {
       const name = pick(kr, "NAME", "Name", "BillingName", "ClientName");
       if (name) {
+        // Sage 50 stores addresses in ADDRESS_1..ADDRESS_5 (line1, line2, town, county, postcode).
+        // Fall back to legacy/long names for older exports.
         e.billingEntity = {
           name: String(name).trim(),
-          addressLine1: pick(kr, "ADDRESS_LINE1", "AddressLine1", "Address Line 1") || undefined,
-          addressLine2: pick(kr, "ADDRESS_LINE2", "AddressLine2", "Address Line 2") || undefined,
-          city: pick(kr, "ADDRESS_CITY", "City", "AddressCity", "Address City") || undefined,
-          postcode: pick(kr, "ADDRESS_POSTCODE", "Postcode", "PostalCode", "AddressPostcode", "Post Code") || undefined,
+          addressLine1: pick(kr, "ADDRESS_1", "ADDRESS_LINE1", "AddressLine1", "Address Line 1") || undefined,
+          addressLine2: pick(kr, "ADDRESS_2", "ADDRESS_LINE2", "AddressLine2", "Address Line 2") || undefined,
+          city: pick(kr, "ADDRESS_3", "ADDRESS_CITY", "City", "AddressCity", "Address City") || undefined,
+          postcode: pick(kr, "ADDRESS_5", "ADDRESS_4", "ADDRESS_POSTCODE", "Postcode", "PostalCode", "AddressPostcode", "Post Code") || undefined,
         };
       }
     }

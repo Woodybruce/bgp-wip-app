@@ -569,14 +569,14 @@ export default function TenantRep() {
               <div>
                 <Label className="text-xs mb-1.5 block">CRM Brand (optional)</Label>
                 <Select
-                  value={form.companyId}
-                  onValueChange={v => setForm(f => ({ ...f, companyId: v, contactId: "" }))}
+                  value={form.companyId || "__none__"}
+                  onValueChange={v => setForm(f => ({ ...f, companyId: v === "__none__" ? "" : v, contactId: "" }))}
                 >
                   <SelectTrigger className="h-8 text-sm">
                     <SelectValue placeholder="Link to CRM company..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">— None —</SelectItem>
+                    <SelectItem value="__none__">— None —</SelectItem>
                     {companies.slice(0, 200).map(c => (
                       <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                     ))}
@@ -602,12 +602,15 @@ export default function TenantRep() {
               </div>
               <div>
                 <Label className="text-xs mb-1.5 block">Assigned To</Label>
-                <Select value={form.assignedTo} onValueChange={v => setForm(f => ({ ...f, assignedTo: v }))}>
+                <Select
+                  value={form.assignedTo || "__none__"}
+                  onValueChange={v => setForm(f => ({ ...f, assignedTo: v === "__none__" ? "" : v }))}
+                >
                   <SelectTrigger className="h-8 text-sm">
                     <SelectValue placeholder="Select person..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">— Unassigned —</SelectItem>
+                    <SelectItem value="__none__">— Unassigned —</SelectItem>
                     {BGP_TEAM.map(p => (
                       <SelectItem key={p} value={p}>{p}</SelectItem>
                     ))}
@@ -620,14 +623,14 @@ export default function TenantRep() {
             <div>
               <Label className="text-xs mb-1.5 block">Key Contact</Label>
               <Select
-                value={form.contactId}
-                onValueChange={v => setForm(f => ({ ...f, contactId: v }))}
+                value={form.contactId || "__none__"}
+                onValueChange={v => setForm(f => ({ ...f, contactId: v === "__none__" ? "" : v }))}
               >
                 <SelectTrigger className="h-8 text-sm">
                   <SelectValue placeholder="Select contact..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">— None —</SelectItem>
+                  <SelectItem value="__none__">— None —</SelectItem>
                   {filteredContacts.slice(0, 200).map(c => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.name}{c.role ? ` · ${c.role}` : ""}

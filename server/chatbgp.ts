@@ -3209,14 +3209,15 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "import_wip_excel",
-      description: "Import a Sage WIP (Work-in-Progress) Excel export end-to-end. Auto-detects either Sage layout: legacy 'WIP by deal' (Ref, Amt WIP, Amt invoice, …) or current Sage TransactionsExpo (HEADER_NUMBER, NetAmount, NAME, ADDRESS_*, STOCK_CODE, DealStatus, …). Wipes wip_entries and reloads (or appends with mode='append'), then on the TransactionsExpo layout ALSO populates: (1) crm_deals via syncWipToCrmDeals, (2) crm_companies billing entities from NAME + ADDRESS_*, with `invoicing_entity_id` stamped on each deal, (3) deal_fee_allocations from per-Agent NetAmount slices (CON049 STOCK_CODE tagged as BGP House), (4) tenant_rep_searches kanban entries for any NEG-status deals. Idempotent — safe to re-run on each Sage export. The file must have been uploaded to this chat first (drag & drop). By default REPLACES wip_entries — use mode='append' only for incremental updates between full Sage exports.",
+      description: "Import a Sage WIP (Work-in-Progress) Excel export end-to-end. Auto-detects either Sage layout: legacy 'WIP by deal' (Ref, Amt WIP, Amt invoice, …) or current Sage TransactionsExpo (HEADER_NUMBER, NetAmount, NAME, ADDRESS_*, STOCK_CODE, DealStatus, …). Wipes wip_entries and reloads (or appends with mode='append'), then on the TransactionsExpo layout ALSO populates: (1) crm_deals via syncWipToCrmDeals, (2) crm_companies billing entities from NAME + ADDRESS_*, with `invoicing_entity_id` stamped on each deal, (3) deal_fee_allocations from per-Agent NetAmount slices (CON049 STOCK_CODE tagged as BGP House), (4) tenant_rep_searches kanban entries for any NEG-status deals. Idempotent — safe to re-run on each Sage export. Pass either `chatMediaFilename` (file dragged into chat) OR `sharepointUrl` (a SharePoint share link the user pastes). By default REPLACES wip_entries — use mode='append' only for incremental updates between full Sage exports.",
       parameters: {
         type: "object",
         properties: {
-          chatMediaFilename: { type: "string", description: "The chat-media filename of the uploaded Excel (e.g. '1745689452345-abc123def.xlsx'). Must already be in chat-media." },
+          chatMediaFilename: { type: "string", description: "The chat-media filename of the uploaded Excel (e.g. '1745689452345-abc123def.xlsx'). Use when the user has dragged the file into chat." },
+          sharepointUrl: { type: "string", description: "A SharePoint share URL (e.g. 'https://...sharepoint.com/.../IQ...') pointing at the WIP Excel. Use when the user pastes a share link instead of dragging the file in. Either this or chatMediaFilename must be supplied." },
           mode: { type: "string", enum: ["replace", "append"], description: "replace = wipe wip_entries and reload from file (default — what Sage gives you each quarter). append = keep existing rows and add new ones. Default: replace." },
         },
-        required: ["chatMediaFilename"],
+        required: [],
       },
     },
   });
@@ -6524,37 +6525,82 @@ Be thorough — include every unit row you can classify, across all properties i
   if (fnName === "import_wip_excel") {
     try {
       const chatMediaFilename = String(fnArgs.chatMediaFilename || "").trim();
+      const sharepointUrl = String(fnArgs.sharepointUrl || "").trim();
       const mode = (fnArgs.mode === "append" ? "append" : "replace") as "replace" | "append";
-      if (!chatMediaFilename) {
-        return { data: { error: "chatMediaFilename is required. The user must upload the Sage WIP Excel to chat first." } };
-      }
-      if (chatMediaFilename.includes("..") || chatMediaFilename.includes("/") || chatMediaFilename.includes("\\")) {
-        return { data: { error: "Invalid filename" } };
+      if (!chatMediaFilename && !sharepointUrl) {
+        return { data: { error: "Either chatMediaFilename or sharepointUrl must be provided. Ask the user to drag the WIP Excel into chat or paste a SharePoint share link." } };
       }
 
-      // Resolve the file: try disk first (multer-saved), then DB-backed
-      // chat-media storage, then a fallback by originalName lookup. Same
-      // pattern import_leasing_schedule uses.
       let buffer: Buffer | null = null;
-      const diskPath = path.join(process.cwd(), "ChatBGP", "chat-media", chatMediaFilename);
-      if (fs.existsSync(diskPath)) {
-        buffer = fs.readFileSync(diskPath);
+      let resolvedName = chatMediaFilename;
+
+      if (sharepointUrl) {
+        // SharePoint share-link path — resolve via Graph /shares/{token}/driveItem
+        // and download the binary content.
+        const { getValidMsToken } = await import("./microsoft");
+        const token = await getValidMsToken(req);
+        if (!token) {
+          return { data: { error: "Microsoft 365 is not connected. Please connect via the SharePoint page first." } };
+        }
+        const inputUrl = (await resolveOneDriveShortLink(sharepointUrl)).trim();
+        const encodedUrl = Buffer.from(inputUrl).toString("base64")
+          .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        const sharingUrl = `u!${encodedUrl}`;
+        const driveItemRes = await fetch(
+          `https://graph.microsoft.com/v1.0/shares/${sharingUrl}/driveItem`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (!driveItemRes.ok) {
+          const errText = await driveItemRes.text();
+          return { data: { error: `Could not access SharePoint file (${driveItemRes.status}): ${errText.slice(0, 200)}` } };
+        }
+        const driveItem = await driveItemRes.json();
+        resolvedName = driveItem.name || "wip.xlsx";
+        let downloadUrl: string | null = driveItem["@microsoft.graph.downloadUrl"] || null;
+        if (!downloadUrl && driveItem.parentReference?.driveId && driveItem.id) {
+          const contentRes = await fetch(
+            `https://graph.microsoft.com/v1.0/drives/${driveItem.parentReference.driveId}/items/${driveItem.id}/content`,
+            { headers: { Authorization: `Bearer ${token}` }, redirect: "manual" },
+          );
+          if (contentRes.status === 302) {
+            downloadUrl = contentRes.headers.get("location");
+          }
+        }
+        if (!downloadUrl) {
+          return { data: { error: `Could not get a download URL for ${resolvedName}.` } };
+        }
+        const fileRes = await fetch(downloadUrl);
+        if (!fileRes.ok) {
+          return { data: { error: `SharePoint download failed (${fileRes.status}).` } };
+        }
+        buffer = Buffer.from(await fileRes.arrayBuffer());
       } else {
-        const dbFile = await getFile(`chat-media/${chatMediaFilename}`);
-        if (dbFile?.data) {
-          buffer = dbFile.data;
+        if (chatMediaFilename.includes("..") || chatMediaFilename.includes("/") || chatMediaFilename.includes("\\")) {
+          return { data: { error: "Invalid filename" } };
+        }
+        // Resolve the file: try disk first (multer-saved), then DB-backed
+        // chat-media storage, then a fallback by originalName lookup. Same
+        // pattern import_leasing_schedule uses.
+        const diskPath = path.join(process.cwd(), "ChatBGP", "chat-media", chatMediaFilename);
+        if (fs.existsSync(diskPath)) {
+          buffer = fs.readFileSync(diskPath);
         } else {
-          const byName = await findChatMediaByOriginalName(chatMediaFilename);
-          if (byName?.data) buffer = byName.data;
+          const dbFile = await getFile(`chat-media/${chatMediaFilename}`);
+          if (dbFile?.data) {
+            buffer = dbFile.data;
+          } else {
+            const byName = await findChatMediaByOriginalName(chatMediaFilename);
+            if (byName?.data) buffer = byName.data;
+          }
+        }
+        if (!buffer) {
+          return { data: { error: `Chat file not found: ${chatMediaFilename}. Ask the user to re-upload the file.` } };
         }
       }
-      if (!buffer) {
-        return { data: { error: `Chat file not found: ${chatMediaFilename}. Ask the user to re-upload the file.` } };
-      }
 
-      const ext = path.extname(chatMediaFilename).toLowerCase();
+      const ext = path.extname(resolvedName).toLowerCase();
       if (ext !== ".xlsx" && ext !== ".xls") {
-        return { data: { error: `WIP import expects an Excel file (.xlsx / .xls). Got ${ext}.` } };
+        return { data: { error: `WIP import expects an Excel file (.xlsx / .xls). Got ${ext || "<no ext>"}.` } };
       }
 
       const { importWipFromBuffer } = await import("./crm");
