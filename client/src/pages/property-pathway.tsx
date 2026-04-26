@@ -1,11 +1,14 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { useLocation, Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { getAuthHeaders } from "@/lib/queryClient";
+import { PropertyFoldersPanel, SetUpFoldersDialog } from "@/pages/properties";
 import {
   Building2, FolderOpen, MapPin, ShieldCheck, Sparkles,
   FileText, Image as ImageIcon, ChevronRight, ChevronDown, ArrowRight,
@@ -531,6 +534,10 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           </div>
         </CardContent>
       </Card>
+
+      {/* CRM + SharePoint folders for this building. One CRM record per
+          building (auto-created/linked at Stage 1) — never duplicates. */}
+      <PathwayFoldersPanel run={run} />
 
       {/* Stage 1 — Initial Search findings */}
       {s1 && (
@@ -1743,6 +1750,119 @@ function statusTone(status: string): string {
   if (/refus|reject|dismiss|withdraw/.test(s)) return "bg-rose-100 text-rose-800";
   if (/pend|register|valid|consult|under/.test(s)) return "bg-amber-100 text-amber-800";
   return "bg-slate-100 text-slate-700";
+}
+
+/**
+ * Linked-CRM + SharePoint folder tree on the pathway page. Surfaces the
+ * CRM property the pathway is anchored to (auto-created at Stage 1 by
+ * `ensureCrmPropertyLink` if no match was found) and renders its folder
+ * tree using the same `PropertyFoldersPanel` the property detail page uses.
+ *
+ * Rules:
+ *  - If `run.propertyId` is set → fetch that CRM record, render its
+ *    folders. There's only ever one CRM property per building (the auto-
+ *    create logic dedupes via crm_lookup), so we never spawn a second
+ *    folder tree from the pathway.
+ *  - If `run.propertyId` is null (only happens on a fresh run before
+ *    Stage 1 has completed) → prompt the user to run Stage 1, which
+ *    auto-creates the CRM + links it.
+ *  - Folder tree itself is created on-demand via the existing
+ *    SetUpFoldersDialog (POST /api/microsoft/property-folders) — same UX
+ *    as the property detail page's "Set Up Folders" button.
+ */
+function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+
+  const { data: property, isLoading } = useQuery<any>({
+    queryKey: ["/api/crm/properties", run.propertyId],
+    queryFn: async () => {
+      if (!run.propertyId) return null;
+      const r = await fetch(`/api/crm/properties/${run.propertyId}`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    enabled: !!run.propertyId,
+  });
+
+  if (!run.propertyId) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <FolderOpen className="w-4 h-4" /> CRM & Folders
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-[12px] text-muted-foreground">
+          <p>This investigation isn't linked to a CRM property yet.</p>
+          <p className="mt-1">Run Stage 1 — it auto-creates a CRM record (or links to an existing one for this address) and gives you a folder tree to save documents into.</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (isLoading || !property) {
+    return (
+      <Card>
+        <CardContent className="p-3 space-y-2">
+          <Skeleton className="h-5 w-48" />
+          <Skeleton className="h-20 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const folderTeams: string[] = property.folderTeams || [];
+  const hasFolderTree = folderTeams.length > 0;
+
+  return (
+    <>
+      <SetUpFoldersDialog
+        propertyId={property.id}
+        propertyName={property.name}
+        folderTeams={folderTeams}
+        open={folderDialogOpen}
+        onOpenChange={setFolderDialogOpen}
+      />
+      <Card>
+        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <FolderOpen className="w-4 h-4" />
+            <span>CRM & Folders</span>
+            <Link href={`/properties/${property.id}`}>
+              <span className="text-[11px] text-primary hover:underline font-normal inline-flex items-center gap-1 cursor-pointer">
+                {property.name}
+                <ExternalLink className="w-3 h-3" />
+              </span>
+            </Link>
+            {!hasFolderTree && (
+              <Badge variant="outline" className="text-[9px] py-0">No folders yet</Badge>
+            )}
+          </CardTitle>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-[11px] gap-1"
+            onClick={() => setFolderDialogOpen(true)}
+          >
+            <FolderOpen className="w-3 h-3" />
+            {hasFolderTree ? "Manage folders" : "Set up folders"}
+          </Button>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {hasFolderTree ? (
+            <PropertyFoldersPanel propertyName={property.name} folderTeams={folderTeams} />
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              No SharePoint folders set up for this building yet. Click <strong>Set up folders</strong> above to create the standard folder tree (Legal & Title, Due Diligence, KYC & AML, Comparables, etc.) — you can then save scraped planning PDFs and other investigation files into it.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
 }
 
 function OwnershipCard({ titleNumber }: { titleNumber?: string | null }) {
