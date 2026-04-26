@@ -1047,11 +1047,18 @@ async function runStage1(runId: string, req: Request): Promise<void> {
  */
 async function runEmailSort(address: string, emailHits: any[]): Promise<{ markdown: string } | null> {
   if (!emailHits || emailHits.length === 0) return null;
-  if (!process.env.ANTHROPIC_API_KEY) return null;
+  // Same env-var pattern the rest of the codebase uses — prefer the
+  // integration key, fall back to the direct key, optional gateway URL.
+  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
 
   try {
     const Anthropic = (await import("@anthropic-ai/sdk")).default;
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const clientOpts: any = { apiKey };
+    if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      clientOpts.baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+    }
+    const client = new Anthropic(clientOpts);
 
     const list = emailHits.slice(0, 80).map((e: any, i: number) => {
       const date = e.date ? new Date(e.date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "?";

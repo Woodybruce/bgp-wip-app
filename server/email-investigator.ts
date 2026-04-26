@@ -91,7 +91,17 @@ If after searching nothing genuinely relevant turns up, output one line:
 Don't apologise or hedge.`;
 
 export async function runEmailInvestigator(input: EmailInvestigatorInput): Promise<EmailInvestigatorResult | null> {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
+  // Match the rest of the codebase: prefer the integration key (Railway's
+  // canonical env var) and fall back to the direct key. Without this, the
+  // Anthropic client constructed below got `undefined` for apiKey on Railway
+  // and silently failed every Claude call → null → the pathway fell through
+  // to runEmailSort on the legacy 80-email keyword sweep, which is the
+  // "None of the 80 indexed emails relate…" output users were seeing.
+  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    console.warn("[email-investigator] no Anthropic key configured — skipping");
+    return null;
+  }
 
   const { address, postcode, hints, req } = input;
 
@@ -126,7 +136,11 @@ export async function runEmailInvestigator(input: EmailInvestigatorInput): Promi
   };
 
   const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const clientOpts: any = { apiKey };
+  if (process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+    clientOpts.baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+  }
+  const client = new Anthropic(clientOpts);
 
   const tools = [{
     name: "search_emails",
