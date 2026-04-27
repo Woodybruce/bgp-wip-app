@@ -2460,6 +2460,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
     // /pages/terms, Salesforce Commerce /terms, IBM WebSphere
     // /shop/CustomerService?pageName=*). Rather than guess every CMS's path
     // shape, scrape the homepage's <a href> tags and follow anything legal-ish.
+    let localePrefix = ""; // detected from homepage hrefs, used in Step 3
     if (homepageHtml) {
       // First check the homepage itself — many sites put "© X Limited,
       // registered in England..." straight in the footer.
@@ -2534,6 +2535,25 @@ Return both null if the page doesn't disclose a UK trading entity.`;
             t("link", `${url} → no entity, no UK signal (${text.length}B)`);
           }
         } catch (err: any) { t("link", `${url} → error: ${err?.message || "?"}`); }
+      }
+
+      // Detect locale prefix from homepage links (e.g. /en-gb/, /en/).
+      // Brands like H&M Group serve T&Cs at locale-prefixed paths (/en-gb/legal/…)
+      // that aren't in the standard pages list. If ≥3 internal hrefs share a
+      // locale prefix we inject locale-specific legal paths at the top of Step 3.
+      const LOCALE_HREF = /href=["']\/(en[-_]gb|en[-_]uk|en|gb|uk)\//gi;
+      const lCounts = new Map<string, number>();
+      let lm: RegExpExecArray | null;
+      while ((lm = LOCALE_HREF.exec(homepageHtml || "")) !== null) {
+        const lc = lm[1].toLowerCase().replace("_", "-");
+        lCounts.set(lc, (lCounts.get(lc) ?? 0) + 1);
+      }
+      if (lCounts.size) {
+        const [best] = [...lCounts.entries()].sort((a, b) => b[1] - a[1]);
+        if (best && best[1] >= 3) {
+          localePrefix = `/${best[0]}`;
+          t("locale", `detected prefix ${localePrefix} (${best[1]} hrefs)`);
+        }
       }
     }
 
@@ -2610,7 +2630,31 @@ Return both null if the page doesn't disclose a UK trading entity.`;
     }
 
     // ── Step 3: Regular HTML pages (static sites / SSR) ──────────────────────
-    for (const page of pages) {
+    // If a locale prefix was detected from the homepage, try locale-specific
+    // legal paths first — they're far more likely to hit than generic /terms.
+    // When no prefix was detected (SPA with few rendered links), include a
+    // static /en-gb/ fallback set that covers H&M Group and similar brands.
+    const localeLegalPages = localePrefix ? [
+      `${localePrefix}/legal/terms-and-conditions`,
+      `${localePrefix}/terms-and-conditions`,
+      `${localePrefix}/terms`,
+      `${localePrefix}/legal`,
+      `${localePrefix}/legal/privacy-policy`,
+      `${localePrefix}/privacy-policy`,
+      `${localePrefix}/customer-service/terms-and-conditions`,
+      `${localePrefix}/help/terms-and-conditions`,
+    ] : [];
+    const enGbFallback = !localePrefix ? [
+      "/en-gb/legal/terms-and-conditions",
+      "/en-gb/terms-and-conditions",
+      "/en-gb/terms",
+      "/en-gb/legal",
+      "/en-gb/privacy-policy",
+      "/en/legal/terms-and-conditions",
+      "/en/terms-and-conditions",
+    ] : [];
+    const allPages = [...localeLegalPages, ...enGbFallback, ...pages];
+    for (const page of allPages) {
       if (overBudget()) { t("page", `deadline hit before ${page || "/"}`); break; }
       const url = `${base}${page}`;
       try {
