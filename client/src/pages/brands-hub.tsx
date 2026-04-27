@@ -113,6 +113,8 @@ function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string 
       <img
         src={sources[failCount]}
         alt={name}
+        loading="lazy"
+        decoding="async"
         className="rounded object-contain bg-white"
         style={{ width: size, height: size }}
         onError={() => setFailCount(c => c + 1)}

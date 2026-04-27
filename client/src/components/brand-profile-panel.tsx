@@ -2265,17 +2265,20 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               )}
             </div>
 
-            {/* Interactions timeline — emails left, meetings/viewings right (last 2 years) */}
-            {data.interactions && data.interactions.length > 0 && (() => {
+            {/* Interactions board — always visible. When empty, surfaces a
+                "possibly incomplete" hint so the user knows the gap might
+                be a sync issue rather than genuinely no contact. */}
+            {(() => {
+              const allInteractions = data.interactions || [];
               const ago = (date: string) => {
                 const days = Math.floor((Date.now() - new Date(date).getTime()) / 864e5);
                 return days < 1 ? "today" : days < 7 ? `${days}d` : days < 30 ? `${Math.floor(days / 7)}w` : days < 365 ? `${Math.floor(days / 30)}mo` : `${Math.floor(days / 365)}y`;
               };
               const twoYearsAgo = Date.now() - 2 * 365 * 864e5;
-              const recent = data.interactions.filter((it: any) => new Date(it.interaction_date).getTime() >= twoYearsAgo);
-              if (recent.length === 0) return null;
+              const recent = allInteractions.filter((it: any) => new Date(it.interaction_date).getTime() >= twoYearsAgo);
               const emails = recent.filter((it: any) => it.type === "email" || it.type === "call" || it.type === "note");
               const meetings = recent.filter((it: any) => it.type === "meeting");
+              const isEmpty = recent.length === 0;
               const renderRow = (it: any, accent: string) => (
                 <div key={it.id} className="text-xs flex gap-1.5 items-start py-0.5">
                   <div className={`w-1 self-stretch rounded-full shrink-0 ${accent}`} />
@@ -2291,6 +2294,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <div className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
                     <Clock className="w-3 h-3" /> Recent interactions — last 2 years ({recent.length})
                   </div>
+                  {isEmpty && (
+                    <div className="text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded px-2 py-1.5 mb-2 flex items-start gap-1.5">
+                      <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" />
+                      <span>
+                        No BGP interactions logged in the last 2 years.
+                        This may be incorrect — check the brand's email/calendar sync or log them manually.
+                      </span>
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <div className="text-[10px] font-medium text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-1 flex items-center gap-1">

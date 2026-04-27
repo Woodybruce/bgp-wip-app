@@ -74,6 +74,8 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
     <img
       src={logoSources[failCount]}
       alt={company.name}
+      loading="lazy"
+      decoding="async"
       className={`${sizeClass} rounded-lg object-contain bg-white border shrink-0`}
       onError={() => setFailCount(c => c + 1)}
     />

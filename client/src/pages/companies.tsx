@@ -129,6 +129,8 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
     <img
       src={logoSources[failCount]}
       alt={name || "Company logo"}
+      loading="lazy"
+      decoding="async"
       className="rounded-lg shrink-0 object-contain bg-white border"
       style={{ width: size, height: size }}
       onError={() => setFailCount(c => c + 1)}

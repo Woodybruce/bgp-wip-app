@@ -126,6 +126,8 @@ function BrandLogo({ name, domain, size = 28 }: { name: string; domain?: string 
     return (
       <img
         src={src} alt={name}
+        loading="lazy"
+        decoding="async"
         className="rounded object-contain bg-white border border-gray-100 shrink-0"
         style={{ width: size, height: size }}
         onError={() => setFailed(true)}
