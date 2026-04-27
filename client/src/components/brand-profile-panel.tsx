@@ -1705,34 +1705,38 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </button>
               </div>
               {stores.length > 0 ? (
-                <>
-                  <div className="mb-1.5">
-                    <BrandPortfolioMap stores={stores as any} />
-                  </div>
-                  <div className="space-y-0.5 max-h-40 overflow-y-auto">
-                    {stores.slice(0, 10).map((s) => (
-                      <div key={s.id} className="text-xs flex items-center gap-1.5 px-1 py-0.5">
-                        <MapPin className={`w-3 h-3 shrink-0 ${s.status === "closed" ? "text-red-500" : s.status === "open" ? "text-emerald-500" : "text-muted-foreground"}`} />
-                        <span className="truncate flex-1">{s.name}</span>
-                        {s.address && <span className="text-[10px] text-muted-foreground truncate max-w-[200px]">{s.address.split(",").slice(-3, -2)[0]?.trim()}</span>}
-                        {s.place_id && (
-                          <a
-                            href={`https://www.google.com/maps/place/?q=place_id:${s.place_id}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="shrink-0 text-muted-foreground hover:text-primary"
-                            title="View on Google Maps"
-                          >
-                            <ExternalLink className="w-2.5 h-2.5" />
-                          </a>
-                        )}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="space-y-0.5 max-h-[180px] overflow-y-auto pr-1 order-2 md:order-1">
+                    {stores.slice(0, 20).map((s) => (
+                      <div key={s.id} className="text-xs flex items-start gap-1.5 px-1 py-0.5">
+                        <MapPin className={`w-3 h-3 shrink-0 mt-0.5 ${s.status === "closed" ? "text-red-500" : s.status === "open" ? "text-emerald-500" : "text-muted-foreground"}`} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1">
+                            <span className="truncate flex-1 font-medium">{s.name}</span>
+                            {s.place_id && (
+                              <a
+                                href={`https://www.google.com/maps/place/?q=place_id:${s.place_id}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="shrink-0 text-muted-foreground hover:text-primary"
+                                title="View on Google Maps"
+                              >
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </a>
+                            )}
+                          </div>
+                          {s.address && <div className="text-[10px] text-muted-foreground truncate">{s.address}</div>}
+                        </div>
                       </div>
                     ))}
-                    {stores.length > 10 && (
-                      <p className="text-[10px] text-muted-foreground pl-1">+{stores.length - 10} more stores</p>
+                    {stores.length > 20 && (
+                      <p className="text-[10px] text-muted-foreground pl-1">+{stores.length - 20} more stores</p>
                     )}
                   </div>
-                </>
+                  <div className="order-1 md:order-2">
+                    <BrandPortfolioMap stores={stores as any} />
+                  </div>
+                </div>
               ) : (
                 <div className="text-xs text-muted-foreground px-1 py-1">
                   {researchStoresMutation.isPending ? (
