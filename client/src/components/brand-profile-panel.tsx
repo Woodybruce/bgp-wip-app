@@ -1168,11 +1168,11 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               })()}
             </div>
 
-            {/* ── Zone 1: Global Brand ─────────────────────── */}
+            {/* ── Zone 1: Brand Expansion ──────────────────── */}
             <div className="border-t border-border/40 mt-3 pt-2 order-3">
             <div className="flex items-center gap-1.5 mb-2">
               <Store className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Global Brand</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Brand Expansion</span>
             </div>
             <div className="space-y-2.5">
 
@@ -1274,7 +1274,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   {c.brand_analysis ? (
                     <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2">
                       <div className="flex items-center gap-1 text-xs text-purple-700 dark:text-purple-300 mb-1">
-                        <Sparkles className="w-3 h-3" /> Global overview
+                        <Sparkles className="w-3 h-3" /> Brand expansion
                         {c.brand_analysis_at && (
                           <span className="text-[10px] text-muted-foreground ml-auto">
                             {new Date(c.brand_analysis_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
@@ -2055,7 +2055,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     </button>
                   </div>
                   {stores.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number").length > 0 ? (
-                    <div className="space-y-0.5 max-h-[260px] overflow-y-auto pr-1">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div className="space-y-0.5 max-h-[260px] overflow-y-auto pr-1 order-2 md:order-1">
                       {stores.slice(0, 30).map((s: any) => (
                         <div key={s.id} className="text-xs flex items-start gap-1.5 px-1 py-0.5">
                           <MapPin className={`w-3 h-3 shrink-0 mt-0.5 ${s.status === "closed" ? "text-red-500" : s.status === "open" ? "text-emerald-500" : "text-muted-foreground"}`} />
@@ -2081,6 +2082,10 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       {stores.length > 30 && (
                         <p className="text-[10px] text-muted-foreground pl-1">+{stores.length - 30} more stores</p>
                       )}
+                      </div>
+                      <div className="order-1 md:order-2">
+                        <BrandPortfolioMap stores={stores as any} height={260} />
+                      </div>
                     </div>
                   ) : (
                     <div className="text-xs text-muted-foreground px-1 py-1">
@@ -2303,47 +2308,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
               )}
             </div>
-
-            {/* BGP deal history — comprehensive interactions live in the timeline below */}
-            {bgpSummary && bgpSummary.totalDeals > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Briefcase className="w-3 h-3" /> BGP deals with this brand
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-                  <div>
-                    <div className="text-[10px] text-muted-foreground">Deals</div>
-                    <div className="font-semibold">{bgpSummary.totalDeals}{bgpSummary.completedDeals > 0 ? ` · ${bgpSummary.completedDeals} done` : ""}</div>
-                  </div>
-                  {bgpSummary.totalFees > 0 && (
-                    <div>
-                      <div className="text-[10px] text-muted-foreground">Fees</div>
-                      <div className="font-semibold">£{(bgpSummary.totalFees / 1000).toFixed(0)}k</div>
-                    </div>
-                  )}
-                  {bgpSummary.team.length > 0 && (
-                    <div>
-                      <div className="text-[10px] text-muted-foreground">BGP team</div>
-                      <div className="font-medium truncate text-xs">{bgpSummary.team.slice(0, 3).join(", ")}{bgpSummary.team.length > 3 ? ` +${bgpSummary.team.length - 3}` : ""}</div>
-                    </div>
-                  )}
-                </div>
-                {bgpDeals.length > 0 && (
-                  <div className="mt-1.5 space-y-0.5">
-                    {bgpDeals.slice(0, 4).map((d) => (
-                      <Link key={d.id} href={`/deals/${d.id}`}>
-                        <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
-                          {d.party_role && <Badge variant="outline" className="text-[10px] shrink-0 capitalize">{d.party_role}</Badge>}
-                          <span className="truncate flex-1">{d.name}</span>
-                          {d.status && <Badge variant="secondary" className="text-[10px] shrink-0">{d.status}</Badge>}
-                        </div>
-                      </Link>
-                    ))}
-                    {bgpDeals.length > 4 && <p className="text-[10px] text-muted-foreground pl-1">+{bgpDeals.length - 4} more deals</p>}
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Interactions timeline — last 12 BGP touchpoints */}
             {data.interactions && data.interactions.length > 0 && (
@@ -2603,16 +2567,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     </Link>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {/* UK store map — full-width footer of the BGP Relationship zone */}
-            {stores.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number").length > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <MapPin className="w-3 h-3" /> UK store map ({stores.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number").length} located)
-                </div>
-                <BrandPortfolioMap stores={stores as any} height={420} />
               </div>
             )}
 
