@@ -1137,15 +1137,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <div className="mt-2 order-2 space-y-3">
               <BgpTakeStrip companyId={companyId} tab="brand" />
               {(() => {
-                const questions: string[] = [
-                  `Tell me everything BGP needs to know about ${c.name} before a first call`,
-                  `What's ${c.name}'s covenant risk? How should we position this to a landlord?`,
-                  `What are the key signals about ${c.name} right now and what should BGP do?`,
-                  `Who should BGP contact at ${c.name} and what's the best approach?`,
-                  `What space would ${c.name} want and what BGP properties could work?`,
-                  `Walk me through ${c.name}'s UK financials and what they mean for rent affordability`,
-                  `Should BGP be pitching ${c.name} new space — if so, where and why?`,
-                  `Draft a brief introductory pitch email from BGP to ${c.name}`,
+                const topics: { label: string; question: string }[] = [
+                  { label: "Overview", question: `Tell me everything BGP needs to know about ${c.name} before a first call` },
+                  { label: "Covenant", question: `What's ${c.name}'s covenant risk? How should we position this to a landlord?` },
+                  { label: "Signals", question: `What are the key signals about ${c.name} right now and what should BGP do?` },
+                  { label: "Contacts", question: `Who should BGP contact at ${c.name} and what's the best approach?` },
+                  { label: "Expansion", question: `What space would ${c.name} want and what BGP properties could work?` },
+                  { label: "Financials", question: `Walk me through ${c.name}'s UK financials and what they mean for rent affordability` },
+                  { label: "Pitch", question: `Should BGP be pitching ${c.name} new space — if so, where and why?` },
+                  { label: "Email", question: `Draft a brief introductory pitch email from BGP to ${c.name}` },
                 ];
                 return (
                   <div>
@@ -1153,13 +1153,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       <Sparkles className="w-3 h-3 text-purple-500" /> Ask ChatBGP
                     </div>
                     <div className="flex gap-1.5 flex-wrap">
-                      {questions.map(q => (
+                      {topics.map(t => (
                         <button
-                          key={q}
-                          onClick={() => { setChatInput(q); window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt")); }}
-                          className="text-xs px-2.5 py-1 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1 leading-tight"
+                          key={t.label}
+                          onClick={() => { setChatInput(t.question); window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt")); }}
+                          title={t.question}
+                          className="text-xs px-2.5 py-1 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1 leading-tight font-medium"
                         >
-                          <Sparkles className="w-3 h-3 shrink-0" />{q}
+                          <Sparkles className="w-3 h-3 shrink-0" />{t.label}
                         </button>
                       ))}
                     </div>
