@@ -18,7 +18,7 @@ import {
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
   MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
-  Globe, Linkedin, Calendar, BadgeInfo, Phone,
+  Globe, Linkedin, Calendar, BadgeInfo, Phone, Mail,
 } from "lucide-react";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
 
@@ -2310,36 +2310,58 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               )}
             </div>
 
-            {/* Interactions timeline — last 12 BGP touchpoints */}
-            {data.interactions && data.interactions.length > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
-                  <Clock className="w-3 h-3" /> Recent interactions ({data.interactions.length})
+            {/* Interactions timeline — emails left, meetings/viewings right */}
+            {data.interactions && data.interactions.length > 0 && (() => {
+              const ago = (date: string) => {
+                const days = Math.floor((Date.now() - new Date(date).getTime()) / 864e5);
+                return days < 1 ? "today" : days < 7 ? `${days}d` : days < 30 ? `${Math.floor(days / 7)}w` : days < 365 ? `${Math.floor(days / 30)}mo` : `${Math.floor(days / 365)}y`;
+              };
+              const emails = data.interactions.filter((it: any) => it.type === "email" || it.type === "call" || it.type === "note");
+              const meetings = data.interactions.filter((it: any) => it.type === "meeting");
+              const renderRow = (it: any, accent: string) => (
+                <div key={it.id} className="text-xs flex gap-1.5 items-start py-0.5">
+                  <div className={`w-1 self-stretch rounded-full shrink-0 ${accent}`} />
+                  <div className="flex-1 min-w-0">
+                    {it.subject && <div className="font-medium truncate leading-snug">{it.subject}</div>}
+                    {it.preview && <div className="text-[10px] text-muted-foreground truncate leading-snug">{it.preview}</div>}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground shrink-0">{it.bgp_user || ""} · {ago(it.interaction_date)}</span>
                 </div>
-                <div className="space-y-1 border-l-2 border-purple-200 dark:border-purple-900 pl-2.5">
-                  {data.interactions.slice(0, 8).map((it: any) => {
-                    const days = Math.floor((Date.now() - new Date(it.interaction_date).getTime()) / 864e5);
-                    const ago = days < 1 ? "today" : days < 7 ? `${days}d` : days < 30 ? `${Math.floor(days / 7)}w` : days < 365 ? `${Math.floor(days / 30)}mo` : `${Math.floor(days / 365)}y`;
-                    const typeColor: Record<string, string> = {
-                      email: "bg-blue-50 text-blue-700 border-blue-200",
-                      call: "bg-emerald-50 text-emerald-700 border-emerald-200",
-                      meeting: "bg-purple-50 text-purple-700 border-purple-200",
-                      note: "bg-zinc-50 text-zinc-700 border-zinc-200",
-                    };
-                    return (
-                      <div key={it.id} className="text-xs flex gap-1.5 items-start">
-                        <span className={`text-[10px] font-medium px-1 py-0.5 rounded border shrink-0 ${typeColor[it.type] || "bg-zinc-50 text-zinc-700 border-zinc-200"}`}>{it.type}</span>
-                        <div className="flex-1 min-w-0">
-                          {it.subject && <div className="font-medium truncate">{it.subject}</div>}
-                          {it.preview && <div className="text-[10px] text-muted-foreground truncate">{it.preview}</div>}
-                        </div>
-                        <span className="text-[10px] text-muted-foreground shrink-0">{it.bgp_user || ""} · {ago}</span>
+              );
+              return (
+                <div className="border-t pt-2">
+                  <div className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
+                    <Clock className="w-3 h-3" /> Recent interactions ({data.interactions.length})
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-[10px] font-medium text-blue-700 dark:text-blue-400 uppercase tracking-wide mb-1 flex items-center gap-1">
+                        <Mail className="w-2.5 h-2.5" /> Emails &amp; calls ({emails.length})
                       </div>
-                    );
-                  })}
+                      {emails.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {emails.slice(0, 6).map((it: any) => renderRow(it, "bg-blue-300 dark:bg-blue-700"))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground italic">None</p>
+                      )}
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-medium text-purple-700 dark:text-purple-400 uppercase tracking-wide mb-1 flex items-center gap-1">
+                        <Users className="w-2.5 h-2.5" /> Meetings &amp; viewings ({meetings.length})
+                      </div>
+                      {meetings.length > 0 ? (
+                        <div className="space-y-0.5">
+                          {meetings.slice(0, 6).map((it: any) => renderRow(it, "bg-purple-300 dark:bg-purple-700"))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground italic">None</p>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}
             {leaseEvents.length > 0 && (
