@@ -326,6 +326,73 @@ router.get("/api/brand/:companyId/hunter-score", requireAuth, async (req: Reques
   }
 });
 
+// ─── Suggested BGP units ─────────────────────────────────────────────────
+// Returns leasing schedule units that could be a good pitch for this brand:
+// void/available units not already targeting the brand, ranked by whether
+// they're already on a shortlist, size fit, and proximity to requirements.
+
+router.get("/api/brand/:companyId/suggested-units", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const companyId = String(req.params.companyId);
+
+    const brandQ = await pool.query(
+      `SELECT name FROM crm_companies WHERE id = $1`,
+      [companyId]
+    );
+    if (!brandQ.rows[0]) return res.status(404).json({ error: "not found" });
+    const brandName = brandQ.rows[0].name as string;
+
+    // Brand's active requirements (locations, sizes)
+    const reqQ = await pool.query(
+      `SELECT requirement_locations, size FROM crm_requirements_leasing
+        WHERE company_id = $1 AND (status IS NULL OR status ILIKE '%active%')
+        LIMIT 5`,
+      [companyId]
+    );
+    const reqLocations: string[] = reqQ.rows.flatMap((r: any) => r.requirement_locations || []).map((l: string) => l.toLowerCase());
+
+    // Available leasing schedule units not already targeting this brand
+    const unitsQ = await pool.query(
+      `SELECT u.id, u.unit_name, u.sqft, u.rent_pa, u.status, u.zone, u.positioning,
+              u.optimum_target, u.target_brands, u.priority,
+              p.id AS property_id, p.name AS property_name, p.address AS property_address, p.asset_class
+         FROM leasing_schedule_units u
+         JOIN crm_properties p ON p.id = u.property_id
+        WHERE
+          -- Exclude clearly occupied units
+          (u.status IS NULL
+           OR u.status ILIKE '%void%'
+           OR u.status ILIKE '%available%'
+           OR u.status ILIKE '%vacant%'
+           OR (u.status NOT ILIKE '%let%' AND u.status NOT ILIKE '%sold%' AND u.status NOT ILIKE '%complete%'))
+          -- Not already directly targeted at this brand
+          AND NOT ($1 = ANY(COALESCE(u.target_company_ids, '{}'::text[])))
+          AND (u.target_brands IS NULL OR u.target_brands NOT ILIKE $2)
+        ORDER BY u.rent_pa ASC NULLS LAST
+        LIMIT 50`,
+      [companyId, `%${brandName}%`]
+    );
+
+    // Score client-side-style: location match + has optimum_target or target_brands set
+    const scored = unitsQ.rows.map((u: any) => {
+      let score = 0;
+      const addr = (u.property_address || "").toLowerCase();
+      const zone = (u.zone || "").toLowerCase();
+      if (reqLocations.some(loc => addr.includes(loc) || zone.includes(loc))) score += 10;
+      if (u.optimum_target) score += 5;
+      if (u.target_brands) score += 3;
+      if (u.priority && ["high", "a", "1"].includes(u.priority.toLowerCase())) score += 4;
+      return { ...u, matchScore: score };
+    });
+
+    scored.sort((a: any, b: any) => b.matchScore - a.matchScore);
+
+    res.json(scored.slice(0, 6));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Per-brand Intel refresh ─────────────────────────────────────────────
 // Fetches the brand's Google News RSS feed, inserts new articles, links them
 // as brand_signals, then busts the intel AI-take cache so the next GET

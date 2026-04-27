@@ -509,6 +509,26 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     retry: false,
   });
 
+  // BGP portfolio units that could be pitched to this brand
+  const { data: suggestedUnits } = useQuery<Array<{
+    id: string; unit_name: string | null; sqft: number | null; rent_pa: number | null;
+    status: string | null; zone: string | null; property_id: string;
+    property_name: string; property_address: string | null; asset_class: string | null;
+    matchScore: number;
+  }>>({
+    queryKey: ["/api/brand", companyId, "suggested-units"],
+    queryFn: async () => {
+      const r = await fetch(`/api/brand/${companyId}/suggested-units`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) return [];
+      return r.json();
+    },
+    staleTime: 15 * 60 * 1000,
+    retry: false,
+  });
+
   if (isLoading || !data) return null;
 
   const c = data.company;
@@ -1924,6 +1944,35 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
               )}
             </div>
+
+            {/* Suggested BGP units — available portfolio units not yet pitched to this brand */}
+            {suggestedUnits && suggestedUnits.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] font-medium text-foreground/70 mb-1 flex items-center gap-1">
+                  <Building2 className="w-3 h-3 text-emerald-600" />
+                  <span>BGP portfolio — potential pitches ({suggestedUnits.length})</span>
+                </div>
+                <div className="space-y-1">
+                  {suggestedUnits.map((u) => (
+                    <Link key={u.id} href={`/properties/${u.property_id}`} className="flex items-center gap-2 text-xs hover:bg-muted/40 rounded px-1 py-1 -mx-1 transition-colors group">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-medium truncate">{u.property_name}</span>
+                          {u.unit_name && <span className="text-[10px] text-muted-foreground shrink-0">{u.unit_name}</span>}
+                          {u.zone && <Badge variant="outline" className="text-[9px] shrink-0">{u.zone}</Badge>}
+                        </div>
+                        {u.property_address && <div className="text-[10px] text-muted-foreground truncate">{u.property_address}</div>}
+                      </div>
+                      <div className="text-right shrink-0">
+                        {u.rent_pa != null && <div className="font-semibold text-[11px]">£{Math.round(u.rent_pa / 1000)}k pa</div>}
+                        {u.sqft != null && <div className="text-[9px] text-muted-foreground">{Math.round(u.sqft).toLocaleString()} sqft</div>}
+                      </div>
+                      <ExternalLink className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100 shrink-0" />
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
 
             </TabsContent>
 
