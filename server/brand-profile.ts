@@ -897,7 +897,15 @@ export async function researchBrandStores(companyId: string): Promise<{
     // immediately after (avoids "Supreme Pizza", "Coach Hire", etc.).
     const re = new RegExp(`\\b${brandFirstWord}\\b(?:\\s+(\\S+))?`);
     const m = n.match(re);
-    if (!m) return false;
+    if (!m) {
+      // Slug fallback: handles brands stored as slugs e.g. "andotherstories"
+      // matching a Google Places result "& Other Stories". Normalise & → "and"
+      // then strip non-alphanumeric before comparing.
+      const slugify = (s: string) => s.replace(/&/g, "and").replace(/[^a-z0-9]/g, "");
+      const bSlug = slugify(brandToken);
+      const nSlug = slugify(n);
+      return !!(bSlug && (nSlug === bSlug || nSlug.startsWith(bSlug)));
+    }
     const next = (m[1] || "").replace(/[^a-z0-9]/g, "");
     if (next && NOISE.has(next)) return false;
     return true;
