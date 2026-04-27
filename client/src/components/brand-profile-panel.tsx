@@ -875,7 +875,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           })()}
           {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
         </CardTitle>
-        {(c.industry || (c.employee_count && c.employee_count > 0) || c.founded_year || data.parentGroup || c.backers || (c.stock_ticker && stockData?.snapshot)) && (
+        {(c.industry || (c.employee_count && c.employee_count > 0) || c.founded_year || data.parentGroup || c.backers || c.head_office_address || (c.stock_ticker && stockData?.snapshot)) && (
           <div className="text-xs text-muted-foreground flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
             {c.industry && <span>{c.industry}</span>}
             {c.employee_count && c.employee_count > 0 && (
@@ -886,6 +886,19 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   : `${c.employee_count} employees`}</span>
             )}
             {c.founded_year && <span>· Est. {c.founded_year}</span>}
+            {(() => {
+              const a = c.head_office_address as { street?: string; city?: string; country?: string; address?: string } | null | undefined;
+              if (!a) return null;
+              const short = [a.city, a.country].filter(Boolean).join(", ");
+              const full = [a.street, a.city, a.country].filter(Boolean).join(", ") || a.address || "";
+              const display = short || a.address || "";
+              if (!display) return null;
+              return (
+                <span title={full || display} className="inline-flex items-center gap-0.5">
+                  · <Building2 className="w-2.5 h-2.5" /> HQ {display}
+                </span>
+              );
+            })()}
             {data.parentGroup && (
               <span>· Part of <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">{data.parentGroup.name}</Link></span>
             )}

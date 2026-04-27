@@ -127,7 +127,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     const companyQ = pool.query(
       `SELECT id, name, description, company_type, companies_house_number, companies_house_data,
-              domain, domain_url,
+              domain, domain_url, head_office_address,
               linkedin_url, phone, industry, employee_count, annual_revenue, founded_year,
               kyc_status, kyc_expires_at, aml_risk_level, aml_pep_status,
               is_tracked_brand, tracking_reason, brand_group_id, parent_company_id,
