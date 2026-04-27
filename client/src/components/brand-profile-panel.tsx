@@ -12,7 +12,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, Handshake,
@@ -875,8 +874,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
           </div>
         ) : (
-          <Tabs defaultValue="brand" className="w-full">
-            {/* Outreach strip — prominent quick-action buttons (always visible across tabs) */}
+          <div className="w-full">
+            {/* Outreach strip — quick-action buttons */}
             <div className="flex items-center gap-1.5 flex-wrap mb-2">
               {(c.domain_url || c.domain) && (
                 <a
@@ -938,15 +937,31 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <TrendingUp className="w-3 h-3" /> {c.stock_ticker}
                 </a>
               )}
+              <button
+                type="button"
+                onClick={() => navigate("/deals")}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-[11px] font-medium transition-colors"
+                title="Go to Deals to add this brand to a deal"
+              >
+                <Briefcase className="w-3 h-3" /> Add to deal
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate("/available")}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 text-[11px] font-medium transition-colors"
+                title="Browse available units to pitch to this brand"
+              >
+                <Building2 className="w-3 h-3" /> Pitch property
+              </button>
             </div>
 
-            <TabsList className="w-full h-8 grid grid-cols-4 mb-2">
-              <TabsTrigger value="brand" className="text-[11px]">Brand</TabsTrigger>
-              <TabsTrigger value="uk" className="text-[11px]">UK &amp; Covenant</TabsTrigger>
-              <TabsTrigger value="activity" className="text-[11px]">Activity</TabsTrigger>
-              <TabsTrigger value="intel" className="text-[11px]">Intel</TabsTrigger>
-            </TabsList>
-            <TabsContent value="brand" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
+            {/* ── Zone 1: Global Brand ─────────────────────── */}
+            <div className="border-t border-border/40 mt-2 pt-2">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Store className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Global Brand</span>
+            </div>
+            <div className="space-y-2.5">
             <BgpTakeStrip companyId={companyId} tab="brand" />
             <div className="flex gap-1.5 flex-wrap">
               {[`Tell me everything BGP needs to know about ${c.name} before a first call`, `What space would ${c.name} want and what BGP properties could work?`].map(q => (
@@ -1381,9 +1396,16 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
               </div>
             )}
-            </TabsContent>
+            </div>
+            </div>
 
-            <TabsContent value="uk" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
+            {/* ── Zone 2: UK & Covenant ────────────────────── */}
+            <div className="border-t border-border/40 mt-3 pt-2">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">UK &amp; Covenant</span>
+            </div>
+            <div className="space-y-2.5">
             <BgpTakeStrip companyId={companyId} tab="uk" />
             <div className="flex gap-1.5 flex-wrap">
               {[`What's ${c.name}'s covenant risk? How should we position this to a landlord?`, `Walk me through ${c.name}'s UK financials and what they mean for rent affordability`].map(q => (
@@ -1652,18 +1674,21 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     </div>
                   </div>
                 )}
-                {turnover.length > 0 && (
-                  <div className="mt-2 flex items-center gap-2 text-xs flex-wrap">
-                    <PoundSterling className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-muted-foreground">Turnover trend:</span>
-                    {turnover.slice(0, 3).reverse().map((t: any) => (
-                      <Badge key={t.period} variant="outline" className="text-[10px]">
-                        {t.period}: £{(t.turnover / 1_000_000).toFixed(1)}m
-                      </Badge>
-                    ))}
-                    <Sparkline values={turnover.slice().reverse().map((t: any) => Number(t.turnover) || 0)} />
-                  </div>
-                )}
+                {turnover.filter((t: any) => t.turnover && t.turnover > 0).length > 0 && (() => {
+                  const validTurnover = turnover.filter((t: any) => t.turnover && t.turnover > 0);
+                  return (
+                    <div className="mt-2 flex items-center gap-2 text-xs flex-wrap">
+                      <PoundSterling className="w-3 h-3 text-muted-foreground" />
+                      <span className="text-muted-foreground">Turnover trend:</span>
+                      {validTurnover.slice(0, 3).reverse().map((t: any) => (
+                        <Badge key={t.period} variant="outline" className="text-[10px]">
+                          {t.period}: £{(t.turnover / 1_000_000).toFixed(1)}m
+                        </Badge>
+                      ))}
+                      <Sparkline values={validTurnover.slice().reverse().map((t: any) => Number(t.turnover))} />
+                    </div>
+                  );
+                })()}
                 {rentAffordability && rentAffordability.rentToTurnoverPct != null && (
                   <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] pt-2 border-t">
                     <div>
@@ -1723,9 +1748,16 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 )}
               </div>
             )}
-            </TabsContent>
+            </div>
+            </div>
 
-            <TabsContent value="activity" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
+            {/* ── Zone 3: BGP Relationship ──────────────────── */}
+            <div className="border-t border-border/40 mt-3 pt-2">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">BGP Relationship</span>
+            </div>
+            <div className="space-y-2.5">
             <BgpTakeStrip companyId={companyId} tab="activity" />
             <div className="flex gap-1.5 flex-wrap">
               {[`Who should BGP contact at ${c.name} and what's the best approach?`, `Draft a brief introductory pitch email from BGP to ${c.name}`].map(q => (
@@ -2233,11 +2265,16 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
             )}
 
-            </TabsContent>
+            </div>
+            </div>
 
-            <TabsContent value="intel" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex-1 min-w-0"><BgpTakeStrip companyId={companyId} tab="intel" /></div>
+            {/* ── Zone 4: Hunter Intel & News ───────────────── */}
+            <div className="border-t border-border/40 mt-3 pt-2">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Intel &amp; News</span>
+              </div>
               <div className="flex items-center gap-1 shrink-0">
                 <Button
                   size="sm"
@@ -2274,6 +2311,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </Button>
               </div>
             </div>
+            <div className="space-y-2.5">
+            <BgpTakeStrip companyId={companyId} tab="intel" />
             <div className="flex gap-1.5 flex-wrap">
               {[`What are the key signals about ${c.name} right now and what should BGP do?`, `Should BGP be pitching ${c.name} new space — if so, where and why?`].map(q => (
                 <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
@@ -2554,8 +2593,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 <Clock className="w-2.5 h-2.5" /> Last enriched {new Date(c.last_enriched_at).toLocaleString("en-GB")}
               </div>
             )}
-            </TabsContent>
-          </Tabs>
+            </div>
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>
