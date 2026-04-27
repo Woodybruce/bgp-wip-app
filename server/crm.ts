@@ -231,6 +231,12 @@ export async function importWipFromBuffer(
   };
 
   const monthOrder = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  // Convert Excel serial number (e.g. 46357) to a JS Date (UTC).
+  // Excel counts from 1900-01-00 with a phantom leap day on 1900-02-29,
+  // so the Unix-epoch offset is 25569 days.
+  const excelSerialToDate = (serial: number): Date =>
+    new Date((serial - 25569) * 86400 * 1000);
+
   const parseFiscalYear = (raw: any): number | null => {
     if (!raw) return null;
     const s = String(raw).trim();
@@ -247,11 +253,42 @@ export async function importWipFromBuffer(
       const mIdx0 = parseInt(mYearFirst[2]) - 1;
       if (!isNaN(yr) && mIdx0 >= 0 && mIdx0 < 12) return mIdx0 >= 3 ? yr + 1 : yr;
     }
+    // Excel serial number exported as a bare integer (e.g. 46357 = 2026-12-31).
+    // Range 40000–60000 safely covers 2009–2064 without false-positives.
+    if (/^\d+$/.test(s)) {
+      const serial = parseInt(s);
+      if (serial >= 40000 && serial <= 60000) {
+        const d = excelSerialToDate(serial);
+        const mIdx0 = d.getUTCMonth();
+        const yr = d.getUTCFullYear();
+        return mIdx0 >= 3 ? yr + 1 : yr;
+      }
+    }
     const d = new Date(s);
     if (!isNaN(d.getTime())) {
       const mIdx0 = d.getUTCMonth();
       const yr = d.getUTCFullYear();
       return mIdx0 >= 3 ? yr + 1 : yr;
+    }
+    return null;
+  };
+
+  // Derive a "Mon-YY" label from any date-like value (MonthYear text, Excel serial,
+  // or formatted date string).  Used as a fallback when MonthYear is blank.
+  const deriveMonthLabel = (raw: any): string | null => {
+    if (!raw) return null;
+    const s = String(raw).trim();
+    if (/^[A-Za-z]{3}-\d{2,4}$/.test(s)) return s;
+    if (/^\d+$/.test(s)) {
+      const serial = parseInt(s);
+      if (serial >= 40000 && serial <= 60000) {
+        const d = excelSerialToDate(serial);
+        return `${monthOrder[d.getUTCMonth()]}-${String(d.getUTCFullYear()).slice(2)}`;
+      }
+    }
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      return `${monthOrder[d.getUTCMonth()]}-${String(d.getUTCFullYear()).slice(2)}`;
     }
     return null;
   };
@@ -312,7 +349,7 @@ export async function importWipFromBuffer(
       agent: pick(kr, "Agent") || null,
       amtWip: isInvoiced ? 0 : net,
       amtInvoice: isInvoiced ? net : 0,
-      month: pick(kr, "MonthYear", "Month Year", "Month") || null,
+      month: pick(kr, "MonthYear", "Month Year", "Month") || deriveMonthLabel(pick(kr, "DueDate_EOMonth", "DueDate")) || null,
       dealStatus: pick(kr, "DealStatus", "Deal Status", "Deal status") || null,
       stage: pick(kr, "Stage") || pick(kr, "STOCK_CODE", "StockCode") || null,
       invoiceNo: pick(kr, "InvoiceNo") ? String(pick(kr, "InvoiceNo")) : null,
