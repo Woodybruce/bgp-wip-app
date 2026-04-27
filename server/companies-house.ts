@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "./auth";
+import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
 
 const router = Router();
 
@@ -453,13 +454,25 @@ async function performAutoKyc(companyId: string, opts: {
       diagnostics.push({ step: "manual_entity_name", outcome: "accepted", detail: `Searching CH for "${searchName}".` });
     } else if (opts.manualTcsUrl) {
       try {
-        const r = await fetch(opts.manualTcsUrl, {
-          headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" },
+        // Direct first; on bot-wall (403/Akamai/Cloudflare) or timeout, retry
+        // through ScraperAPI's residential proxy. Same fallback pattern as
+        // the auto-scraper (Step 0) below.
+        const ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+        let r = await fetch(opts.manualTcsUrl, {
+          headers: { "User-Agent": ua },
           signal: AbortSignal.timeout(10_000),
           redirect: "follow",
-        });
-        if (!r.ok) {
-          diagnostics.push({ step: "manual_tcs_url", outcome: "fetch_failed", detail: `${r.status} ${r.statusText} for ${opts.manualTcsUrl}` });
+        }).catch(() => null);
+        const blocked = !r || r.status === 403 || r.status === 503 || r.status === 429;
+        if (blocked && isScraperApiAvailable()) {
+          diagnostics.push({ step: "manual_tcs_url", outcome: "direct_blocked", detail: `Direct fetch returned ${r?.status ?? "no response"} — retrying via ScraperAPI residential proxy.` });
+          r = await scraperFetch(opts.manualTcsUrl, {
+            headers: { "User-Agent": ua },
+            timeoutMs: 30_000,
+          }).catch(() => null);
+        }
+        if (!r || !r.ok) {
+          diagnostics.push({ step: "manual_tcs_url", outcome: "fetch_failed", detail: `${r?.status ?? "no response"} ${r?.statusText ?? ""} for ${opts.manualTcsUrl}` });
         } else {
           const html = await r.text();
           const text = html
@@ -2369,23 +2382,52 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       .replace(/&[a-z]+;/g, " ")
       .replace(/\s+/g, " ");
 
+  // Direct fetch first, ScraperAPI residential proxy on failure. Most
+  // premium retail sites (stories.com, hm.com, supreme.com, hermes.com,
+  // ralphlauren.com, balenciaga.com…) sit behind Akamai or Cloudflare
+  // bot-walls that 403 every datacenter IP — direct fetch from Railway
+  // dies on them. ScraperAPI's residential pool bypasses the wall.
+  // Treat any 403/503/timeout as a signal to retry through the proxy.
+  const tryFetch = async (
+    url: string,
+    init: RequestInit & { timeoutMs?: number } = {},
+  ): Promise<Response | null> => {
+    const { timeoutMs, ...rest } = init;
+    const direct = await fetch(url, {
+      ...rest,
+      signal: rest.signal ?? AbortSignal.timeout(timeoutMs ?? 6000),
+    }).catch(() => null);
+    if (direct && direct.ok) return direct;
+    const blocked = !direct || direct.status === 403 || direct.status === 503 || direct.status === 429;
+    if (blocked && isScraperApiAvailable()) {
+      return scraperFetch(url, {
+        ...rest,
+        timeoutMs: 25000,
+        signal: rest.signal,
+      }).catch(() => null);
+    }
+    return direct; // non-ok but not bot-blocked — return so callers see the status
+  };
+
   for (const base of baseUrls) {
     // Probe + discover — fetch homepage, confirm it's alive, capture HTML so
-    // we can harvest legal links from the footer (Step 0 below).
+    // we can harvest legal links from the footer (Step 0 below). Routes
+    // through ScraperAPI on bot-wall (403/Akamai) so premium-retailer sites
+    // like stories.com / hm.com / supreme.com don't dead-end here.
     let probeOk = false;
     let homepageHtml: string | null = null;
-    try {
-      const probe = await fetch(base, {
-        method: "GET",
-        headers: { "User-Agent": UA, "Accept": "text/html,*/*" },
-        signal: AbortSignal.timeout(5000),
-        redirect: "follow",
-      });
-      probeOk = probe.status > 0; // any HTTP response = host alive
+    const probe = await tryFetch(base, {
+      method: "GET",
+      headers: { "User-Agent": UA, "Accept": "text/html,*/*" },
+      timeoutMs: 7000,
+      redirect: "follow",
+    });
+    if (probe) {
+      probeOk = probe.status > 0;
       if (probe.ok && (probe.headers.get("content-type") || "").includes("html")) {
-        homepageHtml = await probe.text();
+        homepageHtml = await probe.text().catch(() => null);
       }
-    } catch { probeOk = false; }
+    }
     if (!probeOk) continue;
 
     // ── Step 0: homepage + footer-link harvest ────────────────────────────────
@@ -2425,12 +2467,12 @@ Return both null if the page doesn't disclose a UK trading entity.`;
 
       for (const url of discovered) {
         try {
-          const resp = await fetch(url, {
+          const resp = await tryFetch(url, {
             headers: { "User-Agent": UA },
-            signal: AbortSignal.timeout(6000),
+            timeoutMs: 8000,
             redirect: "follow",
           });
-          if (!resp.ok) continue;
+          if (!resp || !resp.ok) continue;
           const ct = resp.headers.get("content-type") || "";
           if (!ct.includes("html") && !ct.includes("text")) continue;
           const text = htmlToText(await resp.text());
@@ -2457,12 +2499,12 @@ Return both null if the page doesn't disclose a UK trading entity.`;
     ];
     for (const path of shopifyPolicies) {
       try {
-        const resp = await fetch(`${base}${path}`, {
+        const resp = await tryFetch(`${base}${path}`, {
           headers: { "User-Agent": UA },
-          signal: AbortSignal.timeout(6000),
+          timeoutMs: 7000,
           redirect: "follow",
         });
-        if (!resp.ok) continue;
+        if (!resp || !resp.ok) continue;
         const ct = resp.headers.get("content-type") || "";
         if (!ct.includes("json")) continue;
         const json = await resp.json() as any;
@@ -2485,12 +2527,12 @@ Return both null if the page doesn't disclose a UK trading entity.`;
     const wpSlugs = ["terms-and-conditions", "terms-of-service", "terms", "privacy-policy", "legal"];
     for (const slug of wpSlugs) {
       try {
-        const resp = await fetch(`${base}/wp-json/wp/v2/pages?slug=${slug}&_fields=content`, {
+        const resp = await tryFetch(`${base}/wp-json/wp/v2/pages?slug=${slug}&_fields=content`, {
           headers: { "User-Agent": UA },
-          signal: AbortSignal.timeout(5000),
+          timeoutMs: 6000,
           redirect: "follow",
         });
-        if (!resp.ok) continue;
+        if (!resp || !resp.ok) continue;
         const json = await resp.json() as any[];
         const body: string = json?.[0]?.content?.rendered || "";
         if (!body) continue;
@@ -2511,12 +2553,12 @@ Return both null if the page doesn't disclose a UK trading entity.`;
     for (const page of pages) {
       const url = `${base}${page}`;
       try {
-        const resp = await fetch(url, {
+        const resp = await tryFetch(url, {
           headers: { "User-Agent": UA },
-          signal: AbortSignal.timeout(6000),
+          timeoutMs: 8000,
           redirect: "follow",
         });
-        if (!resp.ok) continue;
+        if (!resp || !resp.ok) continue;
         const ct = resp.headers.get("content-type") || "";
         if (!ct.includes("html") && !ct.includes("text")) continue;
 
