@@ -452,6 +452,7 @@ import perplexityRouter from "./perplexity";
 import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
+import brandAiTakeRouter from "./brand-ai-take";
 import apolloContactsRouter from "./apollo-contacts";
 import rocketreachContactsRouter, { rocketreachHealth } from "./rocketreach-contacts";
 import { experianHealth, fetchCommercialCredit, isExperianConfigured } from "./experian";
@@ -799,6 +800,7 @@ app.use("/api/branding/assets", express.static(
   app.use(brandDedupeRouter);
   app.use(brandProfileRouter);
   app.use(brandEnrichmentRouter);
+  app.use(brandAiTakeRouter);
   app.use(apolloContactsRouter);
   app.use(rocketreachContactsRouter);
 

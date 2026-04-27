@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { BgpTakeStrip } from "@/components/bgp-take-strip";
 import {
   Sparkles, Store, TrendingUp, TrendingDown, Users, Handshake,
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
@@ -662,6 +663,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <TabsTrigger value="intel" className="text-[11px]">Intel</TabsTrigger>
             </TabsList>
             <TabsContent value="brand" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
+            <BgpTakeStrip companyId={companyId} tab="brand" />
             {/* ── Global brand ─────────────────────────────────────────── */}
             <div className="space-y-2">
               {/* Single description — prefer brand_analysis (more detailed), fall back to description */}
@@ -1032,6 +1034,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </TabsContent>
 
             <TabsContent value="uk" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
+            <BgpTakeStrip companyId={companyId} tab="uk" />
             {/* Covenant strip — CH financials + traffic light */}
             {covenant && (
               <div className="border-t pt-2">
@@ -1321,6 +1324,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </TabsContent>
 
             <TabsContent value="activity" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
+            <BgpTakeStrip companyId={companyId} tab="activity" />
             {/* Relationship strip — lead broker, last touchpoint, active contacts */}
             {(c.bgp_contact_crm || data.contacts.length > 0) && (() => {
               const lastContactedAt = data.contacts
@@ -1775,6 +1779,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </TabsContent>
 
             <TabsContent value="intel" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
+            <BgpTakeStrip companyId={companyId} tab="intel" />
             {/* Images */}
             {data.images.length > 0 && (
               <div>
