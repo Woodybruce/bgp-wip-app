@@ -822,9 +822,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {data.parentGroup && (
               <span>· Part of <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">{data.parentGroup.name}</Link></span>
             )}
-            {c.backers && (
-              <span className="truncate max-w-[200px]" title={c.backers}>· Backed by {c.backers}</span>
-            )}
           </div>
         )}
         </div>
@@ -1092,7 +1089,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               const firstImg = data.images[0];
               if (!hasStreetView && !firstImg) return null;
               return (
-                <div className={`grid gap-1.5 rounded-md overflow-hidden ${hasStreetView && firstImg ? "grid-cols-2" : "grid-cols-1"}`} style={{ height: 140 }}>
+                <div className={`grid gap-1.5 rounded-md overflow-hidden ${hasStreetView && firstImg ? "grid-cols-2" : "grid-cols-1"}`} style={{ height: 220 }}>
                   {hasStreetView && (
                     <div className="overflow-hidden rounded-md bg-muted/40">
                       <img
@@ -1391,23 +1388,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {c.tracking_reason && (
               <div className="text-xs text-muted-foreground italic border-l-2 border-purple-300 pl-2">
                 {c.tracking_reason}
-              </div>
-            )}
-
-            {/* Hunter intel — expansion score + flags driving it */}
-            {hunter && hunter.expansionFlags.length > 0 && (
-              <div className="border-t pt-2">
-                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                  <Flame className="w-3 h-3 text-orange-500" /> Hunter signals
-                  <span className="ml-auto font-semibold text-foreground">{hunter.expansionScore}/100</span>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {hunter.expansionFlags.map((flag) => (
-                    <Badge key={flag} variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
-                      {flag}
-                    </Badge>
-                  ))}
-                </div>
               </div>
             )}
 
@@ -1919,15 +1899,67 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     <RolloutBarChart monthly={rolloutVelocity.monthly} />
                   </div>
                 )}
-                {/* Store spread map */}
-                {stores.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number").length > 0 && (
-                  <div className="mt-2 pt-2 border-t">
-                    <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                      <MapPin className="w-3 h-3" /> UK store spread ({stores.filter((s: any) => s.status === "open").length} open)
-                    </div>
-                    <BrandPortfolioMap stores={stores as any} />
+                {/* Store spread map + list side-by-side */}
+                <div className="mt-2 pt-2 border-t">
+                  <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
+                    <span className="flex items-center gap-1">
+                      <MapPin className="w-3 h-3" /> UK stores ({stores.length}{c.store_count && c.store_count > 0 && stores.length !== c.store_count ? ` of ${c.store_count} global` : ""}{stores.filter((s: any) => s.status === "open").length > 0 && stores.filter((s: any) => s.status === "open").length !== stores.length ? ` · ${stores.filter((s: any) => s.status === "open").length} open` : ""})
+                    </span>
+                    <button
+                      onClick={() => researchStoresMutation.mutate()}
+                      disabled={researchStoresMutation.isPending}
+                      className="text-[10px] text-primary hover:underline disabled:opacity-50 flex items-center gap-0.5"
+                      title="Research stores via Google Places"
+                    >
+                      <Search className={`w-2.5 h-2.5 ${researchStoresMutation.isPending ? "animate-spin" : ""}`} />
+                      {stores.length === 0 ? "Find stores" : "Re-scan"}
+                    </button>
                   </div>
-                )}
+                  {stores.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number").length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div className="space-y-0.5 max-h-[260px] overflow-y-auto pr-1 order-2 md:order-1">
+                        {stores.slice(0, 30).map((s: any) => (
+                          <div key={s.id} className="text-xs flex items-start gap-1.5 px-1 py-0.5">
+                            <MapPin className={`w-3 h-3 shrink-0 mt-0.5 ${s.status === "closed" ? "text-red-500" : s.status === "open" ? "text-emerald-500" : "text-muted-foreground"}`} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1">
+                                <span className="truncate flex-1 font-medium">{s.name}</span>
+                                {s.place_id && (
+                                  <a
+                                    href={`https://www.google.com/maps/place/?q=place_id:${s.place_id}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="shrink-0 text-muted-foreground hover:text-primary"
+                                    title="View on Google Maps"
+                                  >
+                                    <ExternalLink className="w-2.5 h-2.5" />
+                                  </a>
+                                )}
+                              </div>
+                              {s.address && <div className="text-[10px] text-muted-foreground truncate">{s.address}</div>}
+                            </div>
+                          </div>
+                        ))}
+                        {stores.length > 30 && (
+                          <p className="text-[10px] text-muted-foreground pl-1">+{stores.length - 30} more stores</p>
+                        )}
+                      </div>
+                      <div className="order-1 md:order-2">
+                        <BrandPortfolioMap stores={stores as any} />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground px-1 py-1">
+                      {researchStoresMutation.isPending ? (
+                        <span className="italic">Searching Google Places…</span>
+                      ) : c.store_count && c.store_count > 0 ? (
+                        <span>Brand has ~{c.store_count.toLocaleString()} stores globally. Click Find stores to pull UK locations from Google Places.</span>
+                      ) : (
+                        <span className="italic">No stores researched yet. Click Find stores to search now.</span>
+                      )}
+                    </div>
+                  )}
+                </div>
                 {rentAffordability && rentAffordability.rentToTurnoverPct != null && (
                   <div className="mt-2 grid grid-cols-3 gap-2 text-xs pt-2 border-t">
                     <div>
@@ -2444,74 +2476,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
             )}
 
-            {/* Stores — Google Places list. Auto-researched by the background
-                enrichment scheduler; manual trigger available when empty. */}
-            <div className="border-t pt-2">
-              <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
-                <span className="flex items-center gap-1">
-                  <MapPin className="w-3 h-3" /> UK stores ({stores.length}{c.store_count && c.store_count > 0 && stores.length !== c.store_count ? ` of ${c.store_count} global` : ""})
-                </span>
-                <button
-                  onClick={() => researchStoresMutation.mutate()}
-                  disabled={researchStoresMutation.isPending}
-                  className="text-[10px] text-primary hover:underline disabled:opacity-50 flex items-center gap-0.5"
-                  title="Research stores via Google Places"
-                >
-                  <Search className={`w-2.5 h-2.5 ${researchStoresMutation.isPending ? "animate-spin" : ""}`} />
-                  {stores.length === 0 ? "Find stores" : "Re-scan"}
-                </button>
-              </div>
-              {stores.length > 0 ? (
-                <div className="space-y-0.5 max-h-[200px] overflow-y-auto pr-1">
-                  {stores.slice(0, 20).map((s) => (
-                    <div key={s.id} className="text-xs flex items-start gap-1.5 px-1 py-0.5">
-                      <MapPin className={`w-3 h-3 shrink-0 mt-0.5 ${s.status === "closed" ? "text-red-500" : s.status === "open" ? "text-emerald-500" : "text-muted-foreground"}`} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1">
-                          <span className="truncate flex-1 font-medium">{s.name}</span>
-                          {s.place_id && (
-                            <a
-                              href={`https://www.google.com/maps/place/?q=place_id:${s.place_id}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="shrink-0 text-muted-foreground hover:text-primary"
-                              title="View on Google Maps"
-                            >
-                              <ExternalLink className="w-2.5 h-2.5" />
-                            </a>
-                          )}
-                        </div>
-                        {s.address && <div className="text-[10px] text-muted-foreground truncate">{s.address}</div>}
-                      </div>
-                    </div>
-                  ))}
-                  {stores.length > 20 && (
-                    <p className="text-[10px] text-muted-foreground pl-1">+{stores.length - 20} more stores</p>
-                  )}
-                </div>
-              ) : (
-                <div className="text-xs text-muted-foreground px-1 py-1">
-                  {researchStoresMutation.isPending ? (
-                    <span className="italic">Searching Google Places…</span>
-                  ) : c.store_count && c.store_count > 0 ? (
-                    <span>
-                      Brand has ~{c.store_count.toLocaleString()} stores globally. Click{" "}
-                      <button
-                        type="button"
-                        onClick={() => researchStoresMutation.mutate()}
-                        className="text-primary hover:underline"
-                      >
-                        Find stores
-                      </button>{" "}
-                      to pull UK locations from Google Places.
-                    </span>
-                  ) : (
-                    <span className="italic">No stores researched yet. Click Find stores to search now.</span>
-                  )}
-                </div>
-              )}
-            </div>
-
             {/* Suggested BGP units — available portfolio units not yet pitched to this brand */}
             {suggestedUnits && suggestedUnits.length > 0 && (
               <div className="border-t pt-2">
@@ -2610,6 +2574,16 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
             </div>
             <div className="space-y-2.5">
+            {/* Expansion flags driving the Hunter score */}
+            {hunter && hunter.expansionFlags && hunter.expansionFlags.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {hunter.expansionFlags.map((flag) => (
+                  <Badge key={flag} variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
+                    {flag}
+                  </Badge>
+                ))}
+              </div>
+            )}
             <div className="flex gap-1.5 flex-wrap">
               {[`What are the key signals about ${c.name} right now and what should BGP do?`, `Should BGP be pitching ${c.name} new space — if so, where and why?`].map(q => (
                 <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">

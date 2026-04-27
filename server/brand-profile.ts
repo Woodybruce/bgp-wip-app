@@ -1123,13 +1123,16 @@ router.get("/api/brand/gallery-image/:imageId", requireAuth, async (req: Request
 // Street View image of the brand's flagship store — picks the first cached
 // Google Places store with coords and proxies Google's Street View Static
 // API. Cached 24h client-side. Returns 204 when no suitable store exists.
+// Flagship banner — try Google Places Photo first (real user/business photos
+// of the storefront), fall back to Street View. Both are sized 1600 wide so
+// the panel banner stays sharp on retina displays.
 router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Request, res: Response) => {
   try {
     const apiKey = process.env.GOOGLE_API_KEY;
     if (!apiKey) return res.status(204).end();
 
     const { rows } = await pool.query(
-      `SELECT lat, lng, name FROM brand_stores
+      `SELECT lat, lng, name, place_id FROM brand_stores
         WHERE brand_company_id = $1 AND lat IS NOT NULL AND lng IS NOT NULL
           AND status = 'open'
         ORDER BY researched_at DESC NULLS LAST LIMIT 1`,
@@ -1138,8 +1141,36 @@ router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Requ
     const store = rows[0];
     if (!store) return res.status(204).end();
 
+    const sendImage = (buf: Buffer) => {
+      res.setHeader("Content-Type", "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.send(buf);
+    };
+
+    // 1. Try Place Photos — usually much better quality than Street View.
+    if (store.place_id) {
+      try {
+        const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(store.place_id)}&fields=photos&key=${apiKey}`;
+        const detailsResp = await fetch(detailsUrl);
+        if (detailsResp.ok) {
+          const details = await detailsResp.json();
+          const photoRef = details?.result?.photos?.[0]?.photo_reference;
+          if (photoRef) {
+            const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=1600&photo_reference=${encodeURIComponent(photoRef)}&key=${apiKey}`;
+            const photoResp = await fetch(photoUrl);
+            if (photoResp.ok) {
+              return sendImage(Buffer.from(await photoResp.arrayBuffer()));
+            }
+          }
+        }
+      } catch (e: any) {
+        console.warn("[brand-flagship] place photo failed, falling back to street view:", e?.message);
+      }
+    }
+
+    // 2. Street View fallback — 1600x600 for sharp retina rendering.
     const params = new URLSearchParams({
-      size: "800x280",
+      size: "1600x600",
       location: `${store.lat},${store.lng}`,
       fov: "80",
       pitch: "0",
@@ -1147,11 +1178,7 @@ router.get("/api/brand/:companyId/flagship-image", requireAuth, async (req: Requ
     });
     const resp = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params.toString()}`);
     if (!resp.ok) return res.status(204).end();
-
-    const buf = Buffer.from(await resp.arrayBuffer());
-    res.setHeader("Content-Type", "image/jpeg");
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    res.send(buf);
+    return sendImage(Buffer.from(await resp.arrayBuffer()));
   } catch (err: any) {
     console.error("[brand-flagship]", err.message);
     res.status(500).end();
