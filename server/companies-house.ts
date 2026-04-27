@@ -2922,7 +2922,6 @@ router.post("/api/companies-house/batch-scrape-test", requireAuth, async (req, r
     const { crmCompanies } = await import("../shared/schema");
     const { eq, inArray } = await import("drizzle-orm");
 
-    // Optional: pass { ids: ["id1","id2",...] } to test a subset
     const ids: string[] | undefined = req.body?.ids;
     const rows = ids?.length
       ? await db.select().from(crmCompanies).where(inArray(crmCompanies.id, ids))
@@ -2930,17 +2929,13 @@ router.post("/api/companies-house/batch-scrape-test", requireAuth, async (req, r
 
     if (rows.length === 0) return res.json({ total: 0, results: [] });
 
-    // Stream results as newline-delimited JSON so the caller sees progress
-    res.setHeader("Content-Type", "application/x-ndjson");
-    res.setHeader("Transfer-Encoding", "chunked");
-    res.flushHeaders();
-
+    const results: any[] = [];
     let passed = 0, failed = 0, skipped = 0;
     for (const company of rows) {
       const domain = (company as any).domainUrl || (company as any).website;
       if (!domain) {
         skipped++;
-        res.write(JSON.stringify({ id: company.id, name: company.name, domain: null, status: "skipped", reason: "no domain" }) + "\n");
+        results.push({ id: company.id, name: company.name, domain: null, status: "skipped", reason: "no domain" });
         continue;
       }
       try {
@@ -2948,7 +2943,7 @@ router.post("/api/companies-house/batch-scrape-test", requireAuth, async (req, r
         const result = await scrapeUkEntityFromWebsite(domain, { name: company.name, parentGroup });
         const ok = !!(result.entityName || result.chNumber);
         if (ok) passed++; else failed++;
-        res.write(JSON.stringify({
+        results.push({
           id: company.id,
           name: company.name,
           domain,
@@ -2956,16 +2951,14 @@ router.post("/api/companies-house/batch-scrape-test", requireAuth, async (req, r
           entityName: result.entityName,
           chNumber: result.chNumber,
           sourceUrl: result.sourceUrl,
-        }) + "\n");
+        });
       } catch (err: any) {
         failed++;
-        res.write(JSON.stringify({ id: company.id, name: company.name, domain, status: "error", error: err.message }) + "\n");
+        results.push({ id: company.id, name: company.name, domain, status: "error", error: err.message });
       }
-      // 2s gap between brands to avoid rate-limiting ScraperAPI
       await new Promise(r => setTimeout(r, 2000));
     }
-    res.write(JSON.stringify({ summary: { total: rows.length, passed, failed, skipped } }) + "\n");
-    res.end();
+    res.json({ summary: { total: rows.length, passed, failed, skipped }, results });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
