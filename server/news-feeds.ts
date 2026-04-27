@@ -24,13 +24,16 @@ const DEFAULT_SOURCES = [
   { name: "London Property News", url: "https://www.londonpropertynews.co.uk", feedUrl: "https://www.londonpropertynews.co.uk/feed/", type: "rss", category: "Property" },
   { name: "Property Investor Today", url: "https://www.propertyinvestortoday.co.uk", feedUrl: "https://www.propertyinvestortoday.co.uk/rss.xml", type: "rss", category: "Investment" },
   { name: "Drapers", url: "https://www.drapersonline.com", feedUrl: "https://www.drapersonline.com/rss", type: "rss", category: "Retail" },
+  { name: "Retail Week", url: "https://www.retailweek.com", feedUrl: "https://www.retailweek.com/feed", type: "rss", category: "Retail" },
+  { name: "Reuters Business", url: "https://www.reuters.com/business", feedUrl: "https://feeds.reuters.com/reuters/businessNews", type: "rss", category: "Retail" },
+  { name: "The Guardian — Retail", url: "https://www.theguardian.com/business/retail", feedUrl: "https://www.theguardian.com/business/retail/rss", type: "rss", category: "Retail" },
   // Brand / fashion / retail press — added for Tenant Rep + Leasing brand-hunting
   { name: "Vogue Business", url: "https://www.voguebusiness.com", feedUrl: "https://www.voguebusiness.com/feed", type: "rss", category: "Retail" },
   { name: "Highsnobiety", url: "https://www.highsnobiety.com", feedUrl: "https://www.highsnobiety.com/feed/", type: "rss", category: "Retail" },
-  { name: "The New Yorker — Business", url: "https://www.newyorker.com/business", feedUrl: "https://www.newyorker.com/feed/business", type: "rss", category: "Retail" },
   // Google News searches for topics without a direct RSS feed
   { name: "Industry of Fashion (Google News)", url: "https://news.google.com/search?q=%22industry+of+fashion%22", feedUrl: "https://news.google.com/rss/search?q=%22industry+of+fashion%22&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
   { name: "Industry of Beauty (Google News)", url: "https://news.google.com/search?q=%22industry+of+beauty%22", feedUrl: "https://news.google.com/rss/search?q=%22industry+of+beauty%22&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
+  { name: "UK Retail Expansion (Google News)", url: "https://news.google.com/search?q=%22new+store%22+%22UK%22+retail", feedUrl: "https://news.google.com/rss/search?q=%22new+store%22+UK+retail&hl=en-GB&gl=GB&ceid=GB:en", type: "google_news", category: "Retail" },
 ];
 
 const TEAM_PROFILES: Record<string, { focus: string; keywords: string[] }> = {
