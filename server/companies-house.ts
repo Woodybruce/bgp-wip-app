@@ -2226,8 +2226,20 @@ async function scrapeUkEntityFromWebsite(
     "/policies/terms-of-service",             // Shopify policies
     "/policies/privacy-policy",
     "/legal",
+    "/legal/terms-and-conditions",
+    "/legal/terms",
     "/legal-notices",
     "/legal-information",
+    "/legal-notice",                          // Inditex (Zara, Massimo Dutti, etc.)
+    "/legal-notice.html",
+    "/help/terms-and-conditions",             // Next, M&S, Adidas, Nike
+    "/help/terms",
+    "/help/terms-of-service",
+    "/info/terms-and-conditions",             // ASOS, River Island
+    "/info/terms",
+    "/customer-service/terms-and-conditions", // Primark, some Arcadia brands
+    "/customer-service/terms",
+    "/support/terms-and-conditions",
     "/privacy",
     "/privacy-policy",
     "/contact",
@@ -2510,8 +2522,20 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       // H&M Group / stories.com serve T&Cs under /en-gb/legal/… — we should
       // hit that before wasting proxy calls following homepage nav links.
       const earlyPaths = localePrefix
-        ? [`${localePrefix}/legal/terms-and-conditions`, `${localePrefix}/customer-service/terms-and-conditions`, `${localePrefix}/terms`]
-        : ["/en-gb/legal/terms-and-conditions", "/en-gb/customer-service/terms-and-conditions"];
+        ? [
+          `${localePrefix}/legal/terms-and-conditions`,
+          `${localePrefix}/customer-service/terms-and-conditions`,
+          `${localePrefix}/help/terms-and-conditions`,
+          `${localePrefix}/terms`,
+          `${localePrefix}/info/terms-and-conditions`,
+        ]
+        : [
+          "/en-gb/legal/terms-and-conditions",
+          "/en-gb/customer-service/terms-and-conditions",
+          "/en-gb/help/terms-and-conditions",
+          "/en-gb/terms-and-conditions",
+          "/en/legal/terms-and-conditions",
+        ];
       for (const lp of earlyPaths) {
         if (overBudget()) break;
         const lpUrl = `${base}${lp}`;
@@ -2696,9 +2720,12 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       `${localePrefix}/privacy-policy`,
       `${localePrefix}/customer-service/terms-and-conditions`,
       `${localePrefix}/help/terms-and-conditions`,
+      `${localePrefix}/info/terms-and-conditions`,
     ] : [];
     const enGbFallback = !localePrefix ? [
       "/en-gb/legal/terms-and-conditions",
+      "/en-gb/customer-service/terms-and-conditions",
+      "/en-gb/help/terms-and-conditions",
       "/en-gb/terms-and-conditions",
       "/en-gb/terms",
       "/en-gb/legal",
@@ -2706,6 +2733,8 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       "/en/legal/terms-and-conditions",
       "/en/terms-and-conditions",
     ] : [];
+    // locale + en-gb paths are high-value (targeted) → use render fallback for Akamai-protected sites
+    const localePageSet = new Set([...localeLegalPages, ...enGbFallback]);
     const allPages = [...localeLegalPages, ...enGbFallback, ...pages];
     for (const page of allPages) {
       if (overBudget()) { t("page", `deadline hit before ${page || "/"}`); break; }
@@ -2715,6 +2744,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
           headers: { "User-Agent": UA },
           timeoutMs: 6000,
           redirect: "follow",
+          renderFallback: localePageSet.has(page),
         });
         if (!resp || !resp.ok) { t("page", `${url} → ${resp ? resp.status : "no response"} (skip)`); continue; }
         const ct = resp.headers.get("content-type") || "";
@@ -2864,6 +2894,43 @@ router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async
     console.error("[find-uk-entity]", err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ── Scraper probe test ─────────────────────────────────────────────────────
+// GET /api/scraper-test?url=https://... — quick diagnostic to verify ScraperAPI
+// can reach a URL. Returns status, content-length, and whether entity patterns
+// matched. Useful for testing bot-blocked retailer sites from the live env.
+router.get("/api/scraper-test", requireAuth, async (req, res) => {
+  const url = req.query.url as string;
+  if (!url) return res.status(400).json({ error: "url query param required" });
+  if (!isScraperApiAvailable()) return res.status(503).json({ error: "SCRAPERAPI_KEY not configured" });
+  const results: any[] = [];
+  for (const render of [false, true]) {
+    const start = Date.now();
+    try {
+      const r = await scraperFetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" },
+        render,
+        timeoutMs: render ? 35_000 : 15_000,
+      });
+      const text = await r.text();
+      const hasEntity = /registered\s+in\s+england|company\s+(?:number|no\.?)|(?:Limited|Ltd\.?|plc|LLP)\s+\((?:company|registered)/i.test(text);
+      const entityMatch = text.match(/([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|LLP))\s+\((?:company|registered)/i);
+      results.push({
+        render,
+        status: r.status,
+        ok: r.ok,
+        contentLength: text.length,
+        timeMs: Date.now() - start,
+        hasEntitySignal: hasEntity,
+        entityHint: entityMatch ? entityMatch[1] : null,
+        snippet: text.slice(0, 400).replace(/\s+/g, " "),
+      });
+    } catch (e: any) {
+      results.push({ render, error: e.message, timeMs: Date.now() - start });
+    }
+  }
+  res.json({ url, results });
 });
 
 export default router;
