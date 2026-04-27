@@ -701,6 +701,21 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
           <Sparkles className="w-4 h-4 text-purple-500" />
           Brand Profile
+          {c.industry && (
+            <span className="text-[11px] font-normal text-muted-foreground">· {c.industry}</span>
+          )}
+          {c.employee_count && c.employee_count > 0 && (
+            <span className="text-[11px] font-normal text-muted-foreground">
+              · {c.employee_count >= 10000
+                  ? `~${Math.round(c.employee_count / 1000)}k employees`
+                  : c.employee_count >= 1000
+                    ? `~${(c.employee_count / 1000).toFixed(1)}k employees`
+                    : `${c.employee_count} employees`}
+            </span>
+          )}
+          {c.founded_year && (
+            <span className="text-[11px] font-normal text-muted-foreground">· Est. {c.founded_year}</span>
+          )}
           {c.is_tracked_brand && <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px]">Tracked brand</Badge>}
           {c.hunter_flag && <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
           {hunter && hunter.expansionScore >= 40 && (
