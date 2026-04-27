@@ -1068,6 +1068,86 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           </div>
         ) : (
           <div className="w-full flex flex-col">
+            {/* ── Details + KYC boards ─────────────────────── */}
+            {(() => {
+              const a = c.head_office_address;
+              const hqShort = a ? [a.city, a.country].filter(Boolean).join(", ") || a.address || null : null;
+              const hasDetails = !!(c.industry || hqShort || (c.employee_count && c.employee_count > 0) || c.annual_revenue || c.founded_year);
+              const hasKyc = !!(c.kyc_status || c.aml_risk_level || data.kyc?.doc_count || c.kyc_expires_at || covenant?.experian);
+              if (!hasDetails && !hasKyc) return null;
+              const kycColor = c.kyc_status === "pass" ? "text-emerald-700" : c.kyc_status === "warning" ? "text-amber-600" : c.kyc_status === "fail" ? "text-red-600" : "text-muted-foreground";
+              const kycLabel = c.kyc_status === "pass" ? "Passed" : c.kyc_status === "warning" ? "Review" : c.kyc_status === "fail" ? "Failed" : "Not run";
+              const experian = covenant?.experian;
+              const scoreColor = experian?.creditScore != null
+                ? experian.creditScore >= 70 ? "text-emerald-700" : experian.creditScore >= 40 ? "text-amber-600" : "text-red-600"
+                : "";
+              const empStr = c.employee_count && c.employee_count > 0
+                ? c.employee_count >= 10000 ? `~${Math.round(c.employee_count / 1000)}k employees`
+                  : c.employee_count >= 1000 ? `~${(c.employee_count / 1000).toFixed(1)}k employees`
+                  : `${c.employee_count} employees`
+                : null;
+              return (
+                <div className="grid grid-cols-2 gap-2 mb-2 order-0">
+                  {/* Details card */}
+                  <div className="rounded-md border border-border/40 bg-muted/20 p-2 space-y-0.5">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1 mb-1">
+                      <Building2 className="w-3 h-3" /> Details
+                    </div>
+                    {c.industry && <div className="text-xs text-foreground truncate">{c.industry}</div>}
+                    {hqShort && (
+                      <div className="text-xs text-muted-foreground flex items-center gap-0.5">
+                        <MapPin className="w-2.5 h-2.5 shrink-0" /> {hqShort}
+                      </div>
+                    )}
+                    {empStr && <div className="text-xs text-muted-foreground">{empStr}</div>}
+                    {c.annual_revenue && <div className="text-xs text-muted-foreground">Revenue {c.annual_revenue}</div>}
+                    {c.founded_year && <div className="text-xs text-muted-foreground">Est. {c.founded_year}</div>}
+                    {!hasDetails && <div className="text-xs text-muted-foreground italic">No details on file</div>}
+                  </div>
+                  {/* KYC card */}
+                  <div className="rounded-md border border-border/40 bg-muted/20 p-2 space-y-0.5">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1 mb-1">
+                      <ShieldCheck className="w-3 h-3" /> KYC
+                    </div>
+                    {c.kyc_status ? (
+                      <div className={`text-xs font-semibold ${kycColor}`}>{kycLabel}</div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground italic">Not run</div>
+                    )}
+                    {data.kyc?.doc_count > 0 && (
+                      <div className="text-xs text-muted-foreground">{data.kyc.doc_count} document{data.kyc.doc_count !== 1 ? "s" : ""}</div>
+                    )}
+                    {c.kyc_expires_at && (
+                      <div className="text-xs text-muted-foreground">
+                        Expires {new Date(c.kyc_expires_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                      </div>
+                    )}
+                    {c.aml_risk_level && (
+                      <div className={`text-xs font-medium ${c.aml_risk_level === "high" ? "text-red-600" : c.aml_risk_level === "medium" ? "text-amber-600" : "text-emerald-700"}`}>
+                        AML: {c.aml_risk_level}
+                      </div>
+                    )}
+                    {experian && (
+                      <div className="mt-0.5 pt-0.5 border-t border-border/30 space-y-0.5">
+                        <div className="text-[10px] text-muted-foreground font-medium">Experian</div>
+                        {experian.creditScore != null && (
+                          <div className={`text-xs font-semibold ${scoreColor}`}>{experian.creditScore}/100{experian.creditBand ? ` · ${experian.creditBand}` : ""}</div>
+                        )}
+                        {experian.riskIndicator && <div className="text-xs text-muted-foreground">{experian.riskIndicator}</div>}
+                        {experian.creditLimit != null && <div className="text-xs text-muted-foreground">Limit £{Number(experian.creditLimit).toLocaleString()}</div>}
+                        {experian.ccj != null && experian.ccj > 0 && (
+                          <div className="text-xs font-medium text-red-600">{experian.ccj} CCJ{experian.ccj !== 1 ? "s" : ""}{experian.ccjTotalValue ? ` · £${Number(experian.ccjTotalValue).toLocaleString()}` : ""}</div>
+                        )}
+                        {experian.turnover != null && experian.turnover > 0 && (
+                          <div className="text-xs text-muted-foreground">Turnover £{(Number(experian.turnover) / 1_000_000).toFixed(1)}m</div>
+                        )}
+                      </div>
+                    )}
+                    {!hasKyc && <div className="text-xs text-muted-foreground italic">No KYC data</div>}
+                  </div>
+                </div>
+              );
+            })()}
             {/* Outreach strip — quick-action buttons */}
             <div className="flex items-center gap-1.5 flex-wrap mb-2 order-1">
               {(c.domain_url || c.domain) && (
