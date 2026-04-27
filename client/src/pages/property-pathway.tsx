@@ -1424,10 +1424,11 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               {/* 03 Planning — hidden by request (the apps feed PlanningDocsCard
                   below which already surfaces the same data). */}
 
-              {/* 04 Planning Documents — single column width, original layout.
-                  Floor plans, drawings, decision notices, and the underlying
-                  app metadata. */}
+              {/* 04 Planning Documents — spans 2 columns at xl so it fills
+                  the row alongside Ownership + Companies House (with 03
+                  hidden), and full width at md. */}
               <PlanningDocsCard
+                className="md:col-span-2 xl:col-span-2"
                 apps={s4.planningApplications || []}
                 planningDocs={s4.planningDocs || []}
                 legacyUrls={s4.floorPlanUrls || []}
@@ -2295,6 +2296,7 @@ function PlanningDocsCard({
   apps,
   planningDocs,
   legacyUrls,
+  className,
 }: {
   apps: any[];
   planningDocs: Array<{
@@ -2306,6 +2308,7 @@ function PlanningDocsCard({
     docs: Array<{ url: string; date: string; description: string; type: string; drawingNumber?: string; category: string; label: string }>;
   }>;
   legacyUrls: string[];
+  className?: string;
 }) {
   const [showDialog, setShowDialog] = useState(false);
   const scrapedRefs = new Set(planningDocs.map((p) => p.ref));
@@ -2315,7 +2318,7 @@ function PlanningDocsCard({
   const unscraped = apps.filter((a: any) => a.documentUrl && !scrapedRefs.has(a.reference));
 
   return (
-    <div className="border rounded p-2.5 bg-muted/10">
+    <div className={`border rounded p-2.5 bg-muted/10${className ? ` ${className}` : ""}`}>
       <div className="flex items-center justify-between mb-1.5">
         <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
           04 Planning Documents
