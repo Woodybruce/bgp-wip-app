@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
@@ -21,7 +21,6 @@ import {
   Globe, Linkedin, Calendar, BadgeInfo, Phone,
 } from "lucide-react";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
-import { ApolloContactsDialog } from "@/components/apollo-contacts-dialog";
 
 interface BrandProfile {
   company: {
@@ -323,16 +322,29 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [addSignalOpen, setAddSignalOpen] = useState(false);
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
   const [officerApollo, setOfficerApollo] = useState<Record<string, { loading: boolean; match: any | null; error?: string }>>({});
-  const [contactsDialogOpen, setContactsDialogOpen] = useState(false);
+  const [contactsFinding, setContactsFinding] = useState(false);
+  const autoContactsRan = useRef(false);
 
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (!detail?.companyId || detail.companyId === companyId) setContactsDialogOpen(true);
-    };
-    window.addEventListener("bgp:open-apollo", handler);
-    return () => window.removeEventListener("bgp:open-apollo", handler);
-  }, [companyId]);
+  async function runContactDiscovery() {
+    setContactsFinding(true);
+    try {
+      await Promise.allSettled([
+        apiRequest("POST", `/api/brand/${companyId}/apollo/discover`, {})
+          .then(r => r.json())
+          .then((res: any) => res.people?.length > 0
+            ? apiRequest("POST", `/api/brand/${companyId}/apollo/import`, { people: res.people })
+            : null),
+        apiRequest("POST", `/api/brand/${companyId}/rocketreach/discover`, {})
+          .then(r => r.json())
+          .then((res: any) => res.people?.length > 0
+            ? apiRequest("POST", `/api/brand/${companyId}/rocketreach/import`, { people: res.people })
+            : null),
+      ]);
+    } finally {
+      setContactsFinding(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    }
+  }
 
   const { data, isLoading, isError } = useQuery<BrandProfile>({
     queryKey: ["/api/brand", companyId, "profile"],
@@ -345,6 +357,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
       return res.json();
     },
   });
+
+  useEffect(() => {
+    if (!data || autoContactsRan.current) return;
+    autoContactsRan.current = true;
+    if (data.contacts.length === 0) runContactDiscovery();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
 
   const patchMutation = useMutation({
     mutationFn: async (body: Partial<BrandProfile["company"]>) => {
@@ -1047,11 +1066,12 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               )}
               <button
                 type="button"
-                onClick={() => window.dispatchEvent(new CustomEvent("bgp:open-apollo", { detail: { companyId } }))}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 text-xs font-medium transition-colors"
+                onClick={() => runContactDiscovery()}
+                disabled={contactsFinding}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 text-xs font-medium transition-colors disabled:opacity-50"
                 data-testid="button-apollo-quick"
               >
-                <Sparkles className="w-3 h-3" /> Find contacts
+                <Sparkles className="w-3 h-3" /> {contactsFinding ? "Finding…" : "Refresh contacts"}
               </button>
               {c.stock_ticker && (
                 <a
@@ -2185,16 +2205,11 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <div className="border-t pt-2">
               <div className="text-xs text-muted-foreground mb-1.5 flex items-center justify-between gap-1">
                 <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Key contacts</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    // open Apollo dialog via window event (avoids prop drilling)
-                    window.dispatchEvent(new CustomEvent("bgp:open-apollo", { detail: { companyId } }));
-                  }}
-                  className="text-[10px] text-purple-600 hover:text-purple-700 flex items-center gap-0.5"
-                >
-                  <Sparkles className="w-2.5 h-2.5" /> Find via Apollo
-                </button>
+                {contactsFinding && (
+                  <span className="text-[10px] text-purple-500 flex items-center gap-0.5 animate-pulse">
+                    <Sparkles className="w-2.5 h-2.5" /> Finding…
+                  </span>
+                )}
               </div>
               {/* UK registered address as contact detail */}
               {covenant?.registeredAddress && (
@@ -2204,7 +2219,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
               )}
               {decisionMakers.length === 0 ? (
-                <p className="text-xs text-muted-foreground italic">No contacts yet. Use Apollo to discover key people.</p>
+                <p className="text-xs text-muted-foreground italic">
+                  {contactsFinding ? "Searching Apollo & RocketReach…" : "No contacts found."}
+                </p>
               ) : (
                 <div className="space-y-2.5">
                   {/* Tier 1 — Store development / property / UK */}
@@ -2993,12 +3010,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
         )}
       </CardContent>
 
-      <ApolloContactsDialog
-        companyId={companyId}
-        companyName={data.company.name}
-        open={contactsDialogOpen}
-        onOpenChange={setContactsDialogOpen}
-      />
     </Card>
   );
 }
