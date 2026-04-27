@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
@@ -21,6 +21,7 @@ import {
   Globe, Linkedin, Calendar, BadgeInfo, Phone,
 } from "lucide-react";
 import { BrandPortfolioMap } from "@/components/brand-portfolio-map";
+import { ApolloContactsDialog } from "@/components/apollo-contacts-dialog";
 
 interface BrandProfile {
   company: {
@@ -322,6 +323,16 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [addSignalOpen, setAddSignalOpen] = useState(false);
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
   const [officerApollo, setOfficerApollo] = useState<Record<string, { loading: boolean; match: any | null; error?: string }>>({});
+  const [contactsDialogOpen, setContactsDialogOpen] = useState(false);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.companyId || detail.companyId === companyId) setContactsDialogOpen(true);
+    };
+    window.addEventListener("bgp:open-apollo", handler);
+    return () => window.removeEventListener("bgp:open-apollo", handler);
+  }, [companyId]);
 
   const { data, isLoading, isError } = useQuery<BrandProfile>({
     queryKey: ["/api/brand", companyId, "profile"],
@@ -2981,6 +2992,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           </div>
         )}
       </CardContent>
+
+      <ApolloContactsDialog
+        companyId={companyId}
+        companyName={data.company.name}
+        open={contactsDialogOpen}
+        onOpenChange={setContactsDialogOpen}
+      />
     </Card>
   );
 }
