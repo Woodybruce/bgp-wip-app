@@ -2923,11 +2923,17 @@ router.post("/api/companies-house/batch-scrape-test", requireAuth, async (req, r
     const { eq, inArray } = await import("drizzle-orm");
 
     const ids: string[] | undefined = req.body?.ids;
-    const rows = ids?.length
+    const limit: number = Math.min(req.body?.limit ?? 4, 8);
+    const offset: number = req.body?.offset ?? 0;
+
+    let rows = ids?.length
       ? await db.select().from(crmCompanies).where(inArray(crmCompanies.id, ids))
       : await db.select().from(crmCompanies).where(eq(crmCompanies.isTrackedBrand, true));
 
-    if (rows.length === 0) return res.json({ total: 0, results: [] });
+    const total = rows.length;
+    rows = rows.slice(offset, offset + limit);
+
+    if (rows.length === 0) return res.json({ total, offset, limit, done: true, results: [] });
 
     const results: any[] = [];
     let passed = 0, failed = 0, skipped = 0;
@@ -2935,7 +2941,7 @@ router.post("/api/companies-house/batch-scrape-test", requireAuth, async (req, r
       const domain = (company as any).domainUrl || (company as any).website;
       if (!domain) {
         skipped++;
-        results.push({ id: company.id, name: company.name, domain: null, status: "skipped", reason: "no domain" });
+        results.push({ id: company.id, name: company.name, domain: null, status: "skipped" });
         continue;
       }
       try {
@@ -2944,9 +2950,7 @@ router.post("/api/companies-house/batch-scrape-test", requireAuth, async (req, r
         const ok = !!(result.entityName || result.chNumber);
         if (ok) passed++; else failed++;
         results.push({
-          id: company.id,
-          name: company.name,
-          domain,
+          id: company.id, name: company.name, domain,
           status: ok ? "found" : "not_found",
           entityName: result.entityName,
           chNumber: result.chNumber,
@@ -2956,9 +2960,16 @@ router.post("/api/companies-house/batch-scrape-test", requireAuth, async (req, r
         failed++;
         results.push({ id: company.id, name: company.name, domain, status: "error", error: err.message });
       }
-      await new Promise(r => setTimeout(r, 2000));
+      if (results.length < rows.length) await new Promise(r => setTimeout(r, 2000));
     }
-    res.json({ summary: { total: rows.length, passed, failed, skipped }, results });
+    const nextOffset = offset + limit;
+    res.json({
+      total, offset, limit,
+      done: nextOffset >= total,
+      nextOffset: nextOffset < total ? nextOffset : null,
+      batch: { passed, failed, skipped },
+      results,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
