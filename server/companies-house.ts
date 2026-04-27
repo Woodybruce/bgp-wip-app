@@ -2238,6 +2238,7 @@ async function scrapeUkEntityFromWebsite(
     "/info/terms-and-conditions",             // ASOS, River Island
     "/info/terms",
     "/customer-service/terms-and-conditions", // Primark, some Arcadia brands
+    "/customer-service/terms-conditions",     // H&M Group (& Other Stories, COS, Arket, Weekday)
     "/customer-service/terms",
     "/support/terms-and-conditions",
     "/privacy",
@@ -2525,6 +2526,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
         ? [
           `${localePrefix}/legal/terms-and-conditions`,
           `${localePrefix}/customer-service/terms-and-conditions`,
+          `${localePrefix}/customer-service/terms-conditions`,
           `${localePrefix}/help/terms-and-conditions`,
           `${localePrefix}/terms`,
           `${localePrefix}/info/terms-and-conditions`,
@@ -2532,6 +2534,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
         : [
           "/en-gb/legal/terms-and-conditions",
           "/en-gb/customer-service/terms-and-conditions",
+          "/en-gb/customer-service/terms-conditions",
           "/en-gb/help/terms-and-conditions",
           "/en-gb/terms-and-conditions",
           "/en/legal/terms-and-conditions",
@@ -2719,12 +2722,14 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       `${localePrefix}/legal/privacy-policy`,
       `${localePrefix}/privacy-policy`,
       `${localePrefix}/customer-service/terms-and-conditions`,
+      `${localePrefix}/customer-service/terms-conditions`,
       `${localePrefix}/help/terms-and-conditions`,
       `${localePrefix}/info/terms-and-conditions`,
     ] : [];
     const enGbFallback = !localePrefix ? [
       "/en-gb/legal/terms-and-conditions",
       "/en-gb/customer-service/terms-and-conditions",
+      "/en-gb/customer-service/terms-conditions",
       "/en-gb/help/terms-and-conditions",
       "/en-gb/terms-and-conditions",
       "/en-gb/terms",
