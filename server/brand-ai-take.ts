@@ -290,6 +290,42 @@ router.get("/api/brand/:companyId/ai-take/:tab", requireAuth, async (req: Reques
   }
 });
 
+// Per-brand Hunter score. Mirrors the bulk dashboard scorer so the brand
+// profile can show the same number/flags without a big roundtrip.
+router.get("/api/brand/:companyId/hunter-score", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { computeHunterScore } = await import("./hunter-score");
+    const companyId = String(req.params.companyId);
+    const brandQ = await pool.query(
+      `SELECT id, name, rollout_status, store_count, backers, instagram_handle,
+              tiktok_handle, dept_store_presence, franchise_activity, hunter_flag,
+              concept_pitch, description, stock_ticker
+         FROM crm_companies WHERE id = $1`,
+      [companyId]
+    );
+    if (!brandQ.rows[0]) return res.status(404).json({ error: "not found" });
+    const signalsQ = await pool.query(
+      `SELECT signal_type, headline, magnitude, sentiment
+         FROM brand_signals
+        WHERE brand_company_id = $1
+          AND COALESCE(signal_date, created_at) >= now() - interval '365 days'`,
+      [companyId]
+    );
+    let stock: any = null;
+    if (brandQ.rows[0].stock_ticker) {
+      try {
+        const { getStockSnapshots } = await import("./stock-price");
+        const map = await getStockSnapshots([String(brandQ.rows[0].stock_ticker).trim().toUpperCase()]);
+        stock = Array.from(map.values())[0] || null;
+      } catch {}
+    }
+    const result = computeHunterScore({ brand: brandQ.rows[0], signals: signalsQ.rows, stock });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export function invalidateBrandAiTake(companyId: string): void {
   for (const tab of ["brand", "uk", "activity", "intel"] as Tab[]) {
     cache.delete(`${companyId}:${tab}`);

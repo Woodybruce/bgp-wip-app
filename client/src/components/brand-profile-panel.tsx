@@ -468,6 +468,21 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  // Hunter score (computed score + flags from brand_signals + stock)
+  const { data: hunter } = useQuery<{ expansionScore: number; expansionFlags: string[] }>({
+    queryKey: ["/api/brand", companyId, "hunter-score"],
+    queryFn: async () => {
+      const r = await fetch(`/api/brand/${companyId}/hunter-score`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    staleTime: 10 * 60 * 1000,
+    retry: false,
+  });
+
   if (isLoading || !data) return null;
 
   const c = data.company;
@@ -521,6 +536,18 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           Brand Profile
           {c.is_tracked_brand && <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px]">Tracked brand</Badge>}
           {c.hunter_flag && <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
+          {hunter && hunter.expansionScore >= 40 && (
+            <Badge
+              className={
+                hunter.expansionScore >= 75 ? "bg-orange-100 text-orange-700 border-orange-200 text-[10px]" :
+                hunter.expansionScore >= 55 ? "bg-amber-100 text-amber-700 border-amber-200 text-[10px]" :
+                "bg-zinc-100 text-zinc-700 border-zinc-200 text-[10px]"
+              }
+              title={hunter.expansionFlags.join(" · ")}
+            >
+              Hunter {hunter.expansionScore}/100
+            </Badge>
+          )}
           {c.agent_type && <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
           {covenant && (
             <Badge className={
@@ -939,6 +966,23 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {c.tracking_reason && (
               <div className="text-xs text-muted-foreground italic border-l-2 border-purple-300 pl-2">
                 {c.tracking_reason}
+              </div>
+            )}
+
+            {/* Hunter intel — expansion score + flags driving it */}
+            {hunter && hunter.expansionFlags.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                  <Flame className="w-3 h-3 text-orange-500" /> Hunter signals
+                  <span className="ml-auto font-semibold text-foreground">{hunter.expansionScore}/100</span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {hunter.expansionFlags.map((flag) => (
+                    <Badge key={flag} variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
+                      {flag}
+                    </Badge>
+                  ))}
+                </div>
               </div>
             )}
 
