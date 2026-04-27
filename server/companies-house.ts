@@ -2303,8 +2303,9 @@ async function scrapeUkEntityFromWebsite(
     // slavery statement). Threshold ≥2 keeps drive-by mentions of unrelated
     // Limited entities (Stripe, Klarna, Google Payment, etc.) from winning.
     if (!entityName) {
-      // Allow & at start of word (e.g. "H&M Hennes & Mauritz UK Ltd.")
-      const BROAD = /\b([A-Z][A-Za-z0-9&'.,()\-]+(?:\s+[A-Z0-9&][A-Za-z0-9&'.,()\-]+){0,5}\s+(?:Limited|Ltd\.?|PLC|plc|LLP|LP))\b/g;
+      // Find any "X Ltd / X PLC / X LLP" on the page and score candidates.
+      // Pattern allows standalone & as a word (e.g. "H&M Hennes & Mauritz UK Ltd.").
+      const BROAD = /\b([A-Z][A-Za-z0-9&'.,()\-]+(?:\s+(?:&\s+)?[A-Z0-9][A-Za-z0-9&'.,()\-]+){0,5}\s+(?:Limited|Ltd\.?|PLC|plc|LLP|LP))\b/g;
       const scores = new Map<string, number>();
       let m: RegExpExecArray | null;
       while ((m = BROAD.exec(text)) !== null) {
@@ -2314,7 +2315,7 @@ async function scrapeUkEntityFromWebsite(
         if (/^(?:The|This|These|Our|Your|Their|All|Any|Some|Such|Other|Same|Both|Each|Every)\b/i.test(name)) continue;
         const win = text.slice(Math.max(0, m.index - 200), m.index + name.length + 200);
         let score = (scores.get(name) ?? 0) + 1;
-        if (/\b(?:England|Wales|Companies\s*House|company\s+(?:registration\s+)?(?:number|no\.?)|registered\s+office|registered\s+in\s+(?:England|Scotland))\b/i.test(win)) score += 3;
+        if (/\b(?:England|Wales|Companies\s*House|company\s+(?:registration\s+)?(?:number|no\.?)|org\.\s*no|registered\s+office|registered\s+in\s+(?:England|Scotland))\b/i.test(win)) score += 3;
         if (/\bUK\b|\bGB\b|\bGreat\s+Britain\b/.test(name)) score += 2;
         if (brand?.name) {
           const tokens = brand.name.toLowerCase().split(/\s+/).filter((t) => t.length > 2 && !/^(?:the|and|inc|ltd|llc|plc|limited|company|stores?)$/i.test(t));
@@ -2325,7 +2326,10 @@ async function scrapeUkEntityFromWebsite(
       }
       if (scores.size) {
         const best = [...scores.entries()].sort((a, b) => b[1] - a[1])[0];
-        if (best && best[1] >= 2) entityName = best[0];
+        // Threshold 1: any Ltd/PLC on a page we've specifically fetched is a valid candidate.
+        // Scoring prevents third-party mentions (Stripe Ltd, PayPal Ltd) from winning over
+        // the actual operator — those appear without UK signals or brand-token overlap.
+        if (best && best[1] >= 1) entityName = best[0];
       }
     }
     for (const pat of CH_PATTERNS) {
