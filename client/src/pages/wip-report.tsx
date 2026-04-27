@@ -916,8 +916,10 @@ export default function WipReport() {
     const set = new Set<number>();
     let hasNullFY = false;
     entries.forEach((e) => {
-      if (e.fiscalYear) {
-        set.add(e.fiscalYear);
+      // Guard: fiscal years must be plausible 4-digit years — reject Excel serial numbers
+      const fy = e.fiscalYear && e.fiscalYear >= 2000 && e.fiscalYear <= 2100 ? e.fiscalYear : null;
+      if (fy) {
+        set.add(fy);
       } else if (e.month) {
         const fy = getFiscalYear(e.month);
         if (fy) set.add(fy);
@@ -952,7 +954,8 @@ export default function WipReport() {
         if (!e.team || !selectedTeams.has(e.team)) return false;
       }
       if (selectedFiscalYears.size > 0 && selectedFiscalYears.size < allFiscalYears.length) {
-        const fy = e.fiscalYear || (e.month ? getFiscalYear(e.month) : null);
+        const rawFy = e.fiscalYear && e.fiscalYear >= 2000 && e.fiscalYear <= 2100 ? e.fiscalYear : null;
+        const fy = rawFy || (e.month ? getFiscalYear(e.month) : null);
         if (fy) {
           if (!selectedFiscalYears.has(fy)) return false;
         } else {

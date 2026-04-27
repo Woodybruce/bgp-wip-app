@@ -85,7 +85,7 @@ export async function importWipFromBuffer(
   const XLSX = await import("xlsx");
   const wb = XLSX.read(buffer, { type: "buffer" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
-  const data: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null });
+  const data: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null, cellDates: true });
   if (data.length === 0) throw new Error("No data found in file");
 
   // Build a case- and punctuation-insensitive key map per row, so column
@@ -222,8 +222,9 @@ export async function importWipFromBuffer(
     const amount = parseFloat(pick(kr, "NetAmount", "Net Amount", "Amount") || 0) || 0;
     if (agent && amount !== 0) {
       const stockCode = String(pick(kr, "STOCK_CODE", "StockCode", "Stock Code") || "").toUpperCase();
+      const agentName = String(agent).trim();
       e.feeSlices.push({
-        agent: String(agent).trim(),
+        agent: agentName.toLowerCase() === "bgp house" ? "BGP" : agentName,
         amount,
         isBgpHouse: stockCode === "CON049",
       });
@@ -360,15 +361,33 @@ export async function importWipFromBuffer(
       project: pick(kr, "Project") || null,
       tenant: pick(kr, "Tenant") || pick(kr, "Client") || null,
       team: pick(kr, "Team") || null,
-      agent: pick(kr, "Agent") || null,
+      agent: (() => {
+        const a = String(pick(kr, "Agent") || "").trim();
+        return a.toLowerCase() === "bgp house" ? "BGP" : (a || null);
+      })(),
       amtWip: isInvoiced ? 0 : net,
       amtInvoice: isInvoiced ? net : 0,
-      month: deriveMonthLabel(pick(kr, "MonthYear", "Month Year", "Month")) || deriveMonthLabel(pick(kr, "DueDate_EOMonth", "DueDate")) || null,
+      month: (() => {
+        const dateAliases = ["MonthYear", "Month Year", "Month", "Date", "Trans Date", "Transaction Date", "Posting Date", "Invoice Date", "Period Date", "TRAN_DATE", "POSTING_DATE"];
+        const dueDateAliases = ["DueDate_EOMonth", "DueDate", "Due Date"];
+        const raw = pick(kr, ...dateAliases) || pick(kr, ...dueDateAliases);
+        if (raw) return deriveMonthLabel(raw);
+        // Catch-all: find any column whose name contains "month" or "date"
+        const fallbackKey = Object.keys(kr).find(k => /month|date/.test(k));
+        return fallbackKey ? deriveMonthLabel(kr[fallbackKey]) : null;
+      })(),
       dealStatus: pick(kr, "DealStatus", "Deal Status", "Deal status") || null,
       stage: pick(kr, "Stage") || pick(kr, "STOCK_CODE", "StockCode") || null,
       invoiceNo: pick(kr, "InvoiceNo") ? String(pick(kr, "InvoiceNo")) : null,
       orderNumber: pick(kr, "ORDER_NUMBER", "OrderNumber") ? String(pick(kr, "ORDER_NUMBER", "OrderNumber")) : null,
-      fiscalYear: parseFiscalYear(pick(kr, "MonthYear", "Month Year", "Month") || pick(kr, "DueDate_EOMonth", "DueDate")),
+      fiscalYear: (() => {
+        const dateAliases = ["MonthYear", "Month Year", "Month", "Date", "Trans Date", "Transaction Date", "Posting Date", "Invoice Date", "Period Date", "TRAN_DATE", "POSTING_DATE"];
+        const dueDateAliases = ["DueDate_EOMonth", "DueDate", "Due Date"];
+        const raw = pick(kr, ...dateAliases) || pick(kr, ...dueDateAliases);
+        if (raw) return parseFiscalYear(raw);
+        const fallbackKey = Object.keys(kr).find(k => /month|date/.test(k));
+        return fallbackKey ? parseFiscalYear(kr[fallbackKey]) : null;
+      })(),
     };
   });
 
