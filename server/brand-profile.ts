@@ -361,6 +361,31 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
+    const bgpInteractionsListQ = pool.query(
+      `SELECT id, type, direction, subject, preview, interaction_date, bgp_user
+         FROM crm_interactions
+        WHERE company_id = $1
+        ORDER BY interaction_date DESC NULLS LAST LIMIT 12`,
+      [companyId]
+    );
+
+    // Monthly rollout buckets — store openings and closures per month for last 12 months
+    const rolloutMonthlyQ = pool.query(
+      `WITH months AS (
+         SELECT generate_series(date_trunc('month', now() - interval '11 months'), date_trunc('month', now()), interval '1 month') AS month
+       )
+       SELECT
+         to_char(m.month, 'YYYY-MM') AS month,
+         COALESCE(SUM(CASE WHEN s.signal_type = 'opening' THEN 1 ELSE 0 END), 0) ::int AS openings,
+         COALESCE(SUM(CASE WHEN s.signal_type = 'closure' THEN 1 ELSE 0 END), 0) ::int AS closures
+       FROM months m
+       LEFT JOIN brand_signals s ON date_trunc('month', COALESCE(s.signal_date, s.created_at)) = m.month
+         AND s.brand_company_id = $1
+       GROUP BY m.month
+       ORDER BY m.month`,
+      [companyId]
+    );
+
     // Decision-maker contacts — all contacts with enrichment_source, role, tier ranking.
     // Returned unsorted limit 20; client tiers into Store Dev / C-suite / Other.
     const decisionMakersQ = pool.query(
@@ -444,13 +469,15 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       kyc, images, deals, parentGroup, siblings, news,
       requirements, pitchedTo, contacts, stores, turnover,
       rolloutVelocityRow, rentComps,
-      bgpDeals, bgpInteractions, decisionMakers, leaseEvents, competitors,
+      bgpDeals, bgpInteractions, bgpInteractionsList, decisionMakers, leaseEvents, competitors,
+      rolloutMonthly,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
       safe(requirementsQ), safe(pitchedToQ), safe(contactsQ), safe(storesQ), safe(turnoverQ),
       safe(rolloutVelocityQ), safe(rentCompsQ),
-      safe(bgpDealsQ), safe(bgpInteractionsQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
+      safe(bgpDealsQ), safe(bgpInteractionsQ), safe(bgpInteractionsListQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
+      safe(rolloutMonthlyQ),
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
@@ -467,6 +494,19 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       ).catch(() => empty);
       coverers = cov.rows;
     }
+
+    // Latest social-stats per platform — sub-query to skip if table missing
+    let socialStats: Array<{ platform: string; followers: number | null; fetched_at: string | null }> = [];
+    try {
+      const sx = await pool.query(
+        `SELECT DISTINCT ON (platform) platform, followers, fetched_at
+           FROM brand_social_stats
+          WHERE brand_company_id = $1
+          ORDER BY platform, fetched_at DESC`,
+        [companyId]
+      );
+      socialStats = sx.rows;
+    } catch { /* table doesn't exist yet — first run */ }
 
     // Fire-and-forget: if tracked brand has no analysis yet, generate one
     // in the background so next load picks it up. Respects AI on/off.
@@ -534,6 +574,11 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       net12m: (Number(velocityRow.openings_12m) || 0) - (Number(velocityRow.closures_12m) || 0),
       currentOpen: openStores,
       currentClosed: closedStores,
+      monthly: rolloutMonthly.rows.map((r: any) => ({
+        month: r.month,
+        openings: r.openings,
+        closures: r.closures,
+      })),
     };
 
     // Rent affordability — rent psf ÷ turnover psf averaged across brand comps,
@@ -623,6 +668,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       turnover: turnover.rows,
       covenant,
       coverers,
+      interactions: bgpInteractionsList.rows,
+      socialStats,
       rolloutVelocity,
       rentAffordability,
       rentComps: rentComps.rows,

@@ -92,6 +92,8 @@ interface BrandProfile {
   stores: Array<{ id: string; name: string; address: string | null; lat: number | null; lng: number | null; place_id: string | null; status: string | null; store_type: string | null; source_type: string | null; researched_at: string | null }>;
   turnover: Array<{ period: string | null; turnover: number | null; turnover_per_sqft: number | null; confidence: string | null; source: string | null }>;
   coverers: Array<{ id: string; name: string; email: string | null }>;
+  interactions: Array<{ id: string; type: string; direction: string | null; subject: string | null; preview: string | null; interaction_date: string; bgp_user: string | null }>;
+  socialStats: Array<{ platform: string; followers: number | null; fetched_at: string | null }>;
   covenant: {
     companyStatus: string | null;
     accountsOverdue: boolean;
@@ -120,6 +122,7 @@ interface BrandProfile {
     net12m: number;
     currentOpen: number;
     currentClosed: number;
+    monthly: Array<{ month: string; openings: number; closures: number }>;
   } | null;
   rentAffordability: {
     avgRentPsf: number | null;
@@ -253,6 +256,44 @@ function AiChip() {
     <span title="AI-generated — any edit makes it ground truth" className="inline-flex items-center gap-0.5 text-[10px] text-purple-600 ml-1">
       <Sparkles className="w-2.5 h-2.5" /> ai
     </span>
+  );
+}
+
+function fmtFollowers(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  return String(n);
+}
+
+// 12-month bar chart of openings vs closures.
+// Each month is two stacked bars (green up, red down) over a baseline.
+function RolloutBarChart({ monthly }: { monthly: Array<{ month: string; openings: number; closures: number }> }) {
+  const max = Math.max(1, ...monthly.flatMap(m => [m.openings, m.closures]));
+  const barW = 100 / monthly.length;
+  return (
+    <svg viewBox="0 0 100 32" preserveAspectRatio="none" className="w-full h-10">
+      <line x1="0" y1="16" x2="100" y2="16" stroke="currentColor" strokeOpacity="0.15" strokeWidth="0.3" />
+      {monthly.map((m, i) => {
+        const x = i * barW + barW * 0.15;
+        const w = barW * 0.7;
+        const openH = (m.openings / max) * 14;
+        const closeH = (m.closures / max) * 14;
+        return (
+          <g key={m.month}>
+            {m.openings > 0 && (
+              <rect x={x} y={16 - openH} width={w} height={openH} fill="#10b981">
+                <title>{m.month}: +{m.openings}</title>
+              </rect>
+            )}
+            {m.closures > 0 && (
+              <rect x={x} y={16} width={w} height={closeH} fill="#ef4444">
+                <title>{m.month}: -{m.closures}</title>
+              </rect>
+            )}
+          </g>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -1265,31 +1306,43 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   )}
                 </div>
               )}
-              {c.instagram_handle && (
-                <div>
-                  <a
-                    href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-sm text-primary hover:underline flex items-center gap-1"
-                  >
-                    <Instagram className="w-3 h-3" /> {c.instagram_handle}
-                  </a>
-                </div>
-              )}
-              {c.tiktok_handle && (
-                <div>
-                  <a
-                    href={`https://tiktok.com/@${c.tiktok_handle.replace(/^@/, "")}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-sm text-primary hover:underline flex items-center gap-1"
-                  >
-                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.27 8.27 0 004.84 1.55V6.79a4.86 4.86 0 01-1.07-.1z" /></svg>
-                    {c.tiktok_handle}
-                  </a>
-                </div>
-              )}
+              {c.instagram_handle && (() => {
+                const ig = data.socialStats?.find((s: any) => s.platform === "instagram");
+                return (
+                  <div>
+                    <a
+                      href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm text-primary hover:underline flex items-center gap-1"
+                    >
+                      <Instagram className="w-3 h-3" /> {c.instagram_handle}
+                      {ig?.followers != null && (
+                        <span className="text-[10px] text-muted-foreground ml-0.5">· {fmtFollowers(ig.followers)}</span>
+                      )}
+                    </a>
+                  </div>
+                );
+              })()}
+              {c.tiktok_handle && (() => {
+                const tk = data.socialStats?.find((s: any) => s.platform === "tiktok");
+                return (
+                  <div>
+                    <a
+                      href={`https://tiktok.com/@${c.tiktok_handle.replace(/^@/, "")}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm text-primary hover:underline flex items-center gap-1"
+                    >
+                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.27 8.27 0 004.84 1.55V6.79a4.86 4.86 0 01-1.07-.1z" /></svg>
+                      {c.tiktok_handle}
+                      {tk?.followers != null && (
+                        <span className="text-[10px] text-muted-foreground ml-0.5">· {fmtFollowers(tk.followers)}</span>
+                      )}
+                    </a>
+                  </div>
+                );
+              })()}
               {c.dept_store_presence && (
                 <div className="col-span-2">
                   <div className="text-[11px] text-muted-foreground flex items-center gap-1 mb-1">
@@ -1854,6 +1907,31 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     </div>
                   );
                 })()}
+                {/* Rollout velocity — 12-month bar chart */}
+                {rolloutVelocity && rolloutVelocity.monthly && rolloutVelocity.monthly.some((m: any) => m.openings > 0 || m.closures > 0) && (
+                  <div className="mt-2 pt-2 border-t">
+                    <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                      <TrendingUp className="w-3 h-3" /> Rollout velocity (last 12m)
+                      <span className="ml-auto font-medium">
+                        <span className="text-emerald-700">+{rolloutVelocity.openings12m}</span>
+                        <span className="text-muted-foreground"> · </span>
+                        <span className="text-red-600">-{rolloutVelocity.closures12m}</span>
+                        <span className="text-muted-foreground"> · net </span>
+                        <span className={rolloutVelocity.net12m > 0 ? "text-emerald-700" : rolloutVelocity.net12m < 0 ? "text-red-600" : ""}>{rolloutVelocity.net12m > 0 ? "+" : ""}{rolloutVelocity.net12m}</span>
+                      </span>
+                    </div>
+                    <RolloutBarChart monthly={rolloutVelocity.monthly} />
+                  </div>
+                )}
+                {/* Store spread map */}
+                {stores.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number").length > 0 && (
+                  <div className="mt-2 pt-2 border-t">
+                    <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                      <MapPin className="w-3 h-3" /> UK store spread ({stores.filter((s: any) => s.status === "open").length} open)
+                    </div>
+                    <BrandPortfolioMap stores={stores as any} />
+                  </div>
+                )}
                 {rentAffordability && rentAffordability.rentToTurnoverPct != null && (
                   <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] pt-2 border-t">
                     <div>
@@ -2135,6 +2213,37 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     {bgpDeals.length > 4 && <p className="text-[10px] text-muted-foreground pl-1">+{bgpDeals.length - 4} more deals</p>}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Interactions timeline — last 12 BGP touchpoints */}
+            {data.interactions && data.interactions.length > 0 && (
+              <div className="border-t pt-2">
+                <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                  <Clock className="w-3 h-3" /> Recent interactions ({data.interactions.length})
+                </div>
+                <div className="space-y-1 border-l-2 border-purple-200 dark:border-purple-900 pl-2.5">
+                  {data.interactions.slice(0, 8).map((it: any) => {
+                    const days = Math.floor((Date.now() - new Date(it.interaction_date).getTime()) / 864e5);
+                    const ago = days < 1 ? "today" : days < 7 ? `${days}d` : days < 30 ? `${Math.floor(days / 7)}w` : days < 365 ? `${Math.floor(days / 30)}mo` : `${Math.floor(days / 365)}y`;
+                    const typeColor: Record<string, string> = {
+                      email: "bg-blue-50 text-blue-700 border-blue-200",
+                      call: "bg-emerald-50 text-emerald-700 border-emerald-200",
+                      meeting: "bg-purple-50 text-purple-700 border-purple-200",
+                      note: "bg-zinc-50 text-zinc-700 border-zinc-200",
+                    };
+                    return (
+                      <div key={it.id} className="text-[11px] flex gap-1.5 items-start">
+                        <span className={`text-[9px] font-medium px-1 py-0.5 rounded border shrink-0 ${typeColor[it.type] || "bg-zinc-50 text-zinc-700 border-zinc-200"}`}>{it.type}</span>
+                        <div className="flex-1 min-w-0">
+                          {it.subject && <div className="font-medium truncate">{it.subject}</div>}
+                          {it.preview && <div className="text-[10px] text-muted-foreground truncate">{it.preview}</div>}
+                        </div>
+                        <span className="text-[10px] text-muted-foreground shrink-0">{it.bgp_user || ""} · {ago}</span>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 

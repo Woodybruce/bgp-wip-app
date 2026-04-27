@@ -524,6 +524,18 @@ export const insertBrandSignalSchema = createInsertSchema(brandSignals).omit({ i
 export type InsertBrandSignal = z.infer<typeof insertBrandSignalSchema>;
 export type BrandSignal = typeof brandSignals.$inferSelect;
 
+// ─── Brand social stats — follower counts per platform per brand ─────────
+export const brandSocialStats = pgTable("brand_social_stats", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brandCompanyId: varchar("brand_company_id").notNull(),
+  platform: text("platform").notNull(), // instagram | tiktok
+  handle: text("handle").notNull(),
+  followers: integer("followers"),
+  following: integer("following"),
+  posts: integer("posts"),
+  fetchedAt: timestamp("fetched_at").defaultNow(),
+});
+
 // ─── Brand stores — geocoded UK store locations per brand ─────────────────
 export const brandStores = pgTable("brand_stores", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
