@@ -498,6 +498,54 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Intel refresh failed", description: e.message, variant: "destructive" }),
   });
 
+  const perplexityRefreshMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`/api/brand/${companyId}/perplexity-refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json() as Promise<{ signalsAdded: number; analysisUpdated: boolean; error?: string }>;
+    },
+    onSuccess: (out) => {
+      if (out.error) {
+        toast({ title: "Perplexity refresh failed", description: out.error, variant: "destructive" });
+        return;
+      }
+      toast({
+        title: "Perplexity refreshed",
+        description: `${out.signalsAdded} new signal${out.signalsAdded === 1 ? "" : "s"}${out.analysisUpdated ? ", analysis updated" : ""}`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Perplexity refresh failed", description: e.message, variant: "destructive" }),
+  });
+
+  const scrapeWebsiteMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`/api/brand/${companyId}/scrape`, {
+        method: "POST",
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json() as Promise<{ pagesChecked: number; signalsAdded: number; error?: string }>;
+    },
+    onSuccess: (out) => {
+      if (out.error) {
+        toast({ title: "Scrape failed", description: out.error, variant: "destructive" });
+        return;
+      }
+      toast({
+        title: "Website scraped",
+        description: `${out.pagesChecked} page${out.pagesChecked === 1 ? "" : "s"} checked, ${out.signalsAdded} new signal${out.signalsAdded === 1 ? "" : "s"}`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Scrape failed", description: e.message, variant: "destructive" }),
+  });
+
   const addSignalMutation = useMutation({
     mutationFn: async () => {
       const r = await fetch("/api/brand/signals", {
@@ -2190,17 +2238,41 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <TabsContent value="intel" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
             <div className="flex items-center justify-between gap-2">
               <div className="flex-1 min-w-0"><BgpTakeStrip companyId={companyId} tab="intel" /></div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="shrink-0 h-7 text-[10px] gap-1 text-muted-foreground"
-                onClick={() => refreshIntelMutation.mutate()}
-                disabled={refreshIntelMutation.isPending}
-                title="Fetch latest Google News for this brand + re-link signals"
-              >
-                <Search className={`w-3 h-3 ${refreshIntelMutation.isPending ? "animate-spin" : ""}`} />
-                {refreshIntelMutation.isPending ? "Fetching…" : "Refresh intel"}
-              </Button>
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-[10px] gap-1 text-muted-foreground"
+                  onClick={() => refreshIntelMutation.mutate()}
+                  disabled={refreshIntelMutation.isPending}
+                  title="Fetch latest Google News for this brand + re-link signals"
+                >
+                  <Search className={`w-3 h-3 ${refreshIntelMutation.isPending ? "animate-spin" : ""}`} />
+                  {refreshIntelMutation.isPending ? "Fetching…" : "News"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-[10px] gap-1 text-muted-foreground"
+                  onClick={() => perplexityRefreshMutation.mutate()}
+                  disabled={perplexityRefreshMutation.isPending}
+                  title="Ask Perplexity for last 30 days of UK-relevant news and extract signals"
+                >
+                  <Sparkles className={`w-3 h-3 ${perplexityRefreshMutation.isPending ? "animate-spin" : ""}`} />
+                  {perplexityRefreshMutation.isPending ? "Thinking…" : "Perplexity"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-[10px] gap-1 text-muted-foreground"
+                  onClick={() => scrapeWebsiteMutation.mutate()}
+                  disabled={scrapeWebsiteMutation.isPending || !c.domain}
+                  title={c.domain ? "Scrape careers/press pages for expansion signals" : "No domain set"}
+                >
+                  <Globe className={`w-3 h-3 ${scrapeWebsiteMutation.isPending ? "animate-spin" : ""}`} />
+                  {scrapeWebsiteMutation.isPending ? "Scraping…" : "Scrape"}
+                </Button>
+              </div>
             </div>
             <div className="flex gap-1.5 flex-wrap">
               {[`What are the key signals about ${c.name} right now and what should BGP do?`, `Should BGP be pitching ${c.name} new space — if so, where and why?`].map(q => (
