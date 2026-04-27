@@ -2544,7 +2544,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       "/policies/refund-policy.json",
     ];
     for (const path of shopifyPolicies) {
-      if (overBudget()) break;
+      if (overBudget()) { t("shopify", `deadline hit before ${path}`); break; }
       try {
         const resp = await tryFetch(`${base}${path}`, {
           headers: { "User-Agent": UA },
@@ -2552,29 +2552,34 @@ Return both null if the page doesn't disclose a UK trading entity.`;
           proxy: false, // /policies/*.json: 404 = not Shopify, not Akamai-blocked
           redirect: "follow",
         });
-        if (!resp || !resp.ok) continue;
+        if (!resp || !resp.ok) { t("shopify", `${base}${path} → ${resp ? resp.status : "no response"} (skip)`); continue; }
         const ct = resp.headers.get("content-type") || "";
-        if (!ct.includes("json")) continue;
+        if (!ct.includes("json")) { t("shopify", `${base}${path} → non-json content-type (${ct})`); continue; }
         const json = await resp.json() as any;
         const body: string = json?.policy?.body || json?.body || "";
-        if (!body) continue;
+        if (!body) { t("shopify", `${base}${path} → json ok but no body field`); continue; }
         const text = body.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
         const hit = extractFromText(text, `${base}${path}`);
         if (hit) {
+          t("shopify", `${base}${path} → entity:${hit.entityName} ch:${hit.chNumber || "-"}`);
           console.log(`[find-uk-entity] Shopify JSON ${base}${path}: "${hit.entityName}" / ${hit.chNumber}`);
           return hit;
         }
         if (hasUkSignal(text)) {
+          t("shopify", `${base}${path} → has-uk-signal, trying AI`);
           const aiHit = await aiExtract(text, `${base}${path}`);
-          if (aiHit) return aiHit;
+          if (aiHit) { t("shopify.ai", `${base}${path} → entity:${aiHit.entityName} ch:${aiHit.chNumber || "-"}`); return aiHit; }
+          t("shopify.ai", `${base}${path} → AI extracted nothing`);
+        } else {
+          t("shopify", `${base}${path} → no entity, no UK signal (${text.length}B)`);
         }
-      } catch { /* non-fatal */ }
+      } catch (err: any) { t("shopify", `${base}${path} → error: ${err?.message || "?"}`); }
     }
 
     // ── Step 2: WordPress REST API ────────────────────────────────────────────
     const wpSlugs = ["terms-and-conditions", "terms-of-service", "terms", "privacy-policy", "legal"];
     for (const slug of wpSlugs) {
-      if (overBudget()) break;
+      if (overBudget()) { t("wp", `deadline hit before slug=${slug}`); break; }
       try {
         const resp = await tryFetch(`${base}/wp-json/wp/v2/pages?slug=${slug}&_fields=content`, {
           headers: { "User-Agent": UA },
@@ -2582,26 +2587,31 @@ Return both null if the page doesn't disclose a UK trading entity.`;
           proxy: false, // WP REST: 404 = not WordPress, not a bot wall
           redirect: "follow",
         });
-        if (!resp || !resp.ok) continue;
+        if (!resp || !resp.ok) { t("wp", `${base}/wp-json slug=${slug} → ${resp ? resp.status : "no response"} (skip)`); continue; }
         const json = await resp.json() as any[];
         const body: string = json?.[0]?.content?.rendered || "";
-        if (!body) continue;
+        if (!body) { t("wp", `${base}/wp-json slug=${slug} → ok but no rendered content`); continue; }
         const text = body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
         const hit = extractFromText(text, `${base}/wp-json/wp/v2/pages?slug=${slug}`);
         if (hit) {
+          t("wp", `${base}/wp-json slug=${slug} → entity:${hit.entityName} ch:${hit.chNumber || "-"}`);
           console.log(`[find-uk-entity] WP REST ${slug}: "${hit.entityName}" / ${hit.chNumber}`);
           return hit;
         }
         if (hasUkSignal(text)) {
+          t("wp", `${base}/wp-json slug=${slug} → has-uk-signal, trying AI`);
           const aiHit = await aiExtract(text, `${base}/wp-json/wp/v2/pages?slug=${slug}`);
-          if (aiHit) return aiHit;
+          if (aiHit) { t("wp.ai", `slug=${slug} → entity:${aiHit.entityName} ch:${aiHit.chNumber || "-"}`); return aiHit; }
+          t("wp.ai", `slug=${slug} → AI extracted nothing`);
+        } else {
+          t("wp", `${base}/wp-json slug=${slug} → no entity, no UK signal (${text.length}B)`);
         }
-      } catch { /* non-fatal */ }
+      } catch (err: any) { t("wp", `${base}/wp-json slug=${slug} → error: ${err?.message || "?"}`); }
     }
 
     // ── Step 3: Regular HTML pages (static sites / SSR) ──────────────────────
     for (const page of pages) {
-      if (overBudget()) break;
+      if (overBudget()) { t("page", `deadline hit before ${page || "/"}`); break; }
       const url = `${base}${page}`;
       try {
         const resp = await tryFetch(url, {
@@ -2609,9 +2619,9 @@ Return both null if the page doesn't disclose a UK trading entity.`;
           timeoutMs: 6000,
           redirect: "follow",
         });
-        if (!resp || !resp.ok) continue;
+        if (!resp || !resp.ok) { t("page", `${url} → ${resp ? resp.status : "no response"} (skip)`); continue; }
         const ct = resp.headers.get("content-type") || "";
-        if (!ct.includes("html") && !ct.includes("text")) continue;
+        if (!ct.includes("html") && !ct.includes("text")) { t("page", `${url} → non-html (${ct})`); continue; }
 
         const html = await resp.text();
 
@@ -2622,7 +2632,11 @@ Return both null if the page doesn't disclose a UK trading entity.`;
             const nd = JSON.parse(nextDataMatch[1]);
             const ndText = JSON.stringify(nd);
             const hit = extractFromText(ndText, url + "#next-data");
-            if (hit) { console.log(`[find-uk-entity] Next.js JSON blob at ${url}`); return hit; }
+            if (hit) {
+              t("page", `${url}#next-data → entity:${hit.entityName} ch:${hit.chNumber || "-"}`);
+              console.log(`[find-uk-entity] Next.js JSON blob at ${url}`);
+              return hit;
+            }
           } catch { /* non-fatal */ }
         }
 
@@ -2630,21 +2644,30 @@ Return both null if the page doesn't disclose a UK trading entity.`;
 
         const hit = extractFromText(text, url);
         if (hit) {
+          t("page", `${url} → entity:${hit.entityName} ch:${hit.chNumber || "-"}`);
           console.log(`[find-uk-entity] scraped from ${url}: "${hit.entityName}" / ${hit.chNumber}`);
           return hit;
         }
         // AI fallback when regex misses on a legal-looking page that has
         // clear UK signals — catches retailers with non-standard T&Cs phrasing.
         if (isLegalPath(page) && text.length > 200 && hasUkSignal(text)) {
+          t("page", `${url} → has-uk-signal on legal path, trying AI`);
           const aiHit = await aiExtract(text, url);
-          if (aiHit) return aiHit;
+          if (aiHit) { t("page.ai", `${url} → entity:${aiHit.entityName} ch:${aiHit.chNumber || "-"}`); return aiHit; }
+          t("page.ai", `${url} → AI extracted nothing`);
+        } else if (hasUkSignal(text)) {
+          t("page", `${url} → has-uk-signal but not a legal path — no AI attempt (${text.length}B)`);
+        } else {
+          t("page", `${url} → no entity, no UK signal (${text.length}B)`);
         }
       } catch (err: any) {
+        t("page", `${url} → error: ${err?.message || "?"}`);
         console.log(`[find-uk-entity] scrape failed ${url}: ${err.message}`);
       }
     }
   }
 
+  t("exhaust", "all base URLs and steps exhausted — no entity found");
   return { entityName: null, chNumber: null, sourceUrl: null };
 }
 
