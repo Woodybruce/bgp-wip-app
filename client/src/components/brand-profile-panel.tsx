@@ -471,6 +471,26 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const refreshIntelMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`/api/brand/${companyId}/refresh-intel`, {
+        method: "POST",
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json() as Promise<{ added: number; signalsLinked: number; warning?: string }>;
+    },
+    onSuccess: (out) => {
+      const msg = out.added > 0
+        ? `${out.added} new article${out.added === 1 ? "" : "s"}, ${out.signalsLinked} signal${out.signalsLinked === 1 ? "" : "s"} linked`
+        : "No new articles found";
+      toast({ title: "Intel refreshed", description: msg });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Intel refresh failed", description: e.message, variant: "destructive" }),
+  });
+
   // Hunter score (computed score + flags from brand_signals + stock)
   const { data: hunter } = useQuery<{ expansionScore: number; expansionFlags: string[] }>({
     queryKey: ["/api/brand", companyId, "hunter-score"],
@@ -1884,7 +1904,20 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </TabsContent>
 
             <TabsContent value="intel" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
-            <BgpTakeStrip companyId={companyId} tab="intel" />
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex-1 min-w-0"><BgpTakeStrip companyId={companyId} tab="intel" /></div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0 h-7 text-[10px] gap-1 text-muted-foreground"
+                onClick={() => refreshIntelMutation.mutate()}
+                disabled={refreshIntelMutation.isPending}
+                title="Fetch latest Google News for this brand + re-link signals"
+              >
+                <Search className={`w-3 h-3 ${refreshIntelMutation.isPending ? "animate-spin" : ""}`} />
+                {refreshIntelMutation.isPending ? "Fetching…" : "Refresh intel"}
+              </Button>
+            </div>
             {/* Images */}
             {data.images.length > 0 && (
               <div>

@@ -326,6 +326,113 @@ router.get("/api/brand/:companyId/hunter-score", requireAuth, async (req: Reques
   }
 });
 
+// ─── Per-brand Intel refresh ─────────────────────────────────────────────
+// Fetches the brand's Google News RSS feed, inserts new articles, links them
+// as brand_signals, then busts the intel AI-take cache so the next GET
+// returns a fresh paragraph.
+
+router.post("/api/brand/:companyId/refresh-intel", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const companyId = String(req.params.companyId);
+
+    // 1. Get brand
+    const brandQ = await pool.query(
+      `SELECT name, industry FROM crm_companies WHERE id = $1`,
+      [companyId]
+    );
+    if (!brandQ.rows[0]) return res.status(404).json({ error: "not found" });
+    const { name, industry } = brandQ.rows[0];
+
+    // 2. Build the same Google News RSS URL the nightly job uses
+    const { googleNewsRssUrl } = await import("./rssapp");
+    const ind = (industry || "").toLowerCase();
+    const industryHint =
+      /fashion|apparel|retail|streetwear|luxury|denim/.test(ind) ? " (fashion OR retail OR store OR shop)"
+      : /food|restaurant|qsr|hospitality|coffee|cafe/.test(ind) ? " (restaurant OR cafe OR food OR menu)"
+      : /beauty|skincare|cosmetic/.test(ind) ? " (beauty OR skincare OR cosmetics)"
+      : /fitness|gym|wellness/.test(ind) ? " (gym OR fitness OR studio)"
+      : "";
+    const shortName = name.trim();
+    const queryStr = shortName.length <= 3 ? `"${shortName}" (retail OR store OR UK)` : `"${shortName}" UK${industryHint}`;
+    const feedUrl = googleNewsRssUrl(queryStr);
+
+    // 3. Fetch RSS
+    const Parser = (await import("rss-parser")).default;
+    const parser = new Parser({ timeout: 12000, headers: { "User-Agent": "BGP-Dashboard/1.0" } });
+    let items: any[] = [];
+    try {
+      const feed = await parser.parseURL(feedUrl);
+      items = feed.items?.slice(0, 20) || [];
+    } catch (e: any) {
+      return res.json({ added: 0, signalsLinked: 0, warning: `Google News fetch failed: ${e.message}` });
+    }
+
+    // 4. Insert new articles
+    let added = 0;
+    const newArticleIds: string[] = [];
+    for (const item of items) {
+      if (!item.title || !item.link) continue;
+      const existingR = await pool.query(`SELECT id FROM news_articles WHERE url = $1`, [item.link]);
+      if (existingR.rows.length > 0) continue;
+      const pub = item.isoDate || item.pubDate ? new Date(item.isoDate || item.pubDate) : null;
+      const ins = await pool.query(
+        `INSERT INTO news_articles (title, summary, url, source_name, published_at, category)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+        [
+          item.title,
+          item.contentSnippet || item.content || null,
+          item.link,
+          "Google News",
+          pub,
+          "general",
+        ]
+      );
+      if (ins.rows[0]?.id) { newArticleIds.push(ins.rows[0].id); added++; }
+    }
+
+    // 5. Link new articles as brand_signals for this brand
+    const normalizedName = name
+      .toLowerCase()
+      .replace(/[^a-z0-9& ]+/g, "")
+      .replace(/\b(ltd|limited|plc|uk|holdings|group)\b/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    let signalsLinked = 0;
+    for (const articleId of newArticleIds) {
+      const aR = await pool.query(
+        `SELECT title, summary, ai_summary, url, published_at FROM news_articles WHERE id = $1`,
+        [articleId]
+      );
+      const a = aR.rows[0];
+      if (!a) continue;
+      const hay = [a.title, a.summary || "", a.ai_summary || ""].join(" ").toLowerCase();
+      const re = new RegExp(
+        `(^|[^a-z0-9])${normalizedName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`,
+        "i"
+      );
+      if (!re.test(hay)) continue;
+      const dup = await pool.query(
+        `SELECT id FROM brand_signals WHERE brand_company_id = $1 AND source = $2`,
+        [companyId, a.url]
+      );
+      if (dup.rows.length > 0) continue;
+      await pool.query(
+        `INSERT INTO brand_signals (brand_company_id, signal_type, headline, detail, signal_date, source, sentiment, magnitude)
+         VALUES ($1, 'news', $2, $3, $4, $5, 'neutral', 'low')`,
+        [companyId, a.title, a.summary || null, a.published_at || null, a.url]
+      );
+      signalsLinked++;
+    }
+
+    // 6. Bust intel AI-take cache so next GET regenerates
+    cache.delete(`${companyId}:intel`);
+
+    res.json({ added, signalsLinked });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export function invalidateBrandAiTake(companyId: string): void {
   for (const tab of ["brand", "uk", "activity", "intel"] as Tab[]) {
     cache.delete(`${companyId}:${tab}`);
