@@ -10,16 +10,31 @@ import { Loader2, Sparkles, Search, Linkedin, Mail, Building2, Phone } from "luc
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
+interface PreviousEmployer {
+  company: string;
+  title: string | null;
+  end_date: string | null;
+}
+
 interface DiscoveredPerson {
   // apollo uses apollo_id, rocketreach uses rocketreach_id — normalised to person_id
   person_id: string;
   name: string;
   role: string | null;
   email: string | null;
+  work_email?: string | null;
+  personal_email?: string | null;
   phone?: string | null;
+  mobile_phone?: string | null;
+  work_phone?: string | null;
   linkedin_url: string | null;
+  twitter_url?: string | null;
   avatar_url: string | null;
   location: string | null;
+  current_employer?: string | null;
+  previous_employers?: PreviousEmployer[];
+  education?: string | null;
+  bio?: string | null;
   source: "direct" | "name_search" | "parent_group";
   source_company_name?: string;
   // keep original payload for import endpoint
@@ -45,10 +60,19 @@ function normalisePeople(raw: Record<string, unknown>[], provider: "apollo" | "r
     name: String(p.name ?? ""),
     role: (p.role as string | null) ?? null,
     email: (p.email as string | null) ?? null,
+    work_email: (p.work_email as string | null) ?? null,
+    personal_email: (p.personal_email as string | null) ?? null,
     phone: (p.phone as string | null) ?? null,
+    mobile_phone: (p.mobile_phone as string | null) ?? null,
+    work_phone: (p.work_phone as string | null) ?? null,
     linkedin_url: (p.linkedin_url as string | null) ?? null,
+    twitter_url: (p.twitter_url as string | null) ?? null,
     avatar_url: (p.avatar_url as string | null) ?? null,
     location: (p.location as string | null) ?? null,
+    current_employer: (p.current_employer as string | null) ?? null,
+    previous_employers: (p.previous_employers as PreviousEmployer[] | undefined) ?? [],
+    education: (p.education as string | null) ?? null,
+    bio: (p.bio as string | null) ?? null,
     source: (p.source as DiscoveredPerson["source"]) ?? "direct",
     source_company_name: p.source_company_name as string | undefined,
     _raw: p,
@@ -73,25 +97,31 @@ function ProviderTab({ active, provider, onClick }: { active: boolean; provider:
 
 function PersonRow({ p, selected, onToggle }: { p: DiscoveredPerson; selected: boolean; onToggle: () => void }) {
   const isParent = p.source === "parent_group";
+  const showWork = p.work_email && p.work_email !== p.email;
+  const showPersonal = p.personal_email && p.personal_email !== p.email;
+  const mobile = p.mobile_phone && p.mobile_phone !== p.phone ? p.mobile_phone : null;
   return (
-    <label className={`flex items-center gap-3 p-2 rounded cursor-pointer ${
+    <label className={`flex items-start gap-3 p-2 rounded cursor-pointer ${
       isParent
         ? "hover:bg-amber-50/50 dark:hover:bg-amber-950/20 border-l-2 border-amber-200 ml-2"
         : "hover:bg-muted/50"
     }`}>
-      <Checkbox checked={selected} onCheckedChange={onToggle} />
+      <Checkbox checked={selected} onCheckedChange={onToggle} className="mt-1" />
       <div className="w-8 h-8 rounded-full bg-muted overflow-hidden shrink-0">
         {p.avatar_url && <img src={p.avatar_url} alt="" className="w-full h-full object-cover" />}
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+      <div className="flex-1 min-w-0 space-y-0.5">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-sm truncate">{p.name}</span>
           {p.role && <Badge variant="outline" className="text-[10px]">{p.role}</Badge>}
           {isParent && <Badge className="text-[9px] bg-amber-100 text-amber-700 border-amber-200">group</Badge>}
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
           {p.email && <span className="flex items-center gap-0.5"><Mail className="w-3 h-3" />{p.email}</span>}
+          {showWork && <span className="flex items-center gap-0.5 text-blue-600"><Mail className="w-3 h-3" />{p.work_email}</span>}
+          {showPersonal && <span className="flex items-center gap-0.5"><Mail className="w-3 h-3" />{p.personal_email}</span>}
           {p.phone && <span className="flex items-center gap-0.5"><Phone className="w-3 h-3" />{p.phone}</span>}
+          {mobile && <span className="flex items-center gap-0.5 text-emerald-600"><Phone className="w-3 h-3" />m: {mobile}</span>}
           {p.linkedin_url && (
             <a href={p.linkedin_url} target="_blank" rel="noreferrer"
               className="flex items-center gap-0.5 hover:underline"
@@ -101,6 +131,19 @@ function PersonRow({ p, selected, onToggle }: { p: DiscoveredPerson; selected: b
           )}
           {p.location && <span>· {p.location}</span>}
         </div>
+        {p.previous_employers && p.previous_employers.length > 0 && (
+          <div className="flex items-center gap-1 flex-wrap pt-0.5">
+            <span className="text-[10px] text-muted-foreground">Past:</span>
+            {p.previous_employers.slice(0, 3).map((j, i) => (
+              <Badge key={i} variant="outline" className="text-[10px] bg-zinc-50 dark:bg-zinc-900 font-normal">
+                {j.title ? `${j.title} @ ` : ""}{j.company}
+              </Badge>
+            ))}
+          </div>
+        )}
+        {p.education && (
+          <div className="text-[10px] text-muted-foreground italic">🎓 {p.education}</div>
+        )}
       </div>
     </label>
   );

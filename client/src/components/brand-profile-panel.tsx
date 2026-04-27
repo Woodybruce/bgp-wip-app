@@ -870,7 +870,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           })()}
           {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
         </CardTitle>
-        {(c.industry || (c.employee_count && c.employee_count > 0) || c.founded_year || data.parentGroup || c.backers) && (
+        {(c.industry || (c.employee_count && c.employee_count > 0) || c.founded_year || data.parentGroup || c.backers || (c.stock_ticker && stockData?.snapshot)) && (
           <div className="text-xs text-muted-foreground flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
             {c.industry && <span>{c.industry}</span>}
             {c.employee_count && c.employee_count > 0 && (
@@ -884,6 +884,34 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {data.parentGroup && (
               <span>· Part of <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">{data.parentGroup.name}</Link></span>
             )}
+            {c.stock_ticker && stockData?.snapshot && (() => {
+              const s = stockData.snapshot;
+              const change = s.fiftyTwoWeekChange;
+              const changeColor = change == null ? "text-muted-foreground" : change >= 0 ? "text-emerald-700" : "text-red-600";
+              const changePct = change != null ? `${change >= 0 ? "+" : ""}${(change * 100).toFixed(1)}%` : null;
+              const curr = s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "£";
+              const fmtCap = (v: number | null) => {
+                if (v == null) return null;
+                if (v >= 1e9) return `£${(v / 1e9).toFixed(1)}B`;
+                if (v >= 1e6) return `£${(v / 1e6).toFixed(0)}M`;
+                return `£${(v / 1e3).toFixed(0)}K`;
+              };
+              return (
+                <a
+                  href={`https://finance.yahoo.com/quote/${encodeURIComponent(s.ticker)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground"
+                  title={`${s.shortName || s.ticker} on ${s.exchange || "Yahoo Finance"}`}
+                >
+                  <Coins className="w-2.5 h-2.5 text-amber-600" />
+                  {s.ticker}
+                  {s.price != null && <span className="font-semibold">{curr}{s.price.toFixed(2)}</span>}
+                  {changePct && <span className={changeColor}>{changePct}</span>}
+                  {fmtCap(s.marketCapGBP) && <span className="text-muted-foreground">· {fmtCap(s.marketCapGBP)}</span>}
+                </a>
+              );
+            })()}
           </div>
         )}
         </div>
@@ -1021,63 +1049,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           </div>
         ) : (
           <div className="w-full flex flex-col">
-            {/* Stock card — promoted to the top when this brand is publicly listed */}
-            {c.stock_ticker && stockData?.snapshot && (() => {
-              const s = stockData.snapshot;
-              const history = stockData.history || [];
-              const change = s.fiftyTwoWeekChange;
-              const changeColor = change == null ? "text-muted-foreground" : change >= 0 ? "text-emerald-700" : "text-red-600";
-              const changePct = change != null ? `${change >= 0 ? "+" : ""}${(change * 100).toFixed(1)}%` : "—";
-              const fmtCap = (v: number | null) => {
-                if (v == null) return "—";
-                if (v >= 1e9) return `£${(v / 1e9).toFixed(2)}B`;
-                if (v >= 1e6) return `£${(v / 1e6).toFixed(0)}M`;
-                return `£${(v / 1e3).toFixed(0)}K`;
-              };
-              const curr = s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "£";
-              return (
-                <div className="rounded-md border border-border bg-gradient-to-br from-slate-50 to-zinc-50 dark:from-slate-950 dark:to-zinc-950 p-2.5 mb-2 order-0">
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-1.5">
-                      <Coins className="w-3.5 h-3.5 text-amber-600" />
-                      <span className="text-xs font-semibold">{s.ticker}</span>
-                      {s.exchange && <span className="text-[10px] text-muted-foreground">{s.exchange}</span>}
-                      {s.shortName && <span className="text-[10px] text-muted-foreground truncate">· {s.shortName}</span>}
-                    </div>
-                    <a href={`https://finance.yahoo.com/quote/${encodeURIComponent(s.ticker)}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-0.5">
-                      Yahoo <ExternalLink className="w-2.5 h-2.5" />
-                    </a>
-                  </div>
-                  <div className="grid grid-cols-4 gap-2 text-xs">
-                    <div>
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Price</div>
-                      <div className="font-bold">{s.price != null ? `${curr}${s.price.toFixed(2)}` : "—"}</div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">52w</div>
-                      <div className={`font-semibold ${changeColor} flex items-center gap-1`}>
-                        {change != null && (change >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />)}
-                        {changePct}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Mkt cap</div>
-                      <div className="font-semibold">{fmtCap(s.marketCapGBP)}</div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">P/E</div>
-                      <div className="font-semibold">{s.peRatio != null ? s.peRatio.toFixed(1) : "—"}</div>
-                    </div>
-                  </div>
-                  {history.length > 5 && (
-                    <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between gap-2">
-                      <span className="text-[10px] text-muted-foreground">90-day price</span>
-                      <Sparkline values={history.map(h => h.close)} width={140} height={24} />
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
             {/* Outreach strip — quick-action buttons */}
             <div className="flex items-center gap-1.5 flex-wrap mb-2 order-1">
               {(c.domain_url || c.domain) && (

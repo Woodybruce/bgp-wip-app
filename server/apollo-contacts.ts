@@ -17,18 +17,32 @@ import { pool } from "./db";
 
 const router = Router();
 
+// Tight filter — only C-suite and property/acquisitions decision makers.
+// Anything else (marketing, retail ops, country GMs) bloats the import list.
 const ROLE_TITLES = [
+  // C-suite
   "founder", "co-founder", "ceo", "chief executive",
   "coo", "chief operating", "cfo", "chief financial",
+  "cmo", "chief marketing",
+  "managing director",
+  // Property + acquisitions
   "chief property", "head of property", "head of real estate",
   "property director", "real estate director",
-  "retail director", "head of retail",
-  "head of stores", "head of expansion", "head of acquisitions",
-  "head of marketing", "cmo", "chief marketing",
-  "managing director", "country manager", "uk director",
+  "head of expansion", "head of acquisitions",
   "vp real estate", "vice president real estate", "vp property",
   "director of real estate", "director of property",
 ];
+
+// Belt-and-braces post-filter — Apollo's title query is fuzzy and can leak
+// adjacent roles (head of marketing, retail manager). Drop anything whose
+// title doesn't actually look C-suite or property.
+function isRelevantTitle(title: string | null | undefined): boolean {
+  if (!title) return false;
+  const t = title.toLowerCase();
+  const cSuite = /\b(founder|ceo|chief executive|coo|chief operating|cfo|chief financial|cmo|chief marketing|managing director|md)\b/.test(t);
+  const property = /(property|real estate|acquisition|expansion|portfolio|site|estates)/.test(t);
+  return cSuite || property;
+}
 
 interface ApolloPerson {
   id: string;
@@ -200,7 +214,7 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
       try {
         const byDomain = await searchApollo({ domains: brandDomains, apolloKey });
         for (const p of byDomain) {
-          if (!seenIds.has(p.id)) {
+          if (!seenIds.has(p.id) && isRelevantTitle(p.title)) {
             seenIds.add(p.id);
             people.push(mapPerson(p, "direct"));
           }
@@ -224,7 +238,7 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
           apolloKey,
         });
         for (const p of byName) {
-          if (!seenIds.has(p.id)) {
+          if (!seenIds.has(p.id) && isRelevantTitle(p.title)) {
             seenIds.add(p.id);
             people.push(mapPerson(p, "name_search"));
           }
@@ -240,7 +254,7 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
       try {
         const byName = await searchApollo({ organizationName: company.name, apolloKey });
         for (const p of byName) {
-          if (!seenIds.has(p.id)) {
+          if (!seenIds.has(p.id) && isRelevantTitle(p.title)) {
             seenIds.add(p.id);
             people.push(mapPerson(p, "name_search"));
           }
@@ -269,7 +283,7 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
             apolloKey,
           });
           for (const p of byParent) {
-            if (!seenIds.has(p.id)) {
+            if (!seenIds.has(p.id) && isRelevantTitle(p.title)) {
               seenIds.add(p.id);
               people.push(mapPerson(p, "parent_group", parentCompany.name));
             }
@@ -330,7 +344,7 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
           const byVariant = await searchApollo({ organizationName: variant, locations: ["United Kingdom"], apolloKey });
           let added = 0;
           for (const p of byVariant) {
-            if (!seenIds.has(p.id)) {
+            if (!seenIds.has(p.id) && isRelevantTitle(p.title)) {
               seenIds.add(p.id);
               people.push(mapPerson(p, "parent_group", variant));
               added++;
