@@ -11,8 +11,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  Sparkles, Store, TrendingUp, TrendingDown, Users, Handshake, ShieldCheck,
+  Sparkles, Store, TrendingUp, TrendingDown, Users, Handshake,
   Building2, ExternalLink, Pencil, Check, X, Plus, Image as ImageIcon,
   Instagram, Coins, FileText, AlertCircle, Clock, Download, Newspaper,
   MapPin, Activity, Target, Briefcase, PoundSterling, Search, Flame,
@@ -653,7 +654,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
           </div>
         ) : (
-          <>
+          <Tabs defaultValue="brand" className="w-full">
+            <TabsList className="w-full h-8 grid grid-cols-4 mb-2">
+              <TabsTrigger value="brand" className="text-[11px]">Brand</TabsTrigger>
+              <TabsTrigger value="uk" className="text-[11px]">UK &amp; Covenant</TabsTrigger>
+              <TabsTrigger value="activity" className="text-[11px]">Activity</TabsTrigger>
+              <TabsTrigger value="intel" className="text-[11px]">Intel</TabsTrigger>
+            </TabsList>
+            <TabsContent value="brand" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
             {/* ── Global brand ─────────────────────────────────────────── */}
             <div className="space-y-2">
               {/* Single description — prefer brand_analysis (more detailed), fall back to description */}
@@ -1021,7 +1029,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
               </div>
             )}
+            </TabsContent>
 
+            <TabsContent value="uk" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
             {/* Covenant strip — CH financials + traffic light */}
             {covenant && (
               <div className="border-t pt-2">
@@ -1308,7 +1318,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 )}
               </div>
             )}
+            </TabsContent>
 
+            <TabsContent value="activity" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
             {/* Relationship strip — lead broker, last touchpoint, active contacts */}
             {(c.bgp_contact_crm || data.contacts.length > 0) && (() => {
               const lastContactedAt = data.contacts
@@ -1692,7 +1704,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <div className="border-t pt-2">
               <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-1">
                 <span className="flex items-center gap-1">
-                  <MapPin className="w-3 h-3" /> Stores ({stores.length}{c.store_count && c.store_count > 0 && stores.length !== c.store_count ? ` of ~${c.store_count}` : ""})
+                  <MapPin className="w-3 h-3" /> UK stores ({stores.length}{c.store_count && c.store_count > 0 && stores.length !== c.store_count ? ` of ${c.store_count} global` : ""})
                 </span>
                 <button
                   onClick={() => researchStoresMutation.mutate()}
@@ -1760,23 +1772,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               )}
             </div>
 
-            {/* KYC tile */}
-            {(c.kyc_status || data.kyc.doc_count > 0 || c.aml_risk_level) && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground border-t pt-2">
-                <ShieldCheck className="w-3 h-3" />
-                {c.kyc_status === "approved" && <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">KYC approved</Badge>}
-                {c.kyc_status === "pass" && <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">KYC passed</Badge>}
-                {c.kyc_status === "warning" && <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]">Verify entity</Badge>}
-                {c.kyc_status === "in_review" && <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]">KYC in review</Badge>}
-                {c.kyc_status === "rejected" && <Badge variant="destructive" className="text-[10px]">KYC rejected</Badge>}
-                {c.kyc_status === "fail" && <Badge variant="destructive" className="text-[10px]">KYC fail — insolvency</Badge>}
-                {!c.kyc_status && <Badge variant="secondary" className="text-[10px]">KYC pending</Badge>}
-                {c.aml_risk_level && <span>· {c.aml_risk_level} risk</span>}
-                <span>· {data.kyc.doc_count} doc{data.kyc.doc_count === 1 ? "" : "s"}</span>
-                {c.kyc_expires_at && <span>· re-check {new Date(c.kyc_expires_at).toLocaleDateString("en-GB")}</span>}
-              </div>
-            )}
+            </TabsContent>
 
+            <TabsContent value="intel" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
             {/* Images */}
             {data.images.length > 0 && (
               <div>
@@ -1917,7 +1915,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 <Clock className="w-2.5 h-2.5" /> Last enriched {new Date(c.last_enriched_at).toLocaleString("en-GB")}
               </div>
             )}
-          </>
+            </TabsContent>
+          </Tabs>
         )}
       </CardContent>
     </Card>

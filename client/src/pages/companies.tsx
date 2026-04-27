@@ -1181,7 +1181,7 @@ function CompanyDetail({ id }: { id: string }) {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 space-y-4">
+        <div className="lg:col-span-3 space-y-4">
           <Card>
             <CardContent className="p-3 space-y-2">
               <h3 className="font-semibold text-xs">Details</h3>
@@ -1272,7 +1272,8 @@ function CompanyDetail({ id }: { id: string }) {
 
         </div>
 
-        <div className="space-y-3 flex flex-col">
+        {/* CompaniesHouseCard and CompanyFoldersCard kept but hidden — content surfaced in Brand Profile tabs */}
+        <div className="hidden">
           <CompaniesHouseCard company={company} />
           <CompanyFoldersCard companyName={company.name} linkedProperties={linkedProperties} />
         </div>
