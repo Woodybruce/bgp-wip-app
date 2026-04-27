@@ -894,14 +894,17 @@ export default function WipReport() {
   }, [entries]);
 
   const allAgents = useMemo(() => {
-    const set = new Set<string>();
+    const map = new Map<string, string>(); // lowercase key → display value
     entries.forEach((e) => {
       if (e.agent) {
         const parts = (e.agent as string).split(",").map(a => a.trim()).filter(Boolean);
-        parts.forEach(a => set.add(a));
+        parts.forEach(a => {
+          const k = a.toLowerCase();
+          if (!map.has(k)) map.set(k, a.toUpperCase());
+        });
       }
     });
-    return [...set].sort();
+    return [...map.values()].sort();
   }, [entries]);
 
   const allStatuses = useMemo(() => {
@@ -961,7 +964,7 @@ export default function WipReport() {
       }
       if (selectedAgents.size > 0 && selectedAgents.size < allAgents.length) {
         if (!e.agent) return false;
-        const agentParts = (e.agent as string).split(",").map(a => a.trim()).filter(Boolean);
+        const agentParts = (e.agent as string).split(",").map(a => a.trim().toUpperCase()).filter(Boolean);
         if (!agentParts.some(a => selectedAgents.has(a))) return false;
       }
       if (selectedStatuses.size > 0 && selectedStatuses.size < allStatuses.length) {
@@ -975,9 +978,10 @@ export default function WipReport() {
     if (!clickFilter) return sidebarFilteredEntries;
     return sidebarFilteredEntries.filter((e) => {
       if (clickFilter.field === "agent") {
-        const agentField = (e.agent || "unknown").toLowerCase().trim();
+        const agentField = (e.agent || "unknown").trim();
         const agents = agentField.split(",").map(a => a.trim()).filter(Boolean);
-        return agents.some(a => a === clickFilter.value) || agentField === clickFilter.value;
+        const target = clickFilter.value.toLowerCase();
+        return agents.some(a => a.toLowerCase() === target);
       }
       const val = e[clickFilter.field];
       return val === clickFilter.value;
@@ -1027,7 +1031,7 @@ export default function WipReport() {
         map["Unknown"] = (map["Unknown"] || 0) + fee;
       } else {
         agents.forEach(a => {
-          const key = a.toLowerCase().trim();
+          const key = a.trim();
           map[key] = (map[key] || 0) + perAgent;
         });
       }
@@ -1035,8 +1039,8 @@ export default function WipReport() {
     return Object.entries(map)
       .map(([key, value]) => {
         const display = key.includes(" ")
-          ? key.split(" ").map(p => p[0]).join("").toUpperCase()
-          : key.charAt(0).toUpperCase() + key.slice(1);
+          ? key.split(" ").map(p => p[0].toUpperCase()).join("")
+          : key.toUpperCase();
         return { label: display, value, fullName: key };
       })
       .sort((a, b) => b.value - a.value);
