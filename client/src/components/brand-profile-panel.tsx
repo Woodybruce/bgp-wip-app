@@ -261,6 +261,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [addRep, setAddRep] = useState<"brand" | "agent" | null>(null);
   const [repForm, setRepForm] = useState<RepForm>(EMPTY_REP_FORM);
   const [repSearch, setRepSearch] = useState("");
+  const [newsShowAll, setNewsShowAll] = useState(false);
+  const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
+  const [signalsShowAll, setSignalsShowAll] = useState(false);
 
   const { data, isLoading, isError } = useQuery<BrandProfile>({
     queryKey: ["/api/brand", companyId, "profile"],
@@ -1908,11 +1911,11 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Signals feed */}
             {data.signals.length > 0 && (
               <div>
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
-                  <TrendingUp className="w-3 h-3" /> Recent signals
+                <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-1">
+                  <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({data.signals.length})</span>
                 </div>
                 <div className="space-y-1">
-                  {data.signals.slice(0, 6).map((s: any) => {
+                  {(signalsShowAll ? data.signals : data.signals.slice(0, 6)).map((s: any) => {
                     const typeCls: Record<string, string> = {
                       opening:     "bg-emerald-50 text-emerald-700 border-emerald-200",
                       closure:     "bg-red-50 text-red-700 border-red-200",
@@ -1948,74 +1951,139 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     );
                   })}
                 </div>
+                {data.signals.length > 6 && (
+                  <button
+                    onClick={() => setSignalsShowAll(v => !v)}
+                    className="mt-1.5 text-[10px] text-primary hover:underline"
+                  >
+                    {signalsShowAll ? "Show less" : `Show ${data.signals.length - 6} more signal${data.signals.length - 6 === 1 ? "" : "s"}`}
+                  </button>
+                )}
               </div>
             )}
 
             {/* News articles mentioning this brand */}
-            {data.news && data.news.length > 0 && (
-              <div>
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
-                  <Newspaper className="w-3 h-3" /> News ({data.news.length})
-                </div>
-                <div className="space-y-1.5">
-                  {data.news.slice(0, 5).map((article) => {
-                    const isGoogleProxy = /google\.com|gstatic\.com|googleusercontent\.com\/.*\/proxy/i.test(article.image_url || "");
-                    const hasRealImage = article.image_url && !isGoogleProxy;
-                    const articleDomain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
-                    return (
-                    <a
-                      key={article.id}
-                      href={article.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-start gap-2 text-xs group hover:bg-muted/40 rounded-md p-1.5 -mx-1.5 transition-colors"
-                    >
-                      {hasRealImage ? (
-                        <img
-                          src={article.image_url!}
-                          alt=""
-                          className="w-14 h-14 rounded object-cover shrink-0 border"
-                          onError={(e) => {
-                            const el = e.target as HTMLImageElement;
-                            if (articleDomain) el.src = `https://${articleDomain}/favicon.ico`;
-                            else el.style.display = "none";
-                          }}
-                        />
-                      ) : articleDomain ? (
-                        <img
-                          src={`https://${articleDomain}/favicon.ico`}
-                          alt=""
-                          className="w-8 h-8 rounded mt-0.5 object-contain shrink-0 border bg-white p-1"
-                          onError={(e) => { (e.target as HTMLImageElement).replaceWith(Object.assign(document.createElement("div"), { className: "w-8 h-8 rounded mt-0.5 shrink-0 border bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground", textContent: (article.source_name || articleDomain || "?")[0].toUpperCase() })); }}
-                        />
-                      ) : (
-                        <div className="w-8 h-8 rounded mt-0.5 shrink-0 border bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground">
-                          {(article.source_name || "?")[0].toUpperCase()}
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{article.title}</p>
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          {article.source_name && (
-                            <span className="text-[10px] text-muted-foreground font-medium">{article.source_name}</span>
-                          )}
-                          {article.published_at && (
-                            <span className="text-[10px] text-muted-foreground">
-                              {article.source_name ? "·" : ""} {new Date(article.published_at).toLocaleDateString("en-GB")}
-                            </span>
-                          )}
-                          <ExternalLink className="w-2.5 h-2.5 text-muted-foreground ml-auto shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </div>
+            {data.news && data.news.length > 0 && (() => {
+              const newsSourceColor = (name: string | null): string => {
+                if (!name) return "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
+                const n = name.toLowerCase();
+                if (n.includes("drapers")) return "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800";
+                if (n.includes("retail week")) return "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800";
+                if (n.includes("property week") || n.includes("estates gazette") || n.includes("eg ")) return "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800";
+                if (n.includes("financial times") || n === "ft") return "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800";
+                if (n.includes("reuters")) return "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800";
+                if (n.includes("vogue") || n.includes("business of fashion")) return "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800";
+                if (n.includes("bbc")) return "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800";
+                if (n.includes("guardian") || n.includes("times") || n.includes("telegraph")) return "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800";
+                return "bg-zinc-100 text-zinc-600 border-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700";
+              };
+              const relDate = (d: string | null): string => {
+                if (!d) return "";
+                const days = Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+                if (days === 0) return "Today";
+                if (days === 1) return "Yesterday";
+                if (days < 7) return `${days}d ago`;
+                if (days < 30) return `${Math.floor(days / 7)}w ago`;
+                if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+                return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+              };
+              const allSources = [...new Set(data.news.map(a => a.source_name).filter((s): s is string => !!s))];
+              const filtered = newsSourceFilter ? data.news.filter(a => a.source_name === newsSourceFilter) : data.news;
+              const visible = newsShowAll ? filtered : filtered.slice(0, 6);
+              return (
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-[11px] font-medium text-foreground/70 flex items-center gap-1">
+                      <Newspaper className="w-3 h-3" /> Press & News ({data.news.length})
+                    </div>
+                    {allSources.length > 1 && (
+                      <div className="flex items-center gap-1 flex-wrap justify-end">
+                        {newsSourceFilter && (
+                          <button onClick={() => setNewsSourceFilter(null)} className="text-[9px] text-muted-foreground hover:text-foreground underline">
+                            All
+                          </button>
+                        )}
+                        {allSources.slice(0, 5).map(s => (
+                          <button
+                            key={s}
+                            onClick={() => setNewsSourceFilter(s === newsSourceFilter ? null : s)}
+                            className={`text-[9px] font-medium px-1.5 py-0.5 rounded border transition-colors ${newsSourceFilter === s ? newsSourceColor(s) : "border-border text-muted-foreground hover:bg-muted"}`}
+                          >
+                            {s}
+                          </button>
+                        ))}
                       </div>
-                    </a>
-                    );
-                  })}
-                  {data.news.length > 5 && (
-                    <p className="text-[10px] text-muted-foreground pl-1.5">+{data.news.length - 5} more articles</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {visible.map((article) => {
+                      const isGoogleProxy = /google\.com|gstatic\.com|googleusercontent\.com/i.test(article.image_url || "");
+                      const hasRealImage = !!(article.image_url && !isGoogleProxy);
+                      const domain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
+                      const displayText = article.ai_summary || article.summary;
+                      return (
+                        <a
+                          key={article.id}
+                          href={article.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex gap-2.5 group hover:bg-muted/40 rounded-lg p-2 -mx-2 transition-colors border border-transparent hover:border-border/50"
+                        >
+                          <div className="shrink-0">
+                            {hasRealImage ? (
+                              <img
+                                src={article.image_url!}
+                                alt=""
+                                className="w-20 h-14 rounded-md object-cover border"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                              />
+                            ) : (
+                              <div className="w-10 h-10 rounded-md border bg-muted flex items-center justify-center overflow-hidden">
+                                {domain ? (
+                                  <img
+                                    src={`https://www.google.com/s2/favicons?domain=${domain}&sz=32`}
+                                    alt=""
+                                    className="w-5 h-5 object-contain"
+                                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                                  />
+                                ) : (
+                                  <span className="text-sm font-bold text-muted-foreground">{(article.source_name || "?")[0].toUpperCase()}</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                              {article.source_name && (
+                                <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${newsSourceColor(article.source_name)}`}>
+                                  {article.source_name}
+                                </span>
+                              )}
+                              {article.category && article.category !== "general" && (
+                                <span className="text-[9px] text-muted-foreground uppercase tracking-wide">{article.category}</span>
+                              )}
+                              <span className="text-[9px] text-muted-foreground ml-auto shrink-0">{relDate(article.published_at)}</span>
+                            </div>
+                            <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{article.title}</p>
+                            {displayText && (
+                              <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2 mt-0.5">{displayText}</p>
+                            )}
+                          </div>
+                        </a>
+                      );
+                    })}
+                  </div>
+                  {filtered.length > 6 && (
+                    <button
+                      onClick={() => setNewsShowAll(v => !v)}
+                      className="mt-2 text-[10px] text-primary hover:underline"
+                    >
+                      {newsShowAll ? "Show less" : `Show ${filtered.length - 6} more article${filtered.length - 6 === 1 ? "" : "s"}`}
+                    </button>
                   )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {c.last_enriched_at && (
               <div className="text-[10px] text-muted-foreground pt-1 border-t flex items-center gap-1">

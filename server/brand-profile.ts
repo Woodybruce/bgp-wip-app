@@ -228,24 +228,26 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
-    // News articles mentioning this brand
+    // News articles mentioning this brand — deduped by URL, newest per source first
     const newsQ = pool.query(
-      `SELECT n.id, n.title, n.summary, n.ai_summary, n.url, n.image_url, n.source_name, n.published_at, n.category
-         FROM news_articles n,
-              (SELECT name, domain_url, domain, industry FROM crm_companies WHERE id = $1) AS co
-        WHERE (n.title ILIKE '%' || co.name || '%' OR n.summary ILIKE '%' || co.name || '%'
-               OR n.ai_summary ILIKE '%' || co.name || '%')
-          -- For short brand names (<=8 chars), require at least one retail/fashion/brand keyword
-          -- to avoid matching unrelated companies/animals/places with the same word
-          AND (
-            length(trim(co.name)) > 8
-            OR co.domain_url IS NOT NULL AND (n.url ILIKE '%' || regexp_replace(co.domain_url, '^https?://(www\.)?', '', 'i') || '%')
-            OR co.industry IS NOT NULL AND n.title ILIKE '%' || split_part(co.industry, ' ', 1) || '%'
-            OR n.title ~* '\\y(retail|fashion|store|brand|clothing|apparel|shop|boutique|outlet|expansion|opening|pop.up|lease|tenant|uk|london|highstreet|high street)\\y'
-            OR n.summary ~* '\\y(retail|fashion|store|brand|clothing|apparel|shop|boutique|outlet|expansion|opening|pop.up|lease|tenant)\\y'
-          )
-        ORDER BY n.published_at DESC NULLS LAST
-        LIMIT 10`,
+      `SELECT id, title, summary, ai_summary, url, image_url, source_name, published_at, category
+         FROM (
+           SELECT DISTINCT ON (n.url) n.id, n.title, n.summary, n.ai_summary, n.url, n.image_url, n.source_name, n.published_at, n.category
+             FROM news_articles n,
+                  (SELECT name, domain_url, domain, industry FROM crm_companies WHERE id = $1) AS co
+            WHERE (n.title ILIKE '%' || co.name || '%' OR n.summary ILIKE '%' || co.name || '%'
+                   OR n.ai_summary ILIKE '%' || co.name || '%')
+              AND (
+                length(trim(co.name)) > 8
+                OR co.domain_url IS NOT NULL AND (n.url ILIKE '%' || regexp_replace(co.domain_url, '^https?://(www\.)?', '', 'i') || '%')
+                OR co.industry IS NOT NULL AND n.title ILIKE '%' || split_part(co.industry, ' ', 1) || '%'
+                OR n.title ~* '\\y(retail|fashion|store|brand|clothing|apparel|shop|boutique|outlet|expansion|opening|pop.up|lease|tenant|uk|london|highstreet|high street)\\y'
+                OR n.summary ~* '\\y(retail|fashion|store|brand|clothing|apparel|shop|boutique|outlet|expansion|opening|pop.up|lease|tenant)\\y'
+              )
+            ORDER BY n.url, n.published_at DESC NULLS LAST
+         ) deduped
+        ORDER BY published_at DESC NULLS LAST
+        LIMIT 20`,
       [companyId]
     );
 
