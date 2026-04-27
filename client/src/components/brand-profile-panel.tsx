@@ -1281,16 +1281,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
             </div>
 
-            {/* BGP pitch — only shown if distinct from description */}
-            {c.concept_pitch && c.concept_pitch !== c.description && (
-              <div className="border-l-2 border-blue-300 dark:border-blue-700 pl-2">
-                <div className="flex items-center gap-1 text-[10px] text-blue-700 dark:text-blue-400 mb-0.5 font-medium uppercase tracking-wide">
-                  <FileText className="w-2.5 h-2.5" /> BGP pitch {aiFields.concept_pitch && <AiChip />}
-                </div>
-                <p className="text-xs leading-snug">{c.concept_pitch}</p>
-              </div>
-            )}
-
             {/* Key facts row */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
               {c.store_count != null && (
