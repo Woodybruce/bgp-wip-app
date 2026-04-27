@@ -499,4 +499,16 @@ router.post("/api/brand/:companyId/apollo/import", requireAuth, async (req: Requ
   }
 });
 
+// Delete all Apollo-sourced contacts across the whole CRM.
+router.delete("/api/contacts/purge-apollo", requireAuth, async (_req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM crm_contacts WHERE enrichment_source ILIKE 'apollo%' RETURNING id`
+    );
+    res.json({ deleted: result.rowCount ?? 0 });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
