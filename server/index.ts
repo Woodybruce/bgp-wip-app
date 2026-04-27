@@ -453,6 +453,7 @@ import brandDedupeRouter from "./brand-dedupe";
 import brandProfileRouter from "./brand-profile";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
 import brandAiTakeRouter from "./brand-ai-take";
+import brandDigestRouter, { runFortnightlyBrandDigest } from "./brand-digest";
 import apolloContactsRouter from "./apollo-contacts";
 import rocketreachContactsRouter, { rocketreachHealth } from "./rocketreach-contacts";
 import { experianHealth, fetchCommercialCredit, isExperianConfigured } from "./experian";
@@ -801,6 +802,7 @@ app.use("/api/branding/assets", express.static(
   app.use(brandProfileRouter);
   app.use(brandEnrichmentRouter);
   app.use(brandAiTakeRouter);
+  app.use(brandDigestRouter);
   app.use(apolloContactsRouter);
   app.use(rocketreachContactsRouter);
 
@@ -974,6 +976,14 @@ app.use("/api/branding/assets", express.static(
           if (now.getDay() === 1 && now.getHours() === 9 && now.getMinutes() < 60) {
             runWeeklyClientReports().catch(err =>
               console.error("[weekly-report] cron run failed:", err?.message)
+            );
+          }
+          // Fortnightly brand digest — alternating Mondays at 08:00
+          // Week-of-year even = send; avoids clashing with weekly client report
+          const weekOfYear = Math.ceil((now.getDate() + new Date(now.getFullYear(), now.getMonth(), 1).getDay()) / 7);
+          if (now.getDay() === 1 && now.getHours() === 8 && now.getMinutes() < 60 && weekOfYear % 2 === 0) {
+            runFortnightlyBrandDigest().catch(err =>
+              console.error("[brand-digest] cron run failed:", err?.message)
             );
           }
         }, 60 * 60 * 1000);
