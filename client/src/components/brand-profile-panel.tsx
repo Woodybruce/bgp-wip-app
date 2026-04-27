@@ -550,10 +550,10 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Store search failed", description: e.message, variant: "destructive" }),
   });
 
-  // All companies, used by the representation picker (autocomplete)
+  // All companies — used by the representation picker AND the backer linkifier
+  // so any mentioned company name gets a link to its profile.
   const { data: allCompaniesForPicker = [] } = useQuery<Array<{ id: string; name: string; agent_type: string | null; is_tracked_brand: boolean }>>({
     queryKey: ["/api/crm/companies"],
-    enabled: addRep !== null,
   });
 
   const addRepMutation = useMutation({
@@ -1358,10 +1358,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     <Coins className="w-3 h-3" /> Backers {aiFields.backers && <AiChip />}
                   </div>
                   {(() => {
-                    // Build a name → company-id map from the parent group + siblings
-                    // so we can link any backer / brand mention that resolves to a
-                    // company we already track. Match is case-insensitive on full name.
+                    // Build a name → company-id map from every known CRM company,
+                    // plus the parent group + siblings as priority hits, so any
+                    // backer / brand mention that resolves to a tracked company
+                    // becomes a link to its profile. Case-insensitive, word-boundary.
                     const linkMap = new Map<string, string>();
+                    for (const co of allCompaniesForPicker) {
+                      if (co.id === companyId) continue;       // don't self-link
+                      if (co.name && co.name.length >= 3) linkMap.set(co.name.toLowerCase(), co.id);
+                    }
                     if (parentGroup) linkMap.set(parentGroup.name.toLowerCase(), parentGroup.id);
                     for (const s of siblingBrands) linkMap.set(s.name.toLowerCase(), s.id);
                     const linkFor = (name: string): string | null => linkMap.get(name.trim().toLowerCase()) || null;
