@@ -2268,6 +2268,10 @@ async function scrapeUkEntityFromWebsite(
     /registered\s+company(?:\s+name)?:?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
     /©\s*(?:\d{4}[-–]\d{2,4}|\d{4})\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
     /trading\s+(?:as|name):?\s*([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
+    // H&M Group / Scandinavian brands use "through X Ltd., org. no.XXXXXXXX"
+    /through\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))\s*[,.]?\s*org\.\s*no\./i,
+    // "we/us means X Ltd" — common in modern retail T&Cs
+    /(?:we|us|our\s+company)\s+(?:means?|refers?\s+to|is)\s+([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|PLC|LLP))/i,
   ];
 
   const CH_PATTERNS: RegExp[] = [
@@ -2275,6 +2279,7 @@ async function scrapeUkEntityFromWebsite(
     /registered\s+(?:company\s+)?(?:number|no\.?):?\s*(0?\d{7,8})/i,
     /\((?:company\s+)?(?:number|no\.?)\s*(0?\d{7,8})\)/i,
     /(?:CRN|CRN:)\s*(0?\d{7,8})/i,
+    /org\.\s*no\.?\s*(0?\d{7,8})/i,   // H&M Group / Scandinavian phrasing
   ];
 
   // ── Helper: extract entity/CH from a block of plain text ─────────────────
@@ -2298,7 +2303,8 @@ async function scrapeUkEntityFromWebsite(
     // slavery statement). Threshold ≥2 keeps drive-by mentions of unrelated
     // Limited entities (Stripe, Klarna, Google Payment, etc.) from winning.
     if (!entityName) {
-      const BROAD = /\b([A-Z][A-Za-z0-9&'.,()\-]+(?:\s+[A-Z0-9][A-Za-z0-9&'.,()\-]+){0,5}\s+(?:Limited|Ltd\.?|PLC|plc|LLP|LP))\b/g;
+      // Allow & at start of word (e.g. "H&M Hennes & Mauritz UK Ltd.")
+      const BROAD = /\b([A-Z][A-Za-z0-9&'.,()\-]+(?:\s+[A-Z0-9&][A-Za-z0-9&'.,()\-]+){0,5}\s+(?:Limited|Ltd\.?|PLC|plc|LLP|LP))\b/g;
       const scores = new Map<string, number>();
       let m: RegExpExecArray | null;
       while ((m = BROAD.exec(text)) !== null) {
