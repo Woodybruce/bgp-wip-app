@@ -14,7 +14,7 @@ interface Store {
 // Small read-only Leaflet map showing a brand's UK store footprint. Used as
 // a supporting visual on the brand profile panel. Markers are coloured by
 // status (open/closed/unconfirmed). Auto-fits bounds to the store set.
-export function BrandPortfolioMap({ stores }: { stores: Store[] }) {
+export function BrandPortfolioMap({ stores, height = 180 }: { stores: Store[]; height?: number }) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<L.Map | null>(null);
 
@@ -73,7 +73,7 @@ export function BrandPortfolioMap({ stores }: { stores: Store[] }) {
   if (geocodedCount === 0) return null;
 
   return (
-    <div className="rounded-md overflow-hidden border" style={{ height: 180 }}>
+    <div className="rounded-md overflow-hidden border" style={{ height }}>
       <div ref={mapRef} style={{ width: "100%", height: "100%" }} />
     </div>
   );
