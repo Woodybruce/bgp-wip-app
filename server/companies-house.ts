@@ -543,7 +543,13 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
 
     if (!chNumber && domain && !opts.manualEntityName && !opts.manualTcsUrl) {
       try {
-        const scraped = await scrapeUkEntityFromWebsite(domain, brandContext);
+        // Forward per-step trace from inside the scraper into the panel
+        // diagnostics so a "nothing" outcome shows WHICH base/link/page
+        // bailed (probe blocked, SPA homepage with no links, link 403,
+        // page text had no UK signal, etc) rather than a single opaque line.
+        const scraped = await scrapeUkEntityFromWebsite(domain, brandContext, (step, detail) => {
+          diagnostics.push({ step: `scrape.${step}`, outcome: "trace", detail });
+        });
         if (scraped.entityName) {
           searchName = scraped.entityName;
           if (!storedEntityName) {
@@ -2172,6 +2178,7 @@ Format your response as JSON:
 async function scrapeUkEntityFromWebsite(
   domain: string,
   brand?: { name: string; parentGroup?: string | null },
+  trace?: (step: string, detail: string) => void,
 ): Promise<{
   entityName: string | null;
   chNumber: string | null;
@@ -2182,6 +2189,7 @@ async function scrapeUkEntityFromWebsite(
     .replace(/^https?:\/\//i, "")
     .replace(/\/.*$/, "")
     .replace(/^www\./i, "");
+  const t = trace ?? ((_s: string, _d: string) => {});
 
   // UK retail brands often hide their UK trading entity behind a regional
   // subdomain (e.g. uk.supreme.com/pages/terms exists, supreme.com only
@@ -2428,6 +2436,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
     // like stories.com / hm.com / supreme.com don't dead-end here.
     let probeOk = false;
     let homepageHtml: string | null = null;
+    const proxyCallsBefore = proxyCalls;
     const probe = await tryFetch(base, {
       method: "GET",
       headers: { "User-Agent": UA, "Accept": "text/html,*/*" },
@@ -2440,6 +2449,8 @@ Return both null if the page doesn't disclose a UK trading entity.`;
         homepageHtml = await probe.text().catch(() => null);
       }
     }
+    const probeVia = proxyCalls > proxyCallsBefore ? "proxy" : "direct";
+    t("probe", `${base} → ${probe ? `${probe.status} via ${probeVia}` : "no response"}${homepageHtml ? `, html ${homepageHtml.length}B` : ""}`);
     if (!probeOk) continue;
 
     // ── Step 0: homepage + footer-link harvest ────────────────────────────────
@@ -2455,6 +2466,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       const homeText = htmlToText(homepageHtml);
       const homeHit = extractFromText(homeText, base);
       if (homeHit) {
+        t("homepage", `${base} → entity:${homeHit.entityName} ch:${homeHit.chNumber || "-"}`);
         console.log(`[find-uk-entity] homepage ${base}: "${homeHit.entityName}" / ${homeHit.chNumber}`);
         return homeHit;
       }
@@ -2476,6 +2488,14 @@ Return both null if the page doesn't disclose a UK trading entity.`;
           discovered.add(abs.toString());
         } catch { /* malformed href */ }
       }
+      // Total <a href> count to distinguish "JS-rendered SPA, no links in raw HTML"
+      // from "links present but none matched legal keywords".
+      const totalLinks = (homepageHtml.match(/<a\b/gi) || []).length;
+      t("discover", `${base} → ${discovered.size} legal links / ${totalLinks} total <a>${totalLinks < 5 ? " (likely SPA — needs render=true)" : ""}`);
+      if (discovered.size > 0) {
+        const sample = [...discovered].slice(0, 3).map((u) => u.replace(base, "")).join(", ");
+        t("discover.sample", sample);
+      }
 
       for (const url of discovered) {
         if (overBudget()) break;
@@ -2485,12 +2505,19 @@ Return both null if the page doesn't disclose a UK trading entity.`;
             timeoutMs: 6000,
             redirect: "follow",
           });
-          if (!resp || !resp.ok) continue;
+          if (!resp || !resp.ok) {
+            t("link", `${url} → ${resp ? resp.status : "no response"}`);
+            continue;
+          }
           const ct = resp.headers.get("content-type") || "";
-          if (!ct.includes("html") && !ct.includes("text")) continue;
+          if (!ct.includes("html") && !ct.includes("text")) {
+            t("link", `${url} → non-html (${ct})`);
+            continue;
+          }
           const text = htmlToText(await resp.text());
           const hit = extractFromText(text, url);
           if (hit) {
+            t("link", `${url} → entity:${hit.entityName} ch:${hit.chNumber || "-"}`);
             console.log(`[find-uk-entity] discovered ${url}: "${hit.entityName}" / ${hit.chNumber}`);
             return hit;
           }
@@ -2498,9 +2525,15 @@ Return both null if the page doesn't disclose a UK trading entity.`;
           // page with UK signals is fair game for the AI fallback.
           if (text.length > 200 && hasUkSignal(text)) {
             const aiHit = await aiExtract(text, url);
-            if (aiHit) return aiHit;
+            if (aiHit) {
+              t("link.ai", `${url} → entity:${aiHit.entityName} ch:${aiHit.chNumber || "-"}`);
+              return aiHit;
+            }
+            t("link", `${url} → has-uk-signal but AI extracted nothing (${text.length}B)`);
+          } else {
+            t("link", `${url} → no entity, no UK signal (${text.length}B)`);
           }
-        } catch { /* non-fatal */ }
+        } catch (err: any) { t("link", `${url} → error: ${err?.message || "?"}`); }
       }
     }
 
