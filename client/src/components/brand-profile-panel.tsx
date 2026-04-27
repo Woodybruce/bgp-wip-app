@@ -317,7 +317,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [repSearch, setRepSearch] = useState("");
   const [newsShowAll, setNewsShowAll] = useState(false);
   const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
-  const [newsTab, setNewsTab] = useState<"press" | "industry">("industry");
+  const [newsTab, setNewsTab] = useState<"press" | "industry" | "linkedin">("industry");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
   const [addSignalOpen, setAddSignalOpen] = useState(false);
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
@@ -749,7 +749,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
   return (
     <Card data-testid="brand-profile-panel">
-      <CardHeader className="p-3 pb-2 flex flex-row items-start justify-between">
+      <CardHeader className="p-3 pb-2 flex flex-row items-start justify-between sticky top-0 z-20 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/85 border-b border-border/40">
         <div className="flex flex-col gap-1 min-w-0 flex-1">
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
           <Sparkles className="w-4 h-4 text-purple-500 shrink-0" />
@@ -961,9 +961,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
           </div>
         ) : (
-          <div className="w-full">
+          <div className="w-full flex flex-col">
             {/* Outreach strip — quick-action buttons */}
-            <div className="flex items-center gap-1.5 flex-wrap mb-2">
+            <div className="flex items-center gap-1.5 flex-wrap mb-2 order-1">
               {(c.domain_url || c.domain) && (
                 <a
                   href={c.domain_url || `https://${c.domain}`}
@@ -1074,12 +1074,12 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
 
             {/* Single BGP AI take — sits above all zones */}
-            <div className="mt-2">
+            <div className="mt-2 order-2">
               <BgpTakeStrip companyId={companyId} tab="brand" />
             </div>
 
             {/* ── Zone 1: Global Brand ─────────────────────── */}
-            <div className="border-t border-border/40 mt-3 pt-2">
+            <div className="border-t border-border/40 mt-3 pt-2 order-3">
             <div className="flex items-center gap-1.5 mb-2">
               <Store className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Global Brand</span>
@@ -1561,8 +1561,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
             </div>
 
-            {/* ── Zone 2: UK & Covenant ────────────────────── */}
-            <div className="border-t border-border/40 mt-3 pt-2">
+            {/* ── Zone 2: UK Presence ──────────────────────── */}
+            <div className="border-t border-border/40 mt-3 pt-2 order-4">
             <div className="flex items-center gap-1.5 mb-2">
               <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-xs font-semibold uppercase tracking-wider text-foreground">UK &amp; Covenant</span>
@@ -1990,8 +1990,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
             </div>
 
-            {/* ── Zone 3: BGP Relationship ──────────────────── */}
-            <div className="border-t border-border/40 mt-3 pt-2">
+            {/* ── Zone 4: BGP Relationship ──────────────────── */}
+            <div className="border-t border-border/40 mt-3 pt-2 order-6">
             <div className="flex items-center gap-1.5 mb-2">
               <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-xs font-semibold uppercase tracking-wider text-foreground">BGP Relationship</span>
@@ -2462,37 +2462,32 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </button>
               </div>
               {stores.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <div className="space-y-0.5 max-h-[180px] overflow-y-auto pr-1 order-2 md:order-1">
-                    {stores.slice(0, 20).map((s) => (
-                      <div key={s.id} className="text-xs flex items-start gap-1.5 px-1 py-0.5">
-                        <MapPin className={`w-3 h-3 shrink-0 mt-0.5 ${s.status === "closed" ? "text-red-500" : s.status === "open" ? "text-emerald-500" : "text-muted-foreground"}`} />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1">
-                            <span className="truncate flex-1 font-medium">{s.name}</span>
-                            {s.place_id && (
-                              <a
-                                href={`https://www.google.com/maps/place/?q=place_id:${s.place_id}`}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="shrink-0 text-muted-foreground hover:text-primary"
-                                title="View on Google Maps"
-                              >
-                                <ExternalLink className="w-2.5 h-2.5" />
-                              </a>
-                            )}
-                          </div>
-                          {s.address && <div className="text-[10px] text-muted-foreground truncate">{s.address}</div>}
+                <div className="space-y-0.5 max-h-[200px] overflow-y-auto pr-1">
+                  {stores.slice(0, 20).map((s) => (
+                    <div key={s.id} className="text-xs flex items-start gap-1.5 px-1 py-0.5">
+                      <MapPin className={`w-3 h-3 shrink-0 mt-0.5 ${s.status === "closed" ? "text-red-500" : s.status === "open" ? "text-emerald-500" : "text-muted-foreground"}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1">
+                          <span className="truncate flex-1 font-medium">{s.name}</span>
+                          {s.place_id && (
+                            <a
+                              href={`https://www.google.com/maps/place/?q=place_id:${s.place_id}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="shrink-0 text-muted-foreground hover:text-primary"
+                              title="View on Google Maps"
+                            >
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          )}
                         </div>
+                        {s.address && <div className="text-[10px] text-muted-foreground truncate">{s.address}</div>}
                       </div>
-                    ))}
-                    {stores.length > 20 && (
-                      <p className="text-[10px] text-muted-foreground pl-1">+{stores.length - 20} more stores</p>
-                    )}
-                  </div>
-                  <div className="order-1 md:order-2">
-                    <BrandPortfolioMap stores={stores as any} />
-                  </div>
+                    </div>
+                  ))}
+                  {stores.length > 20 && (
+                    <p className="text-[10px] text-muted-foreground pl-1">+{stores.length - 20} more stores</p>
+                  )}
                 </div>
               ) : (
                 <div className="text-xs text-muted-foreground px-1 py-1">
@@ -2549,12 +2544,34 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
             </div>
 
-            {/* ── Zone 4: Hunter Intel & News ───────────────── */}
-            <div className="border-t border-border/40 mt-3 pt-2">
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Intel &amp; News</span>
+            {/* ── Zone 3: Hunter Intel ──────────────────────── */}
+            <div className="border-t border-border/40 mt-3 pt-2 order-5">
+            <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Flame className="w-3.5 h-3.5 text-amber-600" />
+                <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Hunter Intel</span>
+                {hunter && hunter.expansionScore != null && (
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] ${
+                      hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-orange-200" :
+                      hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-amber-200" :
+                      hunter.expansionScore >= 40 ? "bg-zinc-50 text-zinc-700 border-zinc-200" :
+                      "bg-zinc-50 text-zinc-500 border-zinc-200"
+                    }`}
+                    title={hunter.expansionFlags?.join(" · ") || ""}
+                  >
+                    Score {hunter.expansionScore}/100
+                  </Badge>
+                )}
+                {c.hunter_flag && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">Watch</Badge>}
+                <Link
+                  href={`/hunter?companyId=${companyId}`}
+                  className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                  title="Open in Hunter dashboard"
+                >
+                  Open in Hunter <ExternalLink className="w-2.5 h-2.5" />
+                </Link>
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <Button
@@ -2721,6 +2738,21 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </button>
               )}
             </div>
+            {c.last_enriched_at && (
+              <div className="text-[10px] text-muted-foreground pt-1 border-t flex items-center gap-1">
+                <Clock className="w-2.5 h-2.5" /> Last enriched {new Date(c.last_enriched_at).toLocaleString("en-GB")}
+              </div>
+            )}
+            </div>
+            </div>
+
+            {/* ── Zone 5: News & Media ──────────────────────── */}
+            <div className="border-t border-border/40 mt-3 pt-2 order-7">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Newspaper className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-xs font-semibold uppercase tracking-wider text-foreground">News &amp; Media</span>
+            </div>
+            <div className="space-y-2.5">
 
             {/* News articles mentioning this brand */}
             {data.news && data.news.length > 0 && (() => {
@@ -2752,10 +2784,16 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               const pressSignals = data.signals.filter((s: any) =>
                 s.ai_generated && s.source && brandDomain && (s.source.includes(brandDomain) || s.source === "perplexity")
               );
-              const allSources = [...new Set(data.news.map((a: any) => a.source_name).filter((s: any): s is string => !!s))];
+              const allSources = [...new Set(
+                data.news
+                  .map((a: any) => a.source_name)
+                  .filter((s: any): s is string => !!s && !/^google( news)?$/i.test(s))
+              )];
               const filtered = newsTab === "press"
                 ? data.news.filter((a: any) => brandDomain && (a.url?.includes(brandDomain) || a.source_name?.toLowerCase().includes(c.name.toLowerCase().split(" ")[0])))
-                : (newsSourceFilter ? data.news.filter((a: any) => a.source_name === newsSourceFilter) : data.news);
+                : newsTab === "linkedin"
+                  ? data.news.filter((a: any) => a.url?.includes("linkedin.com") || a.source_name?.toLowerCase().includes("linkedin"))
+                  : (newsSourceFilter ? data.news.filter((a: any) => a.source_name === newsSourceFilter) : data.news);
               const visible = newsShowAll ? filtered : filtered.slice(0, 6);
               return (
                 <div>
@@ -2763,13 +2801,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     <div className="flex items-center gap-1">
                       <Newspaper className="w-3 h-3 text-muted-foreground" />
                       <div className="flex gap-0.5">
-                        {(["industry", "press"] as const).map(t => (
+                        {(["industry", "press", "linkedin"] as const).map(t => (
                           <button
                             key={t}
                             onClick={() => { setNewsTab(t); setNewsShowAll(false); setNewsSourceFilter(null); }}
                             className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors ${newsTab === t ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
                           >
-                            {t === "industry" ? `Industry news (${data.news.length})` : `Press releases`}
+                            {t === "industry" ? `Industry (${data.news.length})` : t === "press" ? "Press releases" : "LinkedIn"}
                           </button>
                         ))}
                       </div>
@@ -2792,13 +2830,23 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     )}
                   </div>
                   {newsTab === "press" && pressSignals.length === 0 && filtered.length === 0 && (
-                    <p className="text-xs text-muted-foreground italic">No press releases scraped yet — run "Scrape" from Intel zone.</p>
+                    <p className="text-xs text-muted-foreground italic">No press releases scraped yet — run "Scrape" from Hunter Intel zone.</p>
+                  )}
+                  {newsTab === "linkedin" && filtered.length === 0 && (
+                    <div className="text-xs text-muted-foreground italic flex items-center gap-1.5 py-2">
+                      <Linkedin className="w-3 h-3" />
+                      No LinkedIn posts captured yet.{c.linkedin_url && <a href={c.linkedin_url} target="_blank" rel="noreferrer" className="text-primary hover:underline not-italic">Visit page →</a>}
+                    </div>
                   )}
                   <div className="space-y-2">
                     {visible.map((article) => {
                       const isGoogleProxy = /google\.com|gstatic\.com|googleusercontent\.com/i.test(article.image_url || "");
                       const hasRealImage = !!(article.image_url && !isGoogleProxy);
                       const domain = (() => { try { return new URL(article.url).hostname.replace(/^www\./, ""); } catch { return null; } })();
+                      // Suppress generic "Google" / "Google News" labels — use the actual publisher domain instead
+                      const sourceLabel = article.source_name && /^google( news)?$/i.test(article.source_name)
+                        ? (domain || null)
+                        : article.source_name;
                       const displayText = article.ai_summary || article.summary;
                       return (
                         <a
@@ -2833,9 +2881,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                              {article.source_name && (
-                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${newsSourceColor(article.source_name)}`}>
-                                  {article.source_name}
+                              {sourceLabel && (
+                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${newsSourceColor(sourceLabel)}`}>
+                                  {sourceLabel}
                                 </span>
                               )}
                               {article.category && article.category !== "general" && (
@@ -2864,16 +2912,11 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               );
             })()}
 
-            {c.last_enriched_at && (
-              <div className="text-[10px] text-muted-foreground pt-1 border-t flex items-center gap-1">
-                <Clock className="w-2.5 h-2.5" /> Last enriched {new Date(c.last_enriched_at).toLocaleString("en-GB")}
-              </div>
-            )}
             </div>
             </div>
 
-            {/* ── Zone 5: Documents & Gallery ──────────────── */}
-            <div className="border-t border-border/40 mt-3 pt-2">
+            {/* ── Zone 6: Documents & Gallery ──────────────── */}
+            <div className="border-t border-border/40 mt-3 pt-2 order-8">
             <div className="flex items-center gap-1.5 mb-2">
               <FileText className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Documents &amp; Gallery</span>
