@@ -1021,6 +1021,63 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           </div>
         ) : (
           <div className="w-full flex flex-col">
+            {/* Stock card — promoted to the top when this brand is publicly listed */}
+            {c.stock_ticker && stockData?.snapshot && (() => {
+              const s = stockData.snapshot;
+              const history = stockData.history || [];
+              const change = s.fiftyTwoWeekChange;
+              const changeColor = change == null ? "text-muted-foreground" : change >= 0 ? "text-emerald-700" : "text-red-600";
+              const changePct = change != null ? `${change >= 0 ? "+" : ""}${(change * 100).toFixed(1)}%` : "—";
+              const fmtCap = (v: number | null) => {
+                if (v == null) return "—";
+                if (v >= 1e9) return `£${(v / 1e9).toFixed(2)}B`;
+                if (v >= 1e6) return `£${(v / 1e6).toFixed(0)}M`;
+                return `£${(v / 1e3).toFixed(0)}K`;
+              };
+              const curr = s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "£";
+              return (
+                <div className="rounded-md border border-border bg-gradient-to-br from-slate-50 to-zinc-50 dark:from-slate-950 dark:to-zinc-950 p-2.5 mb-2 order-0">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <Coins className="w-3.5 h-3.5 text-amber-600" />
+                      <span className="text-xs font-semibold">{s.ticker}</span>
+                      {s.exchange && <span className="text-[10px] text-muted-foreground">{s.exchange}</span>}
+                      {s.shortName && <span className="text-[10px] text-muted-foreground truncate">· {s.shortName}</span>}
+                    </div>
+                    <a href={`https://finance.yahoo.com/quote/${encodeURIComponent(s.ticker)}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-0.5">
+                      Yahoo <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-xs">
+                    <div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Price</div>
+                      <div className="font-bold">{s.price != null ? `${curr}${s.price.toFixed(2)}` : "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">52w</div>
+                      <div className={`font-semibold ${changeColor} flex items-center gap-1`}>
+                        {change != null && (change >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />)}
+                        {changePct}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Mkt cap</div>
+                      <div className="font-semibold">{fmtCap(s.marketCapGBP)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">P/E</div>
+                      <div className="font-semibold">{s.peRatio != null ? s.peRatio.toFixed(1) : "—"}</div>
+                    </div>
+                  </div>
+                  {history.length > 5 && (
+                    <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-muted-foreground">90-day price</span>
+                      <Sparkline values={history.map(h => h.close)} width={140} height={24} />
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {/* Outreach strip — quick-action buttons */}
             <div className="flex items-center gap-1.5 flex-wrap mb-2 order-1">
               {(c.domain_url || c.domain) && (
@@ -1209,64 +1266,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               );
             })()}
 
-            {/* Stock card — only when brand has a ticker */}
-            {c.stock_ticker && stockData?.snapshot && (() => {
-              const s = stockData.snapshot;
-              const history = stockData.history || [];
-              const change = s.fiftyTwoWeekChange;
-              const changeColor = change == null ? "text-muted-foreground" : change >= 0 ? "text-emerald-700" : "text-red-600";
-              const changePct = change != null ? `${change >= 0 ? "+" : ""}${(change * 100).toFixed(1)}%` : "—";
-              const fmtCap = (v: number | null) => {
-                if (v == null) return "—";
-                if (v >= 1e9) return `£${(v / 1e9).toFixed(2)}B`;
-                if (v >= 1e6) return `£${(v / 1e6).toFixed(0)}M`;
-                return `£${(v / 1e3).toFixed(0)}K`;
-              };
-              const curr = s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "£";
-              return (
-                <div className="rounded-md border border-border bg-gradient-to-br from-slate-50 to-zinc-50 dark:from-slate-950 dark:to-zinc-950 p-2.5">
-                  <div className="flex items-center justify-between gap-2 mb-2">
-                    <div className="flex items-center gap-1.5">
-                      <Coins className="w-3.5 h-3.5 text-amber-600" />
-                      <span className="text-xs font-semibold">{s.ticker}</span>
-                      {s.exchange && <span className="text-[10px] text-muted-foreground">{s.exchange}</span>}
-                      {s.shortName && <span className="text-[10px] text-muted-foreground truncate">· {s.shortName}</span>}
-                    </div>
-                    <a href={`https://finance.yahoo.com/quote/${encodeURIComponent(s.ticker)}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-0.5">
-                      Yahoo <ExternalLink className="w-2.5 h-2.5" />
-                    </a>
-                  </div>
-                  <div className="grid grid-cols-4 gap-2 text-xs">
-                    <div>
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Price</div>
-                      <div className="font-bold">{s.price != null ? `${curr}${s.price.toFixed(2)}` : "—"}</div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">52w</div>
-                      <div className={`font-semibold ${changeColor} flex items-center gap-1`}>
-                        {change != null && (change >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />)}
-                        {changePct}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Mkt cap</div>
-                      <div className="font-semibold">{fmtCap(s.marketCapGBP)}</div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">P/E</div>
-                      <div className="font-semibold">{s.peRatio != null ? s.peRatio.toFixed(1) : "—"}</div>
-                    </div>
-                  </div>
-                  {history.length > 5 && (
-                    <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between gap-2">
-                      <span className="text-[10px] text-muted-foreground">90-day price</span>
-                      <Sparkline values={history.map(h => h.close)} width={140} height={24} />
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-
             {/* ── Global brand ─────────────────────────────────────────── */}
             <div className="space-y-2">
               {/* Single description — prefer brand_analysis (more detailed), fall back to description */}
@@ -1304,21 +1303,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
               )}
 
-              {/* Meta row — basic facts (outreach links live in the prominent strip above tabs) */}
-              {(c.founded_year || c.employee_count || c.industry) && (
-                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                  {c.founded_year && <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> Est. {c.founded_year}</span>}
-                  {c.employee_count && (
-                    <span className="flex items-center gap-1">
-                      <Users className="w-3 h-3" />
-                      {c.employee_count >= 10000 ? `${Math.round(c.employee_count / 1000)}k+ employees`
-                        : c.employee_count >= 1000 ? `${(c.employee_count / 1000).toFixed(1)}k employees`
-                        : `${c.employee_count} employees`}
-                    </span>
-                  )}
-                  {c.industry && <span className="flex items-center gap-1"><BadgeInfo className="w-3 h-3" /> {c.industry}</span>}
-                </div>
-              )}
             </div>
 
             {/* BGP pitch — only shown if distinct from description */}
@@ -2310,14 +2294,17 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               )}
             </div>
 
-            {/* Interactions timeline — emails left, meetings/viewings right */}
+            {/* Interactions timeline — emails left, meetings/viewings right (last 2 years) */}
             {data.interactions && data.interactions.length > 0 && (() => {
               const ago = (date: string) => {
                 const days = Math.floor((Date.now() - new Date(date).getTime()) / 864e5);
                 return days < 1 ? "today" : days < 7 ? `${days}d` : days < 30 ? `${Math.floor(days / 7)}w` : days < 365 ? `${Math.floor(days / 30)}mo` : `${Math.floor(days / 365)}y`;
               };
-              const emails = data.interactions.filter((it: any) => it.type === "email" || it.type === "call" || it.type === "note");
-              const meetings = data.interactions.filter((it: any) => it.type === "meeting");
+              const twoYearsAgo = Date.now() - 2 * 365 * 864e5;
+              const recent = data.interactions.filter((it: any) => new Date(it.interaction_date).getTime() >= twoYearsAgo);
+              if (recent.length === 0) return null;
+              const emails = recent.filter((it: any) => it.type === "email" || it.type === "call" || it.type === "note");
+              const meetings = recent.filter((it: any) => it.type === "meeting");
               const renderRow = (it: any, accent: string) => (
                 <div key={it.id} className="text-xs flex gap-1.5 items-start py-0.5">
                   <div className={`w-1 self-stretch rounded-full shrink-0 ${accent}`} />
@@ -2331,7 +2318,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               return (
                 <div className="border-t pt-2">
                   <div className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
-                    <Clock className="w-3 h-3" /> Recent interactions ({data.interactions.length})
+                    <Clock className="w-3 h-3" /> Recent interactions — last 2 years ({recent.length})
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>

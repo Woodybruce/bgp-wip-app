@@ -58,7 +58,6 @@ import { EntityPicker } from "@/components/entity-picker";
 import { InlineAddress } from "@/components/address-autocomplete";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schema";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
-import { InteractionTimeline } from "@/pages/contacts";
 
 interface CHSearchResult {
   companyNumber: string;
@@ -1222,8 +1221,6 @@ function CompanyDetail({ id }: { id: string }) {
           </Card>
 
           <BrandProfilePanel companyId={id} />
-
-          <InteractionTimeline companyId={id} />
 
           {linkedProperties.length > 0 && (() => {
             const userIdToName = new Map<string, string>();
