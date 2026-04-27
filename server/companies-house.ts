@@ -2472,7 +2472,64 @@ Return both null if the page doesn't disclose a UK trading entity.`;
         return homeHit;
       }
 
-      const LEGAL_RE = /\b(terms|privacy|legal|imprint|cookie[s]?|policy|policies|modern[\s\-]?slavery|conditions|disclosure|customerservice|customer-service)\b/i;
+      // ── Locale detection (before discover) ────────────────────────────────────
+      // Must run first so we can short-circuit to locale T&Cs paths before the
+      // discover/link step burns proxy budget on generic navigation pages.
+      const LOCALE_HREF = /href=["']\/(en[-_]gb|en[-_]uk|en|gb|uk)\//gi;
+      const lCounts = new Map<string, number>();
+      let llm: RegExpExecArray | null;
+      while ((llm = LOCALE_HREF.exec(homepageHtml)) !== null) {
+        const lc = llm[1].toLowerCase().replace("_", "-");
+        lCounts.set(lc, (lCounts.get(lc) ?? 0) + 1);
+      }
+      if (lCounts.size) {
+        const [best] = [...lCounts.entries()].sort((a, b) => b[1] - a[1]);
+        if (best && best[1] >= 3) {
+          localePrefix = `/${best[0]}`;
+          t("locale", `detected prefix ${localePrefix} (${best[1]} hrefs)`);
+        }
+      }
+
+      // ── Early locale probe ──────────────────────────────────────────────────
+      // Try the highest-probability locale T&Cs paths immediately. Brands like
+      // H&M Group / stories.com serve T&Cs under /en-gb/legal/… — we should
+      // hit that before wasting proxy calls following homepage nav links.
+      const earlyPaths = localePrefix
+        ? [`${localePrefix}/legal/terms-and-conditions`, `${localePrefix}/customer-service/terms-and-conditions`, `${localePrefix}/terms`]
+        : ["/en-gb/legal/terms-and-conditions", "/en-gb/customer-service/terms-and-conditions"];
+      for (const lp of earlyPaths) {
+        if (overBudget()) break;
+        const lpUrl = `${base}${lp}`;
+        try {
+          const resp = await tryFetch(lpUrl, { headers: { "User-Agent": UA }, timeoutMs: 6000, redirect: "follow" });
+          if (!resp || !resp.ok) { t("locale.early", `${lpUrl} → ${resp ? resp.status : "no response"} (skip)`); continue; }
+          const ct = resp.headers.get("content-type") || "";
+          if (!ct.includes("html") && !ct.includes("text")) { t("locale.early", `${lpUrl} → non-html`); continue; }
+          const lpHtml = await resp.text();
+          const ndMatch = lpHtml.match(/<script id="__NEXT_DATA__"[^>]*>(\{[\s\S]*?\})<\/script>/);
+          if (ndMatch) {
+            try {
+              const ndHit = extractFromText(JSON.stringify(JSON.parse(ndMatch[1])), lpUrl + "#next-data");
+              if (ndHit) { t("locale.early", `${lpUrl}#next-data → entity:${ndHit.entityName} ch:${ndHit.chNumber || "-"}`); return ndHit; }
+            } catch { /* non-fatal */ }
+          }
+          const lpText = htmlToText(lpHtml);
+          const lpHit = extractFromText(lpText, lpUrl);
+          if (lpHit) { t("locale.early", `${lpUrl} → entity:${lpHit.entityName} ch:${lpHit.chNumber || "-"}`); return lpHit; }
+          if (isLegalPath(lp) && lpText.length > 200 && hasUkSignal(lpText)) {
+            const aiHit = await aiExtract(lpText, lpUrl);
+            if (aiHit) { t("locale.early.ai", `${lpUrl} → entity:${aiHit.entityName} ch:${aiHit.chNumber || "-"}`); return aiHit; }
+            t("locale.early.ai", `${lpUrl} → AI extracted nothing`);
+          } else {
+            t("locale.early", `${lpUrl} → no entity, no UK signal (${lpText.length}B)`);
+          }
+        } catch (err: any) { t("locale.early", `${lpUrl} → error: ${err?.message || "?"}`); }
+      }
+
+      // ── Step 0: footer-link discovery ──────────────────────────────────────
+      // customer-service excluded from LEGAL_RE — those paths are already
+      // covered by the early locale probe above and localeLegalPages in Step 3.
+      const LEGAL_RE = /\b(terms|privacy|legal|imprint|cookie[s]?|policy|policies|modern[\s\-]?slavery|conditions|disclosure)\b/i;
       const discovered = new Set<string>();
       const linkRe = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
       let lm: RegExpExecArray | null;
@@ -2535,25 +2592,6 @@ Return both null if the page doesn't disclose a UK trading entity.`;
             t("link", `${url} → no entity, no UK signal (${text.length}B)`);
           }
         } catch (err: any) { t("link", `${url} → error: ${err?.message || "?"}`); }
-      }
-
-      // Detect locale prefix from homepage links (e.g. /en-gb/, /en/).
-      // Brands like H&M Group serve T&Cs at locale-prefixed paths (/en-gb/legal/…)
-      // that aren't in the standard pages list. If ≥3 internal hrefs share a
-      // locale prefix we inject locale-specific legal paths at the top of Step 3.
-      const LOCALE_HREF = /href=["']\/(en[-_]gb|en[-_]uk|en|gb|uk)\//gi;
-      const lCounts = new Map<string, number>();
-      let llm: RegExpExecArray | null;
-      while ((llm = LOCALE_HREF.exec(homepageHtml || "")) !== null) {
-        const lc = llm[1].toLowerCase().replace("_", "-");
-        lCounts.set(lc, (lCounts.get(lc) ?? 0) + 1);
-      }
-      if (lCounts.size) {
-        const [best] = [...lCounts.entries()].sort((a, b) => b[1] - a[1]);
-        if (best && best[1] >= 3) {
-          localePrefix = `/${best[0]}`;
-          t("locale", `detected prefix ${localePrefix} (${best[1]} hrefs)`);
-        }
       }
     }
 
