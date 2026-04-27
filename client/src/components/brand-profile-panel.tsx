@@ -103,6 +103,15 @@ interface BrandProfile {
     registeredAddress: string | null;
     trafficLight: "green" | "amber" | "red";
     officers: { name: string; role: string | null; appointedOn: string | null; nationality: string | null; occupation: string | null }[];
+    experian: {
+      creditScore: number | null;
+      creditBand: string | null;
+      creditLimit: number | null;
+      riskIndicator: string | null;
+      ccj: number | null;
+      ccjTotalValue: number | null;
+      turnover: number | null;
+    } | null;
   } | null;
   rolloutVelocity: {
     openings12m: number;
@@ -1652,6 +1661,56 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     </div>
                   </div>
                 </div>
+                {covenant.experian && (
+                  <div className="mt-2 pt-2 border-t">
+                    <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5 flex items-center gap-1">
+                      <BadgeInfo className="w-3 h-3" /> Experian credit report
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+                      {covenant.experian.creditScore != null && (
+                        <div>
+                          <div className="text-[10px] text-muted-foreground">Credit score</div>
+                          <div className={`font-semibold ${covenant.experian.creditScore >= 70 ? "text-emerald-700" : covenant.experian.creditScore >= 40 ? "text-amber-600" : "text-red-600"}`}>
+                            {covenant.experian.creditScore}/100
+                          </div>
+                        </div>
+                      )}
+                      {covenant.experian.creditBand && (
+                        <div>
+                          <div className="text-[10px] text-muted-foreground">Band</div>
+                          <div className="font-semibold">{covenant.experian.creditBand}</div>
+                        </div>
+                      )}
+                      {covenant.experian.riskIndicator && (
+                        <div>
+                          <div className="text-[10px] text-muted-foreground">Risk</div>
+                          <div className="font-semibold">{covenant.experian.riskIndicator}</div>
+                        </div>
+                      )}
+                      {covenant.experian.creditLimit != null && (
+                        <div>
+                          <div className="text-[10px] text-muted-foreground">Credit limit</div>
+                          <div className="font-semibold">£{Number(covenant.experian.creditLimit).toLocaleString()}</div>
+                        </div>
+                      )}
+                      {covenant.experian.ccj != null && covenant.experian.ccj > 0 && (
+                        <div>
+                          <div className="text-[10px] text-muted-foreground">CCJs</div>
+                          <div className="font-semibold text-red-600">
+                            {covenant.experian.ccj} CCJ{covenant.experian.ccj === 1 ? "" : "s"}
+                            {covenant.experian.ccjTotalValue ? ` · £${Number(covenant.experian.ccjTotalValue).toLocaleString()}` : ""}
+                          </div>
+                        </div>
+                      )}
+                      {covenant.experian.turnover != null && covenant.experian.turnover > 0 && (
+                        <div>
+                          <div className="text-[10px] text-muted-foreground">Turnover (Experian)</div>
+                          <div className="font-semibold">£{(Number(covenant.experian.turnover) / 1_000_000).toFixed(1)}m</div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {covenant.officers && covenant.officers.length > 0 && (
                   <div className="mt-2 pt-2 border-t">
                     <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Officers</div>

@@ -506,6 +506,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         : chProfile.companyStatus === "active" && !chProfile.accountsOverdue
           ? "green"
           : "amber",
+      experian: chData.experian || null,
     } : null;
 
     // Deal ledger summary
