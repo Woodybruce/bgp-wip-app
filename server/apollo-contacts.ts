@@ -277,37 +277,71 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
       }
     }
 
-    // 5. If still < 3 and no linked parent company, try the backers text field
-    // (e.g. "H&M Group") or derive the parent from uk_entity_name. This handles
-    // brands like & Other Stories whose team use hm.com emails, not stories.com.
+    // 5. If still < 3 and no linked parent company, cascade through parent-name
+    // variants. Apollo can be picky about how a parent group is registered
+    // (e.g. H&M staff might appear under "H&M", "H & M", "Hennes & Mauritz",
+    // or "H&M Group"). We try the most likely variants until one returns hits.
     if (people.length < 3 && !parentCompany) {
-      // Derive a parent name: prefer backers field, otherwise strip the brand
-      // name from uk_entity_name (e.g. "H&M Hennes & Mauritz UK Ltd." → "H&M")
-      let parentName: string | null = company.backers || null;
-      if (!parentName && company.uk_entity_name) {
-        // Pull first token from entity name as a proxy for the parent group
-        const firstToken = company.uk_entity_name.split(/\s+/).slice(0, 2).join(" ");
-        if (firstToken && firstToken.toLowerCase() !== company.name.toLowerCase().slice(0, firstToken.length)) {
-          parentName = firstToken;
-        }
+      const variants = new Set<string>();
+      const add = (v: string | null | undefined) => {
+        if (!v) return;
+        const trimmed = v.trim();
+        if (trimmed && trimmed.toLowerCase() !== company.name.toLowerCase()) variants.add(trimmed);
+      };
+
+      // Primary: explicit backers text
+      add(company.backers);
+      // Backers can be a comma-list — try each
+      if (company.backers) {
+        for (const part of company.backers.split(/[,;]/).map((s: string) => s.trim()).filter(Boolean)) add(part);
       }
-      if (parentName) {
+      // Derive from uk_entity_name first 1-2 tokens (e.g. "H&M Hennes & Mauritz UK Ltd" → "H&M" + "H&M Hennes")
+      if (company.uk_entity_name) {
+        const tokens = company.uk_entity_name.replace(/\b(UK|Ltd|Limited|PLC|LLP|Holdings|Group)\b/gi, "").trim().split(/\s+/);
+        if (tokens.length >= 1) add(tokens[0]);
+        if (tokens.length >= 2) add(tokens.slice(0, 2).join(" "));
+        if (tokens.length >= 3) add(tokens.slice(0, 3).join(" "));
+      }
+
+      // For each variant, also try common ampersand spellings
+      const expanded = new Set<string>();
+      for (const v of variants) {
+        expanded.add(v);
+        if (v.includes("&")) {
+          expanded.add(v.replace(/&/g, " & "));   // "H&M" → "H & M"
+          expanded.add(v.replace(/&/g, "and"));    // "H&M" → "Hand M" (rare but harmless)
+        }
+        // Drop the trailing " Group" if present, and add a "Group" variant if not
+        if (/\bGroup\b/i.test(v)) expanded.add(v.replace(/\s*Group\s*$/i, "").trim());
+        else expanded.add(`${v} Group`);
+      }
+
+      let totalMatched = 0;
+      const tried: string[] = [];
+      for (const variant of expanded) {
+        if (people.length >= 5) break;  // enough hits
+        if (tried.includes(variant.toLowerCase())) continue;
+        tried.push(variant.toLowerCase());
         try {
-          const byParentName = await searchApollo({
-            organizationName: parentName,
-            locations: ["United Kingdom"],
-            apolloKey,
-          });
-          for (const p of byParentName) {
+          const byVariant = await searchApollo({ organizationName: variant, locations: ["United Kingdom"], apolloKey });
+          let added = 0;
+          for (const p of byVariant) {
             if (!seenIds.has(p.id)) {
               seenIds.add(p.id);
-              people.push(mapPerson(p, "parent_group", parentName));
+              people.push(mapPerson(p, "parent_group", variant));
+              added++;
             }
           }
-          diagnostics.push({ step: "backers_fallback", matched: byParentName.length, details: `name="${parentName}" location=United Kingdom` });
+          totalMatched += added;
+          if (added > 0) {
+            diagnostics.push({ step: "backers_fallback", matched: added, details: `variant="${variant}" location=UK` });
+          }
         } catch (err: any) {
-          diagnostics.push({ step: "backers_fallback", matched: 0, details: `error: ${err.message}` });
+          diagnostics.push({ step: "backers_fallback", matched: 0, details: `variant="${variant}" error: ${err.message}` });
         }
+      }
+      if (totalMatched === 0 && tried.length > 0) {
+        diagnostics.push({ step: "backers_fallback_summary", matched: 0, details: `tried ${tried.length} variants: ${tried.slice(0, 5).join(", ")}` });
       }
     }
 

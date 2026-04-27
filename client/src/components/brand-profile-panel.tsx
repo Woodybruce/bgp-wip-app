@@ -516,11 +516,22 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   return (
     <Card data-testid="brand-profile-panel">
       <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
-        <CardTitle className="text-sm flex items-center gap-2">
+        <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
           <Sparkles className="w-4 h-4 text-purple-500" />
           Brand Profile
           {c.is_tracked_brand && <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px]">Tracked brand</Badge>}
+          {c.hunter_flag && <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
           {c.agent_type && <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
+          {covenant && (
+            <Badge className={
+              covenant.trafficLight === "green" ? "bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]" :
+              covenant.trafficLight === "amber" ? "bg-amber-100 text-amber-700 border-amber-200 text-[10px]" :
+              "bg-red-100 text-red-700 border-red-200 text-[10px]"
+            }>
+              Covenant: {covenant.trafficLight === "green" ? "Strong" : covenant.trafficLight === "amber" ? "Verify" : "At risk"}
+            </Badge>
+          )}
+          {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
         </CardTitle>
         <div className="flex items-center gap-1">
           <Button
@@ -656,6 +667,70 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           </div>
         ) : (
           <Tabs defaultValue="brand" className="w-full">
+            {/* Outreach strip — prominent quick-action buttons (always visible across tabs) */}
+            <div className="flex items-center gap-1.5 flex-wrap mb-2">
+              {(c.domain_url || c.domain) && (
+                <a
+                  href={c.domain_url || `https://${c.domain}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  data-testid="link-website"
+                >
+                  <Globe className="w-3 h-3" /> Website
+                </a>
+              )}
+              {c.linkedin_url && (
+                <a
+                  href={c.linkedin_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  data-testid="link-linkedin"
+                >
+                  <Linkedin className="w-3 h-3" /> LinkedIn
+                </a>
+              )}
+              {c.instagram_handle && (
+                <a
+                  href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  data-testid="link-instagram"
+                >
+                  <Instagram className="w-3 h-3" /> Instagram
+                </a>
+              )}
+              {c.phone && (
+                <a
+                  href={`tel:${c.phone}`}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  data-testid="link-phone"
+                >
+                  <Phone className="w-3 h-3" /> {c.phone}
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent("bgp:open-apollo", { detail: { companyId } }))}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 text-[11px] font-medium transition-colors"
+                data-testid="button-apollo-quick"
+              >
+                <Sparkles className="w-3 h-3" /> Find contacts
+              </button>
+              {c.stock_ticker && (
+                <a
+                  href={`https://finance.yahoo.com/quote/${encodeURIComponent(c.stock_ticker)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                >
+                  <TrendingUp className="w-3 h-3" /> {c.stock_ticker}
+                </a>
+              )}
+            </div>
+
             <TabsList className="w-full h-8 grid grid-cols-4 mb-2">
               <TabsTrigger value="brand" className="text-[11px]">Brand</TabsTrigger>
               <TabsTrigger value="uk" className="text-[11px]">UK &amp; Covenant</TabsTrigger>
@@ -701,26 +776,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
               )}
 
-              {/* Meta row: website · phone · founded · employees · industry */}
-              {(c.domain_url || c.domain || c.phone || c.founded_year || c.employee_count || c.industry || c.linkedin_url) && (
+              {/* Meta row — basic facts (outreach links live in the prominent strip above tabs) */}
+              {(c.founded_year || c.employee_count || c.industry) && (
                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
-                  {(c.domain_url || c.domain) && (
-                    <a href={c.domain_url || `https://${c.domain}`} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-1 hover:text-primary transition-colors">
-                      <Globe className="w-3 h-3" />{c.domain || c.domain_url}
-                    </a>
-                  )}
-                  {c.phone && (
-                    <a href={`tel:${c.phone}`} className="flex items-center gap-1 hover:text-primary transition-colors">
-                      <Phone className="w-3 h-3" /> {c.phone}
-                    </a>
-                  )}
-                  {c.linkedin_url && (
-                    <a href={c.linkedin_url} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-1 hover:text-primary transition-colors">
-                      <Linkedin className="w-3 h-3" /> LinkedIn
-                    </a>
-                  )}
                   {c.founded_year && <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> Est. {c.founded_year}</span>}
                   {c.employee_count && (
                     <span className="flex items-center gap-1">
