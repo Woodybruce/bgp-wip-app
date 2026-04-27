@@ -716,26 +716,36 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           {c.founded_year && (
             <span className="text-[11px] font-normal text-muted-foreground">· Est. {c.founded_year}</span>
           )}
-          {c.is_tracked_brand && <Badge className="bg-purple-100 text-purple-700 border-purple-200 text-[10px]">Tracked brand</Badge>}
-          {c.hunter_flag && <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
+          {data.parentGroup && (
+            <span className="text-[11px] font-normal text-muted-foreground">
+              · Part of <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">{data.parentGroup.name}</Link>
+            </span>
+          )}
+          {c.backers && (
+            <span className="text-[11px] font-normal text-muted-foreground truncate max-w-[180px]" title={c.backers}>
+              · {c.backers}
+            </span>
+          )}
+          {c.is_tracked_brand && <Badge className="bg-purple-100 text-purple-700 border-purple-300 text-[10px]">Tracked brand</Badge>}
+          {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-purple-200 text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
           {hunter && hunter.expansionScore >= 40 && (
             <Badge
               className={
-                hunter.expansionScore >= 75 ? "bg-orange-100 text-orange-700 border-orange-200 text-[10px]" :
-                hunter.expansionScore >= 55 ? "bg-amber-100 text-amber-700 border-amber-200 text-[10px]" :
-                "bg-zinc-100 text-zinc-700 border-zinc-200 text-[10px]"
+                hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-purple-200 text-[10px]" :
+                hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-purple-200 text-[10px]" :
+                "bg-zinc-50 text-zinc-700 border-purple-200 text-[10px]"
               }
               title={hunter.expansionFlags.join(" · ")}
             >
               Hunter {hunter.expansionScore}/100
             </Badge>
           )}
-          {c.agent_type && <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
+          {c.agent_type && <Badge className="bg-blue-50 text-blue-700 border-purple-200 text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
           {covenant && (
             <Badge className={
-              covenant.trafficLight === "green" ? "bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]" :
-              covenant.trafficLight === "amber" ? "bg-amber-100 text-amber-700 border-amber-200 text-[10px]" :
-              "bg-red-100 text-red-700 border-red-200 text-[10px]"
+              covenant.trafficLight === "green" ? "bg-emerald-50 text-emerald-700 border-purple-200 text-[10px]" :
+              covenant.trafficLight === "amber" ? "bg-amber-50 text-amber-700 border-purple-200 text-[10px]" :
+              "bg-red-50 text-red-700 border-purple-200 text-[10px]"
             }>
               Covenant: {covenant.trafficLight === "green" ? "Strong" : covenant.trafficLight === "amber" ? "Verify" : "At risk"}
             </Badge>
@@ -743,11 +753,11 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
           {c.concept_status && (() => {
             const cls: Record<string, string> = {
-              watching:  "bg-zinc-100 text-zinc-700 border-zinc-200",
-              pitching:  "bg-blue-100 text-blue-700 border-blue-200",
-              parked:    "bg-amber-100 text-amber-700 border-amber-200",
-              won_deal:  "bg-emerald-100 text-emerald-700 border-emerald-200",
-              lost_deal: "bg-red-100 text-red-700 border-red-200",
+              watching:  "bg-zinc-50 text-zinc-700 border-purple-200",
+              pitching:  "bg-blue-50 text-blue-700 border-purple-200",
+              parked:    "bg-amber-50 text-amber-700 border-purple-200",
+              won_deal:  "bg-emerald-50 text-emerald-700 border-purple-200",
+              lost_deal: "bg-red-50 text-red-700 border-purple-200",
             };
             const label: Record<string, string> = {
               watching: "Watching", pitching: "Pitching", parked: "Parked",
@@ -970,14 +980,51 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </button>
             </div>
 
+            {/* Single BGP AI take — sits above all zones */}
+            <div className="mt-2">
+              <BgpTakeStrip companyId={companyId} tab="brand" />
+            </div>
+
             {/* ── Zone 1: Global Brand ─────────────────────── */}
-            <div className="border-t border-border/40 mt-2 pt-2">
+            <div className="border-t border-border/40 mt-3 pt-2">
             <div className="flex items-center gap-1.5 mb-2">
               <Store className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Global Brand</span>
             </div>
             <div className="space-y-2.5">
-            <BgpTakeStrip companyId={companyId} tab="brand" />
+
+            {/* Visual brand banner — street view + first gallery image */}
+            {(() => {
+              const hasStreetView = stores.some((s: any) => typeof s.lat === "number" && typeof s.lng === "number");
+              const firstImg = data.images[0];
+              if (!hasStreetView && !firstImg) return null;
+              return (
+                <div className={`grid gap-1.5 rounded-md overflow-hidden ${hasStreetView && firstImg ? "grid-cols-2" : "grid-cols-1"}`} style={{ height: 140 }}>
+                  {hasStreetView && (
+                    <div className="overflow-hidden rounded-md bg-muted/40">
+                      <img
+                        src={`/api/brand/${companyId}/flagship-image`}
+                        alt="Flagship store street view"
+                        className="w-full h-full object-cover"
+                        onError={(e) => { (e.currentTarget.parentElement as HTMLElement).style.display = "none"; }}
+                      />
+                    </div>
+                  )}
+                  {firstImg && (
+                    <div className="overflow-hidden rounded-md bg-muted/40">
+                      <img
+                        src={firstImg.thumbnail_data
+                          ? `data:${firstImg.mime_type || "image/jpeg"};base64,${firstImg.thumbnail_data}`
+                          : `/api/brand/gallery-image/${firstImg.id}`}
+                        alt="Brand visual"
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             <div className="flex gap-1.5 flex-wrap">
               {[`Tell me everything BGP needs to know about ${c.name} before a first call`, `What space would ${c.name} want and what BGP properties could work?`].map(q => (
                 <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
@@ -1106,11 +1153,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
                 <p className="text-xs leading-snug">{c.concept_pitch}</p>
               </div>
-            )}
-
-            {/* Flagship store street view — silently hides if no geocoded open store */}
-            {stores.some(s => typeof s.lat === "number" && typeof s.lng === "number") && (
-              <FlagshipImage companyId={companyId} />
             )}
 
             {/* Key facts row */}
@@ -1421,7 +1463,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">UK &amp; Covenant</span>
             </div>
             <div className="space-y-2.5">
-            <BgpTakeStrip companyId={companyId} tab="uk" />
             <div className="flex gap-1.5 flex-wrap">
               {[`What's ${c.name}'s covenant risk? How should we position this to a landlord?`, `Walk me through ${c.name}'s UK financials and what they mean for rent affordability`].map(q => (
                 <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
@@ -1773,7 +1814,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">BGP Relationship</span>
             </div>
             <div className="space-y-2.5">
-            <BgpTakeStrip companyId={companyId} tab="activity" />
             <div className="flex gap-1.5 flex-wrap">
               {[`Who should BGP contact at ${c.name} and what's the best approach?`, `Draft a brief introductory pitch email from BGP to ${c.name}`].map(q => (
                 <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
@@ -2327,7 +2367,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
             </div>
             <div className="space-y-2.5">
-            <BgpTakeStrip companyId={companyId} tab="intel" />
             <div className="flex gap-1.5 flex-wrap">
               {[`What are the key signals about ${c.name} right now and what should BGP do?`, `Should BGP be pitching ${c.name} new space — if so, where and why?`].map(q => (
                 <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
@@ -2335,29 +2374,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </button>
               ))}
             </div>
-            {/* Images */}
-            {data.images.length > 0 && (
-              <div>
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
-                  <ImageIcon className="w-3 h-3" /> {data.images.length} image{data.images.length === 1 ? "" : "s"} in gallery
-                </div>
-                <div className="flex gap-1 flex-wrap">
-                  {data.images.slice(0, 8).map((img: any) => (
-                    <div key={img.id} className="w-16 h-16 rounded border border-border/60 overflow-hidden bg-muted">
-                      <img
-                        src={img.thumbnail_data
-                          ? `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`
-                          : `/api/brand/gallery-image/${img.id}`}
-                        alt={img.file_name}
-                        className="w-full h-full object-cover"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* Signals feed */}
             <div>
               <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-1">
