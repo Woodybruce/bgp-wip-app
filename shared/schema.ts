@@ -465,6 +465,7 @@ export const crmCompanies = pgTable("crm_companies", {
   stockTicker: text("stock_ticker"), // e.g. "JD.L", "NKE", "LULU" — Yahoo Finance ticker for listed brands
   ukEntityName: text("uk_entity_name"), // UK contracting/operating entity, e.g. "AFH Stores UK Limited"
   agentType: text("agent_type"), // tenant_rep | landlord_rep | investment | null (for non-agents)
+  conceptStatus: text("concept_status"), // watching | pitching | parked | won_deal | lost_deal — BGP pipeline stage for the brand
   // AI-enrichment provenance — which fields were auto-written vs human
   aiGeneratedFields: jsonb("ai_generated_fields"),
   // Dedupe — when set, this row is a merged-away duplicate. Hidden from lists.

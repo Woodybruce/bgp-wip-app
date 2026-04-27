@@ -55,6 +55,7 @@ interface BrandProfile {
     stock_ticker: string | null;
     uk_entity_name: string | null;
     agent_type: string | null;
+    concept_status: string | null;
     ai_generated_fields: Record<string, string> | null;
     last_enriched_at: string | null;
     brand_analysis: string | null;
@@ -269,6 +270,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [signalsShowAll, setSignalsShowAll] = useState(false);
   const [addSignalOpen, setAddSignalOpen] = useState(false);
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
+  const [officerApollo, setOfficerApollo] = useState<Record<string, { loading: boolean; match: any | null; error?: string }>>({});
 
   const { data, isLoading, isError } = useQuery<BrandProfile>({
     queryKey: ["/api/brand", companyId, "profile"],
@@ -556,6 +558,31 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     retry: false,
   });
 
+  // Stock snapshot + 90d history (only fetched if brand has a ticker)
+  const { data: stockData } = useQuery<{
+    snapshot: {
+      ticker: string; price: number | null; currency: string | null;
+      marketCap: number | null; marketCapGBP: number | null;
+      fiftyTwoWeekHigh: number | null; fiftyTwoWeekLow: number | null;
+      fiftyTwoWeekChange: number | null; peRatio: number | null;
+      exchange: string | null; shortName: string | null;
+    } | null;
+    history: Array<{ date: string; close: number }>;
+  }>({
+    queryKey: ["/api/brand", companyId, "stock"],
+    queryFn: async () => {
+      const r = await fetch(`/api/brand/${companyId}/stock`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) return { snapshot: null, history: [] };
+      return r.json();
+    },
+    enabled: !!data?.company?.stock_ticker,
+    staleTime: 15 * 60 * 1000,
+    retry: false,
+  });
+
   // BGP portfolio units that could be pitched to this brand
   const { data: suggestedUnits } = useQuery<Array<{
     id: string; unit_name: string | null; sqft: number | null; rent_pa: number | null;
@@ -652,6 +679,20 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </Badge>
           )}
           {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
+          {c.concept_status && (() => {
+            const cls: Record<string, string> = {
+              watching:  "bg-zinc-100 text-zinc-700 border-zinc-200",
+              pitching:  "bg-blue-100 text-blue-700 border-blue-200",
+              parked:    "bg-amber-100 text-amber-700 border-amber-200",
+              won_deal:  "bg-emerald-100 text-emerald-700 border-emerald-200",
+              lost_deal: "bg-red-100 text-red-700 border-red-200",
+            };
+            const label: Record<string, string> = {
+              watching: "Watching", pitching: "Pitching", parked: "Parked",
+              won_deal: "Won deal", lost_deal: "Lost deal",
+            };
+            return <Badge variant="outline" className={`${cls[c.concept_status] || ""} text-[10px]`}>{label[c.concept_status] || c.concept_status}</Badge>;
+          })()}
         </CardTitle>
         <div className="flex items-center gap-1">
           <Button
@@ -866,6 +907,65 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </button>
               ))}
             </div>
+
+            {/* Stock card — only when brand has a ticker */}
+            {c.stock_ticker && stockData?.snapshot && (() => {
+              const s = stockData.snapshot;
+              const history = stockData.history || [];
+              const change = s.fiftyTwoWeekChange;
+              const changeColor = change == null ? "text-muted-foreground" : change >= 0 ? "text-emerald-700" : "text-red-600";
+              const changePct = change != null ? `${change >= 0 ? "+" : ""}${(change * 100).toFixed(1)}%` : "—";
+              const fmtCap = (v: number | null) => {
+                if (v == null) return "—";
+                if (v >= 1e9) return `£${(v / 1e9).toFixed(2)}B`;
+                if (v >= 1e6) return `£${(v / 1e6).toFixed(0)}M`;
+                return `£${(v / 1e3).toFixed(0)}K`;
+              };
+              const curr = s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "£";
+              return (
+                <div className="rounded-md border border-border bg-gradient-to-br from-slate-50 to-zinc-50 dark:from-slate-950 dark:to-zinc-950 p-2.5">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-1.5">
+                      <Coins className="w-3.5 h-3.5 text-amber-600" />
+                      <span className="text-[11px] font-semibold">{s.ticker}</span>
+                      {s.exchange && <span className="text-[9px] text-muted-foreground">{s.exchange}</span>}
+                      {s.shortName && <span className="text-[10px] text-muted-foreground truncate">· {s.shortName}</span>}
+                    </div>
+                    <a href={`https://finance.yahoo.com/quote/${encodeURIComponent(s.ticker)}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-muted-foreground hover:text-primary flex items-center gap-0.5">
+                      Yahoo <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-xs">
+                    <div>
+                      <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Price</div>
+                      <div className="font-bold">{s.price != null ? `${curr}${s.price.toFixed(2)}` : "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-muted-foreground uppercase tracking-wide">52w</div>
+                      <div className={`font-semibold ${changeColor} flex items-center gap-1`}>
+                        {change != null && (change >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />)}
+                        {changePct}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Mkt cap</div>
+                      <div className="font-semibold">{fmtCap(s.marketCapGBP)}</div>
+                    </div>
+                    <div>
+                      <div className="text-[9px] text-muted-foreground uppercase tracking-wide">P/E</div>
+                      <div className="font-semibold">{s.peRatio != null ? s.peRatio.toFixed(1) : "—"}</div>
+                    </div>
+                  </div>
+                  {history.length > 5 && (
+                    <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between gap-2">
+                      <span className="text-[9px] text-muted-foreground">90-day price</span>
+                      <Sparkline values={history.map(h => h.close)} width={140} height={24} />
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
             {/* ── Global brand ─────────────────────────────────────────── */}
             <div className="space-y-2">
               {/* Single description — prefer brand_analysis (more detailed), fall back to description */}
@@ -1430,15 +1530,60 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <div className="mt-2 pt-2 border-t">
                     <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">Officers</div>
                     <div className="space-y-1">
-                      {covenant.officers.map((o, i) => (
-                        <div key={i} className="flex items-baseline justify-between gap-2 text-[11px]">
-                          <span className="font-medium text-foreground/90 truncate">{o.name}</span>
-                          <span className="text-muted-foreground whitespace-nowrap shrink-0 capitalize">
-                            {o.role?.replace(/-/g, " ") || "Officer"}
-                            {o.appointedOn && <span className="ml-1 text-[10px]">· {new Date(o.appointedOn).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</span>}
-                          </span>
-                        </div>
-                      ))}
+                      {covenant.officers.map((o, i) => {
+                        const a = officerApollo[o.name];
+                        const lookup = async () => {
+                          setOfficerApollo(prev => ({ ...prev, [o.name]: { loading: true, match: null } }));
+                          try {
+                            const r = await fetch(`/api/brand/${companyId}/apollo/find-officer`, {
+                              method: "POST",
+                              credentials: "include",
+                              headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+                              body: JSON.stringify({ name: o.name }),
+                            });
+                            const out = await r.json();
+                            if (!r.ok) throw new Error(out?.error || "Apollo lookup failed");
+                            setOfficerApollo(prev => ({ ...prev, [o.name]: { loading: false, match: out.match } }));
+                            if (!out.match) toast({ title: "No Apollo match", description: o.name });
+                          } catch (e: any) {
+                            setOfficerApollo(prev => ({ ...prev, [o.name]: { loading: false, match: null, error: e.message } }));
+                            toast({ title: "Lookup failed", description: e.message, variant: "destructive" });
+                          }
+                        };
+                        return (
+                          <div key={i} className="text-[11px]">
+                            <div className="flex items-baseline justify-between gap-2">
+                              <span className="font-medium text-foreground/90 truncate">{o.name}</span>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <span className="text-muted-foreground whitespace-nowrap capitalize">
+                                  {o.role?.replace(/-/g, " ") || "Officer"}
+                                  {o.appointedOn && <span className="ml-1 text-[10px]">· {new Date(o.appointedOn).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</span>}
+                                </span>
+                                {!a?.match && (
+                                  <button
+                                    onClick={lookup}
+                                    disabled={a?.loading}
+                                    className="text-[9px] px-1.5 py-0.5 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                                    title="Find this officer on Apollo"
+                                  >
+                                    {a?.loading ? "…" : "Apollo"}
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            {a?.match && (
+                              <div className="mt-1 pl-2 ml-1 border-l-2 border-blue-200 text-[10px] space-y-0.5">
+                                {a.match.title && <div className="text-foreground/80">{a.match.title}</div>}
+                                <div className="flex gap-2 flex-wrap">
+                                  {a.match.email && <a href={`mailto:${a.match.email}`} className="text-blue-700 hover:underline">{a.match.email}</a>}
+                                  {a.match.linkedin_url && <a href={a.match.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline flex items-center gap-0.5"><Linkedin className="w-2.5 h-2.5" />LinkedIn</a>}
+                                  {a.match.location && <span className="text-muted-foreground">{a.match.location}</span>}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -1556,10 +1701,29 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               const daysSince = lastContactedAt
                 ? Math.floor((Date.now() - new Date(lastContactedAt).getTime()) / 864e5)
                 : null;
+              const conceptStatusOptions: Array<{ value: string; label: string; cls: string }> = [
+                { value: "watching", label: "Watching", cls: "bg-zinc-100 text-zinc-700 border-zinc-200" },
+                { value: "pitching", label: "Pitching", cls: "bg-blue-100 text-blue-700 border-blue-200" },
+                { value: "parked", label: "Parked", cls: "bg-amber-100 text-amber-700 border-amber-200" },
+                { value: "won_deal", label: "Won deal", cls: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+                { value: "lost_deal", label: "Lost deal", cls: "bg-red-100 text-red-700 border-red-200" },
+              ];
+              const currentStatus = conceptStatusOptions.find(o => o.value === c.concept_status);
               return (
                 <div className="border-t pt-2">
-                  <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
-                    <Handshake className="w-3 h-3" /> Relationship
+                  <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-1">
+                    <span className="flex items-center gap-1"><Handshake className="w-3 h-3" /> Relationship</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-muted-foreground">Concept status:</span>
+                      <select
+                        value={c.concept_status || ""}
+                        onChange={e => patchMutation.mutate({ concept_status: e.target.value || null })}
+                        className={`h-5 text-[10px] rounded-full border px-2 cursor-pointer ${currentStatus?.cls || "border-dashed border-border text-muted-foreground"}`}
+                      >
+                        <option value="">— set status —</option>
+                        {conceptStatusOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                     {c.bgp_contact_crm && (

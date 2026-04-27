@@ -369,6 +369,80 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
   }
 });
 
+// ─── Per-officer Apollo enrichment ──────────────────────────────────────
+// Look up a single CH officer by name within the brand's organisation and
+// return any Apollo match (email, LinkedIn, current title, photo).
+//
+// Manual button per officer in the UK & Covenant tab → 1 Apollo credit per click.
+router.post("/api/brand/:companyId/apollo/find-officer", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const apolloKey = process.env.APOLLO_API_KEY;
+    if (!apolloKey) return res.status(503).json({ error: "Apollo not configured" });
+
+    const companyId = String(req.params.companyId);
+    const personName: string = String(req.body?.name || "").trim();
+    if (!personName) return res.status(400).json({ error: "name required" });
+
+    const company = await fetchCompany(companyId);
+    if (!company) return res.status(404).json({ error: "Company not found" });
+
+    const parts = personName.split(/\s+/).filter(Boolean);
+    const firstName = parts[0] || "";
+    const lastName = parts.slice(1).join(" ") || "";
+
+    // Prefer domain match for accuracy; fall back to organisation name
+    const cleanedDomain = cleanDomain(company.domain || company.domain_url);
+
+    const body: Record<string, any> = {
+      page: 1,
+      per_page: 5,
+    };
+    if (firstName) body.q_keywords = personName;
+    if (cleanedDomain) body.q_organization_domains_list = [cleanedDomain];
+    else body.organization_names = [company.name];
+
+    const res2 = await fetch("https://api.apollo.io/api/v1/mixed_people/api_search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-cache", "X-Api-Key": apolloKey },
+      body: JSON.stringify(body),
+    });
+    if (!res2.ok) {
+      const t = await res2.text().catch(() => "");
+      return res.status(502).json({ error: `Apollo ${res2.status}: ${t.slice(0, 200)}` });
+    }
+    const data = (await res2.json()) as any;
+    const people = (data.people || data.contacts || []) as ApolloPerson[];
+
+    // Score: name match against first+last
+    const scored = people.map(p => {
+      const fullName = (p.name || `${p.first_name || ""} ${p.last_name || ""}`).toLowerCase().trim();
+      const target = personName.toLowerCase();
+      let score = 0;
+      if (fullName === target) score = 100;
+      else if (firstName && lastName && fullName.includes(firstName.toLowerCase()) && fullName.includes(lastName.toLowerCase())) score = 80;
+      else if (firstName && fullName.includes(firstName.toLowerCase())) score = 30;
+      return { p, score };
+    }).filter(x => x.score > 0).sort((a, b) => b.score - a.score);
+
+    const best = scored[0]?.p;
+    if (!best) return res.json({ match: null });
+
+    res.json({
+      match: {
+        apollo_id: best.id,
+        name: best.name || `${best.first_name || ""} ${best.last_name || ""}`.trim(),
+        title: best.title || null,
+        email: best.email || null,
+        linkedin_url: best.linkedin_url || null,
+        avatar_url: best.photo_url || null,
+        location: [best.city, best.country].filter(Boolean).join(", ") || null,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post("/api/brand/:companyId/apollo/import", requireAuth, async (req: Request, res: Response) => {
   try {
     const companyId = String(req.params.companyId);

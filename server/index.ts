@@ -1025,6 +1025,7 @@ app.use("/api/branding/assets", express.static(
           await addColIfMissing("image_studio_images", "brand_sector", "text");
           await addColIfMissing("crm_companies", "brand_analysis", "text");
           await addColIfMissing("crm_companies", "brand_analysis_at", "timestamp");
+          await addColIfMissing("crm_companies", "concept_status", "text");
 
           // Auto-track all tenant companies as brands (idempotent).
           await db.execute(sql.raw(`
