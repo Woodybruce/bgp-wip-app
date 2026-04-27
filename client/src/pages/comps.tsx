@@ -495,6 +495,7 @@ const UK_INDEX_DATA: { year: number; rpi: number; cpi: number }[] = [
   { year: 2022, rpi: 11.6, cpi: 9.1 },
   { year: 2023, rpi: 9.7, cpi: 7.3 },
   { year: 2024, rpi: 3.6, cpi: 2.5 },
+  { year: 2025, rpi: 4.0, cpi: 2.6 },  // ONS annual average — verify at ons.gov.uk/economy/inflationandpriceindices
 ];
 
 // Inline-edit cell that stores raw numbers but displays them with thousands separators.
@@ -919,6 +920,10 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
     zA: "", zA1: "", zB: "", zB1: "", zC: "", zC1: "", zD: "", zD1: "", rem: "",
     basStorage: "", firstTrading: "",
   });
+  const [itzaDivisors, setItzaDivisors] = useState<Record<string, string>>({
+    zA: "1", zA1: "1.5", zB: "2", zB1: "3", zC: "4", zC1: "6", zD: "8", zD1: "10", rem: "12",
+    basStorage: "20", firstTrading: "10",
+  });
   const [itzaDiscount1, setItzaDiscount1] = useState("");
   const [itzaAddition1, setItzaAddition1] = useState("");
   const [itzaEndDiscount, setItzaEndDiscount] = useState("");
@@ -927,13 +932,16 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
   const itzaRateVal = parseFloat(itzaRate) || 0;
   const groundZoneCalcs = ITZA_ZONES.map(z => {
     const a = parseFloat(itzaZoneAreas[z.key]) || 0;
-    const rate = itzaRateVal / z.div;
-    return { ...z, area: a, rate, erv: a * rate };
+    const div = parseFloat(itzaDivisors[z.key]) || z.div;
+    const rate = div > 0 ? itzaRateVal / div : 0;
+    return { ...z, div, area: a, rate, erv: a * rate };
   });
   const basStorageArea = parseFloat(itzaZoneAreas.basStorage) || 0;
   const firstTradingAreaVal = parseFloat(itzaZoneAreas.firstTrading) || 0;
-  const basStorageERV = basStorageArea * (itzaRateVal / 20);
-  const firstTradingERV = firstTradingAreaVal * (itzaRateVal / 10);
+  const basStorageDiv = parseFloat(itzaDivisors.basStorage) || 20;
+  const firstTradingDiv = parseFloat(itzaDivisors.firstTrading) || 10;
+  const basStorageERV = basStorageArea * (basStorageDiv > 0 ? itzaRateVal / basStorageDiv : 0);
+  const firstTradingERV = firstTradingAreaVal * (firstTradingDiv > 0 ? itzaRateVal / firstTradingDiv : 0);
   const itzaGIA = groundZoneCalcs.reduce((s, z) => s + z.area, 0) + basStorageArea + firstTradingAreaVal;
   const itzaITZA = groundZoneCalcs.reduce((s, z) => s + (z.div > 0 ? z.area / z.div : 0), 0);
   const groundSubTotal = groundZoneCalcs.reduce((s, z) => s + z.erv, 0);
@@ -952,7 +960,16 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
   const [giaAreas, setGiaAreas] = useState<Record<string, string>>({
     groundSales: "", groundAncillary: "",
     firstTrading: "", firstAncillary: "",
+    secondTrading: "", secondAncillary: "",
     basTrading: "", basAncillary: "", basVaults: "",
+    terrace: "",
+  });
+  const [giaWeights, setGiaWeights] = useState<Record<string, string>>({
+    groundSales: "1", groundAncillary: "0.5",
+    firstTrading: "0.5", firstAncillary: "0.25",
+    secondTrading: "0.25", secondAncillary: "0.15",
+    basTrading: "0.5", basAncillary: "0.25", basVaults: "0.125",
+    terrace: "0.15",
   });
   const [giaAdj1, setGiaAdj1] = useState("");
   const [giaAdj2, setGiaAdj2] = useState("");
@@ -965,7 +982,8 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
   const giaRateVal = parseFloat(giaRate) || 0;
   const giaFloorCalcs = GIA_FLOORS.map(f => {
     const a = parseFloat(giaAreas[f.key]) || 0;
-    return { ...f, area: a, rate: giaRateVal * f.weight, erv: a * giaRateVal * f.weight };
+    const weight = parseFloat(giaWeights[f.key] ?? String(f.weight)) || f.weight;
+    return { ...f, area: a, weight, rate: giaRateVal * weight, erv: a * giaRateVal * weight };
   });
   const giaTotalArea = giaFloorCalcs.reduce((s, f) => s + f.area, 0);
   const giaSubTotal = giaFloorCalcs.reduce((s, f) => s + f.erv, 0);
@@ -1368,7 +1386,17 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
                   {groundZoneCalcs.map(z => (
                     <tr key={z.key} className="hover:bg-muted/20">
                       <td className="px-2 py-1">{z.label}</td>
-                      <td className="px-2 py-1 text-muted-foreground">A/{z.div}</td>
+                      <td className="px-2 py-1">
+                        <div className="flex items-center gap-0.5">
+                          <span className="text-muted-foreground text-xs">A/</span>
+                          <Input
+                            type="number"
+                            value={itzaDivisors[z.key]}
+                            onChange={e => setItzaDivisors(prev => ({ ...prev, [z.key]: e.target.value }))}
+                            className="h-6 text-xs w-14 px-1"
+                          />
+                        </div>
+                      </td>
                       <td className="px-2 py-1">
                         <Input
                           type="number"
@@ -1379,7 +1407,7 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
                         />
                       </td>
                       <td className="px-2 py-1 text-right text-muted-foreground">
-                        {itzaRateVal > 0 ? `£${(itzaRateVal / z.div).toFixed(2)}` : "—"}
+                        {itzaRateVal > 0 && z.div > 0 ? `£${(itzaRateVal / z.div).toFixed(2)}` : "—"}
                       </td>
                       <td className="px-2 py-1 text-right font-medium">
                         {z.erv > 0 ? `£${Math.round(z.erv).toLocaleString()}` : "—"}
@@ -1426,32 +1454,30 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
                 <tbody className="divide-y">
                   <tr className="hover:bg-muted/20">
                     <td className="px-2 py-1">Basement – Storage</td>
-                    <td className="px-2 py-1 text-muted-foreground">A/20</td>
                     <td className="px-2 py-1">
-                      <Input
-                        type="number"
-                        value={itzaZoneAreas.basStorage}
-                        onChange={e => setItzaZoneAreas(prev => ({ ...prev, basStorage: e.target.value }))}
-                        placeholder="0"
-                        className="h-7 text-xs text-right w-24 ml-auto"
-                      />
+                      <div className="flex items-center gap-0.5">
+                        <span className="text-muted-foreground text-xs">A/</span>
+                        <Input type="number" value={itzaDivisors.basStorage} onChange={e => setItzaDivisors(prev => ({ ...prev, basStorage: e.target.value }))} className="h-6 text-xs w-14 px-1" />
+                      </div>
                     </td>
-                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 ? `£${(itzaRateVal / 20).toFixed(2)}` : "—"}</td>
+                    <td className="px-2 py-1">
+                      <Input type="number" value={itzaZoneAreas.basStorage} onChange={e => setItzaZoneAreas(prev => ({ ...prev, basStorage: e.target.value }))} placeholder="0" className="h-7 text-xs text-right w-24 ml-auto" />
+                    </td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 && basStorageDiv > 0 ? `£${(itzaRateVal / basStorageDiv).toFixed(2)}` : "—"}</td>
                     <td className="px-2 py-1 text-right font-medium">{basStorageERV > 0 ? `£${Math.round(basStorageERV).toLocaleString()}` : "—"}</td>
                   </tr>
                   <tr className="hover:bg-muted/20">
                     <td className="px-2 py-1">First – Trading</td>
-                    <td className="px-2 py-1 text-muted-foreground">A/10</td>
                     <td className="px-2 py-1">
-                      <Input
-                        type="number"
-                        value={itzaZoneAreas.firstTrading}
-                        onChange={e => setItzaZoneAreas(prev => ({ ...prev, firstTrading: e.target.value }))}
-                        placeholder="0"
-                        className="h-7 text-xs text-right w-24 ml-auto"
-                      />
+                      <div className="flex items-center gap-0.5">
+                        <span className="text-muted-foreground text-xs">A/</span>
+                        <Input type="number" value={itzaDivisors.firstTrading} onChange={e => setItzaDivisors(prev => ({ ...prev, firstTrading: e.target.value }))} className="h-6 text-xs w-14 px-1" />
+                      </div>
                     </td>
-                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 ? `£${(itzaRateVal / 10).toFixed(2)}` : "—"}</td>
+                    <td className="px-2 py-1">
+                      <Input type="number" value={itzaZoneAreas.firstTrading} onChange={e => setItzaZoneAreas(prev => ({ ...prev, firstTrading: e.target.value }))} placeholder="0" className="h-7 text-xs text-right w-24 ml-auto" />
+                    </td>
+                    <td className="px-2 py-1 text-right text-muted-foreground">{itzaRateVal > 0 && firstTradingDiv > 0 ? `£${(itzaRateVal / firstTradingDiv).toFixed(2)}` : "—"}</td>
                     <td className="px-2 py-1 text-right font-medium">{firstTradingERV > 0 ? `£${Math.round(firstTradingERV).toLocaleString()}` : "—"}</td>
                   </tr>
                 </tbody>
@@ -1540,11 +1566,21 @@ function NetRentCalculator({ onClose, prefillComp }: { onClose: () => void; pref
                   {giaFloorCalcs.map(f => (
                     <tr key={f.key} className="hover:bg-muted/20">
                       <td className="px-2 py-1">{f.label}</td>
-                      <td className="px-2 py-1 text-right text-muted-foreground">{(f.weight * 100).toFixed(1)}%</td>
+                      <td className="px-2 py-1 text-right">
+                        <div className="flex items-center justify-end gap-0.5">
+                          <Input
+                            type="number"
+                            step="0.001"
+                            value={giaWeights[f.key]}
+                            onChange={e => setGiaWeights(prev => ({ ...prev, [f.key]: e.target.value }))}
+                            className="h-6 text-xs w-16 px-1 text-right"
+                          />
+                        </div>
+                      </td>
                       <td className="px-2 py-1">
                         <Input
                           type="number"
-                          value={giaAreas[f.key]}
+                          value={giaAreas[f.key] ?? ""}
                           onChange={e => setGiaAreas(prev => ({ ...prev, [f.key]: e.target.value }))}
                           placeholder="0"
                           className="h-7 text-xs text-right w-24 ml-auto"
@@ -2538,6 +2574,15 @@ export default function Comps() {
                     />
                   </td>
                   <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        className="p-1 rounded hover:bg-muted transition-colors"
+                        onClick={() => setSelectedComp(comp)}
+                        title="View Details"
+                        data-testid={`comp-view-${comp.id}`}
+                      >
+                        <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                      </button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button className="p-1 rounded hover:bg-muted transition-colors" data-testid={`comp-menu-${comp.id}`}>
@@ -2565,6 +2610,7 @@ export default function Comps() {
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    </div>
                   </td>
                   <td className="px-2 py-1.5 align-top">
                     <div className="flex items-center gap-1">
@@ -3155,10 +3201,21 @@ export default function Comps() {
           {selectedComp && (
             <>
               <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Building2 className="w-5 h-5 text-primary" />
-                  {selectedComp.name}
-                </DialogTitle>
+                <div className="flex items-start justify-between gap-2">
+                  <DialogTitle className="flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-primary" />
+                    {selectedComp.name}
+                  </DialogTitle>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 h-7 text-xs shrink-0"
+                    onClick={() => { setCalcComp(selectedComp); setCalcOpen(true); }}
+                    data-testid="button-detail-ner"
+                  >
+                    <Calculator className="w-3 h-3" /> NER Calculator
+                  </Button>
+                </div>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-4 mt-4">
                 <div className="space-y-3">
