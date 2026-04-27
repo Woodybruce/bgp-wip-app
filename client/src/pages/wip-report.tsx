@@ -74,6 +74,8 @@ interface ReconciliationData {
     groupName: string | null;
     dealStatus: string | null;
   }>;
+  unmatchedGroups: string[];
+  unmatchedProjects: string[];
 }
 
 const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
@@ -452,6 +454,44 @@ function ReconciliationTab() {
           </ScrollableTable>
         )}
       </div>
+
+      {/* Unmatched client groups */}
+      {(data?.unmatchedGroups?.length ?? 0) > 0 && (
+        <div className="bg-white border border-amber-200 rounded-lg overflow-hidden">
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-3 flex items-center gap-2">
+            <span className="text-sm font-semibold text-amber-800">WIP clients not found in CRM</span>
+            <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-xs">{data!.unmatchedGroups.length}</Badge>
+          </div>
+          <div className="px-4 py-3 text-xs text-gray-600 space-y-1">
+            <p className="text-[11px] text-muted-foreground mb-2">These Group names couldn't be matched to an existing CRM company. Add them to the CRM or rename them to match.</p>
+            {data!.unmatchedGroups.map(g => (
+              <div key={g} className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                <span className="font-medium">{g}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Unmatched properties */}
+      {(data?.unmatchedProjects?.length ?? 0) > 0 && (
+        <div className="bg-white border border-blue-200 rounded-lg overflow-hidden">
+          <div className="bg-blue-50 border-b border-blue-200 px-4 py-3 flex items-center gap-2">
+            <span className="text-sm font-semibold text-blue-800">WIP properties not found in CRM</span>
+            <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-xs">{data!.unmatchedProjects.length}</Badge>
+          </div>
+          <div className="px-4 py-3 text-xs text-gray-600 space-y-1">
+            <p className="text-[11px] text-muted-foreground mb-2">These Project names didn't match a CRM property — new bare records were created. Add addresses via the Properties section.</p>
+            {data!.unmatchedProjects.map(p => (
+              <div key={p} className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
+                <span className="font-medium">{p}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -597,13 +597,67 @@ async function enrichWipDealsFromSage(
   }
 }
 
+// Normalise a company/property name for fuzzy matching:
+// strips "the", legal suffixes, punctuation so "The Crown Estate Ltd" ≈ "Crown Estate".
+function normaliseWipName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/\bthe\b/gi, "")
+    .replace(/\b(ltd|limited|plc|llp|inc|corp|group|holdings|property|properties|estate|estates|shopping|centre|center)\b/gi, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Words >= 3 chars, excluding common stop-words.
+function sigWords(norm: string): string[] {
+  const stop = new Set(["and", "the", "for", "of", "at", "in", "on", "de"]);
+  return norm.split(" ").filter(w => w.length >= 3 && !stop.has(w));
+}
+
+// Fuzzy match a WIP name against a Map of lowercased CRM names → ids.
+// Returns the matched id or null (never creates records).
+function wipFuzzyMatch(wipName: string, nameMap: Map<string, string>): string | null {
+  const key = wipName.toLowerCase().trim();
+  if (nameMap.has(key)) return nameMap.get(key)!;
+
+  const wipNorm = normaliseWipName(wipName);
+  if (!wipNorm) return null;
+
+  // Pass 1: normalised exact match
+  for (const [k, id] of nameMap) {
+    if (normaliseWipName(k) === wipNorm) return id;
+  }
+
+  // Pass 2: one normalised name is a prefix of the other (min 5 chars)
+  for (const [k, id] of nameMap) {
+    const kNorm = normaliseWipName(k);
+    if (!kNorm) continue;
+    const shorter = wipNorm.length < kNorm.length ? wipNorm : kNorm;
+    const longer = wipNorm.length < kNorm.length ? kNorm : wipNorm;
+    if (shorter.length >= 5 && longer.startsWith(shorter)) return id;
+  }
+
+  // Pass 3: all significant words in the WIP name appear as prefixes of
+  // words in the CRM name (e.g. "Land Sec" → "Land Securities")
+  const wipWords = sigWords(wipNorm);
+  if (wipWords.length >= 2) {
+    for (const [k, id] of nameMap) {
+      const kWords = sigWords(normaliseWipName(k));
+      if (wipWords.every(w => kWords.some(kw => kw.startsWith(w) || w.startsWith(kw)))) return id;
+    }
+  }
+
+  return null;
+}
+
 export async function syncWipToCrmDeals(dbPool: Pool) {
   const client = await dbPool.connect();
   try {
     await client.query('BEGIN');
 
     const { rows: deals } = await client.query(`
-      SELECT 
+      SELECT
         ref,
         MIN(group_name) as group_name,
         MIN(project) as project,
@@ -635,54 +689,50 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
       if (match) wipRefToDealId.set(match[1], d.id);
     }
 
-    let created = 0, updated = 0, propertiesCreated = 0, companiesCreated = 0;
+    let created = 0, updated = 0, propertiesCreated = 0;
+    const unmatchedGroups = new Set<string>();
+    const unmatchedProjects = new Set<string>();
 
     for (const deal of deals) {
+      // ── Property (Project column) ───────────────────────────────────────
       let propertyId: string | null = null;
       if (deal.project?.trim()) {
-        const projKey = deal.project.trim().toLowerCase();
-        if (propMap.has(projKey)) {
-          propertyId = propMap.get(projKey)!;
+        const matched = wipFuzzyMatch(deal.project, propMap);
+        if (matched) {
+          propertyId = matched;
         } else {
+          // Create a bare property record — user will add address later
           propertyId = randomUUID();
           await client.query(
             `INSERT INTO crm_properties (id, name, status, created_at, updated_at) VALUES ($1, $2, 'Active', NOW(), NOW())`,
             [propertyId, deal.project.trim()]
           );
-          propMap.set(projKey, propertyId);
+          propMap.set(deal.project.trim().toLowerCase(), propertyId);
           propertiesCreated++;
+          unmatchedProjects.add(deal.project.trim());
         }
       }
 
+      // ── Client group (Group column) — must match existing CRM company ──
+      // Never auto-create: if no fuzzy match, surface in reconciliation.
       let landlordId: string | null = null;
       if (deal.group_name?.trim()) {
-        const groupKey = deal.group_name.trim().toLowerCase();
-        if (compMap.has(groupKey)) {
-          landlordId = compMap.get(groupKey)!;
-        } else {
-          landlordId = randomUUID();
-          await client.query(
-            `INSERT INTO crm_companies (id, name, company_type, created_at, updated_at) VALUES ($1, $2, 'Client', NOW(), NOW())`,
-            [landlordId, deal.group_name.trim()]
-          );
-          compMap.set(groupKey, landlordId);
-          companiesCreated++;
-        }
+        landlordId = wipFuzzyMatch(deal.group_name, compMap);
+        if (!landlordId) unmatchedGroups.add(deal.group_name.trim());
       }
 
+      // ── Tenant ─────────────────────────────────────────────────────────
       let tenantId: string | null = null;
       if (deal.tenant?.trim()) {
-        const tenantKey = deal.tenant.trim().toLowerCase();
-        if (compMap.has(tenantKey)) {
-          tenantId = compMap.get(tenantKey)!;
-        } else {
+        tenantId = wipFuzzyMatch(deal.tenant, compMap);
+        // Tenants often aren't in CRM yet — create if not found
+        if (!tenantId) {
           tenantId = randomUUID();
           await client.query(
             `INSERT INTO crm_companies (id, name, company_type, created_at, updated_at) VALUES ($1, $2, 'Tenant', NOW(), NOW())`,
             [tenantId, deal.tenant.trim()]
           );
-          compMap.set(tenantKey, tenantId);
-          companiesCreated++;
+          compMap.set(deal.tenant.trim().toLowerCase(), tenantId);
         }
       }
 
@@ -735,8 +785,10 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
     }
 
     await client.query('COMMIT');
-    console.log(`[WIP Sync] Created: ${created}, Updated: ${updated}, New properties: ${propertiesCreated}, New companies: ${companiesCreated}`);
-    return { created, updated, propertiesCreated, companiesCreated };
+    const unmatchedGroupList = [...unmatchedGroups];
+    const unmatchedProjectList = [...unmatchedProjects];
+    console.log(`[WIP Sync] Created: ${created}, Updated: ${updated}, New properties: ${propertiesCreated}, Unmatched groups: ${unmatchedGroupList.join(", ") || "none"}, Unmatched projects: ${unmatchedProjectList.join(", ") || "none"}`);
+    return { created, updated, propertiesCreated, unmatchedGroups: unmatchedGroupList, unmatchedProjects: unmatchedProjectList };
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('[WIP Sync] Error:', err);
@@ -5857,6 +5909,30 @@ Rules:
         });
       }
 
+      // Query 3: WIP group names that have no matching CRM company (fuzzy)
+      const { rows: allWipGroups } = await pool.query(`
+        SELECT DISTINCT group_name FROM wip_entries
+        WHERE group_name IS NOT NULL AND group_name != ''
+        ORDER BY group_name
+      `);
+      const { rows: allCrmCompanies } = await pool.query(`SELECT LOWER(TRIM(name)) as name_lower FROM crm_companies`);
+      const crmCompSet = new Map<string, string>(allCrmCompanies.map((c: any) => [c.name_lower, c.name_lower]));
+      const unmatchedGroups = allWipGroups
+        .map((r: any) => r.group_name as string)
+        .filter((g: string) => !wipFuzzyMatch(g, crmCompSet));
+
+      // Query 4: WIP projects that have no matching CRM property (fuzzy)
+      const { rows: allWipProjects } = await pool.query(`
+        SELECT DISTINCT project FROM wip_entries
+        WHERE project IS NOT NULL AND project != ''
+        ORDER BY project
+      `);
+      const { rows: allCrmProps } = await pool.query(`SELECT LOWER(TRIM(name)) as name_lower, address FROM crm_properties`);
+      const crmPropSet = new Map<string, string>(allCrmProps.map((p: any) => [p.name_lower, p.name_lower]));
+      const unmatchedProjects = allWipProjects
+        .map((r: any) => r.project as string)
+        .filter((p: string) => !wipFuzzyMatch(p, crmPropSet));
+
       res.json({
         dealsWithoutWip: filteredDeals.map((d: any) => ({
           id: d.id,
@@ -5879,6 +5955,8 @@ Rules:
           groupName: w.group_name,
           dealStatus: w.deal_status,
         })),
+        unmatchedGroups,
+        unmatchedProjects,
       });
     } catch (e: any) {
       console.error("[wip-reconciliation] Error:", e);
