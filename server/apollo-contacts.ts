@@ -163,7 +163,7 @@ function mapPerson(p: ApolloPerson, source: DiscoveredPerson["source"], sourceCo
 
 async function fetchCompany(companyId: string) {
   const { rows } = await pool.query(
-    `SELECT id, name, domain, domain_url, brand_group_id, parent_company_id FROM crm_companies WHERE id = $1`,
+    `SELECT id, name, domain, domain_url, brand_group_id, parent_company_id, backers, uk_entity_name FROM crm_companies WHERE id = $1`,
     [companyId]
   );
   return rows[0] || null;
@@ -273,6 +273,40 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
           diagnostics.push({ step: "parent_group", matched: byParent.length, details: parentDomains.join(", ") || parentCompany.name });
         } catch (err: any) {
           diagnostics.push({ step: "parent_group", matched: 0, details: `error: ${err.message}` });
+        }
+      }
+    }
+
+    // 5. If still < 3 and no linked parent company, try the backers text field
+    // (e.g. "H&M Group") or derive the parent from uk_entity_name. This handles
+    // brands like & Other Stories whose team use hm.com emails, not stories.com.
+    if (people.length < 3 && !parentCompany) {
+      // Derive a parent name: prefer backers field, otherwise strip the brand
+      // name from uk_entity_name (e.g. "H&M Hennes & Mauritz UK Ltd." → "H&M")
+      let parentName: string | null = company.backers || null;
+      if (!parentName && company.uk_entity_name) {
+        // Pull first token from entity name as a proxy for the parent group
+        const firstToken = company.uk_entity_name.split(/\s+/).slice(0, 2).join(" ");
+        if (firstToken && firstToken.toLowerCase() !== company.name.toLowerCase().slice(0, firstToken.length)) {
+          parentName = firstToken;
+        }
+      }
+      if (parentName) {
+        try {
+          const byParentName = await searchApollo({
+            organizationName: parentName,
+            locations: ["United Kingdom"],
+            apolloKey,
+          });
+          for (const p of byParentName) {
+            if (!seenIds.has(p.id)) {
+              seenIds.add(p.id);
+              people.push(mapPerson(p, "parent_group", parentName));
+            }
+          }
+          diagnostics.push({ step: "backers_fallback", matched: byParentName.length, details: `name="${parentName}" location=United Kingdom` });
+        } catch (err: any) {
+          diagnostics.push({ step: "backers_fallback", matched: 0, details: `error: ${err.message}` });
         }
       }
     }
