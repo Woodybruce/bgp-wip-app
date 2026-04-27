@@ -331,18 +331,24 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   async function runContactDiscovery() {
     setContactsFinding(true);
     try {
-      await Promise.allSettled([
-        apiRequest("POST", `/api/brand/${companyId}/apollo/discover`, {})
-          .then(r => r.json())
-          .then((res: any) => res.people?.length > 0
-            ? apiRequest("POST", `/api/brand/${companyId}/apollo/import`, { people: res.people })
-            : null),
-        apiRequest("POST", `/api/brand/${companyId}/rocketreach/discover`, {})
-          .then(r => r.json())
-          .then((res: any) => res.people?.length > 0
-            ? apiRequest("POST", `/api/brand/${companyId}/rocketreach/import`, { people: res.people })
-            : null),
-      ]);
+      // RocketReach first — better UK contacts. Apollo only runs as fallback if RocketReach finds < 2.
+      let rrCount = 0;
+      try {
+        const rrRes = await apiRequest("POST", `/api/brand/${companyId}/rocketreach/discover`, {}).then(r => r.json());
+        if (rrRes.people?.length > 0) {
+          await apiRequest("POST", `/api/brand/${companyId}/rocketreach/import`, { people: rrRes.people });
+          rrCount = rrRes.people.length;
+        }
+      } catch { /* non-fatal */ }
+
+      if (rrCount < 2) {
+        try {
+          const apRes = await apiRequest("POST", `/api/brand/${companyId}/apollo/discover`, {}).then(r => r.json());
+          if (apRes.people?.length > 0) {
+            await apiRequest("POST", `/api/brand/${companyId}/apollo/import`, { people: apRes.people });
+          }
+        } catch { /* non-fatal */ }
+      }
     } finally {
       setContactsFinding(false);
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
