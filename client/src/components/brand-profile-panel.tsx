@@ -749,35 +749,11 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
   return (
     <Card data-testid="brand-profile-panel">
-      <CardHeader className="p-3 pb-2 flex flex-row items-center justify-between">
+      <CardHeader className="p-3 pb-2 flex flex-row items-start justify-between">
+        <div className="flex flex-col gap-1 min-w-0 flex-1">
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
-          <Sparkles className="w-4 h-4 text-purple-500" />
+          <Sparkles className="w-4 h-4 text-purple-500 shrink-0" />
           Brand Profile
-          {c.industry && (
-            <span className="text-[11px] font-normal text-muted-foreground">· {c.industry}</span>
-          )}
-          {c.employee_count && c.employee_count > 0 && (
-            <span className="text-[11px] font-normal text-muted-foreground">
-              · {c.employee_count >= 10000
-                  ? `~${Math.round(c.employee_count / 1000)}k employees`
-                  : c.employee_count >= 1000
-                    ? `~${(c.employee_count / 1000).toFixed(1)}k employees`
-                    : `${c.employee_count} employees`}
-            </span>
-          )}
-          {c.founded_year && (
-            <span className="text-[11px] font-normal text-muted-foreground">· Est. {c.founded_year}</span>
-          )}
-          {data.parentGroup && (
-            <span className="text-[11px] font-normal text-muted-foreground">
-              · Part of <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">{data.parentGroup.name}</Link>
-            </span>
-          )}
-          {c.backers && (
-            <span className="text-[11px] font-normal text-muted-foreground truncate max-w-[180px]" title={c.backers}>
-              · {c.backers}
-            </span>
-          )}
           {c.is_tracked_brand && <Badge className="bg-purple-100 text-purple-700 border-purple-300 text-[10px]">Tracked brand</Badge>}
           {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-purple-200 text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
           {hunter && hunter.expansionScore >= 40 && (
@@ -795,23 +771,23 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           {c.agent_type && <Badge className="bg-blue-50 text-blue-700 border-purple-200 text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
           {covenant && (
             <Badge className={
-              covenant.trafficLight === "green" ? "bg-emerald-50 text-emerald-700 border-purple-200 text-[10px]" :
-              covenant.trafficLight === "amber" ? "bg-amber-50 text-amber-700 border-purple-200 text-[10px]" :
-              "bg-red-50 text-red-700 border-purple-200 text-[10px]"
+              covenant.trafficLight === "green" ? "bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]" :
+              covenant.trafficLight === "amber" ? "bg-amber-100 text-amber-700 border-amber-200 text-[10px]" :
+              "bg-red-100 text-red-700 border-red-200 text-[10px]"
             }>
               Covenant: {covenant.trafficLight === "green" ? "Strong" : covenant.trafficLight === "amber" ? "Verify" : "At risk"}
             </Badge>
           )}
-          {c.kyc_status === "pass" && <Badge className="bg-emerald-50 text-emerald-700 border-purple-200 text-[10px]">KYC Passed</Badge>}
-          {c.kyc_status === "warning" && <Badge className="bg-amber-50 text-amber-700 border-purple-200 text-[10px]">KYC Review</Badge>}
-          {c.kyc_status === "fail" && <Badge className="bg-red-50 text-red-700 border-purple-200 text-[10px]">KYC Failed</Badge>}
+          {c.kyc_status === "pass" && <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">KYC Passed</Badge>}
+          {c.kyc_status === "warning" && <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]">KYC Review</Badge>}
+          {c.kyc_status === "fail" && <Badge className="bg-red-100 text-red-700 border-red-200 text-[10px]">KYC Failed</Badge>}
           {(() => {
             const lastContactedAt = data.contacts.map((ct: any) => ct.last_contacted_at).filter(Boolean).sort().reverse()[0] as string | undefined;
             const lastContactor = lastContactedAt ? data.contacts.find((ct: any) => ct.last_contacted_at === lastContactedAt) : null;
             if (!lastContactedAt) return null;
             const days = Math.floor((Date.now() - new Date(lastContactedAt).getTime()) / 864e5);
             return (
-              <span className="text-[11px] font-normal text-muted-foreground flex items-center gap-0.5">
+              <span className="text-xs font-normal text-muted-foreground flex items-center gap-0.5">
                 · <Clock className="w-2.5 h-2.5" /> {days}d{lastContactor?.name ? ` · ${lastContactor.name.split(" ")[0]}` : ""}
               </span>
             );
@@ -832,7 +808,27 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             return <Badge variant="outline" className={`${cls[c.concept_status] || ""} text-[10px]`}>{label[c.concept_status] || c.concept_status}</Badge>;
           })()}
         </CardTitle>
-        <div className="flex items-center gap-1">
+        {(c.industry || (c.employee_count && c.employee_count > 0) || c.founded_year || data.parentGroup || c.backers) && (
+          <div className="text-xs text-muted-foreground flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
+            {c.industry && <span>{c.industry}</span>}
+            {c.employee_count && c.employee_count > 0 && (
+              <span>· {c.employee_count >= 10000
+                ? `~${Math.round(c.employee_count / 1000)}k employees`
+                : c.employee_count >= 1000
+                  ? `~${(c.employee_count / 1000).toFixed(1)}k employees`
+                  : `${c.employee_count} employees`}</span>
+            )}
+            {c.founded_year && <span>· Est. {c.founded_year}</span>}
+            {data.parentGroup && (
+              <span>· Part of <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">{data.parentGroup.name}</Link></span>
+            )}
+            {c.backers && (
+              <span className="truncate max-w-[200px]" title={c.backers}>· Backed by {c.backers}</span>
+            )}
+          </div>
+        )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
           <Button
             variant="ghost"
             size="sm"
@@ -973,7 +969,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   href={c.domain_url || `https://${c.domain}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
                   data-testid="link-website"
                 >
                   <Globe className="w-3 h-3" /> Website
@@ -984,7 +980,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   href={c.linkedin_url}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
                   data-testid="link-linkedin"
                 >
                   <Linkedin className="w-3 h-3" /> LinkedIn
@@ -995,7 +991,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   href={`https://instagram.com/${c.instagram_handle.replace(/^@/, "")}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
                   data-testid="link-instagram"
                 >
                   <Instagram className="w-3 h-3" /> Instagram
@@ -1004,7 +1000,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               {c.phone && (
                 <a
                   href={`tel:${c.phone}`}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
                   data-testid="link-phone"
                 >
                   <Phone className="w-3 h-3" /> {c.phone}
@@ -1015,7 +1011,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   href={`https://${c.domain}/press`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
                   title="Brand newsroom"
                 >
                   <Newspaper className="w-3 h-3" /> Press
@@ -1026,7 +1022,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   href={`https://${c.domain}/careers`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
                   title="Brand careers page"
                 >
                   <Briefcase className="w-3 h-3" /> Careers
@@ -1035,7 +1031,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               {data.contacts.find((ct: any) => ct.email) && (
                 <a
                   href={`mailto:${data.contacts.find((ct: any) => ct.email)?.email}`}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
                   title="Email primary contact"
                 >
                   <Phone className="w-3 h-3" /> Email
@@ -1044,7 +1040,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <button
                 type="button"
                 onClick={() => window.dispatchEvent(new CustomEvent("bgp:open-apollo", { detail: { companyId } }))}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 text-[11px] font-medium transition-colors"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 text-xs font-medium transition-colors"
                 data-testid="button-apollo-quick"
               >
                 <Sparkles className="w-3 h-3" /> Find contacts
@@ -1054,7 +1050,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   href={`https://finance.yahoo.com/quote/${encodeURIComponent(c.stock_ticker)}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
                 >
                   <TrendingUp className="w-3 h-3" /> {c.stock_ticker}
                 </a>
@@ -1062,7 +1058,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <button
                 type="button"
                 onClick={() => navigate("/deals")}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-[11px] font-medium transition-colors"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-xs font-medium transition-colors"
                 title="Go to Deals to add this brand to a deal"
               >
                 <Plus className="w-3 h-3" /> Add to deal
@@ -1070,7 +1066,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <button
                 type="button"
                 onClick={() => navigate("/available")}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 text-[11px] font-medium transition-colors"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-medium transition-colors"
                 title="Browse available units to pitch to this brand"
               >
                 <Building2 className="w-3 h-3" /> Pitch property
@@ -1086,7 +1082,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <div className="border-t border-border/40 mt-3 pt-2">
             <div className="flex items-center gap-1.5 mb-2">
               <Store className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Global Brand</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Global Brand</span>
             </div>
             <div className="space-y-2.5">
 
@@ -1149,38 +1145,38 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <div className="flex items-center gap-1.5">
                       <Coins className="w-3.5 h-3.5 text-amber-600" />
-                      <span className="text-[11px] font-semibold">{s.ticker}</span>
-                      {s.exchange && <span className="text-[9px] text-muted-foreground">{s.exchange}</span>}
+                      <span className="text-xs font-semibold">{s.ticker}</span>
+                      {s.exchange && <span className="text-[10px] text-muted-foreground">{s.exchange}</span>}
                       {s.shortName && <span className="text-[10px] text-muted-foreground truncate">· {s.shortName}</span>}
                     </div>
-                    <a href={`https://finance.yahoo.com/quote/${encodeURIComponent(s.ticker)}`} target="_blank" rel="noopener noreferrer" className="text-[9px] text-muted-foreground hover:text-primary flex items-center gap-0.5">
+                    <a href={`https://finance.yahoo.com/quote/${encodeURIComponent(s.ticker)}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-0.5">
                       Yahoo <ExternalLink className="w-2.5 h-2.5" />
                     </a>
                   </div>
                   <div className="grid grid-cols-4 gap-2 text-xs">
                     <div>
-                      <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Price</div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Price</div>
                       <div className="font-bold">{s.price != null ? `${curr}${s.price.toFixed(2)}` : "—"}</div>
                     </div>
                     <div>
-                      <div className="text-[9px] text-muted-foreground uppercase tracking-wide">52w</div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">52w</div>
                       <div className={`font-semibold ${changeColor} flex items-center gap-1`}>
                         {change != null && (change >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />)}
                         {changePct}
                       </div>
                     </div>
                     <div>
-                      <div className="text-[9px] text-muted-foreground uppercase tracking-wide">Mkt cap</div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Mkt cap</div>
                       <div className="font-semibold">{fmtCap(s.marketCapGBP)}</div>
                     </div>
                     <div>
-                      <div className="text-[9px] text-muted-foreground uppercase tracking-wide">P/E</div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">P/E</div>
                       <div className="font-semibold">{s.peRatio != null ? s.peRatio.toFixed(1) : "—"}</div>
                     </div>
                   </div>
                   {history.length > 5 && (
                     <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between gap-2">
-                      <span className="text-[9px] text-muted-foreground">90-day price</span>
+                      <span className="text-[10px] text-muted-foreground">90-day price</span>
                       <Sparkline values={history.map(h => h.close)} width={140} height={24} />
                     </div>
                   )}
@@ -1195,7 +1191,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 <div>
                   {c.brand_analysis ? (
                     <div className="rounded-md border border-purple-200 dark:border-purple-900 bg-purple-50/60 dark:bg-purple-950/30 p-2">
-                      <div className="flex items-center gap-1 text-[11px] text-purple-700 dark:text-purple-300 mb-1">
+                      <div className="flex items-center gap-1 text-xs text-purple-700 dark:text-purple-300 mb-1">
                         <Sparkles className="w-3 h-3" /> Global overview
                         {c.brand_analysis_at && (
                           <span className="text-[10px] text-muted-foreground ml-auto">
@@ -1215,7 +1211,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-7 text-[11px]"
+                    className="h-7 text-xs"
                     onClick={() => enrichMutation.mutate()}
                     disabled={enrichMutation.isPending}
                   >
@@ -1227,7 +1223,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
               {/* Meta row — basic facts (outreach links live in the prominent strip above tabs) */}
               {(c.founded_year || c.employee_count || c.industry) && (
-                <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   {c.founded_year && <span className="flex items-center gap-1"><Calendar className="w-3 h-3" /> Est. {c.founded_year}</span>}
                   {c.employee_count && (
                     <span className="flex items-center gap-1">
@@ -1256,7 +1252,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
               {c.store_count != null && (
                 <div>
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <div className="text-xs text-muted-foreground flex items-center gap-1">
                     <Store className="w-3 h-3" /> Stores {aiFields.store_count && <AiChip />}
                   </div>
                   <div className="font-semibold flex items-center gap-1.5">
@@ -1279,13 +1275,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               )}
               {c.rollout_status && (
                 <div>
-                  <div className="text-[11px] text-muted-foreground mb-1">Rollout {aiFields.rollout_status && <AiChip />}</div>
+                  <div className="text-xs text-muted-foreground mb-1">Rollout {aiFields.rollout_status && <AiChip />}</div>
                   <RolloutBadge status={c.rollout_status} />
                 </div>
               )}
               {c.backers && (
                 <div className="col-span-2">
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1 mb-1">
+                  <div className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
                     <Coins className="w-3 h-3" /> Backers {aiFields.backers && <AiChip />}
                   </div>
                   {Array.isArray(aiFields.backers_detail) && aiFields.backers_detail.length > 0 ? (
@@ -1296,7 +1292,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                           <div className="min-w-0">
                             <span className="font-medium">{b.name}</span>
                             {b.type && <Badge variant="outline" className="ml-1.5 text-[10px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
-                            {b.description && <p className="text-[11px] text-muted-foreground leading-snug">{b.description}</p>}
+                            {b.description && <p className="text-xs text-muted-foreground leading-snug">{b.description}</p>}
                           </div>
                         </div>
                       ))}
@@ -1345,7 +1341,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               })()}
               {c.dept_store_presence && (
                 <div className="col-span-2">
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1 mb-1">
+                  <div className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
                     <Building2 className="w-3 h-3" /> Dept store presence
                   </div>
                   <div className="text-sm">{c.dept_store_presence}</div>
@@ -1353,7 +1349,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               )}
               {c.franchise_activity && (
                 <div className="col-span-2">
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1 mb-1">
+                  <div className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
                     <MapPin className="w-3 h-3" /> Franchise activity
                   </div>
                   <div className="text-sm">{c.franchise_activity}</div>
@@ -1361,7 +1357,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               )}
               {c.annual_revenue && c.annual_revenue > 0 && (
                 <div>
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <div className="text-xs text-muted-foreground flex items-center gap-1">
                     <PoundSterling className="w-3 h-3" /> Revenue
                   </div>
                   <div className="font-semibold">
@@ -1401,7 +1397,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Hunter intel — expansion score + flags driving it */}
             {hunter && hunter.expansionFlags.length > 0 && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Flame className="w-3 h-3 text-orange-500" /> Hunter signals
                   <span className="ml-auto font-semibold text-foreground">{hunter.expansionScore}/100</span>
                 </div>
@@ -1429,7 +1425,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Represented by (agents repping this brand) */}
             {(data.representedBy.length > 0 || isBrand) && (
               <div>
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1"><Handshake className="w-3 h-3" /> Represented by</span>
                   <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("agent"); setRepForm({ ...EMPTY_REP_FORM, agent_type: "tenant_rep" }); }} data-testid="button-add-agent">
                     <Plus className="w-3 h-3 mr-0.5" /> Add agent
@@ -1460,7 +1456,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Represents (brands this agent reps) */}
             {(data.representing.length > 0 || isAgent) && (
               <div>
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Currently representing ({data.representing.length})</span>
                   <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px]" onClick={() => { setAddRep("brand"); setRepForm({ ...EMPTY_REP_FORM, agent_type: c.agent_type || "tenant_rep" }); }} data-testid="button-add-brand">
                     <Plus className="w-3 h-3 mr-0.5" /> Add brand
@@ -1569,7 +1565,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <div className="border-t border-border/40 mt-3 pt-2">
             <div className="flex items-center gap-1.5 mb-2">
               <Building2 className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">UK &amp; Covenant</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-foreground">UK &amp; Covenant</span>
             </div>
             <div className="space-y-2.5">
             <div className="flex gap-1.5 flex-wrap">
@@ -1583,7 +1579,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {covenant && (
               <div className="border-t pt-2">
                 <div className="flex items-center justify-between mb-1.5">
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <div className="text-xs text-muted-foreground flex items-center gap-1">
                     <Activity className="w-3 h-3" /> UK entity &amp; covenant
                   </div>
                   <Badge className={
@@ -1665,7 +1661,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     )}
                     {helpForm && (
                       <div className="mt-2 p-2.5 rounded border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800 space-y-2">
-                        <div className="flex items-start gap-1.5 text-[11px] text-amber-900 dark:text-amber-100">
+                        <div className="flex items-start gap-1.5 text-xs text-amber-900 dark:text-amber-100">
                           <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                           <span>
                             Couldn't find {c.name}'s UK trading entity automatically. Under the Companies Act 2006 it must be on their website — usually in the T&amp;Cs. Help us find it (any one of the three is enough):
@@ -1708,7 +1704,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                           <div className="flex gap-1.5 pt-1">
                             <Button
                               size="sm"
-                              className="h-7 text-[11px]"
+                              className="h-7 text-xs"
                               onClick={() => {
                                 const override: { tcsUrl?: string; entityName?: string; chNumber?: string } = {};
                                 if (helpForm.chNumber.trim()) override.chNumber = helpForm.chNumber.trim();
@@ -1727,7 +1723,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="h-7 text-[11px]"
+                              className="h-7 text-xs"
                               onClick={() => setHelpForm(null)}
                               disabled={manualResolveMutation.isPending}
                             >
@@ -1769,7 +1765,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5 flex items-center gap-1">
                       <BadgeInfo className="w-3 h-3" /> Experian credit report
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[11px]">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                       {covenant.experian.creditScore != null && (
                         <div>
                           <div className="text-[10px] text-muted-foreground">Credit score</div>
@@ -1839,7 +1835,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                           }
                         };
                         return (
-                          <div key={i} className="text-[11px]">
+                          <div key={i} className="text-xs">
                             <div className="flex items-baseline justify-between gap-2">
                               <span className="font-medium text-foreground/90 truncate">{o.name}</span>
                               <div className="flex items-center gap-1.5 shrink-0">
@@ -1851,7 +1847,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                                   <button
                                     onClick={lookup}
                                     disabled={a?.loading}
-                                    className="text-[9px] px-1.5 py-0.5 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                                    className="text-[10px] px-1.5 py-0.5 rounded border border-blue-200 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
                                     title="Find this officer on Apollo"
                                   >
                                     {a?.loading ? "…" : "Apollo"}
@@ -1876,14 +1872,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   </div>
                 )}
                 {covenant.companyStatus && covenant.companyStatus !== "active" && (
-                  <div className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-start gap-1.5">
+                  <div className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 flex items-start gap-1.5">
                     <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                     <div>
                       Linked CH entity is <b>{covenant.companyStatus}</b>. This may be an old holding company.
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-auto px-1 py-0 text-[11px] text-amber-700 underline"
+                        className="h-auto px-1 py-0 text-xs text-amber-700 underline"
                         onClick={() => findUkEntityMutation.mutate()}
                         disabled={findUkEntityMutation.isPending}
                       >
@@ -1910,7 +1906,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 {/* Rollout velocity — 12-month bar chart */}
                 {rolloutVelocity && rolloutVelocity.monthly && rolloutVelocity.monthly.some((m: any) => m.openings > 0 || m.closures > 0) && (
                   <div className="mt-2 pt-2 border-t">
-                    <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                    <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                       <TrendingUp className="w-3 h-3" /> Rollout velocity (last 12m)
                       <span className="ml-auto font-medium">
                         <span className="text-emerald-700">+{rolloutVelocity.openings12m}</span>
@@ -1926,14 +1922,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 {/* Store spread map */}
                 {stores.filter((s: any) => typeof s.lat === "number" && typeof s.lng === "number").length > 0 && (
                   <div className="mt-2 pt-2 border-t">
-                    <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                    <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                       <MapPin className="w-3 h-3" /> UK store spread ({stores.filter((s: any) => s.status === "open").length} open)
                     </div>
                     <BrandPortfolioMap stores={stores as any} />
                   </div>
                 )}
                 {rentAffordability && rentAffordability.rentToTurnoverPct != null && (
-                  <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] pt-2 border-t">
+                  <div className="mt-2 grid grid-cols-3 gap-2 text-xs pt-2 border-t">
                     <div>
                       <div className="text-muted-foreground">Avg rent psf</div>
                       <div className="font-semibold">
@@ -1962,7 +1958,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 )}
                 {rentComps.length > 0 && (
                   <div className="mt-2 pt-2 border-t">
-                    <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                    <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                       <PoundSterling className="w-3 h-3" /> Recent deal comps ({rentComps.length})
                     </div>
                     <div className="space-y-0.5">
@@ -1970,7 +1966,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                         const psf = rc.rent_psf_overall ?? rc.rent_psf_nia ?? rc.zone_a_rate;
                         return (
                           <Link key={rc.id} href={`/comps/${rc.id}`}>
-                            <div className="flex items-center justify-between text-[11px] hover:bg-muted/40 rounded px-1 py-0.5 cursor-pointer">
+                            <div className="flex items-center justify-between text-xs hover:bg-muted/40 rounded px-1 py-0.5 cursor-pointer">
                               <span className="truncate flex-1 min-w-0">
                                 {rc.postcode || "—"}
                                 {rc.area_sqft ? ` · ${Math.round(rc.area_sqft).toLocaleString()} sqft` : ""}
@@ -1998,7 +1994,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <div className="border-t border-border/40 mt-3 pt-2">
             <div className="flex items-center gap-1.5 mb-2">
               <Handshake className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">BGP Relationship</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-foreground">BGP Relationship</span>
             </div>
             <div className="space-y-2.5">
             <div className="flex gap-1.5 flex-wrap">
@@ -2013,7 +2009,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <div className="flex items-center gap-2 flex-wrap border-t pt-2">
                 <span className="text-[10px] text-muted-foreground font-medium">Coverage:</span>
                 {data.coverers.map((cov: any) => (
-                  <span key={cov.id} className="inline-flex items-center gap-1 text-[11px] font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-2 py-0.5">
+                  <span key={cov.id} className="inline-flex items-center gap-1 text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-2 py-0.5">
                     <Users className="w-2.5 h-2.5" /> {cov.name}
                   </span>
                 ))}
@@ -2045,7 +2041,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               const currentStatus = conceptStatusOptions.find(o => o.value === c.concept_status);
               return (
                 <div className="border-t pt-2">
-                  <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-1">
+                  <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
                     <span className="flex items-center gap-1"><Handshake className="w-3 h-3" /> Relationship</span>
                     <div className="flex items-center gap-1">
                       <span className="text-[10px] text-muted-foreground">Concept status:</span>
@@ -2097,7 +2093,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
             {/* Decision-makers — tiered: Store Dev → C-suite → Other → Apollo */}
             <div className="border-t pt-2">
-              <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center justify-between gap-1">
+              <div className="text-xs text-muted-foreground mb-1.5 flex items-center justify-between gap-1">
                 <span className="flex items-center gap-1"><Users className="w-3 h-3" /> Key contacts</span>
                 <button
                   type="button"
@@ -2112,7 +2108,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </div>
               {/* UK registered address as contact detail */}
               {covenant?.registeredAddress && (
-                <div className="text-[11px] text-muted-foreground flex items-start gap-1 mb-1.5 bg-blue-50/60 dark:bg-blue-950/20 rounded px-1.5 py-1">
+                <div className="text-xs text-muted-foreground flex items-start gap-1 mb-1.5 bg-blue-50/60 dark:bg-blue-950/20 rounded px-1.5 py-1">
                   <MapPin className="w-3 h-3 shrink-0 mt-0.5 text-blue-600" />
                   <span><span className="text-blue-700 dark:text-blue-400 font-medium">UK office:</span> {covenant.registeredAddress}</span>
                 </div>
@@ -2174,7 +2170,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* BGP relationship history */}
             {bgpSummary && (bgpSummary.totalDeals > 0 || bgpSummary.interactionsTotal > 0) && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Briefcase className="w-3 h-3" /> BGP with this brand
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
@@ -2195,7 +2191,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   {bgpSummary.team.length > 0 && (
                     <div>
                       <div className="text-[10px] text-muted-foreground">BGP team</div>
-                      <div className="font-medium truncate text-[11px]">{bgpSummary.team.slice(0, 3).join(", ")}{bgpSummary.team.length > 3 ? ` +${bgpSummary.team.length - 3}` : ""}</div>
+                      <div className="font-medium truncate text-xs">{bgpSummary.team.slice(0, 3).join(", ")}{bgpSummary.team.length > 3 ? ` +${bgpSummary.team.length - 3}` : ""}</div>
                     </div>
                   )}
                 </div>
@@ -2219,7 +2215,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Interactions timeline — last 12 BGP touchpoints */}
             {data.interactions && data.interactions.length > 0 && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1.5 flex items-center gap-1">
+                <div className="text-xs text-muted-foreground mb-1.5 flex items-center gap-1">
                   <Clock className="w-3 h-3" /> Recent interactions ({data.interactions.length})
                 </div>
                 <div className="space-y-1 border-l-2 border-purple-200 dark:border-purple-900 pl-2.5">
@@ -2233,8 +2229,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       note: "bg-zinc-50 text-zinc-700 border-zinc-200",
                     };
                     return (
-                      <div key={it.id} className="text-[11px] flex gap-1.5 items-start">
-                        <span className={`text-[9px] font-medium px-1 py-0.5 rounded border shrink-0 ${typeColor[it.type] || "bg-zinc-50 text-zinc-700 border-zinc-200"}`}>{it.type}</span>
+                      <div key={it.id} className="text-xs flex gap-1.5 items-start">
+                        <span className={`text-[10px] font-medium px-1 py-0.5 rounded border shrink-0 ${typeColor[it.type] || "bg-zinc-50 text-zinc-700 border-zinc-200"}`}>{it.type}</span>
                         <div className="flex-1 min-w-0">
                           {it.subject && <div className="font-medium truncate">{it.subject}</div>}
                           {it.preview && <div className="text-[10px] text-muted-foreground truncate">{it.preview}</div>}
@@ -2250,7 +2246,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Lease-expiry radar — tenant's upcoming lease events on our schedule */}
             {leaseEvents.length > 0 && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Clock className="w-3 h-3 text-amber-600" /> Lease events in next 18 months ({leaseEvents.length})
                 </div>
                 <div className="space-y-0.5">
@@ -2264,7 +2260,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                         <div className="text-xs flex items-center gap-1.5 hover:bg-muted/50 rounded px-1 py-0.5 cursor-pointer">
                           <Badge variant="outline" className="text-[10px] shrink-0 border-amber-300 text-amber-700 dark:border-amber-700 dark:text-amber-400 capitalize">{label}</Badge>
                           <span className="truncate flex-1">{le.property_name}{le.unit_name ? ` · ${le.unit_name}` : ""}</span>
-                          <span className="font-medium tabular-nums text-[11px] shrink-0">{nextEvent?.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</span>
+                          <span className="font-medium tabular-nums text-xs shrink-0">{nextEvent?.toLocaleDateString("en-GB", { month: "short", year: "numeric" })}</span>
                         </div>
                       </Link>
                     );
@@ -2277,7 +2273,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Space preferences — what they typically take */}
             {spacePreferences && spacePreferences.sampleSize >= 2 && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Target className="w-3 h-3" /> Space preferences (from {spacePreferences.sampleSize} comps)
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
@@ -2306,7 +2302,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Parent group + sibling brands */}
             {(parentGroup || siblingBrands.length > 0) && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Building2 className="w-3 h-3" /> Group &amp; sibling brands
                 </div>
                 {parentGroup && (
@@ -2339,7 +2335,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Competitor cluster */}
             {competitors.length > 0 && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Users className="w-3 h-3" /> Similar tenants (same use class)
                 </div>
                 <div className="flex flex-wrap gap-1">
@@ -2358,7 +2354,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Deal ledger + active pipeline */}
             {(completedDeals?.length > 0 || activeDeals?.length > 0 || requirements.length > 0) && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Briefcase className="w-3 h-3" /> Deal ledger &amp; pipeline
                 </div>
                 <div className="flex gap-2 text-xs flex-wrap">
@@ -2395,7 +2391,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Active requirements — what this brand is looking for */}
             {requirements.filter(r => r.status === "Active").length > 0 && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between">
                   <span className="flex items-center gap-1">
                     <FileText className="w-3 h-3" /> Active requirements ({requirements.filter(r => r.status === "Active").length})
                   </span>
@@ -2430,7 +2426,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Pitched-to history */}
             {pitchedTo.length > 0 && (
               <div className="border-t pt-2">
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center gap-1">
+                <div className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
                   <Target className="w-3 h-3" /> Pitched into ({pitchedTo.length})
                 </div>
                 <div className="space-y-0.5">
@@ -2451,7 +2447,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Stores — Google Places list. Auto-researched by the background
                 enrichment scheduler; manual trigger available when empty. */}
             <div className="border-t pt-2">
-              <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-1">
+              <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
                 <span className="flex items-center gap-1">
                   <MapPin className="w-3 h-3" /> UK stores ({stores.length}{c.store_count && c.store_count > 0 && stores.length !== c.store_count ? ` of ${c.store_count} global` : ""})
                 </span>
@@ -2524,7 +2520,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* Suggested BGP units — available portfolio units not yet pitched to this brand */}
             {suggestedUnits && suggestedUnits.length > 0 && (
               <div className="border-t pt-2">
-                <div className="text-[11px] font-medium text-foreground/70 mb-1 flex items-center gap-1">
+                <div className="text-xs font-medium text-foreground/70 mb-1 flex items-center gap-1">
                   <Building2 className="w-3 h-3 text-emerald-600" />
                   <span>BGP portfolio — potential pitches ({suggestedUnits.length})</span>
                 </div>
@@ -2535,13 +2531,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-medium truncate">{u.property_name}</span>
                           {u.unit_name && <span className="text-[10px] text-muted-foreground shrink-0">{u.unit_name}</span>}
-                          {u.zone && <Badge variant="outline" className="text-[9px] shrink-0">{u.zone}</Badge>}
+                          {u.zone && <Badge variant="outline" className="text-[10px] shrink-0">{u.zone}</Badge>}
                         </div>
                         {u.property_address && <div className="text-[10px] text-muted-foreground truncate">{u.property_address}</div>}
                       </div>
                       <div className="text-right shrink-0">
-                        {u.rent_pa != null && <div className="font-semibold text-[11px]">£{Math.round(u.rent_pa / 1000)}k pa</div>}
-                        {u.sqft != null && <div className="text-[9px] text-muted-foreground">{Math.round(u.sqft).toLocaleString()} sqft</div>}
+                        {u.rent_pa != null && <div className="font-semibold text-xs">£{Math.round(u.rent_pa / 1000)}k pa</div>}
+                        {u.sqft != null && <div className="text-[10px] text-muted-foreground">{Math.round(u.sqft).toLocaleString()} sqft</div>}
                       </div>
                       <ExternalLink className="w-2.5 h-2.5 text-muted-foreground opacity-0 group-hover:opacity-100 shrink-0" />
                     </Link>
@@ -2558,7 +2554,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <div className="flex items-center justify-between gap-2 mb-2">
               <div className="flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5 text-muted-foreground" />
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Intel &amp; News</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Intel &amp; News</span>
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <Button
@@ -2606,7 +2602,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
             {/* Signals feed */}
             <div>
-              <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-1">
+              <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
                 <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({data.signals.length})</span>
                 <button
                   onClick={() => setAddSignalOpen(v => !v)}
@@ -2781,13 +2777,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     {newsTab === "industry" && allSources.length > 1 && (
                       <div className="flex items-center gap-1 flex-wrap justify-end">
                         {newsSourceFilter && (
-                          <button onClick={() => setNewsSourceFilter(null)} className="text-[9px] text-muted-foreground hover:text-foreground underline">All</button>
+                          <button onClick={() => setNewsSourceFilter(null)} className="text-[10px] text-muted-foreground hover:text-foreground underline">All</button>
                         )}
                         {allSources.slice(0, 5).map(s => (
                           <button
                             key={s}
                             onClick={() => setNewsSourceFilter(s === newsSourceFilter ? null : s)}
-                            className={`text-[9px] font-medium px-1.5 py-0.5 rounded border transition-colors ${newsSourceFilter === s ? newsSourceColor(s) : "border-border text-muted-foreground hover:bg-muted"}`}
+                            className={`text-[10px] font-medium px-1.5 py-0.5 rounded border transition-colors ${newsSourceFilter === s ? newsSourceColor(s) : "border-border text-muted-foreground hover:bg-muted"}`}
                           >
                             {s}
                           </button>
@@ -2796,7 +2792,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     )}
                   </div>
                   {newsTab === "press" && pressSignals.length === 0 && filtered.length === 0 && (
-                    <p className="text-[11px] text-muted-foreground italic">No press releases scraped yet — run "Scrape" from Intel zone.</p>
+                    <p className="text-xs text-muted-foreground italic">No press releases scraped yet — run "Scrape" from Intel zone.</p>
                   )}
                   <div className="space-y-2">
                     {visible.map((article) => {
@@ -2838,14 +2834,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
                               {article.source_name && (
-                                <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded border ${newsSourceColor(article.source_name)}`}>
+                                <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${newsSourceColor(article.source_name)}`}>
                                   {article.source_name}
                                 </span>
                               )}
                               {article.category && article.category !== "general" && (
-                                <span className="text-[9px] text-muted-foreground uppercase tracking-wide">{article.category}</span>
+                                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{article.category}</span>
                               )}
-                              <span className="text-[9px] text-muted-foreground ml-auto shrink-0">{relDate(article.published_at)}</span>
+                              <span className="text-[10px] text-muted-foreground ml-auto shrink-0">{relDate(article.published_at)}</span>
                             </div>
                             <p className="text-xs font-medium leading-snug line-clamp-2 group-hover:text-primary transition-colors">{article.title}</p>
                             {displayText && (
@@ -2880,14 +2876,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             <div className="border-t border-border/40 mt-3 pt-2">
             <div className="flex items-center gap-1.5 mb-2">
               <FileText className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Documents &amp; Gallery</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Documents &amp; Gallery</span>
             </div>
             <div className="space-y-2.5">
               {/* SharePoint folder link */}
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary hover:underline"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
                   onClick={() => {
                     fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include" })
                       .then(r => r.json())
@@ -2999,7 +2995,7 @@ function ContactRow({ dm }: { dm: { id: string; name: string; role: string | nul
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {dm.enrichment_source === "apollo-search" && (
-            <span title="Found via Apollo" className="text-[9px] text-purple-500 font-medium">A</span>
+            <span title="Found via Apollo" className="text-[10px] text-purple-500 font-medium">A</span>
           )}
           {dm.phone && (
             <a href={`tel:${dm.phone}`} onClick={e => e.stopPropagation()} title={dm.phone}
@@ -3035,7 +3031,7 @@ function StockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: s
 
   if (isLoading || !s) {
     return (
-      <div className="rounded border bg-muted/30 px-2 py-1.5 text-[11px] text-muted-foreground flex items-center gap-1 animate-pulse">
+      <div className="rounded border bg-muted/30 px-2 py-1.5 text-xs text-muted-foreground flex items-center gap-1 animate-pulse">
         <TrendingUp className="w-3 h-3" /> {ticker} — fetching…
       </div>
     );
@@ -3062,7 +3058,7 @@ function StockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: s
         <span className="font-semibold tabular-nums">{priceLabel}</span>
       </div>
       {/* Stats row */}
-      <div className="flex items-center gap-3 px-2.5 pb-1.5 text-[11px]">
+      <div className="flex items-center gap-3 px-2.5 pb-1.5 text-xs">
         {chg != null && (
           <span className={`font-medium ${chgColor}`}>
             {chg >= 0 ? "+" : ""}{chg.toFixed(1)}% YoY
@@ -3080,7 +3076,7 @@ function StockSnapshotCard({ companyId, ticker }: { companyId: string; ticker: s
       {history.length >= 5 && (
         <div className="px-1 pb-1">
           <MiniPriceChart points={history} height={52} />
-          <div className="flex justify-between text-[9px] text-muted-foreground px-1 mt-0.5">
+          <div className="flex justify-between text-[10px] text-muted-foreground px-1 mt-0.5">
             <span>{history[0]?.date?.slice(5)}</span>
             <span>3 months</span>
             <span>{history[history.length - 1]?.date?.slice(5)}</span>
@@ -3120,9 +3116,9 @@ function TickerSuggestPicker({ companyId, onSelect }: { companyId: string; onSel
   return (
     <div className="rounded border bg-background shadow-sm p-1.5 space-y-0.5">
       <div className="text-[10px] text-muted-foreground px-1 pb-0.5">Select the correct listing:</div>
-      {isLoading && <div className="text-[11px] text-muted-foreground px-1 py-0.5 animate-pulse">Searching Yahoo Finance…</div>}
+      {isLoading && <div className="text-xs text-muted-foreground px-1 py-0.5 animate-pulse">Searching Yahoo Finance…</div>}
       {!isLoading && data?.suggestions?.length === 0 && (
-        <div className="text-[11px] text-muted-foreground px-1 italic">No public listings found</div>
+        <div className="text-xs text-muted-foreground px-1 italic">No public listings found</div>
       )}
       {data?.suggestions?.map((s) => (
         <button
