@@ -324,6 +324,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [officerApollo, setOfficerApollo] = useState<Record<string, { loading: boolean; match: any | null; error?: string }>>({});
   const [contactsFinding, setContactsFinding] = useState(false);
   const autoContactsRan = useRef(false);
+  const [kycRunning, setKycRunning] = useState(false);
+  const autoKycRan = useRef(false);
 
   async function runContactDiscovery() {
     setContactsFinding(true);
@@ -346,6 +348,18 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     }
   }
 
+  async function runKycCheck() {
+    setKycRunning(true);
+    try {
+      await apiRequest("POST", `/api/kyc/run-all-checks`, { companyId });
+    } catch (e) {
+      // silent — orchestrator may partially fail (Veriff, etc.); covenant data still gets saved
+    } finally {
+      setKycRunning(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    }
+  }
+
   const { data, isLoading, isError } = useQuery<BrandProfile>({
     queryKey: ["/api/brand", companyId, "profile"],
     queryFn: async () => {
@@ -362,6 +376,15 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     if (!data || autoContactsRan.current) return;
     autoContactsRan.current = true;
     if (data.contacts.length === 0) runContactDiscovery();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  useEffect(() => {
+    if (!data || autoKycRan.current) return;
+    autoKycRan.current = true;
+    const hasCh = !!data.company?.companies_house_number;
+    const hasExperian = !!(data as any).covenant?.experian;
+    if (hasCh && !hasExperian) runKycCheck();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
@@ -1825,6 +1848,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     </div>
                   </div>
                 </div>
+                {!covenant.experian && kycRunning && (
+                  <div className="mt-2 pt-2 border-t">
+                    <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1 flex items-center gap-1 animate-pulse">
+                      <BadgeInfo className="w-3 h-3" /> Running Experian credit check…
+                    </div>
+                  </div>
+                )}
                 {covenant.experian && (
                   <div className="mt-2 pt-2 border-t">
                     <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5 flex items-center gap-1">
