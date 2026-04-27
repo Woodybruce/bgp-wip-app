@@ -846,18 +846,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </Badge>
           )}
           {c.agent_type && <Badge className="bg-blue-50 text-blue-700 border-purple-200 text-[10px]">{c.agent_type.replace(/_/g, " ")}</Badge>}
-          {covenant && (
-            <Badge className={
-              covenant.trafficLight === "green" ? "bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]" :
-              covenant.trafficLight === "amber" ? "bg-amber-100 text-amber-700 border-amber-200 text-[10px]" :
-              "bg-red-100 text-red-700 border-red-200 text-[10px]"
-            }>
-              Covenant: {covenant.trafficLight === "green" ? "Strong" : covenant.trafficLight === "amber" ? "Verify" : "At risk"}
-            </Badge>
-          )}
-          {c.kyc_status === "pass" && <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-[10px]">KYC Passed</Badge>}
-          {c.kyc_status === "warning" && <Badge className="bg-amber-100 text-amber-700 border-amber-200 text-[10px]">KYC Review</Badge>}
-          {c.kyc_status === "fail" && <Badge className="bg-red-100 text-red-700 border-red-200 text-[10px]">KYC Failed</Badge>}
           {(() => {
             const lastContactedAt = data.contacts.map((ct: any) => ct.last_contacted_at).filter(Boolean).sort().reverse()[0] as string | undefined;
             const lastContactor = lastContactedAt ? data.contacts.find((ct: any) => ct.last_contacted_at === lastContactedAt) : null;
@@ -871,63 +859,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           })()}
           {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
         </CardTitle>
-        {(c.industry || (c.employee_count && c.employee_count > 0) || c.founded_year || data.parentGroup || c.backers || c.head_office_address || (c.stock_ticker && stockData?.snapshot)) && (
-          <div className="text-xs text-muted-foreground flex items-center flex-wrap gap-x-1.5 gap-y-0.5">
-            {c.industry && <span>{c.industry}</span>}
-            {c.employee_count && c.employee_count > 0 && (
-              <span>· {c.employee_count >= 10000
-                ? `~${Math.round(c.employee_count / 1000)}k employees`
-                : c.employee_count >= 1000
-                  ? `~${(c.employee_count / 1000).toFixed(1)}k employees`
-                  : `${c.employee_count} employees`}</span>
-            )}
-            {c.founded_year && <span>· Est. {c.founded_year}</span>}
-            {(() => {
-              const a = c.head_office_address;
-              if (!a) return null;
-              const short = [a.city, a.country].filter(Boolean).join(", ");
-              const full = [a.street, a.city, a.country].filter(Boolean).join(", ") || a.address || "";
-              const display = short || a.address || "";
-              if (!display) return null;
-              return (
-                <span title={full || display} className="inline-flex items-center gap-0.5">
-                  · <Building2 className="w-2.5 h-2.5" /> HQ {display}
-                </span>
-              );
-            })()}
-            {data.parentGroup && (
-              <span>· Part of <Link href={`/companies/${data.parentGroup.id}`} className="text-primary hover:underline">{data.parentGroup.name}</Link></span>
-            )}
-            {c.stock_ticker && stockData?.snapshot && (() => {
-              const s = stockData.snapshot;
-              const change = s.fiftyTwoWeekChange;
-              const changeColor = change == null ? "text-muted-foreground" : change >= 0 ? "text-emerald-700" : "text-red-600";
-              const changePct = change != null ? `${change >= 0 ? "+" : ""}${(change * 100).toFixed(1)}%` : null;
-              const curr = s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "£";
-              const fmtCap = (v: number | null) => {
-                if (v == null) return null;
-                if (v >= 1e9) return `£${(v / 1e9).toFixed(1)}B`;
-                if (v >= 1e6) return `£${(v / 1e6).toFixed(0)}M`;
-                return `£${(v / 1e3).toFixed(0)}K`;
-              };
-              return (
-                <a
-                  href={`https://finance.yahoo.com/quote/${encodeURIComponent(s.ticker)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground"
-                  title={`${s.shortName || s.ticker} on ${s.exchange || "Yahoo Finance"}`}
-                >
-                  <Coins className="w-2.5 h-2.5 text-amber-600" />
-                  {s.ticker}
-                  {s.price != null && <span className="font-semibold">{curr}{s.price.toFixed(2)}</span>}
-                  {changePct && <span className={changeColor}>{changePct}</span>}
-                  {fmtCap(s.marketCapGBP) && <span className="text-muted-foreground">· {fmtCap(s.marketCapGBP)}</span>}
-                </a>
-              );
-            })()}
-          </div>
-        )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <Button
@@ -1066,24 +997,71 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             {/* ── Details card ─────────────────────────────── */}
             {(() => {
               const a = c.head_office_address;
+              const hqFull = a ? [a.street, a.city, a.country].filter(Boolean).join(", ") || a.address || null : null;
               const hqShort = a ? [a.city, a.country].filter(Boolean).join(", ") || a.address || null : null;
-              const hasDetails = !!(c.industry || hqShort || (c.employee_count && c.employee_count > 0) || c.annual_revenue || c.founded_year);
+              const hasDetails = !!(c.industry || hqShort || (c.employee_count && c.employee_count > 0) || c.annual_revenue || c.founded_year || c.stock_ticker);
               if (!hasDetails) return null;
               const empStr = c.employee_count && c.employee_count > 0
                 ? c.employee_count >= 10000 ? `~${Math.round(c.employee_count / 1000)}k employees`
                   : c.employee_count >= 1000 ? `~${(c.employee_count / 1000).toFixed(1)}k employees`
                   : `${c.employee_count} employees`
                 : null;
+              const fmtRevenue = (v: number) => v >= 1_000_000_000 ? `$${(v / 1_000_000_000).toFixed(1)}B` : `$${(v / 1_000_000).toFixed(0)}M`;
+              const snap = stockData?.snapshot;
+              const fmtCap = (v: number | null) => {
+                if (v == null) return null;
+                if (v >= 1e9) return `£${(v / 1e9).toFixed(1)}B`;
+                if (v >= 1e6) return `£${(v / 1e6).toFixed(0)}M`;
+                return `£${(v / 1e3).toFixed(0)}K`;
+              };
               return (
                 <div className="rounded-md border border-border/40 bg-muted/20 p-2 mb-2 order-0 flex flex-wrap gap-x-3 gap-y-0.5 items-center">
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1">
                     <Building2 className="w-3 h-3" /> Details
                   </span>
                   {c.industry && <span className="text-xs text-foreground">{c.industry}</span>}
-                  {hqShort && <span className="text-xs text-muted-foreground flex items-center gap-0.5"><MapPin className="w-2.5 h-2.5 shrink-0" />{hqShort}</span>}
+                  {hqShort && (
+                    <span className="text-xs text-muted-foreground flex items-center gap-0.5" title={hqFull || hqShort}>
+                      <MapPin className="w-2.5 h-2.5 shrink-0" />Global HQ: {hqShort}
+                    </span>
+                  )}
                   {empStr && <span className="text-xs text-muted-foreground">{empStr}</span>}
-                  {c.annual_revenue && <span className="text-xs text-muted-foreground">Revenue {c.annual_revenue}</span>}
+                  {c.annual_revenue && c.annual_revenue > 0 && (
+                    <span className="text-xs text-muted-foreground">Global revenue {fmtRevenue(c.annual_revenue)}</span>
+                  )}
                   {c.founded_year && <span className="text-xs text-muted-foreground">Est. {c.founded_year}</span>}
+                  {c.stock_ticker && snap && (() => {
+                    const s = snap;
+                    const change = s.fiftyTwoWeekChange;
+                    const changeColor = change == null ? "text-muted-foreground" : change >= 0 ? "text-emerald-700" : "text-red-600";
+                    const changePct = change != null ? `${change >= 0 ? "+" : ""}${(change * 100).toFixed(1)}%` : null;
+                    const curr = s.currency === "USD" ? "$" : s.currency === "EUR" ? "€" : "£";
+                    return (
+                      <a
+                        href={`https://finance.yahoo.com/quote/${encodeURIComponent(s.ticker)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground"
+                        title={`${s.shortName || s.ticker} on ${s.exchange || "Yahoo Finance"}`}
+                      >
+                        <Coins className="w-2.5 h-2.5 text-amber-600" />
+                        {s.ticker}
+                        {s.price != null && <span className="font-semibold">{curr}{s.price.toFixed(2)}</span>}
+                        {changePct && <span className={changeColor}>{changePct}</span>}
+                        {fmtCap(s.marketCapGBP) && <span className="text-muted-foreground">· {fmtCap(s.marketCapGBP)}</span>}
+                      </a>
+                    );
+                  })()}
+                  {c.stock_ticker && !snap && (
+                    <a
+                      href={`https://finance.yahoo.com/quote/${encodeURIComponent(c.stock_ticker)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 bg-muted/40 hover:bg-muted text-[11px] font-medium text-foreground"
+                    >
+                      <Coins className="w-2.5 h-2.5 text-amber-600" /> {c.stock_ticker}
+                    </a>
+                  )}
                 </div>
               );
             })()}
