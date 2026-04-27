@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
+import { useChatBGPState } from "@/contexts/chatbgp-context";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -256,6 +257,8 @@ const EMPTY_REP_FORM: RepForm = { otherCompanyId: "", otherCompanyName: "", agen
 
 export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const { setInput: setChatInput } = useChatBGPState();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<Partial<BrandProfile["company"]>>({});
   const [addRep, setAddRep] = useState<"brand" | "agent" | null>(null);
@@ -789,6 +792,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </TabsList>
             <TabsContent value="brand" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
             <BgpTakeStrip companyId={companyId} tab="brand" />
+            <div className="flex gap-1.5 flex-wrap">
+              {[`Tell me everything BGP needs to know about ${c.name} before a first call`, `What space would ${c.name} want and what BGP properties could work?`].map(q => (
+                <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
+                  <Sparkles className="w-2.5 h-2.5 shrink-0" />{q}
+                </button>
+              ))}
+            </div>
             {/* ── Global brand ─────────────────────────────────────────── */}
             <div className="space-y-2">
               {/* Single description — prefer brand_analysis (more detailed), fall back to description */}
@@ -1160,6 +1170,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
             <TabsContent value="uk" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
             <BgpTakeStrip companyId={companyId} tab="uk" />
+            <div className="flex gap-1.5 flex-wrap">
+              {[`What's ${c.name}'s covenant risk? How should we position this to a landlord?`, `Walk me through ${c.name}'s UK financials and what they mean for rent affordability`].map(q => (
+                <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
+                  <Sparkles className="w-2.5 h-2.5 shrink-0" />{q}
+                </button>
+              ))}
+            </div>
             {/* Covenant strip — CH financials + traffic light */}
             {covenant && (
               <div className="border-t pt-2">
@@ -1450,6 +1467,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
 
             <TabsContent value="activity" className="space-y-2.5 mt-0 data-[state=inactive]:hidden">
             <BgpTakeStrip companyId={companyId} tab="activity" />
+            <div className="flex gap-1.5 flex-wrap">
+              {[`Who should BGP contact at ${c.name} and what's the best approach?`, `Draft a brief introductory pitch email from BGP to ${c.name}`].map(q => (
+                <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
+                  <Sparkles className="w-2.5 h-2.5 shrink-0" />{q}
+                </button>
+              ))}
+            </div>
             {/* Relationship strip — lead broker, last touchpoint, active contacts */}
             {(c.bgp_contact_crm || data.contacts.length > 0) && (() => {
               const lastContactedAt = data.contacts
@@ -1917,6 +1941,13 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 <Search className={`w-3 h-3 ${refreshIntelMutation.isPending ? "animate-spin" : ""}`} />
                 {refreshIntelMutation.isPending ? "Fetching…" : "Refresh intel"}
               </Button>
+            </div>
+            <div className="flex gap-1.5 flex-wrap">
+              {[`What are the key signals about ${c.name} right now and what should BGP do?`, `Should BGP be pitching ${c.name} new space — if so, where and why?`].map(q => (
+                <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
+                  <Sparkles className="w-2.5 h-2.5 shrink-0" />{q}
+                </button>
+              ))}
             </div>
             {/* Images */}
             {data.images.length > 0 && (
