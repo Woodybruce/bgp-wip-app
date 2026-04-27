@@ -869,6 +869,20 @@ function PeopleHub() {
     });
   }, [companies]);
 
+  const agentCompaniesCount = useMemo(() => {
+    return companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent").length;
+  }, [companies]);
+
+  // Contacts visible in this hub = those tied to a landlord or agent company.
+  // Excludes brand/tenant contacts (which live in Brands Hub).
+  const hubContactCount = useMemo(() => {
+    const hubCompanyIds = new Set<string>([
+      ...landlordCompanies.map((c) => c.id),
+      ...companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent").map((c) => c.id),
+    ]);
+    return contacts.filter((c) => c.companyId && hubCompanyIds.has(c.companyId)).length;
+  }, [contacts, companies, landlordCompanies]);
+
   const scopedLandlordCompany = scopedLandlord ? companies.find(c => c.id === scopedLandlord) : null;
   const tabs = scopedLandlord ? SCOPED_TABS : isLandsec ? LANDSEC_TABS : ALL_TABS;
 
@@ -892,7 +906,7 @@ function PeopleHub() {
           <p className="text-sm text-muted-foreground">
             {scopedLandlordCompany
               ? "Agents & tenants relevant to this landlord"
-              : `${companies.length.toLocaleString()} companies · ${contacts.length.toLocaleString()} contacts`}
+              : `${landlordCompanies.length.toLocaleString()} landlords · ${agentCompaniesCount.toLocaleString()} agents · ${hubContactCount.toLocaleString()} contacts`}
           </p>
         </div>
         <div className="flex items-center gap-2">
