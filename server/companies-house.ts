@@ -2407,9 +2407,9 @@ Return both null if the page doesn't disclose a UK trading entity.`;
   const PROXY_BUDGET = 8; // cap residential-proxy calls per resolve
   const tryFetch = async (
     url: string,
-    init: RequestInit & { timeoutMs?: number; proxy?: boolean } = {},
+    init: RequestInit & { timeoutMs?: number; proxy?: boolean; renderFallback?: boolean } = {},
   ): Promise<Response | null> => {
-    const { timeoutMs, proxy = true, ...rest } = init;
+    const { timeoutMs, proxy = true, renderFallback = false, ...rest } = init;
     if (overBudget()) return null;
     const direct = await fetch(url, {
       ...rest,
@@ -2419,11 +2419,26 @@ Return both null if the page doesn't disclose a UK trading entity.`;
     const blocked = !direct || direct.status === 403 || direct.status === 503 || direct.status === 429;
     if (blocked && proxy && proxyCalls < PROXY_BUDGET && !overBudget() && isScraperApiAvailable()) {
       proxyCalls++;
-      return scraperFetch(url, {
+      const proxyResp = await scraperFetch(url, {
         ...rest,
         timeoutMs: 12_000,
         signal: rest.signal,
       }).catch(() => null);
+      if (proxyResp && proxyResp.ok) return proxyResp;
+      // Premium proxy also blocked — try headless Chromium (render=true) which
+      // handles Akamai/Cloudflare JS challenges that reject residential IPs.
+      // Only for targeted fetches (renderFallback=true) to keep render-credit spend low.
+      const proxyBlocked = !proxyResp || proxyResp.status === 403 || proxyResp.status === 503 || proxyResp.status === 429;
+      if (renderFallback && proxyBlocked && proxyCalls < PROXY_BUDGET && !overBudget()) {
+        proxyCalls++;
+        return scraperFetch(url, {
+          ...rest,
+          timeoutMs: 35_000,
+          render: true,
+          signal: rest.signal,
+        }).catch(() => null);
+      }
+      return proxyResp;
     }
     return direct; // non-ok but not bot-blocked — return so callers see the status
   };
@@ -2501,7 +2516,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
         if (overBudget()) break;
         const lpUrl = `${base}${lp}`;
         try {
-          const resp = await tryFetch(lpUrl, { headers: { "User-Agent": UA }, timeoutMs: 6000, redirect: "follow" });
+          const resp = await tryFetch(lpUrl, { headers: { "User-Agent": UA }, timeoutMs: 6000, redirect: "follow", renderFallback: true });
           if (!resp || !resp.ok) { t("locale.early", `${lpUrl} → ${resp ? resp.status : "no response"} (skip)`); continue; }
           const ct = resp.headers.get("content-type") || "";
           if (!ct.includes("html") && !ct.includes("text")) { t("locale.early", `${lpUrl} → non-html`); continue; }
