@@ -462,6 +462,15 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       [companyId]
     );
 
+    // Latest KYC investigation for this company — provides Experian data
+    const kycInvestigationQ = pool.query(
+      `SELECT result->'experian' AS experian
+         FROM kyc_investigations
+        WHERE crm_company_id = $1
+        ORDER BY conducted_at DESC LIMIT 1`,
+      [companyId]
+    );
+
     const empty = { rows: [] };
     const safe = (p: Promise<any>) => p.catch((e: any) => { console.error("[brand-profile] query failed:", e?.message); return empty; });
     const [
@@ -470,14 +479,14 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       requirements, pitchedTo, contacts, stores, turnover,
       rolloutVelocityRow, rentComps,
       bgpDeals, bgpInteractions, bgpInteractionsList, decisionMakers, leaseEvents, competitors,
-      rolloutMonthly,
+      rolloutMonthly, kycInvestigation,
     ] = await Promise.all([
       companyQ, safe(signalsQ), safe(repsForBrandQ), safe(brandsForAgentQ),
       safe(kycQ), safe(imagesQ), safe(dealsQ), safe(parentGroupQ), safe(siblingsQ), safe(newsQ),
       safe(requirementsQ), safe(pitchedToQ), safe(contactsQ), safe(storesQ), safe(turnoverQ),
       safe(rolloutVelocityQ), safe(rentCompsQ),
       safe(bgpDealsQ), safe(bgpInteractionsQ), safe(bgpInteractionsListQ), safe(decisionMakersQ), safe(leaseEventsQ), safe(competitorsQ),
-      safe(rolloutMonthlyQ),
+      safe(rolloutMonthlyQ), safe(kycInvestigationQ),
     ]);
 
     if (!company.rows[0]) return res.status(404).json({ error: "Company not found" });
@@ -557,7 +566,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
         : chProfile.companyStatus === "active" && !chProfile.accountsOverdue
           ? "green"
           : "amber",
-      experian: chData.experian || null,
+      experian: kycInvestigation.rows[0]?.experian || chData.experian || null,
     } : null;
 
     // Deal ledger summary
