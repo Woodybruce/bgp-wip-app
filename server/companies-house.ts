@@ -2388,21 +2388,32 @@ Return both null if the page doesn't disclose a UK trading entity.`;
   // bot-walls that 403 every datacenter IP — direct fetch from Railway
   // dies on them. ScraperAPI's residential pool bypasses the wall.
   // Treat any 403/503/timeout as a signal to retry through the proxy.
+  //
+  // proxy=false skips the ScraperAPI fallback — used for speculative API
+  // endpoints (Shopify /policies/*.json, WP /wp-json/*) where a 404 is
+  // a real "not present" signal, not a bot wall, so paying for a proxy
+  // call to confirm the 404 is wasted budget.
+  const deadline = Date.now() + 25_000;
+  const overBudget = () => Date.now() > deadline;
+  let proxyCalls = 0;
+  const PROXY_BUDGET = 8; // cap residential-proxy calls per resolve
   const tryFetch = async (
     url: string,
-    init: RequestInit & { timeoutMs?: number } = {},
+    init: RequestInit & { timeoutMs?: number; proxy?: boolean } = {},
   ): Promise<Response | null> => {
-    const { timeoutMs, ...rest } = init;
+    const { timeoutMs, proxy = true, ...rest } = init;
+    if (overBudget()) return null;
     const direct = await fetch(url, {
       ...rest,
       signal: rest.signal ?? AbortSignal.timeout(timeoutMs ?? 6000),
     }).catch(() => null);
     if (direct && direct.ok) return direct;
     const blocked = !direct || direct.status === 403 || direct.status === 503 || direct.status === 429;
-    if (blocked && isScraperApiAvailable()) {
+    if (blocked && proxy && proxyCalls < PROXY_BUDGET && !overBudget() && isScraperApiAvailable()) {
+      proxyCalls++;
       return scraperFetch(url, {
         ...rest,
-        timeoutMs: 25000,
+        timeoutMs: 12_000,
         signal: rest.signal,
       }).catch(() => null);
     }
@@ -2410,6 +2421,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
   };
 
   for (const base of baseUrls) {
+    if (overBudget()) break;
     // Probe + discover — fetch homepage, confirm it's alive, capture HTML so
     // we can harvest legal links from the footer (Step 0 below). Routes
     // through ScraperAPI on bot-wall (403/Akamai) so premium-retailer sites
@@ -2466,10 +2478,11 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       }
 
       for (const url of discovered) {
+        if (overBudget()) break;
         try {
           const resp = await tryFetch(url, {
             headers: { "User-Agent": UA },
-            timeoutMs: 8000,
+            timeoutMs: 6000,
             redirect: "follow",
           });
           if (!resp || !resp.ok) continue;
@@ -2498,10 +2511,12 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       "/policies/refund-policy.json",
     ];
     for (const path of shopifyPolicies) {
+      if (overBudget()) break;
       try {
         const resp = await tryFetch(`${base}${path}`, {
           headers: { "User-Agent": UA },
-          timeoutMs: 7000,
+          timeoutMs: 5000,
+          proxy: false, // /policies/*.json: 404 = not Shopify, not Akamai-blocked
           redirect: "follow",
         });
         if (!resp || !resp.ok) continue;
@@ -2526,10 +2541,12 @@ Return both null if the page doesn't disclose a UK trading entity.`;
     // ── Step 2: WordPress REST API ────────────────────────────────────────────
     const wpSlugs = ["terms-and-conditions", "terms-of-service", "terms", "privacy-policy", "legal"];
     for (const slug of wpSlugs) {
+      if (overBudget()) break;
       try {
         const resp = await tryFetch(`${base}/wp-json/wp/v2/pages?slug=${slug}&_fields=content`, {
           headers: { "User-Agent": UA },
-          timeoutMs: 6000,
+          timeoutMs: 4000,
+          proxy: false, // WP REST: 404 = not WordPress, not a bot wall
           redirect: "follow",
         });
         if (!resp || !resp.ok) continue;
@@ -2551,11 +2568,12 @@ Return both null if the page doesn't disclose a UK trading entity.`;
 
     // ── Step 3: Regular HTML pages (static sites / SSR) ──────────────────────
     for (const page of pages) {
+      if (overBudget()) break;
       const url = `${base}${page}`;
       try {
         const resp = await tryFetch(url, {
           headers: { "User-Agent": UA },
-          timeoutMs: 8000,
+          timeoutMs: 6000,
           redirect: "follow",
         });
         if (!resp || !resp.ok) continue;
