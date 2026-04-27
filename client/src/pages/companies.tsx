@@ -162,6 +162,7 @@ function KycInlineSummary({ company }: { company: CrmCompany }) {
   const storedPscs = chData?.pscs || [];
   const activePscs = storedPscs.filter((p: any) => !p.ceasedOn);
   const checkedAt = chData?.checkedAt || (company as any).kycCheckedAt;
+  const experian = chData?.experian;
 
   if (!chData && !kycStatus) return null;
 
@@ -175,6 +176,19 @@ function KycInlineSummary({ company }: { company: CrmCompany }) {
         {!kycStatus && chData && <Badge variant="outline" className="text-[10px]"><ShieldCheck className="w-3 h-3 mr-1" />Linked — not checked</Badge>}
         {checkedAt && <span className="text-[10px] text-muted-foreground">{new Date(checkedAt).toLocaleDateString("en-GB")}</span>}
       </div>
+      {experian && (
+        <div className="mt-1.5">
+          <p className="text-[10px] text-muted-foreground">Experian covenant</p>
+          <div className="flex items-center gap-2 flex-wrap mt-0.5">
+            {experian.creditBand && <Badge variant="outline" className="text-[10px]">Band {experian.creditBand}</Badge>}
+            {experian.riskIndicator && <Badge variant="outline" className="text-[10px]">{experian.riskIndicator}</Badge>}
+            {experian.creditScore != null && <span className="text-[10px] text-muted-foreground">Score {experian.creditScore}/100</span>}
+            {experian.creditLimit != null && <span className="text-[10px] text-muted-foreground">· Limit £{Number(experian.creditLimit).toLocaleString()}</span>}
+            {!!experian.ccj && <Badge className="text-[10px] bg-red-100 text-red-700 border-0">{experian.ccj} CCJ{experian.ccj === 1 ? "" : "s"}{experian.ccjTotalValue ? ` · £${Number(experian.ccjTotalValue).toLocaleString()}` : ""}</Badge>}
+            {experian.turnover != null && <span className="text-[10px] text-muted-foreground">· Turnover £{Number(experian.turnover).toLocaleString()}</span>}
+          </div>
+        </div>
+      )}
       {activePscs.length > 0 && (
         <div className="mt-1.5 space-y-0.5">
           <p className="text-[10px] text-muted-foreground">Ownership (PSCs)</p>

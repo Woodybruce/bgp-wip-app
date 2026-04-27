@@ -368,6 +368,9 @@ async function performAutoKyc(companyId: string, opts: {
   manualChNumber?: string | null;
   manualEntityName?: string | null;
   manualTcsUrl?: string | null;
+  // Conducting user — used so the persisted kyc_investigations row carries
+  // an audit trail. Null is acceptable for system/cron-driven runs.
+  userId?: string | null;
 } = {}): Promise<{
   success: boolean;
   kycStatus: string;
@@ -381,6 +384,10 @@ async function performAutoKyc(companyId: string, opts: {
   message?: string;
   resolvedFrom?: "stored" | "website" | "ai_picker" | "name_match";
   diagnostics?: Array<{ step: string; outcome: string; detail?: string }>;
+  experian?: any;
+  riskLevel?: string;
+  riskScore?: number;
+  investigationId?: number | null;
 }> {
   const { db } = await import("./db");
   const { crmCompanies } = await import("@shared/schema");
@@ -799,7 +806,20 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
       ? "pass"
       : "warning";
 
-  const kycReport = {
+  // Experian commercial credit — non-fatal. Pulls a covenant view (credit
+  // score, recommended limit, CCJs, turnover) so leasing can sanity-check
+  // affordability at the brand stage rather than waiting for the deal AML.
+  let experianReport: any = null;
+  try {
+    const { fetchCommercialCredit, isExperianConfigured } = await import("./experian");
+    if (isExperianConfigured()) {
+      experianReport = await fetchCommercialCredit(chNumber!);
+    }
+  } catch (err: any) {
+    console.warn(`[auto-kyc] Experian lookup failed for "${company.name}":`, err?.message);
+  }
+
+  const kycReport: any = {
     profile,
     officers,
     pscs,
@@ -812,6 +832,7 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
     },
     checkedAt: new Date().toISOString(),
   };
+  if (experianReport) kycReport.experian = experianReport;
 
   await db.update(crmCompanies).set({
     companiesHouseNumber: chNumber,
@@ -821,7 +842,71 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
     kycCheckedAt: new Date(),
   }).where(eq(crmCompanies.id, company.id));
 
-  console.log(`[companies-house] Auto-KYC for "${company.name}" → ${kycStatus} (CH: ${chNumber}, resolvedFrom: ${resolvedFrom})`);
+  // Persist to kyc_investigations so this run shows up in the Clouseau
+  // history tab alongside investigator-launched checks. Risk is computed off
+  // the raw CH responses; sanctions screening isn't run here (use the deal
+  // AML sweep for that) so sanctions_match is left false.
+  let investigationId: number | null = null;
+  let riskLevel = "low";
+  let riskScore = 0;
+  try {
+    const { assessRisk, logKycAudit } = await import("./kyc-clouseau");
+    const { pool } = await import("./db");
+    const rawData = {
+      profile: profileData,
+      officers: officerResult.status === "fulfilled" ? officerResult.value.items || [] : [],
+      pscs: pscResult.status === "fulfilled" ? pscResult.value.items || [] : [],
+    };
+    const risk = assessRisk(rawData, null);
+    riskLevel = risk.level;
+    riskScore = risk.score;
+
+    const investigationResult = {
+      subject: { name: profile.companyName || company.name, companyNumber: chNumber, type: "company" },
+      companyProfile: profile,
+      officers,
+      pscs,
+      filings,
+      filingsTotal,
+      experian: experianReport,
+      riskScore: risk.score,
+      riskLevel: risk.level,
+      flags: risk.flags,
+      resolvedFrom,
+      diagnostics,
+      timestamp: new Date().toISOString(),
+    };
+
+    const inserted = await pool.query(
+      `INSERT INTO kyc_investigations (subject_type, subject_name, company_number, crm_company_id, risk_level, risk_score, sanctions_match, result, conducted_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [
+        "company",
+        profile.companyName || company.name,
+        chNumber,
+        company.id,
+        risk.level,
+        risk.score,
+        false,
+        JSON.stringify(investigationResult),
+        opts.userId || null,
+      ]
+    );
+    investigationId = inserted.rows[0]?.id ?? null;
+    if (investigationId) {
+      await logKycAudit(
+        investigationId,
+        "created",
+        opts.userId || null,
+        `Brand-page auto-KYC: ${profile.companyName || company.name}${experianReport ? " (with Experian credit report)" : ""}`,
+      );
+    }
+  } catch (err: any) {
+    console.warn(`[auto-kyc] Failed to persist Clouseau investigation for "${company.name}":`, err?.message);
+  }
+
+  console.log(`[companies-house] Auto-KYC for "${company.name}" → ${kycStatus} (CH: ${chNumber}, risk: ${riskLevel}/${riskScore}, experian: ${experianReport ? "✓" : "—"}, investigation: ${investigationId ?? "—"})`);
 
   return {
     success: true,
@@ -834,6 +919,10 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
     companyNumber: chNumber,
     resolvedFrom,
     diagnostics,
+    experian: experianReport,
+    riskLevel,
+    riskScore,
+    investigationId,
   };
 }
 
@@ -1037,11 +1126,13 @@ router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req,
     const manualChNumber = (req.body?.chNumber as string | null | undefined) || null;
     const manualEntityName = (req.body?.entityName as string | null | undefined) || null;
     const manualTcsUrl = (req.body?.tcsUrl as string | null | undefined) || null;
+    const userId = (req as any).user?.id || null;
     const result = await performAutoKyc(req.params.companyId, {
       forceFromWebsite,
       manualChNumber,
       manualEntityName,
       manualTcsUrl,
+      userId,
     });
     if (!result.success && result.kycStatus === "not_found") {
       return res.json(result);
