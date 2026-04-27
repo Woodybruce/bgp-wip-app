@@ -2444,7 +2444,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       redirect: "follow",
     });
     if (probe) {
-      probeOk = probe.status > 0;
+      probeOk = probe.status > 0 && probe.status < 500;
       if (probe.ok && (probe.headers.get("content-type") || "").includes("html")) {
         homepageHtml = await probe.text().catch(() => null);
       }
