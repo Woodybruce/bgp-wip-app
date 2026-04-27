@@ -91,6 +91,7 @@ interface BrandProfile {
   contacts: Array<{ id: string; name: string; role: string | null; email: string | null; phone: string | null; linkedin_url: string | null; avatar_url: string | null; last_contacted_at: string | null; enrichment_source: string | null }>;
   stores: Array<{ id: string; name: string; address: string | null; lat: number | null; lng: number | null; place_id: string | null; status: string | null; store_type: string | null; source_type: string | null; researched_at: string | null }>;
   turnover: Array<{ period: string | null; turnover: number | null; turnover_per_sqft: number | null; confidence: string | null; source: string | null }>;
+  coverers: Array<{ id: string; name: string; email: string | null }>;
   covenant: {
     companyStatus: string | null;
     accountsOverdue: boolean;
@@ -275,6 +276,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [repSearch, setRepSearch] = useState("");
   const [newsShowAll, setNewsShowAll] = useState(false);
   const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
+  const [newsTab, setNewsTab] = useState<"press" | "industry">("industry");
   const [signalsShowAll, setSignalsShowAll] = useState(false);
   const [addSignalOpen, setAddSignalOpen] = useState(false);
   const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
@@ -759,6 +761,20 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               Covenant: {covenant.trafficLight === "green" ? "Strong" : covenant.trafficLight === "amber" ? "Verify" : "At risk"}
             </Badge>
           )}
+          {c.kyc_status === "pass" && <Badge className="bg-emerald-50 text-emerald-700 border-purple-200 text-[10px]">KYC Passed</Badge>}
+          {c.kyc_status === "warning" && <Badge className="bg-amber-50 text-amber-700 border-purple-200 text-[10px]">KYC Review</Badge>}
+          {c.kyc_status === "fail" && <Badge className="bg-red-50 text-red-700 border-purple-200 text-[10px]">KYC Failed</Badge>}
+          {(() => {
+            const lastContactedAt = data.contacts.map((ct: any) => ct.last_contacted_at).filter(Boolean).sort().reverse()[0] as string | undefined;
+            const lastContactor = lastContactedAt ? data.contacts.find((ct: any) => ct.last_contacted_at === lastContactedAt) : null;
+            if (!lastContactedAt) return null;
+            const days = Math.floor((Date.now() - new Date(lastContactedAt).getTime()) / 864e5);
+            return (
+              <span className="text-[11px] font-normal text-muted-foreground flex items-center gap-0.5">
+                · <Clock className="w-2.5 h-2.5" /> {days}d{lastContactor?.name ? ` · ${lastContactor.name.split(" ")[0]}` : ""}
+              </span>
+            );
+          })()}
           {c.rollout_status && c.rollout_status !== "none" && <RolloutBadge status={c.rollout_status} />}
           {c.concept_status && (() => {
             const cls: Record<string, string> = {
@@ -953,6 +969,37 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <Phone className="w-3 h-3" /> {c.phone}
                 </a>
               )}
+              {c.domain && (
+                <a
+                  href={`https://${c.domain}/press`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  title="Brand newsroom"
+                >
+                  <Newspaper className="w-3 h-3" /> Press
+                </a>
+              )}
+              {c.domain && (
+                <a
+                  href={`https://${c.domain}/careers`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  title="Brand careers page"
+                >
+                  <Briefcase className="w-3 h-3" /> Careers
+                </a>
+              )}
+              {data.contacts.find((ct: any) => ct.email) && (
+                <a
+                  href={`mailto:${data.contacts.find((ct: any) => ct.email)?.email}`}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-[11px] font-medium transition-colors"
+                  title="Email primary contact"
+                >
+                  <Phone className="w-3 h-3" /> Email
+                </a>
+              )}
               <button
                 type="button"
                 onClick={() => window.dispatchEvent(new CustomEvent("bgp:open-apollo", { detail: { companyId } }))}
@@ -977,7 +1024,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 text-[11px] font-medium transition-colors"
                 title="Go to Deals to add this brand to a deal"
               >
-                <Briefcase className="w-3 h-3" /> Add to deal
+                <Plus className="w-3 h-3" /> Add to deal
               </button>
               <button
                 type="button"
@@ -1646,7 +1693,10 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   </div>
                   <div>
                     <div className="text-[10px] text-muted-foreground">Last accounts</div>
-                    <div className="font-medium">{covenant.lastAccountsMadeUpTo ? new Date(covenant.lastAccountsMadeUpTo).toLocaleDateString("en-GB") : "—"}</div>
+                    <div className={`font-medium ${covenant.accountsOverdue ? "text-red-600" : ""}`}>
+                      {covenant.lastAccountsMadeUpTo ? new Date(covenant.lastAccountsMadeUpTo).toLocaleDateString("en-GB") : "—"}
+                      {covenant.accountsOverdue && <span className="ml-1 text-[10px] text-red-600 font-semibold">OVERDUE</span>}
+                    </div>
                   </div>
                   <div>
                     <div className="text-[10px] text-muted-foreground">Insolvency</div>
@@ -1880,6 +1930,18 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </button>
               ))}
             </div>
+            {/* BGP coverage — who covers this brand internally */}
+            {data.coverers && data.coverers.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap border-t pt-2">
+                <span className="text-[10px] text-muted-foreground font-medium">Coverage:</span>
+                {data.coverers.map((cov: any) => (
+                  <span key={cov.id} className="inline-flex items-center gap-1 text-[11px] font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-2 py-0.5">
+                    <Users className="w-2.5 h-2.5" /> {cov.name}
+                  </span>
+                ))}
+              </div>
+            )}
+
             {/* Relationship strip — lead broker, last touchpoint, active contacts */}
             {(c.bgp_contact_crm || data.contacts.length > 0) && (() => {
               const lastContactedAt = data.contacts
@@ -2580,21 +2642,37 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 if (days < 365) return `${Math.floor(days / 30)}mo ago`;
                 return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
               };
-              const allSources = [...new Set(data.news.map(a => a.source_name).filter((s): s is string => !!s))];
-              const filtered = newsSourceFilter ? data.news.filter(a => a.source_name === newsSourceFilter) : data.news;
+              // Press releases = signals with ai_generated=true (scraped from brand site) or source matching brand domain
+              const brandDomain = c.domain ? c.domain.replace(/^www\./, "") : null;
+              const pressSignals = data.signals.filter((s: any) =>
+                s.ai_generated && s.source && brandDomain && (s.source.includes(brandDomain) || s.source === "perplexity")
+              );
+              const allSources = [...new Set(data.news.map((a: any) => a.source_name).filter((s: any): s is string => !!s))];
+              const filtered = newsTab === "press"
+                ? data.news.filter((a: any) => brandDomain && (a.url?.includes(brandDomain) || a.source_name?.toLowerCase().includes(c.name.toLowerCase().split(" ")[0])))
+                : (newsSourceFilter ? data.news.filter((a: any) => a.source_name === newsSourceFilter) : data.news);
               const visible = newsShowAll ? filtered : filtered.slice(0, 6);
               return (
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="text-[11px] font-medium text-foreground/70 flex items-center gap-1">
-                      <Newspaper className="w-3 h-3" /> Press & News ({data.news.length})
+                    <div className="flex items-center gap-1">
+                      <Newspaper className="w-3 h-3 text-muted-foreground" />
+                      <div className="flex gap-0.5">
+                        {(["industry", "press"] as const).map(t => (
+                          <button
+                            key={t}
+                            onClick={() => { setNewsTab(t); setNewsShowAll(false); setNewsSourceFilter(null); }}
+                            className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors ${newsTab === t ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"}`}
+                          >
+                            {t === "industry" ? `Industry news (${data.news.length})` : `Press releases`}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    {allSources.length > 1 && (
+                    {newsTab === "industry" && allSources.length > 1 && (
                       <div className="flex items-center gap-1 flex-wrap justify-end">
                         {newsSourceFilter && (
-                          <button onClick={() => setNewsSourceFilter(null)} className="text-[9px] text-muted-foreground hover:text-foreground underline">
-                            All
-                          </button>
+                          <button onClick={() => setNewsSourceFilter(null)} className="text-[9px] text-muted-foreground hover:text-foreground underline">All</button>
                         )}
                         {allSources.slice(0, 5).map(s => (
                           <button
@@ -2608,6 +2686,9 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       </div>
                     )}
                   </div>
+                  {newsTab === "press" && pressSignals.length === 0 && filtered.length === 0 && (
+                    <p className="text-[11px] text-muted-foreground italic">No press releases scraped yet — run "Scrape" from Intel zone.</p>
+                  )}
                   <div className="space-y-2">
                     {visible.map((article) => {
                       const isGoogleProxy = /google\.com|gstatic\.com|googleusercontent\.com/i.test(article.image_url || "");
@@ -2683,6 +2764,56 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 <Clock className="w-2.5 h-2.5" /> Last enriched {new Date(c.last_enriched_at).toLocaleString("en-GB")}
               </div>
             )}
+            </div>
+            </div>
+
+            {/* ── Zone 5: Documents & Gallery ──────────────── */}
+            <div className="border-t border-border/40 mt-3 pt-2">
+            <div className="flex items-center gap-1.5 mb-2">
+              <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Documents &amp; Gallery</span>
+            </div>
+            <div className="space-y-2.5">
+              {/* SharePoint folder link */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 text-[11px] font-medium text-primary hover:underline"
+                  onClick={() => {
+                    fetch(`/api/microsoft/company-folders/browse?company=${encodeURIComponent(c.name)}`, { credentials: "include" })
+                      .then(r => r.json())
+                      .then(d => {
+                        const url = d.items?.[0]?.webUrl
+                          ? d.items[0].webUrl.replace(/\/[^/]+$/, "") // strip filename, go to folder
+                          : `https://bgp.sharepoint.com`;
+                        window.open(url, "_blank");
+                      })
+                      .catch(() => window.open(`https://bgp.sharepoint.com`, "_blank"));
+                  }}
+                >
+                  <FileText className="w-3 h-3" /> Open {c.name} folder on SharePoint →
+                </button>
+              </div>
+              {/* Image gallery */}
+              {data.images.length > 1 && (
+                <div>
+                  <div className="text-[10px] text-muted-foreground mb-1.5">{data.images.length} image{data.images.length === 1 ? "" : "s"} in gallery</div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {data.images.slice(0, 8).map((img: any) => (
+                      <div key={img.id} className="aspect-square rounded border border-border/60 overflow-hidden bg-muted">
+                        <img
+                          src={img.thumbnail_data
+                            ? `data:${img.mime_type || "image/jpeg"};base64,${img.thumbnail_data}`
+                            : `/api/brand/gallery-image/${img.id}`}
+                          alt={img.file_name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             </div>
           </div>

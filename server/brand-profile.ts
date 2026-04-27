@@ -457,6 +457,17 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     const c = company.rows[0];
 
+    // Resolve bgp_contact_user_ids → user display names
+    let coverers: Array<{ id: string; name: string; email: string | null }> = [];
+    if (Array.isArray(c.bgp_contact_user_ids) && c.bgp_contact_user_ids.length > 0) {
+      const cov = await pool.query(
+        `SELECT id, COALESCE(name, username, email) AS name, email
+           FROM users WHERE id = ANY($1::text[]) ORDER BY name`,
+        [c.bgp_contact_user_ids]
+      ).catch(() => empty);
+      coverers = cov.rows;
+    }
+
     // Fire-and-forget: if tracked brand has no analysis yet, generate one
     // in the background so next load picks it up. Respects AI on/off.
     if (c.is_tracked_brand && !c.ai_disabled && !c.brand_analysis) {
@@ -611,6 +622,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
       stores: stores.rows,
       turnover: turnover.rows,
       covenant,
+      coverers,
       rolloutVelocity,
       rentAffordability,
       rentComps: rentComps.rows,
