@@ -40,7 +40,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Search, Building, Building2, AlertCircle, X, Plus, ArrowLeft, Loader2, Pencil, Trash2, Users, Handshake, Globe, MapPin, Filter, ChevronDown, ChevronUp, Check, Sparkles, ShieldCheck, ExternalLink, CheckCircle2, XCircle, Clock, Circle, Download, FolderTree, Folder, FolderOpen, ChevronRight, Briefcase, Crown, LinkIcon, Upload, FileText, RefreshCw, ArrowUp, UserCheck, FileSearch, Copy, Bot, BotOff, Zap, Linkedin, Phone, Factory, UsersRound, CalendarDays } from "lucide-react";
+import { Search, Building, Building2, AlertCircle, X, Plus, ArrowLeft, Loader2, Pencil, Trash2, Users, Handshake, Globe, MapPin, Filter, ChevronDown, ChevronUp, Check, Sparkles, ShieldCheck, ExternalLink, CheckCircle2, XCircle, Clock, Circle, Download, FolderTree, Folder, FolderOpen, ChevronRight, Briefcase, Crown, LinkIcon, Upload, FileText, RefreshCw, ArrowUp, UserCheck, FileSearch, Copy, Bot, BotOff, Zap } from "lucide-react";
 import { CompanyLeasingSchedule as CompanyLeasingScheduleSection } from "@/pages/leasing-schedule";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
@@ -1167,18 +1167,6 @@ function CompanyDetail({ id }: { id: string }) {
             <CardContent className="p-3 space-y-2">
               <h3 className="font-semibold text-xs">Details</h3>
               <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-                {(company.domainUrl || company.domain) && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Website</p>
-                    {company.domainUrl ? (
-                      <a href={company.domainUrl.startsWith("http") ? company.domainUrl : `https://${company.domainUrl}`} target="_blank" rel="noopener noreferrer" className="text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1" data-testid="link-company-website">
-                        <Globe className="w-3 h-3 text-teal-500" />{company.domainUrl.replace(/^https?:\/\//, "")}
-                      </a>
-                    ) : (
-                      <p data-testid="text-company-domain">{company.domain}</p>
-                    )}
-                  </div>
-                )}
                 {getCompanyBgpContacts(company).length > 0 && (
                   <div>
                     <p className="text-xs text-muted-foreground">BGP Contacts</p>
@@ -1196,44 +1184,6 @@ function CompanyDetail({ id }: { id: string }) {
                     {hasGlobalHq && (
                       <p className="text-[10px] text-muted-foreground mt-0.5">Global HQ: {globalAddressText}</p>
                     )}
-                  </div>
-                )}
-                {company.linkedinUrl && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">LinkedIn</p>
-                    <a href={company.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1" data-testid="link-company-linkedin">
-                      <Linkedin className="w-3 h-3 text-teal-500" />Profile
-                    </a>
-                  </div>
-                )}
-                {company.phone && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Phone</p>
-                    <p className="flex items-center gap-1" data-testid="text-company-phone"><Phone className="w-3 h-3 text-teal-500" />{company.phone}</p>
-                  </div>
-                )}
-                {company.industry && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Industry</p>
-                    <p className="flex items-center gap-1" data-testid="text-company-industry"><Factory className="w-3 h-3 text-teal-500" />{company.industry}</p>
-                  </div>
-                )}
-                {company.employeeCount && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Employees</p>
-                    <p className="flex items-center gap-1" data-testid="text-company-employees"><UsersRound className="w-3 h-3 text-teal-500" />{Number(company.employeeCount).toLocaleString()}</p>
-                  </div>
-                )}
-                {!!company.annualRevenue && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">{ukAddressText ? "Global annual revenue" : "Annual Revenue"}</p>
-                    <p className="flex items-center gap-1" data-testid="text-company-revenue">£{Number(company.annualRevenue).toLocaleString()}</p>
-                  </div>
-                )}
-                {company.foundedYear && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">Founded</p>
-                    <p className="flex items-center gap-1" data-testid="text-company-founded"><CalendarDays className="w-3 h-3 text-teal-500" />{company.foundedYear}</p>
                   </div>
                 )}
                 <KycInlineSummary company={company} />
