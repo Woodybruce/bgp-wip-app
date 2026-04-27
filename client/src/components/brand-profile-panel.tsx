@@ -267,6 +267,8 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
   const [newsShowAll, setNewsShowAll] = useState(false);
   const [newsSourceFilter, setNewsSourceFilter] = useState<string | null>(null);
   const [signalsShowAll, setSignalsShowAll] = useState(false);
+  const [addSignalOpen, setAddSignalOpen] = useState(false);
+  const [newSignal, setNewSignal] = useState({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
 
   const { data, isLoading, isError } = useQuery<BrandProfile>({
     queryKey: ["/api/brand", companyId, "profile"],
@@ -492,6 +494,51 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
     },
     onError: (e: any) => toast({ title: "Intel refresh failed", description: e.message, variant: "destructive" }),
+  });
+
+  const addSignalMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/brand/signals", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          brandCompanyId: companyId,
+          signalType: newSignal.signal_type,
+          headline: newSignal.headline,
+          source: newSignal.source || null,
+          signalDate: newSignal.signal_date || null,
+          sentiment: newSignal.sentiment,
+          magnitude: "medium",
+          aiGenerated: false,
+        }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Signal logged" });
+      setNewSignal({ headline: "", signal_type: "opening", sentiment: "positive", source: "", signal_date: "" });
+      setAddSignalOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Failed to log signal", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteSignalMutation = useMutation({
+    mutationFn: async (signalId: string) => {
+      const r = await fetch(`/api/brand/signals/${signalId}`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) throw new Error(await r.text());
+    },
+    onSuccess: () => {
+      toast({ title: "Signal removed" });
+      queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
+    },
+    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   // Hunter score (computed score + flags from brand_signals + stock)
@@ -2022,11 +2069,72 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             )}
 
             {/* Signals feed */}
-            {data.signals.length > 0 && (
-              <div>
-                <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-1">
-                  <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({data.signals.length})</span>
+            <div>
+              <div className="text-[11px] text-muted-foreground mb-1 flex items-center justify-between gap-1">
+                <span className="flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Signals ({data.signals.length})</span>
+                <button
+                  onClick={() => setAddSignalOpen(v => !v)}
+                  className="text-[10px] text-primary hover:underline flex items-center gap-0.5"
+                >
+                  <Plus className="w-2.5 h-2.5" /> Log intel
+                </button>
+              </div>
+
+              {addSignalOpen && (
+                <div className="mb-2 p-2 rounded-md border border-dashed border-border bg-muted/30 space-y-1.5">
+                  <Input
+                    placeholder="Headline (e.g. H&M opening Oxford Street flagship)"
+                    value={newSignal.headline}
+                    onChange={e => setNewSignal(v => ({ ...v, headline: e.target.value }))}
+                    className="h-7 text-xs"
+                  />
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <select
+                      value={newSignal.signal_type}
+                      onChange={e => setNewSignal(v => ({ ...v, signal_type: e.target.value }))}
+                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    >
+                      {["opening","closure","funding","exec_change","sector_move","rumour","news"].map(t => (
+                        <option key={t} value={t}>{t.replace(/_/g," ")}</option>
+                      ))}
+                    </select>
+                    <select
+                      value={newSignal.sentiment}
+                      onChange={e => setNewSignal(v => ({ ...v, sentiment: e.target.value }))}
+                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    >
+                      <option value="positive">Positive</option>
+                      <option value="neutral">Neutral</option>
+                      <option value="negative">Negative</option>
+                    </select>
+                    <input
+                      type="date"
+                      value={newSignal.signal_date}
+                      onChange={e => setNewSignal(v => ({ ...v, signal_date: e.target.value }))}
+                      className="h-7 text-xs rounded-md border border-input bg-background px-2"
+                    />
+                  </div>
+                  <Input
+                    placeholder="Source URL (optional)"
+                    value={newSignal.source}
+                    onChange={e => setNewSignal(v => ({ ...v, source: e.target.value }))}
+                    className="h-7 text-xs"
+                  />
+                  <div className="flex gap-1.5">
+                    <Button
+                      size="sm"
+                      className="h-6 text-[10px] px-2"
+                      onClick={() => addSignalMutation.mutate()}
+                      disabled={!newSignal.headline || addSignalMutation.isPending}
+                    >
+                      {addSignalMutation.isPending ? "Saving…" : "Save signal"}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-6 text-[10px] px-2" onClick={() => setAddSignalOpen(false)}>Cancel</Button>
+                  </div>
                 </div>
+              )}
+
+              {data.signals.length > 0 && (
                 <div className="space-y-1">
                   {(signalsShowAll ? data.signals : data.signals.slice(0, 6)).map((s: any) => {
                     const typeCls: Record<string, string> = {
@@ -2044,7 +2152,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       neutral:  "border-l-muted",
                     };
                     return (
-                      <div key={s.id} className={`text-xs flex items-start gap-2 border-l-2 pl-2 ${sentCls[s.sentiment] || "border-l-muted"}`}>
+                      <div key={s.id} className={`text-xs flex items-start gap-2 border-l-2 pl-2 group ${sentCls[s.sentiment] || "border-l-muted"}`}>
                         <Badge variant="outline" className={`text-[10px] shrink-0 ${typeCls[s.signal_type] || ""}`}>
                           {s.signal_type.replace(/_/g, " ")}
                           {s.magnitude === "large" && " ●●"}
@@ -2060,20 +2168,27 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                           )}
                           {s.signal_date && <span className="text-[10px] text-muted-foreground">{new Date(s.signal_date).toLocaleDateString("en-GB")}</span>}
                         </div>
+                        <button
+                          onClick={() => deleteSignalMutation.mutate(s.id)}
+                          className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0 mt-0.5"
+                          title="Remove signal"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
                       </div>
                     );
                   })}
                 </div>
-                {data.signals.length > 6 && (
-                  <button
-                    onClick={() => setSignalsShowAll(v => !v)}
-                    className="mt-1.5 text-[10px] text-primary hover:underline"
-                  >
-                    {signalsShowAll ? "Show less" : `Show ${data.signals.length - 6} more signal${data.signals.length - 6 === 1 ? "" : "s"}`}
-                  </button>
-                )}
-              </div>
-            )}
+              )}
+              {data.signals.length > 6 && (
+                <button
+                  onClick={() => setSignalsShowAll(v => !v)}
+                  className="mt-1.5 text-[10px] text-primary hover:underline"
+                >
+                  {signalsShowAll ? "Show less" : `Show ${data.signals.length - 6} more signal${data.signals.length - 6 === 1 ? "" : "s"}`}
+                </button>
+              )}
+            </div>
 
             {/* News articles mentioning this brand */}
             {data.news && data.news.length > 0 && (() => {
