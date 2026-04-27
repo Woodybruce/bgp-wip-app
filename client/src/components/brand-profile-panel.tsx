@@ -1093,7 +1093,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       {questions.map(q => (
                         <button
                           key={q}
-                          onClick={() => { setChatInput(q); navigate("/chatbgp"); }}
+                          onClick={() => { setChatInput(q); window.dispatchEvent(new CustomEvent("open-ai-chat-with-prompt")); }}
                           className="text-xs px-2.5 py-1 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1 leading-tight"
                         >
                           <Sparkles className="w-3 h-3 shrink-0" />{q}
