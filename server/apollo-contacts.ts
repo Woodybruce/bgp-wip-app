@@ -251,10 +251,14 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
       }
     }
 
-    // 4. If still < 3, cascade to parent group with the same multi-domain
-    // strategy.
+    // 4. Always cascade to parent group when one exists — for sub-brands
+    // (& Other Stories, COS, Arket, Monki, Weekday under H&M Group; Cos by
+    // Inditex; etc.) the lease/property/store-dev decisions are made at the
+    // group level. Brand-level Apollo hits tend to be store managers and
+    // junior staff; the parent has the people who actually sign leases.
+    // Tagged "via [parent]" in the source field so users see the route.
     let parentCompany: any = null;
-    if (people.length < 3) {
+    if (company.brand_group_id || company.parent_company_id) {
       parentCompany = await fetchParentCompany(company);
       if (parentCompany) {
         try {

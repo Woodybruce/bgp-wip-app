@@ -1070,9 +1070,39 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               </button>
             </div>
 
-            {/* Single BGP AI take — sits above all zones */}
-            <div className="mt-2 order-2">
+            {/* Single BGP AI take + Ask ChatBGP question runner — sits above all zones */}
+            <div className="mt-2 order-2 space-y-3">
               <BgpTakeStrip companyId={companyId} tab="brand" />
+              {(() => {
+                const questions: string[] = [
+                  `Tell me everything BGP needs to know about ${c.name} before a first call`,
+                  `What's ${c.name}'s covenant risk? How should we position this to a landlord?`,
+                  `What are the key signals about ${c.name} right now and what should BGP do?`,
+                  `Who should BGP contact at ${c.name} and what's the best approach?`,
+                  `What space would ${c.name} want and what BGP properties could work?`,
+                  `Walk me through ${c.name}'s UK financials and what they mean for rent affordability`,
+                  `Should BGP be pitching ${c.name} new space — if so, where and why?`,
+                  `Draft a brief introductory pitch email from BGP to ${c.name}`,
+                ];
+                return (
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wider text-foreground mb-1.5 flex items-center gap-1">
+                      <Sparkles className="w-3 h-3 text-purple-500" /> Ask ChatBGP
+                    </div>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {questions.map(q => (
+                        <button
+                          key={q}
+                          onClick={() => { setChatInput(q); navigate("/chatbgp"); }}
+                          className="text-xs px-2.5 py-1 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1 leading-tight"
+                        >
+                          <Sparkles className="w-3 h-3 shrink-0" />{q}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* ── Zone 1: Global Brand ─────────────────────── */}
@@ -1114,14 +1144,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 </div>
               );
             })()}
-
-            <div className="flex gap-1.5 flex-wrap">
-              {[`Tell me everything BGP needs to know about ${c.name} before a first call`, `What space would ${c.name} want and what BGP properties could work?`].map(q => (
-                <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
-                  <Sparkles className="w-2.5 h-2.5 shrink-0" />{q}
-                </button>
-              ))}
-            </div>
 
             {/* Stock card — only when brand has a ticker */}
             {c.stock_ticker && stockData?.snapshot && (() => {
@@ -1281,22 +1303,61 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   <div className="text-xs text-muted-foreground flex items-center gap-1 mb-1">
                     <Coins className="w-3 h-3" /> Backers {aiFields.backers && <AiChip />}
                   </div>
-                  {Array.isArray(aiFields.backers_detail) && aiFields.backers_detail.length > 0 ? (
-                    <div className="space-y-1">
-                      {(aiFields.backers_detail as Array<{ name: string; type?: string; description?: string }>).map((b, i) => (
-                        <div key={i} className="flex items-start gap-1.5 text-sm">
-                          <span className="text-muted-foreground shrink-0 mt-0.5">•</span>
-                          <div className="min-w-0">
-                            <span className="font-medium">{b.name}</span>
-                            {b.type && <Badge variant="outline" className="ml-1.5 text-[10px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
-                            {b.description && <p className="text-xs text-muted-foreground leading-snug">{b.description}</p>}
-                          </div>
+                  {(() => {
+                    // Build a name → company-id map from the parent group + siblings
+                    // so we can link any backer / brand mention that resolves to a
+                    // company we already track. Match is case-insensitive on full name.
+                    const linkMap = new Map<string, string>();
+                    if (parentGroup) linkMap.set(parentGroup.name.toLowerCase(), parentGroup.id);
+                    for (const s of siblingBrands) linkMap.set(s.name.toLowerCase(), s.id);
+                    const linkFor = (name: string): string | null => linkMap.get(name.trim().toLowerCase()) || null;
+                    // Linkify any of those known names found inside a free-text string
+                    const linkifyText = (text: string) => {
+                      if (linkMap.size === 0) return text;
+                      const names = Array.from(linkMap.keys()).sort((a, b) => b.length - a.length);
+                      const escaped = names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+                      const re = new RegExp(`\\b(${escaped.join("|")})\\b`, "gi");
+                      const parts: Array<string | { id: string; label: string }> = [];
+                      let last = 0;
+                      let m: RegExpExecArray | null;
+                      while ((m = re.exec(text)) !== null) {
+                        if (m.index > last) parts.push(text.slice(last, m.index));
+                        const id = linkMap.get(m[1].toLowerCase());
+                        if (id) parts.push({ id, label: m[1] });
+                        else parts.push(m[1]);
+                        last = m.index + m[1].length;
+                      }
+                      if (last < text.length) parts.push(text.slice(last));
+                      return parts.map((p, i) => typeof p === "string"
+                        ? <span key={i}>{p}</span>
+                        : <Link key={i} href={`/companies/${p.id}`} className="text-primary hover:underline">{p.label}</Link>
+                      );
+                    };
+                    if (Array.isArray(aiFields.backers_detail) && aiFields.backers_detail.length > 0) {
+                      return (
+                        <div className="space-y-1">
+                          {(aiFields.backers_detail as Array<{ name: string; type?: string; description?: string }>).map((b, i) => {
+                            const id = linkFor(b.name);
+                            return (
+                              <div key={i} className="flex items-start gap-1.5 text-sm">
+                                <span className="text-muted-foreground shrink-0 mt-0.5">•</span>
+                                <div className="min-w-0">
+                                  {id ? (
+                                    <Link href={`/companies/${id}`} className="font-medium text-primary hover:underline">{b.name}</Link>
+                                  ) : (
+                                    <span className="font-medium">{b.name}</span>
+                                  )}
+                                  {b.type && <Badge variant="outline" className="ml-1.5 text-[10px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
+                                  {b.description && <p className="text-xs text-muted-foreground leading-snug">{linkifyText(b.description)}</p>}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-sm">{c.backers}</div>
-                  )}
+                      );
+                    }
+                    return <div className="text-sm">{linkifyText(c.backers || "")}</div>;
+                  })()}
                 </div>
               )}
               {c.instagram_handle && (() => {
@@ -1548,13 +1609,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <span className="text-xs font-semibold uppercase tracking-wider text-foreground">UK &amp; Covenant</span>
             </div>
             <div className="space-y-2.5">
-            <div className="flex gap-1.5 flex-wrap">
-              {[`What's ${c.name}'s covenant risk? How should we position this to a landlord?`, `Walk me through ${c.name}'s UK financials and what they mean for rent affordability`].map(q => (
-                <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
-                  <Sparkles className="w-2.5 h-2.5 shrink-0" />{q}
-                </button>
-              ))}
-            </div>
             {/* Covenant strip — CH financials + traffic light */}
             {covenant && (
               <div className="border-t pt-2">
@@ -2029,13 +2083,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <span className="text-xs font-semibold uppercase tracking-wider text-foreground">BGP Relationship</span>
             </div>
             <div className="space-y-2.5">
-            <div className="flex gap-1.5 flex-wrap">
-              {[`Who should BGP contact at ${c.name} and what's the best approach?`, `Draft a brief introductory pitch email from BGP to ${c.name}`].map(q => (
-                <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
-                  <Sparkles className="w-2.5 h-2.5 shrink-0" />{q}
-                </button>
-              ))}
-            </div>
             {/* BGP coverage — who covers this brand internally */}
             {data.coverers && data.coverers.length > 0 && (
               <div className="flex items-center gap-2 flex-wrap border-t pt-2">
@@ -2584,13 +2631,6 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                 ))}
               </div>
             )}
-            <div className="flex gap-1.5 flex-wrap">
-              {[`What are the key signals about ${c.name} right now and what should BGP do?`, `Should BGP be pitching ${c.name} new space — if so, where and why?`].map(q => (
-                <button key={q} onClick={() => { setChatInput(q); navigate("/chatbgp"); }} className="text-[10px] px-2 py-0.5 rounded-full border border-purple-200 dark:border-purple-800 text-purple-700 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-950 transition-colors flex items-center gap-1">
-                  <Sparkles className="w-2.5 h-2.5 shrink-0" />{q}
-                </button>
-              ))}
-            </div>
             {/* Signals feed */}
             <div>
               <div className="text-xs text-muted-foreground mb-1 flex items-center justify-between gap-1">
