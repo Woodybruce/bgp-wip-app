@@ -587,11 +587,19 @@ function formatInteractionDate(dateStr: string) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined });
 }
 
-function InteractionTimeline({ contactId }: { contactId: string }) {
+// Accepts either a contactId or a companyId so the same UI works on both
+// the contact detail page and the brand/company detail page. The contact
+// endpoint returns nextMeeting/lastInteraction; the company one doesn't —
+// either way we recompute the highlights from the interactions array.
+export function InteractionTimeline({ contactId, companyId }: { contactId?: string; companyId?: string }) {
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const queryKey = contactId
+    ? ["/api/interactions/contact", contactId]
+    : ["/api/interactions/company", companyId!];
 
   const { data, isLoading } = useQuery<InteractionData>({
-    queryKey: ["/api/interactions/contact", contactId],
+    queryKey,
+    enabled: !!(contactId || companyId),
   });
 
   const syncMutation = useMutation({
@@ -599,7 +607,7 @@ function InteractionTimeline({ contactId }: { contactId: string }) {
       await apiRequest("POST", "/api/interactions/sync?daysBack=90&daysForward=60");
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/interactions/contact", contactId] });
+      queryClient.invalidateQueries({ queryKey });
     },
   });
 
@@ -612,6 +620,11 @@ function InteractionTimeline({ contactId }: { contactId: string }) {
   const now = new Date();
   const upcoming = filtered.filter((i) => new Date(i.interactionDate) > now);
   const past = filtered.filter((i) => new Date(i.interactionDate) <= now);
+
+  const nextMeeting = data?.nextMeeting
+    ?? (data?.interactions?.find(i => i.type === "meeting" && new Date(i.interactionDate) > now) ?? null);
+  const lastInteraction = data?.lastInteraction
+    ?? (data?.interactions?.find(i => new Date(i.interactionDate) <= now) ?? null);
 
   return (
     <Card>
@@ -647,26 +660,26 @@ function InteractionTimeline({ contactId }: { contactId: string }) {
           </div>
         </div>
 
-        {data?.nextMeeting && (
+        {nextMeeting && (
           <div className="bg-blue-50 dark:bg-blue-950/30 rounded-md p-3 border border-blue-200 dark:border-blue-800">
             <div className="flex items-center gap-2 text-xs text-blue-600 dark:text-blue-400 font-medium mb-1">
               <Calendar className="w-3 h-3" />
-              Next Meeting — {formatInteractionDate(data.nextMeeting.interactionDate as unknown as string)}
+              Next Meeting — {formatInteractionDate(nextMeeting.interactionDate as unknown as string)}
             </div>
-            <p className="text-sm font-medium">{data.nextMeeting.subject}</p>
+            <p className="text-sm font-medium">{nextMeeting.subject}</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {new Date(data.nextMeeting.interactionDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+              {new Date(nextMeeting.interactionDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
             </p>
           </div>
         )}
 
-        {data?.lastInteraction && !data?.nextMeeting && (
+        {lastInteraction && !nextMeeting && (
           <div className="bg-muted/50 rounded-md p-3 border">
             <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium mb-1">
               <Clock className="w-3 h-3" />
-              Last Interaction — {formatInteractionDate(data.lastInteraction.interactionDate as unknown as string)}
+              Last Interaction — {formatInteractionDate(lastInteraction.interactionDate as unknown as string)}
             </div>
-            <p className="text-sm">{data.lastInteraction.subject}</p>
+            <p className="text-sm">{lastInteraction.subject}</p>
           </div>
         )}
 

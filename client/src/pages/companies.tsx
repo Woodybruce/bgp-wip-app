@@ -58,6 +58,7 @@ import { EntityPicker } from "@/components/entity-picker";
 import { InlineAddress } from "@/components/address-autocomplete";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schema";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
+import { InteractionTimeline } from "@/pages/contacts";
 
 interface CHSearchResult {
   companyNumber: string;
@@ -947,6 +948,10 @@ function CompanyDetail({ id }: { id: string }) {
   });
 
   const userColorMap = useMemo(() => buildUserColorMap(allUsers), [allUsers]);
+  const userOptions = useMemo(() => {
+    if (!allUsers) return [];
+    return allUsers.map(u => ({ label: u.name, value: u.name })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [allUsers]);
 
   const { data: allDeals } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
@@ -1181,16 +1186,27 @@ function CompanyDetail({ id }: { id: string }) {
             <CardContent className="p-3 space-y-2">
               <h3 className="font-semibold text-xs">Details</h3>
               <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-                {getCompanyBgpContacts(company).length > 0 && (
-                  <div>
-                    <p className="text-xs text-muted-foreground">BGP Contacts</p>
-                    <div className="flex flex-wrap gap-1 mt-0.5" data-testid="text-company-bgp-contacts">
-                      {getCompanyBgpContacts(company).map((name: string) => (
-                        <Badge key={name} className={`text-[10px] px-1.5 py-0 text-white ${userColorMap[name] || "bg-zinc-500"}`}>{name}</Badge>
-                      ))}
-                    </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">BGP Contacts</p>
+                  <div className="mt-0.5" data-testid="text-company-bgp-contacts">
+                    <InlineMultiSelect
+                      value={getCompanyBgpContacts(company)}
+                      options={userOptions}
+                      colorMap={userColorMap}
+                      placeholder="Set contacts"
+                      onSave={(v) => {
+                        apiRequest("PUT", `/api/crm/companies/${company.id}`, {
+                          bgpContactUserIds: v.length > 0 ? v : null,
+                          bgpContactCrm: null,
+                        }).then(() => {
+                          queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", company.id] });
+                          queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+                        });
+                      }}
+                      testId={`inline-bgp-contact-detail-${company.id}`}
+                    />
                   </div>
-                )}
+                </div>
                 {addressText && (
                   <div>
                     <p className="text-xs text-muted-foreground">{ukAddressText ? "UK registered office" : "Address"}</p>
@@ -1206,6 +1222,8 @@ function CompanyDetail({ id }: { id: string }) {
           </Card>
 
           <BrandProfilePanel companyId={id} />
+
+          <InteractionTimeline companyId={id} />
 
           {linkedProperties.length > 0 && (() => {
             const userIdToName = new Map<string, string>();
