@@ -496,11 +496,9 @@ export function guessDomain(name: string | null | undefined): string | null {
   for (const [key, domain] of Object.entries(KNOWN_DOMAINS)) {
     if (lower.includes(key) || key.includes(lower)) return domain;
   }
-  const slug = lower
-    .replace(/\b(ltd|limited|plc|llp|inc|corp|group|holdings|uk|properties|property|estates|estate|real estate|international|partners|&|and|the)\b/gi, "")
-    .replace(/[^a-z0-9]/g, "")
-    .trim();
-  if (slug.length >= 3) return `${slug}.com`;
+  // Don't fabricate a `{slug}.com` — it produced a flood of 404s on the
+  // Google favicon endpoint for brands we genuinely have no domain for.
+  // Caller falls back to initials when this returns null.
   return null;
 }
 

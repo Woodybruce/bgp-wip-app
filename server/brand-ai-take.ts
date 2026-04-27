@@ -332,9 +332,8 @@ router.get("/api/brand/:companyId/hunter-score", requireAuth, async (req: Reques
 // they're already on a shortlist, size fit, and proximity to requirements.
 
 router.get("/api/brand/:companyId/suggested-units", requireAuth, async (req: Request, res: Response) => {
+  const companyId = String(req.params.companyId);
   try {
-    const companyId = String(req.params.companyId);
-
     const brandQ = await pool.query(
       `SELECT name FROM crm_companies WHERE id = $1`,
       [companyId]
@@ -342,39 +341,53 @@ router.get("/api/brand/:companyId/suggested-units", requireAuth, async (req: Req
     if (!brandQ.rows[0]) return res.status(404).json({ error: "not found" });
     const brandName = brandQ.rows[0].name as string;
 
-    // Brand's active requirements (locations, sizes)
-    const reqQ = await pool.query(
-      `SELECT requirement_locations, size FROM crm_requirements_leasing
-        WHERE company_id = $1 AND (status IS NULL OR status ILIKE '%active%')
-        LIMIT 5`,
-      [companyId]
-    );
-    const reqLocations: string[] = reqQ.rows.flatMap((r: any) => r.requirement_locations || []).map((l: string) => l.toLowerCase());
+    // Brand's active requirements (locations, sizes). Wrapped in its own
+    // try so a missing requirements table doesn't 500 the whole endpoint.
+    let reqLocations: string[] = [];
+    try {
+      const reqQ = await pool.query(
+        `SELECT requirement_locations FROM crm_requirements_leasing
+          WHERE company_id = $1 AND (status IS NULL OR status ILIKE '%active%')
+          LIMIT 5`,
+        [companyId]
+      );
+      reqLocations = reqQ.rows.flatMap((r: any) => r.requirement_locations || []).map((l: string) => l.toLowerCase());
+    } catch (e: any) {
+      console.warn(`[suggested-units] requirements lookup failed: ${e.message}`);
+    }
 
-    // Available leasing schedule units not already targeting this brand
-    const unitsQ = await pool.query(
-      `SELECT u.id, u.unit_name, u.sqft, u.rent_pa, u.status, u.zone, u.positioning,
-              u.optimum_target, u.target_brands, u.priority,
-              p.id AS property_id, p.name AS property_name, p.address AS property_address, p.asset_class
-         FROM leasing_schedule_units u
-         JOIN crm_properties p ON p.id = u.property_id
-        WHERE
-          -- Exclude clearly occupied units
-          (u.status IS NULL
-           OR u.status ILIKE '%void%'
-           OR u.status ILIKE '%available%'
-           OR u.status ILIKE '%vacant%'
-           OR (u.status NOT ILIKE '%let%' AND u.status NOT ILIKE '%sold%' AND u.status NOT ILIKE '%complete%'))
-          -- Not already directly targeted at this brand
-          AND NOT ($1 = ANY(COALESCE(u.target_company_ids, '{}'::text[])))
-          AND (u.target_brands IS NULL OR u.target_brands NOT ILIKE $2)
-        ORDER BY u.rent_pa ASC NULLS LAST
-        LIMIT 50`,
-      [companyId, `%${brandName}%`]
-    );
+    // Available leasing schedule units not already targeting this brand.
+    // Wrap individually — leasing_schedule_units may lag schema migrations,
+    // and we'd rather return [] than 500 the whole brand profile.
+    let unitsRows: any[] = [];
+    try {
+      const unitsQ = await pool.query(
+        `SELECT u.id, u.unit_name, u.sqft, u.rent_pa, u.status, u.zone, u.positioning,
+                u.optimum_target, u.target_brands, u.priority,
+                p.id AS property_id, p.name AS property_name, p.address AS property_address, p.asset_class
+           FROM leasing_schedule_units u
+           JOIN crm_properties p ON p.id = u.property_id
+          WHERE
+            (u.status IS NULL
+             OR u.status ILIKE '%void%'
+             OR u.status ILIKE '%available%'
+             OR u.status ILIKE '%vacant%'
+             OR (u.status NOT ILIKE '%let%' AND u.status NOT ILIKE '%sold%' AND u.status NOT ILIKE '%complete%'))
+            AND NOT ($1 = ANY(COALESCE(u.target_company_ids, '{}'::text[])))
+            AND (u.target_brands IS NULL OR u.target_brands NOT ILIKE $2)
+          ORDER BY u.rent_pa ASC NULLS LAST
+          LIMIT 50`,
+        [companyId, `%${brandName}%`]
+      );
+      unitsRows = unitsQ.rows;
+    } catch (e: any) {
+      console.warn(`[suggested-units] units lookup failed for ${companyId}: ${e.message}`);
+      // Soft-fail with an empty list rather than 500 — the caller treats
+      // a missing/empty response as "no suggestions".
+      return res.json([]);
+    }
 
-    // Score client-side-style: location match + has optimum_target or target_brands set
-    const scored = unitsQ.rows.map((u: any) => {
+    const scored = unitsRows.map((u: any) => {
       let score = 0;
       const addr = (u.property_address || "").toLowerCase();
       const zone = (u.zone || "").toLowerCase();
@@ -389,7 +402,8 @@ router.get("/api/brand/:companyId/suggested-units", requireAuth, async (req: Req
 
     res.json(scored.slice(0, 6));
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    console.error(`[suggested-units] ${companyId}: ${err.message}`);
+    res.json([]);
   }
 });
 

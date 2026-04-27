@@ -533,18 +533,21 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Manual resolve failed", description: e.message, variant: "destructive" }),
   });
 
+  const [storesDiagnostic, setStoresDiagnostic] = useState<string | null>(null);
   const researchStoresMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/brand/${companyId}/research-stores`);
       return res.json();
     },
     onSuccess: (out: any) => {
-      // Surface the server-side diagnostic summary when the search returned
-      // nothing — turns "0 stores found" into something actionable
-      // (quota issue vs. all-filtered vs. empty queries).
       const summary = Array.isArray(out?.diagnostics)
         ? out.diagnostics.find((d: any) => d.step === "places_summary")?.detail
+          || out.diagnostics[out.diagnostics.length - 1]?.detail
         : null;
+      // Persist the diagnostic on the panel so the user doesn't have to
+      // catch a transient toast — they can read it inline when the empty
+      // state shows.
+      setStoresDiagnostic(out.found ? null : summary || "Google Places returned no UK matches.");
       toast({
         title: "Store search complete",
         description: out.found
@@ -552,12 +555,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
           : summary || "0 stores found",
       });
       if (Array.isArray(out?.diagnostics)) {
-        // Full trace to console for debugging — too long for a toast.
         console.log("[research-stores] diagnostics:", out.diagnostics);
       }
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
     },
-    onError: (e: any) => toast({ title: "Store search failed", description: e.message, variant: "destructive" }),
+    onError: (e: any) => {
+      setStoresDiagnostic(e.message || "Store search failed");
+      toast({ title: "Store search failed", description: e.message, variant: "destructive" });
+    },
   });
 
   // All companies — used by the representation picker AND the backer linkifier
@@ -2044,13 +2049,18 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                       </div>
                     </div>
                   ) : (
-                    <div className="text-xs text-muted-foreground px-1 py-1">
+                    <div className="text-xs text-muted-foreground px-1 py-1 space-y-1">
                       {researchStoresMutation.isPending ? (
                         <span className="italic">Searching Google Places…</span>
                       ) : c.store_count && c.store_count > 0 ? (
                         <span>Brand has ~{c.store_count.toLocaleString()} stores globally. Click Find stores to pull UK locations from Google Places.</span>
                       ) : (
                         <span className="italic">No stores researched yet. Click Find stores to search now.</span>
+                      )}
+                      {storesDiagnostic && !researchStoresMutation.isPending && (
+                        <div className="text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50/60 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded px-1.5 py-1 mt-1">
+                          <span className="font-medium">Last attempt:</span> {storesDiagnostic}
+                        </div>
                       )}
                     </div>
                   )}
