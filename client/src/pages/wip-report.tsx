@@ -294,7 +294,7 @@ function FilterSection({
           Clear
         </button>
       </div>
-      <ScrollArea className="max-h-[160px] px-2 py-1">
+      <ScrollArea className="max-h-[220px] px-2 py-1">
         {filtered.map((item) => (
           <label
             key={item}
@@ -1031,7 +1031,7 @@ export default function WipReport() {
         map["Unknown"] = (map["Unknown"] || 0) + fee;
       } else {
         agents.forEach(a => {
-          const key = a.trim();
+          const key = a.trim().toUpperCase();
           map[key] = (map[key] || 0) + perAgent;
         });
       }
@@ -1557,7 +1557,7 @@ export default function WipReport() {
           </div>
         </div>
 
-        <div className="w-52 flex-shrink-0 no-print overflow-y-auto space-y-3" data-testid="wip-filters-panel">
+        <div className="w-52 flex-shrink-0 no-print overflow-y-auto space-y-3 min-h-0 max-h-full" data-testid="wip-filters-panel">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-gray-700 uppercase tracking-wide flex items-center gap-1">
               <Filter className="h-3 w-3" /> Filters

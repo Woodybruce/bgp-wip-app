@@ -239,6 +239,13 @@ export async function importWipFromBuffer(
 
   const parseFiscalYear = (raw: any): number | null => {
     if (!raw) return null;
+    // XLSX may return a native Date when the cell is date-formatted
+    if (raw instanceof Date) {
+      if (isNaN(raw.getTime())) return null;
+      const mIdx0 = raw.getUTCMonth();
+      const yr = raw.getUTCFullYear();
+      return mIdx0 >= 3 ? yr + 1 : yr;
+    }
     const s = String(raw).trim();
     const mDash = s.match(/^([A-Za-z]{3})[-/ ]+(\d{2,4})$/);
     if (mDash) {
@@ -274,11 +281,18 @@ export async function importWipFromBuffer(
   };
 
   // Derive a "Mon-YY" label from any date-like value (MonthYear text, Excel serial,
-  // or formatted date string).  Used as a fallback when MonthYear is blank.
+  // JS Date object, or formatted date string).
   const deriveMonthLabel = (raw: any): string | null => {
     if (!raw) return null;
+    // XLSX may return a native Date when the cell is date-formatted
+    if (raw instanceof Date) {
+      if (isNaN(raw.getTime())) return null;
+      return `${monthOrder[raw.getUTCMonth()]}-${String(raw.getUTCFullYear()).slice(2)}`;
+    }
     const s = String(raw).trim();
+    if (!s) return null;
     if (/^[A-Za-z]{3}-\d{2,4}$/.test(s)) return s;
+    // Excel serial number (e.g. 46357 = Feb-26); range 40000-60000 = 2009-2064
     if (/^\d+$/.test(s)) {
       const serial = parseInt(s);
       if (serial >= 40000 && serial <= 60000) {
@@ -349,7 +363,7 @@ export async function importWipFromBuffer(
       agent: pick(kr, "Agent") || null,
       amtWip: isInvoiced ? 0 : net,
       amtInvoice: isInvoiced ? net : 0,
-      month: pick(kr, "MonthYear", "Month Year", "Month") || deriveMonthLabel(pick(kr, "DueDate_EOMonth", "DueDate")) || null,
+      month: deriveMonthLabel(pick(kr, "MonthYear", "Month Year", "Month")) || deriveMonthLabel(pick(kr, "DueDate_EOMonth", "DueDate")) || null,
       dealStatus: pick(kr, "DealStatus", "Deal Status", "Deal status") || null,
       stage: pick(kr, "Stage") || pick(kr, "STOCK_CODE", "StockCode") || null,
       invoiceNo: pick(kr, "InvoiceNo") ? String(pick(kr, "InvoiceNo")) : null,
