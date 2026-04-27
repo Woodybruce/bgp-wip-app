@@ -2543,9 +2543,9 @@ Return both null if the page doesn't disclose a UK trading entity.`;
       // locale prefix we inject locale-specific legal paths at the top of Step 3.
       const LOCALE_HREF = /href=["']\/(en[-_]gb|en[-_]uk|en|gb|uk)\//gi;
       const lCounts = new Map<string, number>();
-      let lm: RegExpExecArray | null;
-      while ((lm = LOCALE_HREF.exec(homepageHtml || "")) !== null) {
-        const lc = lm[1].toLowerCase().replace("_", "-");
+      let llm: RegExpExecArray | null;
+      while ((llm = LOCALE_HREF.exec(homepageHtml || "")) !== null) {
+        const lc = llm[1].toLowerCase().replace("_", "-");
         lCounts.set(lc, (lCounts.get(lc) ?? 0) + 1);
       }
       if (lCounts.size) {
