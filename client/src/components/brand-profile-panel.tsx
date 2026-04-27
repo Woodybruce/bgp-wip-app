@@ -413,10 +413,22 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
       return res.json();
     },
     onSuccess: (out: any) => {
+      // Surface the server-side diagnostic summary when the search returned
+      // nothing — turns "0 stores found" into something actionable
+      // (quota issue vs. all-filtered vs. empty queries).
+      const summary = Array.isArray(out?.diagnostics)
+        ? out.diagnostics.find((d: any) => d.step === "places_summary")?.detail
+        : null;
       toast({
         title: "Store search complete",
-        description: out.found != null ? `${out.found} stores found` : "Finished",
+        description: out.found
+          ? `${out.found} stores found`
+          : summary || "0 stores found",
       });
+      if (Array.isArray(out?.diagnostics)) {
+        // Full trace to console for debugging — too long for a toast.
+        console.log("[research-stores] diagnostics:", out.diagnostics);
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/brand", companyId, "profile"] });
     },
     onError: (e: any) => toast({ title: "Store search failed", description: e.message, variant: "destructive" }),

@@ -818,8 +818,13 @@ router.get("/api/brand/:companyId/stores", requireAuth, async (req: Request, res
 // Look up UK stores for a brand via Google Places. Upserts into brand_stores
 // and updates store_count. Used both by the manual endpoint and the
 // auto-enrichment scheduler. Throws if GOOGLE_API_KEY is missing.
+//
+// Diagnostics shape mirrors the KYC re-resolver — caller surfaces these in
+// the toast/console so a "0 stores found" result is debuggable without
+// scraping logs.
 export async function researchBrandStores(companyId: string): Promise<{
   found: number; upserted: number; openCount: number; companyName: string;
+  diagnostics: Array<{ step: string; outcome: string; detail?: string }>;
 }> {
   const googleKey = process.env.GOOGLE_API_KEY;
   if (!googleKey) throw new Error("GOOGLE_API_KEY not configured");
@@ -830,48 +835,77 @@ export async function researchBrandStores(companyId: string): Promise<{
   );
   if (!rows[0]) throw new Error("Company not found");
   const company = rows[0];
+  const diagnostics: Array<{ step: string; outcome: string; detail?: string }> = [];
 
-  const queries = [`${company.name} store London`, `${company.name} UK`];
+  // Query plan — was just London + "UK" suffix, which heavily under-counts
+  // any chain with stores outside London. Now: bare brand name (highest
+  // yield), then major UK retail cities. Each query is paginated up to
+  // 3 pages × 20 = 60 results, deduped by place_id across queries.
+  const cities = [
+    "London", "Manchester", "Birmingham", "Edinburgh", "Glasgow",
+    "Leeds", "Liverpool", "Bristol", "Belfast", "Cardiff",
+    "Newcastle", "Sheffield", "Nottingham",
+  ];
+  const queries = [
+    company.name,
+    `${company.name} UK`,
+    ...cities.map((c) => `${company.name} ${c}`),
+  ];
   const allResults: any[] = [];
   const seenPlaceIds = new Set<string>();
+  // Per-query counters so the diagnostics show exactly where matches came
+  // from (if "Abercrombie & Fitch Manchester" returns 0 raw, we want to know).
+  const queryStats: Record<string, { raw: number; kept: number }> = {};
+  // Sample of rejected names (first 10) — if all matches are being filtered
+  // by isBrandMatch, the diagnostic surfaces what we threw away so the gate
+  // can be loosened mid-incident.
+  const rejectedSamples: string[] = [];
 
-  // Name-similarity gate. For brands with generic names (Supreme, Apple, Coach)
-  // a Places search returns hundreds of unrelated businesses (Supreme Pizza,
-  // Coach Hire, etc.). Only keep results whose place name STARTS WITH the brand
-  // — allowing optional decoration after (Supreme Soho, Apple Regent Street).
+  // Brand-match gate — token-based, not strict prefix. Old code required the
+  // place name to LITERALLY start with the brand token, which rejected real
+  // listings like "BrandName at Selfridges" or "BrandName - Westfield". Now:
+  // the place name must contain the brand's first significant word, and
+  // none of the noise compound-words (pizza/tyres/cleaning/etc) for
+  // single-word brands.
   const brandToken = company.name.toLowerCase().replace(/[^a-z0-9& ]+/g, "").trim();
   const brandFirstWord = brandToken.split(" ")[0] || brandToken;
-  const isBrandMatch = (placeName: string) => {
+  const brandWords = brandToken.split(" ").filter((w) => w.length > 1);
+  const NOISE = new Set([
+    "pizza","tyres","tyre","cars","car","hire","cleaning","plumbing",
+    "gym","fitness","kebab","chicken","fried","fish","chips","pharmacy",
+    "tile","tiles","blinds","carpet","carpets","windows","kitchens",
+    "construction","builders","scaffolding","bakery","barbers","salon",
+    "nails","beauty","dental","dentist","optician","physio","laundry",
+    "taxi","cabs","minicabs","limo","party","tools","plant","plants",
+    "garden","gardens","logistics","couriers","express","cash","loans",
+    "insurance","mortgages","accountants","solicitors","estates",
+    "lettings","properties","property","grocery","market","food","foods",
+    "supermarket","off-licence","newsagent","convenience","dry","wash",
+  ]);
+  const isBrandMatch = (placeName: string): boolean => {
     const n = placeName.toLowerCase().replace(/[^a-z0-9& ]+/g, "").trim();
     if (!n) return false;
-    if (n === brandToken) return true;
-    if (n.startsWith(brandToken + " ")) return true;
-    // Single-word brand: also accept "Brand <decoration>" but reject obvious
-    // unrelated compounds where the first word coincidentally matches.
-    if (!brandToken.includes(" ") && n.startsWith(brandFirstWord + " ")) {
-      const tail = n.slice(brandFirstWord.length + 1).split(" ")[0];
-      // Reject "<brand> pizza|tyres|cars|hire|cleaning|...": these are common
-      // false-positive compounds for short brand tokens. Allow normal store
-      // descriptors (store, shop, london, etc.).
-      const noiseWords = new Set([
-        "pizza","tyres","tyre","cars","car","hire","cleaning","plumbing",
-        "gym","fitness","kebab","chicken","fried","fish","chips","pharmacy",
-        "tile","tiles","blinds","carpet","carpets","windows","kitchens",
-        "construction","builders","scaffolding","bakery","barbers","salon",
-        "nails","beauty","dental","dentist","optician","physio","laundry",
-        "taxi","cabs","minicabs","limo","party","tools","plant","plants",
-        "garden","gardens","logistics","couriers","express","cash","loans",
-        "insurance","mortgages","accountants","solicitors","estates",
-        "lettings","properties","property","grocery","market","food","foods",
-        "supermarket","off-licence","newsagent","convenience","dry","wash",
-      ]);
-      if (noiseWords.has(tail)) return false;
-      return true;
+    // Exact match or starts-with: always accept (cheap, high precision)
+    if (n === brandToken || n.startsWith(brandToken + " ")) return true;
+    // Multi-word brand: require all significant tokens to appear somewhere
+    // in the place name. Catches "BrandName - Westfield London" and
+    // "BrandName at Selfridges" without false-positives on single-token coincidence.
+    if (brandWords.length > 1) {
+      return brandWords.every((w) => n.includes(w));
     }
-    return false;
+    // Single-word brand: brand must appear as a word, and no noise compound
+    // immediately after (avoids "Supreme Pizza", "Coach Hire", etc.).
+    const re = new RegExp(`\\b${brandFirstWord}\\b(?:\\s+(\\S+))?`);
+    const m = n.match(re);
+    if (!m) return false;
+    const next = (m[1] || "").replace(/[^a-z0-9]/g, "");
+    if (next && NOISE.has(next)) return false;
+    return true;
   };
 
+  let lastApiStatus = "";
   for (const q of queries) {
+    queryStats[q] = { raw: 0, kept: 0 };
     let nextPage: string | null = null;
     let page = 0;
     do {
@@ -879,23 +913,56 @@ export async function researchBrandStores(companyId: string): Promise<{
         ? `https://maps.googleapis.com/maps/api/place/textsearch/json?pagetoken=${nextPage}&key=${googleKey}`
         : `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(q)}&region=uk&key=${googleKey}`;
       const r = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-      if (!r.ok) break;
+      if (!r.ok) {
+        diagnostics.push({ step: "places_query", outcome: "http_error", detail: `${q}: ${r.status} ${r.statusText}` });
+        break;
+      }
       const data: any = await r.json();
-      for (const p of (data.results || [])) {
+      // Google returns status="OK" | "ZERO_RESULTS" | "OVER_QUERY_LIMIT" |
+      // "REQUEST_DENIED" | "INVALID_REQUEST". REQUEST_DENIED on every query
+      // = key/billing issue → would otherwise be silent.
+      lastApiStatus = data.status || "?";
+      if (data.status === "REQUEST_DENIED" || data.status === "OVER_QUERY_LIMIT") {
+        diagnostics.push({ step: "places_query", outcome: data.status.toLowerCase(), detail: data.error_message || `${q}: blocked by Google` });
+        break;
+      }
+      const results = data.results || [];
+      queryStats[q].raw += results.length;
+      for (const p of results) {
         // Google Places returns either ", UK" or ", United Kingdom" depending
         // on the place. Older code only matched "UK", silently dropping every
         // result whose address ended in "United Kingdom" → 0 stores found.
         const addr: string = p.formatted_address || "";
         const inUk = /\b(UK|United Kingdom)\b/.test(addr);
-        if (!seenPlaceIds.has(p.place_id) && inUk && isBrandMatch(p.name || "")) {
-          seenPlaceIds.add(p.place_id);
-          allResults.push(p);
+        if (seenPlaceIds.has(p.place_id)) continue;
+        if (!inUk) continue;
+        if (!isBrandMatch(p.name || "")) {
+          if (rejectedSamples.length < 10) rejectedSamples.push(p.name || "(no name)");
+          continue;
         }
+        seenPlaceIds.add(p.place_id);
+        allResults.push(p);
+        queryStats[q].kept++;
       }
       nextPage = data.next_page_token || null;
       page++;
       if (nextPage && page < 3) await new Promise(r => setTimeout(r, 2000));
     } while (nextPage && page < 3);
+  }
+
+  // Surface query-level breakdown so "0 stores found" is never silent.
+  const nonZero = Object.entries(queryStats).filter(([, s]) => s.raw > 0);
+  if (nonZero.length === 0) {
+    diagnostics.push({ step: "places_summary", outcome: "all_queries_empty", detail: `Google API returned 0 results across ${queries.length} queries (last status: ${lastApiStatus || "no response"}). Check GOOGLE_API_KEY billing/quota.` });
+  } else {
+    diagnostics.push({
+      step: "places_summary",
+      outcome: allResults.length > 0 ? "ok" : "all_filtered",
+      detail: `${allResults.length} kept / ${nonZero.reduce((acc, [, s]) => acc + s.raw, 0)} raw across ${nonZero.length}/${queries.length} non-empty queries. Top: ${nonZero.slice(0, 5).map(([q, s]) => `"${q}" ${s.kept}/${s.raw}`).join(", ")}`,
+    });
+    if (allResults.length === 0 && rejectedSamples.length > 0) {
+      diagnostics.push({ step: "places_summary", outcome: "rejected_samples", detail: `Match gate rejected: ${rejectedSamples.slice(0, 5).join(" · ")}` });
+    }
   }
 
   let upserted = 0;
@@ -936,7 +1003,7 @@ export async function researchBrandStores(companyId: string): Promise<{
     );
   }
 
-  return { found: allResults.length, upserted, openCount, companyName: company.name };
+  return { found: allResults.length, upserted, openCount, companyName: company.name, diagnostics };
 }
 
 // Gallery image by ID — serves image from local disk for authenticated users.
