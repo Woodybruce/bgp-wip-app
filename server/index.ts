@@ -454,6 +454,9 @@ import brandProfileRouter from "./brand-profile";
 import brandEnrichmentRouter, { runNightlyBrandEnrichment } from "./brand-enrichment";
 import brandAiTakeRouter from "./brand-ai-take";
 import brandDigestRouter, { runFortnightlyBrandDigest } from "./brand-digest";
+import brandTriggersRouter, { runDailyBrandTriggers } from "./brand-triggers";
+import brandPerplexityRefreshRouter, { runMonthlyPerplexityRefresh } from "./brand-perplexity-refresh";
+import brandScraperRouter, { runDailyBrandScraper } from "./brand-scraper";
 import apolloContactsRouter from "./apollo-contacts";
 import rocketreachContactsRouter, { rocketreachHealth } from "./rocketreach-contacts";
 import { experianHealth, fetchCommercialCredit, isExperianConfigured } from "./experian";
@@ -803,6 +806,9 @@ app.use("/api/branding/assets", express.static(
   app.use(brandEnrichmentRouter);
   app.use(brandAiTakeRouter);
   app.use(brandDigestRouter);
+  app.use(brandTriggersRouter);
+  app.use(brandPerplexityRefreshRouter);
+  app.use(brandScraperRouter);
   app.use(apolloContactsRouter);
   app.use(rocketreachContactsRouter);
 
@@ -984,6 +990,24 @@ app.use("/api/branding/assets", express.static(
           if (now.getDay() === 1 && now.getHours() === 8 && now.getMinutes() < 60 && weekOfYear % 2 === 0) {
             runFortnightlyBrandDigest().catch(err =>
               console.error("[brand-digest] cron run failed:", err?.message)
+            );
+          }
+          // Daily brand-trigger scan — 07:00, after the scraper has run
+          if (now.getHours() === 7 && now.getMinutes() < 60) {
+            runDailyBrandTriggers().catch(err =>
+              console.error("[brand-triggers] cron run failed:", err?.message)
+            );
+          }
+          // Daily brand scraper — 04:00, careers/newsroom probe
+          if (now.getHours() === 4 && now.getMinutes() < 60) {
+            runDailyBrandScraper().catch(err =>
+              console.error("[brand-scraper] cron run failed:", err?.message)
+            );
+          }
+          // Monthly Perplexity refresh — 1st of month, 03:00
+          if (now.getDate() === 1 && now.getHours() === 3 && now.getMinutes() < 60) {
+            runMonthlyPerplexityRefresh().catch(err =>
+              console.error("[perplexity-refresh] cron run failed:", err?.message)
             );
           }
         }, 60 * 60 * 1000);
