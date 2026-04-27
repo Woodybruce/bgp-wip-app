@@ -937,13 +937,17 @@ export async function researchBrandStores(companyId: string): Promise<{
       const results = data.results || [];
       queryStats[q].raw += results.length;
       for (const p of results) {
-        // Google Places returns either ", UK" or ", United Kingdom" depending
-        // on the place. Older code only matched "UK", silently dropping every
-        // result whose address ended in "United Kingdom" → 0 stores found.
-        const addr: string = p.formatted_address || "";
-        const inUk = /\b(UK|United Kingdom)\b/.test(addr);
         if (seenPlaceIds.has(p.place_id)) continue;
-        if (!inUk) continue;
+        // UK detection: accept "UK", "United Kingdom", "GB", UK postcode,
+        // or England/Scotland/Wales/Northern Ireland in address.
+        // We use region=uk but Google still sometimes omits the country suffix.
+        const addr: string = p.formatted_address || "";
+        const inUk = /\b(UK|United Kingdom|GB|England|Scotland|Wales|Northern Ireland)\b/.test(addr)
+          || /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/.test(addr); // UK postcode
+        if (!inUk) {
+          if (rejectedSamples.length < 10) rejectedSamples.push(`[non-UK addr] ${p.name}: ${addr}`);
+          continue;
+        }
         if (!isBrandMatch(p.name || "")) {
           if (rejectedSamples.length < 10) rejectedSamples.push(p.name || "(no name)");
           continue;
