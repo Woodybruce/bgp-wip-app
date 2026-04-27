@@ -2400,7 +2400,7 @@ Return both null if the page doesn't disclose a UK trading entity.`;
     /\/(terms|legal|privacy|policies|impressum|cookies|policy|conditions)/i.test(path) ||
     /\/pages\/(terms|privacy|legal|imprint)/i.test(path);
   const hasUkSignal = (text: string) =>
-    /\b(england|wales|companies house|company\s+(?:registration\s+)?number|registered\s+(?:office|in\s+england))\b/i.test(text);
+    /\b(england|wales|companies house|company\s+(?:registration\s+)?number|registered\s+(?:office|in\s+england)|org\.\s*no\.?|registered\s+address)\b/i.test(text);
 
   // Decode-and-strip helper used by every fetched HTML body.
   const htmlToText = (html: string) =>
@@ -2919,6 +2919,15 @@ router.get("/api/scraper-test", requireAuth, async (req, res) => {
   const url = req.query.url as string;
   if (!url) return res.status(400).json({ error: "url query param required" });
   if (!isScraperApiAvailable()) return res.status(503).json({ error: "SCRAPERAPI_KEY not configured" });
+  const stripHtml = (html: string) =>
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&amp;/g, "&").replace(/&nbsp;/g, " ")
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+      .replace(/&[a-z]+;/g, " ")
+      .replace(/\s+/g, " ");
   const results: any[] = [];
   for (const render of [false, true]) {
     const start = Date.now();
@@ -2928,18 +2937,34 @@ router.get("/api/scraper-test", requireAuth, async (req, res) => {
         render,
         timeoutMs: render ? 35_000 : 15_000,
       });
-      const text = await r.text();
-      const hasEntity = /registered\s+in\s+england|company\s+(?:number|no\.?)|(?:Limited|Ltd\.?|plc|LLP)\s+\((?:company|registered)/i.test(text);
-      const entityMatch = text.match(/([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|plc|LLP))\s+\((?:company|registered)/i);
+      const html = await r.text();
+      const text = stripHtml(html);
+      // Check for entity text in __NEXT_DATA__ blob
+      const ndMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+      const ndText = ndMatch ? ndMatch[1] : "";
+      // Broad Ltd/PLC search in stripped text
+      const ltdMatch = text.match(/([A-Z][A-Za-z0-9\s&',.()-]{2,60}(?:Limited|Ltd\.?|PLC|plc|LLP))/);
+      // org.no / company number search
+      const cnMatch = text.match(/(?:org\.\s*no\.?|company\s+(?:number|no\.?))\s*[:\s]*(0?\d{7,8})/i);
+      // Specific phrases
+      const hasThrough = /through\s+[A-Z]/i.test(text);
+      const hasOrgNo = /org\.\s*no/i.test(text);
+      const hasMauritz = /mauritz/i.test(text) || /mauritz/i.test(ndText);
       results.push({
         render,
         status: r.status,
         ok: r.ok,
-        contentLength: text.length,
+        contentLength: html.length,
+        strippedLength: text.length,
         timeMs: Date.now() - start,
-        hasEntitySignal: hasEntity,
-        entityHint: entityMatch ? entityMatch[1] : null,
-        snippet: text.slice(0, 400).replace(/\s+/g, " "),
+        hasNextData: !!ndMatch,
+        nextDataLength: ndText.length,
+        hasMauritzInHtml: hasMauritz,
+        hasOrgNo,
+        hasThrough,
+        ltdMatch: ltdMatch ? ltdMatch[1].trim() : null,
+        cnMatch: cnMatch ? cnMatch[1] : null,
+        snippet: text.slice(0, 500).replace(/\s+/g, " "),
       });
     } catch (e: any) {
       results.push({ render, error: e.message, timeMs: Date.now() - start });
