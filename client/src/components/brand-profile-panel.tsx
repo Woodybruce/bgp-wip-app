@@ -571,6 +571,19 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     onError: (e: any) => toast({ title: "Add failed", description: e.message, variant: "destructive" }),
   });
 
+  const createBackerMutation = useMutation({
+    mutationFn: async (vars: { name: string; type?: string; description?: string }) => {
+      const description = [vars.type?.replace(/_/g, " "), vars.description].filter(Boolean).join(" — ") || undefined;
+      const res = await apiRequest("POST", `/api/crm/companies`, { name: vars.name, description });
+      return res.json() as Promise<{ id: string; name: string }>;
+    },
+    onSuccess: (created) => {
+      toast({ title: `Created ${created.name}`, description: "Now linked from the Backers list." });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+    },
+    onError: (e: any) => toast({ title: "Create failed", description: e.message, variant: "destructive" }),
+  });
+
   const endRepMutation = useMutation({
     mutationFn: async (repId: string) => {
       await apiRequest("PATCH", `/api/brand/representations/${repId}`, { end_date: new Date().toISOString().slice(0, 10) });
@@ -1404,7 +1417,17 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                                   {id ? (
                                     <Link href={`/companies/${id}`} className="font-medium text-primary hover:underline">{b.name}</Link>
                                   ) : (
-                                    <span className="font-medium">{b.name}</span>
+                                    <>
+                                      <span className="font-medium">{b.name}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => createBackerMutation.mutate({ name: b.name, type: b.type, description: b.description })}
+                                        disabled={createBackerMutation.isPending}
+                                        className="ml-1.5 text-[10px] text-purple-600 hover:text-purple-700 underline decoration-dotted disabled:opacity-50"
+                                      >
+                                        {createBackerMutation.isPending && createBackerMutation.variables?.name === b.name ? "Creating…" : "+ Create"}
+                                      </button>
+                                    </>
                                   )}
                                   {b.type && <Badge variant="outline" className="ml-1.5 text-[10px] py-0">{b.type.replace(/_/g, " ")}</Badge>}
                                   {b.description && <p className="text-xs text-muted-foreground leading-snug">{linkifyText(b.description)}</p>}
