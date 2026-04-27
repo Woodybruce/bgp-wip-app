@@ -2911,6 +2911,66 @@ router.post("/api/companies-house/find-uk-entity/:companyId", requireAuth, async
   }
 });
 
+// ── Batch T&Cs scraper test ────────────────────────────────────────────────
+// POST /api/companies-house/batch-scrape-test
+// Runs the T&Cs scraper on all tracked brands (or a supplied list of company IDs)
+// and returns a summary table: brand, domain, result, entity found, CH number.
+// Runs sequentially with a 2s gap to avoid hammering ScraperAPI.
+router.post("/api/companies-house/batch-scrape-test", requireAuth, async (req, res) => {
+  try {
+    const { db } = await import("./db");
+    const { crmCompanies } = await import("../shared/schema");
+    const { eq, inArray } = await import("drizzle-orm");
+
+    // Optional: pass { ids: ["id1","id2",...] } to test a subset
+    const ids: string[] | undefined = req.body?.ids;
+    const rows = ids?.length
+      ? await db.select().from(crmCompanies).where(inArray(crmCompanies.id, ids))
+      : await db.select().from(crmCompanies).where(eq(crmCompanies.isTrackedBrand, true));
+
+    if (rows.length === 0) return res.json({ total: 0, results: [] });
+
+    // Stream results as newline-delimited JSON so the caller sees progress
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.setHeader("Transfer-Encoding", "chunked");
+    res.flushHeaders();
+
+    let passed = 0, failed = 0, skipped = 0;
+    for (const company of rows) {
+      const domain = (company as any).domainUrl || (company as any).website;
+      if (!domain) {
+        skipped++;
+        res.write(JSON.stringify({ id: company.id, name: company.name, domain: null, status: "skipped", reason: "no domain" }) + "\n");
+        continue;
+      }
+      try {
+        const parentGroup = (company as any).backers as string | null;
+        const result = await scrapeUkEntityFromWebsite(domain, { name: company.name, parentGroup });
+        const ok = !!(result.entityName || result.chNumber);
+        if (ok) passed++; else failed++;
+        res.write(JSON.stringify({
+          id: company.id,
+          name: company.name,
+          domain,
+          status: ok ? "found" : "not_found",
+          entityName: result.entityName,
+          chNumber: result.chNumber,
+          sourceUrl: result.sourceUrl,
+        }) + "\n");
+      } catch (err: any) {
+        failed++;
+        res.write(JSON.stringify({ id: company.id, name: company.name, domain, status: "error", error: err.message }) + "\n");
+      }
+      // 2s gap between brands to avoid rate-limiting ScraperAPI
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    res.write(JSON.stringify({ summary: { total: rows.length, passed, failed, skipped } }) + "\n");
+    res.end();
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Scraper probe test ─────────────────────────────────────────────────────
 // GET /api/scraper-test?url=https://... — quick diagnostic to verify ScraperAPI
 // can reach a URL. Returns status, content-length, and whether entity patterns
