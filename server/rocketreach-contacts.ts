@@ -122,6 +122,7 @@ export function isRocketReachConfigured(): boolean {
 async function searchRocketReach(opts: {
   companyName?: string;
   domain?: string;
+  country?: string[];
 }): Promise<RocketReachPerson[]> {
   const auth = rrAuthHeader();
   if (!auth) throw new Error("ROCKETREACH_API_KEY not configured");
@@ -135,6 +136,7 @@ async function searchRocketReach(opts: {
   };
   if (opts.domain) body.query.current_employer_domain = [opts.domain];
   else if (opts.companyName) body.query.current_employer = [opts.companyName];
+  if (opts.country && opts.country.length > 0) body.query.location_country = opts.country;
 
   const res = await fetch("https://api.rocketreach.co/v2/api/search", {
     method: "POST",
@@ -273,9 +275,11 @@ router.post("/api/brand/:companyId/rocketreach/discover", requireAuth, async (re
       people.push(mapPerson(p, src, parentName));
     };
 
+    const ukOnly = ["United Kingdom"];
+
     if (domain) {
       try {
-        const byDomain = await searchRocketReach({ domain });
+        const byDomain = await searchRocketReach({ domain, country: ukOnly });
         for (const p of byDomain) addIfRelevant(p, "direct");
       } catch (err: any) {
         console.warn(`[rocketreach] domain search failed: ${err?.message}`);
@@ -284,8 +288,19 @@ router.post("/api/brand/:companyId/rocketreach/discover", requireAuth, async (re
 
     if (people.length < 3) {
       try {
-        const byName = await searchRocketReach({ companyName: company.name });
+        const byName = await searchRocketReach({ companyName: company.name, country: ukOnly });
         for (const p of byName) addIfRelevant(p, "name_search");
+      } catch {
+        // non-fatal
+      }
+    }
+
+    // Last-resort: drop country filter — some legit UK contacts have location
+    // set to their passport country rather than work country.
+    if (people.length < 2 && domain) {
+      try {
+        const byDomainGlobal = await searchRocketReach({ domain });
+        for (const p of byDomainGlobal) addIfRelevant(p, "direct");
       } catch {
         // non-fatal
       }
@@ -300,6 +315,7 @@ router.post("/api/brand/:companyId/rocketreach/discover", requireAuth, async (re
           const byParent = await searchRocketReach({
             domain: parentDomain,
             companyName: parentDomain ? undefined : parentCompany.name,
+            country: ukOnly,
           });
           for (const p of byParent) addIfRelevant(p, "parent_group", parentCompany.name);
         } catch {

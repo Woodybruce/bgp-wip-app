@@ -205,23 +205,22 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
     const people: DiscoveredPerson[] = [];
     const diagnostics: { step: string; matched: number; details?: string }[] = [];
 
-    // 1. Primary: every plausible brand domain in one Apollo call.
-    // Includes the stored .com, .co.uk / .uk localisations, and shop./store.
-    // strips so global brands with UK staff get matched even if we only have
-    // their global domain on file.
+    // 1. Primary: every plausible brand domain, UK contacts only.
+    // The UK filter stops US/international staff leaking in when a brand uses
+    // a .com domain shared with its American operation.
     const brandDomains = candidateDomainsFor(company);
     if (brandDomains.length > 0) {
       try {
-        const byDomain = await searchApollo({ domains: brandDomains, apolloKey });
+        const byDomain = await searchApollo({ domains: brandDomains, locations: ["United Kingdom"], apolloKey });
         for (const p of byDomain) {
           if (!seenIds.has(p.id) && isRelevantTitle(p.title)) {
             seenIds.add(p.id);
             people.push(mapPerson(p, "direct"));
           }
         }
-        diagnostics.push({ step: "brand_domains", matched: byDomain.length, details: brandDomains.join(", ") });
+        diagnostics.push({ step: "brand_domains_uk", matched: byDomain.length, details: brandDomains.join(", ") });
       } catch (err: any) {
-        diagnostics.push({ step: "brand_domains", matched: 0, details: `error: ${err.message}` });
+        diagnostics.push({ step: "brand_domains_uk", matched: 0, details: `error: ${err.message}` });
       }
     }
 
@@ -280,6 +279,7 @@ router.post("/api/brand/:companyId/apollo/discover", requireAuth, async (req: Re
           const byParent = await searchApollo({
             domains: parentDomains.length > 0 ? parentDomains : undefined,
             organizationName: parentDomains.length > 0 ? undefined : parentCompany.name,
+            locations: ["United Kingdom"],
             apolloKey,
           });
           for (const p of byParent) {
