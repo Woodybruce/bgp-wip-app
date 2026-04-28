@@ -10048,7 +10048,7 @@ export function setupChatBGPRoutes(app: Express) {
           postcode: propertyPathwayRuns.postcode,
           currentStage: propertyPathwayRuns.currentStage,
           stageStatus: propertyPathwayRuns.stageStatus,
-          createdAt: propertyPathwayRuns.createdAt,
+          startedAt: propertyPathwayRuns.startedAt,
           updatedAt: propertyPathwayRuns.updatedAt,
         }).from(propertyPathwayRuns);
         const rows = q
