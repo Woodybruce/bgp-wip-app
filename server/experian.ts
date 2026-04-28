@@ -26,6 +26,8 @@ function baseUrl(): string {
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
+export function clearTokenCache(): void { cachedToken = null; }
+
 async function getToken(): Promise<string> {
   const clientId = process.env.EXPERIAN_CLIENT_ID;
   const clientSecret = process.env.EXPERIAN_CLIENT_SECRET;
@@ -35,17 +37,22 @@ async function getToken(): Promise<string> {
 
   if (cachedToken && Date.now() < cachedToken.expiresAt - 120_000) return cachedToken.token;
 
+  // Experian UK requires client_id:client_secret as HTTP Basic auth on the token endpoint,
+  // with username+password in the body (not client credentials in the body).
+  const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
   const body = new URLSearchParams({
     grant_type: "password",
-    client_id: clientId,
-    client_secret: clientSecret,
     username: username || "",
     password: password || "",
   });
 
   const res = await fetch(`${baseUrl()}/oauth2/v1/token`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+      Authorization: `Basic ${basicAuth}`,
+    },
     body: body.toString(),
     signal: AbortSignal.timeout(15_000),
   });
@@ -56,7 +63,7 @@ async function getToken(): Promise<string> {
   const data = (await res.json()) as { access_token: string; expires_in?: number };
   const ttlMs = (data.expires_in || 3600) * 1000;
   cachedToken = { token: data.access_token, expiresAt: Date.now() + ttlMs };
-  return data.access_token;
+  return cachedToken.token;
 }
 
 export interface ExperianCreditReport {
@@ -142,17 +149,12 @@ export async function fetchCommercialCredit(companyNumber: string): Promise<Expe
 
   try {
     const token = await getToken();
-    const res = await fetch(`${baseUrl()}/business-information/businesses/uk/v1/credit-report`, {
-      method: "POST",
+    const res = await fetch(`${baseUrl()}/v2/registeredcompanycredit/${encodeURIComponent(cleaned)}`, {
+      method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({
-        registrationNumber: cleaned,
-        country: "GB",
-      }),
       signal: AbortSignal.timeout(30_000),
     });
     if (res.status === 404) {
@@ -209,24 +211,20 @@ export async function kybLookup(companyNumber: string): Promise<{ verified: bool
 
   try {
     const token = await getToken();
-    const res = await fetch(`${baseUrl()}/business-information/businesses/uk/v1/search`, {
-      method: "POST",
+    // /v2/businessstatus/{RegNumber} is the lightweight identity check endpoint
+    const res = await fetch(`${baseUrl()}/v2/businessstatus/${encodeURIComponent(cleaned)}`, {
+      method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify({
-        registrationNumber: cleaned,
-        country: "GB",
-      }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return null;
     const raw = await res.json();
     const hit = raw?.results?.[0] || raw?.result || raw?.data?.[0] || raw;
-    const name = hit?.businessInformation?.name || hit?.name;
-    const status = hit?.businessInformation?.status || hit?.status;
+    const name = hit?.businessInformation?.name || hit?.name || hit?.companyName;
+    const status = hit?.businessInformation?.status || hit?.status || hit?.companyStatus;
     return { verified: !!name, name, status, raw };
   } catch (err: any) {
     console.warn(`[experian] kyb lookup failed for ${cleaned}: ${err?.message}`);
