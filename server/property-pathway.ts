@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { eq, desc, and, or, ilike } from "drizzle-orm";
+import { eq, desc, and, or, ilike, sql } from "drizzle-orm";
 import { requireAuth } from "./auth";
 import { db, pool } from "./db";
 import {
@@ -1633,20 +1633,52 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
       return null;
     });
 
-  // 1a. Search CRM for existing records
+  // 1a. Search CRM for existing records.
+  //
+  // Matching priority (so we prefer real matches over fuzzy name collisions):
+  //   1. Exact postcode match (highest confidence — postcodes are unique to a
+  //      handful of buildings, and CRM stores them normalised).
+  //   2. First-line address match against `name` OR `address->>'formatted'`.
+  //
+  // The previous version did `ilike(name, '%${address}%')` with the FULL
+  // address ("18-22 Haymarket, London SW1Y 4DG"), which only fired if the CRM
+  // name literally contained the whole address string — almost never true,
+  // so it routinely fell through to auto-create + spawned a duplicate stub
+  // pointing at the wrong SharePoint folder.
   let crmHits = { properties: [] as any[], deals: [] as any[], companies: [] as any[] };
   try {
-    const propertyMatches = await db
-      .select()
-      .from(crmProperties)
-      .where(
-        or(
-          ilike(crmProperties.name, `%${address}%`),
-          postcode ? ilike(crmProperties.name, `%${postcode}%`) : ilike(crmProperties.name, `%__nomatch__%`)
-        )
-      )
-      .limit(10);
-    crmHits.properties = propertyMatches;
+    const firstLine = (address.split(",")[0] || address).trim();
+    const normalisedPostcode = postcode.replace(/\s+/g, "").toUpperCase();
+
+    let postcodeMatches: any[] = [];
+    if (normalisedPostcode) {
+      postcodeMatches = await db
+        .select()
+        .from(crmProperties)
+        .where(sql`UPPER(REPLACE(${crmProperties.postcode}, ' ', '')) = ${normalisedPostcode}`)
+        .limit(10);
+    }
+
+    const fuzzyMatches = firstLine.length >= 3
+      ? await db
+          .select()
+          .from(crmProperties)
+          .where(
+            or(
+              ilike(crmProperties.name, `%${firstLine}%`),
+              sql`${crmProperties.address}->>'formatted' ILIKE ${`%${firstLine}%`}`,
+            )
+          )
+          .limit(10)
+      : [];
+
+    // De-dupe, postcode hits first.
+    const seen = new Set<string>();
+    crmHits.properties = [...postcodeMatches, ...fuzzyMatches].filter((p) => {
+      if (!p?.id || seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
+    });
   } catch (err: any) {
     console.error("[pathway stage1] CRM search error:", err?.message);
   }

@@ -1,6 +1,6 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { useLocation, Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1750,6 +1750,7 @@ function statusTone(status: string): string {
  */
 function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [relinkOpen, setRelinkOpen] = useState(false);
 
   const { data: property, isLoading } = useQuery<any>({
     queryKey: ["/api/crm/properties", run.propertyId],
@@ -1767,17 +1768,23 @@ function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
 
   if (!run.propertyId) {
     return (
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <FolderOpen className="w-4 h-4" /> CRM & Folders
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="text-[12px] text-muted-foreground">
-          <p>This investigation isn't linked to a CRM property yet.</p>
-          <p className="mt-1">Run Stage 1 — it auto-creates a CRM record (or links to an existing one for this address) and gives you a folder tree to save documents into.</p>
-        </CardContent>
-      </Card>
+      <>
+        <RelinkCrmDialog runId={run.id} open={relinkOpen} onOpenChange={setRelinkOpen} initialQuery={run.address} />
+        <Card>
+          <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <FolderOpen className="w-4 h-4" /> CRM & Folders
+            </CardTitle>
+            <Button variant="outline" size="sm" className="h-7 text-[11px]" onClick={() => setRelinkOpen(true)}>
+              Link to CRM
+            </Button>
+          </CardHeader>
+          <CardContent className="text-[12px] text-muted-foreground">
+            <p>This investigation isn't linked to a CRM property yet.</p>
+            <p className="mt-1">Run Stage 1 — it auto-creates a CRM record (or links to an existing one for this address) — or click <strong>Link to CRM</strong> above to pick the right record manually.</p>
+          </CardContent>
+        </Card>
+      </>
     );
   }
 
@@ -1804,6 +1811,7 @@ function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
         open={folderDialogOpen}
         onOpenChange={setFolderDialogOpen}
       />
+      <RelinkCrmDialog runId={run.id} open={relinkOpen} onOpenChange={setRelinkOpen} initialQuery={run.address} />
       <Card>
         <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-sm flex items-center gap-2">
@@ -1818,19 +1826,34 @@ function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
               <Badge variant="outline" className="text-[9px] py-0">No folders yet</Badge>
             )}
           </CardTitle>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-[11px] gap-1"
-            onClick={() => setFolderDialogOpen(true)}
-          >
-            <FolderOpen className="w-3 h-3" />
-            {hasFolderTree ? "Manage folders" : "Set up folders"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px] text-muted-foreground hover:text-foreground"
+              onClick={() => setRelinkOpen(true)}
+              title="Link this pathway to a different CRM property"
+            >
+              Wrong building?
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[11px] gap-1"
+              onClick={() => setFolderDialogOpen(true)}
+            >
+              <FolderOpen className="w-3 h-3" />
+              {hasFolderTree ? "Manage folders" : "Set up folders"}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="pt-0">
           {hasFolderTree ? (
-            <PropertyFoldersPanel propertyName={property.name} folderTeams={folderTeams} />
+            <PropertyFoldersPanel
+              propertyName={property.name}
+              folderTeams={folderTeams}
+              sharepointFolderUrl={property.sharepointFolderUrl}
+            />
           ) : (
             <p className="text-[11px] text-muted-foreground">
               No SharePoint folders set up for this building yet. Click <strong>Set up folders</strong> above to create the standard folder tree (Legal & Title, Due Diligence, KYC & AML, Comparables, etc.) — you can then save scraped planning PDFs and other investigation files into it.
@@ -1839,6 +1862,116 @@ function PathwayFoldersPanel({ run }: { run: PathwayRun }) {
         </CardContent>
       </Card>
     </>
+  );
+}
+
+function RelinkCrmDialog({
+  runId,
+  open,
+  onOpenChange,
+  initialQuery,
+}: {
+  runId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  initialQuery: string;
+}) {
+  const [query, setQuery] = useState(initialQuery);
+  const [submitting, setSubmitting] = useState(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (open) setQuery(initialQuery);
+  }, [open, initialQuery]);
+
+  const { data: results, isFetching } = useQuery<any[]>({
+    queryKey: ["/api/crm/properties", { search: query.trim() }],
+    queryFn: async () => {
+      const q = query.trim();
+      if (q.length < 2) return [];
+      const r = await fetch(`/api/crm/properties?search=${encodeURIComponent(q)}&limit=20`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) return [];
+      const data = await r.json();
+      return Array.isArray(data) ? data : data.data || [];
+    },
+    enabled: open && query.trim().length >= 2,
+  });
+
+  async function relink(propertyId: string | null) {
+    setSubmitting(true);
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/relink-crm`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ propertyId }),
+      });
+      if (!r.ok) throw new Error(`Relink failed: ${r.status}`);
+      await queryClient.invalidateQueries({ queryKey: ["/api/property-pathway"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      toast({ title: propertyId ? "Re-linked" : "Unlinked", description: "Folders will refresh from the new CRM record." });
+      onOpenChange(false);
+    } catch (err: any) {
+      toast({ title: "Re-link failed", description: err?.message || "Unknown error", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Link pathway to a CRM property</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Input
+            placeholder="Search by address, postcode, or name…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoFocus
+          />
+          <div className="max-h-72 overflow-y-auto border rounded-md divide-y">
+            {isFetching && <p className="text-[12px] text-muted-foreground p-3">Searching…</p>}
+            {!isFetching && (results || []).length === 0 && query.trim().length >= 2 && (
+              <p className="text-[12px] text-muted-foreground p-3">No matches.</p>
+            )}
+            {(results || []).map((p: any) => (
+              <button
+                key={p.id}
+                type="button"
+                disabled={submitting}
+                onClick={() => relink(p.id)}
+                className="w-full text-left p-2 hover:bg-muted/50 disabled:opacity-50 transition-colors"
+              >
+                <div className="text-[13px] font-medium">{p.name}</div>
+                <div className="text-[11px] text-muted-foreground">
+                  {p.postcode || (p.address as any)?.formatted || ""}
+                  {p.assetClass ? ` · ${p.assetClass}` : ""}
+                </div>
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-between gap-2 pt-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={submitting}
+              onClick={() => relink(null)}
+            >
+              Unlink
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={submitting}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
