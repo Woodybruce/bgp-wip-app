@@ -27,7 +27,7 @@ import {
   xeroInvoices, availableUnits, investmentTracker,
   dealAuditLog,
 } from "@shared/schema";
-import { isInvoicedStatus, legacyToCode, WIP_STATUSES } from "@shared/deal-status";
+import { isInvoicedStatus, legacyToCode, WIP_STATUSES, deriveStageFromStatus } from "@shared/deal-status";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { searchPipnetRequirements } from "./pipnet";
@@ -1851,7 +1851,8 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
 
       // --- Approval gate for Invoiced / Completed ---
-      const APPROVAL_STATUSES = ["Invoiced", "Completed"];
+      // Senior approval required to set these statuses (canonical + legacy)
+      const APPROVAL_STATUSES = ["INV", "COM", "Invoiced", "Completed", "Billed"];
       const SENIOR_EMAILS = new Set([
         "woody@brucegillinghampollard.com",
         "charlotte@brucegillinghampollard.com",
@@ -2031,12 +2032,14 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       }
 
       const isInvestmentTeam = (Array.isArray(deal.team) ? deal.team : []).some(t => t?.toLowerCase() === "investment");
-      const completedStatuses = ["Exchanged", "Completed", "Investment Comps"];
-      const statusChanged = req.body.status && oldDeal && oldDeal.status !== req.body.status;
-      const nowComplete = completedStatuses.includes(deal.status || "");
+      const newCode = legacyToCode(deal.status);
+      const oldCode = legacyToCode(oldDeal?.status);
+      const statusChanged = req.body.status && oldDeal && oldCode !== newCode;
+      const nowComplete = ["EXC", "COM"].includes(newCode || "");
 
-      const WIP_STATUSES = ["SOLs", "Invoiced", "Exchanged", "Billed", "Completed", "Investment Comps"];
-      if (statusChanged && WIP_STATUSES.includes(deal.status || "")) {
+      // Once a deal has moved past listing (SOL onwards), drop any available_units row tied to it
+      const POST_LISTING_CODES = ["SOL", "EXC", "COM", "INV"];
+      if (statusChanged && POST_LISTING_CODES.includes(newCode || "")) {
         try {
           await db.delete(availableUnits).where(eq(availableUnits.dealId, deal.id));
         } catch (_) {}
@@ -4265,7 +4268,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           }
         }
 
-        const isComplete = status === "Invoiced" || status === "Exchanged";
+        const isComplete = ["EXC", "COM", "INV"].includes(legacyToCode(status) || "");
         if (isComplete) completedCount++;
 
         if (isComplete && deal.createdAt) {
@@ -4289,7 +4292,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         "0-30": 0, "31-60": 0, "61-90": 0, "91-180": 0, "181-365": 0, "365+": 0,
       };
       for (const deal of allDeals) {
-        const isComplete = deal.status === "Invoiced" || deal.status === "Exchanged";
+        const isComplete = ["EXC", "COM", "INV"].includes(legacyToCode(deal.status) || "");
         if (isComplete && deal.createdAt) {
           const created = new Date(deal.createdAt);
           const completed = deal.completionDate ? new Date(deal.completionDate) : (deal.updatedAt || now);
@@ -4595,10 +4598,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         dealByName.get(key) || dealByProperty.get(key) || dealByWipRef.get(key);
 
       function deriveStage(status: string | null): string {
-        if (!status) return "pipeline";
-        if (isInvoicedStatus(status)) return "invoiced";
-        if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
-        return "pipeline";
+        return deriveStageFromStatus(status);
       }
 
       function deriveFiscalYear(deal: any): number | null {
@@ -6065,10 +6065,7 @@ Rules:
       const findDealExcel = (key: string) => dealByName.get(key) || dealByProperty.get(key);
 
       function deriveStageExcel(status: string | null): string {
-        if (!status) return "pipeline";
-        if (isInvoicedStatus(status)) return "invoiced";
-        if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
-        return "pipeline";
+        return deriveStageFromStatus(status);
       }
 
       function deriveFiscalYearExcel(deal: any): number | null {
@@ -6422,7 +6419,7 @@ Rules:
           }
         }
 
-        const isComplete = status === "Invoiced" || status === "Exchanged";
+        const isComplete = ["EXC", "COM", "INV"].includes(legacyToCode(status) || "");
         if (isComplete) completedCount++;
 
         if (isComplete && deal.createdAt) {

@@ -13,6 +13,7 @@ import {
   investmentComps,
 } from "@shared/schema";
 import { requireAuth } from "./auth";
+import { legacyToCode } from "@shared/deal-status";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 
 async function safeAICall(prompt: { system: string; user: string; maxTokens?: number }): Promise<string> {
@@ -61,7 +62,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
       const alerts: Array<{ type: string; severity: "high" | "medium" | "low"; dealId: string; dealName: string; message: string }> = [];
 
       for (const deal of deals) {
-        if (!deal.status || ["Completed", "Withdrawn", "Invoiced", "Billed"].includes(deal.status)) continue;
+        if (!deal.status || ["COM", "WIT", "INV"].includes(legacyToCode(deal.status) || "")) continue;
 
         const updatedAt = deal.updatedAt ? new Date(deal.updatedAt) : null;
         const daysSinceUpdate = updatedAt ? Math.floor((now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60 * 24)) : null;
@@ -114,7 +115,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
           }
         }
 
-        if (deal.status === "Under Offer" && deal.amlCheckCompleted !== "YES") {
+        if (legacyToCode(deal.status) === "SOL" && deal.amlCheckCompleted !== "YES") {
           alerts.push({
             type: "missing_aml",
             severity: "medium",
@@ -157,8 +158,8 @@ export function registerAIIntelligenceRoutes(app: Express) {
           OR ${crmDeals.leasingAgentId} = ${contactId}`
       );
 
-      const activeDeals = linkedDeals.filter(d => d.status && !["Completed", "Withdrawn", "Invoiced", "Billed"].includes(d.status));
-      const completedDeals = linkedDeals.filter(d => d.status && ["Completed", "Invoiced", "Billed"].includes(d.status));
+      const activeDeals = linkedDeals.filter(d => { const c = legacyToCode(d.status); return c !== null && !["COM", "WIT", "INV"].includes(c); });
+      const completedDeals = linkedDeals.filter(d => ["COM", "INV"].includes(legacyToCode(d.status) || ""));
 
       const lastInteraction = interactions[0];
       const daysSinceContact = lastInteraction?.interactionDate
@@ -617,7 +618,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
         }
       }
 
-      const underOffer = items.filter(i => i.status === "Under Offer");
+      const underOffer = items.filter(i => legacyToCode(i.status) === "SOL");
       const completed = items.filter(i => i.status === "Completed");
       const live = items.filter(i => i.status === "Live");
 
@@ -804,11 +805,11 @@ export function registerAIIntelligenceRoutes(app: Express) {
       const recentlyUpdated = teamDeals.filter(d => d.updatedAt && new Date(d.updatedAt) > weekAgo);
       const newDeals = teamDeals.filter(d => d.createdAt && new Date(d.createdAt) > weekAgo);
       const completedDeals = teamDeals.filter(d =>
-        (d.status === "Completed" || d.status === "Invoiced" || d.status === "Exchanged") &&
+        ["COM", "INV", "EXC"].includes(legacyToCode(d.status) || "") &&
         d.updatedAt && new Date(d.updatedAt) > weekAgo
       );
 
-      const activeDeals = teamDeals.filter(d => d.status && !["Completed", "Withdrawn", "Invoiced", "Billed"].includes(d.status));
+      const activeDeals = teamDeals.filter(d => { const c = legacyToCode(d.status); return c !== null && !["COM", "WIT", "INV"].includes(c); });
       const totalActiveFees = activeDeals.reduce((s, d) => s + (d.fee || 0), 0);
       const completedFees = completedDeals.reduce((s, d) => s + (d.fee || 0), 0);
 

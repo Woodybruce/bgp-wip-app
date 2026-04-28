@@ -1941,7 +1941,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   app.post("/api/available-units/migrate-letting-deals", requireAuth, async (req, res) => {
     try {
       const { crmDeals, availableUnits } = await import("@shared/schema");
-      const NEGOTIATION_STATUSES = ["Under Negotiation", "HOTs", "NEG"];
+      // Match both canonical and legacy strings — migration may not yet have run
+      const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
       const negDeals = await db.select().from(crmDeals)
         .where(inArray(crmDeals.status, NEGOTIATION_STATUSES));
 
@@ -2025,7 +2026,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const deal = await storage.createCrmDeal({
         name: `${property?.name || "Property"} - ${unit.unitName}`,
         propertyId: unit.propertyId,
-        status: "Under Offer",
+        status: "SOL",
         dealType: body.dealType || "Letting",
         groupName: "Leasing - Active",
         team: body.team || [],
@@ -2047,8 +2048,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
           }
         } catch (_) {}
       }
-      await storage.updateAvailableUnit(req.params.id, { dealId: deal.id, marketingStatus: "Under Offer" });
-      res.json({ deal, unit: { ...unit, dealId: deal.id, marketingStatus: "Under Offer" } });
+      await storage.updateAvailableUnit(req.params.id, { dealId: deal.id, marketingStatus: "SOL" });
+      res.json({ deal, unit: { ...unit, dealId: deal.id, marketingStatus: "SOL" } });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to create deal" });
     }
@@ -2474,7 +2475,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const deal = await storage.createCrmDeal({
         name: item.assetName || property?.name || "Investment Deal",
         propertyId: item.propertyId || undefined,
-        status: "Under Offer",
+        status: "SOL",
         dealType: (item.boardType === "Sales") ? "Sale" : "Acquisition",
         groupName: "Investment - Active",
         team: ["Investment"],
@@ -2610,7 +2611,8 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   (async () => {
     try {
       const { crmDeals, availableUnits } = await import("@shared/schema");
-      const NEGOTIATION_STATUSES = ["Under Negotiation", "HOTs", "NEG"];
+      // Match both canonical and legacy strings — migration may not yet have run
+      const NEGOTIATION_STATUSES = ["NEG", "Under Negotiation", "HOTs"];
       const negDeals = await db.select().from(crmDeals)
         .where(inArray(crmDeals.status, NEGOTIATION_STATUSES));
 
@@ -4536,10 +4538,9 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
 
       const totalDeals = allDeals.length;
 
-      // Pipeline statuses (not completed/invoiced/dead)
-      const INVOICED_STATUSES = ["Invoiced"];
-      const DEAD_STATUSES = ["Dead"];
-      const PIPELINE_STAGE_ORDER = ["Targeting", "Available", "Marketing", "NEG", "HOTs", "SOLs", "Exchanged", "Completed", "Live", "Invoiced"];
+      // Stage detection now uses canonical 10-code helper (legacy strings still mapped)
+      const { legacyToCode } = await import("@shared/deal-status");
+      const PIPELINE_STAGE_ORDER = ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "INV"];
 
       let totalWIP = 0;
       let totalInvoiced = 0;
@@ -4551,17 +4552,18 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       for (const deal of allDeals) {
         const fee = parseFloat(deal.fee) || 0;
         const status = (deal.status || "").trim();
+        const code = legacyToCode(status);
         const dealType = deal.deal_type || "Other";
 
         // WIP vs Invoiced
-        if (INVOICED_STATUSES.includes(status)) {
+        if (code === "INV") {
           totalInvoiced += fee;
-        } else if (!DEAD_STATUSES.includes(status)) {
+        } else if (code !== "WIT") {
           totalWIP += fee;
         }
 
-        // Pipeline value: statuses before Completed/Invoiced
-        const isPreCompletion = !["Completed", "Invoiced", "Dead", "Leasing Comps", "Investment Comps"].includes(status);
+        // Pipeline value: anything still in lifecycle (not COM/INV/WIT)
+        const isPreCompletion = code !== null && !["COM", "INV", "WIT"].includes(code);
         if (isPreCompletion) {
           pipelineValue += fee;
         }
