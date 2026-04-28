@@ -2174,3 +2174,143 @@ export const tenantRepSearches = pgTable("tenant_rep_searches", {
 export const insertTenantRepSearchSchema = createInsertSchema(tenantRepSearches).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertTenantRepSearch = z.infer<typeof insertTenantRepSearchSchema>;
 export type TenantRepSearch = typeof tenantRepSearches.$inferSelect;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Project Demeter — c.300 wet-led pub portfolio (Stonegate / Eastdil deal,
+// advised by BGP for Related/Farallon). Underwriting + 5–10 year disposal
+// AM tracker. See server/demeter.ts for the route layer and the brief at
+// the top of that file for the bucket allocation logic.
+// ─────────────────────────────────────────────────────────────────────────
+export const demeterSites = pgTable("demeter_sites", {
+  id: uuid("id").primaryKey().defaultRandom(),
+
+  // Site identity (from Eastdil datatape — Site Overview + Property Information)
+  siteId: text("site_id").notNull().unique(),
+  name: text("name").notNull(),
+  address: text("address"),
+  town: text("town"),
+  postcode: text("postcode"),
+  county: text("county"),
+  region: text("region"),                              // North & Scotland | South West | London & SE | Central & Wales
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  googleMapsUrl: text("google_maps_url"),
+
+  // Eastdil datatape — financial & lease fields. Populated from a follow-up
+  // wide datatape drop or manual entry; the initial site-list import only
+  // fills the columns above.
+  tenure: text("tenure"),                              // Freehold | Leasehold
+  leaseType: text("lease_type"),                       // L&T | Tied | Free of Tie
+  currentRent: real("current_rent"),
+  rpiLinked: boolean("rpi_linked"),
+  leaseExpiry: text("lease_expiry"),                   // ISO date string
+  publicanName: text("publican_name"),
+  publicanCompanyNumber: text("publican_company_number"),
+  pAndLSharePct: real("p_and_l_share_pct"),
+  fairMaintainableTrade: real("fair_maintainable_trade"),
+  eastdilPubValue: real("eastdil_pub_value"),
+  eastdilAltUseValue: real("eastdil_alt_use_value"),
+  eastdilNotes: text("eastdil_notes"),
+
+  // BGP enrichment metadata
+  enrichmentTier: integer("enrichment_tier").default(0),  // 0 not run, 1, 2, 3
+  enrichmentLastRun: timestamp("enrichment_last_run"),
+
+  // Constraints (Tier 1 PropertyData lookups)
+  listedStatus: text("listed_status"),                 // None | Grade II | Grade II* | Grade I
+  conservationArea: boolean("conservation_area"),
+  greenBelt: boolean("green_belt"),
+  aonb: boolean("aonb"),
+  floodRisk: text("flood_risk"),                       // Low | Medium | High
+  article4: boolean("article_4"),
+
+  // Catchment
+  areaType: text("area_type"),                         // Urban | Suburban | Rural | Town centre
+  householdIncome: real("household_income"),
+  population1Mile: integer("population_1mile"),
+  ptal: text("ptal"),
+
+  // Valuation benchmarks (PropertyData)
+  pdPubValue: real("pd_pub_value"),
+  pdRetailValue: real("pd_retail_value"),
+  pdRestaurantValue: real("pd_restaurant_value"),
+  pdOfficeValue: real("pd_office_value"),
+  pdResiPsf: real("pd_resi_psf"),
+  pdResiPerUnit: real("pd_resi_per_unit"),
+  rebuildCost: real("rebuild_cost"),
+
+  // Bucket allocation — the core underwriting output
+  bucket: integer("bucket"),                           // 1 Hold | 2 Op uplift | 3 Investment dispose | 4 Alt-use | 5 Resi/redevelop
+  bucketRationale: text("bucket_rationale"),
+  bucketConfidence: text("bucket_confidence"),         // High | Medium | Low
+
+  // AM plan & disposal
+  disposalYear: integer("disposal_year"),              // 1..10 from acquisition
+  underwrittenExitValue: real("underwritten_exit_value"),
+  capexRequired: real("capex_required"),
+  amStatus: text("am_status").default("Not started"),  // Not started | Lease regear | Planning | Marketed | Under offer | Sold
+  amNotes: text("am_notes"),
+  amOwner: text("am_owner"),
+
+  // BGP intel
+  crmPropertyId: varchar("crm_property_id"),           // crm_properties.id when matched
+  crmIntelSummary: text("crm_intel_summary"),
+  pathwayRunId: varchar("pathway_run_id"),             // property_pathway_runs.id when Tier 3 spawned a pathway
+
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertDemeterSiteSchema = createInsertSchema(demeterSites).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertDemeterSite = z.infer<typeof insertDemeterSiteSchema>;
+export type DemeterSite = typeof demeterSites.$inferSelect;
+
+// Append-only AM activity log per site (lease regears, planning submissions,
+// viewings, offers, sales). UI surface deferred to phase 2 per the brief, but
+// the table + endpoints exist from day one so we don't lose history.
+export const demeterSiteEvents = pgTable("demeter_site_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  siteId: uuid("site_id").notNull(),                   // FK demeter_sites.id
+  eventType: text("event_type").notNull(),             // Lease regear | Planning submitted | Marketed | Viewing | Offer | Sold | Note
+  eventDate: text("event_date"),                       // ISO date
+  amount: real("amount"),                              // £ where relevant (offer, sale price, capex)
+  notes: text("notes"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDemeterSiteEventSchema = createInsertSchema(demeterSiteEvents).omit({ id: true, createdAt: true });
+export type InsertDemeterSiteEvent = z.infer<typeof insertDemeterSiteEventSchema>;
+export type DemeterSiteEvent = typeof demeterSiteEvents.$inferSelect;
+
+// Background enrichment job queue. Worker (server/demeter-enrichment-worker.ts,
+// phase 2) polls queued rows, runs the tier's PropertyData calls, writes
+// results onto demeter_sites, and updates status + cost estimate here.
+export const demeterEnrichmentJobs = pgTable("demeter_enrichment_jobs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  siteId: uuid("site_id").notNull(),                   // FK demeter_sites.id
+  tier: integer("tier").notNull(),                     // 1 | 2 | 3
+  status: text("status").notNull().default("queued"),  // queued | running | done | failed
+  apiCallsMade: integer("api_calls_made").default(0),
+  costEstimate: real("cost_estimate").default(0),      // £ — approx PropertyData spend
+  error: text("error"),
+  startedAt: timestamp("started_at"),
+  finishedAt: timestamp("finished_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDemeterEnrichmentJobSchema = createInsertSchema(demeterEnrichmentJobs).omit({ id: true, createdAt: true });
+export type InsertDemeterEnrichmentJob = z.infer<typeof insertDemeterEnrichmentJobSchema>;
+export type DemeterEnrichmentJob = typeof demeterEnrichmentJobs.$inferSelect;
+
+// Tunable runtime config — bucket-allocation thresholds, daily spend cap,
+// RBAC allow-list. Stored as a single key/value table so the underwriting
+// rules engine can be tuned without redeploys (per the brief).
+export const demeterConfig = pgTable("demeter_config", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  description: text("description"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type DemeterConfig = typeof demeterConfig.$inferSelect;

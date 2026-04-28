@@ -441,6 +441,7 @@ import { registerInteractionRoutes } from "./interactions";
 import { setupCrmRoutes, startAutoEnrichment, startAutoTurnoverResearch } from "./crm";
 import companiesHouseRouter, { runBatchReKyc } from "./companies-house";
 import { registerPropertyPathwayRoutes } from "./property-pathway";
+import { registerDemeterRoutes } from "./demeter";
 import { registerRetailContextPlanRoutes } from "./retail-context-plan";
 import { registerMapLayerRoutes } from "./map-layers";
 import sanctionsRouter from "./sanctions-screening";
@@ -791,6 +792,7 @@ app.use("/api/branding/assets", express.static(
   setupCrmRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
+  registerDemeterRoutes(app);
   registerRetailContextPlanRoutes(app);
   registerMapLayerRoutes(app);
   app.use(leasingScheduleRouter);
