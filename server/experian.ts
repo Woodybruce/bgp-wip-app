@@ -172,22 +172,30 @@ export async function fetchCommercialCredit(companyNumber: string): Promise<Expe
   }
 }
 
-// Debug helper — returns raw Experian response for a company number (sandbox testing only).
-export async function debugExperianRaw(companyNumber: string): Promise<{ status: number; body: any }> {
+// Debug helper — returns raw Experian response, accepts path + body overrides (sandbox testing only).
+export async function debugExperianRaw(
+  companyNumber: string,
+  opts?: { path?: string; method?: string; reqBody?: any; extraHeaders?: Record<string, string> }
+): Promise<{ status: number; body: any; url: string }> {
   const token = await getToken();
   const cleaned = (companyNumber || "").trim().toUpperCase();
-  const res = await fetch(`${baseUrl()}/business-information/businesses/uk/v1/credit-report`, {
-    method: "POST",
+  const path = opts?.path ?? "/business-information/businesses/uk/v1/credit-report";
+  const method = opts?.method ?? "POST";
+  const reqBody = opts?.reqBody ?? { registrationNumber: cleaned, country: "GB" };
+  const url = `${baseUrl()}${path}`;
+  const res = await fetch(url, {
+    method,
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
       Accept: "application/json",
+      ...(opts?.extraHeaders ?? {}),
     },
-    body: JSON.stringify({ registrationNumber: cleaned, country: "GB" }),
+    body: method !== "GET" ? JSON.stringify(reqBody) : undefined,
     signal: AbortSignal.timeout(30_000),
   });
   const body = await res.json().catch(async () => ({ raw: await res.text().catch(() => "") }));
-  return { status: res.status, body };
+  return { status: res.status, url, body };
 }
 
 // KYB lookup — lighter-weight than full credit report, used for business

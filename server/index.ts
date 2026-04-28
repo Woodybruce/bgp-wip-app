@@ -839,7 +839,12 @@ app.use("/api/branding/assets", express.static(
       if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
       const companyNumber = String(req.body?.companyNumber || "").trim();
       if (!companyNumber) return res.status(400).json({ error: "companyNumber required" });
-      const result = await debugExperianRaw(companyNumber);
+      const result = await debugExperianRaw(companyNumber, {
+        path: req.body?.path,
+        method: req.body?.method,
+        reqBody: req.body?.reqBody,
+        extraHeaders: req.body?.extraHeaders,
+      });
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Unknown error" });
