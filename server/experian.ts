@@ -175,22 +175,24 @@ export async function fetchCommercialCredit(companyNumber: string): Promise<Expe
 // Debug helper — returns raw Experian response, accepts path + body overrides (sandbox testing only).
 export async function debugExperianRaw(
   companyNumber: string,
-  opts?: { path?: string; method?: string; reqBody?: any; extraHeaders?: Record<string, string> }
+  opts?: { path?: string; method?: string; reqBody?: any; extraHeaders?: Record<string, string>; baseOverride?: string; noAuth?: boolean }
 ): Promise<{ status: number; body: any; url: string }> {
-  const token = await getToken();
+  const token = opts?.noAuth ? "" : await getToken();
   const cleaned = (companyNumber || "").trim().toUpperCase();
   const path = opts?.path ?? "/business-information/businesses/uk/v1/credit-report";
   const method = opts?.method ?? "POST";
   const reqBody = opts?.reqBody ?? { registrationNumber: cleaned, country: "GB" };
-  const url = `${baseUrl()}${path}`;
+  const base = opts?.baseOverride ?? baseUrl();
+  const url = `${base}${path}`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    ...(opts?.extraHeaders ?? {}),
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(url, {
     method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      ...(opts?.extraHeaders ?? {}),
-    },
+    headers,
     body: method !== "GET" ? JSON.stringify(reqBody) : undefined,
     signal: AbortSignal.timeout(30_000),
   });

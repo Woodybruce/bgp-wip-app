@@ -844,6 +844,8 @@ app.use("/api/branding/assets", express.static(
         method: req.body?.method,
         reqBody: req.body?.reqBody,
         extraHeaders: req.body?.extraHeaders,
+        baseOverride: req.body?.baseOverride,
+        noAuth: req.body?.noAuth,
       });
       res.json(result);
     } catch (err: any) {
