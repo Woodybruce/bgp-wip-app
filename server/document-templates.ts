@@ -380,7 +380,7 @@ async function autoDesignWithClaude(templateContent: string, templateName: strin
   if (gemini) {
     try {
       const geminiResponse = await gemini.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-2.5-flash",
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: { maxOutputTokens: 2048, temperature: 0.2 },
       });
@@ -861,7 +861,7 @@ Return ONLY valid JSON with this structure:
 }`;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-2.5-flash",
     contents: [
       {
         role: "user",
@@ -915,7 +915,7 @@ Instructions:
 Return ONLY a valid JSON object where keys are field IDs and values are the extracted/generated text.`;
 
   const response = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
+    model: "gemini-2.5-flash",
     contents: [
       {
         role: "user",
@@ -957,7 +957,7 @@ Do NOT include HTML tags, CSS, or placeholder text like "[BGP LOGO]".`;
   if (gemini) {
     try {
       const geminiResponse = await gemini.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-2.5-flash",
         contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
         config: { maxOutputTokens: 8192, temperature: 0.3 },
       });
@@ -1514,7 +1514,7 @@ Return ONLY valid JSON:
       if (geminiDesign) {
         try {
           const geminiResponse = await geminiDesign.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             config: { maxOutputTokens: 12000, temperature: 0.2 },
           });
@@ -1718,7 +1718,7 @@ Keep your reply concise (1-2 sentences). Always return the COMPLETE design, not 
           }
           console.log("[design-assistant] Using Gemini 3.1 Pro");
           const geminiResponse = await geminiChat.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: geminiContents,
             config: { maxOutputTokens: 8000, temperature: 0.3, systemInstruction: systemPrompt },
           });
@@ -2248,7 +2248,7 @@ Generate the complete document now.`;
         try {
           console.log("[doc-generate] Using Gemini 3.1 Pro");
           const geminiResponse = await gemini.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
             config: { maxOutputTokens: 8192, temperature: 0.3 },
           });
@@ -2383,7 +2383,7 @@ Be concise, professional, and use British English. All document advice should al
           }
           geminiContents.push({ role: "user", parts: [{ text: question + fileContext }] });
           const geminiResponse = await gemini.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: geminiContents,
             config: {
               maxOutputTokens: 4096,

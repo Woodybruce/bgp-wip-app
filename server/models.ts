@@ -1827,7 +1827,7 @@ Return ONLY valid JSON. No markdown, no code fences.`;
           }
           console.log("[model-design-chat] Using Gemini 3.1 Pro");
           const geminiResponse = await gemini.models.generateContent({
-            model: "gemini-3.1-pro-preview",
+            model: "gemini-2.5-flash",
             contents: geminiContents,
             config: { maxOutputTokens: 4096, temperature: 0.3, systemInstruction: systemPrompt },
           });
