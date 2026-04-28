@@ -252,11 +252,11 @@ async function ensureSharepointFolder(driveId: string, folderPath: string, msTok
 }
 
 export async function copyDropboxToSharepoint(args: CopyDropboxToSharepointArgs, req: Request): Promise<any> {
-  const { getValidMsToken } = await import("./microsoft");
+  const { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } = await import("./microsoft");
   const msToken = await getValidMsToken(req);
   if (!msToken) return { error: "Microsoft 365 not connected. Ask the user to connect SharePoint first." };
 
-  const spSiteRes = await fetch("https://graph.microsoft.com/v1.0/sites/brucegillinghampollard.sharepoint.com:/sites/BGPsharedrive", {
+  const spSiteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, {
     headers: { Authorization: `Bearer ${msToken}` },
   });
   if (!spSiteRes.ok) return { error: "Could not access BGP SharePoint site" };

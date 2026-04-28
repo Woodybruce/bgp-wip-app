@@ -9,7 +9,7 @@ import * as path from "path";
 import Anthropic from "@anthropic-ai/sdk";
 import { setupAdvancedModelsRoutes } from "./models-advanced";
 import { buildInvestmentModel, buildDCFModel, analyzeAdvancedWorkbook, applyBGPBranding, buildModelForAddin } from "./excel-builder";
-import { getValidMsToken } from "./microsoft";
+import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
 import { performPropertyLookup, formatPropertyReport } from "./property-lookup";
 import { crmDeals, crmContacts, crmCompanies, crmProperties, chatbgpLearnings, appFeedbackLog, appChangeRequests, excelTemplates, excelModelRuns, excelModelRunVersions } from "@shared/schema";
 import { ilike, or, eq, sql, desc, and } from "drizzle-orm";
@@ -1334,9 +1334,7 @@ export function setupModelsRoutes(app: Express) {
       const msToken = await getValidMsToken(req);
       if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected" });
 
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
       const site = await siteRes.json();
 
@@ -1426,9 +1424,7 @@ export function setupModelsRoutes(app: Express) {
         const { getValidMsToken } = await import("./microsoft");
         const msToken = await getValidMsToken(req);
         if (msToken) {
-          const SP_HOST = "brucegillinghampollard.sharepoint.com";
-          const SP_SITE = "/sites/BGPsharedrive";
-          const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+          const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
           if (siteRes.ok) {
             const site = await siteRes.json();
             const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
@@ -1557,9 +1553,7 @@ export function setupModelsRoutes(app: Express) {
       const msToken = await getValidMsToken(req);
       if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected" });
 
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
       const site = await siteRes.json();
 
@@ -1614,9 +1608,7 @@ export function setupModelsRoutes(app: Express) {
       const msToken = await getValidMsToken(req);
       if (!msToken) return res.status(401).json({ message: "Microsoft 365 not connected — required for embedded Excel" });
 
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (!siteRes.ok) return res.status(500).json({ message: "Could not access SharePoint" });
       const site = await siteRes.json();
 

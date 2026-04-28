@@ -26,6 +26,8 @@ const SHAREPOINT_HOST = "brucegillinghampollardlimited.sharepoint.com";
 const SHAREPOINT_SITE_PATH = "/sites/BGP";
 const SHAREPOINT_ROOT_FOLDER = "BGP share drive";
 
+export { SHAREPOINT_HOST, SHAREPOINT_SITE_PATH, SHAREPOINT_ROOT_FOLDER };
+
 let msalClient: ConfidentialClientApplication | null = null;
 let msalCacheLock: Promise<void> | null = null;
 

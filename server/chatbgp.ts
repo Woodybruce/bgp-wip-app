@@ -10,7 +10,7 @@ import path from "node:path";
 import fs from "node:fs";
 import multer from "multer";
 import mammoth from "mammoth";
-import { getValidMsToken } from "./microsoft";
+import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
 import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
@@ -3494,9 +3494,7 @@ async function executeModelRun(args: { templateId: string; name: string; inputVa
     const { getMicrosoftToken } = await import("./microsoft");
     const msToken = await getMicrosoftToken();
     if (msToken) {
-      const SP_HOST = "brucegillinghampollard.sharepoint.com";
-      const SP_SITE = "/sites/BGPsharedrive";
-      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SP_HOST}:${SP_SITE}`, { headers: { Authorization: `Bearer ${msToken}` } });
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, { headers: { Authorization: `Bearer ${msToken}` } });
       if (siteRes.ok) {
         const site = await siteRes.json();
         const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${msToken}` } });
@@ -9823,7 +9821,7 @@ export function setupChatBGPRoutes(app: Express) {
           return { data: { error: `File not found in chat-media: ${chatMediaFilename}. ${hint}` } };
         }
 
-        const spSiteRes = await fetch("https://graph.microsoft.com/v1.0/sites/brucegillinghampollard.sharepoint.com:/sites/BGPsharedrive", {
+        const spSiteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SHAREPOINT_HOST}:${SHAREPOINT_SITE_PATH}`, {
           headers: { Authorization: `Bearer ${msToken}` },
         });
         if (!spSiteRes.ok) return { data: { error: "Could not access SharePoint site" } };
