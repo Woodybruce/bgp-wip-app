@@ -924,7 +924,11 @@ export default function WipReport() {
   const clearClickFilter = useCallback(() => setClickFilter(null), []);
 
   const allTeams = useMemo(() => {
-    const set = new Set(entries.map((e) => e.team).filter(Boolean) as string[]);
+    const set = new Set<string>();
+    entries.forEach((e) => {
+      if (!e.team) return;
+      (e.team as string).split(",").map(t => t.trim()).filter(Boolean).forEach(t => set.add(t));
+    });
     return [...set].sort();
   }, [entries]);
 
@@ -933,11 +937,13 @@ export default function WipReport() {
     return [...set].sort((a, b) => getMonthSortKey(a) - getMonthSortKey(b));
   }, [entries]);
 
+  const normalizeAgent = (a: string) => a.replace(/\s*\(BGP House\)/i, "").trim();
+
   const allAgents = useMemo(() => {
     const map = new Map<string, string>(); // lowercase key → display value
     entries.forEach((e) => {
       if (e.agent) {
-        const parts = (e.agent as string).split(",").map(a => a.trim()).filter(Boolean);
+        const parts = (e.agent as string).split(",").map(a => normalizeAgent(a.trim())).filter(Boolean);
         parts.forEach(a => {
           const k = a.toLowerCase();
           if (!map.has(k)) map.set(k, a.toUpperCase());
@@ -991,7 +997,9 @@ export default function WipReport() {
   const sidebarFilteredEntries = useMemo(() => {
     return entries.filter((e) => {
       if (selectedTeams.size > 0 && selectedTeams.size < allTeams.length) {
-        if (!e.team || !selectedTeams.has(e.team)) return false;
+        if (!e.team) return false;
+        const entryTeams = (e.team as string).split(",").map(t => t.trim()).filter(Boolean);
+        if (!entryTeams.some(t => selectedTeams.has(t))) return false;
       }
       if (selectedFiscalYears.size > 0 && selectedFiscalYears.size < allFiscalYears.length) {
         const rawFy = e.fiscalYear && e.fiscalYear >= 2000 && e.fiscalYear <= 2100 ? e.fiscalYear : null;
@@ -1007,7 +1015,7 @@ export default function WipReport() {
       }
       if (selectedAgents.size > 0 && selectedAgents.size < allAgents.length) {
         if (!e.agent) return false;
-        const agentParts = (e.agent as string).split(",").map(a => a.trim().toUpperCase()).filter(Boolean);
+        const agentParts = (e.agent as string).split(",").map(a => normalizeAgent(a.trim()).toUpperCase()).filter(Boolean);
         if (!agentParts.some(a => selectedAgents.has(a))) return false;
       }
       if (selectedStatuses.size > 0 && selectedStatuses.size < allStatuses.length) {
@@ -1055,8 +1063,12 @@ export default function WipReport() {
   const teamData = useMemo(() => {
     const map: Record<string, number> = {};
     filteredEntries.forEach((e) => {
-      const t = e.team || "Unknown";
-      map[t] = (map[t] || 0) + (e.amtWip || 0) + (e.amtInvoice || 0);
+      const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
+      const teams = e.team
+        ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean)
+        : ["Unknown"];
+      const perTeam = fee / teams.length;
+      teams.forEach(t => { map[t] = (map[t] || 0) + perTeam; });
     });
     return Object.entries(map)
       .map(([label, value]) => ({ label, value }))
@@ -1067,7 +1079,7 @@ export default function WipReport() {
     const map: Record<string, number> = {};
     filteredEntries.forEach((e) => {
       const agentField = e.agent || "Unknown";
-      const agents = agentField.split(",").map(a => a.trim()).filter(Boolean);
+      const agents = agentField.split(",").map(a => normalizeAgent(a.trim())).filter(Boolean);
       const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
       const perAgent = agents.length > 0 ? fee / agents.length : fee;
       if (agents.length === 0) {
