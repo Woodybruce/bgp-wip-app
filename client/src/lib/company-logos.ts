@@ -520,8 +520,8 @@ export function getCompanyLogoUrl(
   size: number = 40
 ): string | null {
   const d = extractDomain(domain);
-  if (d) return `https://www.google.com/s2/favicons?domain=${d}&sz=${Math.min(size * 2, 128)}`;
+  if (d) return `https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`;
   const guessed = guessDomain(name);
-  if (guessed) return `https://www.google.com/s2/favicons?domain=${guessed}&sz=${Math.min(size * 2, 128)}`;
+  if (guessed) return `https://logo.clearbit.com/${guessed}?size=${Math.min(size * 3, 512)}`;
   return null;
 }

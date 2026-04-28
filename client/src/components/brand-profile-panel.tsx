@@ -2950,7 +2950,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                               <div className="w-10 h-10 rounded-md border bg-muted flex items-center justify-center overflow-hidden">
                                 {domain ? (
                                   <img
-                                    src={`https://www.google.com/s2/favicons?domain=${domain}&sz=32`}
+                                    src={`https://logo.clearbit.com/${domain}?size=64`}
                                     alt=""
                                     className="w-5 h-5 object-contain"
                                     onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
