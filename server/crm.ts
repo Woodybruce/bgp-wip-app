@@ -393,7 +393,7 @@ export async function importWipFromBuffer(
       tenant: pick(kr, "Tenant") || pick(kr, "Client") || null,
       team: pick(kr, "Team") || null,
       agent: (() => {
-        const a = String(pick(kr, "Agent") || "").trim();
+        const a = String(pick(kr, "Agent") || "").trim().replace(/\s*\(BGP House\)/i, "").trim();
         return a.toLowerCase() === "bgp house" ? "BGP" : (a || null);
       })(),
       amtWip: isInvoiced ? 0 : net,

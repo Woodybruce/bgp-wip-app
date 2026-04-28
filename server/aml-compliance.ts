@@ -982,7 +982,7 @@ router.get("/api/kyc/my-deals", requireAuth, async (req: Request, res: Response)
               (SELECT c.kyc_status FROM crm_companies c WHERE c.id = d.purchaser_id) AS purchaser_kyc
        FROM crm_deals d
        LEFT JOIN crm_properties p ON d.property_id = p.id
-       WHERE d.status NOT IN ('Invoiced', 'Completed', 'Dead', 'Withdrawn', 'Lost')
+       WHERE d.status NOT IN ('WIT', 'COM', 'INV')
          AND (
            d.vendor_agent_id = $1 OR d.acquisition_agent_id = $1 OR
            d.purchaser_agent_id = $1 OR d.leasing_agent_id = $1 OR
@@ -1011,16 +1011,16 @@ router.get("/api/kyc/board", requireAuth, async (_req: Request, res: Response) =
     const result = await pool.query(
       `WITH deal_roles AS (
          SELECT d.id AS deal_id, d.name AS deal_name, d.landlord_id AS company_id, 'landlord' AS role
-           FROM crm_deals d WHERE d.landlord_id IS NOT NULL AND d.landlord_id <> '' AND d.status NOT IN ('Dead','Withdrawn','Lost')
+           FROM crm_deals d WHERE d.landlord_id IS NOT NULL AND d.landlord_id <> '' AND d.status NOT IN ('WIT')
          UNION ALL
          SELECT d.id, d.name, d.tenant_id, 'tenant'
-           FROM crm_deals d WHERE d.tenant_id IS NOT NULL AND d.tenant_id <> '' AND d.status NOT IN ('Dead','Withdrawn','Lost')
+           FROM crm_deals d WHERE d.tenant_id IS NOT NULL AND d.tenant_id <> '' AND d.status NOT IN ('WIT')
          UNION ALL
          SELECT d.id, d.name, d.vendor_id, 'vendor'
-           FROM crm_deals d WHERE d.vendor_id IS NOT NULL AND d.vendor_id <> '' AND d.status NOT IN ('Dead','Withdrawn','Lost')
+           FROM crm_deals d WHERE d.vendor_id IS NOT NULL AND d.vendor_id <> '' AND d.status NOT IN ('WIT')
          UNION ALL
          SELECT d.id, d.name, d.purchaser_id, 'purchaser'
-           FROM crm_deals d WHERE d.purchaser_id IS NOT NULL AND d.purchaser_id <> '' AND d.status NOT IN ('Dead','Withdrawn','Lost')
+           FROM crm_deals d WHERE d.purchaser_id IS NOT NULL AND d.purchaser_id <> '' AND d.status NOT IN ('WIT')
        ),
        company_deals AS (
          SELECT company_id,
@@ -1140,7 +1140,7 @@ router.get("/api/kyc/board/deals", requireAuth, async (_req: Request, res: Respo
        LEFT JOIN crm_companies tc ON d.tenant_id    = tc.id
        LEFT JOIN crm_companies vc ON d.vendor_id    = vc.id
        LEFT JOIN crm_companies pc ON d.purchaser_id = pc.id
-       WHERE d.status NOT IN ('Invoiced', 'Completed', 'Dead', 'Withdrawn', 'Lost')
+       WHERE d.status NOT IN ('WIT', 'COM', 'INV')
        ORDER BY d.updated_at DESC NULLS LAST`
     );
 

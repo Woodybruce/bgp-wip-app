@@ -103,6 +103,12 @@ export function legacyToCode(raw: string | null | undefined): DealStatusCode | n
   return LEGACY_MAP[trimmed.toLowerCase()] ?? null;
 }
 
+// Status groups used by server-side SQL exclusion lists.
+// Use these instead of maintaining divergent hardcoded strings in each file.
+// All SQL queries should compare against canonical codes (post-migration).
+export const CLOSED_STATUSES: DealStatusCode[]   = ["WIT", "COM", "INV"]; // fully closed — dead, completed, invoiced
+export const TERMINAL_STATUSES: DealStatusCode[] = ["WIT"];               // dead/withdrawn only (keep COM/INV in view)
+
 // Statuses that should be excluded from active deal views (legacy, comps).
 // `crm_deals.status` rows that match these are not in the 10-code set and
 // represent records that belong in the comps schedules, not in WIP.

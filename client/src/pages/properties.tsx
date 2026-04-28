@@ -1,3 +1,4 @@
+import { legacyToCode, DEAL_STATUS_LABELS } from "@shared/deal-status";
 import { guessDomain } from "@/lib/company-logos";
 import { useTeam } from "@/lib/team-context";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -2869,19 +2870,20 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
   const safeUnits = units || [];
   const hasUnits = safeUnits.length > 0;
   const totalUnits = safeUnits.length;
-  const available = safeUnits.filter(u => u.marketingStatus === "Available").length;
-  const underOffer = safeUnits.filter(u => u.marketingStatus === "Under Offer").length;
-  const let_ = safeUnits.filter(u => u.marketingStatus === "Let").length;
+  const available = safeUnits.filter(u => legacyToCode(u.marketingStatus) === "AVA").length;
+  const underOffer = safeUnits.filter(u => legacyToCode(u.marketingStatus) === "SOL").length;
+  const let_ = safeUnits.filter(u => legacyToCode(u.marketingStatus) === "COM").length;
   const totalSqft = safeUnits.reduce((s: number, u: any) => s + (u.sqft || 0), 0);
-  const availSqft = safeUnits.filter(u => u.marketingStatus === "Available").reduce((s: number, u: any) => s + (u.sqft || 0), 0);
+  const availSqft = safeUnits.filter(u => legacyToCode(u.marketingStatus) === "AVA").reduce((s: number, u: any) => s + (u.sqft || 0), 0);
   const totalViewings = safeUnits.reduce((s: number, u: any) => s + (viewingCounts?.[u.id] || 0), 0);
   const totalOffers = safeUnits.reduce((s: number, u: any) => s + (offerCounts?.[u.id] || 0), 0);
 
   const statusColor = (status: string) => {
-    if (status === "Available") return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
-    if (status === "Under Offer") return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
-    if (status === "Let") return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
-    if (status === "Withdrawn") return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
+    const code = legacyToCode(status);
+    if (code === "AVA") return "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200";
+    if (code === "SOL") return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200";
+    if (code === "COM") return "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200";
+    if (code === "WIT") return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200";
     return "bg-gray-100 text-gray-600";
   };
 
@@ -2947,7 +2949,7 @@ export function LeasingTrackerSummary({ propertyId }: { propertyId: string }) {
                       {unit.askingRent && <span className="text-[10px] text-muted-foreground">£{unit.askingRent.toLocaleString()}/pa</span>}
                       {vc > 0 && <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><Eye className="w-2.5 h-2.5" />{vc}</span>}
                       {oc > 0 && <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><FileText className="w-2.5 h-2.5" />{oc}</span>}
-                      <Badge className={`text-[9px] ${statusColor(unit.marketingStatus || "Available")}`}>{unit.marketingStatus || "Available"}</Badge>
+                      <Badge className={`text-[9px] ${statusColor(unit.marketingStatus || "AVA")}`}>{(() => { const c = legacyToCode(unit.marketingStatus); return c ? DEAL_STATUS_LABELS[c] : (unit.marketingStatus || "Available"); })()}</Badge>
                     </div>
                   </div>
                 );

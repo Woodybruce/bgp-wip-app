@@ -807,7 +807,7 @@ export function setupMicrosoftRoutes(app: Express) {
                d.pricing, d.deal_type, p.name as property_name
         FROM crm_deals d
         LEFT JOIN crm_properties p ON d.property_id = p.id
-        WHERE d.status NOT IN ('Dead', 'Completed', 'Lost')
+        WHERE d.status NOT IN ('WIT', 'COM', 'INV')
         ORDER BY d.created_at DESC
       `);
       const activeDealRows = dealsResult.rows;
@@ -1048,7 +1048,7 @@ export function setupMicrosoftRoutes(app: Express) {
                  p.name as property_name, p.address as property_address
           FROM crm_deals d
           LEFT JOIN crm_properties p ON d.property_id = p.id
-          WHERE d.company_id = ANY($1) AND d.status NOT IN ('Dead', 'Lost')
+          WHERE d.company_id = ANY($1) AND d.status NOT IN ('WIT')
           ORDER BY d.created_at DESC
           LIMIT 10
         `, [allCompanyIds]);

@@ -3312,7 +3312,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const dealsResult = await pool.query(
         `SELECT COUNT(*) as total,
-                COUNT(*) FILTER (WHERE status NOT IN ('Dead', 'Completed', 'Lost')) as active
+                COUNT(*) FILTER (WHERE status NOT IN ('WIT', 'COM', 'INV')) as active
          FROM crm_deals WHERE landlord_id = $1`,
         [companyId]
       );
@@ -3336,7 +3336,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         `SELECT d.id, d.name, d.status, d.property_id, d.deal_type as "dealType", p.name as property_name
          FROM crm_deals d
          LEFT JOIN crm_properties p ON d.property_id = p.id
-         WHERE d.landlord_id = $1 AND d.status NOT IN ('Dead', 'Completed', 'Lost')
+         WHERE d.landlord_id = $1 AND d.status NOT IN ('WIT', 'COM', 'INV')
          ORDER BY p.name, d.created_at DESC`,
         [companyId]
       );
@@ -3986,7 +3986,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
          FROM crm_deals d
          LEFT JOIN crm_properties p ON d.property_id = p.id
          LEFT JOIN crm_companies tc ON d.tenant_id = tc.id
-         WHERE d.team @> ARRAY[$1]::text[] AND d.status NOT IN ('Dead', 'Withdrawn')
+         WHERE d.team @> ARRAY[$1]::text[] AND d.status NOT IN ('WIT')
          ORDER BY d.updated_at DESC LIMIT 15`,
         [userTeam]
       );
@@ -4036,7 +4036,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const digestRes = await pool.query(
         `SELECT id, name, status, updated_at FROM crm_deals 
-         WHERE status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn')
+         WHERE status NOT IN ('COM', 'INV', 'WIT')
          AND updated_at < NOW() - INTERVAL '14 days'
          AND team @> ARRAY[$1]::text[]
          ORDER BY updated_at ASC LIMIT 5`,
@@ -4116,7 +4116,7 @@ ${stuckDeals.length > 0 ? `DEALS NEEDING ATTENTION (no update 14+ days):\n${stuc
 
       const stuckDeals = await pool.query(
         `SELECT id, name, status, updated_at FROM crm_deals 
-         WHERE status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn')
+         WHERE status NOT IN ('COM', 'INV', 'WIT')
          AND updated_at < NOW() - INTERVAL '30 days'
          ORDER BY updated_at ASC LIMIT 10`
       );
@@ -4718,7 +4718,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       // Deals stuck in same status > 30 days
       const stuckDeals = await pool.query(`
         SELECT id, name, status, updated_at FROM crm_deals
-        WHERE status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn', 'Leasing Comps', 'Investment Comps')
+        WHERE status NOT IN ('COM', 'INV', 'WIT')
         AND updated_at < NOW() - INTERVAL '30 days'
         ORDER BY updated_at ASC LIMIT 20
       `);
@@ -4740,7 +4740,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       const noFeeResult = await pool.query(`
         SELECT COUNT(*)::int as count FROM crm_deals
         WHERE (fee IS NULL OR fee = 0)
-        AND status NOT IN ('Dead', 'Withdrawn', 'Completed', 'Invoiced', 'Leasing Comps', 'Investment Comps')
+        AND status NOT IN ('WIT', 'COM', 'INV')
       `);
       const noFeeCount = noFeeResult.rows[0]?.count || 0;
       if (noFeeCount > 0) {
@@ -4758,7 +4758,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       const kycGaps = await pool.query(`
         SELECT id, name, status FROM crm_deals
         WHERE kyc_approved = false
-        AND status IN ('SOLs', 'Exchanged', 'Completing', 'HOTs')
+        AND status IN ('SOL', 'EXC', 'COM', 'NEG')
         LIMIT 10
       `);
       for (const d of kycGaps.rows) {
@@ -4778,7 +4778,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         SELECT id, name, completion_date, status FROM crm_deals
         WHERE completion_date IS NOT NULL
         AND completion_date::date < CURRENT_DATE
-        AND status NOT IN ('Completed', 'Invoiced', 'Dead', 'Withdrawn', 'Leasing Comps', 'Investment Comps')
+        AND status NOT IN ('COM', 'INV', 'WIT')
         ORDER BY completion_date ASC
         LIMIT 10
       `);
