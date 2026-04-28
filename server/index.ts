@@ -421,6 +421,65 @@ import { pool } from "./db";
       created_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS idx_document_runs_created ON document_runs(created_at DESC)`,
+
+    // ── Deal status canonicalisation ──
+    // Backfill legacy status strings on crm_deals, available_units and
+    // investment_tracker into the canonical 10-code set (REP/SPEC/LIVE/AVA/
+    // NEG/SOL/EXC/COM/WIT/INV). Original values are preserved in
+    // *_legacy columns so the migration is reversible. Idempotent — the
+    // UPDATE statements no-op once values are canonical.
+    `ALTER TABLE crm_deals          ADD COLUMN IF NOT EXISTS status_legacy TEXT`,
+    `ALTER TABLE available_units    ADD COLUMN IF NOT EXISTS marketing_status_legacy TEXT`,
+    `ALTER TABLE investment_tracker ADD COLUMN IF NOT EXISTS status_legacy TEXT`,
+    `UPDATE crm_deals          SET status_legacy = status            WHERE status_legacy IS NULL AND status IS NOT NULL`,
+    `UPDATE available_units    SET marketing_status_legacy = marketing_status WHERE marketing_status_legacy IS NULL AND marketing_status IS NOT NULL`,
+    `UPDATE investment_tracker SET status_legacy = status            WHERE status_legacy IS NULL AND status IS NOT NULL`,
+    `UPDATE crm_deals SET status = CASE
+        WHEN UPPER(TRIM(status)) IN ('REP','SPEC','LIVE','AVA','NEG','SOL','EXC','COM','WIT','INV') THEN UPPER(TRIM(status))
+        WHEN LOWER(TRIM(status)) IN ('under negotiation','negotiation','hots') THEN 'NEG'
+        WHEN LOWER(TRIM(status)) IN ('under offer','sols','solicitors')        THEN 'SOL'
+        WHEN LOWER(TRIM(status)) = 'exchanged'                                  THEN 'EXC'
+        WHEN LOWER(TRIM(status)) IN ('completed','complete','let')             THEN 'COM'
+        WHEN LOWER(TRIM(status)) IN ('invoiced','billed')                      THEN 'INV'
+        WHEN LOWER(TRIM(status)) IN ('reporting','targeting')                  THEN 'REP'
+        WHEN LOWER(TRIM(status)) = 'speculative'                                THEN 'SPEC'
+        WHEN LOWER(TRIM(status)) = 'live'                                       THEN 'LIVE'
+        WHEN LOWER(TRIM(status)) IN ('available','marketing')                  THEN 'AVA'
+        WHEN LOWER(TRIM(status)) IN ('withdrawn','lost','dead')                THEN 'WIT'
+        ELSE status
+      END
+      WHERE status IS NOT NULL
+        AND UPPER(TRIM(status)) NOT IN ('REP','SPEC','LIVE','AVA','NEG','SOL','EXC','COM','WIT','INV')`,
+    `UPDATE available_units SET marketing_status = CASE
+        WHEN UPPER(TRIM(marketing_status)) IN ('REP','AVA','NEG','SOL','EXC','COM','WIT','INV') THEN UPPER(TRIM(marketing_status))
+        WHEN LOWER(TRIM(marketing_status)) IN ('under negotiation','negotiation','hots') THEN 'NEG'
+        WHEN LOWER(TRIM(marketing_status)) IN ('under offer','sols','solicitors')        THEN 'SOL'
+        WHEN LOWER(TRIM(marketing_status)) = 'exchanged'                                  THEN 'EXC'
+        WHEN LOWER(TRIM(marketing_status)) IN ('completed','complete','let')             THEN 'COM'
+        WHEN LOWER(TRIM(marketing_status)) IN ('invoiced','billed')                      THEN 'INV'
+        WHEN LOWER(TRIM(marketing_status)) IN ('reporting','targeting')                  THEN 'REP'
+        WHEN LOWER(TRIM(marketing_status)) IN ('available','marketing')                  THEN 'AVA'
+        WHEN LOWER(TRIM(marketing_status)) IN ('withdrawn','lost','dead')                THEN 'WIT'
+        ELSE marketing_status
+      END
+      WHERE marketing_status IS NOT NULL
+        AND UPPER(TRIM(marketing_status)) NOT IN ('REP','AVA','NEG','SOL','EXC','COM','WIT','INV')`,
+    `UPDATE investment_tracker SET status = CASE
+        WHEN UPPER(TRIM(status)) IN ('REP','SPEC','LIVE','AVA','NEG','SOL','EXC','COM','WIT','INV') THEN UPPER(TRIM(status))
+        WHEN LOWER(TRIM(status)) IN ('under negotiation','negotiation','hots') THEN 'NEG'
+        WHEN LOWER(TRIM(status)) IN ('under offer','sols','solicitors')        THEN 'SOL'
+        WHEN LOWER(TRIM(status)) = 'exchanged'                                  THEN 'EXC'
+        WHEN LOWER(TRIM(status)) IN ('completed','complete','let')             THEN 'COM'
+        WHEN LOWER(TRIM(status)) IN ('invoiced','billed')                      THEN 'INV'
+        WHEN LOWER(TRIM(status)) IN ('reporting','targeting')                  THEN 'REP'
+        WHEN LOWER(TRIM(status)) = 'speculative'                                THEN 'SPEC'
+        WHEN LOWER(TRIM(status)) = 'live'                                       THEN 'LIVE'
+        WHEN LOWER(TRIM(status)) IN ('available','marketing')                  THEN 'AVA'
+        WHEN LOWER(TRIM(status)) IN ('withdrawn','lost','dead')                THEN 'WIT'
+        ELSE status
+      END
+      WHERE status IS NOT NULL
+        AND UPPER(TRIM(status)) NOT IN ('REP','SPEC','LIVE','AVA','NEG','SOL','EXC','COM','WIT','INV')`,
   ];
 
   let ok = 0, skipped = 0;
