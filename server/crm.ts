@@ -37,6 +37,35 @@ import { scrapeTrlPage, KNOWN_TRL_PAGES, discoverTrlPages, scrapeTrlOccupierDire
 import { randomUUID } from "crypto";
 import type { Pool } from "pg";
 
+// Snapshot a completed deal into the appropriate comps schedule. Idempotent:
+// skips if a comp already exists for this deal. The original deal stays on
+// its tracker (it will continue to INV when Xero invoices it).
+async function maybeCopyDealToComps(deal: any): Promise<void> {
+  if (!deal?.id) return;
+  const dealType = String(deal.dealType || "").toLowerCase();
+  const isInvestment = dealType.includes("investment") || dealType.includes("acquisition") || dealType === "sale";
+
+  if (isInvestment) {
+    const existing = await pool.query(`SELECT 1 FROM investment_comps WHERE rca_deal_id = $1 LIMIT 1`, [deal.id]);
+    if ((existing.rowCount ?? 0) > 0) return;
+    await pool.query(
+      `INSERT INTO investment_comps (id, rca_deal_id, status, transaction_type, property_name, transaction_date, price)
+       VALUES (gen_random_uuid(), $1, 'COM', $2, $3, $4, $5)`,
+      [deal.id, deal.dealType || null, deal.name || null, deal.completionDate || null, deal.fee || null]
+    );
+    console.log(`[deal->comps] Copied investment deal ${deal.id} (${deal.name}) into investment_comps`);
+  } else {
+    const existing = await pool.query(`SELECT 1 FROM crm_comps WHERE deal_id = $1 LIMIT 1`, [deal.id]);
+    if ((existing.rowCount ?? 0) > 0) return;
+    await pool.query(
+      `INSERT INTO crm_comps (id, name, deal_id, property_id, deal_type, completion_date)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)`,
+      [deal.name || "Untitled deal", deal.id, deal.propertyId || null, deal.dealType || null, deal.completionDate || null]
+    );
+    console.log(`[deal->comps] Copied leasing deal ${deal.id} (${deal.name}) into crm_comps`);
+  }
+}
+
 function parseAiJson(raw: string): any {
   let cleaned = raw.trim();
   if (cleaned.startsWith("```")) {
@@ -1941,6 +1970,16 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       if ("learning" in req.body) delete req.body.learning;
 
       const deal = await storage.updateCrmDeal(req.params.id, req.body);
+
+      // Auto-copy to comps schedule on COM transition (snapshot, deal stays on tracker until INV).
+      // Best-effort: never fails the deal update.
+      try {
+        if (legacyToCode(oldDeal?.status) !== "COM" && legacyToCode(deal.status) === "COM") {
+          await maybeCopyDealToComps(deal);
+        }
+      } catch (compErr: any) {
+        console.warn(`[deal->comps] auto-copy failed for ${deal.id}:`, compErr?.message);
+      }
 
       const rentFields = ["rentPa", "rentFree", "leaseLength", "capitalContribution", "totalAreaSqft"];
       if (rentFields.some(f => req.body[f] !== undefined)) {
