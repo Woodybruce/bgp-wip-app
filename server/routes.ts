@@ -3157,8 +3157,32 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Lazy-init the table on first hit. Same pattern as
+  // brand_score_history in brand-triggers.ts — keeps deploys self-healing
+  // when the table never made it into the migrations folder.
+  let clientTemplatesTableEnsured = false;
+  async function ensureClientTemplatesTable() {
+    if (clientTemplatesTableEnsured) return;
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS client_templates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        company_id VARCHAR NOT NULL,
+        company_name TEXT NOT NULL,
+        label TEXT NOT NULL,
+        description TEXT,
+        category TEXT DEFAULT 'document',
+        preview_data JSONB,
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_client_templates_company_id ON client_templates(company_id);
+    `);
+    clientTemplatesTableEnsured = true;
+  }
+
   app.get("/api/client-templates", requireAuth, async (req, res) => {
     try {
+      await ensureClientTemplatesTable();
       const { resolveCompanyScope } = await import("./company-scope");
       const scopeCompanyId = await resolveCompanyScope(req);
 
@@ -3179,6 +3203,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.post("/api/client-templates", requireAuth, async (req, res) => {
     try {
+      await ensureClientTemplatesTable();
       const userId = req.session.userId!;
       const userResult = await pool.query(`SELECT email FROM users WHERE id = $1`, [userId]);
       const email = userResult.rows[0]?.email?.toLowerCase() || "";
@@ -3204,6 +3229,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.delete("/api/client-templates/:id", requireAuth, async (req, res) => {
     try {
+      await ensureClientTemplatesTable();
       const userId = req.session.userId!;
       const userResult = await pool.query(`SELECT email FROM users WHERE id = $1`, [userId]);
       const email = userResult.rows[0]?.email?.toLowerCase() || "";
