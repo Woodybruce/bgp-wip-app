@@ -103,6 +103,13 @@ interface StageResults {
       dateOfPurchase?: string;
       proprietorCompanyId?: string;
       proprietorCompanyNumber?: string;
+      // True only when the title was resolved via UPRN match (PropertyData
+      // uprn-title). False when sourced from a street-number filter on the
+      // postcode list, the AI's own guess, or the CRM's stored title — in
+      // which case downstream consumers (UI / AI briefing) should treat it
+      // as unverified and prompt the user to confirm before quoting.
+      titleVerified?: boolean;
+      titleSource?: "uprn" | "street_number" | "postcode_only" | "ai" | "crm";
     } | null;
     tenant?: { name: string; companyNumber?: string; companyId?: string };
     folderTree?: { root: string; webUrl: string; children: string[] };
@@ -1408,12 +1415,15 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
     }
     // Verified resolver wins. Keep AI-derived enrichment fields (e.g. purchase
     // price, proprietor company number from web research) where the resolver
-    // didn't fill them.
+    // didn't fill them. Always carry the resolver's verification flag so the
+    // UI / downstream prompt can tell whether the title is UPRN-precise.
     stage1Payload.initialOwnership = {
       ...(aiOwnership || {}),
       ...verifiedOwnership,
       titleNumber: verifiedTitle,
       proprietorName: verifiedOwnership.proprietorName || aiOwnership?.proprietorName,
+      titleVerified: !!verifiedOwnership.titleVerified,
+      titleSource: verifiedOwnership.titleSource,
     };
   } else if (!aiOwnership && verifiedOwnership) {
     // No AI ownership and no verified title (resolver returned only enrichment) —
@@ -1422,8 +1432,14 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   } else if (aiTitle && aiTitle !== "unknown" && !verifiedTitle) {
     // AI gave a title but the resolver couldn't verify any UPRN. Keep the AI's
     // answer (it may still be right — PropertyData/OS coverage isn't complete)
-    // but log clearly so we can trace title-not-found errors back to here.
+    // but flag it as unverified + ai-sourced so the UI doesn't quote it as
+    // authoritative and the next prompt iteration knows it was a guess.
     console.warn(`[pathway stage1] AI title=${aiTitle} is unverified — UPRN resolver returned no matched freeholds for ${run.address} ${run.postcode || ""}. Order failures expected.`);
+    stage1Payload.initialOwnership = {
+      ...(aiOwnership || {}),
+      titleVerified: false,
+      titleSource: "ai",
+    };
   }
   if (!stage1Payload.rates && partialPayload.rates) {
     stage1Payload.rates = partialPayload.rates;
@@ -1705,6 +1721,8 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   const crmMatch = crmHits.properties[0];
   if (crmMatch?.proprietorName || crmMatch?.titleNumber) {
     initialOwnership = {
+      titleVerified: false,
+      titleSource: "crm",
       titleNumber: crmMatch.titleNumber || "unknown",
       proprietorName: crmMatch.proprietorName || undefined,
       proprietorCategory: crmMatch.proprietorType || undefined,
@@ -1713,11 +1731,13 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   let voaEntries: Array<{ firmName?: string; address?: string; postcode?: string; description?: string; rateableValue?: number | null; effectiveDate?: string; }> = [];
   let stage1FreeholdsData: any[] = [];
   let stage1LeaseholdsData: any[] = [];
+  let resolvedUprn: string | undefined;
   try {
     // Authoritative title resolution — UPRN-precise.
     const { resolveBuildingTitles } = await import("./land-registry");
     const lr = await resolveBuildingTitles({ address, postcode, skipPersist: true });
     if (lr.ok) {
+      resolvedUprn = lr.uprns?.[0];
       const matchedFh = lr.matched.freeholds || [];
       const matchedLh = lr.matched.leaseholds || [];
       const fallbackFh = lr.fallback.freeholds || [];
@@ -1732,14 +1752,21 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
       const ownershipPool = matchedFh.length > 0 ? matchedFh : fallbackFh;
       if (ownershipPool.length > 0) {
         const best = ownershipPool.find((f: any) => f?.proprietor_name_1?.trim()) || ownershipPool[0];
+        // Title is only "verified" when the resolver landed it via UPRN match.
+        // Street-number fallback can pick a neighbour with a similar number;
+        // we surface the title but flag it so the UI / AI prompt can refuse
+        // to quote it as authoritative.
+        const titleVerified = lr.source === "uprn" && matchedFh.length > 0;
         initialOwnership = {
           titleNumber: best.title_number || best.title || initialOwnership?.titleNumber || "unknown",
           proprietorName: best.proprietor_name_1 || initialOwnership?.proprietorName,
           proprietorCategory: best.proprietor_category || initialOwnership?.proprietorCategory,
           pricePaid: best.price_paid ? Number(best.price_paid) : initialOwnership?.pricePaid,
           dateOfPurchase: best.date_proprietor_added || initialOwnership?.dateOfPurchase,
+          titleVerified,
+          titleSource: lr.source,
         };
-        console.log(`[pathway stage1] ownership resolved via ${lr.source} — title=${initialOwnership.titleNumber} owner=${initialOwnership.proprietorName || "?"}`);
+        console.log(`[pathway stage1] ownership resolved via ${lr.source} (verified=${titleVerified}) — title=${initialOwnership.titleNumber} owner=${initialOwnership.proprietorName || "?"}`);
       } else {
         console.log(`[pathway stage1] no UPRN-matched title for "${address}" in ${postcode} — leaving ownership null (postcode had ${contextFh.length} other titles)`);
       }
@@ -1749,7 +1776,22 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
 
     // Still run performPropertyLookup for non-LR layers (VOA, EPC, planning,
     // market intel). LR responsibilities now sit with resolveBuildingTitles.
-    const lookup = await performPropertyLookup({ address, postcode, layers: ["core"] });
+    //
+    // Pass the UPRN (when the resolver found one) so PropertyData uses
+    // building-precise endpoints instead of postcode-wide ones, and pass the
+    // street number / range so postcode-wide returns (price-paid, VOA, EPC,
+    // PD planning-applications) get post-filtered to this building only —
+    // stops a neighbour's planning app on the same postcode bleeding into
+    // the AI briefing context.
+    const streetNumberMatch = address.match(/\b(\d+[a-z]?(?:\s*-\s*\d+[a-z]?)?)\b/i);
+    const streetNumber = streetNumberMatch ? streetNumberMatch[1].replace(/\s*-\s*/g, "-") : undefined;
+    const lookup = await performPropertyLookup({
+      address,
+      postcode,
+      uprn: resolvedUprn,
+      streetNumber,
+      layers: ["core"],
+    });
     if (Array.isArray((lookup as any).voaRatings)) {
       voaEntries = (lookup as any).voaRatings;
     }
@@ -2575,7 +2617,9 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   const summary = [
     `Initial search complete for ${address}.`,
     crmHits.properties.length ? `${crmHits.properties.length} CRM property record(s).` : `No existing CRM records.`,
-    initialOwnership?.proprietorName ? `Owner: ${initialOwnership.proprietorName} (title ${initialOwnership.titleNumber}).` : `Ownership not resolved.`,
+    initialOwnership?.proprietorName
+      ? `Owner: ${initialOwnership.proprietorName} (title ${initialOwnership.titleNumber}${initialOwnership.titleVerified === false ? " — unverified" : ""}).`
+      : `Ownership not resolved.`,
     deals.length ? `${deals.length} deal(s) in pipeline/history.` : null,
     tenancy?.units?.length ? `${tenancy.units.length} unit(s) on file — ${tenancy.status}.` : null,
     engagements.length ? `${engagements.length} viewing(s)/interaction(s) logged.` : null,
@@ -2816,7 +2860,9 @@ ${JSON.stringify(briefContext, null, 2).slice(0, 14000)}`;
         initialOwnership?.proprietorName || aiFacts?.owner ? `Owner: ${initialOwnership?.proprietorName || aiFacts?.owner}` : null,
         initialOwnership?.proprietorCompanyNumber || aiFacts?.ownerCompanyNumber ? `Companies House: ${initialOwnership?.proprietorCompanyNumber || aiFacts?.ownerCompanyNumber}` : null,
         derivedTenantForFilter(run, aiFacts, tenancy) ? `Tenant/Occupier: ${derivedTenantForFilter(run, aiFacts, tenancy)}` : null,
-        initialOwnership?.titleNumber ? `Title number: ${initialOwnership.titleNumber}` : null,
+        initialOwnership?.titleNumber
+          ? `Title number: ${initialOwnership.titleNumber}${initialOwnership.titleVerified === false ? ` (UNVERIFIED — sourced via ${initialOwnership.titleSource || "fallback"}; do not quote as authoritative until confirmed against Land Registry)` : ""}`
+          : null,
         aiFacts?.sizeSqft ? `Size: ${aiFacts.sizeSqft} sq ft` : null,
         aiFacts?.listedStatus ? `Heritage: ${aiFacts.listedStatus}` : null,
         aiFacts?.currentUse ? `Use: ${aiFacts.currentUse}` : null,
