@@ -198,7 +198,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
 
 // ─── Email rendering ─────────────────────────────────────────────────────
 
-function renderAlertEmail(event: TriggerEvent, baseUrl = ""): { subject: string; body: string } {
+function renderAlertEmail(event: TriggerEvent): { subject: string; body: string } {
   const typeEmoji: Record<TriggerEvent["type"], string> = {
     hunter_hot: "🔥",
     hunter_cooling: "❄️",
@@ -208,7 +208,8 @@ function renderAlertEmail(event: TriggerEvent, baseUrl = ""): { subject: string;
   };
   const subject = `${typeEmoji[event.type]} BGP alert — ${event.headline}`;
 
-  const url = `${baseUrl}/companies?brand=${event.brandId}`;
+  const baseUrl = (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
+  const url = `${baseUrl}/companies/${event.brandId}`;
   const body = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
