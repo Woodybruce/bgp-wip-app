@@ -429,7 +429,7 @@ export function PropertyDetail({ id }: { id: string }) {
 
             <div className="md:hidden space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} />
+                <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />
                 <LinkedDealsPanel propertyId={property.id} />
               </div>
               <Card>
@@ -520,7 +520,7 @@ export function PropertyDetail({ id }: { id: string }) {
               </button>
               {sidebarSections.files && (
                 <div className="px-4 pb-3 space-y-3">
-                  <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} />
+                  <PropertyFoldersPanel propertyName={property.name} folderTeams={property.folderTeams} sharepointFolderUrl={property.sharepointFolderUrl} />
                   <PropertySharepointLink propertyId={property.id} sharepointFolderUrl={property.sharepointFolderUrl} onUpdate={inlineUpdate} />
                 </div>
               )}
