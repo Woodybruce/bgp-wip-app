@@ -187,10 +187,10 @@ export async function debugExperianRaw(
   const base = opts?.baseOverride ?? baseUrl();
   const url = `${base}${path}`;
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
     Accept: "application/json",
     ...(opts?.extraHeaders ?? {}),
   };
+  if (method !== "GET") headers["Content-Type"] = "application/json";
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(url, {
     method,
