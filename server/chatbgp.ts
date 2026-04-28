@@ -2098,6 +2098,23 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
+      name: "attach_workbook_to_pathway",
+      description: "Attach an existing Excel model run to a Property Pathway's Stage 7 (Excel Model). Use when the user has refined a workbook in the Excel add-in and asks to 'save to the pathway'. Looks up the model run, links it to the pathway (top-level modelRunId + stageResults.stage7), and marks Stage 7 as running so the user can review and agree. Does NOT auto-agree the model — the user still needs to click Agree on the pathway card to lock it.",
+      parameters: {
+        type: "object",
+        properties: {
+          runId: { type: "string", description: "The pathway run id" },
+          modelRunId: { type: "string", description: "The excel_model_runs id of the workbook being attached. The Excel add-in surfaces this as the 'linked model run'." },
+          modelVersionId: { type: "string", description: "Optional specific version id. Defaults to the latest version of the model run." },
+        },
+        required: ["runId", "modelRunId"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "generate_pdf",
       description: "Generate a PLAIN-TEXT PDF report (no imagery, no visual design — headings, paragraphs, bullets only). Use ONLY for internal text summaries like meeting notes or data digests. DO NOT use for brochures, pitch decks, client-facing documents, placemaking materials, or anything the user describes as 'great-looking', 'designed', 'brochure', 'deck', 'pitch', or 'playbook' — for those use `generate_designed_deck` (Gamma, full visual design) or `compile_brochure_from_pdfs` (stitch real pages from existing BGP brochures).",
       parameters: {
@@ -10057,6 +10074,69 @@ export function setupChatBGPRoutes(app: Express) {
         return { data: { count: rows.length, runs: rows } };
       } catch (err: any) {
         return { data: { error: `Failed to list pathway runs: ${err?.message}` } };
+      }
+    }
+
+    if (tcName === "attach_workbook_to_pathway") {
+      try {
+        const { db } = await import("./db");
+        const { propertyPathwayRuns, excelModelRuns, excelModelRunVersions } = await import("@shared/schema");
+        const { eq, desc, and } = await import("drizzle-orm");
+        const runId = String(tcArgs.runId || "");
+        const modelRunId = String(tcArgs.modelRunId || "");
+        if (!runId || !modelRunId) return { data: { error: "runId and modelRunId required" } };
+
+        const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
+        if (!run) return { data: { error: "Pathway run not found" } };
+
+        const [modelRun] = await db.select().from(excelModelRuns).where(eq(excelModelRuns.id, modelRunId)).limit(1);
+        if (!modelRun) return { data: { error: "Model run not found" } };
+
+        const versionId = tcArgs.modelVersionId ? String(tcArgs.modelVersionId) : null;
+        const [version] = versionId
+          ? await db.select().from(excelModelRunVersions).where(and(eq(excelModelRunVersions.id, versionId), eq(excelModelRunVersions.modelRunId, modelRunId))).limit(1)
+          : await db.select().from(excelModelRunVersions).where(eq(excelModelRunVersions.modelRunId, modelRunId)).orderBy(desc(excelModelRunVersions.version)).limit(1);
+        if (versionId && !version) return { data: { error: "Specified modelVersionId not found on this model run" } };
+
+        const sr: any = run.stageResults || {};
+        const existingStage7: any = sr.stage7 || {};
+        const nextStage7 = {
+          ...existingStage7,
+          modelRunId,
+          modelVersionId: version?.id,
+          modelRunName: modelRun.name,
+          modelVersionLabel: version?.notes || (version ? `v${version.version}` : undefined),
+          workbookUrl: `/api/models/runs/${modelRunId}/download`,
+          // Re-attaching a workbook un-agrees Stage 7 — the user must review the
+          // new model and click Agree again.
+          agreed: false,
+          agreedAt: undefined,
+          agreedBy: undefined,
+        };
+
+        await db.update(propertyPathwayRuns).set({
+          modelRunId,
+          stageResults: { ...sr, stage7: nextStage7 },
+          stageStatus: { ...((run.stageStatus as any) || {}), stage7: "running" },
+          currentStage: Math.max(run.currentStage || 7, 7),
+          updatedAt: new Date(),
+        }).where(eq(propertyPathwayRuns.id, runId));
+
+        return {
+          data: {
+            ok: true,
+            runId,
+            modelRunId,
+            modelVersionId: version?.id,
+            modelRunName: modelRun.name,
+            modelVersionLabel: nextStage7.modelVersionLabel,
+            workbookUrl: nextStage7.workbookUrl,
+            note: "Stage 7 marked as running. The user still needs to Agree on the model from the pathway card to lock it and unlock Stage 8.",
+          },
+          action: { type: "navigate", path: `/property-pathway?runId=${runId}` },
+        };
+      } catch (err: any) {
+        return { data: { error: `Failed to attach workbook to pathway: ${err?.message}` } };
       }
     }
 
