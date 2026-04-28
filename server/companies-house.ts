@@ -811,9 +811,20 @@ Reply with ONLY a JSON object: {"entityName": "<UK entity name with Limited/Ltd/
   // affordability at the brand stage rather than waiting for the deal AML.
   let experianReport: any = null;
   try {
-    const { fetchCommercialCredit, isExperianConfigured } = await import("./experian");
+    const { fetchCommercialCredit, isExperianConfigured, persistExperianTurnover } = await import("./experian");
     if (isExperianConfigured()) {
       experianReport = await fetchCommercialCredit(chNumber!);
+      if (experianReport && experianReport.turnover != null && experianReport.turnover > 0) {
+        const { pool } = await import("./db");
+        const result = await persistExperianTurnover(pool, {
+          companyId: company.id,
+          companyName: profile.companyName || company.name,
+          report: experianReport,
+        });
+        if (result?.inserted || result?.updated) {
+          console.log(`[auto-kyc] Persisted Experian turnover for "${company.name}" (£${Number(experianReport.turnover).toLocaleString()}, ${result.inserted ? "new" : "refreshed"})`);
+        }
+      }
     }
   } catch (err: any) {
     console.warn(`[auto-kyc] Experian lookup failed for "${company.name}":`, err?.message);

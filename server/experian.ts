@@ -80,6 +80,7 @@ export interface ExperianCreditReport {
   sic: string[] | null;
   employees: number | null;
   turnover: number | null;          // £
+  accountsDate: string | null;      // YYYY-MM-DD — accounts period end date for the turnover figure
   rawResponse?: any;                // keep so we can debug / extract more fields
 }
 
@@ -125,8 +126,22 @@ function normaliseReport(raw: any, companyNumber: string): ExperianCreditReport 
     sic: Array.isArray(sic1992) ? sic1992.map((s: any) => s?.Code).filter(Boolean) : null,
     employees: toNumber(accounts?.DisclosureItems?.NumberEmployees),
     turnover: toNumber(accounts?.ProfitLoss?.Turnover ?? accounts?.ProfitLoss?.UKTurnover ?? accounts?.ProfitLoss?.TotalTurnover),
+    accountsDate: first<string>(accounts, "AccountsDate", "AccountDate", "PeriodEndDate", "Date"),
     rawResponse: raw,
   };
+}
+
+// Convert an Experian accounts date into a YYYY period suitable for turnover_data.period.
+// Accepts ISO strings, "DD/MM/YYYY", or year-only. Falls back to current year.
+export function experianTurnoverPeriod(accountsDate: string | null): string {
+  if (!accountsDate) return new Date().getFullYear().toString();
+  const iso = /^(\d{4})-/.exec(accountsDate);
+  if (iso) return iso[1];
+  const dmy = /\/(\d{4})$/.exec(accountsDate);
+  if (dmy) return dmy[1];
+  const y = /^(\d{4})$/.exec(accountsDate.trim());
+  if (y) return y[1];
+  return new Date().getFullYear().toString();
 }
 
 export function isExperianConfigured(): boolean {
@@ -231,6 +246,43 @@ export async function kybLookup(companyNumber: string): Promise<{ verified: bool
     return { verified: !!name, name: name || undefined, status: status || undefined, raw };
   } catch (err: any) {
     console.warn(`[experian] kyb lookup failed for ${cleaned}: ${err?.message}`);
+    return null;
+  }
+}
+
+// Upsert the filed turnover from an Experian credit report into turnover_data.
+// Keyed on (company_id, source) so re-running the KYC sweep won't duplicate rows;
+// it just refreshes the latest figure. Silent no-op if turnover is missing.
+export async function persistExperianTurnover(
+  pool: { query: (sql: string, params?: any[]) => Promise<any> },
+  args: { companyId: string; companyName: string; report: ExperianCreditReport },
+): Promise<{ inserted: boolean; updated: boolean } | null> {
+  const { companyId, companyName, report } = args;
+  if (!report || report.turnover == null || !(report.turnover > 0)) return null;
+  const period = experianTurnoverPeriod(report.accountsDate);
+  const source = "Experian (filed accounts)";
+  const notes = `Filed turnover from Experian commercial credit report${report.accountsDate ? ` (accounts to ${report.accountsDate})` : ""}`;
+  try {
+    const existing = await pool.query(
+      `SELECT id FROM turnover_data WHERE company_id = $1 AND source = $2 LIMIT 1`,
+      [companyId, source],
+    );
+    if (existing.rows[0]) {
+      await pool.query(
+        `UPDATE turnover_data SET turnover = $1, period = $2, confidence = $3, notes = $4, updated_at = NOW() WHERE id = $5`,
+        [report.turnover, period, "High", notes, existing.rows[0].id],
+      );
+      return { inserted: false, updated: true };
+    }
+    const { nanoid } = await import("nanoid");
+    await pool.query(
+      `INSERT INTO turnover_data (id, company_id, company_name, period, turnover, source, confidence, notes, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW(),NOW())`,
+      [nanoid(), companyId, companyName, period, report.turnover, source, "High", notes],
+    );
+    return { inserted: true, updated: false };
+  } catch (err: any) {
+    console.warn(`[experian] persistTurnover failed for ${companyName}: ${err?.message}`);
     return null;
   }
 }

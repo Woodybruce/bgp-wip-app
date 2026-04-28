@@ -73,24 +73,64 @@ async function ensureScoreHistoryTable(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_brand_score_history_brand_time
       ON brand_score_history(brand_company_id, checked_at DESC);
+    ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS experian_score INTEGER;
+    ALTER TABLE brand_score_history ADD COLUMN IF NOT EXISTS experian_ccj_count INTEGER;
   `);
 }
 
-async function getLastScore(brandId: string): Promise<number | null> {
+async function getLastSnapshot(brandId: string): Promise<{
+  hunterScore: number | null;
+  experianScore: number | null;
+  experianCcjCount: number | null;
+}> {
   const r = await pool.query(
-    `SELECT hunter_score FROM brand_score_history
+    `SELECT hunter_score, experian_score, experian_ccj_count FROM brand_score_history
       WHERE brand_company_id = $1
       ORDER BY checked_at DESC LIMIT 1`,
     [brandId]
   );
-  return r.rows[0]?.hunter_score ?? null;
+  const row = r.rows[0];
+  return {
+    hunterScore: row?.hunter_score ?? null,
+    experianScore: row?.experian_score ?? null,
+    experianCcjCount: row?.experian_ccj_count ?? null,
+  };
 }
 
-async function recordScore(brandId: string, score: number, flags: string[]): Promise<void> {
+async function recordScore(
+  brandId: string,
+  score: number,
+  flags: string[],
+  experianScore: number | null,
+  experianCcjCount: number | null,
+): Promise<void> {
   await pool.query(
-    `INSERT INTO brand_score_history (brand_company_id, hunter_score, flags) VALUES ($1, $2, $3)`,
-    [brandId, score, flags]
+    `INSERT INTO brand_score_history (brand_company_id, hunter_score, flags, experian_score, experian_ccj_count)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [brandId, score, flags, experianScore, experianCcjCount]
   );
+}
+
+// Pull the latest Experian snapshot for a brand from companies_house_data JSONB.
+// Falls back to the most recent KYC investigation if the brand-level cache is empty.
+async function getExperianSnapshot(brandId: string): Promise<{ score: number | null; ccjCount: number | null }> {
+  const r = await pool.query(
+    `SELECT companies_house_data->'experian' AS exp FROM crm_companies WHERE id = $1`,
+    [brandId]
+  );
+  let exp: any = r.rows[0]?.exp || null;
+  if (!exp) {
+    const inv = await pool.query(
+      `SELECT result->'experian' AS exp FROM kyc_investigations
+        WHERE crm_company_id = $1 ORDER BY conducted_at DESC LIMIT 1`,
+      [brandId]
+    );
+    exp = inv.rows[0]?.exp || null;
+  }
+  if (!exp) return { score: null, ccjCount: null };
+  const score = typeof exp.creditScore === "number" ? exp.creditScore : null;
+  const ccjCount = typeof exp.ccj === "number" ? exp.ccj : null;
+  return { score, ccjCount };
 }
 
 // ─── Scan logic ──────────────────────────────────────────────────────────
@@ -125,42 +165,70 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
       stock: null, // skip stock fetching here — keeps the scan fast
     });
 
-    const prev = await getLastScore(brand.id);
+    const prev = await getLastSnapshot(brand.id);
+    const experian = await getExperianSnapshot(brand.id);
 
     // 1. Score crossings
-    if (prev != null) {
-      if (prev < HOT_THRESHOLD && score >= HOT_THRESHOLD) {
+    if (prev.hunterScore != null) {
+      if (prev.hunterScore < HOT_THRESHOLD && score >= HOT_THRESHOLD) {
         events.push({
           brandId: brand.id, brandName: brand.name, type: "hunter_hot",
-          headline: `${brand.name} just turned HOT (${prev} → ${score})`,
+          headline: `${brand.name} just turned HOT (${prev.hunterScore} → ${score})`,
           detail: `Expansion score crossed ${HOT_THRESHOLD}. Flags: ${flags.join(", ")}`,
           recipients: await getRecipientsForBrand(brand.id),
         });
-      } else if (prev >= HOT_THRESHOLD && score < COOLING_THRESHOLD) {
+      } else if (prev.hunterScore >= HOT_THRESHOLD && score < COOLING_THRESHOLD) {
         events.push({
           brandId: brand.id, brandName: brand.name, type: "hunter_cooling",
-          headline: `${brand.name} is cooling (${prev} → ${score})`,
-          detail: `Expansion score dropped from ${prev} to ${score}. Worth a check-in before they go dark.`,
+          headline: `${brand.name} is cooling (${prev.hunterScore} → ${score})`,
+          detail: `Expansion score dropped from ${prev.hunterScore} to ${score}. Worth a check-in before they go dark.`,
           recipients: await getRecipientsForBrand(brand.id),
         });
       }
     }
 
-    if (!dryRun) await recordScore(brand.id, score, flags);
+    if (!dryRun) await recordScore(brand.id, score, flags, experian.score, experian.ccjCount);
 
-    // 2. Covenant deterioration — new insolvency or accounts overdue in last 7d
-    const recentInsolv = sigs.rows.find((s: any) =>
-      (s.signal_type === "closure" || s.sentiment === "negative") &&
-      new Date(s.created_at) >= new Date(Date.now() - 7 * 86400000) &&
-      /insolven|administrat|liquidat|wind.up|ccj|adverse/i.test(s.headline || "")
-    );
-    if (recentInsolv) {
+    // 2. Covenant deterioration — three triggers, ordered by signal strength.
+    //    a) Experian CCJ count went up since the last scan (hard data)
+    //    b) Experian credit score dropped 15+ points since the last scan
+    //    c) Recent news signal regex-matches insolvency keywords (legacy fallback)
+    const recipients = await getRecipientsForBrand(brand.id);
+
+    if (
+      experian.ccjCount != null && experian.ccjCount > 0 &&
+      prev.experianCcjCount != null && experian.ccjCount > prev.experianCcjCount
+    ) {
       events.push({
         brandId: brand.id, brandName: brand.name, type: "covenant_risk",
-        headline: `${brand.name} — covenant red flag`,
-        detail: `Recent signal: ${recentInsolv.headline}. Review covenant before any new pitch.`,
-        recipients: await getRecipientsForBrand(brand.id),
+        headline: `${brand.name} — new CCJ filed`,
+        detail: `Experian CCJ count rose from ${prev.experianCcjCount} to ${experian.ccjCount}. Pull the credit report and review covenant before any new pitch.`,
+        recipients,
       });
+    } else if (
+      experian.score != null && prev.experianScore != null &&
+      prev.experianScore - experian.score >= 15
+    ) {
+      events.push({
+        brandId: brand.id, brandName: brand.name, type: "covenant_risk",
+        headline: `${brand.name} — Experian score dropped`,
+        detail: `Credit score fell from ${prev.experianScore} to ${experian.score} (${prev.experianScore - experian.score} points). Worth a quick review of recent filings.`,
+        recipients,
+      });
+    } else {
+      const recentInsolv = sigs.rows.find((s: any) =>
+        (s.signal_type === "closure" || s.sentiment === "negative") &&
+        new Date(s.created_at) >= new Date(Date.now() - 7 * 86400000) &&
+        /insolven|administrat|liquidat|wind.up|ccj|adverse/i.test(s.headline || "")
+      );
+      if (recentInsolv) {
+        events.push({
+          brandId: brand.id, brandName: brand.name, type: "covenant_risk",
+          headline: `${brand.name} — covenant red flag`,
+          detail: `Recent signal: ${recentInsolv.headline}. Review covenant before any new pitch.`,
+          recipients,
+        });
+      }
     }
 
     // 3. Live fundraise — funding signal of any magnitude in last 24h
@@ -173,7 +241,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
         brandId: brand.id, brandName: brand.name, type: "fundraise",
         headline: `${brand.name} just raised`,
         detail: `${recentFunding.headline}. Hot moment to reach out — they're spending.`,
-        recipients: await getRecipientsForBrand(brand.id),
+        recipients,
       });
     }
 
@@ -188,7 +256,7 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
         brandId: brand.id, brandName: brand.name, type: "exec_change_major",
         headline: `${brand.name} — major leadership move`,
         detail: `${recentExec.headline}. New leadership often means new property strategy.`,
-        recipients: await getRecipientsForBrand(brand.id),
+        recipients,
       });
     }
   }

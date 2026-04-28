@@ -317,9 +317,16 @@ export async function runAllAmlChecks(
       // Experian commercial credit — non-fatal, augments the investigation
       let experianReport: any = null;
       try {
-        const { fetchCommercialCredit, isExperianConfigured } = await import("./experian");
+        const { fetchCommercialCredit, isExperianConfigured, persistExperianTurnover } = await import("./experian");
         if (isExperianConfigured()) {
           experianReport = await fetchCommercialCredit(company.companies_house_number);
+          if (experianReport && experianReport.turnover != null && experianReport.turnover > 0) {
+            await persistExperianTurnover(pool, {
+              companyId: company.id,
+              companyName: companyData.profile?.company_name || company.name,
+              report: experianReport,
+            });
+          }
         }
       } catch (e: any) {
         warnings.push(`Experian credit lookup failed: ${e?.message || "unknown"}`);
