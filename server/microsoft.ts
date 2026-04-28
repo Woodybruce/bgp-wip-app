@@ -2285,6 +2285,55 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     try {
       const { team, propertyName } = req.params;
       const subPath = req.query.path as string || "";
+      const folderUrl = (req.query.folderUrl as string || "").trim();
+
+      // If the caller has a stored SharePoint folder URL on the CRM property
+      // (crm_properties.sharepoint_folder_url) prefer that — it always
+      // resolves to the real folder regardless of whether the CRM record's
+      // `name` matches the on-disk folder name. Falls back to path
+      // synthesis (BGP share drive/{team}/{propertyName}) if no URL.
+      if (folderUrl) {
+        const encoded = Buffer.from(folderUrl).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+        const driveItemRes = await fetch(`https://graph.microsoft.com/v1.0/shares/u!${encoded}/driveItem`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!driveItemRes.ok) {
+          if (driveItemRes.status === 404) return res.json({ exists: false, folders: [] });
+          throw new Error(`Failed to resolve folder URL: ${driveItemRes.status}`);
+        }
+        const driveItem = await driveItemRes.json();
+        const driveId = driveItem.parentReference?.driveId;
+        let itemId = driveItem.id;
+        // Walk into subPath if requested.
+        if (subPath && driveId) {
+          const encodedSub = subPath.split("/").map(s => encodeURIComponent(s)).join("/");
+          const subRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}:/${encodedSub}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!subRes.ok) {
+            if (subRes.status === 404) return res.json({ exists: false, folders: [] });
+            throw new Error(`Failed to walk into subPath: ${subRes.status}`);
+          }
+          const subItem = await subRes.json();
+          itemId = subItem.id;
+        }
+        const childrenRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=100`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!childrenRes.ok) throw new Error(`Failed to list children: ${childrenRes.status}`);
+        const childrenData = await childrenRes.json();
+        const items = (childrenData.value || []).map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          isFolder: !!item.folder,
+          childCount: item.folder?.childCount || 0,
+          size: item.size || 0,
+          webUrl: item.webUrl,
+          lastModified: item.lastModifiedDateTime,
+        }));
+        return res.json({ exists: true, folders: items, path: driveItem.name, webUrl: driveItem.webUrl, source: "url" });
+      }
+
       const spInfo = await getSharePointDriveId(token);
       if (!spInfo) {
         return res.status(404).json({ message: "Could not find BGP SharePoint site" });
@@ -2317,7 +2366,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
         lastModified: item.lastModifiedDateTime,
       }));
 
-      res.json({ exists: true, folders: items, path: folderPath });
+      res.json({ exists: true, folders: items, path: folderPath, source: "path" });
     } catch (err: any) {
       console.error("Property folders list error:", err);
       res.status(500).json({ message: "Failed to list property folders" });

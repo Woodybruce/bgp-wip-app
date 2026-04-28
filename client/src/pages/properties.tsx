@@ -1254,7 +1254,7 @@ interface PropertyFolderItem {
   lastModified: string;
 }
 
-export function PropertyFoldersPanel({ propertyName, folderTeams }: { propertyName: string; folderTeams?: string[] | null }) {
+export function PropertyFoldersPanel({ propertyName, folderTeams, sharepointFolderUrl }: { propertyName: string; folderTeams?: string[] | null; sharepointFolderUrl?: string | null }) {
   const { data: currentUser } = useQuery<any>({ queryKey: ["/api/auth/me"] });
   const userTeam = currentUser?.team || "Investment";
   const teamsToCheck = folderTeams && folderTeams.length > 0 ? folderTeams : [userTeam];
@@ -1262,10 +1262,16 @@ export function PropertyFoldersPanel({ propertyName, folderTeams }: { propertyNa
   const activeTeam = activeTeamName && teamsToCheck.includes(activeTeamName) ? activeTeamName : teamsToCheck[0] || userTeam;
   const activeTeamIdx = teamsToCheck.indexOf(activeTeam);
 
-  const { data: folderData, isLoading } = useQuery<{ exists: boolean; folders: PropertyFolderItem[]; path?: string }>({
-    queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName],
+  // If the CRM record has a stored SharePoint folder URL, prefer that — it
+  // resolves to the real folder regardless of name mismatches between CRM
+  // and SharePoint. The team-based path synthesis is only used as a fallback.
+  const folderUrl = (sharepointFolderUrl || "").trim();
+
+  const { data: folderData, isLoading } = useQuery<{ exists: boolean; folders: PropertyFolderItem[]; path?: string; webUrl?: string; source?: string }>({
+    queryKey: ["/api/microsoft/property-folders", activeTeam, propertyName, folderUrl],
     queryFn: async () => {
-      const res = await fetch(`/api/microsoft/property-folders/${encodeURIComponent(activeTeam)}/${encodeURIComponent(propertyName)}`, { credentials: "include" });
+      const qs = folderUrl ? `?folderUrl=${encodeURIComponent(folderUrl)}` : "";
+      const res = await fetch(`/api/microsoft/property-folders/${encodeURIComponent(activeTeam)}/${encodeURIComponent(propertyName)}${qs}`, { credentials: "include" });
       if (!res.ok) {
         if (res.status === 401) return { exists: false, folders: [] };
         throw new Error("Failed to load folders");
