@@ -114,12 +114,13 @@ const ROLLOUT_LABELS: Record<string, string> = {
   contracting: "Contracting",
 };
 
-function renderDigestHtml(data: Awaited<ReturnType<typeof loadDigestData>>, baseUrl = ""): string {
+function renderDigestHtml(data: Awaited<ReturnType<typeof loadDigestData>>): string {
   const { brands, since, until } = data;
   const dateRange = `${since.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} – ${until.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`;
+  const baseUrl = (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
 
   const brandBlocks = brands.map(b => {
-    const url = `${baseUrl}/companies?brand=${b.id}`;
+    const url = `${baseUrl}/companies/${b.id}`;
     const rolloutTag = b.rollout_status ? `<span style="display:inline-block;padding:1px 6px;background:#e7f3eb;color:${BGP_GREEN};border-radius:4px;font-size:11px;font-weight:600;margin-left:6px">${ROLLOUT_LABELS[b.rollout_status] || b.rollout_status}</span>` : "";
     const hunterTag = b.hunter_flag ? `<span style="display:inline-block;padding:1px 6px;background:#fef3c7;color:#92400e;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px">🔥 Hunter</span>` : "";
 
