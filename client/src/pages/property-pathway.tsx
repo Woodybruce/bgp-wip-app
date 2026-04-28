@@ -658,8 +658,21 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                         <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Owner:</span> {ownerEl}{ownerCoNumber ? <span className="text-muted-foreground text-[10px] ml-0.5">(Co# {ownerCoNumber})</span> : null}</div>
                         {ownerCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{ownerCommentary}</div>}
                         {ownerCoCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">Other proprietors noted: {ownerCoCommentary}</div>}
-                        <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Title:</span> <span className="break-words">{titleEl}</span></div>
+                        <div className="col-span-2 min-w-0">
+                          <span className="text-muted-foreground">Title:</span>{" "}
+                          <span className="break-words">{titleEl}</span>
+                          {titleNum && s1.initialOwnership?.titleVerified === false && (
+                            <Badge variant="outline" className="text-[9px] py-0 ml-1 border-amber-400 text-amber-700 bg-amber-50">
+                              Unverified · {s1.initialOwnership?.titleSource || "fallback"}
+                            </Badge>
+                          )}
+                        </div>
                         {titleCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{titleCommentary}</div>}
+                        {titleNum && s1.initialOwnership?.titleVerified === false && (
+                          <div className="col-span-2 min-w-0 text-[10px] text-amber-700 leading-snug">
+                            This title was {s1.initialOwnership?.titleSource === "street_number" ? "matched on a street-number filter, not a UPRN lookup" : s1.initialOwnership?.titleSource === "ai" ? "proposed by the AI investigator and not verified against PropertyData" : "from a fallback source"}. Confirm against the official Land Registry register before quoting.
+                          </div>
+                        )}
                         <div className="min-w-0"><span className="text-muted-foreground">Paid:</span> <span className="font-medium break-words">{paid || "—"}</span></div>
                         <div className="min-w-0"><span className="text-muted-foreground">Date:</span> <span className="font-medium">{date || "—"}</span></div>
                         {s1.aiFacts?.refurbCost && <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Refurb spend:</span> <span className="font-medium break-words">{s1.aiFacts.refurbCost}</span></div>}

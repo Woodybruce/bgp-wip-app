@@ -645,16 +645,58 @@ async function lookupPropertyDataCoUk(postcode: string, layers?: PropertyDataLay
   });
 }
 
+// Building-narrowing post-filter helpers. The PropertyData / EPC / VOA APIs
+// largely accept only postcode, so when the caller knows the building's
+// street number ("18-22") we drop entries from neighbouring buildings on the
+// same postcode (e.g. "4 Panton Street", "1 Norris Street") that would
+// otherwise contaminate the AI briefing context. Callers that don't pass
+// `streetNumber` get the original unfiltered behaviour.
+
+function expandStreetNumberRange(raw: string | null | undefined): number[] {
+  if (!raw) return [];
+  const s = String(raw).trim().toLowerCase().replace(/\s*-\s*/g, "-");
+  const range = s.match(/^(\d+)[a-z]?-(\d+)[a-z]?$/);
+  if (range) {
+    const a = parseInt(range[1], 10);
+    const b = parseInt(range[2], 10);
+    if (Number.isFinite(a) && Number.isFinite(b) && b >= a && b - a < 100) {
+      return Array.from({ length: b - a + 1 }, (_, i) => a + i);
+    }
+  }
+  const single = s.match(/^(\d+)[a-z]?$/);
+  if (single) {
+    const n = parseInt(single[1], 10);
+    return Number.isFinite(n) ? [n] : [];
+  }
+  return [];
+}
+
+function addressMatchesStreetNumber(itemAddress: string | null | undefined, buildingNumbers: number[]): boolean {
+  if (!buildingNumbers.length) return true; // no filter
+  if (!itemAddress) return false;
+  const tokens = String(itemAddress).match(/\b(\d+)[a-z]?\b/gi) || [];
+  for (const t of tokens) {
+    const n = parseInt(t.replace(/[a-z]/i, ""), 10);
+    if (Number.isFinite(n) && buildingNumbers.includes(n)) return true;
+  }
+  return false;
+}
+
 export async function performPropertyLookup(params: {
   address?: string;
   postcode?: string;
   street?: string;
   buildingNameOrNumber?: string;
   uprn?: string;
+  /** Building street number / range (e.g. "18-22"). When set, postcode-wide
+   *  results (EPC, VOA, planning applications, price-paid) are post-filtered
+   *  to only entries whose address contains a matching number — drops
+   *  neighbours that share the postcode. */
+  streetNumber?: string;
   layers?: string[];
   propertyDataLayers?: string[];
 }): Promise<PropertyLookupResult> {
-  const { address, postcode, street, buildingNameOrNumber, uprn, layers, propertyDataLayers } = params;
+  const { address, postcode, street, buildingNameOrNumber, uprn, streetNumber, layers, propertyDataLayers } = params;
 
   const pc = postcode || "";
   const st = street || "";
@@ -677,16 +719,78 @@ export async function performPropertyLookup(params: {
     shouldLoadExtended && pc ? lookupTflNearby(pc) : Promise.resolve(null),
   ]);
 
+  // Post-filter postcode-wide arrays to this building's street number when
+  // we have one. Listed-building / flood / TFL / area designations stay
+  // unfiltered — those are legitimately area-wide and useful as context.
+  const buildingNumbers = expandStreetNumberRange(streetNumber);
+  let filteredPricePaid = pricePaid;
+  let filteredVoa = voaResults;
+  let filteredEpc = epcResults;
+  let filteredPropertyData = propertyDataResults;
+
+  if (buildingNumbers.length > 0) {
+    const before = {
+      pricePaid: Array.isArray(pricePaid) ? pricePaid.length : 0,
+      voa: Array.isArray(voaResults) ? voaResults.length : 0,
+      epc: Array.isArray(epcResults) ? epcResults.length : 0,
+    };
+    if (Array.isArray(pricePaid)) {
+      filteredPricePaid = pricePaid.filter((p: any) =>
+        addressMatchesStreetNumber(p.paon || p.saon || p.address || `${p.paon ?? ""} ${p.street ?? ""}`, buildingNumbers)
+      );
+    }
+    if (Array.isArray(voaResults)) {
+      filteredVoa = voaResults.filter((v: any) =>
+        addressMatchesStreetNumber(v.address || `${v.numberOrName ?? ""} ${v.street ?? ""}`, buildingNumbers)
+      );
+    }
+    if (Array.isArray(epcResults)) {
+      filteredEpc = epcResults.filter((e: any) =>
+        addressMatchesStreetNumber(e.address, buildingNumbers)
+      );
+    }
+    // PropertyData has many sub-arrays under `data` (planning-applications,
+    // floor-areas, freeholds, etc.). Filter rows whose `address` field has a
+    // recognisable street number; leave rows without an address untouched
+    // (some endpoints return aggregates).
+    if (propertyDataResults && typeof propertyDataResults === "object") {
+      filteredPropertyData = { ...propertyDataResults };
+      for (const key of Object.keys(filteredPropertyData)) {
+        const layer = filteredPropertyData[key];
+        if (layer?.data && Array.isArray(layer.data)) {
+          const filteredArr = layer.data.filter((row: any) => {
+            const candidate =
+              row.address ||
+              (Array.isArray(row.property) ? row.property.join(", ") : row.property) ||
+              row.full_address ||
+              row.street_address;
+            // Don't filter rows with no address-like field — keeps aggregate
+            // / area-wide rows (price trends, demographics) intact.
+            if (!candidate) return true;
+            return addressMatchesStreetNumber(candidate, buildingNumbers);
+          });
+          // Only narrow if filtering didn't drop everything — falling back
+          // to the full list when the filter zeroes out is safer than
+          // losing all data because of a quirky address format.
+          if (filteredArr.length > 0 || layer.data.length === 0) {
+            filteredPropertyData[key] = { ...layer, data: filteredArr };
+          }
+        }
+      }
+    }
+    console.log(`[property-lookup] street-number filter "${streetNumber}" → pricePaid ${before.pricePaid}→${Array.isArray(filteredPricePaid) ? filteredPricePaid.length : 0}, VOA ${before.voa}→${Array.isArray(filteredVoa) ? filteredVoa.length : 0}, EPC ${before.epc}→${Array.isArray(filteredEpc) ? filteredEpc.length : 0}`);
+  }
+
   return {
     address: fullAddress,
     postcode: pc,
-    pricePaid,
-    voaRatings: voaResults,
-    epc: epcResults,
+    pricePaid: filteredPricePaid,
+    voaRatings: filteredVoa,
+    epc: filteredEpc,
     floodRisk: floodData,
     listedBuilding: listedResults,
     planningData: planningResults,
-    propertyDataCoUk: propertyDataResults,
+    propertyDataCoUk: filteredPropertyData,
     tflNearby: tflResults,
     companiesHouse: [],
   };
