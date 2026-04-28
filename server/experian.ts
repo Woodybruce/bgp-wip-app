@@ -172,6 +172,24 @@ export async function fetchCommercialCredit(companyNumber: string): Promise<Expe
   }
 }
 
+// Debug helper — returns raw Experian response for a company number (sandbox testing only).
+export async function debugExperianRaw(companyNumber: string): Promise<{ status: number; body: any }> {
+  const token = await getToken();
+  const cleaned = (companyNumber || "").trim().toUpperCase();
+  const res = await fetch(`${baseUrl()}/business-information/businesses/uk/v1/credit-report`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ registrationNumber: cleaned, country: "GB" }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const body = await res.json().catch(async () => ({ raw: await res.text().catch(() => "") }));
+  return { status: res.status, body };
+}
+
 // KYB lookup — lighter-weight than full credit report, used for business
 // identity verification (name / address / director match).
 export async function kybLookup(companyNumber: string): Promise<{ verified: boolean; name?: string; status?: string; raw?: any } | null> {
