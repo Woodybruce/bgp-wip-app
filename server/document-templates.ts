@@ -2258,20 +2258,17 @@ Generate the complete document now.`;
         }
       }
       if (!content) {
-        // Use Opus for high-value document types, Sonnet for routine docs
-        const OPUS_DOCUMENT_TYPES = ["Investment Memo", "Pitch Deck", "Pitch Presentation", "Marketing Particulars", "Board Report", "Client Report"];
-        const docModel = OPUS_DOCUMENT_TYPES.some(t => documentType?.toLowerCase().includes(t.toLowerCase()))
-          ? "claude-opus-4-6"
-          : CHATBGP_HELPER_MODEL;
-        console.log(`[doc-generate] Using model: ${docModel} for type: ${documentType || "unspecified"}`);
-        const completion = await callClaude({
-          model: docModel,
+        // All Document Studio generations use Opus (per the 956dbc9 upgrade).
+        // callDocOpus tries 4.7 first and falls back to 4.6 if the newer model
+        // isn't yet API-accessible — fixes the 500 from a hardcoded 4.6 string.
+        console.log(`[doc-generate] Using Opus for type: ${documentType || "unspecified"}`);
+        const completion = await callDocOpus({
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
           temperature: 0.3,
-          max_completion_tokens: docModel === "claude-opus-4-6" ? 8192 : 4000,
+          max_completion_tokens: 16384,
         });
         content = completion.choices[0]?.message?.content || "No content generated.";
       }
