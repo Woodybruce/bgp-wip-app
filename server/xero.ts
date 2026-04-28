@@ -5,6 +5,7 @@ import { xeroInvoices, crmDeals, crmCompanies } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import crypto from "crypto";
+import { isInvoicedStatus } from "@shared/deal-status";
 
 const XERO_AUTH_URL = "https://login.xero.com/identity/connect/authorize";
 const XERO_TOKEN_URL = "https://identity.xero.com/connect/token";
@@ -14,18 +15,17 @@ const XERO_CONNECTIONS_URL = "https://api.xero.com/connections";
 const TRUSTED_HOSTS = ["bgp-wip-app-production-efac.up.railway.app", "chatbgp.app", "bgp-dashboard-flow.replit.app", "9578f23f-37ae-4acf-944d-42a112fa681a-00-w7prqguaevhh.worf.replit.dev"];
 
 const XERO_INVOICED_STATUSES = ["AUTHORISED", "PAID"];
-const DEAL_ALREADY_INVOICED = ["Invoiced", "Billed"];
 
 async function autoPromoteDealToInvoiced(dealId: string, xeroStatus: string): Promise<boolean> {
   if (!XERO_INVOICED_STATUSES.includes(xeroStatus)) return false;
   try {
     const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId)).limit(1);
     if (!deal) return false;
-    if (DEAL_ALREADY_INVOICED.includes(deal.status || "")) return false;
+    if (isInvoicedStatus(deal.status)) return false;
     await db.update(crmDeals)
-      .set({ status: "Invoiced", updatedAt: new Date() })
+      .set({ status: "INV", updatedAt: new Date() })
       .where(eq(crmDeals.id, dealId));
-    console.log(`[xero-auto] Deal ${dealId} auto-promoted to Invoiced (Xero status: ${xeroStatus})`);
+    console.log(`[xero-auto] Deal ${dealId} auto-promoted to INV (Xero status: ${xeroStatus})`);
     return true;
   } catch (err: any) {
     console.error(`[xero-auto] Failed to auto-promote deal ${dealId}:`, err.message);

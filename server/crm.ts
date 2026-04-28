@@ -27,7 +27,7 @@ import {
   xeroInvoices, availableUnits, investmentTracker,
   dealAuditLog,
 } from "@shared/schema";
-import { isInvoicedStatus } from "@shared/deal-status";
+import { isInvoicedStatus, legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { searchPipnetRequirements } from "./pipnet";
@@ -744,12 +744,14 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
       else if (teamArr.some((t: string) => t === 'Tenant Rep')) dealType = 'Tenant Rep';
       else if (teamArr.some((t: string) => t === 'Lease Advisory')) dealType = 'Lease Advisory';
 
-      let status = 'Live';
-      if (deal.stage === 'invoiced') status = 'Invoiced';
-      else if (deal.deal_status === 'SOL') status = 'SOLs';
+      // Sage WIP rows are post-NEG by definition; default to NEG when no status code present
+      let status = 'NEG';
+      if (deal.stage === 'invoiced') status = 'INV';
+      else if (deal.deal_status === 'SOL') status = 'SOL';
       else if (deal.deal_status === 'NEG') status = 'NEG';
-      else if (deal.deal_status === 'EXC') status = 'Exchanged';
-      else if (deal.deal_status === 'DRAFT INV' || deal.deal_status === 'DRAFT PO' || deal.deal_status === 'AWAIT PO') status = 'Invoiced';
+      else if (deal.deal_status === 'EXC') status = 'EXC';
+      else if (deal.deal_status === 'COM') status = 'COM';
+      else if (deal.deal_status === 'DRAFT INV' || deal.deal_status === 'DRAFT PO' || deal.deal_status === 'AWAIT PO') status = 'INV';
 
       const dealName = `${deal.project || ''} - ${deal.tenant || ''}`;
       const fee = (deal.total_wip || 0) + (deal.total_invoice || 0);
@@ -4432,11 +4434,12 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         }
       }
 
-      const EXCLUDED_STATUSES = ["Dead", "Leasing Comps", "Investment Comps"];
       const result: any[] = [];
 
       for (const deal of deals) {
-        if (EXCLUDED_STATUSES.includes(deal.status || "")) continue;
+        // Skip archived rows: WIT (withdrawn/lost/dead) + legacy comps statuses still present pre-migration
+        const code = legacyToCode(deal.status);
+        if (code === "WIT" || (deal.status || "").toLowerCase().includes("comps")) continue;
         const totalFee = deal.fee || 0;
         const isInvoiced = isInvoicedStatus(deal.status);
         const dealAllocs = allocsByDeal.get(deal.id);
@@ -4505,7 +4508,6 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const isAdmin = !!currentUser?.isAdmin;
       const userTeam = currentUser?.team || null;
 
-      const EXCLUDED_STATUSES = ["Dead", "Leasing Comps", "Investment Comps"];
 
       const deals = await db.select().from(crmDeals);
       const properties = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties);
@@ -4615,9 +4617,13 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         };
       });
 
-      const unmatchedDeals = deals.filter(d =>
-        !EXCLUDED_STATUSES.includes(d.status || "") && !usedDealIds.has(d.id)
-      );
+      // WIP only shows deals at NEG/SOL/EXC/COM/INV — earlier-stage deals
+      // (REP/SPEC/LIVE/AVA) and archived (WIT, Leasing/Investment Comps) are excluded.
+      const unmatchedDeals = deals.filter(d => {
+        if (usedDealIds.has(d.id)) return false;
+        const code = legacyToCode(d.status);
+        return code !== null && WIP_STATUSES.includes(code);
+      });
       for (const deal of unmatchedDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
         const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
@@ -5979,7 +5985,6 @@ Rules:
       const isAdmin = !!currentUser?.isAdmin;
       const userTeam = currentUser?.team || null;
 
-      const EXCLUDED_STATUSES = ["Dead", "Leasing Comps", "Investment Comps"];
 
       const deals = await db.select().from(crmDeals);
       const properties = await db.select({ id: crmProperties.id, name: crmProperties.name }).from(crmProperties);
@@ -6068,7 +6073,11 @@ Rules:
         };
       });
 
-      const unmatchedDeals = deals.filter(d => !EXCLUDED_STATUSES.includes(d.status || "") && !usedDealIds.has(d.id));
+      const unmatchedDeals = deals.filter(d => {
+        if (usedDealIds.has(d.id)) return false;
+        const code = legacyToCode(d.status);
+        return code !== null && WIP_STATUSES.includes(code);
+      });
       for (const deal of unmatchedDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
         const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
