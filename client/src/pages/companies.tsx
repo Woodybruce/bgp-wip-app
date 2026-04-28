@@ -105,11 +105,9 @@ function CompanyLogoImg({ domain, name, size = 40 }: { domain: string | null | u
   const logoSources: string[] = [];
   if (d) {
     logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
-    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
   }
   if (guessedDomain && guessedDomain !== d) {
     logoSources.push(`https://logo.clearbit.com/${guessedDomain}?size=${Math.min(size * 3, 512)}`);
-    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${guessedDomain}&size=128`);
   }
 
   if (failCount >= logoSources.length) {

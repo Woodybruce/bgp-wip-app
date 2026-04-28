@@ -54,11 +54,9 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
   const logoSources: string[] = [];
   if (d) {
     logoSources.push(`https://logo.clearbit.com/${d}?size=${Math.min(px * 3, 512)}`);
-    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${d}&size=128`);
   }
   if (guessed && guessed !== d) {
     logoSources.push(`https://logo.clearbit.com/${guessed}?size=${Math.min(px * 3, 512)}`);
-    logoSources.push(`https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=https://${guessed}&size=128`);
   }
 
   if (failCount >= logoSources.length) {
