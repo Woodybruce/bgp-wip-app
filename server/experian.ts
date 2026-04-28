@@ -100,28 +100,31 @@ function toNumber(v: any): number | null {
 }
 
 function normaliseReport(raw: any, companyNumber: string): ExperianCreditReport {
-  // Experian's UK B2B response shapes vary by product (Commercial Credit vs
-  // Business Profile). We probe the common paths.
-  const root = raw?.results || raw?.result || raw?.data || raw;
-  const biz = root?.businessInformation || root?.business || root;
-  const score = root?.scoreInformation || root?.score || root?.creditScore;
-  const risk = root?.riskDetails || root?.risk || {};
-  const finance = root?.financialInformation || root?.financials || {};
+  // Experian UK Commercial Credit v2 response shape:
+  //   RegNumber, CommercialName, Identification.{LegalStatus,IncorporationDate,SICInformation1992[]},
+  //   CommercialDelphi.{CommDelphiScore, CommDelphiBand, CommDelphiBandText, CreditLimit},
+  //   CCJs.{NumberCCJs0To72, ValueCCJs0To72},
+  //   Financials.Accounts[0].DisclosureItems.NumberEmployees
+  const id = raw?.Identification || {};
+  const delphi = raw?.CommercialDelphi || {};
+  const ccjs = raw?.CCJs || {};
+  const accounts = raw?.Financials?.Accounts?.[0] || {};
+  const sic1992 = id?.SICInformation1992 || [];
 
   return {
     companyNumber,
-    companyName: first<string>(biz, "name", "registeredName", "tradingName") || "",
-    creditScore: toNumber(first(score, "score", "value", "commercialDelphiScore")),
-    creditLimit: toNumber(first(score, "creditLimit", "recommendedCreditLimit")),
-    creditBand: first<string>(score, "band", "creditBand", "riskClass"),
-    riskIndicator: first<string>(risk, "indicator", "description", "level"),
-    ccj: toNumber(first(root, "ccjInformation.totalCount", "ccj.count", "legalEvents.ccjCount")),
-    ccjTotalValue: toNumber(first(root, "ccjInformation.totalValue", "ccj.totalValue")),
-    status: first<string>(biz, "status", "companyStatus", "tradingStatus"),
-    incorporationDate: first<string>(biz, "incorporationDate", "incorporated"),
-    sic: (first<any[]>(biz, "sicCodes", "sic") || []).map((s: any) => typeof s === "string" ? s : s?.code).filter(Boolean),
-    employees: toNumber(first(finance, "employees", "numberOfEmployees")),
-    turnover: toNumber(first(finance, "turnover", "annualTurnover", "revenue")),
+    companyName: raw?.CommercialName || "",
+    creditScore: toNumber(delphi?.CommDelphiScore),
+    creditLimit: toNumber(delphi?.CreditLimit),
+    creditBand: delphi?.CommDelphiBand ? String(delphi.CommDelphiBand) : null,
+    riskIndicator: delphi?.CommDelphiBandText || null,
+    ccj: toNumber(ccjs?.NumberCCJs0To72),
+    ccjTotalValue: toNumber(ccjs?.ValueCCJs0To72),
+    status: id?.LegalStatus ? String(id.LegalStatus) : null,
+    incorporationDate: id?.IncorporationDate || null,
+    sic: Array.isArray(sic1992) ? sic1992.map((s: any) => s?.Code).filter(Boolean) : null,
+    employees: toNumber(accounts?.DisclosureItems?.NumberEmployees),
+    turnover: toNumber(accounts?.ProfitLoss?.Turnover ?? accounts?.ProfitLoss?.UKTurnover ?? accounts?.ProfitLoss?.TotalTurnover),
     rawResponse: raw,
   };
 }
@@ -149,7 +152,7 @@ export async function fetchCommercialCredit(companyNumber: string): Promise<Expe
 
   try {
     const token = await getToken();
-    const res = await fetch(`${baseUrl()}/v2/registeredcompanycredit/${encodeURIComponent(cleaned)}`, {
+    const res = await fetch(`${baseUrl()}/risk/business/v2/registeredcompanycredit/${encodeURIComponent(cleaned)}`, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -211,8 +214,8 @@ export async function kybLookup(companyNumber: string): Promise<{ verified: bool
 
   try {
     const token = await getToken();
-    // /v2/businessstatus/{RegNumber} is the lightweight identity check endpoint
-    const res = await fetch(`${baseUrl()}/v2/businessstatus/${encodeURIComponent(cleaned)}`, {
+    // businesstargeter is the search endpoint — accepts businessref query param
+    const res = await fetch(`${baseUrl()}/risk/business/v2/businesstargeter?businessref=${encodeURIComponent(cleaned)}`, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -222,10 +225,10 @@ export async function kybLookup(companyNumber: string): Promise<{ verified: bool
     });
     if (!res.ok) return null;
     const raw = await res.json();
-    const hit = raw?.results?.[0] || raw?.result || raw?.data?.[0] || raw;
-    const name = hit?.businessInformation?.name || hit?.name || hit?.companyName;
-    const status = hit?.businessInformation?.status || hit?.status || hit?.companyStatus;
-    return { verified: !!name, name, status, raw };
+    const hit = raw?.SearchResults?.[0] || null;
+    const name = hit?.CommercialName || hit?.Name || null;
+    const status = hit?.BusinessStatus || null;
+    return { verified: !!name, name: name || undefined, status: status || undefined, raw };
   } catch (err: any) {
     console.warn(`[experian] kyb lookup failed for ${cleaned}: ${err?.message}`);
     return null;
