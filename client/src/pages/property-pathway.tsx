@@ -459,6 +459,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
   const [tenantInput, setTenantInput] = useState("");
   const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
   const [emailSortSummary, setEmailSortSummary] = useState<string | null>(null);
+  const [manualOwnershipOpen, setManualOwnershipOpen] = useState(false);
   // Re-analyse via the focused investigator returns its own emailHits — keep
   // them so [E#] citations in the fresh markdown reference the right messages
   // (the saved s1.emailHits may be older / different).
@@ -653,7 +654,17 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
 
                   return (
                     <div className="border rounded p-2 bg-muted/20">
-                      <p className="text-[9px] uppercase tracking-wide text-muted-foreground mb-1">Ownership</p>
+                      <div className="flex items-center justify-between mb-1">
+                        <p className="text-[9px] uppercase tracking-wide text-muted-foreground">Ownership</p>
+                        <button
+                          type="button"
+                          onClick={() => setManualOwnershipOpen(true)}
+                          className="text-[10px] text-primary hover:underline"
+                          data-testid="btn-edit-ownership"
+                        >
+                          {s1.initialOwnership?.manualLock ? "Edit manual title" : (s1.initialOwnership?.titleVerified === false ? "Pick / enter title" : "Override title")}
+                        </button>
+                      </div>
                       <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
                         <div className="col-span-2 min-w-0"><span className="text-muted-foreground">Owner:</span> {ownerEl}{ownerCoNumber ? <span className="text-muted-foreground text-[10px] ml-0.5">(Co# {ownerCoNumber})</span> : null}</div>
                         {ownerCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{ownerCommentary}</div>}
@@ -661,16 +672,21 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
                         <div className="col-span-2 min-w-0">
                           <span className="text-muted-foreground">Title:</span>{" "}
                           <span className="break-words">{titleEl}</span>
-                          {titleNum && s1.initialOwnership?.titleVerified === false && (
+                          {titleNum && s1.initialOwnership?.manualLock && (
+                            <Badge variant="outline" className="text-[9px] py-0 ml-1 border-emerald-400 text-emerald-700 bg-emerald-50">
+                              Manual
+                            </Badge>
+                          )}
+                          {titleNum && !s1.initialOwnership?.manualLock && s1.initialOwnership?.titleVerified === false && (
                             <Badge variant="outline" className="text-[9px] py-0 ml-1 border-amber-400 text-amber-700 bg-amber-50">
                               Unverified · {s1.initialOwnership?.titleSource || "fallback"}
                             </Badge>
                           )}
                         </div>
                         {titleCommentary && <div className="col-span-2 min-w-0 text-[10px] text-muted-foreground break-words leading-snug">{titleCommentary}</div>}
-                        {titleNum && s1.initialOwnership?.titleVerified === false && (
+                        {titleNum && !s1.initialOwnership?.manualLock && s1.initialOwnership?.titleVerified === false && (
                           <div className="col-span-2 min-w-0 text-[10px] text-amber-700 leading-snug">
-                            This title was {s1.initialOwnership?.titleSource === "street_number" ? "matched on a street-number filter, not a UPRN lookup" : s1.initialOwnership?.titleSource === "ai" ? "proposed by the AI investigator and not verified against PropertyData" : "from a fallback source"}. Confirm against the official Land Registry register before quoting.
+                            This title was {s1.initialOwnership?.titleSource === "street_number" ? "matched on a street-number filter, not a UPRN lookup" : s1.initialOwnership?.titleSource === "ai" ? "proposed by the AI investigator and not verified against PropertyData" : "from a fallback source"}. Click <strong>Pick / enter title</strong> above to confirm or correct.
                           </div>
                         )}
                         <div className="min-w-0"><span className="text-muted-foreground">Paid:</span> <span className="font-medium break-words">{paid || "—"}</span></div>
@@ -1215,6 +1231,13 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
               onClose={() => setOpenEmail(null)}
             />
           )}
+          {/* Manual ownership / title-pick dialog */}
+          <ManualTitleDialog
+            run={run}
+            open={manualOwnershipOpen}
+            onOpenChange={setManualOwnershipOpen}
+            onSaved={onReload}
+          />
         </>
       )}
 
@@ -1981,6 +2004,195 @@ function RelinkCrmDialog({
             <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={submitting}>
               Cancel
             </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Manual title override. Used when the resolver couldn't UPRN-verify the
+// title — the user picks one from the candidate list (resolver matched +
+// fallback + postcode neighbours) or types one in. Saves to the pathway
+// stage1.initialOwnership with manualLock so Stage 1 re-runs preserve it,
+// and mirrors title + proprietor onto the linked CRM property.
+function ManualTitleDialog({
+  run,
+  open,
+  onOpenChange,
+  onSaved,
+}: {
+  run: PathwayRun;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [titleNumber, setTitleNumber] = useState("");
+  const [proprietorName, setProprietorName] = useState("");
+  const [proprietorCo, setProprietorCo] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const existing = (run.stageResults as any)?.stage1?.initialOwnership;
+  const existingTitle = (existing?.titleNumber || "").trim();
+  const existingTitleClean = existingTitle && existingTitle !== "unknown" ? existingTitle : "";
+
+  // Pre-fill from whatever's currently set when the dialog opens.
+  useEffect(() => {
+    if (!open) return;
+    setTitleNumber(existingTitleClean);
+    setProprietorName((existing?.proprietorName || "").trim());
+    setProprietorCo((existing?.proprietorCompanyNumber || "").trim());
+  }, [open, existingTitleClean, existing?.proprietorName, existing?.proprietorCompanyNumber]);
+
+  // Re-run the resolver (skipPersist on the server side via /resolve writes
+  // a row, but it dedupes by user/run — fine to call) to populate candidate
+  // lists. Cached by react-query so reopening the dialog is instant.
+  const { data: candidates, isFetching } = useQuery<any>({
+    queryKey: ["/api/land-registry/resolve", run.address, run.postcode],
+    queryFn: async () => {
+      const r = await fetch("/api/land-registry/resolve", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ address: run.address, postcode: run.postcode, source: "pathway-manual", pathwayRunId: run.id }),
+      });
+      if (!r.ok) return null;
+      return r.json();
+    },
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  function pick(row: any) {
+    setTitleNumber(row.title_number || row.titleNumber || "");
+    setProprietorName(row.proprietor_name_1 || row.proprietor || "");
+  }
+
+  async function save() {
+    setSubmitting(true);
+    try {
+      const r = await fetch(`/api/property-pathway/${run.id}/ownership`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          titleNumber: titleNumber.trim(),
+          proprietorName: proprietorName.trim() || undefined,
+          proprietorCompanyNumber: proprietorCo.trim() || undefined,
+        }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.error || `Save failed (${r.status})`);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["/api/property-pathway"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      toast({ title: "Title saved", description: "Manual override locked — Stage 1 re-runs will preserve it." });
+      onOpenChange(false);
+      onSaved();
+    } catch (err: any) {
+      toast({ title: "Save failed", description: err?.message || "Unknown error", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function clearOverride() {
+    setSubmitting(true);
+    try {
+      const r = await fetch(`/api/property-pathway/${run.id}/ownership`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ clear: true }),
+      });
+      if (!r.ok) throw new Error(`Clear failed (${r.status})`);
+      await queryClient.invalidateQueries({ queryKey: ["/api/property-pathway"] });
+      toast({ title: "Override cleared", description: "Re-run Stage 1 to refresh ownership." });
+      onOpenChange(false);
+      onSaved();
+    } catch (err: any) {
+      toast({ title: "Clear failed", description: err?.message || "Unknown error", variant: "destructive" });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const matched: any[] = candidates?.matched?.freeholds || [];
+  const fallback: any[] = candidates?.fallback?.freeholds || [];
+  const context: any[] = candidates?.context?.freeholds || [];
+
+  const renderRow = (row: any, label?: string) => (
+    <button
+      key={`${row.title_number}-${label}`}
+      type="button"
+      disabled={submitting}
+      onClick={() => pick(row)}
+      className="w-full text-left p-2 hover:bg-muted/50 disabled:opacity-50 transition-colors border-b last:border-b-0"
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-[12px] font-mono font-semibold">{row.title_number}</span>
+        {label && <Badge variant="outline" className="text-[8px] py-0 px-1">{label}</Badge>}
+      </div>
+      <div className="text-[11px] text-muted-foreground truncate">{row.proprietor_name_1 || "(no proprietor)"}</div>
+      {row.property && (
+        <div className="text-[10px] text-muted-foreground/80 truncate">
+          {Array.isArray(row.property) ? row.property.join(", ") : row.property}
+        </div>
+      )}
+    </button>
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Set the official title for {run.address}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-[12px] text-muted-foreground">
+            Pick a candidate from the list below or type/paste the title number you have from another source. The override is mirrored onto the linked CRM property and locks Stage 1 from overwriting it on a re-run.
+          </p>
+
+          <div className="border rounded-md max-h-56 overflow-y-auto">
+            {isFetching && <p className="text-[12px] text-muted-foreground p-3">Loading candidates…</p>}
+            {!isFetching && matched.length === 0 && fallback.length === 0 && context.length === 0 && (
+              <p className="text-[12px] text-muted-foreground p-3">No candidates returned by the resolver — type the title manually below.</p>
+            )}
+            {matched.map(r => renderRow(r, "UPRN match"))}
+            {fallback.map(r => renderRow(r, "Street-number match"))}
+            {context.slice(0, 8).map(r => renderRow(r, "Same postcode"))}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="sm:col-span-2">
+              <label className="text-[11px] text-muted-foreground">Title number</label>
+              <Input value={titleNumber} onChange={(e) => setTitleNumber(e.target.value.toUpperCase())} placeholder="e.g. NGL939200" data-testid="input-title-number" />
+            </div>
+            <div>
+              <label className="text-[11px] text-muted-foreground">Proprietor name</label>
+              <Input value={proprietorName} onChange={(e) => setProprietorName(e.target.value)} placeholder="e.g. Amsprop Estates Ltd" />
+            </div>
+            <div>
+              <label className="text-[11px] text-muted-foreground">Co. number (optional)</label>
+              <Input value={proprietorCo} onChange={(e) => setProprietorCo(e.target.value.toUpperCase())} placeholder="e.g. 01690503" />
+            </div>
+          </div>
+
+          <div className="flex justify-between gap-2 pt-1">
+            {existing?.manualLock ? (
+              <Button variant="ghost" size="sm" disabled={submitting} onClick={clearOverride}>
+                Clear manual override
+              </Button>
+            ) : <span />}
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={submitting}>Cancel</Button>
+              <Button size="sm" onClick={save} disabled={submitting || !titleNumber.trim()}>
+                {submitting ? "Saving…" : "Save & lock"}
+              </Button>
+            </div>
           </div>
         </div>
       </DialogContent>
