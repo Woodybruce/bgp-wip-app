@@ -18,21 +18,11 @@ import {
 } from "lucide-react";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
 
+// Grotta / Neue Machina aren't currently shipped with the app (their .otf
+// files don't live under server/assets/branding/fonts/). The font-family
+// chains used in the designer fall back to Work Sans / Arial cleanly, so we
+// only declare the fonts we can actually serve to avoid noisy 404s.
 const BGP_FONT_FACES = `
-@font-face {
-  font-family: 'Grotta';
-  src: url('/api/branding/fonts/Grotta-Regular-q93rrw.otf') format('opentype');
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: 'Neue Machina';
-  src: url('/api/branding/fonts/Neue%20Machina%20Regular-e896.otf') format('opentype');
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap;
-}
 @font-face {
   font-family: 'Space Mono';
   src: url('https://fonts.gstatic.com/s/spacemono/v13/i7dPIFZifjKcF5UAWdDRYEF8RQ.woff2') format('woff2');
