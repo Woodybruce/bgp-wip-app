@@ -460,7 +460,7 @@ import brandScraperRouter, { runDailyBrandScraper } from "./brand-scraper";
 import brandSocialScraperRouter, { runWeeklySocialScrape } from "./brand-social-scraper";
 import apolloContactsRouter from "./apollo-contacts";
 import rocketreachContactsRouter, { rocketreachHealth } from "./rocketreach-contacts";
-import { experianHealth, fetchCommercialCredit, isExperianConfigured } from "./experian";
+import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExperianRaw } from "./experian";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
 import dealDocsRouter from "./deal-docs";
@@ -829,6 +829,18 @@ app.use("/api/branding/assets", express.static(
       const report = await fetchCommercialCredit(companyNumber);
       if (!report) return res.status(404).json({ error: "No Experian credit report found for that company" });
       res.json(report);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Unknown error" });
+    }
+  });
+  // Temporary sandbox debug route — remove after testing
+  app.post("/api/experian/debug-raw", async (req, res) => {
+    try {
+      if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
+      const companyNumber = String(req.body?.companyNumber || "").trim();
+      if (!companyNumber) return res.status(400).json({ error: "companyNumber required" });
+      const result = await debugExperianRaw(companyNumber);
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Unknown error" });
     }
