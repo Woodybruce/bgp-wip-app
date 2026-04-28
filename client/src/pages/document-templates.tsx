@@ -2726,22 +2726,11 @@ function DocumentEditor({ run, onClose, autoDesign }: { run: DocumentRun; onClos
   );
 }
 
+// Grotta / Neue Machina / MinionPro aren't currently shipped with the app —
+// their .otf files don't live under server/assets/branding/fonts/. The
+// preview's font-family chains fall back to Work Sans / Arial cleanly, so we
+// only declare the fonts we can actually serve to avoid noisy 404s.
 const BGP_PREVIEW_FONTS = `
-@font-face {
-  font-family: 'Grotta';
-  src: url('/api/branding/fonts/Grotta-Regular-q93rrw.otf') format('opentype');
-  font-weight: normal; font-style: normal; font-display: swap;
-}
-@font-face {
-  font-family: 'Neue Machina';
-  src: url('/api/branding/fonts/Neue%20Machina%20Regular-e896.otf') format('opentype');
-  font-weight: normal; font-style: normal; font-display: swap;
-}
-@font-face {
-  font-family: 'MinionPro';
-  src: url('/api/branding/fonts/MinionPro-Regular.otf') format('opentype');
-  font-weight: normal; font-style: normal; font-display: swap;
-}
 @font-face {
   font-family: 'Space Mono';
   src: url('https://fonts.gstatic.com/s/spacemono/v13/i7dPIFZifjKcF5UAWdDRYEF8RQ.woff2') format('woff2');
