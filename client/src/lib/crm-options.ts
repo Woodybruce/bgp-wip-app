@@ -111,22 +111,8 @@ export const CRM_OPTIONS = {
   propertyAssetClass: ["Office", "Leisure", "Retail", "Industrial", "Mixed Use"],
   propertyTenure: ["Freehold", "Leasehold"],
 
-  dealStatus: [
-    "Targeting",
-    "Available",
-    "Marketing",
-    "NEG",
-    "HOTs",
-    "SOLs",
-    "Exchanged",
-    "Completed",
-    "Live",
-    "Invoiced",
-    "Speculative",
-    "Dead",
-    "Leasing Comps",
-    "Investment Comps",
-  ],
+  // Canonical 10-code set — see shared/deal-status.ts. INV is system-set on Xero invoice sync.
+  dealStatus: ["REP", "SPEC", "LIVE", "AVA", "NEG", "SOL", "EXC", "COM", "WIT", "INV"],
   dealType: [
     "Acquisition",
     "Sale",

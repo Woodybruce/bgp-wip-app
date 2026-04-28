@@ -43,7 +43,8 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 
-const MARKETING_STATUSES = ["Reporting", "Available", "Negotiating", "Under Offer", "Let", "Withdrawn"];
+import { LETTING_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+const MARKETING_STATUSES = LETTING_STATUSES;
 const USE_CLASSES = ["E", "E(a)", "E(b)", "E(c)", "E(d)", "E(e)", "A1", "A2", "A3", "A4", "A5", "B1", "B2", "B8", "C1", "C3", "D1", "D2", "F1", "F2", "Sui Generis"];
 const FLOORS = ["Basement", "Lower Ground", "Ground", "Mezzanine", "1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th", "10th", "Upper"];
 const CONDITIONS = ["Shell & Core", "Cat A", "Cat A+", "Cat B", "Fitted", "Turn Key", "As Is"];
@@ -58,21 +59,25 @@ const LOCATION_COLORS: Record<string, string> = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  "Reporting": "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
-  "Available": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
-  "Negotiating": "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  "Under Offer": "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  "Let": "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
-  "Withdrawn": "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
+  REP: "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
+  AVA: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
+  NEG: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+  SOL: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+  EXC: "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
+  COM: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+  WIT: "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
+  INV: "bg-emerald-200 text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-200",
 };
 
 const STATUS_LABEL_COLORS: Record<string, string> = {
-  "Reporting": "bg-violet-500",
-  "Available": "bg-emerald-500",
-  "Negotiating": "bg-blue-500",
-  "Under Offer": "bg-amber-500",
-  "Let": "bg-green-500",
-  "Withdrawn": "bg-gray-500",
+  REP: "bg-violet-500",
+  AVA: "bg-emerald-500",
+  NEG: "bg-blue-500",
+  SOL: "bg-amber-500",
+  EXC: "bg-violet-600",
+  COM: "bg-green-500",
+  WIT: "bg-gray-500",
+  INV: "bg-emerald-600",
 };
 
 const ASSET_CLASS_COLORS: Record<string, string> = {
@@ -188,7 +193,7 @@ const emptyForm: UnitFormState = {
   useClass: "",
   condition: "",
   availableDate: "",
-  marketingStatus: "Available",
+  marketingStatus: "AVA",
   epcRating: "",
   location: "",
   notes: "",
@@ -210,7 +215,7 @@ function formToPayload(f: UnitFormState) {
     useClass: f.useClass || null,
     condition: f.condition || null,
     availableDate: f.availableDate || null,
-    marketingStatus: f.marketingStatus || "Available",
+    marketingStatus: legacyToCode(f.marketingStatus) || "AVA",
     epcRating: f.epcRating || null,
     location: f.location || null,
     notes: f.notes || null,
@@ -233,7 +238,7 @@ function unitToForm(u: AvailableUnit): UnitFormState {
     useClass: u.useClass || "",
     condition: u.condition || "",
     availableDate: u.availableDate || "",
-    marketingStatus: u.marketingStatus || "Available",
+    marketingStatus: legacyToCode(u.marketingStatus) || "AVA",
     epcRating: u.epcRating || "",
     location: u.location || "",
     notes: u.notes || "",
@@ -572,7 +577,7 @@ export default function AvailableUnitsPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
       setWipUnit(null);
-      toast({ title: "Under Offer — WIP deal created" });
+      toast({ title: "Solicitors — WIP deal created" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -597,7 +602,7 @@ export default function AvailableUnitsPage() {
 
   const inlineUpdate = (id: string, field: string, value: any) => {
     if (typeof value === "number" && isNaN(value)) value = null;
-    if (field === "marketingStatus" && value === "Under Offer") {
+    if (field === "marketingStatus" && legacyToCode(value) === "SOL") {
       const unit = units.find(u => u.id === id);
       if (unit && !unit.dealId) {
         openWipDialog(unit);
@@ -614,7 +619,7 @@ export default function AvailableUnitsPage() {
 
   const filtered = useMemo(() => {
     let result = teamUnits;
-    if (statusFilter !== "all") result = result.filter(u => u.marketingStatus === statusFilter);
+    if (statusFilter !== "all") result = result.filter(u => legacyToCode(u.marketingStatus) === statusFilter);
     if (propertyFilter !== "all") result = result.filter(u => u.propertyId === propertyFilter);
     if (assetClassFilter !== "all") result = result.filter(u => u.useClass === assetClassFilter);
     if (locationFilter !== "all") result = result.filter(u => u.location === locationFilter);
@@ -631,7 +636,10 @@ export default function AvailableUnitsPage() {
   const stats = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const s of MARKETING_STATUSES) counts[s] = 0;
-    for (const u of teamUnits) counts[u.marketingStatus || "Available"] = (counts[u.marketingStatus || "Available"] || 0) + 1;
+    for (const u of teamUnits) {
+      const code = legacyToCode(u.marketingStatus) || "AVA";
+      counts[code] = (counts[code] || 0) + 1;
+    }
     return counts;
   }, [teamUnits]);
 
@@ -818,9 +826,9 @@ export default function AvailableUnitsPage() {
               className={`${STATUS_LABEL_COLORS[s]} text-white text-[11px] font-medium px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${
                 statusFilter === s ? "ring-2 ring-primary ring-offset-1 scale-105" : statusFilter !== "all" ? "opacity-40" : "hover:opacity-90"
               }`}
-              data-testid={`filter-status-${s.toLowerCase().replace(/\s/g, "-")}`}
+              data-testid={`filter-status-${s.toLowerCase()}`}
             >
-              {s}
+              {DEAL_STATUS_LABELS[s]}
               {statusFilter === s && <X className="inline h-3 w-3 ml-1 -mr-0.5" />}
             </button>
           ))}
@@ -849,20 +857,20 @@ export default function AvailableUnitsPage() {
       <ScrollArea className="w-full">
         <div className="flex items-center gap-3 pb-1">
           {MARKETING_STATUSES.map(s => {
-            const count = teamUnits.filter(u => u.marketingStatus === s).length;
+            const count = teamUnits.filter(u => legacyToCode(u.marketingStatus) === s).length;
             return (
               <Card
                 key={s}
                 className={`flex-shrink-0 min-w-[120px] cursor-pointer transition-colors ${statusFilter === s ? "border-primary" : ""}`}
                 onClick={() => setStatusFilter(statusFilter === s ? "all" : s)}
-                data-testid={`stat-card-${s.toLowerCase().replace(/\s/g, "-")}`}
+                data-testid={`stat-card-${s.toLowerCase()}`}
               >
                 <CardContent className="p-3">
                   <div className="flex items-center gap-2">
                     <div className={`w-2.5 h-2.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
                     <div>
                       <p className="text-lg font-bold">{count}</p>
-                      <p className="text-xs text-muted-foreground">{s}</p>
+                      <p className="text-xs text-muted-foreground">{DEAL_STATUS_LABELS[s]}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -890,10 +898,10 @@ export default function AvailableUnitsPage() {
                 <DropdownMenuItem
                   key={s}
                   onClick={() => bulkStatusMutation.mutate({ ids: Array.from(selectedIds), status: s })}
-                  data-testid={`bulk-status-${s.toLowerCase().replace(/\s/g, "-")}`}
+                  data-testid={`bulk-status-${s.toLowerCase()}`}
                 >
                   <span className={`w-2 h-2 rounded-full mr-2 ${STATUS_LABEL_COLORS[s] || "bg-gray-400"}`} />
-                  {s}
+                  {DEAL_STATUS_LABELS[s]}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -1068,10 +1076,11 @@ export default function AvailableUnitsPage() {
                       </TableCell>
                       <TableCell>
                         <InlineLabelSelect
-                          value={u.marketingStatus || "Available"}
+                          value={legacyToCode(u.marketingStatus) || "AVA"}
                           options={MARKETING_STATUSES}
                           colorMap={STATUS_LABEL_COLORS}
-                          onSave={v => inlineUpdate(u.id, "marketingStatus", v || "Available")}
+                          labelMap={DEAL_STATUS_LABELS}
+                          onSave={v => inlineUpdate(u.id, "marketingStatus", v || "AVA")}
                           allowClear={false}
                         />
                       </TableCell>
@@ -1295,7 +1304,7 @@ export default function AvailableUnitsPage() {
       <Dialog open={!!wipUnit} onOpenChange={v => { if (!v) setWipUnit(null); }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Create WIP Deal — Under Offer</DialogTitle>
+            <DialogTitle>Create WIP Deal — Solicitors</DialogTitle>
             <DialogDescription>
               {wipUnit ? `${propertyMap[wipUnit.propertyId]?.name || "Property"} — ${wipUnit.unitName}` : ""}
               . Fill in the deal details below.
@@ -2033,10 +2042,10 @@ function UnitFormDialog({
           </div>
           <div>
             <Label>Marketing Status</Label>
-            <Select value={form.marketingStatus} onValueChange={v => upd("marketingStatus", v)}>
+            <Select value={legacyToCode(form.marketingStatus) || "AVA"} onValueChange={v => upd("marketingStatus", v)}>
               <SelectTrigger><SelectValue placeholder="Status..." /></SelectTrigger>
               <SelectContent>
-                {MARKETING_STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                {MARKETING_STATUSES.map(s => <SelectItem key={s} value={s}>{DEAL_STATUS_LABELS[s]}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

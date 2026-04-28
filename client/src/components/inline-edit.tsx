@@ -275,13 +275,14 @@ interface InlineLabelSelectProps {
   value: string | null | undefined;
   options: readonly string[] | string[];
   colorMap?: Record<string, string>;
+  labelMap?: Record<string, string>;
   onSave: (value: string) => void;
   placeholder?: string;
   allowClear?: boolean;
   compact?: boolean;
 }
 
-export function InlineLabelSelect({ value, options, colorMap, onSave, placeholder = "Set label", allowClear = true, compact = false }: InlineLabelSelectProps) {
+export function InlineLabelSelect({ value, options, colorMap, labelMap, onSave, placeholder = "Set label", allowClear = true, compact = false }: InlineLabelSelectProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -335,7 +336,7 @@ export function InlineLabelSelect({ value, options, colorMap, onSave, placeholde
           className={`${bg} text-white font-medium rounded-full cursor-pointer hover:opacity-90 transition-opacity whitespace-nowrap ${compact ? "text-[10px] px-2 py-0.5" : "text-[11px] px-2.5 py-1"}`}
           data-testid="inline-label-display"
         >
-          {value}
+          {(value && labelMap?.[value]) || value}
         </button>
       ) : (
         <button
@@ -369,7 +370,7 @@ export function InlineLabelSelect({ value, options, colorMap, onSave, placeholde
                 data-testid={`label-option-${opt}`}
               >
                 <span className={`${optBg} text-white text-[11px] font-medium px-3 py-1 rounded-full w-full text-center`}>
-                  {opt}
+                  {labelMap?.[opt] ?? opt}
                 </span>
               </button>
             );

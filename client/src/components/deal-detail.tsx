@@ -52,6 +52,7 @@ import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schem
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
+import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 import {
   DEAL_STATUS_COLORS,
   DEAL_TYPE_COLORS,
@@ -252,7 +253,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-xl font-bold truncate" data-testid="text-deal-name">{linkedProperty?.name || deal.name}</h1>
             {deal.status && (
-              <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[deal.status] || "bg-zinc-500"}`} data-testid="badge-deal-status">{deal.status}</Badge>
+              <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[deal.status] || "bg-zinc-500"}`} data-testid="badge-deal-status">{(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}</Badge>
             )}
           </div>
         </div>

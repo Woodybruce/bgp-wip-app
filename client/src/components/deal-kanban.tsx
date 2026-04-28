@@ -1,15 +1,17 @@
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
 import type { CrmDeal } from "@shared/schema";
+import { legacyToCode } from "@shared/deal-status";
 
+// Kanban columns map to canonical status codes; HOTs merges into NEG (same lifecycle stage).
 const KANBAN_COLUMNS = [
-  { key: "Pipeline", label: "Pipeline", statuses: ["Targeting", "Available", "Marketing", "Speculative", "Live"] },
-  { key: "NEG", label: "Under Negotiation", statuses: ["NEG", "Under Negotiation"] },
-  { key: "HOTs", label: "HOTs", statuses: ["HOTs"] },
-  { key: "SOLs", label: "SOLs", statuses: ["SOLs"] },
-  { key: "Exchanged", label: "Exchanged", statuses: ["Exchanged"] },
-  { key: "Completed", label: "Completed", statuses: ["Completed"] },
-  { key: "Invoiced", label: "Invoiced", statuses: ["Invoiced"] },
+  { key: "Pipeline", label: "Pipeline", statuses: ["REP", "SPEC", "LIVE", "AVA"] },
+  { key: "NEG", label: "Negotiating", statuses: ["NEG"] },
+  { key: "SOL", label: "Solicitors", statuses: ["SOL"] },
+  { key: "EXC", label: "Exchanged", statuses: ["EXC"] },
+  { key: "COM", label: "Completed", statuses: ["COM"] },
+  { key: "INV", label: "Invoiced", statuses: ["INV"] },
+  { key: "WIT", label: "Withdrawn", statuses: ["WIT"] },
 ];
 
 const DEAL_TYPE_COLORS: Record<string, string> = {
@@ -64,9 +66,10 @@ interface DealKanbanProps {
 export function DealKanban({ deals, propertyMap }: DealKanbanProps) {
   // Group deals into columns
   const columns = KANBAN_COLUMNS.map((col) => {
-    const columnDeals = deals.filter((d) =>
-      col.statuses.includes(d.status || "")
-    );
+    const columnDeals = deals.filter((d) => {
+      const code = legacyToCode(d.status);
+      return code !== null && col.statuses.includes(code);
+    });
     const totalFee = columnDeals.reduce(
       (sum, d) => sum + (d.fee ? Number(d.fee) : 0),
       0

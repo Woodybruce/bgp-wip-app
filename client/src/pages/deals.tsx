@@ -113,20 +113,40 @@ import { EmptyState } from "@/components/empty-state";
 import { DealKanban } from "@/components/deal-kanban";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { DealDetail } from "@/components/deal-detail";
+import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
 
+// Canonical 10-code colour map. Legacy strings retained as fallbacks for any
+// rows that haven't yet been touched by the migration.
 export const DEAL_STATUS_COLORS: Record<string, string> = {
-  "Targeting": "bg-amber-500",
+  REP: "bg-slate-500",
+  SPEC: "bg-violet-500",
+  LIVE: "bg-blue-500",
+  AVA: "bg-emerald-500",
+  NEG: "bg-yellow-600",
+  SOL: "bg-orange-500",
+  EXC: "bg-purple-500",
+  COM: "bg-green-500",
+  WIT: "bg-zinc-500",
+  INV: "bg-emerald-600",
+  // Legacy strings — kept for safety; all map to the new colours above
+  "Targeting": "bg-slate-500",
+  "Reporting": "bg-slate-500",
+  "Speculative": "bg-violet-500",
+  "Live": "bg-blue-500",
   "Available": "bg-emerald-500",
-  "Marketing": "bg-sky-500",
-  "NEG": "bg-yellow-600",
-  "HOTs": "bg-fuchsia-600",
-  "SOLs": "bg-indigo-600",
-  "Exchanged": "bg-teal-500",
-  "Completed": "bg-teal-700",
-  "Live": "bg-lime-600",
-  "Invoiced": "bg-green-700",
-  "Speculative": "bg-orange-400",
+  "Marketing": "bg-emerald-500",
+  "Under Negotiation": "bg-yellow-600",
+  "HOTs": "bg-yellow-600",
+  "Under Offer": "bg-orange-500",
+  "SOLs": "bg-orange-500",
+  "Exchanged": "bg-purple-500",
+  "Completed": "bg-green-500",
+  "Let": "bg-green-500",
+  "Withdrawn": "bg-zinc-500",
+  "Lost": "bg-zinc-500",
   "Dead": "bg-zinc-500",
+  "Invoiced": "bg-emerald-600",
+  "Billed": "bg-emerald-600",
   "Leasing Comps": "bg-cyan-600",
   "Investment Comps": "bg-purple-500",
 };
@@ -705,14 +725,17 @@ export function DealFormDialog({
 
             <div>
               <Label>Status</Label>
-              <Select value={form.status || undefined} onValueChange={(v) => set("status", v === "__clear__" ? "" : v)}>
+              <Select value={legacyToCode(form.status) || undefined} onValueChange={(v) => set("status", v === "__clear__" ? "" : v)}>
                 <SelectTrigger data-testid="select-deal-status">
                   <SelectValue placeholder="Select status" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__clear__">None</SelectItem>
                   {CRM_OPTIONS.dealStatus.map((s) => (
-                    <SelectItem key={s} value={s}>{s}</SelectItem>
+                    <SelectItem key={s} value={s} disabled={s === "INV"}>
+                      {DEAL_STATUS_LABELS[s as keyof typeof DEAL_STATUS_LABELS] ?? s}
+                      {s === "INV" ? " (auto)" : ""}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -4640,9 +4663,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       {visibleColumns.status && (
                         <TableCell className="px-1.5 py-1">
                           <InlineLabelSelect
-                            value={deal.status}
+                            value={legacyToCode(deal.status) || deal.status}
                             options={CRM_OPTIONS.dealStatus}
                             colorMap={DEAL_STATUS_COLORS}
+                            labelMap={DEAL_STATUS_LABELS}
                             onSave={(v) => handleInlineSave(deal.id, "status", v || null)}
                             data-testid={`inline-deal-status-${deal.id}`}
                           />

@@ -41,8 +41,9 @@ import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
 
-const STATUSES = ["Reporting", "Speculative", "Live", "Available", "Under Offer", "Completed"];
-const SUMMARY_STATUSES = ["Reporting", "Speculative", "Live", "Available", "Under Offer", "Completed"];
+import { INVESTMENT_STATUSES, DEAL_STATUS_LABELS, legacyToCode, type DealStatusCode } from "@shared/deal-status";
+const STATUSES = INVESTMENT_STATUSES;
+const SUMMARY_STATUSES = INVESTMENT_STATUSES;
 const BOARD_TYPES = ["Purchases", "Sales"] as const;
 type BoardType = typeof BOARD_TYPES[number];
 const ASSET_CLASSES = ["Retail", "Office", "Industrial", "Mixed Use", "F&B", "Leisure", "Residential"];
@@ -50,12 +51,16 @@ const TENURES = ["Freehold", "Leasehold", "Virtual Freehold"];
 const FEE_TYPES = ["% of Price", "Fixed Fee", "Retainer + Success", "Other"];
 
 const STATUS_COLORS: Record<string, string> = {
-  "Reporting": "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300",
-  "Speculative": "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
-  "Live": "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  "Available": "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
-  "Under Offer": "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
-  "Completed": "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+  REP: "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300",
+  SPEC: "bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300",
+  LIVE: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+  AVA: "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300",
+  NEG: "bg-cyan-100 text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300",
+  SOL: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
+  EXC: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
+  COM: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+  WIT: "bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-300",
+  INV: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
 };
 
 const ASSET_CLASS_COLORS: Record<string, string> = {
@@ -69,12 +74,16 @@ const ASSET_CLASS_COLORS: Record<string, string> = {
 };
 
 const STATUS_LABEL_COLORS: Record<string, string> = {
-  "Reporting": "bg-slate-500",
-  "Speculative": "bg-violet-500",
-  "Live": "bg-blue-500",
-  "Available": "bg-amber-500",
-  "Under Offer": "bg-orange-500",
-  "Completed": "bg-green-500",
+  REP: "bg-slate-500",
+  SPEC: "bg-violet-500",
+  LIVE: "bg-blue-500",
+  AVA: "bg-amber-500",
+  NEG: "bg-cyan-500",
+  SOL: "bg-orange-500",
+  EXC: "bg-purple-500",
+  COM: "bg-green-500",
+  WIT: "bg-gray-500",
+  INV: "bg-emerald-600",
 };
 
 function fmtNum(n: number | null | undefined) {
@@ -195,7 +204,7 @@ function makeEmptyForm(boardType: BoardType): FormState {
     occupancy: "",
     capexRequired: "",
     boardType,
-    status: "Reporting",
+    status: "REP",
     client: "",
     clientId: "",
     clientContact: "",
@@ -232,7 +241,7 @@ function formToPayload(f: FormState) {
     occupancy: f.occupancy ? parseFloat(f.occupancy) : null,
     capexRequired: f.capexRequired ? parseFloat(f.capexRequired) : null,
     boardType: f.boardType || "Purchases",
-    status: f.status || "Reporting",
+    status: legacyToCode(f.status) || "REP",
     client: f.client || null,
     clientId: f.clientId || null,
     clientContact: f.clientContact || null,
@@ -269,7 +278,7 @@ function itemToForm(u: InvestmentTracker): FormState {
     occupancy: u.occupancy?.toString() || "",
     capexRequired: u.capexRequired?.toString() || "",
     boardType: u.boardType || "Purchases",
-    status: u.status || "Reporting",
+    status: legacyToCode(u.status) || "REP",
     client: u.client || "",
     clientId: u.clientId || "",
     clientContact: u.clientContact || "",
@@ -986,7 +995,7 @@ export default function InvestmentTrackerPage() {
         (u.vendorAgent || "").toLowerCase().includes(q)
       );
     }
-    if (statusFilter !== "all") list = list.filter(u => u.status === statusFilter);
+    if (statusFilter !== "all") list = list.filter(u => legacyToCode(u.status) === statusFilter);
     if (assetClassFilter !== "all") list = list.filter(u => u.assetType === assetClassFilter);
     if (tenureFilter !== "all") list = list.filter(u => u.tenure === tenureFilter);
     if (agentFilter !== "all") {
@@ -994,7 +1003,7 @@ export default function InvestmentTrackerPage() {
       if (agentUser) list = list.filter(u => (u.agentUserIds || []).includes(agentUser.id));
     }
     const statusOrder = Object.fromEntries(STATUSES.map((s, i) => [s, i]));
-    list = [...list].sort((a, b) => (statusOrder[a.status || "Reporting"] ?? 99) - (statusOrder[b.status || "Reporting"] ?? 99));
+    list = [...list].sort((a, b) => (statusOrder[legacyToCode(a.status) || "REP"] ?? 99) - (statusOrder[legacyToCode(b.status) || "REP"] ?? 99));
     return list;
   }, [boardItems, search, statusFilter, assetClassFilter, tenureFilter, agentFilter, bgpUsers]);
 
@@ -1050,7 +1059,10 @@ export default function InvestmentTrackerPage() {
   const statusSummary = useMemo(() => {
     const c: Record<string, number> = {};
     for (const s of STATUSES) c[s] = 0;
-    for (const u of boardItems) c[u.status || "Reporting"] = (c[u.status || "Reporting"] || 0) + 1;
+    for (const u of boardItems) {
+      const code = legacyToCode(u.status) || "REP";
+      c[code] = (c[code] || 0) + 1;
+    }
     return c;
   }, [boardItems]);
 
@@ -1167,7 +1179,7 @@ export default function InvestmentTrackerPage() {
                   <div className={`w-2.5 h-2.5 rounded-full ${STATUS_LABEL_COLORS[s] || "bg-primary/60"}`} />
                   <div>
                     <p className="text-lg font-bold">{statusSummary[s] || 0}</p>
-                    <p className="text-xs text-muted-foreground truncate max-w-[100px]">{s}</p>
+                    <p className="text-xs text-muted-foreground truncate max-w-[100px]">{DEAL_STATUS_LABELS[s]}</p>
                   </div>
                 </div>
               </CardContent>
@@ -1196,9 +1208,9 @@ export default function InvestmentTrackerPage() {
               className={`${STATUS_LABEL_COLORS[s]} text-white text-[11px] font-medium px-2.5 py-1 rounded-full transition-all whitespace-nowrap ${
                 statusFilter === s ? "ring-2 ring-primary ring-offset-1 scale-105" : statusFilter !== "all" ? "opacity-40" : "hover:opacity-90"
               }`}
-              data-testid={`filter-status-${s.toLowerCase().replace(/\s/g, "-")}`}
+              data-testid={`filter-status-${s.toLowerCase()}`}
             >
-              {s}
+              {DEAL_STATUS_LABELS[s]}
               {statusFilter === s && <X className="inline h-3 w-3 ml-1 -mr-0.5" />}
             </button>
           ))}
@@ -1383,9 +1395,9 @@ export default function InvestmentTrackerPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {STATUSES.map(s => (
-                <DropdownMenuItem key={s} onClick={() => bulkSetStatus(s)} data-testid={`bulk-status-${s.toLowerCase().replace(/\s/g, "-")}`}>
+                <DropdownMenuItem key={s} onClick={() => bulkSetStatus(s)} data-testid={`bulk-status-${s.toLowerCase()}`}>
                   <span className={`inline-block w-2 h-2 rounded-full mr-2 ${STATUS_LABEL_COLORS[s]}`} />
-                  {s}
+                  {DEAL_STATUS_LABELS[s]}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -1746,9 +1758,10 @@ export default function InvestmentTrackerPage() {
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       <InlineLabelSelect
-                        value={item.status || "Reporting"}
+                        value={legacyToCode(item.status) || "REP"}
                         options={STATUSES}
                         colorMap={STATUS_LABEL_COLORS}
+                        labelMap={DEAL_STATUS_LABELS}
                         onSave={v => inlineUpdate(item.id, "status", v)}
                       />
                     </TableCell>
@@ -1947,9 +1960,9 @@ export default function InvestmentTrackerPage() {
             </div>
             <div>
               <Label className="text-xs">Status</Label>
-              <Select value={form.status} onValueChange={v => setForm({ ...form, status: v })}>
+              <Select value={legacyToCode(form.status) || "REP"} onValueChange={v => setForm({ ...form, status: v })}>
                 <SelectTrigger className="h-9" data-testid="select-status"><SelectValue /></SelectTrigger>
-                <SelectContent>{STATUSES.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                <SelectContent>{STATUSES.map(s => <SelectItem key={s} value={s}>{DEAL_STATUS_LABELS[s]}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             {boardType === "Purchases" ? (
