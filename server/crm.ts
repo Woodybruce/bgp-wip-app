@@ -27,6 +27,7 @@ import {
   xeroInvoices, availableUnits, investmentTracker,
   dealAuditLog,
 } from "@shared/schema";
+import { isInvoicedStatus } from "@shared/deal-status";
 import { eq, and, or, inArray, isNotNull, sql } from "drizzle-orm";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { searchPipnetRequirements } from "./pipnet";
@@ -4359,7 +4360,6 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         }
       }
 
-      const INVOICED_STATUSES = ["Invoiced", "Billed"];
       const agentTotals = new Map<string, { invoiced: number; wip: number }>();
 
       for (const deal of deals) {
@@ -4372,7 +4372,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           if (!dealTeamsLower.some(t => t === userTeam.toLowerCase())) continue;
         }
         const totalFee = deal.fee;
-        const isInvoiced = INVOICED_STATUSES.includes(deal.status);
+        const isInvoiced = isInvoicedStatus(deal.status);
         const agents = allocsByDeal.get(deal.id);
 
         if (agents && agents.length > 0) {
@@ -4432,14 +4432,13 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         }
       }
 
-      const INVOICED_STATUSES = ["Invoiced", "Billed"];
       const EXCLUDED_STATUSES = ["Dead", "Leasing Comps", "Investment Comps"];
       const result: any[] = [];
 
       for (const deal of deals) {
         if (EXCLUDED_STATUSES.includes(deal.status || "")) continue;
         const totalFee = deal.fee || 0;
-        const isInvoiced = INVOICED_STATUSES.includes(deal.status || "");
+        const isInvoiced = isInvoicedStatus(deal.status);
         const dealAllocs = allocsByDeal.get(deal.id);
         let allocatedAmount = 0;
         let isRelevant = false;
@@ -4469,7 +4468,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
         function drilldownStage(status: string | null): string {
           if (!status) return "pipeline";
-          if (INVOICED_STATUSES.includes(status)) return "invoiced";
+          if (isInvoicedStatus(status)) return "invoiced";
           if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
           return "pipeline";
         }
@@ -4506,7 +4505,6 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       const isAdmin = !!currentUser?.isAdmin;
       const userTeam = currentUser?.team || null;
 
-      const INVOICED_STATUSES = ["Invoiced", "Billed"];
       const EXCLUDED_STATUSES = ["Dead", "Leasing Comps", "Investment Comps"];
 
       const deals = await db.select().from(crmDeals);
@@ -4557,7 +4555,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       function deriveStage(status: string | null): string {
         if (!status) return "pipeline";
-        if (INVOICED_STATUSES.includes(status)) return "invoiced";
+        if (isInvoicedStatus(status)) return "invoiced";
         if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
         return "pipeline";
       }
@@ -5981,7 +5979,6 @@ Rules:
       const isAdmin = !!currentUser?.isAdmin;
       const userTeam = currentUser?.team || null;
 
-      const INVOICED_STATUSES = ["Invoiced", "Billed"];
       const EXCLUDED_STATUSES = ["Dead", "Leasing Comps", "Investment Comps"];
 
       const deals = await db.select().from(crmDeals);
@@ -6025,7 +6022,7 @@ Rules:
 
       function deriveStageExcel(status: string | null): string {
         if (!status) return "pipeline";
-        if (INVOICED_STATUSES.includes(status)) return "invoiced";
+        if (isInvoicedStatus(status)) return "invoiced";
         if (["SOLs", "Under Negotiation", "HOTs", "NEG", "Live", "Exchanged", "Completed"].includes(status)) return "wip";
         return "pipeline";
       }
