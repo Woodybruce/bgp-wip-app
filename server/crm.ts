@@ -352,7 +352,8 @@ export async function importWipFromBuffer(
     }
     upsertEnrichment(kr);
     const status = String(pick(kr, "DealStatus", "Deal Status", "Deal status") || "").toUpperCase();
-    const isInvoiced = status === "SOL" || status === "SOLD" || status === "INVOICED";
+    // SOL = Solicitors instructed — deal agreed but not yet invoiced, stays in WIP
+    const isInvoiced = status === "SOLD" || status === "INVOICED";
     const net = parseFloat(pick(kr, "NetAmount", "Net Amount", "Amount") || 0) || 0;
     const headerNum = pickDealRef(kr);
     return {
@@ -368,12 +369,12 @@ export async function importWipFromBuffer(
       amtWip: isInvoiced ? 0 : net,
       amtInvoice: isInvoiced ? net : 0,
       month: (() => {
-        const dateAliases = ["MonthYear", "Month Year", "Month", "Date", "Trans Date", "Transaction Date", "Posting Date", "Invoice Date", "Period Date", "TRAN_DATE", "POSTING_DATE"];
-        const dueDateAliases = ["DueDate_EOMonth", "DueDate", "Due Date"];
-        const raw = pick(kr, ...dateAliases) || pick(kr, ...dueDateAliases);
+        // Only use the fee-period columns; "Date"/"Trans Date" etc. are transaction dates, not fee months
+        const monthAliases = ["MonthYear", "Month Year", "DueDate_EOMonth", "DueDate", "Due Date"];
+        const raw = pick(kr, ...monthAliases);
         if (raw) return deriveMonthLabel(raw);
-        // Catch-all: find any column whose name contains "month" or "date"
-        const fallbackKey = Object.keys(kr).find(k => /month|date/.test(k));
+        // Catch-all: find any column whose name contains "month" (not bare "date")
+        const fallbackKey = Object.keys(kr).find(k => /month/i.test(k));
         return fallbackKey ? deriveMonthLabel(kr[fallbackKey]) : null;
       })(),
       dealStatus: pick(kr, "DealStatus", "Deal Status", "Deal status") || null,
@@ -381,11 +382,10 @@ export async function importWipFromBuffer(
       invoiceNo: pick(kr, "InvoiceNo") ? String(pick(kr, "InvoiceNo")) : null,
       orderNumber: pick(kr, "ORDER_NUMBER", "OrderNumber") ? String(pick(kr, "ORDER_NUMBER", "OrderNumber")) : null,
       fiscalYear: (() => {
-        const dateAliases = ["MonthYear", "Month Year", "Month", "Date", "Trans Date", "Transaction Date", "Posting Date", "Invoice Date", "Period Date", "TRAN_DATE", "POSTING_DATE"];
-        const dueDateAliases = ["DueDate_EOMonth", "DueDate", "Due Date"];
-        const raw = pick(kr, ...dateAliases) || pick(kr, ...dueDateAliases);
+        const monthAliases = ["MonthYear", "Month Year", "DueDate_EOMonth", "DueDate", "Due Date"];
+        const raw = pick(kr, ...monthAliases);
         if (raw) return parseFiscalYear(raw);
-        const fallbackKey = Object.keys(kr).find(k => /month|date/.test(k));
+        const fallbackKey = Object.keys(kr).find(k => /month/i.test(k));
         return fallbackKey ? parseFiscalYear(kr[fallbackKey]) : null;
       })(),
     };
@@ -4542,13 +4542,18 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       // Build lookup maps — use separate maps to avoid name/property overwrites
       const dealByName = new Map<string, typeof deals[0]>();
       const dealByProperty = new Map<string, typeof deals[0]>();
+      const dealByWipRef = new Map<string, typeof deals[0]>();
       for (const d of deals) {
         if (d.name) dealByName.set(d.name.toLowerCase().trim(), d);
         const propName = d.propertyId ? propMap.get(d.propertyId) : null;
         if (propName) dealByProperty.set(propName.toLowerCase().trim(), d);
+        // Match Sage HEADER_NUMBER stored as "WIP Ref: XXXX" in deal.comments
+        const wipRefMatch = (d as any).comments?.match(/WIP Ref:\s*(\d+)/);
+        if (wipRefMatch) dealByWipRef.set(wipRefMatch[1], d);
       }
-      // Combined lookup: check name first, then property
-      const findDeal = (key: string) => dealByName.get(key) || dealByProperty.get(key);
+      // Combined lookup: check name, then property, then WIP ref (for Sage imports)
+      const findDeal = (key: string) =>
+        dealByName.get(key) || dealByProperty.get(key) || dealByWipRef.get(key);
 
       function deriveStage(status: string | null): string {
         if (!status) return "pipeline";
