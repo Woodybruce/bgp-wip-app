@@ -109,7 +109,13 @@ interface StageResults {
       // which case downstream consumers (UI / AI briefing) should treat it
       // as unverified and prompt the user to confirm before quoting.
       titleVerified?: boolean;
-      titleSource?: "uprn" | "street_number" | "postcode_only" | "ai" | "crm";
+      titleSource?: "uprn" | "street_number" | "postcode_only" | "ai" | "crm" | "manual";
+      // True when the user manually picked / entered the title via the
+      // pathway Ownership card. Stage 1 re-runs preserve the user's
+      // override — they can clear it explicitly from the same dialog.
+      manualLock?: boolean;
+      manualSetBy?: string;
+      manualSetAt?: string;
     } | null;
     tenant?: { name: string; companyNumber?: string; companyId?: string };
     folderTree?: { root: string; webUrl: string; children: string[] };
@@ -1405,6 +1411,16 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
   // when the user clicks "Order Title Register" because PropertyData has no
   // record of them. The verified resolver (resolveBuildingTitles via
   // land_registry_lookup → matched.freeholds) is authoritative; prefer it.
+  //
+  // Manual override: if the user has previously picked / entered the title
+  // via the Ownership card (manualLock === true), we honour their choice
+  // and leave it untouched. Their picked value is in the existing
+  // stage1.initialOwnership on the run record at this point.
+  const existingStage1 = (run.stageResults as any)?.stage1?.initialOwnership;
+  if (existingStage1?.manualLock) {
+    console.log(`[pathway stage1] manual title lock active (title=${existingStage1.titleNumber} set by ${existingStage1.manualSetBy || "?"}) — skipping cross-validation`);
+    stage1Payload.initialOwnership = existingStage1;
+  } else {
   const verifiedOwnership = partialPayload.initialOwnership as any;
   const verifiedTitle = verifiedOwnership?.titleNumber;
   const aiOwnership = stage1Payload.initialOwnership as any;
@@ -1441,6 +1457,7 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
       titleSource: "ai",
     };
   }
+  } // end manualLock branch
   if (!stage1Payload.rates && partialPayload.rates) {
     stage1Payload.rates = partialPayload.rates;
   }
@@ -4850,6 +4867,87 @@ export function registerPropertyPathwayRoutes(app: Express) {
     } catch (err: any) {
       console.error("[pathway relink-crm] error:", err?.message);
       res.status(500).json({ error: err?.message || "Failed to relink CRM" });
+    }
+  });
+
+  // Manual ownership override. Used when the UPRN resolver couldn't verify
+  // the title — the user picks a candidate from the resolver's postcode list
+  // or pastes one from another source. Persists onto stage1.initialOwnership
+  // with manualLock: true so subsequent Stage 1 re-runs don't overwrite it,
+  // and mirrors title + proprietor onto the linked CRM property so the
+  // override is canonical (other places that read CRM ownership see it too).
+  app.patch("/api/property-pathway/:runId/ownership", requireAuth, async (req: Request, res: Response) => {
+    const runId = String(req.params.runId);
+    try {
+      const { titleNumber, proprietorName, proprietorCompanyNumber, clear } = req.body as {
+        titleNumber?: string | null;
+        proprietorName?: string | null;
+        proprietorCompanyNumber?: string | null;
+        clear?: boolean;
+      };
+      const run = await getRun(runId);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+
+      const sr: any = run.stageResults || {};
+      const stage1: any = sr.stage1 || {};
+      const existingOwnership: any = stage1.initialOwnership || {};
+      const userId = (req as any).userId as string | undefined;
+
+      let nextOwnership: any;
+      if (clear) {
+        // Clear the manual override — drop manualLock and rewind to whatever
+        // Stage 1 originally found (resolver/AI/CRM). The user should re-run
+        // Stage 1 to get a fresh result; until then we just strip the flag.
+        nextOwnership = {
+          ...existingOwnership,
+          manualLock: false,
+          manualSetBy: undefined,
+          manualSetAt: undefined,
+        };
+        console.log(`[pathway ownership] run ${runId}: manual lock cleared`);
+      } else {
+        const cleanedTitle = (titleNumber || "").trim();
+        if (!cleanedTitle) return res.status(400).json({ error: "titleNumber is required (or pass { clear: true } to remove the override)" });
+        nextOwnership = {
+          ...existingOwnership,
+          titleNumber: cleanedTitle,
+          proprietorName: (proprietorName || "").trim() || existingOwnership.proprietorName,
+          proprietorCompanyNumber: (proprietorCompanyNumber || "").trim() || existingOwnership.proprietorCompanyNumber,
+          titleVerified: true,
+          titleSource: "manual",
+          manualLock: true,
+          manualSetBy: userId || "user",
+          manualSetAt: new Date().toISOString(),
+        };
+        console.log(`[pathway ownership] run ${runId}: manual title=${cleanedTitle} owner=${nextOwnership.proprietorName || "?"}`);
+      }
+
+      // Mirror onto the linked CRM property when one exists, so any other
+      // surface (property detail page, KYC investigation seed, etc.) reads
+      // the user's confirmed values instead of stale autoresolved ones.
+      if (run.propertyId) {
+        const updates: any = {};
+        if (!clear) {
+          if (nextOwnership.titleNumber) updates.titleNumber = nextOwnership.titleNumber;
+          if (nextOwnership.proprietorName) updates.proprietorName = nextOwnership.proprietorName;
+          if (nextOwnership.proprietorCompanyNumber) updates.proprietorCompanyNumber = nextOwnership.proprietorCompanyNumber;
+        }
+        if (Object.keys(updates).length > 0) {
+          updates.updatedAt = new Date();
+          await db.update(crmProperties).set(updates).where(eq(crmProperties.id, run.propertyId));
+        }
+      }
+
+      await db.update(propertyPathwayRuns).set({
+        stageResults: { ...sr, stage1: { ...stage1, initialOwnership: nextOwnership } },
+        updatedAt: new Date(),
+      }).where(eq(propertyPathwayRuns.id, runId));
+
+      const updated = await getRun(runId);
+      res.json({ success: true, ownership: nextOwnership, run: updated });
+    } catch (err: any) {
+      console.error("[pathway ownership] error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to update ownership" });
     }
   });
 
