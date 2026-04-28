@@ -816,13 +816,20 @@ Return valid JSON only with this structure:
 }
 
 function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
-  if (!apiKey || !baseUrl) return null;
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: { apiVersion: "", baseUrl },
-  });
+  // Prefer the Replit AI Integrations setup if both vars are present (gives us a
+  // pre-configured proxy host); otherwise fall back to a direct Google Gemini
+  // call using the standard GEMINI_API_KEY (what Railway has set).
+  const integrationsKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+  const integrationsBase = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+  if (integrationsKey && integrationsBase) {
+    return new GoogleGenAI({
+      apiKey: integrationsKey,
+      httpOptions: { apiVersion: "", baseUrl: integrationsBase },
+    });
+  }
+  const directKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!directKey) return null;
+  return new GoogleGenAI({ apiKey: directKey });
 }
 
 async function analyzeDocumentWithGemini(text: string, fileName: string): Promise<{
@@ -2246,7 +2253,7 @@ Generate the complete document now.`;
       const gemini = getGeminiClient();
       if (gemini) {
         try {
-          console.log("[doc-generate] Using Gemini 3.1 Pro");
+          console.log("[doc-generate] Using Gemini 2.5 Flash");
           const geminiResponse = await gemini.models.generateContent({
             model: "gemini-2.5-flash",
             contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
@@ -2254,22 +2261,27 @@ Generate the complete document now.`;
           });
           content = geminiResponse.text || "";
         } catch (geminiErr: any) {
-          console.log("[doc-generate] Gemini 3.1 Pro failed, falling back to GPT-4o:", geminiErr?.message);
+          console.log("[doc-generate] Gemini failed, falling back to Opus:", geminiErr?.message);
         }
       }
       if (!content) {
-        // All Document Studio generations use Opus (per the 956dbc9 upgrade).
-        // callDocOpus tries 4.7 first and falls back to 4.6 if the newer model
-        // isn't yet API-accessible — fixes the 500 from a hardcoded 4.6 string.
+        // Opus fallback. Cap output at 6000 tokens so the response stays under
+        // Railway's 60s proxy timeout even at Opus's slower output speed
+        // (~30 tok/s for 4.7, so 6000 tokens ≈ 3 minutes worst-case → 6000
+        // is still ambitious; we use a hard 50s wall-clock timeout below).
         console.log(`[doc-generate] Using Opus for type: ${documentType || "unspecified"}`);
-        const completion = await callDocOpus({
+        const opusPromise = callDocOpus({
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt },
           ],
           temperature: 0.3,
-          max_completion_tokens: 16384,
+          max_completion_tokens: 6000,
         });
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("Opus took longer than 50s — try a shorter document or upload fewer source files")), 50_000);
+        });
+        const completion = await Promise.race([opusPromise, timeoutPromise]);
         content = completion.choices[0]?.message?.content || "No content generated.";
       }
 
