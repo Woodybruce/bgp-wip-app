@@ -852,6 +852,37 @@ app.use("/api/branding/assets", express.static(
       res.status(500).json({ error: err?.message || "Unknown error" });
     }
   });
+  // Business Profile endpoint discovery — hit once to find the correct path, then remove
+  app.get("/api/experian/discover-profile", async (req, res) => {
+    try {
+      if (!isExperianConfigured()) return res.status(400).json({ error: "EXPERIAN not configured" });
+      const regnum = String(req.query?.regnum || "99999999").trim().toUpperCase();
+      // Candidate paths across Commercial Credit v2 and Business Information product families
+      const candidates = [
+        { path: `/risk/business/v2/businessprofile/${regnum}`,                        method: "GET" },
+        { path: `/risk/business/v2/registeredbusinessprofile/${regnum}`,              method: "GET" },
+        { path: `/risk/business/v2/businessinformation/${regnum}`,                    method: "GET" },
+        { path: `/business-information/businesses/uk/v1/profile/${regnum}`,           method: "GET" },
+        { path: `/business-information/businesses/uk/v2/profile/${regnum}`,           method: "GET" },
+        { path: `/kyb/businesses/uk/v1/profile/${regnum}`,                            method: "GET" },
+        { path: `/compliance/business/v1/company/${regnum}`,                          method: "GET" },
+        { path: `/risk/business/v2/businessprofile`,                                   method: "POST", reqBody: { registrationNumber: regnum } },
+        { path: `/business-information/businesses/uk/v1/profile`,                     method: "POST", reqBody: { registrationNumber: regnum, country: "GB" } },
+      ];
+      const results: any[] = [];
+      for (const c of candidates) {
+        try {
+          const r = await debugExperianRaw(regnum, { path: c.path, method: c.method, reqBody: c.reqBody });
+          results.push({ path: c.path, method: c.method, status: r.status, ok: r.status >= 200 && r.status < 300, preview: JSON.stringify(r.body).slice(0, 200) });
+        } catch (e: any) {
+          results.push({ path: c.path, method: c.method, status: null, ok: false, preview: e?.message });
+        }
+      }
+      res.json({ regnum, results });
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Unknown error" });
+    }
+  });
   app.use(propertyGapAnalysisRouter);
   app.use(brandPackRouter);
   app.use(dealDocsRouter);
