@@ -403,6 +403,24 @@ import { pool } from "./db";
       created_at TIMESTAMP DEFAULT now(),
       updated_at TIMESTAMP DEFAULT now()
     )`,
+
+    // Document Studio run history — created lazily here because it's not in
+    // the Drizzle schema/migrations (storage.ts uses raw SQL for this table).
+    `CREATE TABLE IF NOT EXISTS document_runs (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      name TEXT NOT NULL,
+      document_type TEXT,
+      description TEXT,
+      content TEXT NOT NULL DEFAULT '',
+      source_files TEXT[],
+      canva_design_id TEXT,
+      canva_edit_url TEXT,
+      canva_view_url TEXT,
+      design TEXT,
+      status TEXT DEFAULT 'done',
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_document_runs_created ON document_runs(created_at DESC)`,
   ];
 
   let ok = 0, skipped = 0;
