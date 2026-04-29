@@ -133,7 +133,10 @@ const GROUP_TABS = [
   { id: "Pipeline", label: "Pipeline" },
   { id: "Archived", label: "Archived" },
   { id: "Development", label: "Development" },
+  { id: "Investment Comps", label: "Investment Comps" },
 ];
+
+const HIDDEN_FROM_ALL = new Set(["Investment Comps", "Investment Comp"]);
 
 export const STATUS_OPTIONS = ["BGP Active", "BGP Targeting", "Leasing Instruction", "Lease Advisory Instruction", "Sales Instruction", "Archive"];
 
@@ -4210,7 +4213,9 @@ function PropertiesList({
         const assignedIds = agentLinks.filter(l => l.propertyId === item.id).map(l => l.userId);
         if (assignedIds.length > 0 && !assignedIds.some(id => teamUserIds.has(id))) return false;
       }
-      if (activeGroup !== "all" && item.groupName !== activeGroup) return false;
+      if (activeGroup === "all" && HIDDEN_FROM_ALL.has(item.groupName || "")) return false;
+      if (activeGroup === "Investment Comps" && !HIDDEN_FROM_ALL.has(item.groupName || "")) return false;
+      if (activeGroup !== "all" && activeGroup !== "Investment Comps" && item.groupName !== activeGroup) return false;
 
       const statusFilters = columnFilters["status"] || [];
       if (statusFilters.length > 0 && (!item.status || !statusFilters.includes(item.status))) return false;
@@ -4251,7 +4256,9 @@ function PropertiesList({
   const groupCounts = useMemo(() => {
     return GROUP_TABS.filter((g) => g.id !== "all").map((g) => ({
       ...g,
-      count: items.filter((i) => i.groupName === g.id).length,
+      count: g.id === "Investment Comps"
+        ? items.filter((i) => HIDDEN_FROM_ALL.has(i.groupName || "")).length
+        : items.filter((i) => i.groupName === g.id).length,
     }));
   }, [items]);
 
