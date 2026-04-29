@@ -33,6 +33,43 @@ export interface PersistLandRegistrySearchInput {
   ownership?: any;
   source?: string; // direct | pathway | clouseau
   pathwayRunId?: string | null;
+  /** Explicit CRM property linkage. If not provided we auto-match by
+   *  normalised address+postcode against crm_properties. */
+  crmPropertyId?: string | null;
+}
+
+// Auto-match a CRM property by normalised address+postcode. Returns null if
+// no unique match is found — we never guess.
+async function findMatchingCrmPropertyId(address: string, postcode?: string | null): Promise<string | null> {
+  try {
+    const target = normaliseKey(address, postcode || null);
+    const all = await db.select({
+      id: sql<string>`id`,
+      name: sql<string>`name`,
+      address: sql<any>`address`,
+      postcode: sql<string | null>`postcode`,
+    }).from(sql`crm_properties`);
+    const matches = (all as any[]).filter((p) => {
+      const propAddr = typeof p.address === "string"
+        ? p.address
+        : p.address && typeof p.address === "object"
+          ? (p.address.formatted || p.address.line1 || p.address.address || p.address.text || p.name || "")
+          : (p.name || "");
+      const k1 = normaliseKey(propAddr, p.postcode);
+      if (k1 === target) return true;
+      // Fall back to name-only match if the structured address is sparse
+      if (p.name) {
+        const k2 = normaliseKey(p.name, p.postcode);
+        if (k2 === target) return true;
+      }
+      return false;
+    });
+    if (matches.length === 1) return matches[0].id as string;
+    return null;
+  } catch (e: any) {
+    console.warn("[land-registry] auto-match property failed:", e?.message);
+    return null;
+  }
 }
 
 export async function persistLandRegistrySearch(input: PersistLandRegistrySearchInput) {
@@ -47,6 +84,7 @@ export async function persistLandRegistrySearch(input: PersistLandRegistrySearch
     ownership,
     source,
     pathwayRunId,
+    crmPropertyId: explicitPropertyId,
   } = input;
 
   if (!userId) throw new Error("userId required");
@@ -55,6 +93,11 @@ export async function persistLandRegistrySearch(input: PersistLandRegistrySearch
   const fhArr = Array.isArray(freeholds) ? freeholds : [];
   const lhArr = Array.isArray(leaseholds) ? leaseholds : [];
   const key = normaliseKey(address, postcode || null);
+
+  // Resolve linkage: explicit value wins; otherwise try auto-matching.
+  const resolvedPropertyId = explicitPropertyId !== undefined
+    ? explicitPropertyId
+    : await findMatchingCrmPropertyId(address, postcode);
 
   // Find existing row for this user with the same normalised address+postcode.
   const existing = await db.select().from(landRegistrySearches)
@@ -75,6 +118,9 @@ export async function persistLandRegistrySearch(input: PersistLandRegistrySearch
     // a 'direct' row to 'pathway' silently — but do attach pathwayRunId if given).
     if (source && match.source === "direct" && source !== "direct") updates.source = source;
     if (pathwayRunId && !match.pathwayRunId) updates.pathwayRunId = pathwayRunId;
+    // Backfill linkage on existing rows if it was missing or if caller is explicit.
+    if (resolvedPropertyId && !match.crmPropertyId) updates.crmPropertyId = resolvedPropertyId;
+    if (explicitPropertyId !== undefined) updates.crmPropertyId = explicitPropertyId;
 
     const [row] = await db.update(landRegistrySearches)
       .set(updates)
@@ -96,6 +142,7 @@ export async function persistLandRegistrySearch(input: PersistLandRegistrySearch
     ownership: ownership ?? null,
     source: source || "direct",
     pathwayRunId: pathwayRunId || null,
+    crmPropertyId: resolvedPropertyId || null,
   }).returning();
   return row;
 }
@@ -1393,7 +1440,7 @@ Respond with ONLY a JSON object (no markdown, no backticks):
     try {
       const userId = req.session?.userId || req.tokenUserId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { address, postcode, freeholds, leaseholds, intelligence, aiSummary, ownership, source, pathwayRunId } = req.body;
+      const { address, postcode, freeholds, leaseholds, intelligence, aiSummary, ownership, source, pathwayRunId, crmPropertyId } = req.body;
       if (!address) return res.status(400).json({ error: "Address required" });
       const row = await persistLandRegistrySearch({
         userId,
@@ -1406,10 +1453,34 @@ Respond with ONLY a JSON object (no markdown, no backticks):
         ownership,
         source,
         pathwayRunId,
+        crmPropertyId,
       });
       res.json(row);
     } catch (e: any) {
       console.error("[land-registry-searches] Save error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // One-shot: walk every land_registry_searches row with crm_property_id IS NULL
+  // and attempt to auto-link by normalised address+postcode. Idempotent.
+  app.post("/api/land-registry/backfill-property-links", requireAuth, async (_req: any, res) => {
+    try {
+      const rows = await db.select().from(landRegistrySearches)
+        .where(sql`crm_property_id IS NULL`);
+      let linked = 0;
+      for (const r of rows) {
+        const propertyId = await findMatchingCrmPropertyId(r.address, r.postcode);
+        if (propertyId) {
+          await db.update(landRegistrySearches)
+            .set({ crmPropertyId: propertyId })
+            .where(eq(landRegistrySearches.id, r.id));
+          linked++;
+        }
+      }
+      res.json({ success: true, scanned: rows.length, linked });
+    } catch (e: any) {
+      console.error("[land-registry-backfill] Error:", e);
       res.status(500).json({ error: e.message });
     }
   });
