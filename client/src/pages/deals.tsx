@@ -113,7 +113,7 @@ import { EmptyState } from "@/components/empty-state";
 import { DealKanban } from "@/components/deal-kanban";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { DealDetail } from "@/components/deal-detail";
-import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
+import { DEAL_STATUS_LABELS, legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 
 // Canonical 10-code colour map. Legacy strings retained as fallbacks for any
 // rows that haven't yet been touched by the migration.
@@ -4036,10 +4036,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   }, []);
 
   const statusValues = useMemo(() => {
+    // WIP page only ever offers post-instruction statuses (NEG → INV); the
+    // pre-instruction codes (REP/SPEC/LIVE/AVA) live on the Letting/Investment
+    // trackers and WIT is hidden from WIP.
+    if (mode === "wip") return [...WIP_STATUSES];
     const s = new Set<string>();
     deals.forEach((d) => { if (d.status) s.add(d.status); });
     return Array.from(s).sort();
-  }, [deals]);
+  }, [deals, mode]);
 
   const typeValues = useMemo(() => {
     const s = new Set<string>();
@@ -4113,13 +4117,24 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     if (isNegotiationsMode) {
       return deals.filter(d => NEGOTIATION_STATUSES.includes(d.status || "") && !migratedDealIds.has(d.id));
     }
-    return deals;
+    // WIP page: client-side guard so pre-instruction tracker deals (REP/SPEC/
+    // LIVE/AVA) and WIT can never leak in, regardless of server filter state.
+    return deals.filter(d => {
+      const code = legacyToCode(d.status);
+      return code !== null && WIP_STATUSES.includes(code);
+    });
   }, [deals, isCompsMode, isNegotiationsMode, migratedDealIds]);
 
   const filteredDeals = useMemo(() => {
     return baseDeals.filter((deal) => {
-      if (activeGroup !== "all" && deal.status !== activeGroup) return false;
-      if (columnFilters["status"]?.length && (!deal.status || !columnFilters["status"].includes(deal.status))) return false;
+      const dealCode = legacyToCode(deal.status);
+      const statusMatch = (target: string) =>
+        mode === "wip" ? dealCode === target : deal.status === target;
+      if (activeGroup !== "all" && !statusMatch(activeGroup)) return false;
+      if (columnFilters["status"]?.length) {
+        const ok = columnFilters["status"].some(statusMatch);
+        if (!ok) return false;
+      }
       if (columnFilters["type"]?.length && (!deal.dealType || !columnFilters["type"].includes(deal.dealType))) return false;
       if (columnFilters["team"]?.length) {
         const dealTeams: string[] = Array.isArray(deal.team) ? deal.team : deal.team ? [deal.team] : [];
@@ -4178,10 +4193,14 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       .filter(s => isCompsMode ? COMPLETED_STATUSES.includes(s) : true)
       .map((s) => ({
         name: s,
-        count: teamFilteredDeals.filter((d) => d.status === s).length,
+        // On WIP, statusValues are canonical codes; match via legacyToCode so
+        // older free-text statuses still bucket into the right chip.
+        count: teamFilteredDeals.filter((d) =>
+          mode === "wip" ? legacyToCode(d.status) === s : d.status === s
+        ).length,
       }))
       .filter(s => s.count > 0);
-  }, [teamFilteredDeals, statusValues, isCompsMode]);
+  }, [teamFilteredDeals, statusValues, isCompsMode, mode]);
 
   if (params?.id && !isNegotiationsMode) {
     return <DealDetail id={params.id} isComps={isCompsMode} />;
@@ -4668,7 +4687,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         <TableCell className="px-1.5 py-1">
                           <InlineLabelSelect
                             value={legacyToCode(deal.status) || deal.status}
-                            options={CRM_OPTIONS.dealStatus}
+                            options={mode === "wip" ? WIP_STATUSES : CRM_OPTIONS.dealStatus}
                             colorMap={DEAL_STATUS_COLORS}
                             labelMap={DEAL_STATUS_LABELS}
                             onSave={(v) => handleInlineSave(deal.id, "status", v || null)}
