@@ -281,8 +281,8 @@ export default function LeaseEventsPage({ embedded }: { embedded?: boolean } = {
                 </Select>
               </div>
               <div>
-                <label className="text-xs font-medium mb-1 block">Event date</label>
-                <Input type="date" value={editing.eventDate ? new Date(editing.eventDate).toISOString().slice(0, 10) : ""} onChange={e => setEditing(x => ({ ...x!, eventDate: e.target.value || null }))} />
+                <label className="text-xs font-medium mb-1 block">Event date <span className="text-destructive">*</span></label>
+                <Input type="date" required value={editing.eventDate ? new Date(editing.eventDate).toISOString().slice(0, 10) : ""} onChange={e => setEditing(x => ({ ...x!, eventDate: e.target.value || null }))} className={!editing.eventDate ? "border-destructive" : ""} />
               </div>
               <div>
                 <label className="text-xs font-medium mb-1 block">Notice date</label>
@@ -330,7 +330,7 @@ export default function LeaseEventsPage({ embedded }: { embedded?: boolean } = {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
-            <Button onClick={() => editing && saveMut.mutate(editing)} disabled={saveMut.isPending}>
+            <Button onClick={() => editing && saveMut.mutate(editing)} disabled={saveMut.isPending || !editing?.eventDate}>
               {editing?.id ? "Save changes" : "Create event"}
             </Button>
           </DialogFooter>
