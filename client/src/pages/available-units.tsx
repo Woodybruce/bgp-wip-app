@@ -19,7 +19,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown,
+  ChevronDown, ExternalLink,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -628,6 +628,15 @@ export default function AvailableUnitsPage() {
       }
     }
     updateMutation.mutate({ id, data: { [field]: value } });
+    // Keep linked deal name in sync when unit name changes
+    if (field === "unitName") {
+      const unit = units.find(u => u.id === id);
+      if (unit?.dealId) {
+        const prop = propertyMap[unit.propertyId];
+        const dealName = prop ? `${prop.name} – ${value}` : value;
+        dealInlineUpdate.mutate({ id: unit.dealId, field: "name", value: dealName });
+      }
+    }
   };
 
   const uniqueProperties = useMemo(() => {
@@ -1073,11 +1082,23 @@ export default function AvailableUnitsPage() {
                         ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell>
-                        <InlineText
-                          value={u.unitName}
-                          onSave={v => inlineUpdate(u.id, "unitName", v)}
-                          data-testid={`inline-unit-name-${u.id}`}
-                        />
+                        <div className="flex items-center gap-1">
+                          <InlineText
+                            value={u.unitName}
+                            onSave={v => inlineUpdate(u.id, "unitName", v)}
+                            data-testid={`inline-unit-name-${u.id}`}
+                          />
+                          {deal && (
+                            <a
+                              href={`/deals/${deal.id}`}
+                              title={`Open deal: ${deal.name || u.unitName}`}
+                              className="shrink-0 text-muted-foreground hover:text-primary"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <InlineSelect
