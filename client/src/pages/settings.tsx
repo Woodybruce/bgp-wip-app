@@ -979,6 +979,7 @@ function DataHealthSection() {
   const { toast } = useToast();
   const [scanResult, setScanResult] = useState<DupeScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
 
   const runScan = async () => {
     setScanning(true);
@@ -990,6 +991,19 @@ function DataHealthSection() {
       toast({ title: "Scan failed", description: err.message, variant: "destructive" });
     } finally {
       setScanning(false);
+    }
+  };
+
+  const runBackfill = async () => {
+    setBackfilling(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/backfill-tracker-deals");
+      const data = await res.json();
+      toast({ title: "Backfill complete", description: data.message || `${data.created || 0} deals created` });
+    } catch (err: any) {
+      toast({ title: "Backfill failed", description: err.message, variant: "destructive" });
+    } finally {
+      setBackfilling(false);
     }
   };
 
@@ -1035,10 +1049,16 @@ function DataHealthSection() {
             <ShieldCheck className="w-4 h-4" />
             Data Health
           </CardTitle>
-          <Button size="sm" variant="outline" onClick={runScan} disabled={scanning} data-testid="button-scan-duplicates">
-            {scanning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
-            {scanning ? "Scanning..." : "Scan for Duplicates"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={runBackfill} disabled={backfilling} data-testid="button-backfill-tracker-deals">
+              {backfilling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {backfilling ? "Backfilling..." : "Backfill Tracker Deals"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={runScan} disabled={scanning} data-testid="button-scan-duplicates">
+              {scanning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {scanning ? "Scanning..." : "Scan for Duplicates"}
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
