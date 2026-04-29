@@ -628,6 +628,53 @@ body {
 .scheme-claude .text-cyan-600, .scheme-claude .text-teal-600 { color: hsl(25 40% 45%) !important; }
 .scheme-claude .bg-cyan-100, .scheme-claude .bg-teal-100 { background-color: hsl(30 30% 91%) !important; }
 
+/* Saturated badge backgrounds (status/team/type maps in deals page) — remap each
+   hue family to a distinct point on the warm spectrum so categories stay
+   distinguishable but the page no longer looks like a pride flag. */
+.scheme-claude .bg-slate-500, .scheme-claude .bg-slate-600 { background-color: hsl(25 12% 45%) !important; }
+.scheme-claude .bg-zinc-500, .scheme-claude .bg-neutral-400, .scheme-claude .bg-neutral-500 { background-color: hsl(25 8% 55%) !important; }
+.scheme-claude .bg-violet-500, .scheme-claude .bg-violet-600, .scheme-claude .bg-purple-500, .scheme-claude .bg-purple-600 { background-color: hsl(15 35% 48%) !important; }
+.scheme-claude .bg-fuchsia-600, .scheme-claude .bg-rose-600 { background-color: hsl(5 50% 50%) !important; }
+.scheme-claude .bg-blue-500, .scheme-claude .bg-blue-600, .scheme-claude .bg-blue-700 { background-color: hsl(28 35% 42%) !important; }
+.scheme-claude .bg-sky-500, .scheme-claude .bg-sky-700 { background-color: hsl(28 30% 50%) !important; }
+.scheme-claude .bg-indigo-500, .scheme-claude .bg-indigo-600, .scheme-claude .bg-indigo-700 { background-color: hsl(20 30% 42%) !important; }
+.scheme-claude .bg-cyan-500, .scheme-claude .bg-cyan-600, .scheme-claude .bg-teal-500, .scheme-claude .bg-teal-600 { background-color: hsl(30 30% 50%) !important; }
+.scheme-claude .bg-yellow-500, .scheme-claude .bg-yellow-600 { background-color: hsl(38 60% 48%) !important; }
+.scheme-claude .bg-amber-500, .scheme-claude .bg-amber-600 { background-color: hsl(35 65% 50%) !important; }
+.scheme-claude .bg-orange-500, .scheme-claude .bg-orange-600 { background-color: hsl(22 60% 50%) !important; }
+.scheme-claude .bg-lime-600 { background-color: hsl(35 50% 45%) !important; }
+.scheme-claude .bg-green-700, .scheme-claude .bg-emerald-700 { background-color: hsl(25 55% 38%) !important; }
+.scheme-claude .bg-red-600, .scheme-claude .bg-red-700 { background-color: hsl(8 55% 45%) !important; }
+
+/* Dark text on tinted backgrounds (-700 shades used by urgency badges/cards) */
+.scheme-claude .text-red-700 { color: hsl(8 55% 35%) !important; }
+.scheme-claude .text-orange-700 { color: hsl(22 60% 38%) !important; }
+.scheme-claude .text-amber-700, .scheme-claude .text-yellow-700 { color: hsl(35 65% 35%) !important; }
+.scheme-claude .text-emerald-700, .scheme-claude .text-green-800 { color: hsl(25 55% 35%) !important; }
+.scheme-claude .text-blue-700 { color: hsl(28 35% 32%) !important; }
+.scheme-claude .text-purple-700, .scheme-claude .text-violet-700 { color: hsl(15 35% 35%) !important; }
+
+/* Tinted card backgrounds (-50 shades for summary cards) */
+.scheme-claude .bg-red-50 { background-color: hsl(8 30% 96%) !important; }
+.scheme-claude .bg-orange-50 { background-color: hsl(22 35% 96%) !important; }
+.scheme-claude .bg-amber-50, .scheme-claude .bg-yellow-50 { background-color: hsl(35 40% 96%) !important; }
+.scheme-claude .bg-emerald-50, .scheme-claude .bg-green-50 { background-color: hsl(30 30% 96%) !important; }
+.scheme-claude .bg-blue-50 { background-color: hsl(28 25% 96%) !important; }
+
+/* Border tints (-200 shades) */
+.scheme-claude .border-red-200 { border-color: hsl(8 25% 84%) !important; }
+.scheme-claude .border-orange-200 { border-color: hsl(22 30% 84%) !important; }
+.scheme-claude .border-amber-200, .scheme-claude .border-yellow-200 { border-color: hsl(35 35% 82%) !important; }
+.scheme-claude .border-emerald-200, .scheme-claude .border-green-200 { border-color: hsl(30 30% 85%) !important; }
+.scheme-claude .border-blue-200 { border-color: hsl(28 22% 84%) !important; }
+.scheme-claude .border-purple-200, .scheme-claude .border-violet-200 { border-color: hsl(15 22% 84%) !important; }
+
+/* Dark-mode card bgs — tone these down too */
+.dark.scheme-claude .dark\:bg-red-950\/30 { background-color: hsl(8 25% 12% / 0.4) !important; }
+.dark.scheme-claude .dark\:bg-orange-950\/30 { background-color: hsl(22 30% 12% / 0.4) !important; }
+.dark.scheme-claude .dark\:bg-amber-950\/30, .dark.scheme-claude .dark\:bg-yellow-950\/30 { background-color: hsl(35 35% 12% / 0.4) !important; }
+.dark.scheme-claude .dark\:bg-emerald-950\/30, .dark.scheme-claude .dark\:bg-green-950\/30 { background-color: hsl(30 25% 12% / 0.4) !important; }
+
 /* Focus ring — use warm primary */
 .scheme-claude *:focus-visible { outline-color: hsl(25 60% 45%) !important; }
 

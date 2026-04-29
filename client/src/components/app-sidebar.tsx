@@ -1,5 +1,6 @@
 import { useLocation, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import bgpLogoWhite from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTheme, COLOR_SCHEMES } from "@/components/theme-provider";
 import {
@@ -28,6 +29,8 @@ import {
   Landmark,
   UserPlus,
   ChevronsUpDown,
+  ChevronDown,
+  ChevronRight,
   Check,
   MapPin,
   Receipt,
@@ -117,12 +120,21 @@ const adminNavBase = [
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 
-function NavSection({ label, items }: { label: string; items: Array<{ title: string; url: string; icon: any; badge?: string }> }) {
+function NavSection({
+  label,
+  items,
+  defaultOpen = true,
+  storageKey,
+}: {
+  label: string;
+  items: Array<{ title: string; url: string; icon: any; badge?: string }>;
+  defaultOpen?: boolean;
+  storageKey?: string;
+}) {
   const [location] = useLocation();
   const isActive = (url: string) => {
     if (url === "/") return location === "/";
     if (url.startsWith("#")) return false;
-    // Strip query params for path-only matching
     const path = url.split("?")[0];
     if (path === "/contacts") return location.startsWith("/contacts") || location.startsWith("/companies");
     if (path === "/properties") return location.startsWith("/properties") || location.startsWith("/map") || location.startsWith("/edozo");
@@ -132,13 +144,37 @@ function NavSection({ label, items }: { label: string; items: Array<{ title: str
     return location.startsWith(path);
   };
 
+  // Always expand if a child is active so users never lose their bearings
+  const sectionHasActive = items.some(i => isActive(i.url));
+  const key = storageKey ? `bgp-nav-section-${storageKey}` : null;
+  const [open, setOpen] = useState<boolean>(() => {
+    if (sectionHasActive) return true;
+    if (key && typeof window !== "undefined") {
+      const stored = localStorage.getItem(key);
+      if (stored !== null) return stored === "1";
+    }
+    return defaultOpen;
+  });
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (key) localStorage.setItem(key, next ? "1" : "0");
+  };
+
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>{label}</SidebarGroupLabel>
-      <SidebarGroupContent>
-        <SidebarMenu>
-          {items.map((item) => {
-            return (
+      <SidebarGroupLabel
+        onClick={toggle}
+        className="cursor-pointer select-none flex items-center justify-between hover:text-sidebar-foreground transition-colors"
+      >
+        <span>{label}</span>
+        {open ? <ChevronDown className="w-3 h-3 opacity-60" /> : <ChevronRight className="w-3 h-3 opacity-60" />}
+      </SidebarGroupLabel>
+      {open && (
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {items.map((item) => (
               <SidebarMenuItem key={item.title}>
                 <SidebarMenuButton
                   asChild
@@ -154,10 +190,10 @@ function NavSection({ label, items }: { label: string; items: Array<{ title: str
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
-            );
-          })}
-        </SidebarMenu>
-      </SidebarGroupContent>
+            ))}
+          </SidebarMenu>
+        </SidebarGroupContent>
+      )}
     </SidebarGroup>
   );
 }
@@ -257,14 +293,14 @@ export function AppSidebar() {
       <SidebarSeparator />
 
       <SidebarContent>
-        <NavSection label="Core" items={coreNav} />
+        <NavSection label="Core" items={coreNav} storageKey="core" />
         <QuickAccessSection />
         <SidebarSeparator />
-        <NavSection label="AI Tools" items={user?.isAdmin ? aiNav : aiNav.filter(i => i.url !== "/image-studio")} />
+        <NavSection label="AI Tools" items={user?.isAdmin ? aiNav : aiNav.filter(i => i.url !== "/image-studio")} storageKey="ai" />
         <SidebarSeparator />
-        <NavSection label="Microsoft 365" items={microsoftNav} />
+        <NavSection label="Microsoft 365" items={microsoftNav} storageKey="ms" defaultOpen={false} />
         <SidebarSeparator />
-        <NavSection label="Admin" items={adminNav} />
+        <NavSection label="Admin" items={adminNav} storageKey="admin" defaultOpen={false} />
       </SidebarContent>
 
       <SidebarFooter className="p-3 space-y-2">
