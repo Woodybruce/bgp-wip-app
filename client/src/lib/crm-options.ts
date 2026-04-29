@@ -128,7 +128,7 @@ export const CRM_OPTIONS = {
     "Investment Sale",
     "Investment Acquisition",
   ],
-  dealTeam: ["Development", "London Leasing", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"],
+  dealTeam: ["Development", "London Leasing", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"],
   dealAssetClass: ["Retail", "Leisure", "Office", "Hotel", "Resi", "Mixed Use", "Other"],
   dealFeeAgreement: ["YES", "NO"],
   dealAmlCheck: ["YES", "NO"],

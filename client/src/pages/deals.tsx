@@ -176,6 +176,8 @@ export const DEAL_TYPE_COLORS: Record<string, string> = {
 export const DEAL_TEAM_COLORS: Record<string, string> = {
   "Development": "bg-orange-600",
   "London Leasing": "bg-blue-700",
+  "London F&B": "bg-rose-600",
+  "London Retail": "bg-teal-600",
   "National Leasing": "bg-emerald-600",
   "Investment": "bg-purple-600",
   "Tenant Rep": "bg-rose-600",
@@ -3754,7 +3756,7 @@ function AiMatchDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
 const NEGOTIATION_STATUSES = ["Under Negotiation", "HOTs", "NEG"];
 const COMPLETED_STATUSES = ["Invoiced", "Billed", "Exchanged", "Completed"];
 const INTERNAL_BGP_TEAMS = new Set([
-  "London Leasing", "National Leasing", "Investment", "Tenant Rep",
+  "London Leasing", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep",
   "Development", "Lease Advisory", "Office / Corporate",
 ]);
 
@@ -5164,7 +5166,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="center">
-              {["Development", "London Leasing", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"].map(team => (
+              {["Development", "London Leasing", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"].map(team => (
                 <DropdownMenuItem
                   key={team}
                   onClick={() => bulkUpdateMutation.mutate({ ids: Array.from(selectedIds), field: "team", value: [team] })}

@@ -44,6 +44,8 @@ const ASSET_CLASS_COLORS: Record<string, string> = {
 const TEAM_COLORS: Record<string, string> = {
   "Development": "bg-orange-100 text-orange-800",
   "London Leasing": "bg-blue-100 text-blue-800",
+  "London F&B": "bg-rose-100 text-rose-800",
+  "London Retail": "bg-teal-100 text-teal-800",
   "National Leasing": "bg-emerald-100 text-emerald-800",
   "Investment": "bg-purple-100 text-purple-800",
   "Tenant Rep": "bg-rose-100 text-rose-800",

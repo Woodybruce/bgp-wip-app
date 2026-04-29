@@ -714,7 +714,7 @@ export async function registerRoutes(
       if (!team || typeof team !== "string") {
         return res.status(400).json({ message: "Team is required" });
       }
-      const validTeams = ["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate", "Landsec"];
+      const validTeams = ["London Leasing", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate", "Landsec"];
       if (!validTeams.includes(team)) {
         return res.status(400).json({ message: "Invalid team" });
       }
@@ -2018,6 +2018,29 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json({ created, skipped, message: `Created ${created} deals for previously unlinked tracker rows` });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Backfill failed" });
+    }
+  });
+
+  // Rename legacy long team names in crm_deals.team array
+  app.post("/api/admin/rename-teams", requireAuth, async (req, res) => {
+    try {
+      const renames: Record<string, string> = {
+        "London Leasing Hospitality": "London F&B",
+        "London Leasing Retail": "London Retail",
+      };
+      let updated = 0;
+      for (const [oldName, newName] of Object.entries(renames)) {
+        const result = await pool.query(
+          `UPDATE crm_deals
+           SET team = array_replace(team, $1, $2)
+           WHERE $1 = ANY(team)`,
+          [oldName, newName]
+        );
+        updated += result.rowCount ?? 0;
+      }
+      res.json({ updated, message: `Renamed team values in ${updated} deal(s)` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Rename failed" });
     }
   });
 
