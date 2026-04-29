@@ -159,6 +159,7 @@ function ClickableSummaryTable({
   activeValue,
   onRowClick,
   field,
+  overrideTotal,
 }: {
   title: string;
   data: Array<{ label: string; value: number; clickValue?: string }>;
@@ -166,8 +167,9 @@ function ClickableSummaryTable({
   activeValue: string | null;
   onRowClick: (field: string, value: string) => void;
   field: string;
+  overrideTotal?: number;
 }) {
-  const total = data.reduce((s, d) => s + d.value, 0);
+  const total = overrideTotal ?? data.reduce((s, d) => s + d.value, 0);
 
   return (
     <div className="bg-white border border-gray-200 rounded-lg overflow-hidden" data-testid={`wip-summary-${title.toLowerCase().replace(/\s/g, "-")}`}>
@@ -184,16 +186,16 @@ function ClickableSummaryTable({
                 key={cv}
                 className={`flex items-center justify-between px-3 py-1.5 text-sm cursor-pointer transition-colors ${
                   activeValue === cv
-                    ? "bg-green-100 border-l-2 border-green-600"
-                    : "hover:bg-gray-50"
+                    ? "bg-primary/8 border-l-2 border-primary"
+                    : "hover:bg-muted/50"
                 }`}
                 onClick={() => onRowClick(field, cv)}
                 data-testid={`wip-click-${field}-${cv}`}
               >
-                <span className={`truncate flex-1 mr-1 ${activeValue === cv ? "text-green-900 font-semibold" : "text-gray-800"}`}>
+                <span className={`truncate flex-1 mr-1 ${activeValue === cv ? "text-foreground font-semibold" : "text-gray-800"}`}>
                   {row.label}
                 </span>
-                <span className={`font-mono font-medium text-right whitespace-nowrap ${activeValue === cv ? "text-green-900" : "text-gray-900"}`}>
+                <span className={`font-mono font-medium text-right whitespace-nowrap ${activeValue === cv ? "text-foreground" : "text-gray-900"}`}>
                   {formatFullCurrency(row.value)}
                 </span>
               </div>
@@ -1047,6 +1049,11 @@ export default function WipReport() {
         const target = clickFilter.value.toLowerCase();
         return agents.some(a => a.toLowerCase() === target);
       }
+      if (clickFilter.field === "team") {
+        if (!e.team) return false;
+        const entryTeams = (e.team as string).split(",").map(t => t.trim()).filter(Boolean);
+        return entryTeams.some(t => t === clickFilter.value);
+      }
       const val = e[clickFilter.field];
       return val === clickFilter.value;
     });
@@ -1075,13 +1082,24 @@ export default function WipReport() {
 
   const teamData = useMemo(() => {
     const map: Record<string, number> = {};
+    // Count each deal's fee against every team it belongs to (no split).
+    // This matches click-filter behaviour: clicking a team shows all deals
+    // that include it, at full fee.
+    const counted = new Set<string>();
     filteredEntries.forEach((e) => {
       const fee = (e.amtWip || 0) + (e.amtInvoice || 0);
       const teams = e.team
         ? (e.team as string).split(",").map(t => t.trim()).filter(Boolean)
         : ["Unknown"];
-      const perTeam = fee / teams.length;
-      teams.forEach(t => { map[t] = (map[t] || 0) + perTeam; });
+      teams.forEach(t => {
+        // Deduplicate per (entry, team) so a deal split across agents
+        // doesn't multiply the team total.
+        const key = `${e.id}::${t}`;
+        if (!counted.has(key)) {
+          counted.add(key);
+          map[t] = (map[t] || 0) + fee;
+        }
+      });
     });
     return Object.entries(map)
       .map(([label, value]) => ({ label, value }))
@@ -1449,6 +1467,7 @@ export default function WipReport() {
               activeValue={clickFilterActiveField === "team" ? clickFilterActiveValue : null}
               onRowClick={handleClickFilter}
               field="team"
+              overrideTotal={totalNetFees}
             />
             <ClickableSummaryTable
               title="BGP Contact"
