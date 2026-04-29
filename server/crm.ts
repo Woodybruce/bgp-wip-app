@@ -4669,63 +4669,15 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         return `${months[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
       }
 
-      const usedDealIds = new Set<string>();
-
-      let entries: any[] = wipRows.map(r => {
-        const projectKey = (r.project || "").toLowerCase().trim();
-        const refKey = (r.ref || "").toLowerCase().trim();
-        const matchedDeal = findDeal(projectKey) || findDeal(refKey);
-        if (matchedDeal) usedDealIds.add(matchedDeal.id);
-        const tenantName = matchedDeal?.tenantId ? compMap.get(matchedDeal.tenantId) || null : null;
-
-        return {
-          id: r.id,
-          dealId: matchedDeal?.id || null,
-          dealRef: matchedDeal?.dealRef ?? null,
-          dealType: matchedDeal?.dealType || null,
-          ref: r.ref,
-          groupName: r.groupName,
-          project: r.project,
-          tenant: r.tenant || tenantName,
-          team: r.team,
-          agent: r.agent,
-          assetClass: matchedDeal?.assetClass || null,
-          amtWip: r.amtWip || 0,
-          amtInvoice: r.amtInvoice || 0,
-          month: r.month,
-          dealStatus: r.dealStatus,
-          stage: r.stage,
-          invoiceNo: r.invoiceNo,
-          orderNumber: r.orderNumber,
-          fiscalYear: r.fiscalYear,
-          source: "spreadsheet" as const,
-        };
-      });
-
-      // WIP only shows deals at NEG/SOL/EXC/COM/INV — earlier-stage deals
-      // (REP/SPEC/LIVE/AVA) and archived (WIT) are excluded.
-      // For matched rows, prefer the deal's CURRENT status (the spreadsheet's
-      // dealStatus is captured at import time and goes stale as deals progress).
-      const dealById = new Map(deals.map(d => [d.id, d]));
-      entries = entries.filter(e => {
-        if (e.source !== "spreadsheet") return true;
-        const matchedDeal = e.dealId ? dealById.get(e.dealId) : null;
-        const matchedCode = matchedDeal ? legacyToCode(matchedDeal.status) : null;
-        const sheetCode = legacyToCode(e.dealStatus);
-        // Prefer the deal's current code; fall back to sheet code; if both unknown, keep (unmapped legacy data).
-        const code = matchedCode ?? sheetCode;
-        if (!code) return true;
-        // Also display the resolved code on the row so the UI doesn't show a stale "Reporting" chip
-        if (matchedCode && matchedCode !== sheetCode) e.dealStatus = matchedCode;
-        return WIP_STATUSES.includes(code);
-      });
-
-      const unmatchedDeals = deals.filter(d => {
-        if (usedDealIds.has(d.id)) return false;
+      // WIP report is now a pure projection over crm_deals (CRM = source of truth).
+      // wip_entries is only used by the Sage importer as raw staging — it feeds
+      // syncWipToCrmDeals which upserts crm_deals. The report no longer reads it.
+      let entries: any[] = [];
+      const eligibleDeals = deals.filter(d => {
         const code = legacyToCode(d.status);
         return code !== null && WIP_STATUSES.includes(code);
       });
-      for (const deal of unmatchedDeals) {
+      for (const deal of eligibleDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
         const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
         const tenantName = deal.tenantId ? compMap.get(deal.tenantId) || null : null;
