@@ -4574,7 +4574,7 @@ function PropertiesList({
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.deals && <TableHead className="min-w-[140px]">WIP</TableHead>}
+                    {visibleColumns.deals && <TableHead className="min-w-[60px] w-[60px]">WIP</TableHead>}
                     {visibleColumns.tenants && <TableHead className="min-w-[140px]">Tenants</TableHead>}
                     {visibleColumns.agents && <TableHead className="min-w-[120px]">BGP Contacts</TableHead>}
                     {visibleColumns.sqft && <TableHead className="min-w-[60px] w-[60px]">Sq Ft</TableHead>}
