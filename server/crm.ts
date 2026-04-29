@@ -681,6 +681,29 @@ function wipFuzzyMatch(wipName: string, nameMap: Map<string, string>): string | 
   return null;
 }
 
+function parseWipMonthToDate(month: string | null): Date | null {
+  if (!month) return null;
+  const m = month.trim();
+  // "2026-04" or "2026-4"
+  const iso = m.match(/^(\d{4})-(\d{1,2})$/);
+  if (iso) {
+    const y = parseInt(iso[1], 10), mo = parseInt(iso[2], 10);
+    if (mo >= 1 && mo <= 12) return new Date(Date.UTC(y, mo - 1, 1));
+  }
+  // "Apr-26" / "April-2026"
+  const named = m.match(/^([A-Za-z]+)[\s\-]?(\d{2,4})$/);
+  if (named) {
+    const months = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+    const idx = months.indexOf(named[1].slice(0, 3).toLowerCase());
+    if (idx >= 0) {
+      let y = parseInt(named[2], 10);
+      if (y < 100) y += 2000;
+      return new Date(Date.UTC(y, idx, 1));
+    }
+  }
+  return null;
+}
+
 export async function syncWipToCrmDeals(dbPool: Pool) {
   const client = await dbPool.connect();
   try {
@@ -697,7 +720,8 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
         SUM(amt_wip) as total_wip,
         SUM(amt_invoice) as total_invoice,
         MIN(stage) as stage,
-        MIN(deal_status) as deal_status
+        MIN(deal_status) as deal_status,
+        MIN(month) as month
       FROM wip_entries
       WHERE ref IS NOT NULL AND ref != ''
       GROUP BY ref
@@ -787,20 +811,21 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
       const comments = `WIP Ref: ${deal.ref}. WIP: £${(deal.total_wip || 0).toLocaleString()}. Invoiced: £${(deal.total_invoice || 0).toLocaleString()}. Status: ${deal.deal_status || 'N/A'}.`;
       const teamPg = `{${teamArr.map((t: string) => `"${t}"`).join(',')}}`;
       const agentPg = `{${agentArr.map((a: string) => `"${a}"`).join(',')}}`;
+      const completionDate = parseWipMonthToDate(deal.month);
 
       if (wipRefToDealId.has(deal.ref)) {
         const existingId = wipRefToDealId.get(deal.ref)!;
         await client.query(
-          `UPDATE crm_deals SET name=$1, group_name=$2, property_id=$3, landlord_id=$4, tenant_id=$5, deal_type=$6, status=$7, team=$8, internal_agent=$9, fee=$10, comments=$11, updated_at=NOW() WHERE id=$12`,
-          [dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, existingId]
+          `UPDATE crm_deals SET name=$1, group_name=$2, property_id=$3, landlord_id=$4, tenant_id=$5, deal_type=$6, status=$7, team=$8, internal_agent=$9, fee=$10, comments=$11, completion_date=$12, updated_at=NOW() WHERE id=$13`,
+          [dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, completionDate, existingId]
         );
         updated++;
       } else {
         const dealId = randomUUID();
         await client.query(
-          `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())`,
-          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments]
+          `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, completion_date, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())`,
+          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, completionDate]
         );
 
         if (landlordId) {
