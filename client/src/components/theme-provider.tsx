@@ -13,13 +13,13 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType>({
   theme: "light",
   toggleTheme: () => {},
-  colorScheme: "bgp",
+  colorScheme: "claude",
   setColorScheme: () => {},
 });
 
 export const COLOR_SCHEMES: { id: ColorScheme; label: string; color: string; description: string }[] = [
-  { id: "bgp", label: "BGP Classic", color: "#1a1a1a", description: "Professional monochrome" },
   { id: "claude", label: "Claude", color: "#d4a574", description: "Warm and elegant" },
+  { id: "bgp", label: "BGP Classic", color: "#1a1a1a", description: "Professional monochrome" },
   { id: "ocean", label: "Hot Pink", color: "#ec4899", description: "Bold and vibrant" },
   { id: "ember", label: "Lemon", color: "#eab308", description: "Bright and fresh" },
   { id: "landsec", label: "Landsec", color: "#00263A", description: "Corporate navy" },
@@ -30,9 +30,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   const [colorScheme, setColorSchemeState] = useState<ColorScheme>(() => {
     if (typeof window !== "undefined") {
-      return (localStorage.getItem("bgp-color-scheme") as ColorScheme) || "bgp";
+      return (localStorage.getItem("bgp-color-scheme") as ColorScheme) || "claude";
     }
-    return "bgp";
+    return "claude";
   });
 
   useEffect(() => {

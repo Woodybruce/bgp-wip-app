@@ -576,9 +576,11 @@ body {
   --sidebar-ring: 25 35% 50%;
 }
 
-/* Claude scheme: remap hardcoded green/emerald to warm tones across all pages */
+/* ─── Claude scheme: remap all hardcoded Tailwind colours to warm palette ─── */
+
+/* Primary action (emerald/green → warm brown) */
 .scheme-claude .text-emerald-600, .scheme-claude .text-emerald-500, .scheme-claude .text-green-600, .scheme-claude .text-green-700 { color: hsl(25 60% 45%) !important; }
-.scheme-claude .text-emerald-400 { color: hsl(25 50% 55%) !important; }
+.scheme-claude .text-emerald-400, .scheme-claude .text-green-400 { color: hsl(25 50% 55%) !important; }
 .scheme-claude .bg-emerald-600, .scheme-claude .bg-green-600 { background-color: hsl(25 60% 45%) !important; }
 .scheme-claude .bg-emerald-500, .scheme-claude .bg-green-500 { background-color: hsl(25 55% 50%) !important; }
 .scheme-claude .bg-emerald-100, .scheme-claude .bg-green-100 { background-color: hsl(30 40% 92%) !important; }
@@ -589,6 +591,45 @@ body {
 .scheme-claude .hover\:bg-emerald-700:hover { background-color: hsl(25 55% 38%) !important; }
 .scheme-claude .hover\:bg-green-50:hover { background-color: hsl(30 30% 94%) !important; }
 .scheme-claude .focus-visible\:ring-emerald-500:focus-visible { --tw-ring-color: hsl(25 50% 50%) !important; }
+
+/* Blues → warm slate-brown */
+.scheme-claude .text-blue-600, .scheme-claude .text-blue-500 { color: hsl(25 35% 42%) !important; }
+.scheme-claude .text-blue-400 { color: hsl(25 30% 55%) !important; }
+.scheme-claude .bg-blue-600, .scheme-claude .bg-blue-500 { background-color: hsl(25 45% 42%) !important; }
+.scheme-claude .bg-blue-100 { background-color: hsl(30 30% 91%) !important; }
+.scheme-claude .bg-blue-50 { background-color: hsl(30 25% 96%) !important; }
+.scheme-claude .border-blue-200 { border-color: hsl(30 20% 84%) !important; }
+.scheme-claude .text-sky-600, .scheme-claude .text-sky-500 { color: hsl(25 35% 48%) !important; }
+.scheme-claude .bg-sky-100, .scheme-claude .bg-sky-50 { background-color: hsl(30 25% 94%) !important; }
+.scheme-claude .bg-sky-600 { background-color: hsl(25 45% 42%) !important; }
+
+/* Purples/Violets → warm mauve-brown */
+.scheme-claude .text-purple-600, .scheme-claude .text-purple-500 { color: hsl(15 30% 45%) !important; }
+.scheme-claude .text-purple-400 { color: hsl(15 25% 58%) !important; }
+.scheme-claude .bg-purple-100 { background-color: hsl(25 25% 91%) !important; }
+.scheme-claude .bg-purple-50 { background-color: hsl(25 20% 96%) !important; }
+.scheme-claude .bg-violet-100 { background-color: hsl(25 25% 91%) !important; }
+.scheme-claude .text-violet-600 { color: hsl(15 30% 45%) !important; }
+
+/* Amber/Yellow → warm gold (keep, already compatible) */
+.scheme-claude .text-amber-600, .scheme-claude .text-yellow-600 { color: hsl(35 65% 42%) !important; }
+.scheme-claude .bg-amber-100, .scheme-claude .bg-yellow-100 { background-color: hsl(38 50% 92%) !important; }
+.scheme-claude .bg-amber-50, .scheme-claude .bg-yellow-50 { background-color: hsl(38 40% 97%) !important; }
+
+/* Reds/Orange urgency → warm terracotta (less alarming, still distinct) */
+.scheme-claude .text-red-600, .scheme-claude .text-red-500 { color: hsl(10 55% 45%) !important; }
+.scheme-claude .text-orange-600, .scheme-claude .text-orange-500 { color: hsl(20 55% 45%) !important; }
+.scheme-claude .bg-red-100 { background-color: hsl(10 30% 92%) !important; }
+.scheme-claude .bg-red-50 { background-color: hsl(10 25% 97%) !important; }
+.scheme-claude .bg-orange-100 { background-color: hsl(20 35% 92%) !important; }
+.scheme-claude .border-red-200 { border-color: hsl(10 25% 84%) !important; }
+
+/* Cyan/Teal → warm neutral */
+.scheme-claude .text-cyan-600, .scheme-claude .text-teal-600 { color: hsl(25 40% 45%) !important; }
+.scheme-claude .bg-cyan-100, .scheme-claude .bg-teal-100 { background-color: hsl(30 30% 91%) !important; }
+
+/* Focus ring — use warm primary */
+.scheme-claude *:focus-visible { outline-color: hsl(25 60% 45%) !important; }
 
 :root.scheme-ocean {
   --background: 330 100% 97%;

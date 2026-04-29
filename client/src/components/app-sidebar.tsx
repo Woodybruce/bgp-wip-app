@@ -163,10 +163,10 @@ function NavSection({ label, items }: { label: string; items: Array<{ title: str
 }
 
 const TYPE_CONFIG: Record<RecentItem["type"], { icon: any; path: string; color: string }> = {
-  deal: { icon: BarChart3, path: "/deals", color: "text-blue-400" },
-  contact: { icon: Users, path: "/contacts", color: "text-green-400" },
-  company: { icon: Briefcase, path: "/companies", color: "text-amber-400" },
-  property: { icon: Building2, path: "/properties", color: "text-purple-400" },
+  deal: { icon: BarChart3, path: "/deals", color: "text-sidebar-primary opacity-80" },
+  contact: { icon: Users, path: "/contacts", color: "text-sidebar-foreground opacity-60" },
+  company: { icon: Briefcase, path: "/companies", color: "text-sidebar-primary opacity-70" },
+  property: { icon: Building2, path: "/properties", color: "text-sidebar-foreground opacity-50" },
 };
 
 function QuickAccessSection() {
