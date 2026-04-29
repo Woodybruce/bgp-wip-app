@@ -649,7 +649,7 @@ export function InlineLinkSelect({ value, options, href, onSave, onCreate, place
     <div className="flex items-center gap-1 shrink-0">
       {!compact && selectedName && href ? (
         <Link href={href}>
-          <span className="text-xs text-primary hover:underline cursor-pointer truncate max-w-[120px] block">
+          <span className="text-xs text-primary hover:underline cursor-pointer truncate max-w-[100px] block">
             {selectedName}
           </span>
         </Link>
