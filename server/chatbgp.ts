@@ -5554,7 +5554,7 @@ async function executeCrmToolRaw(
     const totalPipeline = deals.reduce((sum: number, d: any) => sum + (parseFloat(d.pricing) || 0), 0);
     const totalFees = deals.reduce((sum: number, d: any) => sum + (parseFloat(d.fee) || 0), 0);
     const byStage: Record<string, number> = {};
-    for (const d of deals) byStage[d.groupName || "Unknown"] = (byStage[d.groupName || "Unknown"] || 0) + 1;
+    for (const d of deals) byStage[d.status || "Unknown"] = (byStage[d.status || "Unknown"] || 0) + 1;
     const summary = { totalDeals: deals.length, totalPipeline, totalFees, byStage };
     return { data: fnArgs.summaryOnly ? { success: true, summary } : { success: true, summary, deals: deals.slice(0, 50) } };
   }
@@ -8949,7 +8949,7 @@ export async function handleCrmToolCall(
     const totalFees = deals.reduce((sum: number, d: any) => sum + (parseFloat(d.fee) || 0), 0);
     const byStage: Record<string, number> = {};
     for (const d of deals) {
-      byStage[d.groupName || "Unknown"] = (byStage[d.groupName || "Unknown"] || 0) + 1;
+      byStage[d.status || "Unknown"] = (byStage[d.status || "Unknown"] || 0) + 1;
     }
     const summary = { totalDeals: deals.length, totalPipeline, totalFees, byStage };
     const responseData = fnArgs.summaryOnly ? { success: true, summary } : { success: true, summary, deals: deals.slice(0, 50) };
