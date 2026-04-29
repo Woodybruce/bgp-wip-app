@@ -4751,80 +4751,94 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         </TableCell>
                       )}
                       {visibleColumns.tenant && (
-                        <TableCell className="px-1.5 py-1 max-w-[120px]">
-                          <InlineLinkSelect
-                            value={deal.tenantId}
-                            options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}
-                            href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
-                            onSave={(v) => handleInlineSave(deal.id, "tenantId", v || null)}
-                            placeholder="Link tenant"
-                          />
+                        <TableCell className="px-1.5 py-1">
+                          <div className="w-[110px] overflow-hidden">
+                            <InlineLinkSelect
+                              value={deal.tenantId}
+                              options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}
+                              href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
+                              onSave={(v) => handleInlineSave(deal.id, "tenantId", v || null)}
+                              placeholder="Link tenant"
+                            />
+                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.vendor && (
-                        <TableCell className="px-1.5 py-1 max-w-[120px]">
-                          <InlineLinkSelect
-                            value={deal.vendorId}
-                            options={companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.vendorId).map(c => ({ id: c.id, name: c.name }))}
-                            href={deal.vendorId ? `/companies/${deal.vendorId}` : undefined}
-                            onSave={(v) => handleInlineSave(deal.id, "vendorId", v || null)}
-                            placeholder="Link vendor"
-                          />
+                        <TableCell className="px-1.5 py-1">
+                          <div className="w-[110px] overflow-hidden">
+                            <InlineLinkSelect
+                              value={deal.vendorId}
+                              options={companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.vendorId).map(c => ({ id: c.id, name: c.name }))}
+                              href={deal.vendorId ? `/companies/${deal.vendorId}` : undefined}
+                              onSave={(v) => handleInlineSave(deal.id, "vendorId", v || null)}
+                              placeholder="Link vendor"
+                            />
+                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.purchaser && (
-                        <TableCell className="px-1.5 py-1 max-w-[120px]">
-                          <InlineLinkSelect
-                            value={deal.purchaserId}
-                            options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name }))}
-                            href={deal.purchaserId ? `/companies/${deal.purchaserId}` : undefined}
-                            onSave={(v) => handleInlineSave(deal.id, "purchaserId", v || null)}
-                            placeholder="Link purchaser"
-                          />
+                        <TableCell className="px-1.5 py-1">
+                          <div className="w-[110px] overflow-hidden">
+                            <InlineLinkSelect
+                              value={deal.purchaserId}
+                              options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name }))}
+                              href={deal.purchaserId ? `/companies/${deal.purchaserId}` : undefined}
+                              onSave={(v) => handleInlineSave(deal.id, "purchaserId", v || null)}
+                              placeholder="Link purchaser"
+                            />
+                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.vendorAgent && (
-                        <TableCell className="px-1.5 py-1 max-w-[120px]">
-                          <InlineLinkSelect
-                            value={deal.vendorAgentId}
-                            options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
-                            href={deal.vendorAgentId ? `/companies/${deal.vendorAgentId}` : undefined}
-                            onSave={(v) => handleInlineSave(deal.id, "vendorAgentId", v || null)}
-                            placeholder="Link agent"
-                          />
+                        <TableCell className="px-1.5 py-1">
+                          <div className="w-[110px] overflow-hidden">
+                            <InlineLinkSelect
+                              value={deal.vendorAgentId}
+                              options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
+                              href={deal.vendorAgentId ? `/companies/${deal.vendorAgentId}` : undefined}
+                              onSave={(v) => handleInlineSave(deal.id, "vendorAgentId", v || null)}
+                              placeholder="Link agent"
+                            />
+                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.acquisitionAgent && (
-                        <TableCell className="px-1.5 py-1 max-w-[120px]">
-                          <InlineLinkSelect
-                            value={deal.acquisitionAgentId}
-                            options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
-                            href={deal.acquisitionAgentId ? `/companies/${deal.acquisitionAgentId}` : undefined}
-                            onSave={(v) => handleInlineSave(deal.id, "acquisitionAgentId", v || null)}
-                            placeholder="Link agent"
-                          />
+                        <TableCell className="px-1.5 py-1">
+                          <div className="w-[110px] overflow-hidden">
+                            <InlineLinkSelect
+                              value={deal.acquisitionAgentId}
+                              options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
+                              href={deal.acquisitionAgentId ? `/companies/${deal.acquisitionAgentId}` : undefined}
+                              onSave={(v) => handleInlineSave(deal.id, "acquisitionAgentId", v || null)}
+                              placeholder="Link agent"
+                            />
+                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.purchaserAgent && (
-                        <TableCell className="px-1.5 py-1 max-w-[120px]">
-                          <InlineLinkSelect
-                            value={deal.purchaserAgentId}
-                            options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
-                            href={deal.purchaserAgentId ? `/companies/${deal.purchaserAgentId}` : undefined}
-                            onSave={(v) => handleInlineSave(deal.id, "purchaserAgentId", v || null)}
-                            placeholder="Link agent"
-                          />
+                        <TableCell className="px-1.5 py-1">
+                          <div className="w-[110px] overflow-hidden">
+                            <InlineLinkSelect
+                              value={deal.purchaserAgentId}
+                              options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
+                              href={deal.purchaserAgentId ? `/companies/${deal.purchaserAgentId}` : undefined}
+                              onSave={(v) => handleInlineSave(deal.id, "purchaserAgentId", v || null)}
+                              placeholder="Link agent"
+                            />
+                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.leasingAgent && (
-                        <TableCell className="px-1.5 py-1 max-w-[120px]">
-                          <InlineLinkSelect
-                            value={deal.leasingAgentId}
-                            options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
-                            href={deal.leasingAgentId ? `/companies/${deal.leasingAgentId}` : undefined}
-                            onSave={(v) => handleInlineSave(deal.id, "leasingAgentId", v || null)}
-                            placeholder="Link agent"
-                          />
+                        <TableCell className="px-1.5 py-1">
+                          <div className="w-[110px] overflow-hidden">
+                            <InlineLinkSelect
+                              value={deal.leasingAgentId}
+                              options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
+                              href={deal.leasingAgentId ? `/companies/${deal.leasingAgentId}` : undefined}
+                              onSave={(v) => handleInlineSave(deal.id, "leasingAgentId", v || null)}
+                              placeholder="Link agent"
+                            />
+                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.timeline && (
