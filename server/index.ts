@@ -492,6 +492,30 @@ import { pool } from "./db";
 
     // ── Investment Tracker — add completion_date ───────────────────────────
     `ALTER TABLE investment_tracker ADD COLUMN IF NOT EXISTS completion_date TEXT`,
+
+    // ── Property Units — master record per physical space ─────────────────
+    // The unit (e.g. "Unit 12 at Westfield") is the stable entity. Listings
+    // (available_units) and deals (crm_deals) link to it via unit_id.
+    `CREATE TABLE IF NOT EXISTS property_units (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      property_id VARCHAR NOT NULL,
+      unit_name TEXT NOT NULL,
+      floor TEXT,
+      sqft REAL,
+      use_class TEXT,
+      condition TEXT,
+      epc_rating TEXT,
+      frontage TEXT,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_property_units_unique
+       ON property_units (property_id, lower(trim(unit_name)))`,
+    `ALTER TABLE available_units ADD COLUMN IF NOT EXISTS unit_id VARCHAR`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS unit_id VARCHAR`,
+    `CREATE INDEX IF NOT EXISTS idx_available_units_unit_id ON available_units(unit_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_deals_unit_id ON crm_deals(unit_id)`,
   ];
 
   let ok = 0, skipped = 0;
@@ -506,6 +530,58 @@ import { pool } from "./db";
     }
   }
   console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
+
+  // ── Backfill property_units from existing available_units ──────────────
+  // Dedupe by (property_id, lower(trim(unit_name))). Each existing listing
+  // gets its unit_id wired; any deal linked to that listing also gets unit_id.
+  // Idempotent — only fills NULL unit_ids, only inserts missing master rows.
+  try {
+    const result = await pool.query(`
+      WITH dedup AS (
+        SELECT
+          property_id,
+          lower(trim(unit_name)) AS norm_name,
+          MIN(unit_name) AS unit_name,
+          MIN(floor) AS floor,
+          MAX(sqft) AS sqft,
+          MIN(use_class) AS use_class,
+          MIN(condition) AS condition,
+          MIN(epc_rating) AS epc_rating
+        FROM available_units
+        WHERE unit_id IS NULL
+        GROUP BY property_id, lower(trim(unit_name))
+      )
+      INSERT INTO property_units (property_id, unit_name, floor, sqft, use_class, condition, epc_rating)
+      SELECT property_id, unit_name, floor, sqft, use_class, condition, epc_rating
+      FROM dedup
+      ON CONFLICT (property_id, lower(trim(unit_name))) DO NOTHING
+    `);
+    const inserted = result.rowCount ?? 0;
+
+    const linkListings = await pool.query(`
+      UPDATE available_units au
+      SET unit_id = pu.id
+      FROM property_units pu
+      WHERE au.unit_id IS NULL
+        AND au.property_id = pu.property_id
+        AND lower(trim(au.unit_name)) = lower(trim(pu.unit_name))
+    `);
+
+    const linkDeals = await pool.query(`
+      UPDATE crm_deals d
+      SET unit_id = au.unit_id
+      FROM available_units au
+      WHERE d.unit_id IS NULL
+        AND au.deal_id = d.id
+        AND au.unit_id IS NOT NULL
+    `);
+
+    if (inserted || linkListings.rowCount || linkDeals.rowCount) {
+      console.log(`[backfill-units] inserted ${inserted} property_units, linked ${linkListings.rowCount ?? 0} listings, ${linkDeals.rowCount ?? 0} deals`);
+    }
+  } catch (e: any) {
+    console.warn(`[backfill-units] failed: ${e.message}`);
+  }
 })();
 import { setupAuth } from "./auth";
 import { setupMicrosoftRoutes } from "./microsoft";

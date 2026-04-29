@@ -1903,11 +1903,141 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // ── Property Units (master record for the physical space) ──────────────
+  app.get("/api/property-units", requireAuth, async (req, res) => {
+    try {
+      const propertyId = (req.query.propertyId as string | undefined) || undefined;
+      const where = propertyId ? `WHERE property_id = $1` : "";
+      const params = propertyId ? [propertyId] : [];
+      const result = await pool.query(
+        `SELECT id, property_id, unit_name, floor, sqft, use_class, condition,
+                epc_rating, frontage, notes, created_at, updated_at
+         FROM property_units ${where}
+         ORDER BY unit_name`,
+        params
+      );
+      res.json(result.rows.map(r => ({
+        id: r.id,
+        propertyId: r.property_id,
+        unitName: r.unit_name,
+        floor: r.floor,
+        sqft: r.sqft,
+        useClass: r.use_class,
+        condition: r.condition,
+        epcRating: r.epc_rating,
+        frontage: r.frontage,
+        notes: r.notes,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      })));
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to list units" });
+    }
+  });
+
+  app.post("/api/property-units", requireAuth, async (req, res) => {
+    try {
+      const { insertPropertyUnitSchema } = await import("@shared/schema");
+      const parsed = insertPropertyUnitSchema.parse(req.body);
+      if (!parsed.propertyId || !parsed.unitName?.trim()) {
+        return res.status(400).json({ message: "propertyId and unitName are required" });
+      }
+      const result = await pool.query(
+        `INSERT INTO property_units (property_id, unit_name, floor, sqft, use_class, condition, epc_rating, frontage, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id`,
+        [parsed.propertyId, parsed.unitName.trim(), parsed.floor || null, parsed.sqft ?? null,
+         parsed.useClass || null, parsed.condition || null, parsed.epcRating || null,
+         parsed.frontage || null, parsed.notes || null]
+      );
+      res.json({ id: result.rows[0].id, ...parsed });
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        return res.status(409).json({ message: "A unit with that name already exists on this property" });
+      }
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to create unit" });
+    }
+  });
+
+  app.patch("/api/property-units/:id", requireAuth, async (req, res) => {
+    try {
+      const allowed = ["unitName", "floor", "sqft", "useClass", "condition", "epcRating", "frontage", "notes"];
+      const cols: Record<string, string> = {
+        unitName: "unit_name", floor: "floor", sqft: "sqft", useClass: "use_class",
+        condition: "condition", epcRating: "epc_rating", frontage: "frontage", notes: "notes",
+      };
+      const sets: string[] = [];
+      const values: any[] = [];
+      let i = 1;
+      for (const k of allowed) {
+        if (k in req.body) {
+          sets.push(`${cols[k]} = $${i++}`);
+          values.push((req.body as any)[k]);
+        }
+      }
+      if (sets.length === 0) return res.json({ success: true });
+      sets.push(`updated_at = NOW()`);
+      values.push(req.params.id);
+      await pool.query(
+        `UPDATE property_units SET ${sets.join(", ")} WHERE id = $${i}`,
+        values
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        return res.status(409).json({ message: "A unit with that name already exists on this property" });
+      }
+      res.status(500).json({ message: err?.message || "Failed to update unit" });
+    }
+  });
+
+  app.delete("/api/property-units/:id", requireAuth, async (req, res) => {
+    try {
+      const inUse = await pool.query(
+        `SELECT 1 FROM available_units WHERE unit_id = $1
+         UNION ALL SELECT 1 FROM crm_deals WHERE unit_id = $1 LIMIT 1`,
+        [req.params.id]
+      );
+      if (inUse.rows.length > 0) {
+        return res.status(409).json({ message: "Unit is referenced by listings or deals" });
+      }
+      await pool.query(`DELETE FROM property_units WHERE id = $1`, [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to delete unit" });
+    }
+  });
+
   app.post("/api/available-units", requireAuth, async (req, res) => {
     try {
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const parsed = insertAvailableUnitSchema.parse(req.body);
-      const unit = await storage.createAvailableUnit(parsed);
+
+      // Ensure a property_units master row exists for this (property, unit name).
+      // Create one if missing, then set unit_id on the listing.
+      let unitMasterId: string | null = (parsed as any).unitId || null;
+      if (!unitMasterId && parsed.propertyId && parsed.unitName?.trim()) {
+        const existing = await pool.query(
+          `SELECT id FROM property_units
+           WHERE property_id = $1 AND lower(trim(unit_name)) = lower(trim($2))`,
+          [parsed.propertyId, parsed.unitName]
+        );
+        if (existing.rows.length > 0) {
+          unitMasterId = existing.rows[0].id;
+        } else {
+          const created = await pool.query(
+            `INSERT INTO property_units (property_id, unit_name, floor, sqft, use_class, condition, epc_rating)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id`,
+            [parsed.propertyId, parsed.unitName.trim(), parsed.floor || null, parsed.sqft ?? null,
+             parsed.useClass || null, parsed.condition || null, parsed.epcRating || null]
+          );
+          unitMasterId = created.rows[0].id;
+        }
+      }
+
+      const unit = await storage.createAvailableUnit({ ...parsed, unitId: unitMasterId || undefined } as any);
 
       // Auto-create a backing CRM deal so every tracker row has a source of truth
       if (!unit.dealId) {
@@ -1918,13 +2048,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
               ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
               : unit.unitName,
             propertyId: unit.propertyId || undefined,
+            unitId: unitMasterId || undefined,
             status: unit.marketingStatus || "AVA",
             dealType: "Leasing",
             internalAgent: unit.agentUserIds || [],
             fee: unit.fee ?? undefined,
             rentPa: unit.askingRent ?? undefined,
             totalAreaSqft: unit.sqft ?? undefined,
-          });
+          } as any);
           await storage.updateAvailableUnit(unit.id, { dealId: deal.id });
           (unit as any).dealId = deal.id;
           (unit as any).dealRef = deal.dealRef;
@@ -1981,13 +2112,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
               ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
               : unit.unitName,
             propertyId: unit.propertyId || undefined,
+            unitId: unit.unitId || undefined,
             status: unit.marketingStatus || "AVA",
             dealType: "Leasing",
             internalAgent: unit.agentUserIds || [],
             fee: unit.fee ?? undefined,
             rentPa: unit.askingRent ?? undefined,
             totalAreaSqft: unit.sqft ?? undefined,
-          });
+          } as any);
           await db.update(availableUnits).set({ dealId: deal.id }).where(eq(availableUnits.id, unit.id));
           created++;
         } catch (e: any) {
@@ -2132,6 +2264,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const deal = await storage.createCrmDeal({
         name: `${property?.name || "Property"} - ${unit.unitName}`,
         propertyId: unit.propertyId,
+        unitId: unit.unitId || undefined,
         status: "SOL",
         dealType: body.dealType || "Letting",
         groupName: "Leasing - Active",
@@ -2144,7 +2277,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         leaseLength: body.leaseLength ? parseFloat(body.leaseLength) : undefined,
         rentFree: body.rentFree ? parseFloat(body.rentFree) : undefined,
         comments: body.comments || undefined,
-      });
+      } as any);
       if (body.tenantName) {
         try {
           const { crmContacts } = await import("@shared/schema");

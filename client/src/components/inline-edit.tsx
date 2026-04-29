@@ -628,11 +628,14 @@ interface InlineLinkSelectProps {
   options: { id: string; name: string }[];
   href?: string;
   onSave: (val: string | null) => void;
+  // If provided, an extra "Create new: <text>" row appears when the typed text
+  // doesn't match an existing option. The popover closes after onCreate runs.
+  onCreate?: (newName: string) => void;
   placeholder?: string;
   compact?: boolean;
 }
 
-export function InlineLinkSelect({ value, options, href, onSave, placeholder = "Link...", compact = false }: InlineLinkSelectProps) {
+export function InlineLinkSelect({ value, options, href, onSave, onCreate, placeholder = "Link...", compact = false }: InlineLinkSelectProps) {
   const [open, setOpen] = useState(false);
   const [filterText, setFilterText] = useState("");
 
@@ -707,8 +710,18 @@ export function InlineLinkSelect({ value, options, href, onSave, placeholder = "
                   {o.name}
                 </button>
               ))}
-              {filtered.length === 0 && (
+              {filtered.length === 0 && !onCreate && (
                 <p className="text-xs text-muted-foreground text-center py-2">No matches</p>
+              )}
+              {onCreate && filterText.trim() && !filtered.some(o => o.name.toLowerCase() === filterText.trim().toLowerCase()) && (
+                <button
+                  type="button"
+                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-accent rounded-sm flex items-center gap-1 text-primary border-t mt-1 pt-2"
+                  onClick={() => { onCreate(filterText.trim()); setOpen(false); setFilterText(""); }}
+                  data-testid="inline-link-create"
+                >
+                  <Plus className="w-3 h-3" /> Create "{filterText.trim()}"
+                </button>
               )}
             </div>
           </ScrollArea>

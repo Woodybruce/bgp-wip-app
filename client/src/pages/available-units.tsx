@@ -34,7 +34,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
-import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer } from "@shared/schema";
+import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { useTeam } from "@/lib/team-context";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
@@ -335,6 +335,10 @@ export default function AvailableUnitsPage() {
     queryKey: ["/api/crm/properties"],
   });
 
+  const { data: propertyUnits = [] } = useQuery<PropertyUnit[]>({
+    queryKey: ["/api/property-units"],
+  });
+
   const { data: deals = [] } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
   });
@@ -484,6 +488,20 @@ export default function AvailableUnitsPage() {
     return m;
   }, [deals]);
 
+  const unitsByProperty = useMemo(() => {
+    const m: Record<string, PropertyUnit[]> = {};
+    for (const pu of propertyUnits) {
+      (m[pu.propertyId] = m[pu.propertyId] || []).push(pu);
+    }
+    return m;
+  }, [propertyUnits]);
+
+  const unitMasterById = useMemo(() => {
+    const m: Record<string, PropertyUnit> = {};
+    for (const pu of propertyUnits) m[pu.id] = pu;
+    return m;
+  }, [propertyUnits]);
+
   const userMap = useMemo(() => {
     const m: Record<string, string> = {};
     for (const u of bgpUsers) m[u.id] = u.name;
@@ -564,6 +582,62 @@ export default function AvailableUnitsPage() {
     onError: (e: any) => toast({ title: "Error saving", description: e.message, variant: "destructive" }),
   });
 
+  const createPropertyUnitMutation = useMutation({
+    mutationFn: async (data: { propertyId: string; unitName: string; floor?: string | null; sqft?: number | null }) => {
+      const res = await apiRequest("POST", "/api/property-units", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
+    },
+    onError: (e: any) => toast({ title: "Error creating unit", description: e.message, variant: "destructive" }),
+  });
+
+  // Pick an existing master unit (by id) for a listing, or create one and link.
+  // Keeps listing.unitId, listing.unitName, deal.unitId, and deal.name in sync.
+  const pickOrCreateUnit = async (
+    listing: AvailableUnit,
+    selection: { unitId: string } | { newName: string }
+  ) => {
+    let unitId: string | null = null;
+    let unitName: string;
+
+    if ("unitId" in selection) {
+      const pu = unitMasterById[selection.unitId];
+      if (!pu) return;
+      unitId = pu.id;
+      unitName = pu.unitName;
+    } else {
+      const trimmed = selection.newName.trim();
+      if (!trimmed) return;
+      // Reuse if a unit with this name already exists on the property
+      const existing = (unitsByProperty[listing.propertyId] || []).find(
+        u => u.unitName.trim().toLowerCase() === trimmed.toLowerCase()
+      );
+      if (existing) {
+        unitId = existing.id;
+        unitName = existing.unitName;
+      } else {
+        const created = await createPropertyUnitMutation.mutateAsync({
+          propertyId: listing.propertyId,
+          unitName: trimmed,
+          floor: listing.floor || null,
+          sqft: listing.sqft ?? null,
+        });
+        unitId = created.id;
+        unitName = trimmed;
+      }
+    }
+
+    updateMutation.mutate({ id: listing.id, data: { unitId, unitName } });
+    if (listing.dealId) {
+      const prop = propertyMap[listing.propertyId];
+      const dealName = prop ? `${prop.name} – ${unitName}` : unitName;
+      dealInlineUpdate.mutate({ id: listing.dealId, field: "unitId", value: unitId });
+      dealInlineUpdate.mutate({ id: listing.dealId, field: "name", value: dealName });
+    }
+  };
+
   const linkDealMutation = useMutation({
     mutationFn: ({ id, dealId }: { id: string; dealId: string }) =>
       apiRequest("POST", `/api/available-units/${id}/link-deal`, { dealId }),
@@ -618,6 +692,10 @@ export default function AvailableUnitsPage() {
     setWipUnit(unit);
   };
 
+  // Fields that live on the master property_unit. Editing them on a listing
+  // dual-writes to both, keeping master as source of truth and the listing as cache.
+  const MASTER_UNIT_FIELDS = new Set(["floor", "sqft", "useClass", "condition", "epcRating"]);
+
   const inlineUpdate = (id: string, field: string, value: any) => {
     if (typeof value === "number" && isNaN(value)) value = null;
     if (field === "marketingStatus" && legacyToCode(value) === "SOL") {
@@ -628,13 +706,12 @@ export default function AvailableUnitsPage() {
       }
     }
     updateMutation.mutate({ id, data: { [field]: value } });
-    // Keep linked deal name in sync when unit name changes
-    if (field === "unitName") {
-      const unit = units.find(u => u.id === id);
-      if (unit?.dealId) {
-        const prop = propertyMap[unit.propertyId];
-        const dealName = prop ? `${prop.name} – ${value}` : value;
-        dealInlineUpdate.mutate({ id: unit.dealId, field: "name", value: dealName });
+    if (MASTER_UNIT_FIELDS.has(field)) {
+      const listing = units.find(u => u.id === id);
+      if (listing?.unitId) {
+        apiRequest("PATCH", `/api/property-units/${listing.unitId}`, { [field]: value })
+          .then(() => queryClient.invalidateQueries({ queryKey: ["/api/property-units"] }))
+          .catch(() => { /* server errors already toast via main mutation */ });
       }
     }
   };
@@ -1083,10 +1160,16 @@ export default function AvailableUnitsPage() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          <InlineText
-                            value={u.unitName}
-                            onSave={v => inlineUpdate(u.id, "unitName", v)}
-                            data-testid={`inline-unit-name-${u.id}`}
+                          <span className="text-xs truncate max-w-[110px]">{u.unitName || <span className="text-muted-foreground italic">No unit</span>}</span>
+                          <InlineLinkSelect
+                            value={u.unitId}
+                            options={(unitsByProperty[u.propertyId] || []).map(pu => ({ id: pu.id, name: pu.unitName }))}
+                            onSave={(id) => {
+                              if (id) pickOrCreateUnit(u, { unitId: id });
+                            }}
+                            onCreate={(newName) => pickOrCreateUnit(u, { newName })}
+                            placeholder="Pick unit"
+                            compact
                           />
                           {deal && (
                             <a
