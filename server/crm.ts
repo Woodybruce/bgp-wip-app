@@ -4704,11 +4704,19 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
       // WIP only shows deals at NEG/SOL/EXC/COM/INV — earlier-stage deals
       // (REP/SPEC/LIVE/AVA) and archived (WIT) are excluded.
-      // Apply the same filter to spreadsheet-sourced rows so "Reporting" etc. can't slip through.
+      // For matched rows, prefer the deal's CURRENT status (the spreadsheet's
+      // dealStatus is captured at import time and goes stale as deals progress).
+      const dealById = new Map(deals.map(d => [d.id, d]));
       entries = entries.filter(e => {
         if (e.source !== "spreadsheet") return true;
-        const code = legacyToCode(e.dealStatus);
-        if (!code) return true; // unknown/null status → keep (unmapped legacy data)
+        const matchedDeal = e.dealId ? dealById.get(e.dealId) : null;
+        const matchedCode = matchedDeal ? legacyToCode(matchedDeal.status) : null;
+        const sheetCode = legacyToCode(e.dealStatus);
+        // Prefer the deal's current code; fall back to sheet code; if both unknown, keep (unmapped legacy data).
+        const code = matchedCode ?? sheetCode;
+        if (!code) return true;
+        // Also display the resolved code on the row so the UI doesn't show a stale "Reporting" chip
+        if (matchedCode && matchedCode !== sheetCode) e.dealStatus = matchedCode;
         return WIP_STATUSES.includes(code);
       });
 
