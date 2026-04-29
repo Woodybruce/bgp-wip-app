@@ -62,9 +62,14 @@ function formatFee(fee: number | null | undefined): string {
 interface DealKanbanProps {
   deals: CrmDeal[];
   propertyMap: Map<string, string>;
+  unitMap?: Map<string, string>;
+  tenantMap?: Map<string, string>;
 }
 
-export function DealKanban({ deals, propertyMap }: DealKanbanProps) {
+// Stages where the tenant becomes part of the card heading.
+const TENANT_HEADING_STATUSES = new Set(["SOL", "EXC", "COM", "INV"]);
+
+export function DealKanban({ deals, propertyMap, unitMap, tenantMap }: DealKanbanProps) {
   // Group deals into columns
   const columns = KANBAN_COLUMNS.map((col) => {
     const columnDeals = deals.filter((d) => {
@@ -116,7 +121,17 @@ export function DealKanban({ deals, propertyMap }: DealKanbanProps) {
               const propName = deal.propertyId
                 ? propertyMap.get(deal.propertyId) || ""
                 : "";
-              const displayName = propName || deal.name;
+              const unitName = deal.unitId
+                ? unitMap?.get(deal.unitId) || ""
+                : "";
+              const tenantName = deal.tenantId
+                ? tenantMap?.get(deal.tenantId) || ""
+                : "";
+              const code = legacyToCode(deal.status);
+              const showTenant = code && TENANT_HEADING_STATUSES.has(code) && tenantName;
+              // Heading: unit > property > deal name. In SOL+, append tenant.
+              const baseName = unitName || propName || deal.name;
+              const displayName = showTenant ? `${baseName} — ${tenantName}` : baseName;
               const agents = Array.isArray(deal.internalAgent)
                 ? deal.internalAgent.join(", ")
                 : deal.internalAgent || "";

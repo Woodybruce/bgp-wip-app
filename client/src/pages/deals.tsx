@@ -102,7 +102,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useRoute, Link, useLocation } from "wouter";
-import type { CrmDeal, CrmProperty, CrmCompany, CrmContact, DealFeeAllocation, AvailableUnit } from "@shared/schema";
+import type { CrmDeal, CrmProperty, CrmCompany, CrmContact, DealFeeAllocation, AvailableUnit, PropertyUnit } from "@shared/schema";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
@@ -3878,6 +3878,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     queryKey: ["/api/crm/contacts"],
   });
 
+  const { data: propertyUnits = [] } = useQuery<PropertyUnit[]>({
+    queryKey: ["/api/property-units"],
+  });
+
   const { data: users = [] } = useQuery<{ id: number; name: string; email: string }[]>({
     queryKey: ["/api/users"],
   });
@@ -4242,6 +4246,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const propertyMap = new Map(properties.map((p) => [p.id, p.name]));
   const companyMap = new Map(companies.map((c) => [c.id, c.name]));
+  const unitMap = new Map(propertyUnits.map((u) => [u.id, u.unitName]));
   const agentCompanies = companies.filter(c => c.companyType === "Agent");
 
   return (
@@ -4473,7 +4478,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
             ))}
           </div>
         ) : (
-          <DealKanban deals={filteredDeals} propertyMap={propertyMap} />
+          <DealKanban deals={filteredDeals} propertyMap={propertyMap} unitMap={unitMap} tenantMap={companyMap} />
         )
       ) : viewMode === "card" ? (
         <Card className="flex-1 min-h-0 flex flex-col">
