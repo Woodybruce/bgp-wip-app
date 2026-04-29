@@ -1151,18 +1151,17 @@ export default function AvailableUnitsPage() {
                           />
                         ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="px-1.5 max-w-[140px]">
                         <div className="flex items-center gap-1">
-                          <span className="text-xs truncate max-w-[110px]">{u.unitName || <span className="text-muted-foreground italic">No unit</span>}</span>
                           <InlineLinkSelect
                             value={u.unitId}
                             options={(unitsByProperty[u.propertyId] || []).map(pu => ({ id: pu.id, name: pu.unitName }))}
+                            href={u.propertyId ? `/properties/${u.propertyId}` : undefined}
                             onSave={(id) => {
                               if (id) pickOrCreateUnit(u, { unitId: id });
                             }}
                             onCreate={(newName) => pickOrCreateUnit(u, { newName })}
                             placeholder="Pick unit"
-                            compact
                           />
                           {deal && (
                             <a
