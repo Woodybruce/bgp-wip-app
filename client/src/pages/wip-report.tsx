@@ -26,6 +26,7 @@ import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
 import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
+import { legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 import { Skeleton } from "@/components/ui/skeleton";
 
 type SortDirection = "asc" | "desc";
@@ -836,7 +837,14 @@ export default function WipReport() {
   const isLandsecView = activeTeam === "Landsec";
 
   const entries = useMemo(() => {
-    let filtered = rawEntries;
+    // Client-side safety net: strip any rows whose status maps to a non-WIP
+    // canonical code (REP/SPEC/LIVE/AVA/WIT). The server applies the same
+    // filter, but this catches stale cached responses or deployment lag.
+    let filtered = rawEntries.filter(e => {
+      const code = legacyToCode(e.dealStatus);
+      if (!code) return true; // unknown/null status — keep
+      return WIP_STATUSES.includes(code);
+    });
     if (isLandsecView) {
       filtered = filtered.filter((e) => {
         const gn = (e.groupName || "").toLowerCase().replace(/\s+/g, "");

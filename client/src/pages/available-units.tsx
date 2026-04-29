@@ -958,7 +958,7 @@ export default function AvailableUnitsPage() {
                 <TableHead>BGP Contact</TableHead>
                 <TableHead>WIP Deal</TableHead>
                 <TableHead>Marketing</TableHead>
-                <TableHead className="w-[100px]">Actions</TableHead>
+                <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1197,7 +1197,7 @@ export default function AvailableUnitsPage() {
                           Files
                         </Button>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className={`sticky right-0 z-10 border-l ${selectedIds.has(u.id) ? "bg-primary/5" : "bg-card"}`}>
                         <div className="flex gap-1">
                           <Button
                             variant="ghost"
