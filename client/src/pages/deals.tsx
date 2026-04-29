@@ -894,7 +894,7 @@ export function DealFormDialog({
               const showTenure = isLease || isInvestment || showAll;
 
               const tenantTypes = companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === form.tenantId);
-              const landlordTypes = companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === form.landlordId);
+              const landlordTypes = companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === form.landlordId);
               const vendorTypes = companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === form.vendorId);
               const purchaserTypes = companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === form.purchaserId);
 
@@ -4553,7 +4553,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     </TableHead>
                     <TableHead className="w-[60px]">Ref</TableHead>
                     <TableHead className="min-w-[200px]">Property</TableHead>
-                    {visibleColumns.landlord && <TableHead className="min-w-[120px]">Landlord</TableHead>}
+                    {visibleColumns.landlord && <TableHead className="min-w-[120px]">Client</TableHead>}
                     {visibleColumns.type && (
                       <TableHead className="min-w-[120px]">
                         <ColumnFilterPopover
@@ -4567,7 +4567,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.status && (
                       <TableHead className="min-w-[120px]">
                         <ColumnFilterPopover
-                          label="Status"
+                          label="Deal Status"
                           options={statusValues}
                           activeFilters={columnFilters["status"] || []}
                           onToggleFilter={(val) => toggleFilter("status", val)}
@@ -4676,7 +4676,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         <TableCell className="px-1.5 py-1 max-w-[120px]">
                           <InlineLinkSelect
                             value={deal.landlordId}
-                            options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
+                            options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
                             href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
                             onSave={(v) => handleInlineSave(deal.id, "landlordId", v || null)}
                             placeholder="Link landlord"
