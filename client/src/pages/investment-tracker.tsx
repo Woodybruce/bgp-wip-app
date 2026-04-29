@@ -927,6 +927,11 @@ export default function InvestmentTrackerPage() {
     for (const c of companies) m.set(c.id, c.name);
     return m;
   }, [companies]);
+  // Buyer = future landlord, so the picker offers Landlord-type companies
+  // (mirrors the landlord filter on the WIP page).
+  const landlordCompanyItems = useMemo(() => companies
+    .filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client")
+    .map(c => ({ id: c.id, name: c.name })), [companies]);
   const companyByName = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of companies) m.set(c.name, c.id);
@@ -1757,17 +1762,25 @@ export default function InvestmentTrackerPage() {
                     ) : (
                       <>
                         <TableCell className="px-2 py-1.5">
-                          <InlineLinkSelect
-                            value={item.buyer ? (companyByName.get(item.buyer) || "") : ""}
-                            options={companyItems}
-                            href={item.buyer ? (companyByName.get(item.buyer) ? `/companies/${companyByName.get(item.buyer)}` : undefined) : undefined}
-                            onSave={(v) => {
-                              const name = companyById.get(v || "") || "";
-                              inlineUpdate(item.id, "buyer", name || null);
-                            }}
-                            placeholder="Link buyer"
-                            data-testid={`picker-buyer-${item.id}`}
-                          />
+                          {(() => {
+                            const currentId = item.buyer ? (companyByName.get(item.buyer) || "") : "";
+                            const opts = currentId && !landlordCompanyItems.some(o => o.id === currentId)
+                              ? [...landlordCompanyItems, { id: currentId, name: item.buyer || "" }]
+                              : landlordCompanyItems;
+                            return (
+                              <InlineLinkSelect
+                                value={currentId}
+                                options={opts}
+                                href={currentId ? `/companies/${currentId}` : undefined}
+                                onSave={(v) => {
+                                  const name = companyById.get(v || "") || "";
+                                  inlineUpdate(item.id, "buyer", name || null);
+                                }}
+                                placeholder="Link buyer"
+                                data-testid={`picker-buyer-${item.id}`}
+                              />
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="px-2 py-1.5">
                           <InlineDate
