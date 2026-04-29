@@ -1014,10 +1014,15 @@ export default function AvailableUnitsPage() {
                       <TableCell className="text-xs font-mono text-muted-foreground">
                         {deal?.dealRef ? `#${deal.dealRef}` : "—"}
                       </TableCell>
-                      <TableCell className="font-medium max-w-[180px] truncate" title={prop?.name}>
-                        <a href={`/properties/${u.propertyId}`} className="text-blue-600 hover:underline dark:text-blue-400" data-testid={`link-property-${u.id}`}>
-                          {prop?.name || u.propertyId}
-                        </a>
+                      <TableCell className="px-1.5 py-1 font-medium max-w-[200px]">
+                        <InlineLinkSelect
+                          value={u.propertyId}
+                          options={properties.map(p => ({ id: p.id, name: p.name }))}
+                          href={`/properties/${u.propertyId}`}
+                          onSave={(v) => inlineUpdate(u.id, "propertyId", v || null)}
+                          placeholder="Link property"
+                          data-testid={`link-property-${u.id}`}
+                        />
                       </TableCell>
                       <TableCell className="px-1.5">
                         {deal ? (

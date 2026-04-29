@@ -4544,6 +4544,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         data-testid="checkbox-select-all-deals"
                       />
                     </TableHead>
+                    <TableHead className="w-[60px]">Ref</TableHead>
                     <TableHead className="min-w-[200px]">Property</TableHead>
                     {visibleColumns.landlord && <TableHead className="min-w-[120px]">Landlord</TableHead>}
                     {visibleColumns.type && (
@@ -4646,6 +4647,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           }}
                           data-testid={`checkbox-deal-${deal.id}`}
                         />
+                      </TableCell>
+                      <TableCell className="px-1.5 py-1 font-mono text-muted-foreground text-xs">
+                        {deal.dealRef ? `#${deal.dealRef}` : "—"}
                       </TableCell>
                       <TableCell className="px-1.5 py-1 font-medium text-sm max-w-[200px]">
                         <div className="flex items-center gap-2">

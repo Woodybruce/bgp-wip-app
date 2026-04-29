@@ -31,7 +31,7 @@ import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ViewToggle } from "@/components/mobile-card-view";
-import { InlineText, InlineNumber, InlineSelect, InlineDate, InlineLabelSelect } from "@/components/inline-edit";
+import { InlineText, InlineNumber, InlineSelect, InlineDate, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
 import { buildUserIdColorMap } from "@/lib/agent-colors";
 import type { InvestmentTracker, CrmProperty, CrmDeal, CrmCompany, CrmContact, InvestmentViewing, InvestmentOffer, InvestmentDistribution } from "@shared/schema";
 import {
@@ -1564,17 +1564,21 @@ export default function InvestmentTrackerPage() {
                     <TableCell className="px-2 py-1.5 font-mono text-muted-foreground text-xs">
                       {item.dealId ? (dealRefMap.get(item.dealId) ? `#${dealRefMap.get(item.dealId)}` : "—") : "—"}
                     </TableCell>
-                    <TableCell className="px-2 py-1.5 font-medium">
-                      <div>
-                        <InlineText
-                          value={item.assetName}
-                          onSave={v => inlineUpdate(item.id, "assetName", v)}
-                          className="text-xs font-medium"
-                        />
-                        {item.address && (
-                          <div className="text-[10px] text-muted-foreground truncate max-w-[170px]">{item.address}</div>
-                        )}
-                      </div>
+                    <TableCell className="px-2 py-1.5 font-medium max-w-[200px]">
+                      <InlineLinkSelect
+                        value={item.propertyId || ""}
+                        options={propertyItems}
+                        href={item.propertyId ? `/properties/${item.propertyId}` : undefined}
+                        onSave={(v) => {
+                          const name = propertyMap.get(v || "") || "";
+                          inlineUpdate(item.id, "propertyId", v || null);
+                          if (name) inlineUpdate(item.id, "assetName", name);
+                        }}
+                        placeholder={item.assetName || "Link property"}
+                      />
+                      {item.address && (
+                        <div className="text-[10px] text-muted-foreground truncate max-w-[170px] mt-0.5">{item.address}</div>
+                      )}
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       <InlineLabelSelect
