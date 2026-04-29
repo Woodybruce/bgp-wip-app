@@ -43,6 +43,7 @@ import {
   FolderPlus,
   Library,
   Link,
+  RotateCcw,
 } from "lucide-react";
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
@@ -515,6 +516,25 @@ export default function ImageStudio() {
     },
     onError: (err: any) => {
       toast({ title: "Edit failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const revertMutation = useMutation({
+    mutationFn: async (imageId: string) => {
+      const res = await apiRequest("POST", `/api/image-studio/${imageId}/revert`);
+      return res.json();
+    },
+    onSuccess: (_data, imageId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
+      setImageVersions(prev => {
+        const next = { ...prev };
+        delete next[imageId];
+        return next;
+      });
+      toast({ title: "Reverted", description: "Image restored to original" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Revert failed", description: err.message, variant: "destructive" });
     },
   });
 
@@ -2094,6 +2114,17 @@ export default function ImageStudio() {
                 }} data-testid="button-lightbox-ai-edit">
                   <Sparkles className="h-3 w-3 mr-1" /> AI Touch Up
                 </Button>
+                {imageVersions[selectedImage.id] && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => revertMutation.mutate(selectedImage.id)}
+                    disabled={revertMutation.isPending}
+                    data-testid="button-lightbox-undo"
+                  >
+                    <RotateCcw className="h-3 w-3 mr-1" /> Undo
+                  </Button>
+                )}
                 <a
                   href={`/api/image-studio/${selectedImage.id}/full${imageVersions[selectedImage.id] ? `?v=${imageVersions[selectedImage.id]}` : ""}`}
                   download={selectedImage.fileName}

@@ -1153,6 +1153,12 @@ export function registerImageStudioRoutes(app: Express) {
       if (image.uploadedBy && image.uploadedBy !== userId) return res.status(403).json({ error: "Not authorised to edit this image" });
       const sourceBuffer = await readPersistedImage(image.localPath);
       if (!sourceBuffer) return res.status(400).json({ error: "Image file not found. The original image was lost on a deploy — re-capture / re-upload the source image and try again." });
+
+      // Save undo snapshot (normalised to PNG) so the user can revert this edit
+      const undoPath = path.join(IMAGE_DIR, `undo-${imageId}.png`);
+      const undoBuffer = (image.mimeType === "image/png") ? sourceBuffer : await sharp(sourceBuffer).png().toBuffer();
+      fs.writeFileSync(undoPath, undoBuffer);
+
       const base64 = sourceBuffer.toString("base64");
       const inputMime = image.mimeType || "image/jpeg";
 
@@ -1216,6 +1222,45 @@ export function registerImageStudioRoutes(app: Express) {
       res.json({ ...updated, provider });
     } catch (e: any) {
       console.error("[image-studio] AI edit error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/image-studio/:id/revert", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const undoPath = path.join(IMAGE_DIR, `undo-${id}.png`);
+      if (!fs.existsSync(undoPath)) return res.status(404).json({ error: "No undo snapshot available for this image" });
+
+      const undoBuffer = fs.readFileSync(undoPath);
+      const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, id));
+      if (!image) return res.status(404).json({ error: "Image not found" });
+
+      const filename = `reverted-${crypto.randomUUID()}.png`;
+      const filePath = path.join(IMAGE_DIR, filename);
+      await persistImage(filePath, undoBuffer, "image/png");
+
+      const { thumbnail, width, height } = await generateThumbnail(undoBuffer);
+      const oldPath = image.localPath;
+
+      const cleanedTags = (image.tags || []).filter(t => !["AI Edited", "gemini", "local", "openai"].includes(t));
+      const [updated] = await db.update(imageStudioImages).set({
+        mimeType: "image/png",
+        fileSize: undoBuffer.length,
+        width,
+        height,
+        thumbnailData: thumbnail,
+        localPath: filePath,
+        tags: cleanedTags,
+        source: image.source === "ai-edited" ? "uploaded" : (image.source || "uploaded"),
+      }).where(eq(imageStudioImages.id, id)).returning();
+
+      if (oldPath && oldPath !== filePath) { try { fs.unlinkSync(oldPath); } catch {} }
+      try { fs.unlinkSync(undoPath); } catch {}
+
+      res.json(updated);
+    } catch (e: any) {
+      console.error("[image-studio] revert error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });
