@@ -919,7 +919,7 @@ export default function AvailableUnitsPage() {
       )}
 
       <Card>
-        <ScrollableTable minWidth={1800}>
+        <ScrollableTable minWidth={2600}>
           <Table>
             <TableHeader>
               <TableRow>

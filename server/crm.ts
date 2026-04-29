@@ -4681,6 +4681,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         return {
           id: r.id,
           dealId: matchedDeal?.id || null,
+          dealRef: matchedDeal?.dealRef ?? null,
           dealType: matchedDeal?.dealType || null,
           ref: r.ref,
           groupName: r.groupName,
@@ -4702,7 +4703,15 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       });
 
       // WIP only shows deals at NEG/SOL/EXC/COM/INV — earlier-stage deals
-      // (REP/SPEC/LIVE/AVA) and archived (WIT, Leasing/Investment Comps) are excluded.
+      // (REP/SPEC/LIVE/AVA) and archived (WIT) are excluded.
+      // Apply the same filter to spreadsheet-sourced rows so "Reporting" etc. can't slip through.
+      entries = entries.filter(e => {
+        if (e.source !== "spreadsheet") return true;
+        const code = legacyToCode(e.dealStatus);
+        if (!code) return true; // unknown/null status → keep (unmapped legacy data)
+        return WIP_STATUSES.includes(code);
+      });
+
       const unmatchedDeals = deals.filter(d => {
         if (usedDealIds.has(d.id)) return false;
         const code = legacyToCode(d.status);
@@ -4729,6 +4738,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
             entries.push({
               id: `${deal.id}_${alloc.agentName}`,
               dealId: deal.id,
+              dealRef: deal.dealRef ?? null,
               dealType: deal.dealType || null,
               ref: deal.name,
               groupName: deal.groupName || null,
@@ -4756,6 +4766,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
             entries.push({
               id: deal.id,
               dealId: deal.id,
+              dealRef: deal.dealRef ?? null,
               dealType: deal.dealType || null,
               ref: deal.name,
               groupName: deal.groupName || null,
@@ -4781,6 +4792,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               entries.push({
                 id: `${deal.id}_${agentName}`,
                 dealId: deal.id,
+                dealRef: deal.dealRef ?? null,
                 dealType: deal.dealType || null,
                 ref: deal.name,
                 groupName: deal.groupName || null,

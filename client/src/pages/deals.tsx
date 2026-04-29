@@ -152,18 +152,22 @@ export const DEAL_STATUS_COLORS: Record<string, string> = {
 };
 
 export const DEAL_TYPE_COLORS: Record<string, string> = {
+  // Legacy — still exist in older deals
   "Acquisition": "bg-blue-600",
-  "Sale": "bg-red-600",
   "Leasing": "bg-green-600",
-  "Lease Renewal": "bg-purple-600",
-  "Rent Review": "bg-orange-500",
   "Investment": "bg-indigo-600",
   "Lease Advisory": "bg-cyan-600",
+  // Current types
+  "Sale": "bg-red-600",
+  "Purchase": "bg-emerald-600",
+  "Investment Sale": "bg-red-700",
+  "Investment Acquisition": "bg-indigo-700",
+  "Lease Renewal": "bg-purple-600",
+  "Rent Review": "bg-orange-500",
   "Tenant Rep": "bg-rose-600",
   "Lease Acquisition": "bg-violet-600",
   "Lease Disposal": "bg-amber-600",
   "Regear": "bg-teal-600",
-  "Purchase": "bg-emerald-600",
   "New Letting": "bg-lime-600",
   "Sub-Letting": "bg-sky-600",
   "Assignment": "bg-slate-600",
@@ -704,7 +708,7 @@ export function DealFormDialog({
                 const val = v === "__clear__" ? "" : v;
                 set("dealType", val);
                 let autoTeam: string | null = null;
-                if (val === "Purchase" || val === "Sale") autoTeam = "Investment";
+                if (["Purchase", "Sale", "Investment Sale", "Investment Acquisition"].includes(val)) autoTeam = "Investment";
                 else if (val === "Lease Acquisition") autoTeam = "Tenant Rep";
                 else if (["Lease Disposal", "Lease Renewal", "Rent Review", "Regear"].includes(val)) autoTeam = "Lease Advisory";
                 if (autoTeam && !form.team.includes(autoTeam)) {
@@ -3980,7 +3984,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     }
     if (field === "dealType" && typeof value === "string") {
       const types = value.split(",").map(t => t.trim());
-      const investmentTypes = ["Purchase", "Sale"];
+      const investmentTypes = ["Purchase", "Sale", "Investment Sale", "Investment Acquisition"];
       const leaseAdvisoryTypes = ["Lease Disposal", "Lease Renewal", "Rent Review", "Regear"];
       const deal = deals.find(d => d.id === dealId);
       const currentTeams: string[] = Array.isArray(deal?.team) ? deal.team : deal?.team ? [deal.team] : [];

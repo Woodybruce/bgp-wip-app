@@ -33,6 +33,7 @@ type SortDirection = "asc" | "desc";
 interface WipDealEntry {
   id: string;
   dealId: string;
+  dealRef?: number | null;
   dealType: string | null;
   ref: string;
   groupName: string | null;
@@ -79,18 +80,22 @@ interface ReconciliationData {
 }
 
 const DEAL_TYPE_BADGE_COLORS: Record<string, string> = {
+  // Legacy — still exist in older deals
   "Acquisition": "bg-blue-100 text-blue-800",
-  "Sale": "bg-red-100 text-red-800",
   "Leasing": "bg-green-100 text-green-800",
-  "Lease Renewal": "bg-purple-100 text-purple-800",
-  "Rent Review": "bg-orange-100 text-orange-800",
   "Investment": "bg-indigo-100 text-indigo-800",
   "Lease Advisory": "bg-cyan-100 text-cyan-800",
+  // Current types
+  "Sale": "bg-red-100 text-red-800",
+  "Purchase": "bg-emerald-100 text-emerald-800",
+  "Investment Sale": "bg-red-200 text-red-900",
+  "Investment Acquisition": "bg-indigo-200 text-indigo-900",
+  "Lease Renewal": "bg-purple-100 text-purple-800",
+  "Rent Review": "bg-orange-100 text-orange-800",
   "Tenant Rep": "bg-rose-100 text-rose-800",
   "Lease Acquisition": "bg-violet-100 text-violet-800",
   "Lease Disposal": "bg-amber-100 text-amber-800",
   "Regear": "bg-teal-100 text-teal-800",
-  "Purchase": "bg-emerald-100 text-emerald-800",
   "New Letting": "bg-lime-100 text-lime-800",
   "Sub-Letting": "bg-sky-100 text-sky-800",
   "Assignment": "bg-slate-100 text-slate-800",
@@ -1146,6 +1151,7 @@ export default function WipReport() {
     sorted.sort((a, b) => {
       let aVal: any, bVal: any;
       switch (detailSort.column) {
+        case "dealRef": aVal = a.dealRef || 0; bVal = b.dealRef || 0; break;
         case "ref": aVal = a.ref || ""; bVal = b.ref || ""; break;
         case "groupName": aVal = a.groupName || ""; bVal = b.groupName || ""; break;
         case "project": aVal = a.project || ""; bVal = b.project || ""; break;
@@ -1516,6 +1522,7 @@ export default function WipReport() {
                       />
                     </th>
                     {[
+                      { key: "dealRef", label: "Ref", width: "w-16" },
                       { key: "ref", label: "Deal", width: "w-40" },
                       { key: "groupName", label: "Group", width: "w-28" },
                       { key: "project", label: "Project", width: "w-32" },
@@ -1555,6 +1562,9 @@ export default function WipReport() {
                             data-testid={`checkbox-select-${e.id}`}
                           />
                         )}
+                      </td>
+                      <td className="px-2 py-1.5 text-xs font-mono text-gray-400 whitespace-nowrap">
+                        {e.dealRef ? `#${e.dealRef}` : "—"}
                       </td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[180px]">
                         {e.dealId ? (
@@ -1597,7 +1607,7 @@ export default function WipReport() {
                 </tbody>
                 <tfoot className="bg-gray-100 border-t font-semibold">
                   <tr>
-                    <td colSpan={8} className="px-2 py-1.5 text-gray-800">Total</td>
+                    <td colSpan={9} className="px-2 py-1.5 text-gray-800">Total</td>
                     <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
                       {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
                     </td>
