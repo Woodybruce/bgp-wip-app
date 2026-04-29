@@ -1538,7 +1538,7 @@ export default function InvestmentTrackerPage() {
                   <TableHead className="w-[60px] text-right">NIY (%)</TableHead>
                   <TableHead className="w-[70px] text-right">Sq Ft</TableHead>
                   <TableHead className="w-[80px] text-right">Rent (pa)</TableHead>
-                  <TableHead className="w-[150px]">Client / Contact</TableHead>
+                  <TableHead className="w-[150px]">Client</TableHead>
                   {boardType === "Purchases" ? (
                     <>
                       <TableHead className="w-[150px]">Vendor / Agent</TableHead>
