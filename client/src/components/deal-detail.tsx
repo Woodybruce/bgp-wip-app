@@ -41,7 +41,17 @@ import {
   ExternalLink,
   Link2,
   Image as ImageIcon,
+  ChevronDown,
+  ChevronRight,
+  ShieldCheck,
+  History,
+  Mail,
+  Calendar as CalendarIcon,
+  TrendingUp,
+  FileText,
+  MessageSquare,
 } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { useState, useMemo, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
@@ -74,11 +84,102 @@ import {
 } from "@/pages/deals";
 // DealAmlStatusCard removed — KYC pack now consolidated on Compliance Board
 
+// Collapsible card pattern reused across the deal page for heavy panels.
+function CollapsibleCard({
+  open,
+  onToggle,
+  icon: Icon,
+  title,
+  children,
+  testId,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  icon: any;
+  title: string;
+  children: React.ReactNode;
+  testId?: string;
+}) {
+  return (
+    <Card>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+        data-testid={testId}
+      >
+        <div className="flex items-center gap-2">
+          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs font-semibold">{title}</span>
+        </div>
+        {open ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+      </button>
+      {open && <div className="px-3 pb-3 pt-1">{children}</div>}
+    </Card>
+  );
+}
+
+// Right-sidebar collapsible row (different styling — borderless, full-width).
+function SidebarSection({
+  open,
+  onToggle,
+  icon: Icon,
+  title,
+  children,
+  testId,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  icon: any;
+  title: string;
+  children: React.ReactNode;
+  testId?: string;
+}) {
+  return (
+    <div className="border-b">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors"
+        data-testid={testId}
+      >
+        <div className="flex items-center gap-2">
+          <Icon className="w-4 h-4 text-muted-foreground" />
+          <span className="text-sm font-semibold">{title}</span>
+        </div>
+        {open ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+      </button>
+      {open && <div className="px-4 pb-3">{children}</div>}
+    </div>
+  );
+}
+
 export function DealDetail({ id, isComps = false }: { id: string; isComps?: boolean }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+
+  // Heavy panels — collapsed by default to keep the page scannable.
+  const [mainSections, setMainSections] = useState<Record<string, boolean>>({
+    pathway: false,
+    kyc: false,
+    brands: false,
+    timeline: false,
+    audit: false,
+    emails: false,
+    meetings: false,
+  });
+  const toggleMain = (key: string) => setMainSections(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Right sidebar — linked records, files, contacts.
+  const [sidebarSections, setSidebarSections] = useState<Record<string, boolean>>({
+    files: true,
+    property: true,
+    contacts: true,
+    comments: true,
+  });
+  const toggleSidebar = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
 
   const { data: deal, isLoading } = useQuery<CrmDeal>({
     queryKey: ["/api/crm/deals", id],
@@ -236,13 +337,19 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   ];
 
   return (
-    <div className="p-4 sm:p-6 space-y-4" data-testid={`deal-detail-${id}`}>
-      <Breadcrumbs
-        items={[
-          { label: isComps ? "Comps" : "Deals", href: isComps ? "/comps" : "/deals" },
-          { label: linkedProperty?.name || deal.name },
-        ]}
-      />
+    <div className="h-[calc(100vh-48px)] flex flex-col" data-testid={`deal-detail-${id}`}>
+      <div className="px-4 sm:px-6 pt-4 sm:pt-5">
+        <Breadcrumbs
+          items={[
+            { label: isComps ? "Comps" : "Deals", href: isComps ? "/comps" : "/deals" },
+            { label: linkedProperty?.name || deal.name },
+          ]}
+        />
+      </div>
+
+      <div className="flex-1 flex min-h-0">
+        <div className="flex-1 overflow-y-auto">
+          <div className="p-4 sm:p-6 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
         <Link href={isComps ? "/comps" : "/deals"}>
           <Button variant="ghost" size="icon" data-testid="button-back-deals">
@@ -370,71 +477,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
       <XeroInvoiceSection dealId={deal.id} deal={deal} companies={companies} />
 
-      {deal.comments && (
-        <Card>
-          <CardContent className="p-3 space-y-1">
-            <p className="text-[10px] text-muted-foreground font-medium">Comments</p>
-            <p className="text-xs whitespace-pre-wrap" data-testid="text-deal-comments">{deal.comments}</p>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card data-testid="deal-files-section">
-        <CardContent className="p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <p className="text-[10px] text-muted-foreground font-medium">Files</p>
-          </div>
-          {deal.sharepointLink ? (
-            <div className="flex items-center gap-2">
-              <a
-                href={deal.sharepointLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 text-sm text-primary hover:underline"
-                data-testid="link-deal-sharepoint-folder"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                Open in SharePoint
-              </a>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-[10px] text-muted-foreground"
-                onClick={() => {
-                  setSharepointUrlInput(deal.sharepointLink || "");
-                  setSharepointDialogOpen(true);
-                }}
-                data-testid="button-edit-sharepoint-link"
-              >
-                <Pencil className="w-3 h-3" />
-              </Button>
-            </div>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs"
-              onClick={() => {
-                setSharepointUrlInput("");
-                setSharepointDialogOpen(true);
-              }}
-              data-testid="button-link-sharepoint-folder"
-            >
-              <Link2 className="w-3.5 h-3.5 mr-1.5" />
-              Link SharePoint Folder
-            </Button>
-          )}
-          {deal.propertyId && (
-            <Link href={`/properties/${deal.propertyId}`}>
-              <span className="text-sm text-muted-foreground hover:text-primary flex items-center gap-1 cursor-pointer" data-testid="link-deal-sharepoint">
-                <Building2 className="w-3.5 h-3.5" />
-                View property folder — {linkedProperty?.name || "Property"}
-              </span>
-            </Link>
-          )}
-        </CardContent>
-      </Card>
-
       <Dialog open={sharepointDialogOpen} onOpenChange={setSharepointDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -484,86 +526,59 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </DialogContent>
       </Dialog>
 
-      <PathwayIntelStrip
-        propertyId={(deal as any).propertyId || undefined}
-        address={(deal as any).propertyAddress || (deal as any).address || deal.name}
-        postcode={(deal as any).postcode}
-      />
+      <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-deal-pathway">
+        <PathwayIntelStrip
+          propertyId={(deal as any).propertyId || undefined}
+          address={(deal as any).propertyAddress || (deal as any).address || deal.name}
+          postcode={(deal as any).postcode}
+        />
+      </CollapsibleCard>
 
-      <DealKYCPanel deal={deal} companies={companies} />
+      <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
+        <DealKYCPanel deal={deal} companies={companies} />
+      </CollapsibleCard>
 
-      {/* Brand profiles for counterparties on this deal */}
       {[
         { company: linkedTenant, role: "Tenant" },
         { company: linkedLandlord, role: "Landlord" },
       ]
         .filter(({ company }) => !!company)
-        .filter(({ company }, i, arr) => arr.findIndex(a => a.company!.id === company!.id) === i)
-        .map(({ company, role }) => (
-          <div key={company!.id} data-testid={`deal-brand-${role.toLowerCase()}`}>
-            <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1 flex items-center gap-1.5">
-              <Building2 className="w-3 h-3" /> {role}: {company!.name}
-            </p>
-            <BrandProfilePanel companyId={company!.id} />
-          </div>
-        ))}
-
-      <DealTimeline dealId={id} />
-
-      <DealAuditLog dealId={id} />
-
-      <DealRelatedEmails dealId={id} />
-      <DealRelatedMeetings dealId={id} />
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {linkedProperty && (
-          <Card data-testid="linked-property-panel">
-            <CardContent className="p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Building2 className="w-3.5 h-3.5" />
-                <h3 className="text-xs font-semibold">Linked Property</h3>
-              </div>
-              <Link href={`/properties/${linkedProperty.id}`}>
-                <div className="p-2 rounded-md border hover-elevate cursor-pointer">
-                  <p className="text-xs font-medium">{linkedProperty.name}</p>
-                  {linkedProperty.status && (
-                    <Badge variant="outline" className="mt-0.5 text-[9px]">{linkedProperty.status}</Badge>
-                  )}
+        .filter(({ company }, i, arr) => arr.findIndex(a => a.company!.id === company!.id) === i).length > 0 && (
+        <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Profiles" testId="toggle-deal-brands">
+          <div className="space-y-3">
+            {[
+              { company: linkedTenant, role: "Tenant" },
+              { company: linkedLandlord, role: "Landlord" },
+            ]
+              .filter(({ company }) => !!company)
+              .filter(({ company }, i, arr) => arr.findIndex(a => a.company!.id === company!.id) === i)
+              .map(({ company, role }) => (
+                <div key={company!.id} data-testid={`deal-brand-${role.toLowerCase()}`}>
+                  <p className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1 flex items-center gap-1.5">
+                    <Building2 className="w-3 h-3" /> {role}: {company!.name}
+                  </p>
+                  <BrandProfilePanel companyId={company!.id} />
                 </div>
-              </Link>
-            </CardContent>
-          </Card>
-        )}
+              ))}
+          </div>
+        </CollapsibleCard>
+      )}
 
-        {linkedContacts.length > 0 && (
-          <Card data-testid="linked-contacts-panel">
-            <CardContent className="p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Users className="w-3.5 h-3.5" />
-                <h3 className="text-xs font-semibold">Linked Contacts</h3>
-                <Badge variant="secondary" className="text-[9px]">{linkedContacts.length}</Badge>
-              </div>
-              <div className="space-y-1">
-                {linkedContacts.map((contact) => (
-                  <Link key={contact.id} href={`/contacts/${contact.id}`}>
-                    <div className="p-2 rounded-md border hover-elevate cursor-pointer">
-                      <p className="text-xs font-medium">{contact.name}</p>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {contact.role && (
-                          <span className="text-[9px] text-muted-foreground">{contact.role}</span>
-                        )}
-                        {contact.companyName && (
-                          <Badge variant="outline" className="text-[9px]">{contact.companyName}</Badge>
-                        )}
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
+      <CollapsibleCard open={mainSections.timeline} onToggle={() => toggleMain("timeline")} icon={CalendarIcon} title="Timeline" testId="toggle-deal-timeline">
+        <DealTimeline dealId={id} />
+      </CollapsibleCard>
+
+      <CollapsibleCard open={mainSections.audit} onToggle={() => toggleMain("audit")} icon={History} title="Audit Log" testId="toggle-deal-audit">
+        <DealAuditLog dealId={id} />
+      </CollapsibleCard>
+
+      <CollapsibleCard open={mainSections.emails} onToggle={() => toggleMain("emails")} icon={Mail} title="Related Emails" testId="toggle-deal-emails">
+        <DealRelatedEmails dealId={id} />
+      </CollapsibleCard>
+
+      <CollapsibleCard open={mainSections.meetings} onToggle={() => toggleMain("meetings")} icon={CalendarIcon} title="Related Meetings" testId="toggle-deal-meetings">
+        <DealRelatedMeetings dealId={id} />
+      </CollapsibleCard>
 
       {deal.updatedAt && (
         <p className="text-xs text-muted-foreground flex items-center gap-1">
@@ -581,7 +596,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         users={users}
       />
 
-      <div className="flex justify-start mt-8 pt-4 border-t">
+      <div className="flex justify-start mt-6 pt-3 border-t">
         <Button variant="outline" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteOpen(true)} data-testid="button-delete-deal">
           <Trash2 className="w-4 h-4 mr-2" />
           Delete Deal
@@ -608,6 +623,125 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+          </div>
+        </div>
+
+        {/* Right sidebar — linked records, files, comments */}
+        <div className="w-[300px] border-l bg-background flex flex-col shrink-0 h-full overflow-hidden hidden md:flex">
+          <ScrollArea className="flex-1">
+            <div className="px-4 pt-4 pb-3 border-b">
+              <h3 className="text-sm font-bold leading-tight truncate" data-testid="sidebar-deal-name">{linkedProperty?.name || deal.name}</h3>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {deal.status && (
+                  <Badge className={`text-[10px] text-white ${DEAL_STATUS_COLORS[deal.status] || "bg-zinc-500"}`}>
+                    {(() => { const code = legacyToCode(deal.status); return code ? DEAL_STATUS_LABELS[code] : deal.status; })()}
+                  </Badge>
+                )}
+                {deal.dealType && (
+                  <Badge variant="outline" className="text-[10px]">{deal.dealType}</Badge>
+                )}
+                {deal.fee != null && (
+                  <Badge variant="outline" className="text-[10px] font-mono">{formatCurrency(deal.fee)}</Badge>
+                )}
+              </div>
+            </div>
+
+            <SidebarSection open={sidebarSections.files} onToggle={() => toggleSidebar("files")} icon={FileText} title="Files" testId="toggle-sidebar-files">
+              <div className="space-y-2" data-testid="deal-files-section">
+                {deal.sharepointLink ? (
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={deal.sharepointLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 text-xs text-primary hover:underline"
+                      data-testid="link-deal-sharepoint-folder"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      Open in SharePoint
+                    </a>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[10px] text-muted-foreground"
+                      onClick={() => {
+                        setSharepointUrlInput(deal.sharepointLink || "");
+                        setSharepointDialogOpen(true);
+                      }}
+                      data-testid="button-edit-sharepoint-link"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs h-7 w-full justify-start"
+                    onClick={() => {
+                      setSharepointUrlInput("");
+                      setSharepointDialogOpen(true);
+                    }}
+                    data-testid="button-link-sharepoint-folder"
+                  >
+                    <Link2 className="w-3 h-3 mr-1.5" />
+                    Link SharePoint Folder
+                  </Button>
+                )}
+                {deal.propertyId && (
+                  <Link href={`/properties/${deal.propertyId}`}>
+                    <span className="text-xs text-muted-foreground hover:text-primary flex items-center gap-1 cursor-pointer" data-testid="link-deal-sharepoint">
+                      <Building2 className="w-3 h-3" />
+                      Property folder
+                    </span>
+                  </Link>
+                )}
+              </div>
+            </SidebarSection>
+
+            {linkedProperty && (
+              <SidebarSection open={sidebarSections.property} onToggle={() => toggleSidebar("property")} icon={Building2} title="Linked Property" testId="toggle-sidebar-property">
+                <Link href={`/properties/${linkedProperty.id}`}>
+                  <div className="p-2 rounded-md border hover-elevate cursor-pointer" data-testid="linked-property-panel">
+                    <p className="text-xs font-medium">{linkedProperty.name}</p>
+                    {linkedProperty.status && (
+                      <Badge variant="outline" className="mt-1 text-[9px]">{linkedProperty.status}</Badge>
+                    )}
+                  </div>
+                </Link>
+              </SidebarSection>
+            )}
+
+            {linkedContacts.length > 0 && (
+              <SidebarSection open={sidebarSections.contacts} onToggle={() => toggleSidebar("contacts")} icon={Users} title={`Linked Contacts (${linkedContacts.length})`} testId="toggle-sidebar-contacts">
+                <div className="space-y-1.5" data-testid="linked-contacts-panel">
+                  {linkedContacts.map((contact) => (
+                    <Link key={contact.id} href={`/contacts/${contact.id}`}>
+                      <div className="p-2 rounded-md border hover-elevate cursor-pointer">
+                        <p className="text-xs font-medium">{contact.name}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {contact.role && (
+                            <span className="text-[9px] text-muted-foreground">{contact.role}</span>
+                          )}
+                          {contact.companyName && (
+                            <Badge variant="outline" className="text-[9px]">{contact.companyName}</Badge>
+                          )}
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </SidebarSection>
+            )}
+
+            {deal.comments && (
+              <SidebarSection open={sidebarSections.comments} onToggle={() => toggleSidebar("comments")} icon={MessageSquare} title="Comments" testId="toggle-sidebar-comments">
+                <p className="text-xs whitespace-pre-wrap text-muted-foreground" data-testid="text-deal-comments">{deal.comments}</p>
+              </SidebarSection>
+            )}
+          </ScrollArea>
+        </div>
+      </div>
     </div>
   );
 }

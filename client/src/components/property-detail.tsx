@@ -23,6 +23,12 @@ import {
   UserCheck,
   Image as ImageIcon,
   MessageSquare,
+  Calendar as CalendarIcon,
+  Newspaper,
+  ShieldCheck,
+  Sparkles,
+  Activity,
+  TrendingUp,
 } from "lucide-react";
 import { useState, useMemo, useEffect } from "react";
 import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
@@ -75,6 +81,42 @@ import {
   type DealLink,
 } from "@/pages/properties";
 
+// Compact collapsible card used by the heavy mid-page panels (leasing schedule,
+// tenancy, KYC, etc). Header is always rendered; body only mounts when open.
+function CollapsibleCard({
+  open,
+  onToggle,
+  icon: Icon,
+  title,
+  children,
+  testId,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  icon: any;
+  title: string;
+  children: React.ReactNode;
+  testId?: string;
+}) {
+  return (
+    <Card>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+        data-testid={testId}
+      >
+        <div className="flex items-center gap-2">
+          <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs font-semibold">{title}</span>
+        </div>
+        {open ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />}
+      </button>
+      {open && <div className="px-3 pb-3 pt-1">{children}</div>}
+    </Card>
+  );
+}
+
 export function PropertyDetail({ id }: { id: string }) {
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
@@ -116,6 +158,7 @@ export function PropertyDetail({ id }: { id: string }) {
 
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [editingAddress, setEditingAddress] = useState(false);
+  const [streetViewExpanded, setStreetViewExpanded] = useState(false);
   const [sidebarSections, setSidebarSections] = useState<Record<string, boolean>>({
     details: true,
     files: true,
@@ -125,6 +168,21 @@ export function PropertyDetail({ id }: { id: string }) {
     landRegistry: false,
   });
   const toggleSection = (key: string) => setSidebarSections(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Heavy panels in the main column — collapsed by default to keep the page short.
+  const [mainSections, setMainSections] = useState<Record<string, boolean>>({
+    leasingSchedule: true,
+    tenancy: true,
+    pathway: false,
+    property360: false,
+    kyc: false,
+    intel: false,
+    pitch: false,
+    brands: false,
+    news: false,
+    contacts: false,
+  });
+  const toggleMain = (key: string) => setMainSections(prev => ({ ...prev, [key]: !prev[key] }));
   const { toast } = useToast();
 
   const updateMutation = useMutation({
@@ -208,7 +266,7 @@ export function PropertyDetail({ id }: { id: string }) {
       </div>
       <div className="flex-1 flex min-h-0">
         <div className="flex-1 overflow-y-auto">
-          <div className="p-4 sm:p-6 space-y-5">
+          <div className="p-4 sm:p-6 space-y-3">
             <div className="flex items-center gap-3 flex-wrap">
               <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={() => window.history.length > 1 ? window.history.back() : window.location.href = "/properties"}>
                 <ArrowLeft className="w-3.5 h-3.5" />
@@ -299,132 +357,144 @@ export function PropertyDetail({ id }: { id: string }) {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              <Card>
-                <CardContent className="p-3 space-y-1">
-                  <p className="text-xs text-muted-foreground">Status</p>
-                  <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-3 space-y-1">
-                  <p className="text-xs text-muted-foreground">Asset Class</p>
-                  <InlineEngagement value={property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-3 space-y-1">
-                  <p className="text-xs text-muted-foreground">Tenure</p>
-                  <InlineLabelSelect value={property.tenure} options={TENURE_OPTIONS} colorMap={TENURE_COLORS} onSave={(val) => inlineUpdate("tenure", val)} placeholder="Set tenure" />
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-3 space-y-1">
-                  <p className="text-xs text-muted-foreground">Team</p>
-                  <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-3 space-y-1">
-                  <p className="text-xs text-muted-foreground">Landlord / Client</p>
-                  <InlineLandlord propertyId={id} landlordId={property.landlordId} allCompanies={allCompanies} />
-                </CardContent>
-              </Card>
-              <Card className="border-amber-200 dark:border-amber-800">
-                <CardContent className="p-3 space-y-1">
-                  <div className="flex items-center gap-1">
-                    <p className="text-xs text-muted-foreground">Billing Entity</p>
-                    <Badge variant="outline" className="text-[8px] px-1 py-0 border-amber-300 text-amber-600">SPV</Badge>
+            <Card>
+              <CardContent className="p-3">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-x-4 gap-y-2">
+                  <div>
+                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Status</p>
+                    <InlineLabelSelect value={property.status} options={STATUS_OPTIONS} colorMap={PROPERTY_STATUS_COLORS} onSave={(val) => inlineUpdate("status", val)} placeholder="Set status" />
                   </div>
-                  <InlineBillingEntity propertyId={id} billingEntityId={property.billingEntityId} landlordId={property.landlordId} allCompanies={allCompanies} />
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-3 space-y-1">
-                  <p className="text-xs text-muted-foreground">Sq Ft</p>
-                  <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-3 space-y-1">
-                  <p className="text-xs text-muted-foreground">Tenants</p>
-                  <InlineTenants propertyId={id} tenantLinks={tenantLinks} allCompanies={allCompanies} />
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-3 space-y-1">
-                  <p className="text-xs text-muted-foreground">Website</p>
-                  <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm" />
-                  {property.website && (
-                    <a href={property.website.startsWith("http") ? property.website : `https://${property.website}`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-1">
-                      <Globe className="w-3 h-3" /> Open <ExternalLink className="w-3 h-3" />
-                    </a>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Asset Class</p>
+                    <InlineEngagement value={property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Tenure</p>
+                    <InlineLabelSelect value={property.tenure} options={TENURE_OPTIONS} colorMap={TENURE_COLORS} onSave={(val) => inlineUpdate("tenure", val)} placeholder="Set tenure" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Team</p>
+                    <InlineEngagement value={property.bgpEngagement} options={TEAM_OPTIONS} colorMap={TEAM_COLORS} onSave={(val) => inlineUpdate("bgpEngagement", val)} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Sq Ft</p>
+                    <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Landlord / Client</p>
+                    <InlineLandlord propertyId={id} landlordId={property.landlordId} allCompanies={allCompanies} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1 mb-0.5">
+                      <p className="text-[10px] text-muted-foreground leading-tight">Billing Entity</p>
+                      <Badge variant="outline" className="text-[8px] px-1 py-0 border-amber-300 text-amber-600">SPV</Badge>
+                    </div>
+                    <InlineBillingEntity propertyId={id} billingEntityId={property.billingEntityId} landlordId={property.landlordId} allCompanies={allCompanies} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Tenants</p>
+                    <InlineTenants propertyId={id} tenantLinks={tenantLinks} allCompanies={allCompanies} />
+                  </div>
+                  <div className="col-span-2 sm:col-span-2 lg:col-span-2">
+                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Website</p>
+                    <div className="flex items-center gap-2">
+                      <InlineText value={property.website || ""} onSave={(val) => inlineUpdate("website", val)} placeholder="Set website" className="text-sm" />
+                      {property.website && (
+                        <a href={property.website.startsWith("http") ? property.website : `https://${property.website}`} target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 shrink-0">
+                          <Globe className="w-3 h-3" /> <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
 
             <Card>
               <CardContent className="p-3 space-y-1">
-                <p className="text-xs text-muted-foreground">Notes</p>
+                <p className="text-[10px] text-muted-foreground">Notes</p>
                 <InlineText value={property.notes || ""} onSave={(val) => inlineUpdate("notes", val)} placeholder="Add notes..." className="text-sm" multiline />
               </CardContent>
             </Card>
 
-            <StreetViewCard address={formatAddress(property.address) || property.name} propertyName={property.name} />
+            {streetViewExpanded ? (
+              <div className="relative">
+                <StreetViewCard address={formatAddress(property.address) || property.name} propertyName={property.name} />
+                <Button variant="outline" size="sm" className="absolute top-2 right-2 h-7 text-xs" onClick={() => setStreetViewExpanded(false)} data-testid="button-collapse-street-view">
+                  <X className="w-3 h-3 mr-1" /> Hide
+                </Button>
+              </div>
+            ) : (
+              <Button variant="outline" size="sm" className="w-full justify-start gap-2 text-xs" onClick={() => setStreetViewExpanded(true)} data-testid="button-expand-street-view">
+                <ImageIcon className="w-3.5 h-3.5" />
+                Show Street View
+              </Button>
+            )}
 
             {(property.status === "Leasing Instruction" || property.status === "Lease Advisory Instruction") && (
               <LeasingTrackerSummary propertyId={property.id} />
             )}
 
-            <Card>
-              <CardContent className="p-4">
-                <PropertyLeasingSchedule propertyId={property.id} />
-              </CardContent>
-            </Card>
+            <CollapsibleCard open={mainSections.leasingSchedule} onToggle={() => toggleMain("leasingSchedule")} icon={CalendarIcon} title="Leasing Schedule" testId="toggle-leasing-schedule">
+              <PropertyLeasingSchedule propertyId={property.id} />
+            </CollapsibleCard>
 
             <ErrorBoundary compact name="Tenancy schedule">
-              <Card>
-                <CardContent className="p-4">
-                  <PropertyTenancySchedule propertyId={property.id} />
-                </CardContent>
-              </Card>
+              <CollapsibleCard open={mainSections.tenancy} onToggle={() => toggleMain("tenancy")} icon={Users} title="Tenancy Schedule" testId="toggle-tenancy">
+                <PropertyTenancySchedule propertyId={property.id} />
+              </CollapsibleCard>
             </ErrorBoundary>
 
             <ErrorBoundary compact name="Pathway intel strip">
-              <PathwayIntelStrip
-                propertyId={property.id}
-                address={typeof property.address === "string" ? property.address : (property.address as any)?.line1 || property.name}
-                postcode={(property as any).postcode || (property.address as any)?.postcode}
-              />
+              <CollapsibleCard open={mainSections.pathway} onToggle={() => toggleMain("pathway")} icon={TrendingUp} title="Pathway Intel" testId="toggle-pathway">
+                <PathwayIntelStrip
+                  propertyId={property.id}
+                  address={typeof property.address === "string" ? property.address : (property.address as any)?.line1 || property.name}
+                  postcode={(property as any).postcode || (property.address as any)?.postcode}
+                />
+              </CollapsibleCard>
             </ErrorBoundary>
 
             <ErrorBoundary compact name="Property 360">
-              <Property360Panel propertyId={property.id} />
+              <CollapsibleCard open={mainSections.property360} onToggle={() => toggleMain("property360")} icon={Activity} title="Property 360" testId="toggle-property360">
+                <Property360Panel propertyId={property.id} />
+              </CollapsibleCard>
             </ErrorBoundary>
 
             <ErrorBoundary compact name="KYC panel">
-              <PropertyKycPanel property={property} />
+              <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-kyc">
+                <PropertyKycPanel property={property} />
+              </CollapsibleCard>
             </ErrorBoundary>
 
             <ErrorBoundary compact name="Property intelligence (Land Registry / planning)">
-              <PropertyIntelligencePanel property={property} />
+              <CollapsibleCard open={mainSections.intel} onToggle={() => toggleMain("intel")} icon={Landmark} title="Property Intelligence" testId="toggle-intel">
+                <PropertyIntelligencePanel property={property} />
+              </CollapsibleCard>
             </ErrorBoundary>
 
             <ErrorBoundary compact name="Leasing pitch">
-              <LeasingPitchPanel propertyId={property.id} />
+              <CollapsibleCard open={mainSections.pitch} onToggle={() => toggleMain("pitch")} icon={Sparkles} title="Leasing Pitch" testId="toggle-pitch">
+                <LeasingPitchPanel propertyId={property.id} />
+              </CollapsibleCard>
             </ErrorBoundary>
 
             <ErrorBoundary compact name="Brand gap">
-              <BrandGapPanel propertyId={property.id} />
+              <CollapsibleCard open={mainSections.brands} onToggle={() => toggleMain("brands")} icon={Building2} title="Brand Gap" testId="toggle-brands">
+                <BrandGapPanel propertyId={property.id} />
+              </CollapsibleCard>
             </ErrorBoundary>
 
             <ErrorBoundary compact name="Property news">
-              <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
+              <CollapsibleCard open={mainSections.news} onToggle={() => toggleMain("news")} icon={Newspaper} title="Property News" testId="toggle-news">
+                <PropertyNewsPanel propertyId={property.id} propertyName={property.name} />
+              </CollapsibleCard>
             </ErrorBoundary>
 
             <ErrorBoundary compact name="Linked contacts">
-              <LinkedContactsPanel propertyId={property.id} />
+              <CollapsibleCard open={mainSections.contacts} onToggle={() => toggleMain("contacts")} icon={UserCheck} title="Linked Contacts" testId="toggle-contacts">
+                <LinkedContactsPanel propertyId={property.id} />
+              </CollapsibleCard>
             </ErrorBoundary>
 
             <div className="md:hidden space-y-4">
