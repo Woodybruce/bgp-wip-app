@@ -1765,6 +1765,51 @@ Only return the JSON object. If uncertain, return {"role": null}.`
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // ── Deal WIP Badges endpoint ──────────────────────────────────────────
+  // MUST be registered before the /:id route below — Express matches routes
+  // in order and "wip-badges" would otherwise be captured as an :id param.
+  app.get("/api/crm/deals/wip-badges", requireAuth, async (req: any, res) => {
+    try {
+      const { rows: deals } = await pool.query(`SELECT id, name FROM crm_deals`);
+      const { rows: wips } = await pool.query(`
+        SELECT ref, project, amt_wip, amt_invoice, deal_status AS stage, month
+        FROM wip_entries
+      `);
+
+      const result: Record<string, { amtWip: number; amtInvoice: number; count: number; entries: any[] }> = {};
+
+      for (const d of deals) {
+        const matched = wips.filter((w: any) => {
+          if (!w.project || !d.name) return false;
+          const wp = w.project.toLowerCase();
+          const dn = d.name.toLowerCase();
+          return wp.includes(dn) || dn.includes(wp);
+        });
+
+        if (matched.length > 0) {
+          result[d.id] = {
+            amtWip: matched.reduce((sum: number, w: any) => sum + (parseFloat(w.amt_wip) || 0), 0),
+            amtInvoice: matched.reduce((sum: number, w: any) => sum + (parseFloat(w.amt_invoice) || 0), 0),
+            count: matched.length,
+            entries: matched.map((w: any) => ({
+              ref: w.ref,
+              project: w.project,
+              amtWip: parseFloat(w.amt_wip) || 0,
+              amtInvoice: parseFloat(w.amt_invoice) || 0,
+              stage: w.stage,
+              month: w.month,
+            })),
+          };
+        }
+      }
+
+      res.json(result);
+    } catch (e: any) {
+      console.error("[wip-badges] Error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/crm/deals/:id", async (req, res) => {
     try {
       const deal = await storage.getCrmDeal(req.params.id);
@@ -5851,49 +5896,6 @@ Rules:
       res.json(Array.from(grouped.values()));
     } catch (e: any) {
       console.error("[my-portfolio] Error:", e);
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  // ── Deal WIP Badges endpoint ──────────────────────────────────────────
-  app.get("/api/crm/deals/wip-badges", requireAuth, async (req: any, res) => {
-    try {
-      const { rows: deals } = await pool.query(`SELECT id, name FROM crm_deals`);
-      const { rows: wips } = await pool.query(`
-        SELECT ref, project, amt_wip, amt_invoice, deal_status AS stage, month
-        FROM wip_entries
-      `);
-
-      const result: Record<string, { amtWip: number; amtInvoice: number; count: number; entries: any[] }> = {};
-
-      for (const d of deals) {
-        const matched = wips.filter((w: any) => {
-          if (!w.project || !d.name) return false;
-          const wp = w.project.toLowerCase();
-          const dn = d.name.toLowerCase();
-          return wp.includes(dn) || dn.includes(wp);
-        });
-
-        if (matched.length > 0) {
-          result[d.id] = {
-            amtWip: matched.reduce((sum: number, w: any) => sum + (parseFloat(w.amt_wip) || 0), 0),
-            amtInvoice: matched.reduce((sum: number, w: any) => sum + (parseFloat(w.amt_invoice) || 0), 0),
-            count: matched.length,
-            entries: matched.map((w: any) => ({
-              ref: w.ref,
-              project: w.project,
-              amtWip: parseFloat(w.amt_wip) || 0,
-              amtInvoice: parseFloat(w.amt_invoice) || 0,
-              stage: w.stage,
-              month: w.month,
-            })),
-          };
-        }
-      }
-
-      res.json(result);
-    } catch (e: any) {
-      console.error("[wip-badges] Error:", e);
       res.status(500).json({ error: e.message });
     }
   });

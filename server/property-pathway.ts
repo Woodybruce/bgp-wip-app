@@ -5031,19 +5031,10 @@ export function registerPropertyPathwayRoutes(app: Express) {
     }
   });
 
-  // Fetch current state of a run
-  app.get("/api/property-pathway/:runId", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const run = await getRun(String(req.params.runId));
-      if (!run) return res.status(404).json({ error: "Run not found" });
-      res.json(run);
-    } catch (err: any) {
-      res.status(500).json({ error: err?.message });
-    }
-  });
-
   // Latest pathway run for a property id or address — used by property/deal detail
   // pages to show an intelligence summary without re-running paid lookups.
+  // MUST be registered before /:runId — Express matches in order and "latest"
+  // would otherwise be captured as a runId parameter.
   app.get("/api/property-pathway/latest", requireAuth, async (req: Request, res: Response) => {
     try {
       const propertyId = (req.query.propertyId as string) || "";
@@ -5071,6 +5062,17 @@ export function registerPropertyPathwayRoutes(app: Express) {
       });
       if (!match) return res.json(null);
       res.json(match);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // Fetch current state of a run
+  app.get("/api/property-pathway/:runId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const run = await getRun(String(req.params.runId));
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      res.json(run);
     } catch (err: any) {
       res.status(500).json({ error: err?.message });
     }
