@@ -962,6 +962,25 @@ export function registerImageStudioRoutes(app: Express) {
     }
   });
 
+  // MUST be registered before /:id — Express matches in order and "bulk-categorize"
+  // would otherwise be captured as an :id parameter.
+  app.patch("/api/image-studio/bulk-categorize", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { ids, category } = req.body;
+      if (!Array.isArray(ids) || !ids.length || !category) {
+        return res.status(400).json({ error: "ids (array) and category (string) required" });
+      }
+      const placeholders = ids.map((_: string, i: number) => `$${i + 1}`).join(", ");
+      await pool.query(
+        `UPDATE image_studio_images SET category = $${ids.length + 1} WHERE id IN (${placeholders})`,
+        [...ids, category]
+      );
+      res.json({ success: true, updated: ids.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.patch("/api/image-studio/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
       const updates: Record<string, any> = {};
@@ -1013,23 +1032,6 @@ export function registerImageStudioRoutes(app: Express) {
       );
       await db.delete(imageStudioImages).where(inArray(imageStudioImages.id, ids));
       res.json({ success: true, deleted: images.length });
-    } catch (e: any) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  app.patch("/api/image-studio/bulk-categorize", requireAuth, requireAdmin, async (req: Request, res: Response) => {
-    try {
-      const { ids, category } = req.body;
-      if (!Array.isArray(ids) || !ids.length || !category) {
-        return res.status(400).json({ error: "ids (array) and category (string) required" });
-      }
-      const placeholders = ids.map((_: string, i: number) => `$${i + 1}`).join(", ");
-      await pool.query(
-        `UPDATE image_studio_images SET category = $${ids.length + 1} WHERE id IN (${placeholders})`,
-        [...ids, category]
-      );
-      res.json({ success: true, updated: ids.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
