@@ -368,7 +368,7 @@ export async function importWipFromBuffer(
         groupName: pick(kr, "Group") || null,
         project: pick(kr, "Project") || null,
         tenant: pick(kr, "Tenant") || null,
-        team: pick(kr, "Team") || null,
+        team: normalizeTeamName(pick(kr, "Team")),
         agent: pick(kr, "Agent") || null,
         amtWip: parseFloat(pick(kr, "Amt WIP", "AmtWIP")) || 0,
         amtInvoice: parseFloat(pick(kr, "Amt invoice", "AmtInvoice")) || 0,
@@ -391,7 +391,7 @@ export async function importWipFromBuffer(
       groupName: pick(kr, "Group") || null,
       project: pick(kr, "Project") || null,
       tenant: pick(kr, "Tenant") || pick(kr, "Client") || null,
-      team: pick(kr, "Team") || null,
+      team: normalizeTeamName(pick(kr, "Team")),
       agent: (() => {
         const a = String(pick(kr, "Agent") || "").trim().replace(/\s*\(BGP House\)/i, "").trim();
         return a.toLowerCase() === "bgp house" ? "BGP" : (a || null);
@@ -681,6 +681,21 @@ function wipFuzzyMatch(wipName: string, nameMap: Map<string, string>): string | 
   return null;
 }
 
+// Sage WIP exports use legacy team labels. Normalize them on the way in so the
+// rest of the app sees the canonical team set (matches the filter dropdowns).
+//   "London Leasing Hospitality"        → "London F&B"
+//   "London Leasing Hospitality & USA"  → "London F&B"
+//   "London Leasing Retail"             → "London Retail"
+export function normalizeTeamName(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+  if (lower.includes("hospitality")) return "London F&B";
+  if (lower.includes("london") && lower.includes("retail")) return "London Retail";
+  return trimmed;
+}
+
 function parseWipMonthToDate(month: string | null): Date | null {
   if (!month) return null;
   const m = month.trim();
@@ -790,7 +805,9 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
         }
       }
 
-      const teamArr = (deal.teams || []).filter(Boolean);
+      const teamArr = Array.from(new Set(
+        (deal.teams || []).map((t: string) => normalizeTeamName(t)).filter(Boolean) as string[]
+      ));
       const agentArr = (deal.agents || []).filter(Boolean);
       let dealType = 'Leasing';
       if (teamArr.some((t: string) => t === 'Investment')) dealType = 'Investment';
@@ -4862,6 +4879,43 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         updated++;
       }
       res.json({ success: true, updated, dealsWithoutDate: deals.length, wipEntries: entries.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // One-shot: rewrites legacy team labels to the canonical set in both
+  // wip_entries.team (text) and crm_deals.team (text[]). Idempotent.
+  app.post("/api/wip/normalize-team-names", requireAuth, async (req, res) => {
+    try {
+      if (!(await isWipSenior(req))) return res.status(403).json({ error: "Not authorised" });
+
+      const { rows: wipRows } = await pool.query(`SELECT id, team FROM wip_entries WHERE team IS NOT NULL AND team != ''`);
+      let wipUpdated = 0;
+      for (const r of wipRows) {
+        const norm = normalizeTeamName(r.team);
+        if (norm && norm !== r.team) {
+          await pool.query(`UPDATE wip_entries SET team=$1 WHERE id=$2`, [norm, r.id]);
+          wipUpdated++;
+        }
+      }
+
+      const { rows: dealRows } = await pool.query(`SELECT id, team FROM crm_deals WHERE team IS NOT NULL AND array_length(team, 1) > 0`);
+      let dealsUpdated = 0;
+      for (const d of dealRows) {
+        const arr: string[] = Array.isArray(d.team) ? d.team : [];
+        const normalized = Array.from(new Set(
+          arr.map(t => normalizeTeamName(t)).filter(Boolean) as string[]
+        ));
+        const changed = normalized.length !== arr.length || normalized.some((v, i) => v !== arr[i]);
+        if (changed) {
+          const pgArr = `{${normalized.map(t => `"${t.replace(/"/g, '\\"')}"`).join(',')}}`;
+          await pool.query(`UPDATE crm_deals SET team=$1, updated_at=NOW() WHERE id=$2`, [pgArr, d.id]);
+          dealsUpdated++;
+        }
+      }
+
+      res.json({ success: true, wipUpdated, dealsUpdated });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
