@@ -718,6 +718,7 @@ export const crmDeals = pgTable("crm_deals", {
   mondayItemId: text("monday_item_id"),
   groupName: text("group_name"),
   propertyId: varchar("property_id"),
+  unitId: varchar("unit_id"), // → property_units.id (one unit may have many deals over time)
   landlordId: varchar("landlord_id"),
   dealType: text("deal_type"),
   status: text("status"),
@@ -1410,9 +1411,29 @@ export const favoriteInstructions = pgTable("favorite_instructions", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const propertyUnits = pgTable("property_units", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id").notNull(),
+  unitName: text("unit_name").notNull(),
+  floor: text("floor"),
+  sqft: real("sqft"),
+  useClass: text("use_class"),
+  condition: text("condition"),
+  epcRating: text("epc_rating"),
+  frontage: text("frontage"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPropertyUnitSchema = createInsertSchema(propertyUnits).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertPropertyUnit = z.infer<typeof insertPropertyUnitSchema>;
+export type PropertyUnit = typeof propertyUnits.$inferSelect;
+
 export const availableUnits = pgTable("available_units", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   propertyId: varchar("property_id").notNull(),
+  unitId: varchar("unit_id"), // → property_units.id (master record for the physical space)
   unitName: text("unit_name").notNull(),
   floor: text("floor"),
   sqft: real("sqft"),

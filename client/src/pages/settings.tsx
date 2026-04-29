@@ -27,11 +27,13 @@ interface TeamMember {
   isActive?: boolean;
 }
 
-const TEAM_GROUPS = ["Investment", "London Leasing", "Lease Advisory", "Office / Corporate", "National Leasing", "Tenant Rep", "Development", "Landsec"] as const;
+const TEAM_GROUPS = ["Investment", "London Leasing", "London F&B", "London Retail", "Lease Advisory", "Office / Corporate", "National Leasing", "Tenant Rep", "Development", "Landsec"] as const;
 
 const TEAM_GROUP_MEMBERS: Record<string, string[]> = {
   Investment: ["Investment"],
   "London Leasing": ["London Leasing"],
+  "London F&B": ["London F&B"],
+  "London Retail": ["London Retail"],
   "Lease Advisory": ["Lease Advisory"],
   "Office / Corporate": ["Office / Corporate"],
   "National Leasing": ["National Leasing"],
@@ -43,6 +45,8 @@ const TEAM_GROUP_MEMBERS: Record<string, string[]> = {
 const teamColors: Record<string, string> = {
   Investment: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
   "London Leasing": "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300",
+  "London F&B": "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300",
+  "London Retail": "bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300",
   "Lease Advisory": "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
   "Office / Corporate": "bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-300",
   "National Leasing": "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300",
@@ -54,6 +58,8 @@ const teamColors: Record<string, string> = {
 const teamDotColors: Record<string, string> = {
   Investment: "bg-blue-500",
   "London Leasing": "bg-sky-500",
+  "London F&B": "bg-rose-500",
+  "London Retail": "bg-teal-500",
   "Lease Advisory": "bg-indigo-500",
   "Office / Corporate": "bg-slate-500",
   "National Leasing": "bg-emerald-500",
@@ -980,6 +986,7 @@ function DataHealthSection() {
   const [scanResult, setScanResult] = useState<DupeScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [backfilling, setBackfilling] = useState(false);
+  const [renamingTeams, setRenamingTeams] = useState(false);
 
   const runScan = async () => {
     setScanning(true);
@@ -1004,6 +1011,19 @@ function DataHealthSection() {
       toast({ title: "Backfill failed", description: err.message, variant: "destructive" });
     } finally {
       setBackfilling(false);
+    }
+  };
+
+  const runRenameTeams = async () => {
+    setRenamingTeams(true);
+    try {
+      const res = await apiRequest("POST", "/api/admin/rename-teams");
+      const data = await res.json();
+      toast({ title: "Teams renamed", description: data.message });
+    } catch (err: any) {
+      toast({ title: "Rename failed", description: err.message, variant: "destructive" });
+    } finally {
+      setRenamingTeams(false);
     }
   };
 
@@ -1053,6 +1073,10 @@ function DataHealthSection() {
             <Button size="sm" variant="outline" onClick={runBackfill} disabled={backfilling} data-testid="button-backfill-tracker-deals">
               {backfilling ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
               {backfilling ? "Backfilling..." : "Backfill Tracker Deals"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={runRenameTeams} disabled={renamingTeams}>
+              {renamingTeams ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+              {renamingTeams ? "Renaming..." : "Rename Legacy Teams"}
             </Button>
             <Button size="sm" variant="outline" onClick={runScan} disabled={scanning} data-testid="button-scan-duplicates">
               {scanning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}

@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 
 export const TEAMS = [
   "London Leasing",
+  "London F&B",
+  "London Retail",
   "National Leasing",
   "Investment",
   "Tenant Rep",

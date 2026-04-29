@@ -19,7 +19,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown,
+  ChevronDown, ExternalLink,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -34,7 +34,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
-import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer } from "@shared/schema";
+import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { useTeam } from "@/lib/team-context";
 import { CRM_OPTIONS } from "@/lib/crm-options";
 import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
@@ -335,6 +335,10 @@ export default function AvailableUnitsPage() {
     queryKey: ["/api/crm/properties"],
   });
 
+  const { data: propertyUnits = [] } = useQuery<PropertyUnit[]>({
+    queryKey: ["/api/property-units"],
+  });
+
   const { data: deals = [] } = useQuery<CrmDeal[]>({
     queryKey: ["/api/crm/deals"],
   });
@@ -484,6 +488,20 @@ export default function AvailableUnitsPage() {
     return m;
   }, [deals]);
 
+  const unitsByProperty = useMemo(() => {
+    const m: Record<string, PropertyUnit[]> = {};
+    for (const pu of propertyUnits) {
+      (m[pu.propertyId] = m[pu.propertyId] || []).push(pu);
+    }
+    return m;
+  }, [propertyUnits]);
+
+  const unitMasterById = useMemo(() => {
+    const m: Record<string, PropertyUnit> = {};
+    for (const pu of propertyUnits) m[pu.id] = pu;
+    return m;
+  }, [propertyUnits]);
+
   const userMap = useMemo(() => {
     const m: Record<string, string> = {};
     for (const u of bgpUsers) m[u.id] = u.name;
@@ -512,6 +530,9 @@ export default function AvailableUnitsPage() {
       apiRequest("PATCH", `/api/available-units/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      // Master fields (floor/sqft/useClass/condition/epcRating/unitName) flow to
+      // property_units server-side, so refresh that cache too.
+      queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
       setEditItem(null);
       toast({ title: "Unit updated" });
     },
@@ -563,6 +584,62 @@ export default function AvailableUnitsPage() {
     },
     onError: (e: any) => toast({ title: "Error saving", description: e.message, variant: "destructive" }),
   });
+
+  const createPropertyUnitMutation = useMutation({
+    mutationFn: async (data: { propertyId: string; unitName: string; floor?: string | null; sqft?: number | null }) => {
+      const res = await apiRequest("POST", "/api/property-units", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
+    },
+    onError: (e: any) => toast({ title: "Error creating unit", description: e.message, variant: "destructive" }),
+  });
+
+  // Pick an existing master unit (by id) for a listing, or create one and link.
+  // Keeps listing.unitId, listing.unitName, deal.unitId, and deal.name in sync.
+  const pickOrCreateUnit = async (
+    listing: AvailableUnit,
+    selection: { unitId: string } | { newName: string }
+  ) => {
+    let unitId: string | null = null;
+    let unitName: string;
+
+    if ("unitId" in selection) {
+      const pu = unitMasterById[selection.unitId];
+      if (!pu) return;
+      unitId = pu.id;
+      unitName = pu.unitName;
+    } else {
+      const trimmed = selection.newName.trim();
+      if (!trimmed) return;
+      // Reuse if a unit with this name already exists on the property
+      const existing = (unitsByProperty[listing.propertyId] || []).find(
+        u => u.unitName.trim().toLowerCase() === trimmed.toLowerCase()
+      );
+      if (existing) {
+        unitId = existing.id;
+        unitName = existing.unitName;
+      } else {
+        const created = await createPropertyUnitMutation.mutateAsync({
+          propertyId: listing.propertyId,
+          unitName: trimmed,
+          floor: listing.floor || null,
+          sqft: listing.sqft ?? null,
+        });
+        unitId = created.id;
+        unitName = trimmed;
+      }
+    }
+
+    updateMutation.mutate({ id: listing.id, data: { unitId, unitName } });
+    if (listing.dealId) {
+      const prop = propertyMap[listing.propertyId];
+      const dealName = prop ? `${prop.name} – ${unitName}` : unitName;
+      dealInlineUpdate.mutate({ id: listing.dealId, field: "unitId", value: unitId });
+      dealInlineUpdate.mutate({ id: listing.dealId, field: "name", value: dealName });
+    }
+  };
 
   const linkDealMutation = useMutation({
     mutationFn: ({ id, dealId }: { id: string; dealId: string }) =>
@@ -627,6 +704,8 @@ export default function AvailableUnitsPage() {
         return;
       }
     }
+    // Server PATCH handler routes master-managed fields (unitName, floor, sqft,
+    // useClass, condition, epcRating) to property_units when unit_id is set.
     updateMutation.mutate({ id, data: { [field]: value } });
   };
 
@@ -1014,10 +1093,15 @@ export default function AvailableUnitsPage() {
                       <TableCell className="text-xs font-mono text-muted-foreground">
                         {deal?.dealRef ? `#${deal.dealRef}` : "—"}
                       </TableCell>
-                      <TableCell className="font-medium max-w-[180px] truncate" title={prop?.name}>
-                        <a href={`/properties/${u.propertyId}`} className="text-blue-600 hover:underline dark:text-blue-400" data-testid={`link-property-${u.id}`}>
-                          {prop?.name || u.propertyId}
-                        </a>
+                      <TableCell className="px-1.5 py-1 font-medium max-w-[200px]">
+                        <InlineLinkSelect
+                          value={u.propertyId}
+                          options={properties.map(p => ({ id: p.id, name: p.name }))}
+                          href={`/properties/${u.propertyId}`}
+                          onSave={(v) => inlineUpdate(u.id, "propertyId", v || null)}
+                          placeholder="Link property"
+                          data-testid={`link-property-${u.id}`}
+                        />
                       </TableCell>
                       <TableCell className="px-1.5">
                         {deal ? (
@@ -1068,11 +1152,29 @@ export default function AvailableUnitsPage() {
                         ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell>
-                        <InlineText
-                          value={u.unitName}
-                          onSave={v => inlineUpdate(u.id, "unitName", v)}
-                          data-testid={`inline-unit-name-${u.id}`}
-                        />
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs truncate max-w-[110px]">{u.unitName || <span className="text-muted-foreground italic">No unit</span>}</span>
+                          <InlineLinkSelect
+                            value={u.unitId}
+                            options={(unitsByProperty[u.propertyId] || []).map(pu => ({ id: pu.id, name: pu.unitName }))}
+                            onSave={(id) => {
+                              if (id) pickOrCreateUnit(u, { unitId: id });
+                            }}
+                            onCreate={(newName) => pickOrCreateUnit(u, { newName })}
+                            placeholder="Pick unit"
+                            compact
+                          />
+                          {deal && (
+                            <a
+                              href={`/deals/${deal.id}`}
+                              title={`Open deal: ${deal.name || u.unitName}`}
+                              className="shrink-0 text-muted-foreground hover:text-primary"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <InlineSelect
@@ -1290,6 +1392,7 @@ export default function AvailableUnitsPage() {
         form={form}
         setForm={setForm}
         properties={properties}
+        propertyUnits={propertyUnits}
         bgpUsers={bgpUsers}
         onSubmit={() => createMutation.mutate(formToPayload(form))}
         isPending={createMutation.isPending}
@@ -1302,6 +1405,7 @@ export default function AvailableUnitsPage() {
         form={form}
         setForm={setForm}
         properties={properties}
+        propertyUnits={propertyUnits}
         bgpUsers={bgpUsers}
         onSubmit={() => editItem && updateMutation.mutate({ id: editItem.id, data: formToPayload(form) })}
         isPending={updateMutation.isPending}
@@ -2004,7 +2108,7 @@ function MarketingFilesDialog({
 }
 
 function UnitFormDialog({
-  open, onOpenChange, title, form, setForm, properties, bgpUsers, onSubmit, isPending,
+  open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, onSubmit, isPending,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -2012,11 +2116,19 @@ function UnitFormDialog({
   form: UnitFormState;
   setForm: (f: UnitFormState) => void;
   properties: CrmProperty[];
+  propertyUnits?: PropertyUnit[];
   bgpUsers: { id: string; name: string }[];
   onSubmit: () => void;
   isPending: boolean;
 }) {
   const upd = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value });
+  const [unitPickerOpen, setUnitPickerOpen] = useState(false);
+  const existingUnitsOnProperty = form.propertyId
+    ? propertyUnits.filter(pu => pu.propertyId === form.propertyId)
+    : [];
+  const matchedExistingUnit = existingUnitsOnProperty.find(
+    pu => pu.unitName.trim().toLowerCase() === (form.unitName || "").trim().toLowerCase()
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -2040,7 +2152,60 @@ function UnitFormDialog({
           </div>
           <div>
             <Label>Unit Name / Number</Label>
-            <Input value={form.unitName} onChange={e => upd("unitName", e.target.value)} placeholder="e.g. Unit 3, Ground Floor" data-testid="input-unit-name" />
+            <Popover open={unitPickerOpen} onOpenChange={setUnitPickerOpen}>
+              <PopoverTrigger asChild>
+                <div>
+                  <Input
+                    value={form.unitName}
+                    onChange={e => upd("unitName", e.target.value)}
+                    onFocus={() => existingUnitsOnProperty.length > 0 && setUnitPickerOpen(true)}
+                    placeholder={form.propertyId ? "Pick or type a new unit name" : "Select a property first"}
+                    disabled={!form.propertyId}
+                    data-testid="input-unit-name"
+                  />
+                  {form.unitName && !matchedExistingUnit && existingUnitsOnProperty.length > 0 && (
+                    <p className="text-[10px] text-emerald-600 mt-0.5">New unit — will be created on this property</p>
+                  )}
+                  {matchedExistingUnit && (
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Existing unit on this property — will be linked</p>
+                  )}
+                </div>
+              </PopoverTrigger>
+              {existingUnitsOnProperty.length > 0 && (
+                <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
+                  <Command>
+                    <CommandInput placeholder="Search existing units..." />
+                    <CommandList>
+                      <CommandEmpty>No matches. Keep typing to create a new unit.</CommandEmpty>
+                      <CommandGroup heading={`Units on this property (${existingUnitsOnProperty.length})`}>
+                        {existingUnitsOnProperty.map(pu => (
+                          <CommandItem
+                            key={pu.id}
+                            value={pu.unitName}
+                            onSelect={() => {
+                              setForm({
+                                ...form,
+                                unitName: pu.unitName,
+                                floor: pu.floor || form.floor,
+                                sqft: pu.sqft != null ? String(pu.sqft) : form.sqft,
+                                useClass: pu.useClass || form.useClass,
+                                condition: pu.condition || form.condition,
+                                epcRating: pu.epcRating || form.epcRating,
+                              });
+                              setUnitPickerOpen(false);
+                            }}
+                          >
+                            <span className="text-sm">{pu.unitName}</span>
+                            {pu.floor && <span className="text-xs text-muted-foreground ml-2">{pu.floor}</span>}
+                            {pu.sqft != null && <span className="text-xs text-muted-foreground ml-2">{pu.sqft.toLocaleString()} sqft</span>}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              )}
+            </Popover>
           </div>
           <div>
             <Label>Floor</Label>

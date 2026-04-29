@@ -31,7 +31,7 @@ import { Button } from "@/components/ui/button";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ViewToggle } from "@/components/mobile-card-view";
-import { InlineText, InlineNumber, InlineSelect, InlineDate, InlineLabelSelect } from "@/components/inline-edit";
+import { InlineText, InlineNumber, InlineSelect, InlineDate, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
 import { buildUserIdColorMap } from "@/lib/agent-colors";
 import type { InvestmentTracker, CrmProperty, CrmDeal, CrmCompany, CrmContact, InvestmentViewing, InvestmentOffer, InvestmentDistribution } from "@shared/schema";
 import {
@@ -917,6 +917,26 @@ export default function InvestmentTrackerPage() {
     }
     return m;
   }, [contacts]);
+  const contactById = useMemo(() => {
+    const m = new Map<string, CrmContact>();
+    for (const c of contacts) m.set(c.id, c);
+    return m;
+  }, [contacts]);
+  const companyById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of companies) m.set(c.id, c.name);
+    return m;
+  }, [companies]);
+  // Buyer = future landlord, so the picker offers Landlord-type companies
+  // (mirrors the landlord filter on the WIP page).
+  const landlordCompanyItems = useMemo(() => companies
+    .filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client")
+    .map(c => ({ id: c.id, name: c.name })), [companies]);
+  const companyByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of companies) m.set(c.name, c.id);
+    return m;
+  }, [companies]);
   const agentContacts = useMemo(() => contacts.filter(c => c.contactType === "Agent"), [contacts]);
   const agentContactItems = useMemo(() => agentContacts.map(c => ({ id: c.id, name: c.companyName ? `${c.name} (${c.companyName})` : c.name })), [agentContacts]);
 
@@ -1564,17 +1584,21 @@ export default function InvestmentTrackerPage() {
                     <TableCell className="px-2 py-1.5 font-mono text-muted-foreground text-xs">
                       {item.dealId ? (dealRefMap.get(item.dealId) ? `#${dealRefMap.get(item.dealId)}` : "—") : "—"}
                     </TableCell>
-                    <TableCell className="px-2 py-1.5 font-medium">
-                      <div>
-                        <InlineText
-                          value={item.assetName}
-                          onSave={v => inlineUpdate(item.id, "assetName", v)}
-                          className="text-xs font-medium"
-                        />
-                        {item.address && (
-                          <div className="text-[10px] text-muted-foreground truncate max-w-[170px]">{item.address}</div>
-                        )}
-                      </div>
+                    <TableCell className="px-2 py-1.5 font-medium max-w-[200px]">
+                      <InlineLinkSelect
+                        value={item.propertyId || ""}
+                        options={propertyItems}
+                        href={item.propertyId ? `/properties/${item.propertyId}` : undefined}
+                        onSave={(v) => {
+                          const name = propertyMap.get(v || "") || "";
+                          inlineUpdate(item.id, "propertyId", v || null);
+                          if (name) inlineUpdate(item.id, "assetName", name);
+                        }}
+                        placeholder={item.assetName || "Link property"}
+                      />
+                      {item.address && (
+                        <div className="text-[10px] text-muted-foreground truncate max-w-[170px] mt-0.5">{item.address}</div>
+                      )}
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       <InlineLabelSelect
@@ -1629,47 +1653,46 @@ export default function InvestmentTrackerPage() {
                     </TableCell>
                     <TableCell className="px-2 py-1.5">
                       <div className="space-y-0.5">
-                        <CrmPicker
-                          items={companyItems}
-                          value={item.client || ""}
-                          valueName={item.client || ""}
-                          onSelect={(id, name) => {
+                        <InlineLinkSelect
+                          value={item.clientId || ""}
+                          options={companyItems}
+                          href={item.clientId ? `/companies/${item.clientId}` : undefined}
+                          onSave={(v) => {
+                            const name = companyById.get(v || "") || "";
+                            inlineUpdate(item.id, "clientId", v || null);
                             inlineUpdate(item.id, "client", name || null);
-                            inlineUpdate(item.id, "clientId", id || null);
                           }}
-                          placeholder="—"
-                          testId={`picker-client-${item.id}`}
+                          placeholder="Link client"
+                          data-testid={`picker-client-${item.id}`}
                         />
                         <div className="flex items-center gap-1.5 pl-1.5">
-                          <CrmPicker
-                            items={contactItems}
-                            value={item.clientContact || ""}
-                            valueName={item.clientContact || ""}
-                            onSelect={(id, name) => {
+                          <InlineLinkSelect
+                            value={item.clientContactId || ""}
+                            options={contactItems}
+                            href={item.clientContactId ? `/contacts/${item.clientContactId}` : undefined}
+                            onSave={(v) => {
+                              const ct = contactById.get(v || "");
+                              const name = ct ? (ct.companyName ? `${ct.name} (${ct.companyName})` : ct.name) : "";
+                              inlineUpdate(item.id, "clientContactId", v || null);
                               inlineUpdate(item.id, "clientContact", name || null);
-                              inlineUpdate(item.id, "clientContactId", id || null);
                             }}
-                            placeholder="contact"
-                            testId={`picker-client-contact-${item.id}`}
+                            placeholder="Link contact"
+                            data-testid={`picker-client-contact-${item.id}`}
                           />
-                          {item.clientContact && (() => {
-                            const ct = contactByName.get(item.clientContact);
+                          {item.clientContactId && (() => {
+                            const ct = contactById.get(item.clientContactId);
+                            if (!ct) return null;
                             return (
                               <>
-                                {ct?.email && (
+                                {ct.email && (
                                   <a href={`mailto:${ct.email}`} className="text-muted-foreground hover:text-blue-500" title={ct.email} data-testid={`link-client-contact-email-${item.id}`}>
                                     <Mail className="h-3 w-3" />
                                   </a>
                                 )}
-                                {ct?.phone && (
+                                {ct.phone && (
                                   <a href={`tel:${ct.phone}`} className="text-muted-foreground hover:text-blue-500" title={ct.phone} data-testid={`link-client-contact-phone-${item.id}`}>
                                     <Phone className="h-3 w-3" />
                                   </a>
-                                )}
-                                {item.clientContactId && (
-                                  <Link href={`/contacts/${item.clientContactId}`} className="text-muted-foreground hover:text-blue-500" title="View profile" data-testid={`link-client-contact-profile-${item.id}`}>
-                                    <ExternalLink className="h-3 w-3" />
-                                  </Link>
                                 )}
                               </>
                             );
@@ -1681,47 +1704,46 @@ export default function InvestmentTrackerPage() {
                       <>
                         <TableCell className="px-2 py-1.5">
                           <div className="space-y-0.5">
-                            <CrmPicker
-                              items={companyItems}
-                              value={item.vendor || ""}
-                              valueName={item.vendor || ""}
-                              onSelect={(id, name) => {
+                            <InlineLinkSelect
+                              value={item.vendorId || ""}
+                              options={companyItems}
+                              href={item.vendorId ? `/companies/${item.vendorId}` : undefined}
+                              onSave={(v) => {
+                                const name = companyById.get(v || "") || "";
+                                inlineUpdate(item.id, "vendorId", v || null);
                                 inlineUpdate(item.id, "vendor", name || null);
-                                inlineUpdate(item.id, "vendorId", id || null);
                               }}
-                              placeholder="—"
-                              testId={`picker-vendor-${item.id}`}
+                              placeholder="Link vendor"
+                              data-testid={`picker-vendor-${item.id}`}
                             />
                             <div className="flex items-center gap-1.5 pl-1.5">
-                              <CrmPicker
-                                items={agentContactItems}
-                                value={item.vendorAgent || ""}
-                                valueName={item.vendorAgent || ""}
-                                onSelect={(id, name) => {
+                              <InlineLinkSelect
+                                value={item.vendorAgentId || ""}
+                                options={agentContactItems}
+                                href={item.vendorAgentId ? `/contacts/${item.vendorAgentId}` : undefined}
+                                onSave={(v) => {
+                                  const ct = contactById.get(v || "");
+                                  const name = ct ? (ct.companyName ? `${ct.name} (${ct.companyName})` : ct.name) : "";
+                                  inlineUpdate(item.id, "vendorAgentId", v || null);
                                   inlineUpdate(item.id, "vendorAgent", name || null);
-                                  inlineUpdate(item.id, "vendorAgentId", id || null);
                                 }}
-                                placeholder="agent"
-                                testId={`picker-vendor-agent-${item.id}`}
+                                placeholder="Link agent"
+                                data-testid={`picker-vendor-agent-${item.id}`}
                               />
-                              {item.vendorAgent && (() => {
-                                const agent = contactByName.get(item.vendorAgent);
+                              {item.vendorAgentId && (() => {
+                                const agent = contactById.get(item.vendorAgentId);
+                                if (!agent) return null;
                                 return (
                                   <>
-                                    {agent?.email && (
+                                    {agent.email && (
                                       <a href={`mailto:${agent.email}`} className="text-muted-foreground hover:text-blue-500" title={agent.email} data-testid={`link-agent-email-${item.id}`}>
                                         <Mail className="h-3 w-3" />
                                       </a>
                                     )}
-                                    {agent?.phone && (
+                                    {agent.phone && (
                                       <a href={`tel:${agent.phone}`} className="text-muted-foreground hover:text-blue-500" title={agent.phone} data-testid={`link-agent-phone-${item.id}`}>
                                         <Phone className="h-3 w-3" />
                                       </a>
-                                    )}
-                                    {item.vendorAgentId && (
-                                      <Link href={`/contacts/${item.vendorAgentId}`} className="text-muted-foreground hover:text-blue-500" title="View profile" data-testid={`link-vendor-agent-profile-${item.id}`}>
-                                        <ExternalLink className="h-3 w-3" />
-                                      </Link>
                                     )}
                                   </>
                                 );
@@ -1740,14 +1762,25 @@ export default function InvestmentTrackerPage() {
                     ) : (
                       <>
                         <TableCell className="px-2 py-1.5">
-                          <CrmPicker
-                            items={companyItems}
-                            value={item.buyer || ""}
-                            valueName={item.buyer || ""}
-                            onSelect={(_id, name) => inlineUpdate(item.id, "buyer", name || null)}
-                            placeholder="—"
-                            testId={`picker-buyer-${item.id}`}
-                          />
+                          {(() => {
+                            const currentId = item.buyer ? (companyByName.get(item.buyer) || "") : "";
+                            const opts = currentId && !landlordCompanyItems.some(o => o.id === currentId)
+                              ? [...landlordCompanyItems, { id: currentId, name: item.buyer || "" }]
+                              : landlordCompanyItems;
+                            return (
+                              <InlineLinkSelect
+                                value={currentId}
+                                options={opts}
+                                href={currentId ? `/companies/${currentId}` : undefined}
+                                onSave={(v) => {
+                                  const name = companyById.get(v || "") || "";
+                                  inlineUpdate(item.id, "buyer", name || null);
+                                }}
+                                placeholder="Link buyer"
+                                data-testid={`picker-buyer-${item.id}`}
+                              />
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="px-2 py-1.5">
                           <InlineDate

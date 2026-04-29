@@ -714,7 +714,7 @@ export async function registerRoutes(
       if (!team || typeof team !== "string") {
         return res.status(400).json({ message: "Team is required" });
       }
-      const validTeams = ["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate", "Landsec"];
+      const validTeams = ["London Leasing", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate", "Landsec"];
       if (!validTeams.includes(team)) {
         return res.status(400).json({ message: "Invalid team" });
       }
@@ -1783,44 +1783,55 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units", requireAuth, async (req, res) => {
     try {
-      const { availableUnits, crmProperties } = await import("@shared/schema");
-      const conditions: any[] = [];
-      if (req.query.propertyId) conditions.push(eq(availableUnits.propertyId, req.query.propertyId as string));
-      if (req.query.marketingStatus) conditions.push(eq(availableUnits.marketingStatus, req.query.marketingStatus as string));
-      const where = conditions.length > 0 ? and(...conditions) : undefined;
-      const rows = await db
-        .select({
-          id: availableUnits.id,
-          propertyId: availableUnits.propertyId,
-          unitName: availableUnits.unitName,
-          floor: availableUnits.floor,
-          sqft: availableUnits.sqft,
-          askingRent: availableUnits.askingRent,
-          ratesPa: availableUnits.ratesPa,
-          serviceChargePa: availableUnits.serviceChargePa,
-          useClass: availableUnits.useClass,
-          condition: availableUnits.condition,
-          availableDate: availableUnits.availableDate,
-          marketingStatus: availableUnits.marketingStatus,
-          epcRating: availableUnits.epcRating,
-          notes: availableUnits.notes,
-          restrictions: availableUnits.restrictions,
-          fee: availableUnits.fee,
-          dealId: availableUnits.dealId,
-          agentUserIds: availableUnits.agentUserIds,
-          viewingsCount: availableUnits.viewingsCount,
-          lastViewingDate: availableUnits.lastViewingDate,
-          marketingStartDate: availableUnits.marketingStartDate,
-          createdAt: availableUnits.createdAt,
-          updatedAt: availableUnits.updatedAt,
-          propertyName: crmProperties.name,
-          propertyAddress: crmProperties.address,
-        })
-        .from(availableUnits)
-        .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
-        .where(where)
-        .orderBy(desc(availableUnits.createdAt));
-      res.json(rows);
+      // Master physical attributes live on property_units; the listing's columns
+      // are kept as a backwards-compat cache. We COALESCE master over listing so
+      // every reader sees the source-of-truth values.
+      const params: any[] = [];
+      const filters: string[] = [];
+      if (req.query.propertyId) {
+        params.push(req.query.propertyId);
+        filters.push(`au.property_id = $${params.length}`);
+      }
+      if (req.query.marketingStatus) {
+        params.push(req.query.marketingStatus);
+        filters.push(`au.marketing_status = $${params.length}`);
+      }
+      const whereClause = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+      const result = await pool.query(`
+        SELECT
+          au.id,
+          au.property_id AS "propertyId",
+          au.unit_id AS "unitId",
+          COALESCE(pu.unit_name, au.unit_name) AS "unitName",
+          COALESCE(pu.floor, au.floor) AS "floor",
+          COALESCE(pu.sqft, au.sqft) AS "sqft",
+          au.asking_rent AS "askingRent",
+          au.rates_pa AS "ratesPa",
+          au.service_charge_pa AS "serviceChargePa",
+          COALESCE(pu.use_class, au.use_class) AS "useClass",
+          COALESCE(pu.condition, au.condition) AS "condition",
+          au.available_date AS "availableDate",
+          au.marketing_status AS "marketingStatus",
+          COALESCE(pu.epc_rating, au.epc_rating) AS "epcRating",
+          au.notes,
+          au.restrictions,
+          au.fee,
+          au.deal_id AS "dealId",
+          au.agent_user_ids AS "agentUserIds",
+          au.viewings_count AS "viewingsCount",
+          au.last_viewing_date AS "lastViewingDate",
+          au.marketing_start_date AS "marketingStartDate",
+          au.created_at AS "createdAt",
+          au.updated_at AS "updatedAt",
+          p.name AS "propertyName",
+          p.address AS "propertyAddress"
+        FROM available_units au
+        LEFT JOIN crm_properties p ON p.id = au.property_id
+        LEFT JOIN property_units pu ON pu.id = au.unit_id
+        ${whereClause}
+        ORDER BY au.created_at DESC
+      `, params);
+      res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch available units" });
     }
@@ -1828,24 +1839,25 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-files", requireAuth, async (req, res) => {
     try {
-      const { unitMarketingFiles, availableUnits } = await import("@shared/schema");
-      const rows = await db
-        .select({
-          id: unitMarketingFiles.id,
-          unitId: unitMarketingFiles.unitId,
-          fileName: unitMarketingFiles.fileName,
-          filePath: unitMarketingFiles.filePath,
-          fileType: unitMarketingFiles.fileType,
-          fileSize: unitMarketingFiles.fileSize,
-          mimeType: unitMarketingFiles.mimeType,
-          createdAt: unitMarketingFiles.createdAt,
-          unitName: availableUnits.unitName,
-          propertyId: availableUnits.propertyId,
-        })
-        .from(unitMarketingFiles)
-        .leftJoin(availableUnits, eq(unitMarketingFiles.unitId, availableUnits.id))
-        .orderBy(unitMarketingFiles.createdAt);
-      res.json(rows);
+      // unitName comes from property_units master with listing fallback
+      const result = await pool.query(`
+        SELECT
+          umf.id,
+          umf.unit_id AS "unitId",
+          umf.file_name AS "fileName",
+          umf.file_path AS "filePath",
+          umf.file_type AS "fileType",
+          umf.file_size AS "fileSize",
+          umf.mime_type AS "mimeType",
+          umf.created_at AS "createdAt",
+          COALESCE(pu.unit_name, au.unit_name) AS "unitName",
+          au.property_id AS "propertyId"
+        FROM unit_marketing_files umf
+        LEFT JOIN available_units au ON au.id = umf.unit_id
+        LEFT JOIN property_units pu ON pu.id = au.unit_id
+        ORDER BY umf.created_at
+      `);
+      res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch all files" });
     }
@@ -1895,11 +1907,145 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/:id", requireAuth, async (req, res) => {
     try {
-      const unit = await storage.getAvailableUnit(req.params.id);
-      if (!unit) return res.status(404).json({ message: "Unit not found" });
-      res.json(unit);
+      // Master overrides cache for unitName/floor/sqft/useClass/condition/epcRating
+      const result = await pool.query(`
+        SELECT
+          au.*,
+          au.property_id AS "propertyId",
+          au.unit_id AS "unitId",
+          COALESCE(pu.unit_name, au.unit_name) AS "unitName",
+          COALESCE(pu.floor, au.floor) AS "floor",
+          COALESCE(pu.sqft, au.sqft) AS "sqft",
+          COALESCE(pu.use_class, au.use_class) AS "useClass",
+          COALESCE(pu.condition, au.condition) AS "condition",
+          COALESCE(pu.epc_rating, au.epc_rating) AS "epcRating",
+          au.asking_rent AS "askingRent",
+          au.rates_pa AS "ratesPa",
+          au.service_charge_pa AS "serviceChargePa",
+          au.available_date AS "availableDate",
+          au.marketing_status AS "marketingStatus",
+          au.deal_id AS "dealId",
+          au.agent_user_ids AS "agentUserIds",
+          au.viewings_count AS "viewingsCount",
+          au.last_viewing_date AS "lastViewingDate",
+          au.marketing_start_date AS "marketingStartDate",
+          au.created_at AS "createdAt",
+          au.updated_at AS "updatedAt"
+        FROM available_units au
+        LEFT JOIN property_units pu ON pu.id = au.unit_id
+        WHERE au.id = $1
+        LIMIT 1
+      `, [req.params.id]);
+      if (result.rows.length === 0) return res.status(404).json({ message: "Unit not found" });
+      res.json(result.rows[0]);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch unit" });
+    }
+  });
+
+  // ── Property Units (master record for the physical space) ──────────────
+  app.get("/api/property-units", requireAuth, async (req, res) => {
+    try {
+      const propertyId = (req.query.propertyId as string | undefined) || undefined;
+      const where = propertyId ? `WHERE property_id = $1` : "";
+      const params = propertyId ? [propertyId] : [];
+      const result = await pool.query(
+        `SELECT id, property_id, unit_name, floor, sqft, use_class, condition,
+                epc_rating, frontage, notes, created_at, updated_at
+         FROM property_units ${where}
+         ORDER BY unit_name`,
+        params
+      );
+      res.json(result.rows.map(r => ({
+        id: r.id,
+        propertyId: r.property_id,
+        unitName: r.unit_name,
+        floor: r.floor,
+        sqft: r.sqft,
+        useClass: r.use_class,
+        condition: r.condition,
+        epcRating: r.epc_rating,
+        frontage: r.frontage,
+        notes: r.notes,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      })));
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to list units" });
+    }
+  });
+
+  app.post("/api/property-units", requireAuth, async (req, res) => {
+    try {
+      const { insertPropertyUnitSchema } = await import("@shared/schema");
+      const parsed = insertPropertyUnitSchema.parse(req.body);
+      if (!parsed.propertyId || !parsed.unitName?.trim()) {
+        return res.status(400).json({ message: "propertyId and unitName are required" });
+      }
+      const result = await pool.query(
+        `INSERT INTO property_units (property_id, unit_name, floor, sqft, use_class, condition, epc_rating, frontage, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id`,
+        [parsed.propertyId, parsed.unitName.trim(), parsed.floor || null, parsed.sqft ?? null,
+         parsed.useClass || null, parsed.condition || null, parsed.epcRating || null,
+         parsed.frontage || null, parsed.notes || null]
+      );
+      res.json({ id: result.rows[0].id, ...parsed });
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        return res.status(409).json({ message: "A unit with that name already exists on this property" });
+      }
+      if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
+      res.status(500).json({ message: err?.message || "Failed to create unit" });
+    }
+  });
+
+  app.patch("/api/property-units/:id", requireAuth, async (req, res) => {
+    try {
+      const allowed = ["unitName", "floor", "sqft", "useClass", "condition", "epcRating", "frontage", "notes"];
+      const cols: Record<string, string> = {
+        unitName: "unit_name", floor: "floor", sqft: "sqft", useClass: "use_class",
+        condition: "condition", epcRating: "epc_rating", frontage: "frontage", notes: "notes",
+      };
+      const sets: string[] = [];
+      const values: any[] = [];
+      let i = 1;
+      for (const k of allowed) {
+        if (k in req.body) {
+          sets.push(`${cols[k]} = $${i++}`);
+          values.push((req.body as any)[k]);
+        }
+      }
+      if (sets.length === 0) return res.json({ success: true });
+      sets.push(`updated_at = NOW()`);
+      values.push(req.params.id);
+      await pool.query(
+        `UPDATE property_units SET ${sets.join(", ")} WHERE id = $${i}`,
+        values
+      );
+      res.json({ success: true });
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        return res.status(409).json({ message: "A unit with that name already exists on this property" });
+      }
+      res.status(500).json({ message: err?.message || "Failed to update unit" });
+    }
+  });
+
+  app.delete("/api/property-units/:id", requireAuth, async (req, res) => {
+    try {
+      const inUse = await pool.query(
+        `SELECT 1 FROM available_units WHERE unit_id = $1
+         UNION ALL SELECT 1 FROM crm_deals WHERE unit_id = $1 LIMIT 1`,
+        [req.params.id]
+      );
+      if (inUse.rows.length > 0) {
+        return res.status(409).json({ message: "Unit is referenced by listings or deals" });
+      }
+      await pool.query(`DELETE FROM property_units WHERE id = $1`, [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to delete unit" });
     }
   });
 
@@ -1907,7 +2053,31 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const parsed = insertAvailableUnitSchema.parse(req.body);
-      const unit = await storage.createAvailableUnit(parsed);
+
+      // Ensure a property_units master row exists for this (property, unit name).
+      // Create one if missing, then set unit_id on the listing.
+      let unitMasterId: string | null = (parsed as any).unitId || null;
+      if (!unitMasterId && parsed.propertyId && parsed.unitName?.trim()) {
+        const existing = await pool.query(
+          `SELECT id FROM property_units
+           WHERE property_id = $1 AND lower(trim(unit_name)) = lower(trim($2))`,
+          [parsed.propertyId, parsed.unitName]
+        );
+        if (existing.rows.length > 0) {
+          unitMasterId = existing.rows[0].id;
+        } else {
+          const created = await pool.query(
+            `INSERT INTO property_units (property_id, unit_name, floor, sqft, use_class, condition, epc_rating)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             RETURNING id`,
+            [parsed.propertyId, parsed.unitName.trim(), parsed.floor || null, parsed.sqft ?? null,
+             parsed.useClass || null, parsed.condition || null, parsed.epcRating || null]
+          );
+          unitMasterId = created.rows[0].id;
+        }
+      }
+
+      const unit = await storage.createAvailableUnit({ ...parsed, unitId: unitMasterId || undefined } as any);
 
       // Auto-create a backing CRM deal so every tracker row has a source of truth
       if (!unit.dealId) {
@@ -1918,13 +2088,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
               ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
               : unit.unitName,
             propertyId: unit.propertyId || undefined,
+            unitId: unitMasterId || undefined,
             status: unit.marketingStatus || "AVA",
             dealType: "Leasing",
             internalAgent: unit.agentUserIds || [],
             fee: unit.fee ?? undefined,
             rentPa: unit.askingRent ?? undefined,
             totalAreaSqft: unit.sqft ?? undefined,
-          });
+          } as any);
           await storage.updateAvailableUnit(unit.id, { dealId: deal.id });
           (unit as any).dealId = deal.id;
           (unit as any).dealRef = deal.dealRef;
@@ -1946,6 +2117,39 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!existing) return res.status(404).json({ message: "Unit not found" });
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const partial = insertAvailableUnitSchema.partial().parse(req.body);
+
+      // Master-managed fields: write to property_units (the source of truth).
+      // We still write the same value to the listing cache so direct DB queries
+      // outside our GET endpoints stay coherent until the columns are dropped.
+      const MASTER_FIELDS = ["unitName", "floor", "sqft", "useClass", "condition", "epcRating"] as const;
+      const masterPatch: Record<string, any> = {};
+      for (const f of MASTER_FIELDS) {
+        if (f in partial) masterPatch[f] = (partial as any)[f];
+      }
+      if (existing.unitId && Object.keys(masterPatch).length > 0) {
+        const cols: Record<string, string> = {
+          unitName: "unit_name", floor: "floor", sqft: "sqft", useClass: "use_class",
+          condition: "condition", epcRating: "epc_rating",
+        };
+        const sets: string[] = [];
+        const values: any[] = [];
+        let i = 1;
+        for (const [k, v] of Object.entries(masterPatch)) {
+          sets.push(`${cols[k]} = $${i++}`);
+          values.push(v);
+        }
+        sets.push(`updated_at = NOW()`);
+        values.push(existing.unitId);
+        try {
+          await pool.query(`UPDATE property_units SET ${sets.join(", ")} WHERE id = $${i}`, values);
+        } catch (e: any) {
+          if (e?.code === "23505") {
+            return res.status(409).json({ message: "A unit with that name already exists on this property" });
+          }
+          throw e;
+        }
+      }
+
       const unit = await storage.updateAvailableUnit(req.params.id, partial);
       res.json(unit);
     } catch (err: any) {
@@ -1981,13 +2185,14 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
               ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
               : unit.unitName,
             propertyId: unit.propertyId || undefined,
+            unitId: unit.unitId || undefined,
             status: unit.marketingStatus || "AVA",
             dealType: "Leasing",
             internalAgent: unit.agentUserIds || [],
             fee: unit.fee ?? undefined,
             rentPa: unit.askingRent ?? undefined,
             totalAreaSqft: unit.sqft ?? undefined,
-          });
+          } as any);
           await db.update(availableUnits).set({ dealId: deal.id }).where(eq(availableUnits.id, unit.id));
           created++;
         } catch (e: any) {
@@ -2018,6 +2223,29 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json({ created, skipped, message: `Created ${created} deals for previously unlinked tracker rows` });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Backfill failed" });
+    }
+  });
+
+  // Rename legacy long team names in crm_deals.team array
+  app.post("/api/admin/rename-teams", requireAuth, async (req, res) => {
+    try {
+      const renames: Record<string, string> = {
+        "London Leasing Hospitality": "London F&B",
+        "London Leasing Retail": "London Retail",
+      };
+      let updated = 0;
+      for (const [oldName, newName] of Object.entries(renames)) {
+        const result = await pool.query(
+          `UPDATE crm_deals
+           SET team = array_replace(team, $1, $2)
+           WHERE $1 = ANY(team)`,
+          [oldName, newName]
+        );
+        updated += result.rowCount ?? 0;
+      }
+      res.json({ updated, message: `Renamed team values in ${updated} deal(s)` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Rename failed" });
     }
   });
 
@@ -2109,6 +2337,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const deal = await storage.createCrmDeal({
         name: `${property?.name || "Property"} - ${unit.unitName}`,
         propertyId: unit.propertyId,
+        unitId: unit.unitId || undefined,
         status: "SOL",
         dealType: body.dealType || "Letting",
         groupName: "Leasing - Active",
@@ -2121,7 +2350,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         leaseLength: body.leaseLength ? parseFloat(body.leaseLength) : undefined,
         rentFree: body.rentFree ? parseFloat(body.rentFree) : undefined,
         comments: body.comments || undefined,
-      });
+      } as any);
       if (body.tenantName) {
         try {
           const { crmContacts } = await import("@shared/schema");
