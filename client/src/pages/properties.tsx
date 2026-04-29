@@ -947,7 +947,7 @@ export function InlineTenants({
   });
 
   return (
-    <div className="flex items-center gap-1 flex-wrap">
+    <div className="flex items-start gap-1 flex-wrap max-h-[60px] overflow-y-auto">
       {assignedCompanies.map(company => (
         <span key={company.id} className="inline-flex items-center gap-0.5">
           <Link href={`/companies/${company.id}`}>
