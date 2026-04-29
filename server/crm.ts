@@ -4651,22 +4651,6 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         }
       }
 
-      // Build lookup maps — use separate maps to avoid name/property overwrites
-      const dealByName = new Map<string, typeof deals[0]>();
-      const dealByProperty = new Map<string, typeof deals[0]>();
-      const dealByWipRef = new Map<string, typeof deals[0]>();
-      for (const d of deals) {
-        if (d.name) dealByName.set(d.name.toLowerCase().trim(), d);
-        const propName = d.propertyId ? propMap.get(d.propertyId) : null;
-        if (propName) dealByProperty.set(propName.toLowerCase().trim(), d);
-        // Match Sage HEADER_NUMBER stored as "WIP Ref: XXXX" in deal.comments
-        const wipRefMatch = (d as any).comments?.match(/WIP Ref:\s*(\d+)/);
-        if (wipRefMatch) dealByWipRef.set(wipRefMatch[1], d);
-      }
-      // Combined lookup: check name, then property, then WIP ref (for Sage imports)
-      const findDeal = (key: string) =>
-        dealByName.get(key) || dealByProperty.get(key) || dealByWipRef.get(key);
-
       function deriveStage(status: string | null): string {
         return deriveStageFromStatus(status);
       }
@@ -4719,7 +4703,11 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
           for (const alloc of dealAllocations) {
             const allocPct = (alloc.percentage || 0) / 100;
             const agentFee = alloc.fixedAmount || Math.round(totalFee * allocPct * 100) / 100;
-            const agentInvoiceAmt = alloc.fixedAmount || Math.round(totalInvoiceAmt * allocPct * 100) / 100;
+            // Only emit invoice amount when deal is actually invoiced — otherwise
+            // fixedAmount gets reused for both columns and doubles the totals.
+            const agentInvoiceAmt = isInvoiced
+              ? (alloc.fixedAmount || Math.round(totalInvoiceAmt * allocPct * 100) / 100)
+              : 0;
             entries.push({
               id: `${deal.id}_${alloc.agentName}`,
               dealId: deal.id,
@@ -4839,6 +4827,41 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       if (!(await isWipSenior(req))) return res.status(403).json({ error: "Not authorised" });
       await db.delete(wipEntries);
       res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // One-shot backfill: parses MonthYear from wip_entries and writes completion_date
+  // on matching crm_deals where it's still NULL. Safe to run repeatedly — only
+  // touches NULL completion_date rows so manual edits are preserved.
+  app.post("/api/wip/backfill-completion-dates", requireAuth, async (req, res) => {
+    try {
+      if (!(await isWipSenior(req))) return res.status(403).json({ error: "Not authorised" });
+      const { rows: entries } = await pool.query(
+        `SELECT ref, MIN(month) as month FROM wip_entries WHERE ref IS NOT NULL AND ref != '' GROUP BY ref`
+      );
+      const { rows: deals } = await pool.query(
+        `SELECT id, comments FROM crm_deals WHERE completion_date IS NULL`
+      );
+      const wipRefToDealId = new Map<string, string>();
+      for (const d of deals) {
+        const match = d.comments?.match(/WIP Ref:\s*(\d+)/);
+        if (match) wipRefToDealId.set(match[1], d.id);
+      }
+      let updated = 0;
+      for (const e of entries) {
+        const dealId = wipRefToDealId.get(e.ref);
+        if (!dealId) continue;
+        const completionDate = parseWipMonthToDate(e.month);
+        if (!completionDate) continue;
+        await pool.query(
+          `UPDATE crm_deals SET completion_date=$1, updated_at=NOW() WHERE id=$2 AND completion_date IS NULL`,
+          [completionDate, dealId]
+        );
+        updated++;
+      }
+      res.json({ success: true, updated, dealsWithoutDate: deals.length, wipEntries: entries.length });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -6128,7 +6151,9 @@ Rules:
           for (const alloc of dealAllocations) {
             const allocPct = (alloc.percentage || 0) / 100;
             const agentFee = alloc.fixedAmount || Math.round(totalFee * allocPct * 100) / 100;
-            const agentInvoiceAmt = alloc.fixedAmount || Math.round(totalInvoiceAmt * allocPct * 100) / 100;
+            const agentInvoiceAmt = isInvoiced
+              ? (alloc.fixedAmount || Math.round(totalInvoiceAmt * allocPct * 100) / 100)
+              : 0;
             entries.push({
               id: `${deal.id}_${alloc.agentName}`, dealId: deal.id, dealType: deal.dealType || null,
               ref: deal.name, groupName: deal.groupName || null, project: propertyName, tenant: tenantName,
