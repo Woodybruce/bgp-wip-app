@@ -3,15 +3,14 @@ import { Link } from "wouter";
 import type { CrmDeal } from "@shared/schema";
 import { legacyToCode } from "@shared/deal-status";
 
-// Kanban columns map to canonical status codes; HOTs merges into NEG (same lifecycle stage).
+// WIP-only kanban: NEG → INV. Pipeline (REP/SPEC/LIVE/AVA) belongs on the
+// Letting / Investment trackers; WIT is hidden from the WIP board entirely.
 const KANBAN_COLUMNS = [
-  { key: "Pipeline", label: "Pipeline", statuses: ["REP", "SPEC", "LIVE", "AVA"] },
   { key: "NEG", label: "Negotiating", statuses: ["NEG"] },
   { key: "SOL", label: "Solicitors", statuses: ["SOL"] },
   { key: "EXC", label: "Exchanged", statuses: ["EXC"] },
   { key: "COM", label: "Completed", statuses: ["COM"] },
   { key: "INV", label: "Invoiced", statuses: ["INV"] },
-  { key: "WIT", label: "Withdrawn", statuses: ["WIT"] },
 ];
 
 const DEAL_TYPE_COLORS: Record<string, string> = {
