@@ -235,6 +235,7 @@ export default function ImageStudio() {
   const [aiEditPrompt, setAiEditPrompt] = useState("");
   const [aiEditImageId, setAiEditImageId] = useState<string | null>(null);
   const [aiEditImageName, setAiEditImageName] = useState("");
+  const [imageVersions, setImageVersions] = useState<Record<string, number>>({});
 
   // Bulk tag state
   const [bulkTagDialogOpen, setBulkTagDialogOpen] = useState(false);
@@ -502,10 +503,12 @@ export default function ImageStudio() {
       const res = await apiRequest("POST", "/api/image-studio/ai-edit", data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio"] });
       queryClient.invalidateQueries({ queryKey: ["/api/image-studio/categories"] });
-      toast({ title: "Edited", description: "AI touch-up created as new image" });
+      // Bump the version so the lightbox re-fetches the updated image (bypasses browser cache)
+      setImageVersions(prev => ({ ...prev, [variables.imageId]: Date.now() }));
+      toast({ title: "Image updated", description: "AI touch-up applied — you can keep amending it" });
       setAiEditOpen(false);
       setAiEditPrompt("");
       setAiEditImageId(null);
@@ -2056,7 +2059,7 @@ export default function ImageStudio() {
             onClick={(e) => e.stopPropagation()}
           >
             <img
-              src={`/api/image-studio/${selectedImage.id}/full`}
+              src={`/api/image-studio/${selectedImage.id}/full${imageVersions[selectedImage.id] ? `?v=${imageVersions[selectedImage.id]}` : ""}`}
               alt={selectedImage.fileName}
               className="max-w-full max-h-[75vh] object-contain rounded"
               data-testid="img-lightbox-full"
@@ -2092,7 +2095,7 @@ export default function ImageStudio() {
                   <Sparkles className="h-3 w-3 mr-1" /> AI Touch Up
                 </Button>
                 <a
-                  href={`/api/image-studio/${selectedImage.id}/full`}
+                  href={`/api/image-studio/${selectedImage.id}/full${imageVersions[selectedImage.id] ? `?v=${imageVersions[selectedImage.id]}` : ""}`}
                   download={selectedImage.fileName}
                   className="inline-flex"
                 >

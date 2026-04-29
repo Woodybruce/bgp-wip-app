@@ -1190,24 +1190,25 @@ export function registerImageStudioRoutes(app: Express) {
 
       const { thumbnail, width, height } = await generateThumbnail(resultBuffer);
 
-      const [inserted] = await db.insert(imageStudioImages).values({
-        fileName: `Edit: ${trimmedEdit.slice(0, 50)} (from ${image.fileName})`,
-        category: image.category || "Generated",
-        tags: [...(image.tags || []), "AI Edited", provider].filter((v: any, i: any, a: any) => a.indexOf(v) === i),
-        description: `AI edit of "${image.fileName}": ${trimmedEdit}`,
-        source: "ai-edited",
-        area: image.area,
+      // Update the existing record in place so the user can keep amending the same image
+      const oldPath = image.localPath;
+      const [updated] = await db.update(imageStudioImages).set({
         mimeType: "image/png",
         fileSize: resultBuffer.length,
         width,
         height,
         thumbnailData: thumbnail,
         localPath: filePath,
-        uploadedBy: userId,
-        propertyId: image.propertyId,
-      }).returning();
+        tags: [...new Set([...(image.tags || []), "AI Edited", provider])],
+        source: "ai-edited",
+      }).where(eq(imageStudioImages.id, imageId)).returning();
 
-      res.json({ ...inserted, provider });
+      // Clean up old file (best-effort — a different path means the old bytes are orphaned)
+      if (oldPath && oldPath !== filePath) {
+        try { fs.unlinkSync(oldPath); } catch {}
+      }
+
+      res.json({ ...updated, provider });
     } catch (e: any) {
       console.error("[image-studio] AI edit error:", e.message);
       res.status(500).json({ error: e.message });
