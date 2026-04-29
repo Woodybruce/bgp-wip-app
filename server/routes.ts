@@ -1783,44 +1783,55 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units", requireAuth, async (req, res) => {
     try {
-      const { availableUnits, crmProperties } = await import("@shared/schema");
-      const conditions: any[] = [];
-      if (req.query.propertyId) conditions.push(eq(availableUnits.propertyId, req.query.propertyId as string));
-      if (req.query.marketingStatus) conditions.push(eq(availableUnits.marketingStatus, req.query.marketingStatus as string));
-      const where = conditions.length > 0 ? and(...conditions) : undefined;
-      const rows = await db
-        .select({
-          id: availableUnits.id,
-          propertyId: availableUnits.propertyId,
-          unitName: availableUnits.unitName,
-          floor: availableUnits.floor,
-          sqft: availableUnits.sqft,
-          askingRent: availableUnits.askingRent,
-          ratesPa: availableUnits.ratesPa,
-          serviceChargePa: availableUnits.serviceChargePa,
-          useClass: availableUnits.useClass,
-          condition: availableUnits.condition,
-          availableDate: availableUnits.availableDate,
-          marketingStatus: availableUnits.marketingStatus,
-          epcRating: availableUnits.epcRating,
-          notes: availableUnits.notes,
-          restrictions: availableUnits.restrictions,
-          fee: availableUnits.fee,
-          dealId: availableUnits.dealId,
-          agentUserIds: availableUnits.agentUserIds,
-          viewingsCount: availableUnits.viewingsCount,
-          lastViewingDate: availableUnits.lastViewingDate,
-          marketingStartDate: availableUnits.marketingStartDate,
-          createdAt: availableUnits.createdAt,
-          updatedAt: availableUnits.updatedAt,
-          propertyName: crmProperties.name,
-          propertyAddress: crmProperties.address,
-        })
-        .from(availableUnits)
-        .leftJoin(crmProperties, eq(availableUnits.propertyId, crmProperties.id))
-        .where(where)
-        .orderBy(desc(availableUnits.createdAt));
-      res.json(rows);
+      // Master physical attributes live on property_units; the listing's columns
+      // are kept as a backwards-compat cache. We COALESCE master over listing so
+      // every reader sees the source-of-truth values.
+      const params: any[] = [];
+      const filters: string[] = [];
+      if (req.query.propertyId) {
+        params.push(req.query.propertyId);
+        filters.push(`au.property_id = $${params.length}`);
+      }
+      if (req.query.marketingStatus) {
+        params.push(req.query.marketingStatus);
+        filters.push(`au.marketing_status = $${params.length}`);
+      }
+      const whereClause = filters.length > 0 ? `WHERE ${filters.join(" AND ")}` : "";
+      const result = await pool.query(`
+        SELECT
+          au.id,
+          au.property_id AS "propertyId",
+          au.unit_id AS "unitId",
+          COALESCE(pu.unit_name, au.unit_name) AS "unitName",
+          COALESCE(pu.floor, au.floor) AS "floor",
+          COALESCE(pu.sqft, au.sqft) AS "sqft",
+          au.asking_rent AS "askingRent",
+          au.rates_pa AS "ratesPa",
+          au.service_charge_pa AS "serviceChargePa",
+          COALESCE(pu.use_class, au.use_class) AS "useClass",
+          COALESCE(pu.condition, au.condition) AS "condition",
+          au.available_date AS "availableDate",
+          au.marketing_status AS "marketingStatus",
+          COALESCE(pu.epc_rating, au.epc_rating) AS "epcRating",
+          au.notes,
+          au.restrictions,
+          au.fee,
+          au.deal_id AS "dealId",
+          au.agent_user_ids AS "agentUserIds",
+          au.viewings_count AS "viewingsCount",
+          au.last_viewing_date AS "lastViewingDate",
+          au.marketing_start_date AS "marketingStartDate",
+          au.created_at AS "createdAt",
+          au.updated_at AS "updatedAt",
+          p.name AS "propertyName",
+          p.address AS "propertyAddress"
+        FROM available_units au
+        LEFT JOIN crm_properties p ON p.id = au.property_id
+        LEFT JOIN property_units pu ON pu.id = au.unit_id
+        ${whereClause}
+        ORDER BY au.created_at DESC
+      `, params);
+      res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch available units" });
     }
@@ -1828,24 +1839,25 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/all-files", requireAuth, async (req, res) => {
     try {
-      const { unitMarketingFiles, availableUnits } = await import("@shared/schema");
-      const rows = await db
-        .select({
-          id: unitMarketingFiles.id,
-          unitId: unitMarketingFiles.unitId,
-          fileName: unitMarketingFiles.fileName,
-          filePath: unitMarketingFiles.filePath,
-          fileType: unitMarketingFiles.fileType,
-          fileSize: unitMarketingFiles.fileSize,
-          mimeType: unitMarketingFiles.mimeType,
-          createdAt: unitMarketingFiles.createdAt,
-          unitName: availableUnits.unitName,
-          propertyId: availableUnits.propertyId,
-        })
-        .from(unitMarketingFiles)
-        .leftJoin(availableUnits, eq(unitMarketingFiles.unitId, availableUnits.id))
-        .orderBy(unitMarketingFiles.createdAt);
-      res.json(rows);
+      // unitName comes from property_units master with listing fallback
+      const result = await pool.query(`
+        SELECT
+          umf.id,
+          umf.unit_id AS "unitId",
+          umf.file_name AS "fileName",
+          umf.file_path AS "filePath",
+          umf.file_type AS "fileType",
+          umf.file_size AS "fileSize",
+          umf.mime_type AS "mimeType",
+          umf.created_at AS "createdAt",
+          COALESCE(pu.unit_name, au.unit_name) AS "unitName",
+          au.property_id AS "propertyId"
+        FROM unit_marketing_files umf
+        LEFT JOIN available_units au ON au.id = umf.unit_id
+        LEFT JOIN property_units pu ON pu.id = au.unit_id
+        ORDER BY umf.created_at
+      `);
+      res.json(result.rows);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch all files" });
     }
@@ -1895,9 +1907,37 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
   app.get("/api/available-units/:id", requireAuth, async (req, res) => {
     try {
-      const unit = await storage.getAvailableUnit(req.params.id);
-      if (!unit) return res.status(404).json({ message: "Unit not found" });
-      res.json(unit);
+      // Master overrides cache for unitName/floor/sqft/useClass/condition/epcRating
+      const result = await pool.query(`
+        SELECT
+          au.*,
+          au.property_id AS "propertyId",
+          au.unit_id AS "unitId",
+          COALESCE(pu.unit_name, au.unit_name) AS "unitName",
+          COALESCE(pu.floor, au.floor) AS "floor",
+          COALESCE(pu.sqft, au.sqft) AS "sqft",
+          COALESCE(pu.use_class, au.use_class) AS "useClass",
+          COALESCE(pu.condition, au.condition) AS "condition",
+          COALESCE(pu.epc_rating, au.epc_rating) AS "epcRating",
+          au.asking_rent AS "askingRent",
+          au.rates_pa AS "ratesPa",
+          au.service_charge_pa AS "serviceChargePa",
+          au.available_date AS "availableDate",
+          au.marketing_status AS "marketingStatus",
+          au.deal_id AS "dealId",
+          au.agent_user_ids AS "agentUserIds",
+          au.viewings_count AS "viewingsCount",
+          au.last_viewing_date AS "lastViewingDate",
+          au.marketing_start_date AS "marketingStartDate",
+          au.created_at AS "createdAt",
+          au.updated_at AS "updatedAt"
+        FROM available_units au
+        LEFT JOIN property_units pu ON pu.id = au.unit_id
+        WHERE au.id = $1
+        LIMIT 1
+      `, [req.params.id]);
+      if (result.rows.length === 0) return res.status(404).json({ message: "Unit not found" });
+      res.json(result.rows[0]);
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to fetch unit" });
     }
@@ -2077,6 +2117,39 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       if (!existing) return res.status(404).json({ message: "Unit not found" });
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const partial = insertAvailableUnitSchema.partial().parse(req.body);
+
+      // Master-managed fields: write to property_units (the source of truth).
+      // We still write the same value to the listing cache so direct DB queries
+      // outside our GET endpoints stay coherent until the columns are dropped.
+      const MASTER_FIELDS = ["unitName", "floor", "sqft", "useClass", "condition", "epcRating"] as const;
+      const masterPatch: Record<string, any> = {};
+      for (const f of MASTER_FIELDS) {
+        if (f in partial) masterPatch[f] = (partial as any)[f];
+      }
+      if (existing.unitId && Object.keys(masterPatch).length > 0) {
+        const cols: Record<string, string> = {
+          unitName: "unit_name", floor: "floor", sqft: "sqft", useClass: "use_class",
+          condition: "condition", epcRating: "epc_rating",
+        };
+        const sets: string[] = [];
+        const values: any[] = [];
+        let i = 1;
+        for (const [k, v] of Object.entries(masterPatch)) {
+          sets.push(`${cols[k]} = $${i++}`);
+          values.push(v);
+        }
+        sets.push(`updated_at = NOW()`);
+        values.push(existing.unitId);
+        try {
+          await pool.query(`UPDATE property_units SET ${sets.join(", ")} WHERE id = $${i}`, values);
+        } catch (e: any) {
+          if (e?.code === "23505") {
+            return res.status(409).json({ message: "A unit with that name already exists on this property" });
+          }
+          throw e;
+        }
+      }
+
       const unit = await storage.updateAvailableUnit(req.params.id, partial);
       res.json(unit);
     } catch (err: any) {

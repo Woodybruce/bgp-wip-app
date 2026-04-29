@@ -530,6 +530,9 @@ export default function AvailableUnitsPage() {
       apiRequest("PATCH", `/api/available-units/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
+      // Master fields (floor/sqft/useClass/condition/epcRating/unitName) flow to
+      // property_units server-side, so refresh that cache too.
+      queryClient.invalidateQueries({ queryKey: ["/api/property-units"] });
       setEditItem(null);
       toast({ title: "Unit updated" });
     },
@@ -692,10 +695,6 @@ export default function AvailableUnitsPage() {
     setWipUnit(unit);
   };
 
-  // Fields that live on the master property_unit. Editing them on a listing
-  // dual-writes to both, keeping master as source of truth and the listing as cache.
-  const MASTER_UNIT_FIELDS = new Set(["floor", "sqft", "useClass", "condition", "epcRating"]);
-
   const inlineUpdate = (id: string, field: string, value: any) => {
     if (typeof value === "number" && isNaN(value)) value = null;
     if (field === "marketingStatus" && legacyToCode(value) === "SOL") {
@@ -705,15 +704,9 @@ export default function AvailableUnitsPage() {
         return;
       }
     }
+    // Server PATCH handler routes master-managed fields (unitName, floor, sqft,
+    // useClass, condition, epcRating) to property_units when unit_id is set.
     updateMutation.mutate({ id, data: { [field]: value } });
-    if (MASTER_UNIT_FIELDS.has(field)) {
-      const listing = units.find(u => u.id === id);
-      if (listing?.unitId) {
-        apiRequest("PATCH", `/api/property-units/${listing.unitId}`, { [field]: value })
-          .then(() => queryClient.invalidateQueries({ queryKey: ["/api/property-units"] }))
-          .catch(() => { /* server errors already toast via main mutation */ });
-      }
-    }
   };
 
   const uniqueProperties = useMemo(() => {
@@ -1399,6 +1392,7 @@ export default function AvailableUnitsPage() {
         form={form}
         setForm={setForm}
         properties={properties}
+        propertyUnits={propertyUnits}
         bgpUsers={bgpUsers}
         onSubmit={() => createMutation.mutate(formToPayload(form))}
         isPending={createMutation.isPending}
@@ -1411,6 +1405,7 @@ export default function AvailableUnitsPage() {
         form={form}
         setForm={setForm}
         properties={properties}
+        propertyUnits={propertyUnits}
         bgpUsers={bgpUsers}
         onSubmit={() => editItem && updateMutation.mutate({ id: editItem.id, data: formToPayload(form) })}
         isPending={updateMutation.isPending}
@@ -2113,7 +2108,7 @@ function MarketingFilesDialog({
 }
 
 function UnitFormDialog({
-  open, onOpenChange, title, form, setForm, properties, bgpUsers, onSubmit, isPending,
+  open, onOpenChange, title, form, setForm, properties, propertyUnits = [], bgpUsers, onSubmit, isPending,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -2121,11 +2116,19 @@ function UnitFormDialog({
   form: UnitFormState;
   setForm: (f: UnitFormState) => void;
   properties: CrmProperty[];
+  propertyUnits?: PropertyUnit[];
   bgpUsers: { id: string; name: string }[];
   onSubmit: () => void;
   isPending: boolean;
 }) {
   const upd = (field: keyof UnitFormState, value: string) => setForm({ ...form, [field]: value });
+  const [unitPickerOpen, setUnitPickerOpen] = useState(false);
+  const existingUnitsOnProperty = form.propertyId
+    ? propertyUnits.filter(pu => pu.propertyId === form.propertyId)
+    : [];
+  const matchedExistingUnit = existingUnitsOnProperty.find(
+    pu => pu.unitName.trim().toLowerCase() === (form.unitName || "").trim().toLowerCase()
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -2149,7 +2152,60 @@ function UnitFormDialog({
           </div>
           <div>
             <Label>Unit Name / Number</Label>
-            <Input value={form.unitName} onChange={e => upd("unitName", e.target.value)} placeholder="e.g. Unit 3, Ground Floor" data-testid="input-unit-name" />
+            <Popover open={unitPickerOpen} onOpenChange={setUnitPickerOpen}>
+              <PopoverTrigger asChild>
+                <div>
+                  <Input
+                    value={form.unitName}
+                    onChange={e => upd("unitName", e.target.value)}
+                    onFocus={() => existingUnitsOnProperty.length > 0 && setUnitPickerOpen(true)}
+                    placeholder={form.propertyId ? "Pick or type a new unit name" : "Select a property first"}
+                    disabled={!form.propertyId}
+                    data-testid="input-unit-name"
+                  />
+                  {form.unitName && !matchedExistingUnit && existingUnitsOnProperty.length > 0 && (
+                    <p className="text-[10px] text-emerald-600 mt-0.5">New unit — will be created on this property</p>
+                  )}
+                  {matchedExistingUnit && (
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Existing unit on this property — will be linked</p>
+                  )}
+                </div>
+              </PopoverTrigger>
+              {existingUnitsOnProperty.length > 0 && (
+                <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
+                  <Command>
+                    <CommandInput placeholder="Search existing units..." />
+                    <CommandList>
+                      <CommandEmpty>No matches. Keep typing to create a new unit.</CommandEmpty>
+                      <CommandGroup heading={`Units on this property (${existingUnitsOnProperty.length})`}>
+                        {existingUnitsOnProperty.map(pu => (
+                          <CommandItem
+                            key={pu.id}
+                            value={pu.unitName}
+                            onSelect={() => {
+                              setForm({
+                                ...form,
+                                unitName: pu.unitName,
+                                floor: pu.floor || form.floor,
+                                sqft: pu.sqft != null ? String(pu.sqft) : form.sqft,
+                                useClass: pu.useClass || form.useClass,
+                                condition: pu.condition || form.condition,
+                                epcRating: pu.epcRating || form.epcRating,
+                              });
+                              setUnitPickerOpen(false);
+                            }}
+                          >
+                            <span className="text-sm">{pu.unitName}</span>
+                            {pu.floor && <span className="text-xs text-muted-foreground ml-2">{pu.floor}</span>}
+                            {pu.sqft != null && <span className="text-xs text-muted-foreground ml-2">{pu.sqft.toLocaleString()} sqft</span>}
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              )}
+            </Popover>
           </div>
           <div>
             <Label>Floor</Label>
