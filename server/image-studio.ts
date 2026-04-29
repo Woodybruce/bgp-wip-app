@@ -1014,22 +1014,27 @@ export function registerImageStudioRoutes(app: Express) {
         return res.status(400).json({ error: "ids (array) required" });
       }
       const images = await db.select().from(imageStudioImages).where(inArray(imageStudioImages.id, ids));
+
+      // Delete local files (synchronous fs calls — fast)
       for (const image of images) {
         if (image.localPath && fs.existsSync(image.localPath)) {
           try { fs.unlinkSync(image.localPath); } catch {}
         }
-        if (image.sharepointDriveId && image.sharepointItemId) {
-          await pool.query(
-            "INSERT INTO deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id) VALUES ($1, $2) ON CONFLICT (sharepoint_drive_id, sharepoint_item_id) DO NOTHING",
-            [image.sharepointDriveId, image.sharepointItemId]
-          );
-        }
       }
-      // Clean up collection references before deleting images
-      await pool.query(
-        `DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`,
-        [ids]
-      );
+
+      // Batch-insert SharePoint tombstones in one query instead of N round-trips
+      const spPairs = images.filter(img => img.sharepointDriveId && img.sharepointItemId);
+      if (spPairs.length > 0) {
+        const values = spPairs.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(", ");
+        const params = spPairs.flatMap(img => [img.sharepointDriveId, img.sharepointItemId]);
+        await pool.query(
+          `INSERT INTO deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id) VALUES ${values} ON CONFLICT (sharepoint_drive_id, sharepoint_item_id) DO NOTHING`,
+          params
+        );
+      }
+
+      // Clean up collection references and delete records — both already batched
+      await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [ids]);
       await db.delete(imageStudioImages).where(inArray(imageStudioImages.id, ids));
       res.json({ success: true, deleted: images.length });
     } catch (e: any) {
