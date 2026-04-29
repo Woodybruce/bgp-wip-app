@@ -33,9 +33,11 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect } from "@/components/inline-edit";
+import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
 import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer } from "@shared/schema";
 import { useTeam } from "@/lib/team-context";
+import { CRM_OPTIONS } from "@/lib/crm-options";
+import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
 } from "@/components/ui/command";
@@ -552,6 +554,16 @@ export default function AvailableUnitsPage() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const dealInlineUpdate = useMutation({
+    mutationFn: async ({ id, field, value }: { id: string; field: string; value: unknown }) => {
+      await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+    },
+    onError: (e: any) => toast({ title: "Error saving", description: e.message, variant: "destructive" }),
+  });
+
   const linkDealMutation = useMutation({
     mutationFn: ({ id, dealId }: { id: string; dealId: string }) =>
       apiRequest("POST", `/api/available-units/${id}/link-deal`, { dealId }),
@@ -1007,20 +1019,53 @@ export default function AvailableUnitsPage() {
                           {prop?.name || u.propertyId}
                         </a>
                       </TableCell>
-                      <TableCell className="text-xs">{deal?.dealType || "—"}</TableCell>
-                      <TableCell className="text-xs truncate max-w-[140px]">
-                        {(() => {
-                          if (!deal) return "—";
+                      <TableCell className="px-1.5">
+                        {deal ? (
+                          <InlineLabelSelect
+                            value={deal.dealType}
+                            options={CRM_OPTIONS.dealType}
+                            colorMap={DEAL_TYPE_COLORS}
+                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "dealType", value: v || null })}
+                          />
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell className="px-1.5 max-w-[140px]">
+                        {deal ? (() => {
                           const isTenantRep = (deal.dealType || "").toLowerCase().includes("tenant rep");
-                          const id = isTenantRep ? deal.tenantId : deal.landlordId;
-                          return id ? (companyMap[id] || "—") : "—";
-                        })()}
+                          const field = isTenantRep ? "tenantId" : "landlordId";
+                          const value = isTenantRep ? deal.tenantId : deal.landlordId;
+                          return (
+                            <InlineLinkSelect
+                              value={value}
+                              options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                              href={value ? `/companies/${value}` : undefined}
+                              onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field, value: v || null })}
+                              placeholder="Link client"
+                            />
+                          );
+                        })() : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="text-xs truncate max-w-[140px]">
-                        {deal?.tenantId ? (companyMap[deal.tenantId] || "—") : "—"}
+                      <TableCell className="px-1.5 max-w-[140px]">
+                        {deal ? (
+                          <InlineLinkSelect
+                            value={deal.tenantId}
+                            options={crmCompanies.map(c => ({ id: c.id, name: c.name }))}
+                            href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
+                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "tenantId", value: v || null })}
+                            placeholder="Link tenant"
+                          />
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="text-xs truncate max-w-[140px]">
-                        {(deal?.team || []).join(", ") || "—"}
+                      <TableCell className="px-1.5 max-w-[160px]">
+                        {deal ? (
+                          <InlineMultiSelect
+                            value={deal.team || []}
+                            options={CRM_OPTIONS.dealTeam.map(t => ({ label: t, value: t }))}
+                            colorMap={DEAL_TEAM_COLORS}
+                            placeholder="Set team"
+                            onSave={(v) => dealInlineUpdate.mutate({ id: deal.id, field: "team", value: v.length > 0 ? v : null })}
+                          />
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
                       <TableCell>
                         <InlineText
