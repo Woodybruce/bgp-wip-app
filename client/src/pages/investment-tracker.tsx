@@ -899,6 +899,12 @@ export default function InvestmentTrackerPage() {
     return m;
   }, [deals]);
 
+  const dealRefMap = useMemo(() => {
+    const m = new Map<string, number | null>();
+    for (const d of deals) m.set(d.id, d.dealRef ?? null);
+    return m;
+  }, [deals]);
+
   const propertyItems = useMemo(() => properties.map(p => ({ id: p.id, name: p.name })), [properties]);
   const dealItems = useMemo(() => deals.map(d => ({ id: d.id, name: d.name })), [deals]);
   const companyItems = useMemo(() => companies.map(c => ({ id: c.id, name: c.name })), [companies]);
@@ -1504,7 +1510,8 @@ export default function InvestmentTrackerPage() {
                       data-testid="checkbox-select-all"
                     />
                   </TableHead>
-                  <TableHead className="w-[180px]">Asset</TableHead>
+                  <TableHead className="w-[50px]">Ref</TableHead>
+                  <TableHead className="w-[180px]">Property</TableHead>
                   <FilterHead label="Asset Class" value={assetClassFilter} options={ASSET_CLASSES} onChange={setAssetClassFilter} colorMap={ASSET_CLASS_COLORS} className="w-[90px]" />
                   <FilterHead label="Tenure" value={tenureFilter} options={TENURES} onChange={setTenureFilter} className="w-[70px]" />
                   <TableHead className="w-[90px] text-right">Guide Price</TableHead>
@@ -1523,9 +1530,10 @@ export default function InvestmentTrackerPage() {
                       <TableHead className="w-[80px]">Marketing Date</TableHead>
                     </>
                   )}
+                  <TableHead className="w-[100px]">Completion Date</TableHead>
                   <TableHead className="w-[70px] text-right">Fee</TableHead>
-                  <FilterHead label="Status" value={statusFilter} options={STATUSES} onChange={setStatusFilter} colorMap={STATUS_LABEL_COLORS} className="w-[90px]" />
-                  <FilterHead label="Agent" value={agentFilter} options={bgpUsers.map(u => u.name)} onChange={setAgentFilter} className="w-[90px]" />
+                  <FilterHead label="Deal Status" value={statusFilter} options={STATUSES} onChange={setStatusFilter} colorMap={STATUS_LABEL_COLORS} className="w-[90px]" />
+                  <FilterHead label="BGP Contact" value={agentFilter} options={bgpUsers.map(u => u.name)} onChange={setAgentFilter} className="w-[90px]" />
                   <TableHead className="w-[60px] text-center">Files</TableHead>
                   <TableHead className="w-[50px] text-center">Views</TableHead>
                   <TableHead className="w-[50px] text-center">Offers</TableHead>
@@ -1538,7 +1546,7 @@ export default function InvestmentTrackerPage() {
               <TableBody>
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={boardType === "Purchases" ? 21 : 20} className="text-center py-8 text-muted-foreground text-sm">
+                    <TableCell colSpan={boardType === "Purchases" ? 23 : 22} className="text-center py-8 text-muted-foreground text-sm">
                       {boardItems.length === 0 ? `No ${boardType.toLowerCase()} tracked yet. Click 'Add Asset' to start.` : "No assets match your filters."}
                     </TableCell>
                   </TableRow>
@@ -1552,6 +1560,9 @@ export default function InvestmentTrackerPage() {
                         aria-label={`Select ${item.assetName}`}
                         data-testid={`checkbox-select-${item.id}`}
                       />
+                    </TableCell>
+                    <TableCell className="px-2 py-1.5 font-mono text-muted-foreground text-xs">
+                      {item.dealId ? (dealRefMap.get(item.dealId) ? `#${dealRefMap.get(item.dealId)}` : "—") : "—"}
                     </TableCell>
                     <TableCell className="px-2 py-1.5 font-medium">
                       <div>
@@ -1747,6 +1758,13 @@ export default function InvestmentTrackerPage() {
                         </TableCell>
                       </>
                     )}
+                    <TableCell className="px-2 py-1.5">
+                      <InlineDate
+                        value={item.completionDate || ""}
+                        onSave={v => inlineUpdate(item.id, "completionDate", v || null)}
+                        className="text-xs"
+                      />
+                    </TableCell>
                     <TableCell className="px-2 py-1.5 text-right">
                       <InlineNumber
                         value={item.fee}

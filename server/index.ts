@@ -480,6 +480,18 @@ import { pool } from "./db";
       END
       WHERE status IS NOT NULL
         AND UPPER(TRIM(status)) NOT IN ('REP','SPEC','LIVE','AVA','NEG','SOL','EXC','COM','WIT','INV')`,
+
+    // ── Deal Ref — sequential human-readable number starting at 1000 ─────────
+    // Each crm_deal gets a unique integer ref that never changes and is shown
+    // on every board (Letting Tracker, Investment Tracker, WIP Report, Deals).
+    `CREATE SEQUENCE IF NOT EXISTS deal_ref_seq START WITH 1000 INCREMENT BY 1`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS deal_ref INTEGER`,
+    `UPDATE crm_deals SET deal_ref = NEXTVAL('deal_ref_seq') WHERE deal_ref IS NULL`,
+    `ALTER TABLE crm_deals ALTER COLUMN deal_ref SET DEFAULT NEXTVAL('deal_ref_seq')`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_crm_deals_deal_ref ON crm_deals(deal_ref) WHERE deal_ref IS NOT NULL`,
+
+    // ── Investment Tracker — add completion_date ───────────────────────────
+    `ALTER TABLE investment_tracker ADD COLUMN IF NOT EXISTS completion_date TEXT`,
   ];
 
   let ok = 0, skipped = 0;

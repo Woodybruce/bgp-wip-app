@@ -1908,6 +1908,31 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       const { insertAvailableUnitSchema } = await import("@shared/schema");
       const parsed = insertAvailableUnitSchema.parse(req.body);
       const unit = await storage.createAvailableUnit(parsed);
+
+      // Auto-create a backing CRM deal so every tracker row has a source of truth
+      if (!unit.dealId) {
+        try {
+          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+          const deal = await storage.createCrmDeal({
+            name: property
+              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
+              : unit.unitName,
+            propertyId: unit.propertyId || undefined,
+            status: unit.marketingStatus || "AVA",
+            dealType: "Leasing",
+            internalAgent: unit.agentUserIds || [],
+            fee: unit.fee ?? undefined,
+            rentPa: unit.askingRent ?? undefined,
+            totalAreaSqft: unit.sqft ?? undefined,
+          });
+          await storage.updateAvailableUnit(unit.id, { dealId: deal.id });
+          (unit as any).dealId = deal.id;
+          (unit as any).dealRef = deal.dealRef;
+        } catch (e: any) {
+          console.warn("[available-units POST] auto-create deal failed:", e.message);
+        }
+      }
+
       res.json(unit);
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ message: "Validation error", errors: err.errors });
@@ -1935,6 +1960,64 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err?.message || "Failed to delete unit" });
+    }
+  });
+
+  // Backfill: create CRM deals for any tracker rows that are still missing dealId.
+  // Safe to run multiple times — skips rows that already have a dealId.
+  app.post("/api/admin/backfill-tracker-deals", requireAuth, async (req, res) => {
+    try {
+      const { availableUnits, investmentTracker: invTracker } = await import("@shared/schema");
+      let created = 0;
+      const skipped = 0;
+
+      // --- Letting Tracker ---
+      const unlinkedUnits = await db.select().from(availableUnits).where(sql`deal_id IS NULL`);
+      for (const unit of unlinkedUnits) {
+        try {
+          const property = unit.propertyId ? await storage.getCrmProperty(unit.propertyId) : null;
+          const deal = await storage.createCrmDeal({
+            name: property
+              ? `${property.name}${unit.unitName ? ` – ${unit.unitName}` : ""}`
+              : unit.unitName,
+            propertyId: unit.propertyId || undefined,
+            status: unit.marketingStatus || "AVA",
+            dealType: "Leasing",
+            internalAgent: unit.agentUserIds || [],
+            fee: unit.fee ?? undefined,
+            rentPa: unit.askingRent ?? undefined,
+            totalAreaSqft: unit.sqft ?? undefined,
+          });
+          await db.update(availableUnits).set({ dealId: deal.id }).where(eq(availableUnits.id, unit.id));
+          created++;
+        } catch (e: any) {
+          console.warn(`[backfill] unit ${unit.id} failed:`, e.message);
+        }
+      }
+
+      // --- Investment Tracker ---
+      const unlinkedInv = await db.select().from(invTracker).where(sql`deal_id IS NULL`);
+      for (const row of unlinkedInv) {
+        try {
+          const dealType = row.boardType === "Sales" ? "Investment Sale" : "Investment Acquisition";
+          const deal = await storage.createCrmDeal({
+            name: row.assetName,
+            propertyId: row.propertyId,
+            status: "REP",
+            dealType,
+            internalAgent: row.agentUserIds || [],
+            fee: row.fee ?? undefined,
+          });
+          await db.update(invTracker).set({ dealId: deal.id }).where(eq(invTracker.id, row.id));
+          created++;
+        } catch (e: any) {
+          console.warn(`[backfill] inv-tracker ${row.id} failed:`, e.message);
+        }
+      }
+
+      res.json({ created, skipped, message: `Created ${created} deals for previously unlinked tracker rows` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Backfill failed" });
     }
   });
 
@@ -2393,6 +2476,27 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
       }
       const parsed = insertInvestmentTrackerSchema.parse(body);
       const [row] = await db.insert(investmentTracker).values(parsed).returning();
+
+      // Auto-create a backing CRM deal
+      if (!row.dealId) {
+        try {
+          const dealType = row.boardType === "Sales" ? "Investment Sale" : "Investment Acquisition";
+          const deal = await storage.createCrmDeal({
+            name: row.assetName,
+            propertyId: row.propertyId,
+            status: "REP",
+            dealType,
+            internalAgent: row.agentUserIds || [],
+            fee: row.fee ?? undefined,
+          });
+          await db.update(investmentTracker).set({ dealId: deal.id }).where(eq(investmentTracker.id, row.id));
+          (row as any).dealId = deal.id;
+          (row as any).dealRef = deal.dealRef;
+        } catch (e: any) {
+          console.warn("[investment-tracker POST] auto-create deal failed:", e.message);
+        }
+      }
+
       res.json(row);
     } catch (e: any) {
       res.status(400).json({ message: e.message });
@@ -2405,7 +2509,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         "propertyId", "assetName", "assetType", "tenure", "guidePrice", "niy", "eqy", "sqft",
         "waultBreak", "waultExpiry", "currentRent", "ervPa", "occupancy", "capexRequired",
         "boardType", "status", "client", "clientContact", "vendor", "vendorAgent", "buyer",
-        "address", "notes", "dealId", "agentUserIds", "fee", "feeType", "marketingDate", "bidDeadline",
+        "address", "notes", "dealId", "agentUserIds", "fee", "feeType", "marketingDate", "bidDeadline", "completionDate",
       ]);
       const updates: Record<string, any> = { updatedAt: new Date() };
       for (const [key, value] of Object.entries(req.body)) {

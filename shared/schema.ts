@@ -713,6 +713,7 @@ export type CrmPropertyClient = typeof crmPropertyClients.$inferSelect;
 
 export const crmDeals = pgTable("crm_deals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealRef: integer("deal_ref"),
   name: text("name").notNull(),
   mondayItemId: text("monday_item_id"),
   groupName: text("group_name"),
@@ -1534,6 +1535,7 @@ export const investmentTracker = pgTable("investment_tracker", {
   feeType: text("fee_type"),
   marketingDate: text("marketing_date"),
   bidDeadline: text("bid_deadline"),
+  completionDate: text("completion_date"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

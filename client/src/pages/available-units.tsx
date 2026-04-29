@@ -488,6 +488,12 @@ export default function AvailableUnitsPage() {
     return m;
   }, [bgpUsers]);
 
+  const companyMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const c of crmCompanies) m[c.id] = c.name;
+    return m;
+  }, [crmCompanies]);
+
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/available-units", data),
     onSuccess: () => {
@@ -929,7 +935,12 @@ export default function AvailableUnitsPage() {
                   />
                 </TableHead>
                 <TableHead className="w-10 px-1"><Star className="w-3.5 h-3.5 text-muted-foreground" /></TableHead>
+                <TableHead className="w-[50px]">Ref</TableHead>
                 <TableHead className="w-[180px]">Property</TableHead>
+                <TableHead className="w-[120px]">Deal Type</TableHead>
+                <TableHead className="w-[140px]">Client</TableHead>
+                <TableHead className="w-[140px]">Tenant</TableHead>
+                <TableHead className="w-[140px]">Team</TableHead>
                 <TableHead className="w-[140px]">Unit</TableHead>
                 <TableHead>Floor</TableHead>
                 <TableHead className="text-right">Sq Ft</TableHead>
@@ -940,11 +951,11 @@ export default function AvailableUnitsPage() {
                 <TableHead>Location</TableHead>
                 <TableHead>Condition</TableHead>
                 <TableHead>EPC</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead>Deal Status</TableHead>
                 <TableHead className="text-center">Viewings</TableHead>
                 <TableHead className="text-center">Offers</TableHead>
                 <TableHead className="text-right">Fee</TableHead>
-                <TableHead>Agent</TableHead>
+                <TableHead>BGP Contact</TableHead>
                 <TableHead>WIP Deal</TableHead>
                 <TableHead>Marketing</TableHead>
                 <TableHead className="w-[100px]">Actions</TableHead>
@@ -953,7 +964,7 @@ export default function AvailableUnitsPage() {
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={20} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={26} className="text-center py-12 text-muted-foreground">
                     <Store className="h-8 w-8 mx-auto mb-2 opacity-40" />
                     {teamUnits.length === 0 ? "No available units yet. Add your first unit to get started." : "No units match filters."}
                   </TableCell>
@@ -988,10 +999,28 @@ export default function AvailableUnitsPage() {
                           <Star className={`w-4 h-4 ${favoriteIds.includes(u.propertyId) ? "text-amber-500 fill-amber-500" : "text-muted-foreground/40 hover:text-amber-400"}`} />
                         </button>
                       </TableCell>
+                      <TableCell className="text-xs font-mono text-muted-foreground">
+                        {deal?.dealRef ? `#${deal.dealRef}` : "—"}
+                      </TableCell>
                       <TableCell className="font-medium max-w-[180px] truncate" title={prop?.name}>
                         <a href={`/properties/${u.propertyId}`} className="text-blue-600 hover:underline dark:text-blue-400" data-testid={`link-property-${u.id}`}>
                           {prop?.name || u.propertyId}
                         </a>
+                      </TableCell>
+                      <TableCell className="text-xs">{deal?.dealType || "—"}</TableCell>
+                      <TableCell className="text-xs truncate max-w-[140px]">
+                        {(() => {
+                          if (!deal) return "—";
+                          const isTenantRep = (deal.dealType || "").toLowerCase().includes("tenant rep");
+                          const id = isTenantRep ? deal.tenantId : deal.landlordId;
+                          return id ? (companyMap[id] || "—") : "—";
+                        })()}
+                      </TableCell>
+                      <TableCell className="text-xs truncate max-w-[140px]">
+                        {deal?.tenantId ? (companyMap[deal.tenantId] || "—") : "—"}
+                      </TableCell>
+                      <TableCell className="text-xs truncate max-w-[140px]">
+                        {(deal?.team || []).join(", ") || "—"}
                       </TableCell>
                       <TableCell>
                         <InlineText
