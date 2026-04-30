@@ -52,6 +52,8 @@ const DocumentTemplates = lazy(() => import("@/pages/document-templates"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const Comps = lazy(() => import("@/pages/comps"));
 const InvestmentComps = lazy(() => import("@/pages/investment-comps"));
+const HuntersLetting = lazy(() => import("@/pages/hunters-letting"));
+const HuntersInvestment = lazy(() => import("@/pages/hunters-investment"));
 const Leads = lazy(() => import("@/pages/leads"));
 const Subscriptions = lazy(() => import("@/pages/subscriptions"));
 const ChatBGP = lazy(() => import("@/pages/chatbgp"));
@@ -127,6 +129,8 @@ function Router() {
       <Route path="/deals/:rest*" component={DealsHub} />
       <Route path="/requirements" component={Requirements} />
       <Route path="/tenant-rep" component={TenantRep} />
+      <Route path="/hunters/letting" component={HuntersLetting} />
+      <Route path="/hunters/investment" component={HuntersInvestment} />
       <Route path="/today" component={TodayPage} />
       <Route path="/news" component={News} />
       <Route path="/diary" component={DiaryRedirect} />

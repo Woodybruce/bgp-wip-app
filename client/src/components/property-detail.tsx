@@ -400,6 +400,31 @@ export function PropertyDetail({ id }: { id: string }) {
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Tenants</p>
                     <InlineTenants propertyId={id} tenantLinks={tenantLinks} allCompanies={allCompanies} />
                   </div>
+                  <div>
+                    <div className="flex items-center gap-1 mb-0.5">
+                      <p className="text-[10px] text-muted-foreground leading-tight">Competitor agent</p>
+                      {property.competitorAgentStatus === "active" && property.competitorAgentInstructedAt && (
+                        Date.now() - new Date(property.competitorAgentInstructedAt).getTime() > 365 * 864e5 ? (
+                          <Badge variant="outline" className="text-[8px] px-1 py-0 border-orange-300 text-orange-600">stale</Badge>
+                        ) : null
+                      )}
+                    </div>
+                    <InlineText
+                      value={property.competitorAgent || ""}
+                      onSave={(val) => inlineUpdate("competitorAgent", val || null)}
+                      placeholder="e.g. CBRE"
+                      className="text-sm"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Comp. instructed</p>
+                    <InlineText
+                      value={property.competitorAgentInstructedAt ? String(property.competitorAgentInstructedAt).slice(0, 10) : ""}
+                      onSave={(val) => inlineUpdate("competitorAgentInstructedAt", val || null)}
+                      placeholder="YYYY-MM-DD"
+                      className="text-sm"
+                    />
+                  </div>
                   <div className="col-span-2 sm:col-span-2 lg:col-span-2">
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Website</p>
                     <div className="flex items-center gap-2">
