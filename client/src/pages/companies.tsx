@@ -58,6 +58,9 @@ import { EntityPicker } from "@/components/entity-picker";
 import { InlineAddress } from "@/components/address-autocomplete";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schema";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
+import { LandlordInvestmentPanel } from "@/components/landlord-investment-panel";
+import { LandlordLettingPanel } from "@/components/landlord-letting-panel";
+import { BillingEntityPanel } from "@/components/billing-entity-panel";
 
 interface CHSearchResult {
   companyNumber: string;
@@ -1220,7 +1223,23 @@ function CompanyDetail({ id }: { id: string }) {
             </CardContent>
           </Card>
 
-          <BrandProfilePanel companyId={id} />
+          {(() => {
+            const t = (company.companyType || "").toLowerCase();
+            const isBilling = t.includes("billing");
+            const isLandlord = t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("fund");
+            if (isBilling) {
+              return <BillingEntityPanel company={company as any} />;
+            }
+            if (isLandlord) {
+              return (
+                <>
+                  <LandlordLettingPanel company={company as any} />
+                  <LandlordInvestmentPanel company={company as any} />
+                </>
+              );
+            }
+            return <BrandProfilePanel companyId={id} />;
+          })()}
 
           {linkedProperties.length > 0 && (() => {
             const userIdToName = new Map<string, string>();

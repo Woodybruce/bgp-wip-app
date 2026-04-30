@@ -285,6 +285,9 @@ export async function registerRoutes(
   const { registerLeaseEventRoutes } = await import("./lease-events");
   registerLeaseEventRoutes(app);
 
+  const { registerLandlordHunterRoutes } = await import("./landlord-hunter");
+  registerLandlordHunterRoutes(app);
+
   const { registerIntegrationsStatusRoutes } = await import("./integrations-status");
   registerIntegrationsStatusRoutes(app);
 
