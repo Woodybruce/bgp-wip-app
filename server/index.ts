@@ -335,6 +335,53 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS uk_entity_name TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_crm_companies_merged_into ON crm_companies(merged_into_id) WHERE merged_into_id IS NOT NULL`,
 
+    // ── Landlord/Investor hunter signals ──────────────────────────────
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS mandate_asset_class TEXT[]`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS mandate_lot_size_min REAL`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS mandate_lot_size_max REAL`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS mandate_geographies TEXT[]`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS acquiring_now BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS acquiring_now_notes TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS capital_source TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aum REAL`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS fund_vintage_year INTEGER`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS fund_end_year INTEGER`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS disposing_now BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS disposing_now_notes TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS distress_flag BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS distress_notes TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS letting_hunter_flag BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS letting_hunter_notes TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS asset_manager_contact_id VARCHAR`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_acquiring_now ON crm_companies(acquiring_now) WHERE acquiring_now = true`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_distress_flag ON crm_companies(distress_flag) WHERE distress_flag = true`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_letting_hunter ON crm_companies(letting_hunter_flag) WHERE letting_hunter_flag = true`,
+
+    // ── Letting hunter — competitor agent on each property ────────────
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS competitor_agent TEXT`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS competitor_agent_instructed_at TIMESTAMP`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS competitor_agent_status TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_properties_competitor_agent ON crm_properties(competitor_agent) WHERE competitor_agent IS NOT NULL`,
+
+    // ── Landlord debt / capital event log — distress + activity stream ──
+    `CREATE TABLE IF NOT EXISTS landlord_debt_events (
+       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+       landlord_id VARCHAR NOT NULL,
+       property_id VARCHAR,
+       event_type TEXT NOT NULL,
+       event_date TIMESTAMP,
+       lender TEXT,
+       amount REAL,
+       notes TEXT,
+       source_url TEXT,
+       source TEXT DEFAULT 'manual',
+       created_at TIMESTAMP DEFAULT NOW(),
+       updated_at TIMESTAMP DEFAULT NOW()
+     )`,
+    `CREATE INDEX IF NOT EXISTS idx_landlord_debt_events_landlord ON landlord_debt_events(landlord_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_landlord_debt_events_property ON landlord_debt_events(property_id) WHERE property_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_landlord_debt_events_date ON landlord_debt_events(event_date)`,
+
     `CREATE TABLE IF NOT EXISTS dedupe_candidates (
        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
        cluster_key TEXT NOT NULL,

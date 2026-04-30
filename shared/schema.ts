@@ -477,6 +477,27 @@ export const crmCompanies = pgTable("crm_companies", {
   // rollout velocity). Refreshed automatically, never manually.
   brandAnalysis: text("brand_analysis"),
   brandAnalysisAt: timestamp("brand_analysis_at"),
+  // ── Landlord / Investor hunter signals ──────────────────────────────
+  // Investment side — buyers
+  mandateAssetClass: text("mandate_asset_class").array(), // ["retail","office","leisure"]
+  mandateLotSizeMin: real("mandate_lot_size_min"), // £m
+  mandateLotSizeMax: real("mandate_lot_size_max"), // £m
+  mandateGeographies: text("mandate_geographies").array(), // ["London","UK Regions","Europe"]
+  acquiringNow: boolean("acquiring_now").default(false),
+  acquiringNowNotes: text("acquiring_now_notes"),
+  capitalSource: text("capital_source"), // balance_sheet | fund | jv | family_office | sovereign | reit | listed
+  aum: real("aum"), // £m AUM
+  fundVintageYear: integer("fund_vintage_year"),
+  fundEndYear: integer("fund_end_year"),
+  // Investment side — sellers / distress
+  disposingNow: boolean("disposing_now").default(false),
+  disposingNowNotes: text("disposing_now_notes"),
+  distressFlag: boolean("distress_flag").default(false),
+  distressNotes: text("distress_notes"),
+  // Letting side — leasing team's hunt criteria for landlords
+  lettingHunterFlag: boolean("letting_hunter_flag").default(false),
+  lettingHunterNotes: text("letting_hunter_notes"),
+  assetManagerContactId: varchar("asset_manager_contact_id"), // who signs off lettings
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -693,6 +714,10 @@ export const crmProperties = pgTable("crm_properties", {
   bgpContactUserIds: text("bgp_contact_user_ids").array(),
   leasingPrivacyEnabled: boolean("leasing_privacy_enabled").default(false),
   sharepointFolderUrl: text("sharepoint_folder_url"),
+  // ── Letting hunter — track competitor agent on non-BGP-instructed stock ──
+  competitorAgent: text("competitor_agent"), // e.g. "CBRE", "Knight Frank"
+  competitorAgentInstructedAt: timestamp("competitor_agent_instructed_at"),
+  competitorAgentStatus: text("competitor_agent_status"), // active | won_by_bgp | lost
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1045,6 +1070,28 @@ export const leaseEvents = pgTable("lease_events", {
 export const insertLeaseEventSchema = createInsertSchema(leaseEvents).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertLeaseEvent = z.infer<typeof insertLeaseEventSchema>;
 export type LeaseEvent = typeof leaseEvents.$inferSelect;
+
+// ─── Landlord debt / capital events — drives the Investment Hunter's
+// distress signals (refinances coming up, breaches, writedowns, fundraises).
+// One row per event. `source = manual | scrape | news` so we know what was
+// typed vs auto-collected.
+export const landlordDebtEvents = pgTable("landlord_debt_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  landlordId: varchar("landlord_id").notNull(),
+  propertyId: varchar("property_id"),
+  eventType: text("event_type").notNull(), // refinance | maturity | breach | writedown | disposal | fundraise | acquisition
+  eventDate: timestamp("event_date"),
+  lender: text("lender"),
+  amount: real("amount"), // £m
+  notes: text("notes"),
+  sourceUrl: text("source_url"),
+  source: text("source").default("manual"), // manual | scrape | news
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertLandlordDebtEventSchema = createInsertSchema(landlordDebtEvents).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertLandlordDebtEvent = z.infer<typeof insertLandlordDebtEventSchema>;
+export type LandlordDebtEvent = typeof landlordDebtEvents.$inferSelect;
 
 export const crmPropertyAgents = pgTable("crm_property_agents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
