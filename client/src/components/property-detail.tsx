@@ -138,7 +138,12 @@ export function PropertyDetail({ id }: { id: string }) {
     queryKey: ["/api/crm/property-agents"],
   });
   const { data: allCompanies = [] } = useQuery<CrmCompany[]>({
-    queryKey: ["/api/crm/companies"],
+    queryKey: ["/api/crm/companies", { includeBillingEntities: true }],
+    queryFn: async () => {
+      const res = await fetch("/api/crm/companies?includeBillingEntities=true");
+      if (!res.ok) throw new Error("Failed to load companies");
+      return res.json();
+    },
   });
   const { data: tenantLinks = [] } = useQuery<{ propertyId: string; companyId: string }[]>({
     queryKey: ["/api/crm/property-tenants"],

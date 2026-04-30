@@ -143,7 +143,7 @@ export interface IStorage {
   deleteMemory(id: string): Promise<void>;
   clearMemories(userId: string): Promise<void>;
 
-  getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]>;
+  getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; includeBillingEntities?: boolean; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]>;
   getCrmCompany(id: string): Promise<CrmCompany | undefined>;
   createCrmCompany(company: InsertCrmCompany): Promise<CrmCompany>;
   updateCrmCompany(id: string, updates: Partial<InsertCrmCompany>): Promise<CrmCompany>;
@@ -709,7 +709,7 @@ export class DatabaseStorage implements IStorage {
     await db.delete(chatbgpMemories).where(eq(chatbgpMemories.userId, userId));
   }
 
-  async getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]> {
+  async getCrmCompanies(filters?: { search?: string; groupName?: string; companyType?: string; includeBillingEntities?: boolean; page?: number; limit?: number }): Promise<{ data: CrmCompany[]; total: number } | CrmCompany[]> {
     // Hide companies that have been merged into another — they shouldn't
     // appear in any list view. Their FK references have been rewritten so
     // nothing depends on them any more.
@@ -717,6 +717,13 @@ export class DatabaseStorage implements IStorage {
     if (filters?.search) conditions.push(ilike(crmCompanies.name, `%${escapeLike(filters.search)}%`));
     if (filters?.groupName) conditions.push(eq(crmCompanies.groupName, filters.groupName));
     if (filters?.companyType) conditions.push(eq(crmCompanies.companyType, filters.companyType));
+    // Hide invoicing/billing entities (Sage-imported SPVs, shell cos used for
+    // invoicing) from the main CRM list by default. They're still resolvable
+    // by ID for the deal page billing-entity link and KYC checks. Pass
+    // includeBillingEntities=true or filter explicitly by companyType to see them.
+    else if (!filters?.includeBillingEntities) {
+      conditions.push(sql`(${crmCompanies.companyType} IS NULL OR ${crmCompanies.companyType} NOT IN ('Billing','Billing Entity'))`);
+    }
     const where = and(...conditions);
     if (filters?.page && filters?.limit) {
       const offset = (filters.page - 1) * filters.limit;

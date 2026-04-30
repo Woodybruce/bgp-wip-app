@@ -562,7 +562,7 @@ async function enrichWipDealsFromSage(
             : null;
           await client.query(
             `INSERT INTO crm_companies (id, name, company_type, head_office_address, created_at, updated_at)
-             VALUES ($1, $2, 'Billing', $3, NOW(), NOW())`,
+             VALUES ($1, $2, 'Billing Entity', $3, NOW(), NOW())`,
             [billingId, billingName, addressBlob],
           );
           compByName.set(key, billingId);
@@ -1074,6 +1074,7 @@ export function setupCrmRoutes(app: Express) {
         search: req.query.search as string | undefined,
         groupName: req.query.groupName as string | undefined,
         companyType: req.query.companyType as string | undefined,
+        includeBillingEntities: req.query.includeBillingEntities === "true",
         page,
         limit,
       };

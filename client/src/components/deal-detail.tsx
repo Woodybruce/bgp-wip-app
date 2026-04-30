@@ -190,7 +190,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   });
 
   const { data: companies = [] } = useQuery<CrmCompany[]>({
-    queryKey: ["/api/crm/companies"],
+    queryKey: ["/api/crm/companies", { includeBillingEntities: true }],
+    queryFn: async () => {
+      const res = await fetch("/api/crm/companies?includeBillingEntities=true");
+      if (!res.ok) throw new Error("Failed to load companies");
+      return res.json();
+    },
   });
 
   const { data: contacts = [] } = useQuery<CrmContact[]>({
