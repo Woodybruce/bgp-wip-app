@@ -4632,7 +4632,7 @@ function PropertiesList({
                         }}
                       />
                     </TableHead>
-                    <TableHead className="min-w-[200px]">Property</TableHead>
+                    <TableHead className="min-w-[280px] w-[280px]">Property</TableHead>
                     {visibleColumns.landlord && <TableHead className="min-w-[140px]">Ownership</TableHead>}
                     {visibleColumns.status && (
                       <TableHead className="min-w-[90px] w-[90px]">
