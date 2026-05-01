@@ -497,6 +497,9 @@ export const crmCompanies = pgTable("crm_companies", {
   // Letting side — leasing team's hunt criteria for landlords
   lettingHunterFlag: boolean("letting_hunter_flag").default(false),
   lettingHunterNotes: text("letting_hunter_notes"),
+  // Investment side — investment team's hunt criteria for landlords
+  investmentHunterFlag: boolean("investment_hunter_flag").default(false),
+  investmentHunterNotes: text("investment_hunter_notes"),
   assetManagerContactId: varchar("asset_manager_contact_id"), // who signs off lettings
   // ── Lender profile fields ────────────────────────────────────────────────
   lenderType: text("lender_type"), // clearing_bank | investment_bank | insurance | pension | debt_fund | private_credit | mezzanine | bridging | development | building_society

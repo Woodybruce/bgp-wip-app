@@ -67,6 +67,8 @@ interface BrandProfile {
     bgp_contact_crm: string | null;
     letting_hunter_flag: boolean | null;
     letting_hunter_notes: string | null;
+    investment_hunter_flag: boolean | null;
+    investment_hunter_notes: string | null;
   };
   signals: Array<any>;
   representedBy: Array<any>;
@@ -2643,6 +2645,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                     return (
                       <>
                         {c.letting_hunter_flag && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200"><Flame className="w-2.5 h-2.5 mr-0.5" />Letting Watch</Badge>}
+                        {c.investment_hunter_flag && <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200"><Flame className="w-2.5 h-2.5 mr-0.5" />Investment Watch</Badge>}
                         <Link
                           href={`/hunters/letting?companyId=${companyId}`}
                           className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"

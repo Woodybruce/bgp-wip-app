@@ -139,7 +139,8 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               brand_analysis, brand_analysis_at,
               ai_disabled,
               merged_into_id,
-              letting_hunter_flag, letting_hunter_notes
+              letting_hunter_flag, letting_hunter_notes,
+              investment_hunter_flag, investment_hunter_notes
          FROM crm_companies WHERE id = $1`,
       [companyId]
     );
