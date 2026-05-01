@@ -4633,7 +4633,7 @@ function PropertiesList({
                       />
                     </TableHead>
                     <TableHead className="min-w-[200px]">Property</TableHead>
-                    {visibleColumns.landlord && <TableHead className="min-w-[200px]">Ownership</TableHead>}
+                    {visibleColumns.landlord && <TableHead className="min-w-[140px]">Ownership</TableHead>}
                     {visibleColumns.status && (
                       <TableHead className="min-w-[90px] w-[90px]">
                         <ColumnFilterPopover
@@ -4665,7 +4665,7 @@ function PropertiesList({
                       </TableHead>
                     )}
                     {visibleColumns.engagement && (
-                      <TableHead className="min-w-[110px]">
+                      <TableHead className="min-w-[140px]">
                         <ColumnFilterPopover
                           label="Team"
                           options={engagementValues}
@@ -4674,7 +4674,7 @@ function PropertiesList({
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.deals && <TableHead className="min-w-[60px] w-[60px]">WIP</TableHead>}
+                    {visibleColumns.deals && <TableHead className="min-w-[140px]">WIP</TableHead>}
                     {visibleColumns.tenants && <TableHead className="min-w-[140px]">Tenants</TableHead>}
                     {visibleColumns.agents && <TableHead className="min-w-[120px]">BGP Contacts</TableHead>}
                     {visibleColumns.sqft && <TableHead className="min-w-[60px] w-[60px]">Sq Ft</TableHead>}
