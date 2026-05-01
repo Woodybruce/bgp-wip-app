@@ -229,7 +229,7 @@ const GROUP_COLORS: Record<string, string> = {
 };
 
 const COLUMN_LABELS: Record<string, string> = {
-  landlord: "Ownership",
+  landlord: "Client",
   status: "Status",
   type: "Deal Type",
   team: "Team",
@@ -4558,7 +4558,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     </TableHead>
                     <TableHead className="w-[60px]">Ref</TableHead>
                     <TableHead className="min-w-[200px]">Property</TableHead>
-                    {visibleColumns.landlord && <TableHead className="min-w-[120px]">Ownership</TableHead>}
+                    {visibleColumns.landlord && <TableHead className="min-w-[120px]">Client</TableHead>}
                     {visibleColumns.type && (
                       <TableHead className="min-w-[120px]">
                         <ColumnFilterPopover

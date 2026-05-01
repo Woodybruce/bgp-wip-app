@@ -1035,9 +1035,13 @@ export function InlineTenants({
     },
   });
 
+  const MAX_VISIBLE = 3;
+  const visibleCompanies = assignedCompanies.slice(0, MAX_VISIBLE);
+  const hiddenCount = assignedCompanies.length - MAX_VISIBLE;
+
   return (
-    <div className="flex items-start gap-1 flex-wrap max-h-[60px] overflow-y-auto">
-      {assignedCompanies.map(company => (
+    <div className="flex items-center gap-1 flex-wrap">
+      {visibleCompanies.map(company => (
         <span key={company.id} className="inline-flex items-center gap-0.5">
           <Link href={`/companies/${company.id}`}>
             <Badge
@@ -1058,6 +1062,9 @@ export function InlineTenants({
           </button>
         </span>
       ))}
+      {hiddenCount > 0 && (
+        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">+{hiddenCount} more</Badge>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button

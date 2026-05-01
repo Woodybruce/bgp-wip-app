@@ -25,11 +25,17 @@ type Property = {
   address?: any;
   postcode?: string | null;
   landlordId?: string | null;
+  freeholderId?: string | null;
+  longLeaseholderId?: string | null;
+  seniorLenderId?: string | null;
+  juniorLenderId?: string | null;
   competitorAgent?: string | null;
   competitorAgentInstructedAt?: string | null;
   competitorAgentStatus?: string | null;
   sqft?: number | null;
 };
+
+type SimpleCompany = { id: string; name: string };
 
 type LeaseEvent = {
   id: string;
@@ -49,6 +55,11 @@ export function LandlordLettingPanel({ company }: { company: Company }) {
 
   const { data: properties = [] } = useQuery<Property[]>({
     queryKey: ["/api/crm/properties"],
+  });
+
+  const { data: allCompanies = [] } = useQuery<SimpleCompany[]>({
+    queryKey: ["/api/crm/companies"],
+    select: (data: any[]) => data.map((c) => ({ id: c.id, name: c.name })),
   });
 
   const { data: leaseEvents = [] } = useQuery<LeaseEvent[]>({
@@ -182,17 +193,38 @@ export function LandlordLettingPanel({ company }: { company: Company }) {
               {ownedProps.length === 0 ? (
                 <div className="text-xs text-muted-foreground italic">No linked properties</div>
               ) : (
-                ownedProps.map((p) => (
-                  <div key={p.id} className="flex justify-between items-center text-xs border-b border-border/40 pb-1">
-                    <Link href={`/properties/${p.id}`} className="hover:underline truncate flex-1">{p.name}</Link>
-                    <div className="flex items-center gap-1.5 shrink-0 ml-2">
-                      {p.sqft ? <span className="text-muted-foreground">{p.sqft.toLocaleString()} sqft</span> : null}
-                      {p.competitorAgent && (
-                        <Badge variant="outline" className="text-[10px]">{p.competitorAgent}</Badge>
+                ownedProps.map((p) => {
+                  const compName = (id: string | null | undefined) =>
+                    id ? allCompanies.find((c) => c.id === id)?.name : null;
+                  const ownershipItems = [
+                    { label: "F", value: compName(p.freeholderId) },
+                    { label: "LL", value: compName(p.longLeaseholderId) },
+                    { label: "SL", value: compName(p.seniorLenderId) },
+                    { label: "JL", value: compName(p.juniorLenderId) },
+                  ].filter((o) => o.value);
+                  return (
+                    <div key={p.id} className="text-xs border-b border-border/40 pb-1.5">
+                      <div className="flex justify-between items-center">
+                        <Link href={`/properties/${p.id}`} className="hover:underline truncate flex-1 font-medium">{p.name}</Link>
+                        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                          {p.sqft ? <span className="text-muted-foreground">{p.sqft.toLocaleString()} sqft</span> : null}
+                          {p.competitorAgent && (
+                            <Badge variant="outline" className="text-[10px]">{p.competitorAgent}</Badge>
+                          )}
+                        </div>
+                      </div>
+                      {ownershipItems.length > 0 && (
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
+                          {ownershipItems.map((o) => (
+                            <span key={o.label} className="text-[10px] text-muted-foreground">
+                              <span className="font-semibold text-foreground/60">{o.label}:</span> {o.value}
+                            </span>
+                          ))}
+                        </div>
                       )}
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </TabsContent>
 
