@@ -266,35 +266,70 @@ export async function scanBrandTriggers(opts: { dryRun?: boolean } = {}): Promis
 
 // ─── Email rendering ─────────────────────────────────────────────────────
 
-function renderAlertEmail(event: TriggerEvent): { subject: string; body: string } {
-  const typeEmoji: Record<TriggerEvent["type"], string> = {
-    hunter_hot: "🔥",
-    hunter_cooling: "❄️",
-    covenant_risk: "⚠️",
-    fundraise: "💰",
-    exec_change_major: "👤",
-  };
-  const subject = `${typeEmoji[event.type]} BGP alert — ${event.headline}`;
+const TYPE_EMOJI: Record<TriggerEvent["type"], string> = {
+  hunter_hot: "🔥",
+  hunter_cooling: "❄️",
+  covenant_risk: "⚠️",
+  fundraise: "💰",
+  exec_change_major: "👤",
+};
 
+function renderDigestEmail(events: TriggerEvent[]): { subject: string; body: string } {
   const baseUrl = (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
-  const url = `${baseUrl}/companies/${event.brandId}`;
+
+  const hotCount = events.filter(e => e.type === "hunter_hot").length;
+  const riskCount = events.filter(e => e.type === "covenant_risk").length;
+  const otherCount = events.length - hotCount - riskCount;
+
+  const summaryParts: string[] = [];
+  if (hotCount) summaryParts.push(`${hotCount} brand${hotCount > 1 ? "s" : ""} hot`);
+  if (riskCount) summaryParts.push(`${riskCount} covenant risk${riskCount > 1 ? "s" : ""}`);
+  if (otherCount) summaryParts.push(`${otherCount} other alert${otherCount > 1 ? "s" : ""}`);
+  const subject = `BGP brand alerts — ${summaryParts.join(", ")}`;
+
+  const rows = events.map(e => {
+    const url = `${baseUrl}/companies/${e.brandId}`;
+    return `
+    <tr style="border-bottom:1px solid #e5e7eb">
+      <td style="padding:10px 12px;font-size:13px;white-space:nowrap">${TYPE_EMOJI[e.type]}</td>
+      <td style="padding:10px 12px">
+        <div style="font-weight:600;font-size:13px;color:#111827"><a href="${url}" style="color:${BGP_GREEN};text-decoration:none">${e.brandName}</a></div>
+        <div style="font-size:12px;color:#6b7280;margin-top:2px">${e.headline}</div>
+        <div style="font-size:12px;color:#374151;margin-top:4px">${e.detail}</div>
+      </td>
+    </tr>`;
+  }).join("");
+
   const body = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
-<body style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:20px;background:#fff">
+<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;background:#fff">
   <div style="background:${BGP_GREEN};padding:14px 18px;border-radius:8px 8px 0 0">
-    <h1 style="color:white;margin:0;font-size:18px;font-weight:700">${typeEmoji[event.type]} ${event.headline}</h1>
+    <h1 style="color:white;margin:0;font-size:17px;font-weight:700">BGP Brand Alerts — ${new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" })}</h1>
+    <p style="color:rgba(255,255,255,0.8);margin:4px 0 0;font-size:12px">${events.length} alert${events.length !== 1 ? "s" : ""} today</p>
   </div>
-  <div style="border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;padding:18px">
-    <p style="margin:0 0 12px;font-size:14px;color:#374151;line-height:1.5">${event.detail}</p>
-    <a href="${url}" style="display:inline-block;background:${BGP_GREEN};color:white;text-decoration:none;padding:8px 14px;border-radius:6px;font-size:13px;font-weight:600">Open ${event.brandName} profile →</a>
-    <p style="margin:16px 0 0;padding-top:12px;border-top:1px solid #e5e7eb;font-size:11px;color:#9ca3af">
-      Bruce Gillingham Pollard · Brand alerts · You're receiving this because you cover this brand.
-    </p>
+  <div style="border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;overflow:hidden">
+    <table style="width:100%;border-collapse:collapse">
+      <tbody>${rows}</tbody>
+    </table>
   </div>
+  <p style="margin:16px 0 0;font-size:11px;color:#9ca3af">
+    Bruce Gillingham Pollard · Brand alerts · You're receiving this because you cover these brands.
+  </p>
 </body>
 </html>`;
   return { subject, body };
+}
+
+function groupEventsByRecipient(events: TriggerEvent[]): Map<string, TriggerEvent[]> {
+  const map = new Map<string, TriggerEvent[]>();
+  for (const event of events) {
+    for (const to of event.recipients) {
+      if (!map.has(to)) map.set(to, []);
+      map.get(to)!.push(event);
+    }
+  }
+  return map;
 }
 
 // ─── Endpoints ───────────────────────────────────────────────────────────
@@ -316,15 +351,14 @@ router.post("/api/brand-triggers/run", requireAuth, async (req: Request, res: Re
 
     const events = await scanBrandTriggers({ dryRun: false });
     let sent = 0;
-    for (const event of events) {
-      for (const to of event.recipients) {
-        try {
-          const { subject, body } = renderAlertEmail(event);
-          await sendSharedMailboxEmail({ to, subject, body });
-          sent++;
-        } catch (e: any) {
-          console.warn(`[brand-triggers] email to ${to} failed:`, e.message);
-        }
+    const byRecipient = groupEventsByRecipient(events);
+    for (const [to, recipientEvents] of byRecipient) {
+      try {
+        const { subject, body } = renderDigestEmail(recipientEvents);
+        await sendSharedMailboxEmail({ to, subject, body });
+        sent++;
+      } catch (e: any) {
+        console.warn(`[brand-triggers] email to ${to} failed:`, e.message);
       }
     }
     res.json({ events: events.length, sent });
@@ -337,16 +371,15 @@ export async function runDailyBrandTriggers(): Promise<{ events: number; sent: n
   try {
     const events = await scanBrandTriggers({ dryRun: false });
     let sent = 0;
-    for (const event of events) {
-      for (const to of event.recipients) {
-        try {
-          const { subject, body } = renderAlertEmail(event);
-          await sendSharedMailboxEmail({ to, subject, body });
-          sent++;
-        } catch {}
-      }
+    const byRecipient = groupEventsByRecipient(events);
+    for (const [to, recipientEvents] of byRecipient) {
+      try {
+        const { subject, body } = renderDigestEmail(recipientEvents);
+        await sendSharedMailboxEmail({ to, subject, body });
+        sent++;
+      } catch {}
     }
-    console.log(`[brand-triggers] ${events.length} alerts → ${sent} emails sent`);
+    console.log(`[brand-triggers] ${events.length} alerts → ${sent} digest emails sent`);
     return { events: events.length, sent };
   } catch (err: any) {
     console.error("[brand-triggers] daily run failed:", err?.message);
