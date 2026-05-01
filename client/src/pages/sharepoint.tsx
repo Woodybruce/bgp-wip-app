@@ -148,11 +148,14 @@ function formatDate(dateStr?: string) {
 
 const teamColors: Record<string, string> = {
   "Investment": "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  "Lease Advisory": "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+  "London F&B": "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+  "London Retail": "bg-teal-500/10 text-teal-600 dark:text-teal-400",
+  "Lease Advisory": "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
   "National Leasing": "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
   "Tenant Rep": "bg-purple-500/10 text-purple-600 dark:text-purple-400",
   "Development": "bg-amber-500/10 text-amber-600 dark:text-amber-400",
   "Office / Corporate": "bg-gray-500/10 text-gray-600 dark:text-gray-400",
+  "Landsec": "bg-orange-500/10 text-orange-600 dark:text-orange-400",
 };
 
 function FileThumbnail({ item, driveId, size = "small" }: { item: DriveItem; driveId: string | null; size?: "small" | "medium" | "large" }) {

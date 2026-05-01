@@ -50,6 +50,8 @@ import type { NewsArticle, EmailIngest, NewsLead } from "@shared/schema";
 const TEAMS = [
   "For You",
   "All",
+  "London F&B",
+  "London Retail",
   "Investment",
   "Lease Advisory",
   "National Leasing",

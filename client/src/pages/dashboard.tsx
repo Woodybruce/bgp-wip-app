@@ -709,12 +709,15 @@ export default function Dashboard() {
   const allDeals = crmDeals || [];
 
   const TEAM_ALIASES: Record<string, string[]> = useMemo(() => ({
+    "London F&B": ["London F&B"],
+    "London Retail": ["London Retail"],
     "National Leasing": ["National Leasing", "National"],
     "Investment": ["Investment"],
     "Tenant Rep": ["Tenant Rep"],
     "Development": ["Development"],
     "Lease Advisory": ["Lease Advisory"],
     "Office / Corporate": ["Office / Corporate", "Office", "Corporate"],
+    "Landsec": ["Landsec"],
   }), []);
 
   const matchesTeam = useCallback((teamField: string | string[] | null | undefined) => {
