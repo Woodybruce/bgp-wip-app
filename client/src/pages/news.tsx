@@ -51,7 +51,6 @@ const TEAMS = [
   "For You",
   "All",
   "Investment",
-  "London Leasing",
   "Lease Advisory",
   "National Leasing",
   "Tenant Rep",

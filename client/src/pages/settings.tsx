@@ -27,11 +27,10 @@ interface TeamMember {
   isActive?: boolean;
 }
 
-const TEAM_GROUPS = ["Investment", "London Leasing", "London F&B", "London Retail", "Lease Advisory", "Office / Corporate", "National Leasing", "Tenant Rep", "Development", "Landsec"] as const;
+const TEAM_GROUPS = ["Investment", "London F&B", "London Retail", "Lease Advisory", "Office / Corporate", "National Leasing", "Tenant Rep", "Development", "Landsec"] as const;
 
 const TEAM_GROUP_MEMBERS: Record<string, string[]> = {
   Investment: ["Investment"],
-  "London Leasing": ["London Leasing"],
   "London F&B": ["London F&B"],
   "London Retail": ["London Retail"],
   "Lease Advisory": ["Lease Advisory"],
@@ -44,7 +43,6 @@ const TEAM_GROUP_MEMBERS: Record<string, string[]> = {
 
 const teamColors: Record<string, string> = {
   Investment: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
-  "London Leasing": "bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300",
   "London F&B": "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300",
   "London Retail": "bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300",
   "Lease Advisory": "bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300",
@@ -57,7 +55,6 @@ const teamColors: Record<string, string> = {
 
 const teamDotColors: Record<string, string> = {
   Investment: "bg-blue-500",
-  "London Leasing": "bg-sky-500",
   "London F&B": "bg-rose-500",
   "London Retail": "bg-teal-500",
   "Lease Advisory": "bg-indigo-500",
@@ -79,7 +76,7 @@ function getTeamGroup(memberTeam: string | null): string | null {
 export default function SettingsPage() {
   const { toast } = useToast();
   const [expandedTeams, setExpandedTeams] = useState<Record<string, boolean>>({
-    Investment: true, "London Leasing": true, "Lease Advisory": true,
+    Investment: true, "Lease Advisory": true,
     "Office / Corporate": true, "National Leasing": true, "Tenant Rep": true, Development: true,
   });
 

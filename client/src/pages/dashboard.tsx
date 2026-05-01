@@ -709,7 +709,6 @@ export default function Dashboard() {
   const allDeals = crmDeals || [];
 
   const TEAM_ALIASES: Record<string, string[]> = useMemo(() => ({
-    "London Leasing": ["London Leasing", "London"],
     "National Leasing": ["National Leasing", "National"],
     "Investment": ["Investment"],
     "Tenant Rep": ["Tenant Rep"],

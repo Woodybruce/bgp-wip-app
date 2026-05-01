@@ -435,11 +435,6 @@ export function CompPdfTemplateEditor({ scope = "leasing" }: { scope?: "leasing"
                 </div>
                 <div className="flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-green-600" />
-                  <span>London Leasing</span>
-                  <Badge variant="default" className="text-[10px] ml-auto">Can Edit</Badge>
-                </div>
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-green-600" />
                   <span>National Leasing</span>
                   <Badge variant="default" className="text-[10px] ml-auto">Can Edit</Badge>
                 </div>

@@ -175,7 +175,6 @@ export const DEAL_TYPE_COLORS: Record<string, string> = {
 
 export const DEAL_TEAM_COLORS: Record<string, string> = {
   "Development": "bg-orange-600",
-  "London Leasing": "bg-blue-700",
   "London F&B": "bg-rose-600",
   "London Retail": "bg-teal-600",
   "National Leasing": "bg-emerald-600",

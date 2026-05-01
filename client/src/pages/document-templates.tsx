@@ -4582,7 +4582,6 @@ function LegalDDTab() {
                     data-testid="select-dd-team"
                   >
                     <option value="Investment">Investment</option>
-                    <option value="London Leasing">London Leasing</option>
                     <option value="Lease Advisory">Lease Advisory</option>
                     <option value="National Leasing">National Leasing</option>
                     <option value="Tenant Rep">Tenant Rep</option>

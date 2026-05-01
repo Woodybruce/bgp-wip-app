@@ -148,7 +148,6 @@ function formatDate(dateStr?: string) {
 
 const teamColors: Record<string, string> = {
   "Investment": "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  "London Leasing": "bg-sky-500/10 text-sky-600 dark:text-sky-400",
   "Lease Advisory": "bg-teal-500/10 text-teal-600 dark:text-teal-400",
   "National Leasing": "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
   "Tenant Rep": "bg-purple-500/10 text-purple-600 dark:text-purple-400",

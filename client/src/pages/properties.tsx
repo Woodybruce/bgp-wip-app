@@ -231,7 +231,6 @@ export const TEAM_OPTIONS = CRM_OPTIONS.dealTeam;
 
 export const TEAM_COLORS: Record<string, string> = {
   "Investment": "bg-sky-600",
-  "London Leasing": "bg-zinc-700",
   "National Leasing": "bg-violet-500",
   "Lease Advisory": "bg-indigo-500",
   "Tenant Rep": "bg-rose-500",
