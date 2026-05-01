@@ -288,6 +288,9 @@ export async function registerRoutes(
   const { registerLandlordHunterRoutes } = await import("./landlord-hunter");
   registerLandlordHunterRoutes(app);
 
+  const { registerLenderRoutes } = await import("./lender-routes");
+  registerLenderRoutes(app);
+
   const { registerIntegrationsStatusRoutes } = await import("./integrations-status");
   registerIntegrationsStatusRoutes(app);
 

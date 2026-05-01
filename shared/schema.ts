@@ -498,6 +498,19 @@ export const crmCompanies = pgTable("crm_companies", {
   lettingHunterFlag: boolean("letting_hunter_flag").default(false),
   lettingHunterNotes: text("letting_hunter_notes"),
   assetManagerContactId: varchar("asset_manager_contact_id"), // who signs off lettings
+  // ── Lender profile fields ────────────────────────────────────────────────
+  lenderType: text("lender_type"), // clearing_bank | investment_bank | insurance | pension | debt_fund | private_credit | mezzanine | bridging | development | building_society
+  lendingActive: boolean("lending_active").default(false),
+  typicalLoanSizeMinM: real("typical_loan_size_min_m"), // £m
+  typicalLoanSizeMaxM: real("typical_loan_size_max_m"), // £m
+  typicalLtvMax: real("typical_ltv_max"), // %
+  typicalMarginBps: integer("typical_margin_bps"), // basis points over SONIA
+  typicalLoanTerm: text("typical_loan_term"), // short | medium | long
+  typicalLoanStructure: text("typical_loan_structure"), // senior | mezzanine | whole_loan | construction
+  recourse: text("recourse"), // full | limited | non_recourse
+  preferredAssetClasses: text("preferred_asset_classes").array(),
+  preferredGeographies: text("preferred_geographies").array(),
+  lendingAppetiteNotes: text("lending_appetite_notes"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -718,6 +731,11 @@ export const crmProperties = pgTable("crm_properties", {
   competitorAgent: text("competitor_agent"), // e.g. "CBRE", "Knight Frank"
   competitorAgentInstructedAt: timestamp("competitor_agent_instructed_at"),
   competitorAgentStatus: text("competitor_agent_status"), // active | won_by_bgp | lost
+  // ── Ownership stack ──────────────────────────────────────────────────────
+  freeholderId: varchar("freeholder_id"),       // → crm_companies
+  longLeaseholderId: varchar("long_leaseholder_id"), // → crm_companies
+  seniorLenderId: varchar("senior_lender_id"),  // → crm_companies
+  juniorLenderId: varchar("junior_lender_id"),  // → crm_companies
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

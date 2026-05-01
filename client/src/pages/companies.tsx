@@ -61,6 +61,7 @@ import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { LandlordInvestmentPanel } from "@/components/landlord-investment-panel";
 import { LandlordLettingPanel } from "@/components/landlord-letting-panel";
 import { BillingEntityPanel } from "@/components/billing-entity-panel";
+import { LenderPanel } from "@/components/lender-panel";
 
 interface CHSearchResult {
   companyNumber: string;
@@ -1226,9 +1227,16 @@ function CompanyDetail({ id }: { id: string }) {
           {(() => {
             const t = (company.companyType || "").toLowerCase();
             const isBilling = t.includes("billing");
-            const isLandlord = t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("fund");
+            const isLender = t.includes("lender") || t.includes("clearing bank") || t.includes("investment bank")
+              || t.includes("debt fund") || t.includes("private credit") || t.includes("mezzanine")
+              || t.includes("bridging") || t.includes("development finance") || t.includes("building society")
+              || t.includes("insurance lender") || t.includes("pension fund");
+            const isLandlord = !isLender && (t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("fund"));
             if (isBilling) {
               return <BillingEntityPanel company={company as any} />;
+            }
+            if (isLender) {
+              return <LenderPanel companyId={id} company={company} />;
             }
             if (isLandlord) {
               return (

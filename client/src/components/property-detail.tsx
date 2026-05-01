@@ -62,6 +62,7 @@ import {
   InlineEngagement,
   InlineAgents,
   InlineLandlord,
+  InlineOwnerLink,
   InlineBillingEntity,
   InlineDeals,
   InlineTenants,
@@ -385,9 +386,28 @@ export function PropertyDetail({ id }: { id: string }) {
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Sq Ft</p>
                     <InlineNumber value={property.sqft} onSave={(val) => inlineUpdate("sqft", val)} suffix=" sf" className="text-sm font-mono font-medium" />
                   </div>
-                  <div>
-                    <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Landlord / Client</p>
-                    <InlineLandlord propertyId={id} landlordId={property.landlordId} allCompanies={allCompanies} />
+                  <div className="col-span-2 sm:col-span-2 lg:col-span-2">
+                    <p className="text-[10px] text-muted-foreground leading-tight mb-1 flex items-center gap-1">
+                      <Landmark className="w-3 h-3" /> Ownership
+                    </p>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                      <div>
+                        <p className="text-[9px] text-muted-foreground/70 uppercase tracking-wide mb-0.5">Freeholder</p>
+                        <InlineOwnerLink propertyId={id} companyId={(property as any).freeholderId} fieldName="freeholderId" label="Freeholder" allCompanies={allCompanies} />
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted-foreground/70 uppercase tracking-wide mb-0.5">Long Leaseholder</p>
+                        <InlineOwnerLink propertyId={id} companyId={(property as any).longLeaseholderId} fieldName="longLeaseholderId" label="Long Leaseholder" allCompanies={allCompanies} />
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted-foreground/70 uppercase tracking-wide mb-0.5">Senior Lender</p>
+                        <InlineOwnerLink propertyId={id} companyId={(property as any).seniorLenderId} fieldName="seniorLenderId" label="Senior Lender" allCompanies={allCompanies} />
+                      </div>
+                      <div>
+                        <p className="text-[9px] text-muted-foreground/70 uppercase tracking-wide mb-0.5">Junior Lender</p>
+                        <InlineOwnerLink propertyId={id} companyId={(property as any).juniorLenderId} fieldName="juniorLenderId" label="Junior Lender" allCompanies={allCompanies} />
+                      </div>
+                    </div>
                   </div>
                   <div>
                     <div className="flex items-center gap-1 mb-0.5">

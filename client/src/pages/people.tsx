@@ -15,7 +15,7 @@ import {
   Building2, Users, Crown, Search, Globe, MapPin,
   ChevronRight, ChevronDown, Building, Briefcase,
   Phone, Mail, X, TrendingUp, Trash2,
-  Handshake, ClipboardList,
+  Handshake, ClipboardList, Landmark,
 } from "lucide-react";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -46,7 +46,7 @@ function CompanyLogo({ company, size = "md" }: { company: CrmCompany; size?: "sm
   const textSize = size === "sm" ? "text-xs" : size === "lg" ? "text-lg" : "text-sm";
   const px = size === "sm" ? 32 : size === "lg" ? 56 : 40;
 
-  const domain = company.domainUrl || company.logoUrl || company.domain;
+  const domain = company.domainUrl || (company as any).logoUrl || company.domain;
   const d = extractDomain(domain || null);
   const guessed = guessDomain(company.name);
 
@@ -769,11 +769,231 @@ function AgentsTab({
   );
 }
 
-type PeopleTab = "landlords" | "agents";
+const LENDER_TYPES = [
+  "lender", "clearing bank", "investment bank", "insurance lender",
+  "pension fund", "debt fund", "private credit", "mezzanine",
+  "bridging", "development finance", "building society",
+];
+
+function isLenderCompany(companyType: string | null | undefined): boolean {
+  const t = (companyType || "").toLowerCase().trim();
+  return LENDER_TYPES.some((lt) => t.includes(lt.replace(/ /g, " ")));
+}
+
+function lenderSubType(companyType: string | null | undefined): "Banks" | "Debt Funds" | "Insurance/Pension" | "Private/Bridge" | "Other" {
+  const t = (companyType || "").toLowerCase().trim();
+  if (t.includes("clearing bank") || t.includes("investment bank") || t.includes("building society")) return "Banks";
+  if (t.includes("debt fund")) return "Debt Funds";
+  if (t.includes("insurance") || t.includes("pension")) return "Insurance/Pension";
+  if (t.includes("private credit") || t.includes("mezzanine") || t.includes("bridging") || t.includes("development finance")) return "Private/Bridge";
+  return "Other";
+}
+
+type LenderSubFilter = "all" | "Banks" | "Debt Funds" | "Insurance/Pension" | "Private/Bridge";
+
+function LendersTab({
+  companies,
+  contacts,
+  properties,
+  onAddCompany,
+}: {
+  companies: CrmCompany[];
+  contacts: CrmContact[];
+  properties: CrmProperty[];
+  onAddCompany?: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [subFilter, setSubFilter] = useState<LenderSubFilter>("all");
+
+  const lenders = useMemo(() => companies.filter((c) => isLenderCompany(c.companyType)), [companies]);
+
+  const activeCount = useMemo(() => lenders.filter((c) => (c as any).lendingActive === true).length, [lenders]);
+
+  const typeCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    lenders.forEach((c) => {
+      const t = (c.companyType || "Other");
+      map[t] = (map[t] || 0) + 1;
+    });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  }, [lenders]);
+
+  const contactsByCompany = useMemo(() => {
+    const map: Record<string, CrmContact[]> = {};
+    contacts.forEach((c) => {
+      if (c.companyId) {
+        if (!map[c.companyId]) map[c.companyId] = [];
+        map[c.companyId].push(c);
+      }
+    });
+    return map;
+  }, [contacts]);
+
+  const propertiesByLender = useMemo(() => {
+    const map: Record<string, number> = {};
+    properties.forEach((p) => {
+      const sid = (p as any).seniorLenderId;
+      const jid = (p as any).juniorLenderId;
+      if (sid) map[sid] = (map[sid] || 0) + 1;
+      if (jid && jid !== sid) map[jid] = (map[jid] || 0) + 1;
+    });
+    return map;
+  }, [properties]);
+
+  const filtered = useMemo(() => {
+    let list = lenders;
+    if (subFilter !== "all") {
+      list = list.filter((c) => lenderSubType(c.companyType) === subFilter);
+    }
+    if (search.trim()) {
+      const s = search.toLowerCase();
+      list = list.filter((c) =>
+        c.name.toLowerCase().includes(s) ||
+        (c.companyType || "").toLowerCase().includes(s) ||
+        (c.description || "").toLowerCase().includes(s)
+      );
+    }
+    return list;
+  }, [lenders, subFilter, search]);
+
+  const subFilterOptions: { key: LenderSubFilter; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "Banks", label: "Banks" },
+    { key: "Debt Funds", label: "Debt Funds" },
+    { key: "Insurance/Pension", label: "Insurance/Pension" },
+    { key: "Private/Bridge", label: "Private/Bridge" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="Total Lenders" value={lenders.length} icon={Landmark} color="bg-blue-700" />
+        <StatCard label="Currently Active" value={activeCount} icon={TrendingUp} color="bg-emerald-600" />
+        {typeCounts.map(([type, count]) => (
+          <StatCard key={type} label={type} value={count} icon={Building} color="bg-slate-600" />
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="inline-flex rounded-lg border bg-muted p-0.5">
+          {subFilterOptions.map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => setSubFilter(opt.key)}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                subFilter === opt.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search lenders..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 h-9"
+          />
+          {search && (
+            <button className="absolute right-3 top-1/2 -translate-y-1/2" onClick={() => setSearch("")}>
+              <X className="w-3.5 h-3.5 text-muted-foreground" />
+            </button>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground">{filtered.length} results</p>
+        {onAddCompany && (
+          <Button size="sm" onClick={onAddCompany} className="ml-auto">
+            <Landmark className="w-4 h-4 mr-1.5" />
+            Add Lender
+          </Button>
+        )}
+      </div>
+
+      <Card className="overflow-hidden">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Sub-type</TableHead>
+                <TableHead>Typical LTV</TableHead>
+                <TableHead>Loan Range</TableHead>
+                <TableHead>Appetite</TableHead>
+                <TableHead className="text-center">Properties</TableHead>
+                <TableHead className="text-center">Contacts</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((company) => {
+                const compContacts = contactsByCompany[company.id] || [];
+                const propCount = propertiesByLender[company.id] || 0;
+                const lendingActive = (company as any).lendingActive;
+                const typicalLtvMax = (company as any).typicalLtvMax;
+                const loanMin = (company as any).typicalLoanSizeMinM;
+                const loanMax = (company as any).typicalLoanSizeMaxM;
+                const loanRange = loanMin != null && loanMax != null
+                  ? `£${loanMin}m – £${loanMax}m`
+                  : loanMin != null
+                  ? `£${loanMin}m+`
+                  : loanMax != null
+                  ? `up to £${loanMax}m`
+                  : "—";
+                return (
+                  <TableRow
+                    key={company.id}
+                    className="cursor-pointer hover:bg-muted/50"
+                    onClick={() => { window.location.href = `/companies/${company.id}`; }}
+                  >
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <CompanyLogo company={company} size="sm" />
+                        <div className="min-w-0">
+                          <span className="font-medium text-sm truncate block">{company.name}</span>
+                          {company.description && (
+                            <span className="text-xs text-muted-foreground truncate block max-w-[200px]">{company.description}</span>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{company.companyType || "—"}</TableCell>
+                    <TableCell className="text-sm">{typicalLtvMax != null ? `${typicalLtvMax}%` : "—"}</TableCell>
+                    <TableCell className="text-sm">{loanRange}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={lendingActive ? "default" : "secondary"}
+                        className={lendingActive ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : ""}
+                      >
+                        {lendingActive ? "Active" : "Paused"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-center text-sm">{propCount}</TableCell>
+                    <TableCell className="text-center text-sm">{compContacts.length}</TableCell>
+                  </TableRow>
+                );
+              })}
+              {filtered.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                    No lenders found
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+type PeopleTab = "landlords" | "agents" | "lenders";
 
 const ALL_TABS: { key: PeopleTab; label: string; icon: any }[] = [
   { key: "landlords", label: "Landlords", icon: Building2 },
   { key: "agents", label: "Agents", icon: Briefcase },
+  { key: "lenders", label: "Lenders", icon: Landmark },
 ];
 
 const SCOPED_TABS: { key: PeopleTab; label: string; icon: any }[] = [
@@ -873,6 +1093,10 @@ function PeopleHub() {
     return companies.filter((c) => (c.companyType || "").toLowerCase().trim() === "agent").length;
   }, [companies]);
 
+  const lendersCompanies = useMemo(() => {
+    return companies.filter((c) => isLenderCompany(c.companyType));
+  }, [companies]);
+
   // Contacts visible in this hub = those tied to a landlord or agent company.
   // Excludes brand/tenant contacts (which live in Brands Hub).
   const hubContactCount = useMemo(() => {
@@ -959,6 +1183,9 @@ function PeopleHub() {
           )}
           {tab === "agents" && (
             <AgentsTab companies={companies} contacts={contacts} defaultTenantRep={isLandsec} onDeleteCompany={onDeleteCompany} />
+          )}
+          {tab === "lenders" && (
+            <LendersTab companies={lendersCompanies} contacts={contacts} properties={properties} />
           )}
         </>
       )}

@@ -686,6 +686,92 @@ export function InlineLandlord({
   );
 }
 
+// Generic ownership-stack link — reusable for freeholder, long leaseholder,
+// senior lender, junior lender fields.
+export function InlineOwnerLink({
+  propertyId,
+  companyId,
+  fieldName,
+  label,
+  allCompanies,
+}: {
+  propertyId: string;
+  companyId: string | null | undefined;
+  fieldName: string;
+  label: string;
+  allCompanies: CrmCompany[];
+}) {
+  const { toast } = useToast();
+  const [searchTerm, setSearchTerm] = useState("");
+  const company = companyId ? allCompanies.find(c => c.id === companyId) : null;
+  const filtered = searchTerm
+    ? allCompanies.filter(c => c.name.toLowerCase().includes(searchTerm.toLowerCase())).slice(0, 20)
+    : allCompanies.slice(0, 20);
+
+  const updateMutation = useMutation({
+    mutationFn: async (val: string | null) => {
+      await apiRequest("PUT", `/api/crm/properties/${propertyId}`, { [fieldName]: val });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] }),
+    onError: (err: any) => toast({ title: `Failed to update ${label}`, description: err.message, variant: "destructive" }),
+  });
+
+  if (company) {
+    return (
+      <div className="flex items-center gap-1">
+        <Link href={`/companies/${company.id}`}>
+          <Badge variant="outline" className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted">
+            <Building2 className="w-2.5 h-2.5 mr-0.5 text-muted-foreground" />
+            {company.name}
+          </Badge>
+        </Link>
+        <button
+          className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
+          onClick={() => updateMutation.mutate(null)}
+        >
+          <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
+          <Plus className="w-3 h-3" />
+          Set {label.toLowerCase()}
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64">
+        <div className="p-2">
+          <Input
+            placeholder="Search companies..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="h-7 text-xs"
+          />
+        </div>
+        <div className="max-h-48 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <DropdownMenuItem disabled>No companies found</DropdownMenuItem>
+          ) : (
+            filtered.map(co => (
+              <DropdownMenuItem
+                key={co.id}
+                onClick={() => { updateMutation.mutate(co.id); setSearchTerm(""); }}
+              >
+                <Building2 className="w-3.5 h-3.5 mr-2 text-muted-foreground" />
+                <span className="truncate">{co.name}</span>
+              </DropdownMenuItem>
+            ))
+          )}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function InlineBillingEntity({
   propertyId,
   billingEntityId,

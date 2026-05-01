@@ -363,6 +363,32 @@ import { pool } from "./db";
     `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS competitor_agent_status TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_crm_properties_competitor_agent ON crm_properties(competitor_agent) WHERE competitor_agent IS NOT NULL`,
 
+    // ── Ownership stack on properties ─────────────────────────────────
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS freeholder_id VARCHAR`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS long_leaseholder_id VARCHAR`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS senior_lender_id VARCHAR`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS junior_lender_id VARCHAR`,
+    // Backfill: existing landlord_id → freeholder_id (best default; user can correct)
+    `UPDATE crm_properties SET freeholder_id = landlord_id WHERE freeholder_id IS NULL AND landlord_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_properties_freeholder ON crm_properties(freeholder_id) WHERE freeholder_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_properties_senior_lender ON crm_properties(senior_lender_id) WHERE senior_lender_id IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_properties_junior_lender ON crm_properties(junior_lender_id) WHERE junior_lender_id IS NOT NULL`,
+
+    // ── Lender profile fields on crm_companies ────────────────────────
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS lender_type TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS lending_active BOOLEAN DEFAULT false`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS typical_loan_size_min_m REAL`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS typical_loan_size_max_m REAL`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS typical_ltv_max REAL`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS typical_margin_bps INTEGER`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS typical_loan_term TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS typical_loan_structure TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS recourse TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS preferred_asset_classes TEXT[]`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS preferred_geographies TEXT[]`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS lending_appetite_notes TEXT`,
+    `CREATE INDEX IF NOT EXISTS idx_crm_companies_lending_active ON crm_companies(lending_active) WHERE lending_active = true`,
+
     // ── Landlord debt / capital event log — distress + activity stream ──
     `CREATE TABLE IF NOT EXISTS landlord_debt_events (
        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
