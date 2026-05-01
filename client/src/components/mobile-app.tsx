@@ -1863,7 +1863,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
   const isDm = !isActiveThreadAi && otherMembers.length === 1;
   const dmName = isDm ? otherMembers[0].name : null;
   const threadTitle = isDm ? dmName : (activeThread?.title || activeThread?.linkedName || (isActiveThreadAi ? "ChatBGP" : "Chat"));
-  const headerInitials = isDm ? dmName!.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
+  const headerInitials = isDm && dmName ? dmName.split(" ").map(n => n[0]).join("").slice(0, 2) : null;
   const isGroup = !isActiveThreadAi && !isDm;
   const groupPicFileRef = useRef<HTMLInputElement>(null);
 

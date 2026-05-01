@@ -155,7 +155,7 @@ function InlineAgents({
   allUsers: User[];
 }) {
   const { toast } = useToast();
-  const assignedUserIds = agentLinks.filter(l => l.propertyId === propertyId).map(l => l.userId);
+  const assignedUserIds = agentLinks.filter(l => l.propertyId === propertyId).map(l => String(l.userId));
   const assignedUsers = allUsers.filter(u => assignedUserIds.includes(String(u.id)));
   const unassignedUsers = allUsers.filter(u => !assignedUserIds.includes(String(u.id)));
 

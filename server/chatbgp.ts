@@ -4009,7 +4009,7 @@ async function downloadAndExtractFile(
 
     const tempDir = path.join(process.cwd(), "ChatBGP", "sp-temp");
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-    const tempPath = path.join(tempDir, `kb-${Date.now()}-${fileName}`);
+    const tempPath = path.join(tempDir, `kb-${Date.now()}-${path.basename(fileName)}`);
     try {
       fs.writeFileSync(tempPath, buffer);
     } catch (writeErr: any) {
@@ -4173,7 +4173,7 @@ async function executeReadSharePointFile(
       const fileRes = await fetch(downloadUrl);
       if (!fileRes.ok) return { success: false, error: `Download failed (${fileRes.status})` };
       const buffer = Buffer.from(await fileRes.arrayBuffer());
-      const tmpPath = path.join(process.cwd(), "ChatBGP", `tmp-sp-${Date.now()}-${fileName}`);
+      const tmpPath = path.join(process.cwd(), "ChatBGP", `tmp-sp-${Date.now()}-${path.basename(fileName)}`);
       const fsModule = await import("fs");
       const dir = path.dirname(tmpPath);
       if (!fsModule.existsSync(dir)) fsModule.mkdirSync(dir, { recursive: true });
@@ -4342,7 +4342,7 @@ async function executeReadSharePointFile(
 
     const tempDir = path.join(process.cwd(), "ChatBGP", "sp-temp");
     if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
-    const tempPath = path.join(tempDir, `sp-${Date.now()}-${fileName}`);
+    const tempPath = path.join(tempDir, `sp-${Date.now()}-${path.basename(fileName)}`);
     try {
       fs.writeFileSync(tempPath, buffer);
     } catch (writeErr: any) {
@@ -4755,7 +4755,7 @@ async function executeCrmToolRaw(
     const postcode = fnArgs.address?.postcode;
     const willEnrich = !!(postcode && fnArgs.autoEnrich !== false);
     if (willEnrich) {
-      const baseUrl = `http://localhost:${process.env.PORT || 5000}`;
+      const baseUrl = process.env.INTERNAL_API_URL || `http://localhost:${process.env.PORT || 5000}`;
       fetch(`${baseUrl}/api/title-search/auto-fill-from-postcode/${propertyId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -7273,7 +7273,7 @@ Be thorough — include every unit row you can classify, across all properties i
         clearTimeout(timeout);
         if (!downloadRes.ok) return { data: { error: `Could not download file` } };
         const buffer = Buffer.from(await downloadRes.arrayBuffer());
-        const fileName = filePath.split("/").pop() || "file";
+        const fileName = (filePath.split("/").pop() || "file").replace(/[^a-zA-Z0-9._-]/g, "_");
         try {
           const { extractTextFromFile } = await import("./utils/file-extractor");
           const tempDir = require("path").join(process.cwd(), "ChatBGP", "archivist-temp");

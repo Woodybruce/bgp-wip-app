@@ -1670,7 +1670,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
       }
       return true;
     });
-  }, [contacts, activeGroup, allocationFilter, bgpClientFilter, search, columnFilters]);
+  }, [contacts, activeGroup, allocationFilter, bgpClientFilter, search, columnFilters, companyTypeMap]);
 
   const selectedContacts = filteredContacts.filter(c => selectedIds.has(c.id));
   const mailRecipients: MailRecipient[] = selectedContacts

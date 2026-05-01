@@ -509,12 +509,13 @@ export default function Dashboard() {
   });
 
   const [dashboardViewMode, setDashboardViewMode] = useState<"team" | "individual">(() => {
-    return (localStorage.getItem("bgp_dashboard_view_mode") as "team" | "individual") || "team";
+    try { return (localStorage.getItem("bgp_dashboard_view_mode") as "team" | "individual") || "team"; }
+    catch { return "team"; }
   });
   const [diaryRange, setDiaryRange] = useState<"today" | "week">("week");
   const handleViewModeChange = useCallback((mode: "team" | "individual") => {
     setDashboardViewMode(mode);
-    localStorage.setItem("bgp_dashboard_view_mode", mode);
+    try { localStorage.setItem("bgp_dashboard_view_mode", mode); } catch { /* private browsing */ }
   }, []);
   const { isLoading: statsLoading } = useQuery<CrmStats>({
     queryKey: ["/api/crm/stats"],
@@ -693,8 +694,9 @@ export default function Dashboard() {
   }, [layoutSaveMutation, user]);
 
   const handleResetLayout = useCallback(() => {
-    layoutSaveMutation.mutate(null as any);
-    window.location.reload();
+    layoutSaveMutation.mutate(null as any, {
+      onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/dashboard-template"] }),
+    });
   }, [layoutSaveMutation]);
 
   useEffect(() => {
