@@ -2647,7 +2647,7 @@ CRITICAL RULES:
           input_schema: {
             type: "object" as const,
             properties: {
-              folderPath: { type: "string", description: "Folder path relative to drive root. Examples: 'BGP share drive', 'BGP share drive/Investment', 'BGP share drive/London Leasing'. Use empty string for root." },
+              folderPath: { type: "string", description: "Folder path relative to drive root. Examples: 'BGP share drive', 'BGP share drive/Investment', 'BGP share drive/London Retail'. Use empty string for root." },
             },
             required: ["folderPath"],
           },
@@ -2665,7 +2665,7 @@ CRITICAL RULES:
         },
         {
           name: "sharepoint_create_folder",
-          description: "Create a new folder on SharePoint. All folders should be inside 'BGP share drive'. Team folders: Investment, London Leasing, National Leasing, Tenant Rep, Development, Lease Advisory, Office / Corporate.",
+          description: "Create a new folder on SharePoint. All folders should be inside 'BGP share drive'. Team folders: Investment, London F&B, London Retail, National Leasing, Tenant Rep, Development, Lease Advisory, Office / Corporate.",
           input_schema: {
             type: "object" as const,
             properties: {
@@ -2732,7 +2732,7 @@ CRITICAL RULES:
             type: "object" as const,
             properties: {
               name: { type: "string", description: "Deal name (usually the property address)" },
-              team: { type: "array", items: { type: "string" }, description: "Team(s): London Leasing, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
+              team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
               groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
               dealType: { type: "string", description: "Type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
               status: { type: "string", description: "Status of the deal" },

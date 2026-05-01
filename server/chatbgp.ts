@@ -989,7 +989,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **Bulk file-move**: **copy_dropbox_to_sharepoint** — copies raw PDF binaries from Dropbox into a SharePoint folder. Use when the user says "pull these into a SharePoint folder". Do NOT claim SharePoint "glitched" if upload fails — report the exact error.
 - **Email attachment → SharePoint**: when the user asks to save a brochure / floor plans / any email attachment to SharePoint, use **download_email_attachment** with \`action: "save_to_sharepoint"\` and a \`folderPath\`. This is the ONLY correct tool for that flow — it pulls the binary from Graph and uploads it in one step. Do NOT try \`upload_to_sharepoint\` for email attachments; that tool only handles chat-media files (generated docs, files dragged into the chat). If you reach for upload_to_sharepoint and get a "file not found in chat-media" error, that's the signal you should be using download_email_attachment instead.
 - **Maps**: navigate_to "property-map" with lat/lng/zoom. Tell users to use built-in Radius/Distance buttons.
-- **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London Leasing, etc.
+- **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London F&B, London Retail, etc.
 - **deep_investigate**: If report.property.ambiguous === true, present options as numbered list and ask user to pick. Never guess.
 
 ## Memory Systems
@@ -1624,7 +1624,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "create_sharepoint_folder",
-      description: "Create a folder in the BGP SharePoint site. All folders must be inside the 'BGP share drive' root folder. Team folders are at 'BGP share drive/Investment', 'BGP share drive/London Leasing', etc. Can create folders inside team folders or any existing folder by providing its path. Call multiple times for nested structures.",
+      description: "Create a folder in the BGP SharePoint site. All folders must be inside the 'BGP share drive' root folder. Team folders are at 'BGP share drive/Investment', 'BGP share drive/London F&B', 'BGP share drive/London Retail', etc. Can create folders inside team folders or any existing folder by providing its path. Call multiple times for nested structures.",
       parameters: {
         type: "object",
         properties: {
@@ -1678,7 +1678,7 @@ export async function getAvailableTools(): Promise<{
         properties: {
           url: {
             type: "string",
-            description: "A SharePoint sharing URL for a folder (e.g. https://brucegillinghampollardlimited-my.sharepoint.com/:f:/g/personal/...) OR a folder path in the BGP SharePoint document library (e.g. 'Investment/Deal Files', 'London Leasing'). Use '/' to browse the root. When drilling into subfolders from a previous browse result, you can omit this and use driveId + itemId instead.",
+            description: "A SharePoint sharing URL for a folder (e.g. https://brucegillinghampollardlimited-my.sharepoint.com/:f:/g/personal/...) OR a folder path in the BGP SharePoint document library (e.g. 'Investment/Deal Files', 'London Retail'). Use '/' to browse the root. When drilling into subfolders from a previous browse result, you can omit this and use driveId + itemId instead.",
           },
           driveId: {
             type: "string",
@@ -1708,7 +1708,7 @@ export async function getAvailableTools(): Promise<{
           },
           destinationFolderPath: {
             type: "string",
-            description: "The path to the destination folder where the item should be moved to (e.g. 'Investment/New Folder', 'London Leasing/Active Deals'). Use '/' for root.",
+            description: "The path to the destination folder where the item should be moved to (e.g. 'Investment/New Folder', 'London Retail/Active Deals'). Use '/' for root.",
           },
           newName: {
             type: "string",
@@ -1755,7 +1755,7 @@ export async function getAvailableTools(): Promise<{
         type: "object",
         properties: {
           name: { type: "string", description: "Deal name (usually the property address)" },
-          team: { type: "array", items: { type: "string" }, description: "Team(s): London Leasing, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
+          team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
           groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
           dealType: { type: "string", description: "Type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
           status: { type: "string", description: "Status of the deal" },
@@ -2465,7 +2465,7 @@ export async function getAvailableTools(): Promise<{
           sqft: { type: "number", description: "Size in square feet" },
           status: { type: "string", description: "e.g. Active, Pipeline, Completed" },
           notes: { type: "string" },
-          folderTeams: { type: "array", items: { type: "string" }, description: "Teams this property belongs to e.g. ['London Leasing', 'Investment']" },
+          folderTeams: { type: "array", items: { type: "string" }, description: "Teams this property belongs to e.g. ['London Retail', 'Investment']" },
           autoEnrich: { type: "boolean", description: "If true (default), automatically runs Land Registry lookup, AI title matching, proprietor identification, and landlord linking after creation. Set false to skip." },
         },
         required: ["name"],
@@ -3094,7 +3094,7 @@ export async function getAvailableTools(): Promise<{
       parameters: {
         type: "object",
         properties: {
-          team: { type: "string", description: "Filter by team: London Leasing, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
+          team: { type: "string", description: "Filter by team: London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
           status: { type: "string", description: "Filter by status/stage e.g. Under Offer, Exchanged, Completed, New Instructions" },
           dealType: { type: "string", description: "Filter by deal type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
           summaryOnly: { type: "boolean", description: "If true, return just totals and counts. If false, return deal details." },

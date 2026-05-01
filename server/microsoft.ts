@@ -1321,7 +1321,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
             messages: [
               {
                 role: "system",
-                content: "You are an executive assistant for BGP (Bruce Gillingham Pollard), a London property consultancy. Provide a brief, professional summary of today's BUSINESS diary only. Personal items (lunch, gym, school runs, appointments, etc.) have already been filtered out — do not mention them. Focus exclusively on business-relevant meetings: client meetings, viewings, team catch-ups, calls with agents/tenants/landlords, legal meetings, and deal-related activity. Highlight key meetings, who they're with, and any scheduling clashes. Keep it to 2-3 sentences maximum. Use a warm but professional tone. IMPORTANT: Identify any meetings that appear to be with occupiers, tenants, retailers, or external clients (i.e. not internal BGP meetings). Flag these as 'Occupier/Tenant meetings' and name them specifically. For the London Leasing team this is especially important - highlight any leasing meetings, viewings, or tenant discussions.",
+                content: "You are an executive assistant for BGP (Bruce Gillingham Pollard), a London property consultancy. Provide a brief, professional summary of today's BUSINESS diary only. Personal items (lunch, gym, school runs, appointments, etc.) have already been filtered out — do not mention them. Focus exclusively on business-relevant meetings: client meetings, viewings, team catch-ups, calls with agents/tenants/landlords, legal meetings, and deal-related activity. Highlight key meetings, who they're with, and any scheduling clashes. Keep it to 2-3 sentences maximum. Use a warm but professional tone. IMPORTANT: Identify any meetings that appear to be with occupiers, tenants, retailers, or external clients (i.e. not internal BGP meetings). Flag these as 'Occupier/Tenant meetings' and name them specifically. For the London F&B and London Retail teams this is especially important - highlight any leasing meetings, viewings, or tenant discussions.",
               },
               {
                 role: "user",
@@ -1845,7 +1845,7 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
     }
   });
 
-  const TEAM_FOLDERS = ["Investment", "London Leasing", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate"];
+  const TEAM_FOLDERS = ["Investment", "London F&B", "London Retail", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate"];
 
   const TEAM_FOLDER_TREES: Record<string, string[]> = {
     "Investment": [
@@ -1869,7 +1869,28 @@ Be specific and actionable. Reference real CRM data where available. If no CRM d
       "Correspondence",
       "Client Reporting",
     ],
-    "London Leasing": [
+    "London F&B": [
+      "Marketing",
+      "Marketing/Brochure",
+      "Marketing/Photography",
+      "Marketing/Floorplans",
+      "Marketing/Window Cards",
+      "Marketing/Social Media",
+      "Heads of Terms",
+      "Legal",
+      "Legal/Lease Drafts",
+      "Legal/Licence for Works",
+      "Inspections",
+      "Inspections/Measured Survey",
+      "Inspections/Schedule of Condition",
+      "Tenant Information",
+      "Tenant Information/References",
+      "Tenant Information/Accounts",
+      "Comparable Evidence",
+      "Correspondence",
+      "Rent Review",
+    ],
+    "London Retail": [
       "Marketing",
       "Marketing/Brochure",
       "Marketing/Photography",

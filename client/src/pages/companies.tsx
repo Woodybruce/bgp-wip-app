@@ -58,8 +58,6 @@ import { EntityPicker } from "@/components/entity-picker";
 import { InlineAddress } from "@/components/address-autocomplete";
 import type { CrmCompany, CrmContact, CrmDeal, CrmProperty } from "@shared/schema";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
-import { LandlordInvestmentPanel } from "@/components/landlord-investment-panel";
-import { LandlordLettingPanel } from "@/components/landlord-letting-panel";
 import { BillingEntityPanel } from "@/components/billing-entity-panel";
 import { LenderPanel } from "@/components/lender-panel";
 

@@ -444,7 +444,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
   "filters": {
     "name": "text to search in name/title",
     "agent": "agent name if mentioned",
-    "team": "team name if mentioned (Investment, London Leasing, National Leasing, Lease Advisory, Tenant Rep, Development)",
+    "team": "team name if mentioned (Investment, London F&B, London Retail, National Leasing, Lease Advisory, Tenant Rep, Development)",
     "status": "status if mentioned",
     "location": "location/area if mentioned (e.g. Chelsea, Mayfair, Belgravia)",
     "minFee": number or null,

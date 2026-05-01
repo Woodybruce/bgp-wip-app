@@ -723,7 +723,7 @@ export async function registerRoutes(
       if (!team || typeof team !== "string") {
         return res.status(400).json({ message: "Team is required" });
       }
-      const validTeams = ["London Leasing", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate", "Landsec"];
+      const validTeams = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"];
       if (!validTeams.includes(team)) {
         return res.status(400).json({ message: "Invalid team" });
       }
@@ -3822,7 +3822,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
   });
 
   const TEAM_FOLDERS = [
-    "London Leasing", "National Leasing", "Investment",
+    "London F&B", "London Retail", "National Leasing", "Investment",
     "Tenant Rep", "Development", "Lease Advisory", "Office Corporate", "Admin"
   ];
   const CHATBGP_BASE = path.join(process.cwd(), "ChatBGP");

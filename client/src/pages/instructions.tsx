@@ -79,12 +79,14 @@ const TENURE_COLORS: Record<string, string> = {
 const TEAM_OPTIONS = CRM_OPTIONS.dealTeam;
 const TEAM_COLORS: Record<string, string> = {
   "Investment": "bg-sky-600",
+  "London F&B": "bg-rose-500",
+  "London Retail": "bg-teal-500",
   "National Leasing": "bg-violet-500",
   "Lease Advisory": "bg-indigo-500",
-  "Tenant Rep": "bg-rose-500",
+  "Tenant Rep": "bg-pink-500",
   "Development": "bg-orange-500",
   "Office / Corporate": "bg-slate-500",
-  "Landsec": "bg-rose-500",
+  "Landsec": "bg-amber-500",
 };
 
 function getInitials(name: string): string {

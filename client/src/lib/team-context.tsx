@@ -2,12 +2,12 @@ import { createContext, useContext, useState, useEffect, useCallback } from "rea
 import type { ReactNode } from "react";
 
 export const TEAMS = [
+  "Development",
   "London F&B",
   "London Retail",
   "National Leasing",
   "Investment",
   "Tenant Rep",
-  "Development",
   "Lease Advisory",
   "Office / Corporate",
   "Landsec",

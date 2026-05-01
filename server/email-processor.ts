@@ -129,7 +129,7 @@ Also extract:
 - For "news" type: the property/area/opportunity mentioned
 - Which BGP team member sent/forwarded it (if any)
 - Any external contact names and email addresses
-- Which BGP teams/departments should know about this email. Teams are: London Leasing, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Landsec, Office / Corporate, Accounts. Pick ALL relevant teams. For example: a retail availability in Mayfair → London Leasing; an investment opportunity → Investment; a lease renewal query → Lease Advisory; a nationwide requirement → National Leasing.
+- Which BGP teams/departments should know about this email. Teams are: London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Landsec, Office / Corporate, Accounts. Pick ALL relevant teams. For example: a retail availability in Mayfair → London Retail; an F&B operator opportunity → London F&B; an investment opportunity → Investment; a lease renewal query → Lease Advisory; a nationwide requirement → National Leasing.
 - A short "intelligence briefing" (1-2 sentences) explaining why this email matters and what BGP should do about it, written for a senior director.
 
 You MUST return ONLY a valid JSON object with no additional text, explanation, or markdown formatting. Do not wrap in code fences.
@@ -142,7 +142,7 @@ You MUST return ONLY a valid JSON object with no additional text, explanation, o
   "requestedAction": "description of what to do (for instructions)",
   "propertyContext": "property/area mentioned if any",
   "urgency": "high|normal|low",
-  "relevantTeams": ["London Leasing", "Investment"],
+  "relevantTeams": ["London Retail", "Investment"],
   "briefing": "Short intelligence note for the team — why this matters and what to do"
 }`;
 

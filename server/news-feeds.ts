@@ -41,9 +41,13 @@ const TEAM_PROFILES: Record<string, { focus: string; keywords: string[] }> = {
     focus: "Property investment, capital markets, transactions, yields, returns, acquisitions, disposals",
     keywords: ["investment", "acquisition", "yield", "capital", "transaction", "portfolio", "fund", "IRR", "disposal", "buyer", "seller", "REIT", "valuation"],
   },
-  "London Leasing": {
-    focus: "London commercial leasing, letting activity, new lettings, rent reviews, lease terms in Belgravia, Mayfair, Chelsea, Knightsbridge, West End. Also: brand expansion, new store openings, flagships, new UK operators, DTC brands opening physical retail, fashion and wellness expansion, high street repositioning — these identify prospective tenants for London instructions.",
-    keywords: ["letting", "lease", "tenant", "rent", "Belgravia", "Mayfair", "Chelsea", "Knightsbridge", "West End", "Kensington", "retail unit", "prime pitch", "flagship", "new opening", "new store", "first UK store", "London flagship", "DTC", "direct to consumer", "digital native", "brand expansion", "new operator", "wellness", "fashion brand", "brand performance", "global retail"],
+  "London F&B": {
+    focus: "London food & beverage leasing, restaurant and hospitality lettings, new openings, rent reviews in Belgravia, Mayfair, Chelsea, Knightsbridge, West End. Also: new F&B operators, restaurant concepts, café chains, wellness and hospitality brands expanding into London.",
+    keywords: ["restaurant", "café", "bar", "hospitality", "F&B", "food and beverage", "letting", "lease", "tenant", "rent", "Belgravia", "Mayfair", "Chelsea", "Knightsbridge", "West End", "Kensington", "flagship", "new opening", "new restaurant", "first UK restaurant", "brand expansion", "wellness", "operator"],
+  },
+  "London Retail": {
+    focus: "London retail leasing, new lettings and rent reviews for retail units in Belgravia, Mayfair, Chelsea, Knightsbridge, West End. Also: brand expansion, new store openings, flagships, new UK operators, DTC brands opening physical retail, fashion expansion, high street repositioning — these identify prospective tenants for London retail instructions.",
+    keywords: ["letting", "lease", "tenant", "rent", "Belgravia", "Mayfair", "Chelsea", "Knightsbridge", "West End", "Kensington", "retail unit", "prime pitch", "flagship", "new opening", "new store", "first UK store", "London flagship", "DTC", "direct to consumer", "digital native", "brand expansion", "new operator", "fashion brand", "brand performance", "global retail"],
   },
   "Lease Advisory": {
     focus: "Lease consultancy, rent reviews, lease renewals, dilapidations, break options, service charges",
@@ -266,7 +270,7 @@ Respond in JSON format:
   "articles": [
     {
       "index": 1,
-      "relevanceScores": { "Investment": 85, "London Leasing": 60, "Lease Advisory": 30, "National Leasing": 20, "Tenant Rep": 45, "Development": 10 },
+      "relevanceScores": { "Investment": 85, "London Retail": 60, "London F&B": 55, "Lease Advisory": 30, "National Leasing": 20, "Tenant Rep": 45, "Development": 10 },
       "tags": ["retail", "letting", "Mayfair"],
       "aiSummary": "Brief 1-2 sentence summary highlighting why this matters for property professionals"
     }
@@ -331,7 +335,8 @@ async function extractCompsFromArticles(): Promise<{ extracted: number; created:
     const tags = (a.aiTags || []).map((t: string) => t.toLowerCase());
     const scores = a.aiRelevanceScores as Record<string, number> | null;
     const leasingScore = Math.max(
-      (scores?.["London Leasing"] || 0),
+      (scores?.["London F&B"] || 0),
+      (scores?.["London Retail"] || 0),
       (scores?.["National Leasing"] || 0),
       (scores?.["Lease Advisory"] || 0),
       (scores?.["Tenant Rep"] || 0)

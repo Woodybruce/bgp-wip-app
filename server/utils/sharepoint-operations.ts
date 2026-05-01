@@ -66,8 +66,8 @@ export async function lookupSharePointFolderIfExists(
   let parentPath = args.parentPath || "";
   const teamFolderMappings: Record<string, string> = {
     "Investment": "BGP share drive/Investment",
-    "London": "BGP share drive/London Leasing",
-    "London Leasing": "BGP share drive/London Leasing",
+    "London F&B": "BGP share drive/London F&B",
+    "London Retail": "BGP share drive/London Retail",
     "National": "BGP share drive/National Leasing",
     "National Leasing": "BGP share drive/National Leasing",
     "Development": "BGP share drive/Development & Re-purposing",
@@ -123,8 +123,8 @@ export async function executeCreateSharePointFolder(
   // Map team folder shortcuts
   const teamFolderMappings: Record<string, string> = {
     "Investment": "BGP share drive/Investment",
-    "London": "BGP share drive/London Leasing",
-    "London Leasing": "BGP share drive/London Leasing",
+    "London F&B": "BGP share drive/London F&B",
+    "London Retail": "BGP share drive/London Retail",
     "National": "BGP share drive/National Leasing",
     "National Leasing": "BGP share drive/National Leasing",
     "Development": "BGP share drive/Development & Re-purposing",
@@ -225,8 +225,8 @@ export async function executeUploadFileToSharePoint(
   let folderPath = args.folderPath || "";
   const teamFolderMappings: Record<string, string> = {
     "Investment": "BGP share drive/Investment",
-    "London": "BGP share drive/London Leasing",
-    "London Leasing": "BGP share drive/London Leasing",
+    "London F&B": "BGP share drive/London F&B",
+    "London Retail": "BGP share drive/London Retail",
     "National": "BGP share drive/National Leasing",
     "National Leasing": "BGP share drive/National Leasing",
     "Development": "BGP share drive/Development & Re-purposing",

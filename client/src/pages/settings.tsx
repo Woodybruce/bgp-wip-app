@@ -27,7 +27,7 @@ interface TeamMember {
   isActive?: boolean;
 }
 
-const TEAM_GROUPS = ["Investment", "London F&B", "London Retail", "Lease Advisory", "Office / Corporate", "National Leasing", "Tenant Rep", "Development", "Landsec"] as const;
+const TEAM_GROUPS = ["Development", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"] as const;
 
 const TEAM_GROUP_MEMBERS: Record<string, string[]> = {
   Investment: ["Investment"],
