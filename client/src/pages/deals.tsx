@@ -4558,7 +4558,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     </TableHead>
                     <TableHead className="w-[60px]">Ref</TableHead>
                     <TableHead className="min-w-[200px]">Property</TableHead>
-                    {visibleColumns.landlord && <TableHead className="min-w-[120px]">Client</TableHead>}
+                    {visibleColumns.landlord && <TableHead className="min-w-[120px] px-1.5">Client</TableHead>}
                     {visibleColumns.type && (
                       <TableHead className="min-w-[120px]">
                         <ColumnFilterPopover
