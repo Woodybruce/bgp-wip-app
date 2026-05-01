@@ -4100,7 +4100,7 @@ function PropertiesList({
   });
 
   const COLUMN_LABELS: Record<string, string> = {
-    landlord: "Landlord",
+    landlord: "Ownership",
     status: "Status",
     assetClass: "Asset Class",
     tenure: "Tenure",
@@ -4633,7 +4633,7 @@ function PropertiesList({
                       />
                     </TableHead>
                     <TableHead className="min-w-[200px]">Property</TableHead>
-                    {visibleColumns.landlord && <TableHead className="min-w-[140px]">Landlord</TableHead>}
+                    {visibleColumns.landlord && <TableHead className="min-w-[200px]">Ownership</TableHead>}
                     {visibleColumns.status && (
                       <TableHead className="min-w-[90px] w-[90px]">
                         <ColumnFilterPopover
@@ -4741,11 +4741,40 @@ function PropertiesList({
                       </TableCell>
                       {visibleColumns.landlord && (
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
-                          <InlineLandlord
-                            propertyId={item.id}
-                            landlordId={item.landlordId}
-                            allCompanies={allCompanies}
-                          />
+                          <div className="grid grid-cols-[auto_1fr] gap-x-1.5 gap-y-0.5 items-center">
+                            <span className="text-[9px] uppercase text-muted-foreground tracking-wide">F</span>
+                            <InlineOwnerLink
+                              propertyId={item.id}
+                              companyId={(item as any).freeholderId}
+                              fieldName="freeholderId"
+                              label="Freeholder"
+                              allCompanies={allCompanies}
+                            />
+                            <span className="text-[9px] uppercase text-muted-foreground tracking-wide">LL</span>
+                            <InlineOwnerLink
+                              propertyId={item.id}
+                              companyId={(item as any).longLeaseholderId}
+                              fieldName="longLeaseholderId"
+                              label="Long Leaseholder"
+                              allCompanies={allCompanies}
+                            />
+                            <span className="text-[9px] uppercase text-muted-foreground tracking-wide">SL</span>
+                            <InlineOwnerLink
+                              propertyId={item.id}
+                              companyId={(item as any).seniorLenderId}
+                              fieldName="seniorLenderId"
+                              label="Senior Lender"
+                              allCompanies={allCompanies}
+                            />
+                            <span className="text-[9px] uppercase text-muted-foreground tracking-wide">JL</span>
+                            <InlineOwnerLink
+                              propertyId={item.id}
+                              companyId={(item as any).juniorLenderId}
+                              fieldName="juniorLenderId"
+                              label="Junior Lender"
+                              allCompanies={allCompanies}
+                            />
+                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.status && (
