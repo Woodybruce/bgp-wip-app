@@ -1239,12 +1239,7 @@ function CompanyDetail({ id }: { id: string }) {
               return <LenderPanel companyId={id} company={company} />;
             }
             if (isLandlord) {
-              return (
-                <>
-                  <LandlordLettingPanel company={company as any} />
-                  <LandlordInvestmentPanel company={company as any} />
-                </>
-              );
+              return <BrandProfilePanel companyId={id} />;
             }
             return <BrandProfilePanel companyId={id} />;
           })()}

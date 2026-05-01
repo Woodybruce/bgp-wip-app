@@ -65,6 +65,8 @@ interface BrandProfile {
     aml_risk_level: string | null;
     aml_pep_status: string | null;
     bgp_contact_crm: string | null;
+    letting_hunter_flag: boolean | null;
+    letting_hunter_notes: string | null;
   };
   signals: Array<any>;
   representedBy: Array<any>;
@@ -2634,28 +2636,55 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <div className="flex items-center gap-1.5 flex-wrap">
                 <Flame className="w-3.5 h-3.5 text-amber-600" />
                 <span className="text-xs font-semibold uppercase tracking-wider text-foreground">Hunter Intel</span>
-                {hunter && hunter.expansionScore != null && (
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] ${
-                      hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-orange-200" :
-                      hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-amber-200" :
-                      hunter.expansionScore >= 40 ? "bg-zinc-50 text-zinc-700 border-zinc-200" :
-                      "bg-zinc-50 text-zinc-500 border-zinc-200"
-                    }`}
-                    title={hunter.expansionFlags?.join(" · ") || ""}
-                  >
-                    Score {hunter.expansionScore}/100
-                  </Badge>
-                )}
-                {c.hunter_flag && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">Watch</Badge>}
-                <Link
-                  href={`/hunter?companyId=${companyId}`}
-                  className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
-                  title="Open in Hunter dashboard"
-                >
-                  Open in Hunter <ExternalLink className="w-2.5 h-2.5" />
-                </Link>
+                {(() => {
+                  const t = (c.company_type || "").toLowerCase();
+                  const isLandlord = t.includes("landlord") || t.includes("investor") || t.includes("developer") || t.includes("fund");
+                  if (isLandlord) {
+                    return (
+                      <>
+                        {c.letting_hunter_flag && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200"><Flame className="w-2.5 h-2.5 mr-0.5" />Letting Watch</Badge>}
+                        <Link
+                          href={`/hunters/letting?companyId=${companyId}`}
+                          className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                        >
+                          Letting Hunter <ExternalLink className="w-2.5 h-2.5" />
+                        </Link>
+                        <Link
+                          href={`/hunters/investment?companyId=${companyId}`}
+                          className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                        >
+                          Investment Hunter <ExternalLink className="w-2.5 h-2.5" />
+                        </Link>
+                      </>
+                    );
+                  }
+                  return (
+                    <>
+                      {hunter && hunter.expansionScore != null && (
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${
+                            hunter.expansionScore >= 75 ? "bg-orange-50 text-orange-700 border-orange-200" :
+                            hunter.expansionScore >= 55 ? "bg-amber-50 text-amber-700 border-amber-200" :
+                            hunter.expansionScore >= 40 ? "bg-zinc-50 text-zinc-700 border-zinc-200" :
+                            "bg-zinc-50 text-zinc-500 border-zinc-200"
+                          }`}
+                          title={hunter.expansionFlags?.join(" · ") || ""}
+                        >
+                          Score {hunter.expansionScore}/100
+                        </Badge>
+                      )}
+                      {c.hunter_flag && <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">Watch</Badge>}
+                      <Link
+                        href={`/hunter?companyId=${companyId}`}
+                        className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                        title="Open in Hunter dashboard"
+                      >
+                        Open in Hunter <ExternalLink className="w-2.5 h-2.5" />
+                      </Link>
+                    </>
+                  );
+                })()}
               </div>
               <div className="flex items-center gap-1 shrink-0">
                 <Button
