@@ -4090,7 +4090,6 @@ function PropertiesList({
     landlord: true,
     status: true,
     assetClass: true,
-    tenure: true,
     engagement: true,
     deals: true,
     tenants: true,
@@ -4103,7 +4102,6 @@ function PropertiesList({
     landlord: "Ownership",
     status: "Status",
     assetClass: "Asset Class",
-    tenure: "Tenure",
     engagement: "Team",
     deals: "WIP",
     tenants: "Tenants",
@@ -4654,16 +4652,6 @@ function PropertiesList({
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.tenure && (
-                      <TableHead className="min-w-[75px] w-[75px]">
-                        <ColumnFilterPopover
-                          label="Tenure"
-                          options={tenureValues}
-                          activeFilters={columnFilters["tenure"] || []}
-                          onToggleFilter={(val) => toggleFilter("tenure", val)}
-                        />
-                      </TableHead>
-                    )}
                     {visibleColumns.engagement && (
                       <TableHead className="min-w-[140px]">
                         <ColumnFilterPopover
@@ -4797,18 +4785,6 @@ function PropertiesList({
                             colorMap={ASSET_CLASS_COLORS}
                             onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "assetClass", value: val })}
                             placeholder="Set class"
-                          />
-                        </TableCell>
-                      )}
-                      {visibleColumns.tenure && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
-                          <InlineLabelSelect
-                            value={item.tenure}
-                            options={TENURE_OPTIONS}
-                            colorMap={TENURE_COLORS}
-                            onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "tenure", value: val })}
-                            placeholder="Set tenure"
-                            compact
                           />
                         </TableCell>
                       )}
