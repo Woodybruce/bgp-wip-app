@@ -117,7 +117,9 @@ const ROLLOUT_LABELS: Record<string, string> = {
 function renderDigestHtml(data: Awaited<ReturnType<typeof loadDigestData>>): string {
   const { brands, since, until } = data;
   const dateRange = `${since.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} – ${until.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`;
-  const baseUrl = (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
+  const baseUrl = (process.env.PUBLIC_APP_URL
+    || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")
+    || "https://bgp-wip-app-production-efac.up.railway.app").replace(/\/+$/, "");
 
   const brandBlocks = brands.map(b => {
     const url = `${baseUrl}/companies/${b.id}`;

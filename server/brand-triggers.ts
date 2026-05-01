@@ -274,8 +274,15 @@ const TYPE_EMOJI: Record<TriggerEvent["type"], string> = {
   exec_change_major: "👤",
 };
 
+function appBaseUrl(): string {
+  const raw = process.env.PUBLIC_APP_URL
+    || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")
+    || "https://bgp-wip-app-production-efac.up.railway.app";
+  return raw.replace(/\/+$/, "");
+}
+
 function renderDigestEmail(events: TriggerEvent[]): { subject: string; body: string } {
-  const baseUrl = (process.env.PUBLIC_APP_URL || "https://chatbgp.app").replace(/\/+$/, "");
+  const baseUrl = appBaseUrl();
 
   const hotCount = events.filter(e => e.type === "hunter_hot").length;
   const riskCount = events.filter(e => e.type === "covenant_risk").length;
