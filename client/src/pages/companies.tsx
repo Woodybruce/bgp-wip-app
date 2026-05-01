@@ -1396,7 +1396,7 @@ function PropertyFoldersBrowser({ propertyName }: { propertyName: string }) {
   const [expanded, setExpanded] = useState(false);
   const [currentTeam, setCurrentTeam] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState("");
-  const TEAMS = ["London Leasing", "Investment", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
+  const TEAMS = CRM_OPTIONS.dealTeam;
 
   const { data: teamResults } = useQuery<Record<string, { exists: boolean; folders: SpItem[] }>>({
     queryKey: ["/api/microsoft/property-folders-check", propertyName],

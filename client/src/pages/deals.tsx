@@ -3755,10 +3755,7 @@ function AiMatchDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
 
 const NEGOTIATION_STATUSES = ["Under Negotiation", "HOTs", "NEG"];
 const COMPLETED_STATUSES = ["Invoiced", "Billed", "Exchanged", "Completed"];
-const INTERNAL_BGP_TEAMS = new Set([
-  "London Leasing", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep",
-  "Development", "Lease Advisory", "Office / Corporate",
-]);
+const INTERNAL_BGP_TEAMS = new Set(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "negotiations" } = {}) {
   const isCompsMode = mode === "comps";
@@ -5190,7 +5187,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="center">
-              {["Development", "London Leasing", "London F&B", "London Retail", "National Leasing", "Investment", "Tenant Rep", "Lease Advisory", "Office / Corporate", "Landsec"].map(team => (
+              {CRM_OPTIONS.dealTeam.map(team => (
                 <DropdownMenuItem
                   key={team}
                   onClick={() => bulkUpdateMutation.mutate({ ids: Array.from(selectedIds), field: "team", value: [team] })}

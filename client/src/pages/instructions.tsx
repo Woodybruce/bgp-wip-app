@@ -76,7 +76,7 @@ const TENURE_COLORS: Record<string, string> = {
   "Leasehold": "bg-orange-500",
   "Virtual Freehold": "bg-cyan-500",
 };
-const TEAM_OPTIONS = ["Investment", "London Leasing", "National Leasing", "Lease Advisory", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
+const TEAM_OPTIONS = CRM_OPTIONS.dealTeam;
 const TEAM_COLORS: Record<string, string> = {
   "Investment": "bg-sky-600",
   "London Leasing": "bg-zinc-700",
@@ -441,7 +441,7 @@ function InlineTenants({
   );
 }
 
-const TEAMS = ["Investment", "London Leasing", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
+const TEAMS = CRM_OPTIONS.dealTeam;
 
 interface FolderTemplate {
   team: string;

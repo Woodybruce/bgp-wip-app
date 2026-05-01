@@ -2,6 +2,7 @@
 // panels, and navigation into separate components. The bottom nav system provides an
 // alternative mobile navigation path. Be careful: this is deeply coupled and risky to refactor.
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { CRM_OPTIONS } from "@/lib/crm-options";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { getQueryFn, apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
@@ -833,7 +834,7 @@ function MobileNewGroup({ allUsers, currentUser, onBack, onCreate }: {
   const [groupName, setGroupName] = useState("");
   const [search, setSearch] = useState("");
 
-  const TEAMS = ["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office/Corporate", "Landsec"];
+  const TEAMS = CRM_OPTIONS.dealTeam;
 
   const toggleUser = (id: string) => {
     setSelectedIds(prev => {

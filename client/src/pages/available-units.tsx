@@ -281,10 +281,7 @@ function CurrencyInput({ value, onChange, placeholder, prefix, testId }: { value
   );
 }
 
-const INTERNAL_BGP_TEAMS = new Set([
-  "London Leasing", "National Leasing", "Investment", "Tenant Rep",
-  "Development", "Lease Advisory", "Office / Corporate",
-]);
+const INTERNAL_BGP_TEAMS = new Set(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
 export default function AvailableUnitsPage() {
   const { activeTeam } = useTeam();
@@ -1505,7 +1502,7 @@ export default function AvailableUnitsPage() {
                 <Select value={wipForm.team[0] || ""} onValueChange={v => setWipForm(f => ({ ...f, team: v ? [v] : [] }))}>
                   <SelectTrigger data-testid="wip-team"><SelectValue placeholder="Select team" /></SelectTrigger>
                   <SelectContent>
-                    {["London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development", "Lease Advisory", "Office / Corporate", "Landsec"].map(t => (
+                    {CRM_OPTIONS.dealTeam.map(t => (
                       <SelectItem key={t} value={t}>{t}</SelectItem>
                     ))}
                   </SelectContent>
