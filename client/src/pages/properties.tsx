@@ -1108,7 +1108,7 @@ export function InlineTenants({
 
 // ColumnFilterPopover imported from shared component
 
-const TEAMS = ["Investment", "London Leasing", "Lease Advisory", "National Leasing", "Tenant Rep", "Development", "Office / Corporate", "Landsec"];
+const TEAMS = CRM_OPTIONS.dealTeam;
 
 interface FolderTemplate {
   team: string;
@@ -4284,12 +4284,16 @@ function PropertiesList({
   }, [items]);
 
   const engagementValues = useMemo(() => {
-    const s = new Set<string>();
+    // Canonical team list first, then any stray values from the data so the
+    // user can still filter on legacy entries (e.g. "Hospitality", "USA").
+    const canonical = [...CRM_OPTIONS.dealTeam];
+    const canonicalSet = new Set(canonical);
+    const stray = new Set<string>();
     items.forEach((i) => {
       const vals = Array.isArray(i.bgpEngagement) ? i.bgpEngagement : i.bgpEngagement ? [i.bgpEngagement] : [];
-      vals.forEach(v => s.add(v));
+      vals.forEach(v => { if (v && !canonicalSet.has(v)) stray.add(v); });
     });
-    return Array.from(s).sort();
+    return [...canonical, ...Array.from(stray).sort()];
   }, [items]);
 
   const teamUserIds = useMemo(() => {
