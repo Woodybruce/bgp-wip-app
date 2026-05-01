@@ -48,7 +48,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { useRoute, Link } from "wouter";
+import { useRoute, useLocation, Link } from "wouter";
 import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { CRM_OPTIONS } from "@/lib/crm-options";
@@ -938,6 +938,7 @@ function getCompanyBgpContacts(company: CrmCompany): string[] {
 
 
 function CompanyDetail({ id }: { id: string }) {
+  const [, navigate] = useLocation();
   const { toast } = useToast();
   const [editOpen, setEditOpen] = useState(false);
   const { data: company, isLoading } = useQuery<CrmCompany>({
@@ -1118,7 +1119,7 @@ function CompanyDetail({ id }: { id: string }) {
             if (window.history.length > 1) {
               window.history.back();
             } else {
-              window.location.href = "/companies";
+              navigate("/companies");
             }
           }}
         >

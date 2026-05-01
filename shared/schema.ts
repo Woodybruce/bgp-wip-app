@@ -336,7 +336,7 @@ export const chatThreads = pgTable("chat_threads", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   title: text("title"),
   createdBy: varchar("created_by").notNull(),
-  propertyId: text("property_id"),
+  propertyId: varchar("property_id"),
   propertyName: text("property_name"),
   linkedType: text("linked_type"),
   linkedId: text("linked_id"),
@@ -1474,8 +1474,8 @@ export type XeroInvoice = typeof xeroInvoices.$inferSelect;
 
 export const favoriteInstructions = pgTable("favorite_instructions", {
   id: serial("id").primaryKey(),
-  userId: text("user_id").notNull(),
-  propertyId: text("property_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  propertyId: varchar("property_id").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

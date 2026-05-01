@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState, useMemo, useEffect, useRef } from "react";
-import { useRoute, Link } from "wouter";
+import { useRoute, useLocation, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -111,6 +111,7 @@ function LandlordsTab({
   onDeleteCompany?: (id: string, name: string) => void;
   viewMode?: "table" | "card" | "board";
 }) {
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [landlordFilter, setLandlordFilter] = useState<"all" | "clients" | "non-clients">("all");
 
@@ -228,7 +229,7 @@ function LandlordsTab({
                   const compDeals = dealsByLandlord[company.id] || [];
                   const isClient = clientLandlords.some((cl) => cl.id === company.id);
                   return (
-                    <TableRow key={company.id} className="cursor-pointer hover:bg-muted/50 group" onClick={() => window.location.href = `/companies/${company.id}`}>
+                    <TableRow key={company.id} className="cursor-pointer hover:bg-muted/50 group" onClick={() => navigate(`/companies/${company.id}`)}>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <CompanyLogo company={company} size="sm" />
@@ -347,6 +348,7 @@ function AgentsTab({
   defaultTenantRep?: boolean;
   onDeleteCompany?: (id: string, name: string) => void;
 }) {
+  const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [specialtyFilter, setSpecialtyFilter] = useState<string | null>(defaultTenantRep ? "Tenant Rep" : null);
   const [locationFilter, setLocationFilter] = useState<string | null>(null);
@@ -944,7 +946,7 @@ function LendersTab({
                   <TableRow
                     key={company.id}
                     className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => { window.location.href = `/companies/${company.id}`; }}
+                    onClick={() => navigate(`/companies/${company.id}`)}
                   >
                     <TableCell>
                       <div className="flex items-center gap-2">

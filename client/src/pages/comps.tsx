@@ -38,7 +38,7 @@ import {
 } from "lucide-react";
 import type { CrmComp } from "@shared/schema";
 import jsPDF from "jspdf";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { CompPdfTemplateEditor } from "@/components/comp-pdf-template-editor";
 import { AddressAutocomplete, buildGoogleMapsUrl } from "@/components/address-autocomplete";
 import InvestmentCompsPage from "@/pages/investment-comps";
@@ -1829,6 +1829,7 @@ function PropertyAddressInput({ value, propertyOptions, onSelectProperty, onSele
 
 
 export default function Comps() {
+  const [, navigate] = useLocation();
   const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -2039,7 +2040,7 @@ export default function Comps() {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       toast({ title: "Company added to CRM", description: "Enrichment started — Apollo is filling in details." });
       if (created?.id) {
-        window.location.href = `/companies?highlight=${created.id}`;
+        navigate(`/companies?highlight=${created.id}`);
       }
     },
     onError: (err: any) => {

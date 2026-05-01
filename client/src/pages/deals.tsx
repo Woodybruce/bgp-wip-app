@@ -608,6 +608,7 @@ export function DealFormDialog({
     onSuccess: async () => {
       toast({ title: isEdit ? "Deal updated" : "Deal created" });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
       if (isEdit) {
         queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id] });
         queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id, "audit-log"] });
@@ -2252,6 +2253,8 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
       setReference("");
       setAmount(0);
       refetchInvoices();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
     },
     onError: (err: Error) => {
       toast({ title: "Error creating invoice", description: err.message, variant: "destructive" });
@@ -2266,6 +2269,8 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
     onSuccess: () => {
       toast({ title: "Invoice synced" });
       refetchInvoices();
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
     },
     onError: (err: Error) => {
       toast({ title: "Sync error", description: err.message, variant: "destructive" });

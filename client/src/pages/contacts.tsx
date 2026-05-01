@@ -1484,6 +1484,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
     },
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/interactions/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
       toast({
         title: "Interactions synced",
         description: `Found ${data?.synced?.emails || 0} emails and ${data?.synced?.calendar || 0} calendar events`,
@@ -1552,6 +1553,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
     },
     onSuccess: (email: string) => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
       setAddedEmails((prev) => new Set([...prev, email]));
       toast({ title: "Contact added to CRM" });
     },

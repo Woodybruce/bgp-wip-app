@@ -38,7 +38,7 @@ import { BrandGapPanel } from "@/components/brand-gap-panel";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineLabelSelect, InlineNumber } from "@/components/inline-edit";
@@ -119,6 +119,7 @@ function CollapsibleCard({
 }
 
 export function PropertyDetail({ id }: { id: string }) {
+  const [, navigate] = useLocation();
   const { data: property, isLoading } = useQuery<CrmProperty>({
     queryKey: ["/api/crm/properties", id],
     refetchInterval: (query) => {
@@ -221,7 +222,7 @@ export function PropertyDetail({ id }: { id: string }) {
     onSuccess: () => {
       toast({ title: "Property Deleted" });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
-      window.location.href = "/properties";
+      navigate("/properties");
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -274,7 +275,7 @@ export function PropertyDetail({ id }: { id: string }) {
         <div className="flex-1 overflow-y-auto">
           <div className="p-4 sm:p-6 space-y-3">
             <div className="flex items-center gap-3 flex-wrap">
-              <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={() => window.history.length > 1 ? window.history.back() : window.location.href = "/properties"}>
+              <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back-properties" onClick={() => window.history.length > 1 ? window.history.back() : navigate("/properties")}>
                 <ArrowLeft className="w-3.5 h-3.5" />
                 Properties
               </Button>

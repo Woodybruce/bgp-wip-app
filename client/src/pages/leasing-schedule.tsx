@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useRoute, Link } from "wouter";
+import { useRoute, useLocation, Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ViewToggle } from "@/components/mobile-card-view";
@@ -2371,7 +2371,7 @@ export default function LeasingSchedulePage() {
                 {filtered.map(p => {
                   const occ = p.unit_count > 0 ? Math.round((p.occupied_count / p.unit_count) * 100) : 0;
                   return (
-                    <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => window.location.href = `/leasing-schedule/${p.id}`}>
+                    <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50">
                       <TableCell>
                         <Link href={`/leasing-schedule/${p.id}`} className="font-medium text-sm hover:underline">{p.name}</Link>
                       </TableCell>
