@@ -830,7 +830,12 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
         <div className="flex flex-col gap-1 min-w-0 flex-1">
         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
           <Sparkles className="w-4 h-4 text-purple-500 shrink-0" />
-          Brand Profile
+          {(() => {
+            const t = (c.company_type || "").toLowerCase();
+            if (t === "agent" || t.includes("agent")) return "Agent Profile";
+            if (t.includes("landlord")) return "Landlord Profile";
+            return "Brand Profile";
+          })()}
           {c.is_tracked_brand && <Badge className="bg-purple-100 text-purple-700 border-purple-300 text-[10px]">Tracked brand</Badge>}
           {c.hunter_flag && <Badge className="bg-amber-50 text-amber-700 border-purple-200 text-[10px]"><Flame className="w-2.5 h-2.5 mr-0.5" />Hunter pick</Badge>}
           {hunter && hunter.expansionScore >= 40 && (
