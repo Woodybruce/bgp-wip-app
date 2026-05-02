@@ -931,28 +931,30 @@ export function InlineDeals({
   });
 
   return (
-    <div className="flex flex-col gap-0.5 w-full">
-      {linkedDeals.map(deal => (
-        <div key={deal.id} className="flex items-center gap-0.5 min-w-0 group/deal">
-          <Link href={`/deals/${deal.id}`} className="min-w-0 flex-1">
-            <Badge
-              variant="outline"
-              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted w-full justify-start"
-              data-testid={`deal-badge-${deal.id}`}
+    <div className="flex flex-col gap-0.5 w-full min-w-0">
+      <div className={`flex flex-col gap-0.5 ${linkedDeals.length > 3 ? "max-h-[84px] overflow-y-auto pr-0.5" : ""}`}>
+        {linkedDeals.map(deal => (
+          <div key={deal.id} className="flex items-center gap-0.5 min-w-0 group/deal">
+            <Link href={`/deals/${deal.id}`} className="min-w-0 flex-1">
+              <Badge
+                variant="outline"
+                className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted w-full justify-start"
+                data-testid={`deal-badge-${deal.id}`}
+              >
+                <Handshake className="w-2.5 h-2.5 mr-0.5 shrink-0 text-muted-foreground" />
+                <span className="truncate">{deal.name}</span>
+              </Badge>
+            </Link>
+            <button
+              className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0 opacity-0 group-hover/deal:opacity-100 transition-opacity"
+              onClick={() => unlinkMutation.mutate(deal.id)}
+              data-testid={`remove-deal-${deal.id}`}
             >
-              <Handshake className="w-2.5 h-2.5 mr-0.5 shrink-0 text-muted-foreground" />
-              <span className="truncate">{deal.name}</span>
-            </Badge>
-          </Link>
-          <button
-            className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0 opacity-0 group-hover/deal:opacity-100 transition-opacity"
-            onClick={() => unlinkMutation.mutate(deal.id)}
-            data-testid={`remove-deal-${deal.id}`}
-          >
-            <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
-          </button>
-        </div>
-      ))}
+              <X className="w-2.5 h-2.5 text-muted-foreground hover:text-destructive" />
+            </button>
+          </div>
+        ))}
+      </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -4659,7 +4661,7 @@ function PropertiesList({
                       </TableHead>
                     )}
                     {visibleColumns.engagement && (
-                      <TableHead className="min-w-[140px]">
+                      <TableHead className="w-[140px] max-w-[140px]">
                         <ColumnFilterPopover
                           label="Team"
                           options={engagementValues}
@@ -4668,7 +4670,7 @@ function PropertiesList({
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.deals && <TableHead className="min-w-[140px] w-[140px]">WIP</TableHead>}
+                    {visibleColumns.deals && <TableHead className="w-[140px] max-w-[140px]">WIP</TableHead>}
                     {visibleColumns.tenants && <TableHead className="min-w-[140px]">Tenants</TableHead>}
                     {visibleColumns.agents && <TableHead className="min-w-[120px]">BGP Contacts</TableHead>}
                     {visibleColumns.sqft && <TableHead className="min-w-[60px] w-[60px]">Sq Ft</TableHead>}
@@ -4791,7 +4793,7 @@ function PropertiesList({
                         </TableCell>
                       )}
                       {visibleColumns.engagement && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[140px] max-w-[140px]" onClick={(e) => e.stopPropagation()}>
                           <InlineEngagement
                             value={item.bgpEngagement}
                             options={TEAM_OPTIONS}
@@ -4801,7 +4803,7 @@ function PropertiesList({
                         </TableCell>
                       )}
                       {visibleColumns.deals && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[140px] max-w-[140px]" onClick={(e) => e.stopPropagation()}>
                           <InlineDeals
                             propertyId={item.id}
                             dealLinks={dealLinks}
