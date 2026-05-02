@@ -263,6 +263,7 @@ const COLUMN_LABELS: Record<string, string> = {
   invoicedAt: "Invoiced",
   rentAnalysis: "Rent Analysis",
   sharepoint: "SharePoint",
+  lastInteraction: "Last Touch",
 
 };
 
@@ -283,6 +284,20 @@ export function formatDate(val: string | null | undefined): string {
   } catch {
     return val;
   }
+}
+
+// Compact "Last Touch" cell — colour-coded by recency. Reads the
+// deal.lastInteraction value populated by the AI activity curator.
+function LastTouchCell({ iso }: { iso: string | null | undefined }) {
+  if (!iso) return <span className="text-[10px] text-muted-foreground">—</span>;
+  const t = Date.parse(iso);
+  if (isNaN(t)) return <span className="text-[10px] text-muted-foreground">—</span>;
+  const days = Math.round((Date.now() - t) / (1000 * 60 * 60 * 24));
+  const cls = days <= 7 ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+    : days <= 30 ? "bg-amber-50 text-amber-700 border-amber-200"
+    : "bg-red-50 text-red-700 border-red-200";
+  const label = days === 0 ? "today" : days === 1 ? "1d" : days < 30 ? `${days}d` : days < 365 ? `${Math.round(days / 7)}w` : `${Math.round(days / 365)}y`;
+  return <Badge className={`${cls} text-[10px] font-medium`}>{label}</Badge>;
 }
 
 // ColumnFilterPopover imported from shared component
@@ -3874,6 +3889,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     invoicedAt: false,
     rentAnalysis: true,
     sharepoint: true,
+    lastInteraction: true,
   });
 
   const dealsUrl = mode === "wip" ? "/api/crm/deals?excludeTrackerDeals=true" : "/api/crm/deals";
@@ -4665,6 +4681,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.invoicedAt && <TableHead className="min-w-[110px]">Invoiced</TableHead>}
                     {visibleColumns.rentAnalysis && <TableHead className="min-w-[100px] text-right">Rent Analysis</TableHead>}
                     {visibleColumns.sharepoint && <TableHead className="min-w-[140px]">SharePoint Files</TableHead>}
+                    {visibleColumns.lastInteraction && <TableHead className="min-w-[100px]">Last Touch</TableHead>}
                     <TableHead className="w-[40px]"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -5081,6 +5098,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                               <span className="text-muted-foreground text-[10px]">No files linked</span>
                             ) : null}
                           </div>
+                        </TableCell>
+                      )}
+                      {visibleColumns.lastInteraction && (
+                        <TableCell className="px-1.5 py-1">
+                          <LastTouchCell iso={deal.lastInteraction} />
                         </TableCell>
                       )}
                       <TableCell className="p-1">

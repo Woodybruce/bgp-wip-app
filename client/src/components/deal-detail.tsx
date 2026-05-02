@@ -84,6 +84,7 @@ import {
   DealRelatedMeetings,
 } from "@/pages/deals";
 import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
+import { AIActivityCard } from "@/components/ai-activity-card";
 // DealAmlStatusCard removed — KYC pack now consolidated on Compliance Board
 
 // Collapsible card pattern reused across the deal page for heavy panels.
@@ -722,6 +723,14 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         </CollapsibleCard>
       )}
 
+      {/* AI-curated activity — single panel that combines emails + calendar
+          invites across the deal, tenant, landlord, property and contacts.
+          ChatBGP filters aggressively and groups by topic, so this replaces
+          the noise of dumping every related email/meeting in raw form.
+          Old Related Emails / Related Meetings panels are kept below for
+          parity while we compare output in production. */}
+      <AIActivityCard subjectType="deal" subjectId={id} title="Deal Activity (AI curated)" />
+
       <CollapsibleCard open={mainSections.timeline} onToggle={() => toggleMain("timeline")} icon={CalendarIcon} title="Timeline" testId="toggle-deal-timeline">
         <DealTimeline dealId={id} />
       </CollapsibleCard>
@@ -730,11 +739,11 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
         <DealAuditLog dealId={id} />
       </CollapsibleCard>
 
-      <CollapsibleCard open={mainSections.emails} onToggle={() => toggleMain("emails")} icon={Mail} title="Related Emails" testId="toggle-deal-emails">
+      <CollapsibleCard open={mainSections.emails} onToggle={() => toggleMain("emails")} icon={Mail} title="Related Emails (raw)" testId="toggle-deal-emails">
         <DealRelatedEmails dealId={id} />
       </CollapsibleCard>
 
-      <CollapsibleCard open={mainSections.meetings} onToggle={() => toggleMain("meetings")} icon={CalendarIcon} title="Related Meetings" testId="toggle-deal-meetings">
+      <CollapsibleCard open={mainSections.meetings} onToggle={() => toggleMain("meetings")} icon={CalendarIcon} title="Related Meetings (raw)" testId="toggle-deal-meetings">
         <DealRelatedMeetings dealId={id} />
       </CollapsibleCard>
 
