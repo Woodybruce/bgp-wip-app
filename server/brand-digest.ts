@@ -164,10 +164,23 @@ function renderDigestHtml(data: Awaited<ReturnType<typeof loadDigestData>>): str
     ? `<p style="color:${CLAUDE_MUTED};text-align:center;padding:24px">No brand activity detected in the past ${DIGEST_DAYS} days.</p>`
     : "";
 
+  const bgpLogo = `${baseUrl}/api/branding/assets/BGP_BlackWordmark_trimmed.png`;
+  const sparkleSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align:-2px;margin-right:4px"><path d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3z" fill="${CLAUDE_CORAL}"/><path d="M19 14l.8 2.4L22 17l-2.2.6L19 20l-.8-2.4L16 17l2.2-.6L19 14z" fill="${CLAUDE_CORAL}"/></svg>`;
+
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="font-family:${CLAUDE_FONT};max-width:640px;margin:0 auto;padding:24px;background:${CLAUDE_CREAM};color:${CLAUDE_INK}">
+  <table style="width:100%;border-collapse:collapse;margin-bottom:14px">
+    <tr>
+      <td style="vertical-align:middle">
+        <img src="${bgpLogo}" alt="Bruce Gillingham Pollard" height="28" style="display:block;height:28px;width:auto"/>
+      </td>
+      <td style="vertical-align:middle;text-align:right;font-size:13px;font-weight:600;color:${CLAUDE_INK};letter-spacing:-0.01em">
+        ${sparkleSvg}<span style="vertical-align:middle">ChatBGP</span>
+      </td>
+    </tr>
+  </table>
   <div style="background:#fff;border:1px solid ${CLAUDE_BORDER};border-radius:12px;padding:20px 22px;margin-bottom:16px">
     <h1 style="color:${CLAUDE_INK};margin:0;font-size:20px;font-weight:600;letter-spacing:-0.02em">BGP Brand Intelligence</h1>
     <p style="color:${CLAUDE_MUTED};margin:4px 0 0;font-size:13px">Fortnightly digest · ${dateRange}</p>
