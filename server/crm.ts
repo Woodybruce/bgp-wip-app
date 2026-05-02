@@ -112,6 +112,9 @@ export async function importWipFromBuffer(
   buffer: Buffer,
   opts: { append?: boolean; archiveOrphans?: boolean } = {},
 ): Promise<{ success: true; imported: number; layout: "legacy" | "sage_transactionsexpo" | "unknown"; sync: any; enrichment: any; orphans?: any; diagnostics?: any }> {
+  // Ensure schema additions are present before any inserts — idempotent.
+  await pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS billing_entity TEXT`).catch(() => {});
+
   const XLSX = await import("xlsx");
   const wb = XLSX.read(buffer, { type: "buffer" });
 
