@@ -5054,7 +5054,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {visibleColumns.targetDate && (
                         <TableCell className="px-1.5 py-1">
-                          {deal.targetDate ? formatDate(deal.targetDate) : "—"}
+                          <input
+                            type="date"
+                            className="text-xs bg-transparent border-0 outline-none cursor-pointer hover:bg-muted rounded px-1 w-[110px]"
+                            value={deal.targetDate ? new Date(deal.targetDate).toISOString().slice(0, 10) : ""}
+                            onChange={(e) => handleInlineSave(deal.id, "targetDate", e.target.value || null)}
+                          />
                         </TableCell>
                       )}
                       {visibleColumns.exchangedAt && (
