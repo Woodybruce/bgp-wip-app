@@ -1342,28 +1342,6 @@ export default function WipReport() {
               Clear: {clickFilter.value}
             </Button>
           )}
-          {isSeniorWipUser && (
-            <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={(e) => handleUpload(e, false)}
-                data-testid="wip-upload-input"
-              />
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                data-testid="wip-upload-button"
-              >
-                {uploading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />}
-                {uploading ? "Importing..." : "Upload WIP"}
-              </Button>
-            </>
-          )}
           <Button
             variant="outline"
             size="sm"
@@ -1399,22 +1377,6 @@ export default function WipReport() {
           WIP Report
         </button>
         <button
-          onClick={() => setActiveTab("reconciliation")}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
-            activeTab === "reconciliation"
-              ? "border-green-600 text-green-700"
-              : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-          }`}
-          data-testid="wip-tab-reconciliation"
-        >
-          Reconciliation
-          {reconCount > 0 && (
-            <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
-              {reconCount}
-            </Badge>
-          )}
-        </button>
-        <button
           onClick={() => setActiveTab("agent-summary")}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
             activeTab === "agent-summary"
@@ -1427,9 +1389,7 @@ export default function WipReport() {
         </button>
       </div>
 
-      {activeTab === "reconciliation" ? (
-        <ReconciliationTab />
-      ) : activeTab === "agent-summary" ? (
+      {activeTab === "agent-summary" ? (
         <AgentSummaryTab />
       ) : (
       <div className="flex gap-4 flex-1 min-h-0">
