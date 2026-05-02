@@ -4997,13 +4997,23 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         return `${months[d.getMonth()]}-${String(d.getFullYear()).slice(2)}`;
       }
 
-      // WIP report is now a pure projection over crm_deals (CRM = source of truth).
-      // wip_entries is only used by the Sage importer as raw staging — it feeds
-      // syncWipToCrmDeals which upserts crm_deals. The report no longer reads it.
+      // WIP report shows only deals that are backed by a Sage import — i.e.
+      // have at least one wip_entries row with deal_id matching, or carry the
+      // legacy "WIP Ref: N" comment marker from pre-FK syncs. Stops
+      // leasing-schedule AVA units, manually-created deals, and orphaned
+      // historic rows from bloating the report.
+      const wipBackedDealIds = new Set<string>();
+      for (const w of wipRows) {
+        if (w.dealId) wipBackedDealIds.add(w.dealId);
+      }
       let entries: any[] = [];
       const eligibleDeals = deals.filter(d => {
         const code = legacyToCode(d.status);
-        return code !== null && WIP_STATUSES.includes(code);
+        if (code === null || !WIP_STATUSES.includes(code)) return false;
+        // Must be backed by wip_entries (FK) or legacy WIP Ref comment marker
+        const hasFkBacking = wipBackedDealIds.has(d.id);
+        const hasLegacyMarker = !!(d.comments && /WIP Ref:\s*\d+/.test(d.comments));
+        return hasFkBacking || hasLegacyMarker;
       });
       for (const deal of eligibleDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
@@ -6489,10 +6499,16 @@ Rules:
         };
       });
 
+      const wipBackedDealIdsXl = new Set<string>();
+      for (const w of wipRows) { if (w.dealId) wipBackedDealIdsXl.add(w.dealId); }
       const unmatchedDeals = deals.filter(d => {
         if (usedDealIds.has(d.id)) return false;
         const code = legacyToCode(d.status);
-        return code !== null && WIP_STATUSES.includes(code);
+        if (code === null || !WIP_STATUSES.includes(code)) return false;
+        // Same backing requirement as the JSON report — only WIP-imported deals
+        const hasFkBacking = wipBackedDealIdsXl.has(d.id);
+        const hasLegacyMarker = !!(d.comments && /WIP Ref:\s*\d+/.test(d.comments));
+        return hasFkBacking || hasLegacyMarker;
       });
       for (const deal of unmatchedDeals) {
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
