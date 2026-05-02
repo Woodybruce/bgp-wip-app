@@ -1563,14 +1563,15 @@ export default function WipReport() {
                       { key: "dealRef", label: "Ref", width: "w-16" },
                       { key: "ref", label: "Deal", width: "w-40" },
                       { key: "groupName", label: "Group", width: "w-28" },
-                      { key: "project", label: "Project", width: "w-32" },
                       { key: "tenant", label: "Tenant", width: "w-32" },
+                      { key: "project", label: "Project", width: "w-32" },
                       { key: "team", label: "Team", width: "w-32" },
                       { key: "dealType", label: "Deal Type", width: "w-24" },
+                      { key: "assetClass", label: "Asset Class", width: "w-24" },
+                      { key: "dealDate", label: "Date", width: "w-28" },
                       { key: "agent", label: "BGP Contact", width: "w-20" },
                       { key: "amtWip", label: "Amt WIP", width: "w-24" },
                       { key: "amtInvoice", label: "Amt invoice", width: "w-24" },
-                      { key: "dealDate", label: "Date", width: "w-24" },
                       { key: "dealStatus", label: "Deal Status", width: "w-24" },
                       { key: "stage", label: "Stage", width: "w-24" },
                     ].map((col) => (
@@ -1612,23 +1613,18 @@ export default function WipReport() {
                         ) : (e.ref || "—")}
                       </td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.groupName || "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>
+                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>
                       <td className="px-2 py-1.5">
                         {e.dealType ? (
                           <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${DEAL_TYPE_BADGE_COLORS[e.dealType] || "bg-gray-100 text-gray-700"}`}>{e.dealType}</span>
                         ) : <span className="text-gray-400">—</span>}
                       </td>
-                      <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>
-                      <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
-                        {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
-                      </td>
-                      <td className="px-2 py-1.5 text-green-700 font-mono text-right">
-                        {e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}
-                      </td>
+                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[100px]">{e.assetClass || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">
                         {(() => {
+                          const isActual = !!(e.exchangedAt || e.completedAt || e.invoicedAt);
                           const pick = e.invoicedAt
                             ? { label: "Invoiced", iso: e.invoicedAt, cls: "bg-green-100 text-green-800" }
                             : e.completedAt
@@ -1638,16 +1634,41 @@ export default function WipReport() {
                             : e.targetDate
                             ? { label: "Target", iso: e.targetDate, cls: "bg-gray-100 text-gray-700" }
                             : null;
-                          if (!pick) return <span>—</span>;
-                          const d = new Date(pick.iso);
-                          const dateStr = isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
+                          const dateStr = pick ? (() => { const d = new Date(pick.iso); return isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }); })() : null;
                           return (
                             <div className="flex flex-col gap-0.5">
-                              <span className="text-xs">{dateStr}</span>
-                              <span className={`inline-flex items-center px-1 py-0 rounded text-[9px] font-medium w-fit ${pick.cls}`}>{pick.label}</span>
+                              {!isActual && e.dealId ? (
+                                <input
+                                  type="date"
+                                  defaultValue={e.targetDate ? new Date(e.targetDate).toISOString().slice(0, 10) : ""}
+                                  className="text-xs border border-gray-200 rounded px-1 py-0.5 w-[110px] focus:outline-none focus:border-blue-400"
+                                  onBlur={async (ev) => {
+                                    const val = ev.target.value;
+                                    if (!val) return;
+                                    await fetch(`/api/deals/${e.dealId}`, {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+                                      body: JSON.stringify({ targetDate: val }),
+                                    });
+                                    queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+                                  }}
+                                />
+                              ) : dateStr ? (
+                                <span className="text-xs">{dateStr}</span>
+                              ) : (
+                                <span>—</span>
+                              )}
+                              {pick && <span className={`inline-flex items-center px-1 py-0 rounded text-[9px] font-medium w-fit ${pick.cls}`}>{pick.label}</span>}
                             </div>
                           );
                         })()}
+                      </td>
+                      <td className="px-2 py-1.5 text-gray-700">{e.agent ? e.agent.split(",").map(a => a.trim()).map(a => a.includes(" ") ? a.split(" ").map(p => p[0]).join("").toUpperCase() : a).join(", ") : "—"}</td>
+                      <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
+                        {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
+                      </td>
+                      <td className="px-2 py-1.5 text-green-700 font-mono text-right">
+                        {e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}
                       </td>
                       <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>
                       <td className="px-2 py-1.5 text-xs truncate max-w-[100px]">
@@ -1666,14 +1687,14 @@ export default function WipReport() {
                 </tbody>
                 <tfoot className="bg-gray-100 border-t font-semibold">
                   <tr>
-                    <td colSpan={9} className="px-2 py-1.5 text-gray-800">Total</td>
+                    <td colSpan={11} className="px-2 py-1.5 text-gray-800">Total</td>
                     <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
                       {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
                     </td>
                     <td className="px-2 py-1.5 text-green-700 font-mono text-right">
                       {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtInvoice || 0), 0))}
                     </td>
-                    <td colSpan={3} className="px-2 py-1.5" />
+                    <td colSpan={2} className="px-2 py-1.5" />
                   </tr>
                 </tfoot>
               </table>
