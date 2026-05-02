@@ -29,6 +29,28 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: { componentStack?: string | null }) {
     const label = this.props.name ? ` in "${this.props.name}"` : "";
     console.error(`[ErrorBoundary] Caught rendering error${label}:`, error, info.componentStack);
+
+    // Stale-chunk recovery: after a deploy the open tab still references old
+    // chunk hashes. A single hard reload fetches the new index.html and the
+    // new asset hashes. Guard with sessionStorage so we don't reload-loop if
+    // the network is genuinely down.
+    const msg = String(error?.message || "");
+    const isChunkError =
+      /Failed to fetch dynamically imported module/i.test(msg) ||
+      /Importing a module script failed/i.test(msg) ||
+      /error loading dynamically imported module/i.test(msg) ||
+      error?.name === "ChunkLoadError";
+    if (isChunkError) {
+      try {
+        const KEY = "bgp:chunk-reload-attempted";
+        if (!sessionStorage.getItem(KEY)) {
+          sessionStorage.setItem(KEY, String(Date.now()));
+          window.location.reload();
+        }
+      } catch {
+        window.location.reload();
+      }
+    }
   }
 
   handleReset = () => {
