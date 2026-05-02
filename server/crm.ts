@@ -1048,6 +1048,33 @@ export function setupCrmRoutes(app: Express) {
        WHERE status NOT IN ('ARCH', 'COM')`
   ).catch(() => {});
 
+  // One-shot status normaliser — runs on every boot, idempotent. Maps any
+  // non-canonical crm_deals.status (legacy free text, leasing-schedule
+  // statuses like "Occupied" / "In Negotiation") to the canonical 10-code
+  // set in shared/deal-status.ts.
+  (async () => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, status FROM crm_deals
+          WHERE status IS NOT NULL
+            AND status NOT IN ('REP','SPEC','LIVE','AVA','NEG','SOL','EXC','COM','WIT','INV','ARCH')`
+      );
+      if (rows.length === 0) return;
+      const { legacyToCode } = await import("../shared/deal-status");
+      let normalised = 0;
+      for (const r of rows) {
+        const code = legacyToCode(r.status);
+        if (code && code !== r.status) {
+          await pool.query(`UPDATE crm_deals SET status=$1 WHERE id=$2`, [code, r.id]);
+          normalised++;
+        }
+      }
+      if (normalised > 0) console.log(`[crm] Normalised ${normalised} deal statuses to canonical codes`);
+    } catch (e: any) {
+      console.error("[crm] Status normaliser failed:", e?.message);
+    }
+  })();
+
   app.use("/api/crm", requireAuth);
   app.get("/api/crm/stats", async (_req, res) => {
     try {

@@ -59,6 +59,7 @@ export const SYSTEM_SET_STATUSES: DealStatusCode[] = ["INV"];
 const LEGACY_MAP: Record<string, DealStatusCode> = {
   // post-NEG lifecycle
   "under negotiation": "NEG",
+  "in negotiation": "NEG",        // leasing-schedule unit status, leaks into deals
   "negotiation": "NEG",
   "neg": "NEG",
   "hots": "NEG",
@@ -85,6 +86,7 @@ const LEGACY_MAP: Record<string, DealStatusCode> = {
   "available": "AVA",
   "ava": "AVA",
   "marketing": "AVA",
+  "occupied": "COM",              // leasing-schedule unit status — occupied unit = completed deal
   // archived
   "withdrawn": "WIT",
   "wit": "WIT",
