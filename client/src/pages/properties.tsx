@@ -932,7 +932,7 @@ export function InlineDeals({
 
   return (
     <div className="flex flex-col gap-0.5 w-full min-w-0">
-      <div className={`flex flex-col gap-0.5 ${linkedDeals.length > 3 ? "max-h-[84px] overflow-y-auto pr-0.5" : ""}`}>
+      <div className={`flex flex-col gap-0.5 ${linkedDeals.length > 5 ? "max-h-[120px] overflow-y-auto pr-0.5" : ""}`}>
         {linkedDeals.map(deal => (
           <div key={deal.id} className="flex items-center gap-0.5 min-w-0 group/deal">
             <Link href={`/deals/${deal.id}`} className="min-w-0 flex-1">
