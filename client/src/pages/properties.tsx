@@ -5017,7 +5017,7 @@ function LandlordHealthView({
   onClose: () => void;
 }) {
   const [healthSearch, setHealthSearch] = useState("");
-  const [healthFilter, setHealthFilter] = useState<"all" | "missing_billing" | "missing_parent" | "missing_both" | "ok">("all");
+  const [healthFilter, setHealthFilter] = useState<"all" | "missing_landlord" | "missing_billing" | "missing_parent" | "missing_both" | "ok">("all");
   const { toast } = useToast();
 
   const queryClient_local = useQueryClient();
@@ -5035,14 +5035,43 @@ function LandlordHealthView({
     },
   });
 
-  // Only properties with a landlord
-  const withLandlord = properties.filter(p => p.landlordId);
+  const setLandlordMutation = useMutation({
+    mutationFn: async ({ id, landlordId }: { id: string; landlordId: string }) => {
+      await apiRequest("PUT", `/api/crm/properties/${id}`, { landlordId });
+    },
+    onSuccess: () => {
+      queryClient_local.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      toast({ title: "Landlord linked" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const setParentMutation = useMutation({
+    mutationFn: async ({ companyId, parentCompanyId }: { companyId: string; parentCompanyId: string }) => {
+      await apiRequest("PUT", `/api/crm/companies/${companyId}`, { parentCompanyId });
+    },
+    onSuccess: () => {
+      queryClient_local.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      queryClient_local.invalidateQueries({ queryKey: ["/api/crm/properties"] });
+      toast({ title: "Parent brand linked" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // Show every property — including those with no landlord set yet, so they
+  // can be linked from this view.
+  const withLandlord = properties;
 
   const rows = withLandlord.map(p => {
     const landlord = allCompanies.find(c => c.id === p.landlordId);
     const billingEntity = allCompanies.find(c => c.id === p.billingEntityId);
     const parentCompany = landlord?.parentCompanyId ? allCompanies.find(c => c.id === landlord.parentCompanyId) : null;
 
+    const hasLandlord = !!landlord;
     const hasBilling = !!p.billingEntityId;
     const hasParent = !!parentCompany;
     const landlordIsSPV = landlord && (
@@ -5050,8 +5079,9 @@ function LandlordHealthView({
       !/^(grosvenor|landsec|hammerson|british land|derwent|great portland|canary wharf|crown estate|cadogan|longmartin)/i.test(landlord.name)
     );
 
-    let status: "ok" | "missing_billing" | "missing_parent" | "missing_both" = "ok";
-    if (!hasBilling && !hasParent) status = "missing_both";
+    let status: "ok" | "missing_landlord" | "missing_billing" | "missing_parent" | "missing_both" = "ok";
+    if (!hasLandlord) status = "missing_landlord";
+    else if (!hasBilling && !hasParent) status = "missing_both";
     else if (!hasBilling) status = "missing_billing";
     else if (!hasParent) status = "missing_parent";
 
@@ -5068,6 +5098,7 @@ function LandlordHealthView({
   const counts = {
     all: rows.length,
     ok: rows.filter(r => r.status === "ok").length,
+    missing_landlord: rows.filter(r => r.status === "missing_landlord").length,
     missing_billing: rows.filter(r => r.status === "missing_billing").length,
     missing_parent: rows.filter(r => r.status === "missing_parent").length,
     missing_both: rows.filter(r => r.status === "missing_both").length,
@@ -5080,10 +5111,11 @@ function LandlordHealthView({
   return (
     <div className="space-y-4">
       {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
         {[
-          { key: "all", label: "All Landlord Properties", color: "bg-blue-50 border-blue-200", text: "text-blue-700" },
+          { key: "all", label: "All Properties", color: "bg-blue-50 border-blue-200", text: "text-blue-700" },
           { key: "ok", label: "✅ Fully Set Up", color: "bg-green-50 border-green-200", text: "text-green-700" },
+          { key: "missing_landlord", label: "🔴 No Landlord", color: "bg-red-50 border-red-200", text: "text-red-700" },
           { key: "missing_billing", label: "⚠️ Missing Billing Entity", color: "bg-amber-50 border-amber-200", text: "text-amber-700" },
           { key: "missing_parent", label: "⚠️ Missing Parent Brand", color: "bg-orange-50 border-orange-200", text: "text-orange-700" },
           { key: "missing_both", label: "🔴 Missing Both", color: "bg-red-50 border-red-200", text: "text-red-700" },
@@ -5150,16 +5182,45 @@ function LandlordHealthView({
                           {landlord.name}
                         </a>
                       ) : (
-                        <span className="text-xs text-muted-foreground italic">Not set</span>
+                        <Select
+                          onValueChange={(val) => setLandlordMutation.mutate({ id: property.id, landlordId: val })}
+                        >
+                          <SelectTrigger className="h-7 text-xs w-44 border-dashed border-red-400 text-red-600">
+                            <SelectValue placeholder="Set landlord..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {landlordCompanies.slice(0, 60).map(c => (
+                              <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       )}
                     </TableCell>
                     <TableCell className="py-2 px-3">
                       {parentCompany ? (
-                        <Badge className="bg-blue-100 text-blue-800 text-xs font-normal">
-                          {parentCompany.name}
-                        </Badge>
+                        <a href={`/companies/${parentCompany.id}`} className="hover:underline">
+                          <Badge className="bg-blue-100 text-blue-800 text-xs font-normal">
+                            {parentCompany.name}
+                          </Badge>
+                        </a>
+                      ) : landlord ? (
+                        <Select
+                          onValueChange={(val) => setParentMutation.mutate({ companyId: landlord.id, parentCompanyId: val })}
+                        >
+                          <SelectTrigger className="h-7 text-xs w-44 border-dashed border-amber-400 text-amber-600">
+                            <SelectValue placeholder="Link parent brand..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {landlordCompanies
+                              .filter(c => c.id !== landlord.id)
+                              .slice(0, 60)
+                              .map(c => (
+                                <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
                       ) : (
-                        <span className="text-xs text-amber-600 italic">⚠️ Not linked</span>
+                        <span className="text-xs text-muted-foreground italic">—</span>
                       )}
                     </TableCell>
                     <TableCell className="py-2 px-3">
@@ -5191,6 +5252,7 @@ function LandlordHealthView({
                     </TableCell>
                     <TableCell className="py-2 px-3">
                       {status === "ok" && <Badge className="bg-green-100 text-green-700 text-xs">✅ OK</Badge>}
+                      {status === "missing_landlord" && <Badge className="bg-red-100 text-red-700 text-xs">🔴 No Landlord</Badge>}
                       {status === "missing_billing" && <Badge className="bg-amber-100 text-amber-700 text-xs">⚠️ No Billing</Badge>}
                       {status === "missing_parent" && <Badge className="bg-orange-100 text-orange-700 text-xs">⚠️ No Parent</Badge>}
                       {status === "missing_both" && <Badge className="bg-red-100 text-red-700 text-xs">🔴 Missing Both</Badge>}
