@@ -2,7 +2,8 @@
 // Deal stage transitions + solicitor leg.
 //
 // Enforces an ordered pipeline, writes to deal_events for full audit, and
-// triggers secondary actions (e.g. hots_completed_at on entering 'hots',
+// triggers secondary actions (e.g. exchanged_at on entering 'agreed',
+// completed_at on entering 'completed', invoiced_at on entering 'invoiced',
 // comp seed-row on entering 'completed').
 //
 // Endpoints:
@@ -107,7 +108,7 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     }
 
     const current = await pool.query(
-      `SELECT id, stage, hots_completed_at, solicitor_instructed_at FROM crm_deals WHERE id = $1`,
+      `SELECT id, stage, exchanged_at, completed_at, invoiced_at, solicitor_instructed_at FROM crm_deals WHERE id = $1`,
       [dealId]
     );
     if (!current.rows[0]) return res.status(404).json({ error: "Deal not found" });
@@ -115,11 +116,6 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
 
     const updates: string[] = ["stage = $1", "stage_entered_at = now()", "updated_at = now()"];
     const values: any[] = [toStage];
-
-    // Side-effects triggered by transition
-    if (toStage === "hots" && !current.rows[0].hots_completed_at) {
-      updates.push(`hots_completed_at = now()`);
-    }
 
     // When we hit HoTs we need AML on the tenant (and best-effort the
     // landlord) — this kicks Veriff off automatically so the team doesn't
@@ -130,8 +126,15 @@ router.post("/api/deal/:dealId/stage", requireAuth, async (req: Request & { user
     if (toStage === "sols" && !current.rows[0].solicitor_instructed_at) {
       updates.push(`solicitor_instructed_at = now()`);
     }
-    if (toStage === "completed") {
-      updates.push(`completion_date = to_char(now(), 'YYYY-MM-DD')`);
+    // Stamp the canonical date journey on entering each stage.
+    if (toStage === "agreed" && !current.rows[0].exchanged_at) {
+      updates.push(`exchanged_at = now()`);
+    }
+    if (toStage === "completed" && !current.rows[0].completed_at) {
+      updates.push(`completed_at = now()`);
+    }
+    if (toStage === "invoiced" && !current.rows[0].invoiced_at) {
+      updates.push(`invoiced_at = now()`);
     }
 
     values.push(dealId);
@@ -244,7 +247,7 @@ router.patch("/api/deal/:dealId/solicitor", requireAuth, async (req: Request & {
     const fields = [
       "solicitor_firm", "solicitor_contact", "solicitor_instructed_at",
       "draft_lease_received_at", "comments_returned_at", "engrossment_at",
-      "completion_target_date", "solicitor_notes",
+      "target_date", "exchanged_at", "completed_at", "invoiced_at", "solicitor_notes",
     ];
     const sets: string[] = [];
     const vals: any[] = [];

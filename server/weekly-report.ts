@@ -38,8 +38,9 @@ async function loadContact(contactId: string) {
 async function loadClientActivity(contactId: string, sinceDays = 7) {
   // All deals where this contact is the client contact
   const dealsQ = pool.query(
-    `SELECT d.id, d.name, d.stage, d.status, d.deal_type, d.pricing, d.rent_pa, d.completion_date,
-            d.updated_at, d.hots_completed_at,
+    `SELECT d.id, d.name, d.stage, d.status, d.deal_type, d.pricing, d.rent_pa,
+            d.target_date, d.exchanged_at, d.completed_at, d.invoiced_at,
+            d.updated_at,
             p.name AS property_name, p.address AS property_address,
             lc.name AS landlord_name, tc.name AS tenant_name, vc.name AS vendor_name, pc.name AS purchaser_name
        FROM crm_deals d

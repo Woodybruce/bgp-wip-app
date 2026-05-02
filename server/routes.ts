@@ -4089,17 +4089,20 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         timeline.push({ type: "deal_created", date: deal.created_at, detail: `Deal "${deal.name}" created`, icon: "plus" });
       }
 
-      if (deal.hots_completed_at) {
-        timeline.push({ type: "hots_completed", date: deal.hots_completed_at, detail: "Heads of Terms completed", icon: "file-text" });
+      if (deal.target_date) {
+        timeline.push({ type: "target", date: deal.target_date, detail: "Target date", icon: "target" });
       }
       if (deal.kyc_approved && (deal.kyc_approved_at || deal.updated_at)) {
         timeline.push({ type: "kyc_approved", date: deal.kyc_approved_at || deal.updated_at, detail: `KYC approved by ${deal.kyc_approved_by || "system"}`, icon: "shield-check" });
       }
-      if (deal.completion_date) {
-        const compDate = new Date(deal.completion_date);
-        if (!isNaN(compDate.getTime())) {
-          timeline.push({ type: "completion", date: deal.completion_date, detail: "Deal completed", icon: "check-circle" });
-        }
+      if (deal.exchanged_at) {
+        timeline.push({ type: "exchanged", date: deal.exchanged_at, detail: "Exchanged", icon: "handshake" });
+      }
+      if (deal.completed_at) {
+        timeline.push({ type: "completion", date: deal.completed_at, detail: "Completed", icon: "check-circle" });
+      }
+      if (deal.invoiced_at) {
+        timeline.push({ type: "invoiced", date: deal.invoiced_at, detail: "Invoiced", icon: "receipt" });
       }
 
       const reqRows = await pool.query(
@@ -4182,7 +4185,7 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
 
       const [compsResult, dealsResult, newsResult, reqResult] = await Promise.all([
         pool.query(`SELECT id, name, tenant, headline_rent, area_sqft, completion_date, use_class FROM crm_comps WHERE property_id = $1 ORDER BY created_at DESC LIMIT 10`, [propertyId]),
-        pool.query(`SELECT id, name, deal_type, status, rent_pa, fee, completion_date FROM crm_deals WHERE property_id = $1 ORDER BY created_at DESC LIMIT 10`, [propertyId]),
+        pool.query(`SELECT id, name, deal_type, status, rent_pa, fee, target_date, exchanged_at, completed_at FROM crm_deals WHERE property_id = $1 ORDER BY created_at DESC LIMIT 10`, [propertyId]),
         newsQuery,
         pool.query(`
           SELECT r.id, r.name, r.use, r.size, r.requirement_locations, c.name as company_name
@@ -5148,23 +5151,26 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
         });
       }
 
-      // Deals with stale completion dates (overdue)
+      // Deals with stale target dates (overdue)
       const overdueDeals = await pool.query(`
-        SELECT id, name, completion_date, status FROM crm_deals
-        WHERE completion_date IS NOT NULL
-        AND completion_date::date < CURRENT_DATE
+        SELECT id, name, target_date, status FROM crm_deals
+        WHERE target_date IS NOT NULL
+        AND target_date < CURRENT_DATE
         AND status NOT IN ('COM', 'INV', 'WIT')
-        ORDER BY completion_date ASC
+        AND exchanged_at IS NULL
+        AND completed_at IS NULL
+        ORDER BY target_date ASC
         LIMIT 10
       `);
       for (const d of overdueDeals.rows) {
+        const targetStr = d.target_date ? new Date(d.target_date).toLocaleDateString("en-GB") : "";
         notifications.push({
           id: `overdue-${d.id}`,
           type: "overdue_completion",
-          title: `Overdue completion: ${d.name}`,
-          description: `Expected completion ${d.completion_date} has passed`,
+          title: `Overdue target: ${d.name}`,
+          description: `Target date ${targetStr} has passed`,
           severity: "warning",
-          createdAt: d.completion_date,
+          createdAt: d.target_date,
           dealId: d.id,
         });
       }

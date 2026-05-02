@@ -242,7 +242,6 @@ const COLUMN_LABELS: Record<string, string> = {
   acquisitionAgent: "Acquisition Agent",
   purchaserAgent: "Purchaser Agent",
   leasingAgent: "Leasing Agent",
-  timeline: "Timeline",
   pricing: "Pricing",
   yield: "Yield %",
   fee: "Fee",
@@ -262,7 +261,10 @@ const COLUMN_LABELS: Record<string, string> = {
   rentFree: "Rent Free",
   leaseLength: "Lease Length",
   breakOption: "Break Option",
-  completionDate: "Completion Date",
+  targetDate: "Target Date",
+  exchangedAt: "Exchanged",
+  completedAt: "Completed",
+  invoicedAt: "Invoiced",
   rentAnalysis: "Rent Analysis",
   comments: "Comments",
   sharepoint: "SharePoint",
@@ -384,9 +386,10 @@ interface DealFormData {
   rentFree: string;
   leaseLength: string;
   breakOption: string;
-  completionDate: string;
-  timelineStart: string;
-  timelineEnd: string;
+  targetDate: string;
+  exchangedAt: string;
+  completedAt: string;
+  invoicedAt: string;
   amlCheckCompleted: string;
   comments: string;
   lastInteraction: string;
@@ -426,9 +429,10 @@ const emptyForm: DealFormData = {
   rentFree: "",
   leaseLength: "",
   breakOption: "",
-  completionDate: "",
-  timelineStart: "",
-  timelineEnd: "",
+  targetDate: "",
+  exchangedAt: "",
+  completedAt: "",
+  invoicedAt: "",
   amlCheckCompleted: "",
   comments: "",
   lastInteraction: "",
@@ -469,9 +473,10 @@ function dealToForm(deal: CrmDeal): DealFormData {
     rentFree: deal.rentFree != null ? String(deal.rentFree) : "",
     leaseLength: deal.leaseLength != null ? String(deal.leaseLength) : "",
     breakOption: deal.breakOption != null ? String(deal.breakOption) : "",
-    completionDate: deal.completionDate || "",
-    timelineStart: deal.timelineStart || "",
-    timelineEnd: deal.timelineEnd || "",
+    targetDate: deal.targetDate ? new Date(deal.targetDate).toISOString().slice(0, 10) : "",
+    exchangedAt: deal.exchangedAt ? new Date(deal.exchangedAt).toISOString().slice(0, 10) : "",
+    completedAt: deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : "",
+    invoicedAt: deal.invoicedAt ? new Date(deal.invoicedAt).toISOString().slice(0, 10) : "",
     amlCheckCompleted: deal.amlCheckCompleted || "",
     comments: deal.comments || "",
     lastInteraction: deal.lastInteraction || "",
@@ -517,9 +522,10 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     rentFree: parseNum(form.rentFree),
     leaseLength: parseNum(form.leaseLength),
     breakOption: parseNum(form.breakOption),
-    completionDate: form.completionDate || null,
-    timelineStart: form.timelineStart || null,
-    timelineEnd: form.timelineEnd || null,
+    targetDate: form.targetDate || null,
+    exchangedAt: form.exchangedAt || null,
+    completedAt: form.completedAt || null,
+    invoicedAt: form.invoicedAt || null,
     amlCheckCompleted: form.amlCheckCompleted || null,
     comments: form.comments || null,
     lastInteraction: form.lastInteraction || null,
@@ -1059,8 +1065,20 @@ export function DealFormDialog({
                   )}
 
                   <div>
-                    <Label>Completion Date</Label>
-                    <Input type="date" value={form.completionDate} onChange={(e) => set("completionDate", e.target.value)} data-testid="input-deal-completion-date" />
+                    <Label>Target Date</Label>
+                    <Input type="date" value={form.targetDate} onChange={(e) => set("targetDate", e.target.value)} data-testid="input-deal-target-date" />
+                  </div>
+                  <div>
+                    <Label>Exchanged</Label>
+                    <Input type="date" value={form.exchangedAt} onChange={(e) => set("exchangedAt", e.target.value)} data-testid="input-deal-exchanged-at" />
+                  </div>
+                  <div>
+                    <Label>Completed</Label>
+                    <Input type="date" value={form.completedAt} onChange={(e) => set("completedAt", e.target.value)} data-testid="input-deal-completed-at" />
+                  </div>
+                  <div>
+                    <Label>Invoiced</Label>
+                    <Input type="date" value={form.invoicedAt} onChange={(e) => set("invoicedAt", e.target.value)} data-testid="input-deal-invoiced-at" />
                   </div>
 
                   <div>
@@ -1458,7 +1476,7 @@ function HotsChecklistDialog({
     rentPa: 0,
     feePercentage: 0,
     fee: 0,
-    completionTiming: "",
+    targetDate: "",
     amlCheckCompleted: "",
     invoicingNotes: "",
     poNumber: "",
@@ -1520,7 +1538,7 @@ function HotsChecklistDialog({
         amlCheckCompleted: deal.amlCheckCompleted || "",
         invoicingNotes: deal.invoicingNotes || "",
         poNumber: deal.poNumber || "",
-        completionTiming: deal.completionTiming || "",
+        targetDate: deal.targetDate ? new Date(deal.targetDate).toISOString().slice(0, 10) : "",
         invoicingEmail: deal.invoicingEmail || "",
       }));
     }
@@ -1604,7 +1622,7 @@ function HotsChecklistDialog({
       if (!propId) missing.push("Property / Unit");
       if (!ex.rentPa) missing.push("Rent PA");
       if (!ex.feePercentage && !ex.fee) missing.push("Fee Details");
-      if (!ex.completionTiming) missing.push("Completion Timing");
+      if (!ex.targetDate) missing.push("Target Date");
 
       setMissingFields(missing);
       setForm(prev => ({
@@ -1614,7 +1632,7 @@ function HotsChecklistDialog({
         rentPa: ex.rentPa || prev.rentPa,
         feePercentage: ex.feePercentage || prev.feePercentage,
         fee: ex.fee || prev.fee,
-        completionTiming: ex.completionTiming || prev.completionTiming,
+        targetDate: ex.targetDate || prev.targetDate,
         leaseLength: ex.leaseLength || prev.leaseLength,
         breakOption: ex.breakOption || prev.breakOption,
         rentFree: ex.rentFree || prev.rentFree,
@@ -1660,11 +1678,10 @@ function HotsChecklistDialog({
         rentPa: form.rentPa || null,
         feePercentage: form.feePercentage || null,
         fee: form.fee || null,
-        completionTiming: form.completionTiming || null,
+        targetDate: form.targetDate || null,
         amlCheckCompleted: form.amlCheckCompleted || null,
         invoicingNotes: form.invoicingNotes || null,
         poNumber: form.poNumber || null,
-        hotsCompletedAt: new Date().toISOString(),
       };
       if (form.leaseLength) payload.leaseLength = form.leaseLength;
       if (form.breakOption) payload.breakOption = form.breakOption;
@@ -1998,21 +2015,14 @@ function HotsChecklistDialog({
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className={missingFields.includes("Completion Timing") ? "ring-2 ring-amber-400 rounded-md" : ""}>
-                <Label className="text-xs">Timing for Completion</Label>
-                <Select value={form.completionTiming || undefined} onValueChange={(v) => setForm(prev => ({ ...prev, completionTiming: v }))}>
-                  <SelectTrigger data-testid="select-hots-timing"><SelectValue placeholder="Select timing" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Complete - to bill">Complete - to bill</SelectItem>
-                    <SelectItem value="Pending exchange">Pending exchange</SelectItem>
-                    <SelectItem value="Pending completion">Pending completion</SelectItem>
-                    <SelectItem value="30 days">30 days</SelectItem>
-                    <SelectItem value="60 days">60 days</SelectItem>
-                    <SelectItem value="90 days">90 days</SelectItem>
-                    <SelectItem value="6 months">6 months</SelectItem>
-                    <SelectItem value="TBC">TBC</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className={missingFields.includes("Target Date") ? "ring-2 ring-amber-400 rounded-md" : ""}>
+                <Label className="text-xs">Target Exchange / Completion Date</Label>
+                <Input
+                  type="date"
+                  value={form.targetDate || ""}
+                  onChange={e => setForm(prev => ({ ...prev, targetDate: e.target.value }))}
+                  data-testid="input-hots-target-date"
+                />
               </div>
               <div>
                 <Label className="text-xs">AML Check Completed?</Label>
@@ -3326,12 +3336,13 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
       yieldPercent: "yield", feeAgreement: "fee agreement", rentPa: "rent PA",
       capitalContribution: "capital contribution", rentFree: "rent free",
       leaseLength: "lease length", breakOption: "break option",
-      completionDate: "completion date", tenureText: "tenure", assetClass: "asset class",
+      targetDate: "target date", exchangedAt: "exchanged", completedAt: "completed", invoicedAt: "invoiced",
+      tenureText: "tenure", assetClass: "asset class",
       comments: "comments", amlCheckCompleted: "AML check", totalAreaSqft: "total area",
       propertyId: "property", landlordId: "landlord", tenantId: "tenant",
       vendorId: "vendor", purchaserId: "purchaser", invoicingEntityId: "billing entity",
       kycApproved: "KYC approved", feePercentage: "fee %",
-      completionTiming: "completion timing", invoicingNotes: "invoicing notes",
+      invoicingNotes: "invoicing notes",
       poNumber: "PO number",
     };
     return map[field] || field;
@@ -3821,7 +3832,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     acquisitionAgent: true,
     purchaserAgent: true,
     leasingAgent: true,
-    timeline: true,
     pricing: true,
     yield: true,
     fee: true,
@@ -3841,7 +3851,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     rentFree: true,
     leaseLength: true,
     breakOption: true,
-    completionDate: true,
+    targetDate: true,
+    exchangedAt: false,
+    completedAt: false,
+    invoicedAt: false,
     rentAnalysis: true,
     comments: true,
     sharepoint: true,
@@ -4609,7 +4622,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.acquisitionAgent && <TableHead className="min-w-[120px]">Acquisition Agent</TableHead>}
                     {visibleColumns.purchaserAgent && <TableHead className="min-w-[120px]">Purchaser Agent</TableHead>}
                     {visibleColumns.leasingAgent && <TableHead className="min-w-[120px]">Leasing Agent</TableHead>}
-                    {visibleColumns.timeline && <TableHead className="min-w-[160px]">Timeline</TableHead>}
                     {visibleColumns.pricing && <TableHead className="min-w-[100px] text-right">Pricing</TableHead>}
                     {visibleColumns.yield && <TableHead className="min-w-[80px] text-right">Yield %</TableHead>}
                     {visibleColumns.fee && <TableHead className="min-w-[80px] text-right">Fee</TableHead>}
@@ -4630,7 +4642,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.rentFree && <TableHead className="min-w-[80px] text-right">Rent Free</TableHead>}
                     {visibleColumns.leaseLength && <TableHead className="min-w-[80px] text-right">Lease Length</TableHead>}
                     {visibleColumns.breakOption && <TableHead className="min-w-[80px] text-right">Break Option</TableHead>}
-                    {visibleColumns.completionDate && <TableHead className="min-w-[120px]">Completion Date</TableHead>}
+                    {visibleColumns.targetDate && <TableHead className="min-w-[120px]">Target Date</TableHead>}
+                    {visibleColumns.exchangedAt && <TableHead className="min-w-[110px]">Exchanged</TableHead>}
+                    {visibleColumns.completedAt && <TableHead className="min-w-[110px]">Completed</TableHead>}
+                    {visibleColumns.invoicedAt && <TableHead className="min-w-[110px]">Invoiced</TableHead>}
                     {visibleColumns.rentAnalysis && <TableHead className="min-w-[100px] text-right">Rent Analysis</TableHead>}
                     {visibleColumns.comments && <TableHead className="min-w-[200px]">Comments</TableHead>}
                     {visibleColumns.sharepoint && <TableHead className="min-w-[140px]">SharePoint Files</TableHead>}
@@ -4847,13 +4862,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           </div>
                         </TableCell>
                       )}
-                      {visibleColumns.timeline && (
-                        <TableCell className="px-1.5 py-1">
-                          {deal.timelineStart || deal.timelineEnd ? (
-                            <span>{deal.timelineStart ? formatDate(deal.timelineStart) : "—"} — {deal.timelineEnd ? formatDate(deal.timelineEnd) : "—"}</span>
-                          ) : "—"}
-                        </TableCell>
-                      )}
                       {visibleColumns.pricing && (
                         <TableCell className="px-1.5 py-1">
                           <InlineNumber
@@ -5043,9 +5051,24 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.completionDate && (
+                      {visibleColumns.targetDate && (
                         <TableCell className="px-1.5 py-1">
-                          {deal.completionDate ? formatDate(deal.completionDate) : "—"}
+                          {deal.targetDate ? formatDate(deal.targetDate) : "—"}
+                        </TableCell>
+                      )}
+                      {visibleColumns.exchangedAt && (
+                        <TableCell className="px-1.5 py-1">
+                          {deal.exchangedAt ? formatDate(deal.exchangedAt) : "—"}
+                        </TableCell>
+                      )}
+                      {visibleColumns.completedAt && (
+                        <TableCell className="px-1.5 py-1">
+                          {deal.completedAt ? formatDate(deal.completedAt) : "—"}
+                        </TableCell>
+                      )}
+                      {visibleColumns.invoicedAt && (
+                        <TableCell className="px-1.5 py-1">
+                          {deal.invoicedAt ? formatDate(deal.invoicedAt) : "—"}
                         </TableCell>
                       )}
                       {visibleColumns.rentAnalysis && (

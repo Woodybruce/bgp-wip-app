@@ -51,7 +51,7 @@ async function maybeCopyDealToComps(deal: any): Promise<void> {
     await pool.query(
       `INSERT INTO investment_comps (id, rca_deal_id, status, transaction_type, property_name, transaction_date, price)
        VALUES (gen_random_uuid(), $1, 'COM', $2, $3, $4, $5)`,
-      [deal.id, deal.dealType || null, deal.name || null, deal.completionDate || null, deal.fee || null]
+      [deal.id, deal.dealType || null, deal.name || null, deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : null, deal.fee || null]
     );
     console.log(`[deal->comps] Copied investment deal ${deal.id} (${deal.name}) into investment_comps`);
   } else {
@@ -60,7 +60,7 @@ async function maybeCopyDealToComps(deal: any): Promise<void> {
     await pool.query(
       `INSERT INTO crm_comps (id, name, deal_id, property_id, deal_type, completion_date)
        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5)`,
-      [deal.name || "Untitled deal", deal.id, deal.propertyId || null, deal.dealType || null, deal.completionDate || null]
+      [deal.name || "Untitled deal", deal.id, deal.propertyId || null, deal.dealType || null, deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : null]
     );
     console.log(`[deal->comps] Copied leasing deal ${deal.id} (${deal.name}) into crm_comps`);
   }
@@ -975,7 +975,12 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
       const comments = `WIP Ref: ${deal.ref}. WIP: £${(deal.total_wip || 0).toLocaleString()}. Invoiced: £${(deal.total_invoice || 0).toLocaleString()}. Status: ${deal.deal_status || 'N/A'}.`;
       const teamPg = teamArr;
       const agentPg = agentArr;
-      const completionDate = parseWipMonthToDate(deal.month);
+      // The Sage WIP month is the anticipated completion/billing month — that's
+      // our target_date. If the deal is already at COM/INV, also stamp the
+      // corresponding actual date so the timeline stays consistent.
+      const targetDate = parseWipMonthToDate(deal.month);
+      const completedAt = (status === 'COM' || status === 'INV') ? targetDate : null;
+      const invoicedAt = status === 'INV' ? targetDate : null;
 
       // Dedupe lookup — if no ref→id link exists yet, check whether an active
       // deal already exists with the same name + landlord + tenant. Stops the
@@ -1000,8 +1005,16 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
       if (resolvedDealId) {
         const existingId = resolvedDealId;
         await client.query(
-          `UPDATE crm_deals SET name=$1, group_name=$2, property_id=$3, landlord_id=$4, tenant_id=$5, deal_type=$6, status=$7, team=$8::text[], internal_agent=$9::text[], fee=$10, comments=$11, completion_date=$12, updated_at=NOW() WHERE id=$13`,
-          [dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, completionDate, existingId]
+          `UPDATE crm_deals
+             SET name=$1, group_name=$2, property_id=$3, landlord_id=$4, tenant_id=$5,
+                 deal_type=$6, status=$7, team=$8::text[], internal_agent=$9::text[],
+                 fee=$10, comments=$11,
+                 target_date = COALESCE(target_date, $12),
+                 completed_at = COALESCE(completed_at, $13),
+                 invoiced_at = COALESCE(invoiced_at, $14),
+                 updated_at=NOW()
+           WHERE id=$15`,
+          [dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, existingId]
         );
         // Write hard FKs back onto every wip_entries row for this ref so
         // future reads don't have to re-derive from strings.
@@ -1013,9 +1026,9 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
       } else {
         const dealId = randomUUID();
         await client.query(
-          `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, completion_date, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::text[], $11, $12, $13, NOW(), NOW())`,
-          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, completionDate]
+          `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, target_date, completed_at, invoiced_at, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::text[], $11, $12, $13, $14, $15, NOW(), NOW())`,
+          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt]
         );
         await client.query(
           `UPDATE wip_entries SET deal_id=$1, property_id=$2 WHERE ref=$3`,
@@ -1075,6 +1088,93 @@ export function setupCrmRoutes(app: Express) {
        ON crm_deals (LOWER(name), COALESCE(landlord_id, ''), COALESCE(tenant_id, ''))
        WHERE status NOT IN ('ARCH', 'COM')`
   ).catch(() => {});
+
+  // ── Single deal date journey migration ──────────────────────────────
+  // Consolidates the historic mess (timeline_start, timeline_end,
+  // completion_date, completion_target_date, completion_timing,
+  // hots_completed_at) into one canonical four-field journey:
+  // target_date → exchanged_at → completed_at → invoiced_at.
+  // Idempotent — re-running is a no-op once the old columns are gone.
+  (async () => {
+    try {
+      // 1. Add the four new columns (timestamps).
+      await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS target_date TIMESTAMP`);
+      await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS exchanged_at TIMESTAMP`);
+      await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP`);
+      await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS invoiced_at TIMESTAMP`);
+
+      // 2. Backfill from old fields if they still exist. We try each column
+      //    independently so a partially-migrated DB still progresses.
+      const has = async (col: string) => {
+        const r = await pool.query(
+          `SELECT 1 FROM information_schema.columns WHERE table_name='crm_deals' AND column_name=$1`,
+          [col]
+        );
+        return r.rows.length > 0;
+      };
+
+      // target_date ← completion_target_date ?? completion_date(parsed) ?? timeline_end(parsed)
+      if (await has("completion_target_date")) {
+        await pool.query(
+          `UPDATE crm_deals SET target_date = completion_target_date
+             WHERE target_date IS NULL AND completion_target_date IS NOT NULL`
+        );
+      }
+      if (await has("completion_date")) {
+        // text field — best-effort cast, ignore failures
+        await pool.query(
+          `UPDATE crm_deals SET target_date = NULLIF(completion_date,'')::timestamp
+             WHERE target_date IS NULL
+               AND completion_date IS NOT NULL
+               AND completion_date ~ '^\\d{4}-\\d{2}-\\d{2}'`
+        ).catch(() => {});
+        // For completed deals, also stamp completed_at from completion_date
+        await pool.query(
+          `UPDATE crm_deals SET completed_at = NULLIF(completion_date,'')::timestamp
+             WHERE completed_at IS NULL
+               AND status IN ('COM','INV')
+               AND completion_date IS NOT NULL
+               AND completion_date ~ '^\\d{4}-\\d{2}-\\d{2}'`
+        ).catch(() => {});
+      }
+      if (await has("timeline_end")) {
+        await pool.query(
+          `UPDATE crm_deals SET target_date = NULLIF(timeline_end,'')::timestamp
+             WHERE target_date IS NULL
+               AND timeline_end IS NOT NULL
+               AND timeline_end ~ '^\\d{4}-\\d{2}-\\d{2}'`
+        ).catch(() => {});
+      }
+
+      // exchanged_at — if status >= EXC and we have nothing, fall back to stage_entered_at
+      await pool.query(
+        `UPDATE crm_deals SET exchanged_at = stage_entered_at
+           WHERE exchanged_at IS NULL
+             AND status IN ('EXC','COM','INV')
+             AND stage_entered_at IS NOT NULL`
+      ).catch(() => {});
+
+      // invoiced_at — if status = INV
+      await pool.query(
+        `UPDATE crm_deals SET invoiced_at = stage_entered_at
+           WHERE invoiced_at IS NULL AND status = 'INV' AND stage_entered_at IS NOT NULL`
+      ).catch(() => {});
+
+      // 3. Drop the legacy columns. Wrapped in try/catch so re-runs are safe.
+      for (const col of [
+        "timeline_start",
+        "timeline_end",
+        "completion_date",
+        "completion_target_date",
+        "completion_timing",
+        "hots_completed_at",
+      ]) {
+        await pool.query(`ALTER TABLE crm_deals DROP COLUMN IF EXISTS ${col}`).catch(() => {});
+      }
+    } catch (e: any) {
+      console.error("[crm] Date journey migration failed:", e?.message);
+    }
+  })();
 
   // One-shot status normaliser — runs on every boot, idempotent. Maps any
   // non-canonical crm_deals.status (legacy free text, leasing-schedule
@@ -2297,11 +2397,11 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       const auditFields = [
         "status", "fee", "internalAgent", "team", "dealType", "name", "pricing",
         "yieldPercent", "feeAgreement", "rentPa", "capitalContribution", "rentFree",
-        "leaseLength", "breakOption", "completionDate", "tenureText", "assetClass",
+        "leaseLength", "breakOption", "targetDate", "exchangedAt", "completedAt", "invoicedAt", "tenureText", "assetClass",
         "comments", "amlCheckCompleted", "totalAreaSqft", "basementAreaSqft",
         "gfAreaSqft", "ffAreaSqft", "itzaAreaSqft", "propertyId", "landlordId",
         "tenantId", "vendorId", "purchaserId", "invoicingEntityId", "kycApproved",
-        "feePercentage", "completionTiming", "invoicingNotes", "poNumber",
+        "feePercentage", "invoicingNotes", "poNumber",
         "amlRiskLevel", "amlSourceOfFunds", "amlSourceOfWealth", "amlPepStatus",
         "amlEddRequired", "amlIdVerified", "amlAddressVerified", "amlSarFiled",
       ];
@@ -2480,7 +2580,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                 pricePsf: deal.pricePsf || null,
                 capRate: deal.yieldPercent ? deal.yieldPercent / 100 : null,
                 areaSqft: deal.totalAreaSqft || null,
-                transactionDate: deal.completionDate || new Date().toISOString().split("T")[0],
+                transactionDate: deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : new Date().toISOString().split("T")[0],
                 buyer: buyerName || null,
                 seller: sellerName || null,
                 comments: deal.comments || null,
@@ -2560,7 +2660,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
                 term: deal.leaseLength ? `${deal.leaseLength} years` : null,
                 breakClause: deal.breakOption ? `${deal.breakOption} years` : null,
                 rentAnalysis: deal.rentAnalysis ? String(deal.rentAnalysis) : null,
-                completionDate: deal.completionDate || new Date().toISOString().split("T")[0],
+                completionDate: deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : new Date().toISOString().split("T")[0],
                 postcode: propPostcode || null,
                 areaLocation: propAreaLocation || null,
                 comments: deal.comments || null,
@@ -3072,7 +3172,7 @@ Return a JSON object with these fields (use null for any field you cannot find):
   "feePercentage": number - agency fee percentage if mentioned,
   "fee": number - total fee amount in GBP if mentioned,
   "feeAgreement": "string - fee basis e.g. 'Standard %', 'Fixed Fee'",
-  "completionTiming": "string - expected completion timing",
+  "targetDate": "ISO date string - expected exchange or completion date",
   "dealType": "string - one of: New Letting, Lease Renewal, Rent Review, Sub-Letting, Assignment, Lease Disposal, Purchase, Sale, Lease Acquisition, Regear",
   "assetClass": "string - one of: Retail, Office, Industrial, Residential, Mixed-Use, F&B, Leisure, Healthcare, Other",
   "serviceCharge": "string - service charge details",
@@ -4646,7 +4746,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
             dealType: deal.dealType || "",
           });
 
-          const completionStr = deal.completionDate || deal.updatedAt?.toISOString?.();
+          const completionStr = deal.completedAt || deal.exchangedAt || deal.targetDate || deal.updatedAt?.toISOString?.();
           if (completionStr) {
             const completionDate = new Date(completionStr);
             if (completionDate >= yearStart && completionDate <= now) {
@@ -4662,7 +4762,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
 
         if (isComplete && deal.createdAt) {
           const created = new Date(deal.createdAt);
-          const completed = deal.completionDate ? new Date(deal.completionDate) : (deal.updatedAt || now);
+          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : (deal.updatedAt || now));
           const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
           if (days > 0 && days < 1000) {
             totalDays += days;
@@ -4684,7 +4784,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const isComplete = ["EXC", "COM", "INV"].includes(legacyToCode(deal.status) || "");
         if (isComplete && deal.createdAt) {
           const created = new Date(deal.createdAt);
-          const completed = deal.completionDate ? new Date(deal.completionDate) : (deal.updatedAt || now);
+          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : (deal.updatedAt || now));
           const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
           if (days >= 0 && days < 1000) {
             if (days <= 30) timeToCloseBuckets["0-30"]++;
@@ -4975,8 +5075,9 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       }
 
       function deriveFiscalYear(deal: any): number | null {
-        if (deal.completionDate) {
-          const d = new Date(deal.completionDate);
+        const dateSrc = deal.completedAt || deal.exchangedAt || deal.targetDate;
+        if (dateSrc) {
+          const d = new Date(dateSrc);
           if (!isNaN(d.getTime())) {
             const month = d.getMonth() + 1;
             return month >= 4 ? d.getFullYear() + 1 : d.getFullYear();
@@ -4989,7 +5090,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       }
 
       function deriveMonth(deal: any): string | null {
-        const dateStr = deal.completionDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
+        const dateStr = deal.completedAt || deal.exchangedAt || deal.targetDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
         if (!dateStr) return null;
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return null;
@@ -5052,6 +5153,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               amtWip: isInvoiced ? 0 : agentFee,
               amtInvoice: agentInvoiceAmt,
               month: deriveMonth(deal),
+              targetDate: deal.targetDate || null,
+              exchangedAt: deal.exchangedAt || null,
+              completedAt: deal.completedAt || null,
+              invoicedAt: deal.invoicedAt || null,
               dealStatus: deal.status || null,
               stage,
               invoiceNo: invoice?.invoiceNo || null,
@@ -5080,6 +5185,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               amtWip: isInvoiced ? 0 : totalFee,
               amtInvoice: totalInvoiceAmt,
               month: deriveMonth(deal),
+              targetDate: deal.targetDate || null,
+              exchangedAt: deal.exchangedAt || null,
+              completedAt: deal.completedAt || null,
+              invoicedAt: deal.invoicedAt || null,
               dealStatus: deal.status || null,
               stage,
               invoiceNo: invoice?.invoiceNo || null,
@@ -5106,6 +5215,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 amtWip: isInvoiced ? 0 : perAgentFee,
                 amtInvoice: perAgentInvoice,
                 month: deriveMonth(deal),
+                targetDate: deal.targetDate || null,
+                exchangedAt: deal.exchangedAt || null,
+                completedAt: deal.completedAt || null,
+                invoicedAt: deal.invoicedAt || null,
                 dealStatus: deal.status || null,
                 stage,
                 invoiceNo: invoice?.invoiceNo || null,
@@ -5161,9 +5274,8 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     }
   });
 
-  // One-shot backfill: parses MonthYear from wip_entries and writes completion_date
-  // on matching crm_deals where it's still NULL. Safe to run repeatedly — only
-  // touches NULL completion_date rows so manual edits are preserved.
+  // Backfill: parses MonthYear from wip_entries and writes target_date on
+  // matching crm_deals where it's still NULL. Safe to run repeatedly.
   app.post("/api/wip/backfill-completion-dates", requireAuth, async (req, res) => {
     try {
       if (!(await isWipSenior(req))) return res.status(403).json({ error: "Not authorised" });
@@ -5171,7 +5283,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         `SELECT ref, MIN(month) as month FROM wip_entries WHERE ref IS NOT NULL AND ref != '' GROUP BY ref`
       );
       const { rows: deals } = await pool.query(
-        `SELECT id, comments FROM crm_deals WHERE completion_date IS NULL`
+        `SELECT id, comments FROM crm_deals WHERE target_date IS NULL`
       );
       const wipRefToDealId = new Map<string, string>();
       for (const d of deals) {
@@ -5182,11 +5294,11 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       for (const e of entries) {
         const dealId = wipRefToDealId.get(e.ref);
         if (!dealId) continue;
-        const completionDate = parseWipMonthToDate(e.month);
-        if (!completionDate) continue;
+        const targetDate = parseWipMonthToDate(e.month);
+        if (!targetDate) continue;
         await pool.query(
-          `UPDATE crm_deals SET completion_date=$1, updated_at=NOW() WHERE id=$2 AND completion_date IS NULL`,
-          [completionDate, dealId]
+          `UPDATE crm_deals SET target_date=$1, updated_at=NOW() WHERE id=$2 AND target_date IS NULL`,
+          [targetDate, dealId]
         );
         updated++;
       }
@@ -6166,7 +6278,7 @@ Rules:
       // Get deals where user is internal_agent OR deal team matches user's team
       const { rows: deals } = await pool.query(`
         SELECT d.id, d.name, d.deal_type, d.status, d.fee, d.property_id, d.landlord_id,
-               d.internal_agent, d.team, d.completion_date
+               d.internal_agent, d.team, d.target_date, d.exchanged_at, d.completed_at, d.invoiced_at
         FROM crm_deals d
         WHERE d.status NOT IN ('Dead', 'Draft')
           AND (
@@ -6253,7 +6365,10 @@ Rules:
             dealType: deal.deal_type,
             status: deal.status,
             fee: deal.fee,
-            completionDate: deal.completion_date,
+            targetDate: deal.target_date,
+            exchangedAt: deal.exchanged_at,
+            completedAt: deal.completed_at,
+            invoicedAt: deal.invoiced_at,
           });
         }
       }
@@ -6459,8 +6574,9 @@ Rules:
       }
 
       function deriveFiscalYearExcel(deal: any): number | null {
-        if (deal.completionDate) {
-          const d = new Date(deal.completionDate);
+        const dateSrc = deal.completedAt || deal.exchangedAt || deal.targetDate;
+        if (dateSrc) {
+          const d = new Date(dateSrc);
           if (!isNaN(d.getTime())) {
             const month = d.getMonth() + 1;
             return month >= 4 ? d.getFullYear() + 1 : d.getFullYear();
@@ -6473,7 +6589,7 @@ Rules:
       }
 
       function deriveMonthExcel(deal: any): string | null {
-        const dateStr = deal.completionDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
+        const dateStr = deal.completedAt || deal.exchangedAt || deal.targetDate || (deal.updatedAt ? new Date(deal.updatedAt).toISOString() : null);
         if (!dateStr) return null;
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return null;
@@ -6808,7 +6924,7 @@ Rules:
             dealType: deal.dealType || "",
           });
 
-          const completionStr = deal.completionDate || deal.updatedAt?.toISOString?.();
+          const completionStr = deal.completedAt || deal.exchangedAt || deal.targetDate || deal.updatedAt?.toISOString?.();
           if (completionStr) {
             const completionDate = new Date(completionStr);
             if (completionDate >= yearStart && completionDate <= now) {
@@ -6822,7 +6938,7 @@ Rules:
 
         if (isComplete && deal.createdAt) {
           const created = new Date(deal.createdAt);
-          const completed = deal.completionDate ? new Date(deal.completionDate) : (deal.updatedAt || now);
+          const completed = deal.completedAt ? new Date(deal.completedAt) : (deal.exchangedAt ? new Date(deal.exchangedAt) : (deal.updatedAt || now));
           const days = Math.round((new Date(completed).getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
           if (days > 0 && days < 1000) {
             totalDays += days;

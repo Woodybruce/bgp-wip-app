@@ -336,8 +336,10 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     { label: "Tenure", value: deal.tenureText },
     { label: "Fee Agreement", value: deal.feeAgreement, colorMap: DEAL_FEE_AGREEMENT_COLORS },
     { label: "AML Check", value: deal.amlCheckCompleted, colorMap: DEAL_AML_COLORS },
-    { label: "Completion Date", value: deal.completionDate ? formatDate(deal.completionDate) : null },
-    { label: "Timeline", value: deal.timelineStart && deal.timelineEnd ? `${formatDate(deal.timelineStart)} — ${formatDate(deal.timelineEnd)}` : deal.timelineStart || deal.timelineEnd },
+    { label: "Target Date", value: deal.targetDate ? formatDate(deal.targetDate) : null },
+    { label: "Exchanged", value: deal.exchangedAt ? formatDate(deal.exchangedAt) : null },
+    { label: "Completed", value: deal.completedAt ? formatDate(deal.completedAt) : null },
+    { label: "Invoiced", value: deal.invoicedAt ? formatDate(deal.invoicedAt) : null },
     { label: "Last Interaction", value: deal.lastInteraction },
   ];
 

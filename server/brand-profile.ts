@@ -200,7 +200,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
 
     // Deals where this company is a party
     const dealsQ = pool.query(
-      `SELECT d.id, d.name, d.status, d.deal_type, d.stage, d.updated_at, d.hots_completed_at,
+      `SELECT d.id, d.name, d.status, d.deal_type, d.stage, d.updated_at, d.exchanged_at, d.completed_at,
               CASE
                 WHEN d.landlord_id  = $1 THEN 'landlord'
                 WHEN d.tenant_id    = $1 THEN 'tenant'
@@ -572,7 +572,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
     } : null;
 
     // Deal ledger summary
-    const completedDeals = deals.rows.filter((d: any) => d.status === "completed" || d.hots_completed_at);
+    const completedDeals = deals.rows.filter((d: any) => d.status === "COM" || d.status === "INV" || d.status === "completed" || d.completed_at);
     const activeDeals = deals.rows.filter((d: any) => d.status === "active" || d.status === "in_progress" || d.stage === "negotiation");
 
     // Rollout velocity — signed net from brand_signals, plus store-count trend from brand_stores

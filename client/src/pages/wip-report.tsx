@@ -46,6 +46,10 @@ interface WipDealEntry {
   amtWip: number | null;
   amtInvoice: number | null;
   month: string | null;
+  targetDate: string | null;
+  exchangedAt: string | null;
+  completedAt: string | null;
+  invoicedAt: string | null;
   dealStatus: string | null;
   stage: string | null;
   invoiceNo: string | null;
@@ -1188,6 +1192,12 @@ export default function WipReport() {
         case "amtWip": aVal = a.amtWip || 0; bVal = b.amtWip || 0; break;
         case "amtInvoice": aVal = a.amtInvoice || 0; bVal = b.amtInvoice || 0; break;
         case "month": aVal = getMonthSortKey(a.month || ""); bVal = getMonthSortKey(b.month || ""); break;
+        case "dealDate": {
+          const pick = (e: WipEntry) => e.invoicedAt || e.completedAt || e.exchangedAt || e.targetDate || "";
+          aVal = pick(a) ? new Date(pick(a)).getTime() : 0;
+          bVal = pick(b) ? new Date(pick(b)).getTime() : 0;
+          break;
+        }
         case "dealStatus": aVal = a.dealStatus || ""; bVal = b.dealStatus || ""; break;
         case "stage": aVal = a.stage || ""; bVal = b.stage || ""; break;
         default: aVal = 0; bVal = 0;
@@ -1559,7 +1569,7 @@ export default function WipReport() {
                       { key: "agent", label: "BGP Contact", width: "w-20" },
                       { key: "amtWip", label: "Amt WIP", width: "w-24" },
                       { key: "amtInvoice", label: "Amt invoice", width: "w-24" },
-                      { key: "month", label: "Month", width: "w-16" },
+                      { key: "dealDate", label: "Date", width: "w-24" },
                       { key: "dealStatus", label: "Deal Status", width: "w-24" },
                       { key: "stage", label: "Stage", width: "w-24" },
                     ].map((col) => (
@@ -1616,7 +1626,28 @@ export default function WipReport() {
                       <td className="px-2 py-1.5 text-green-700 font-mono text-right">
                         {e.amtInvoice ? formatFullCurrency(e.amtInvoice) : "—"}
                       </td>
-                      <td className="px-2 py-1.5 text-gray-600">{e.month || "—"}</td>
+                      <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">
+                        {(() => {
+                          const pick = e.invoicedAt
+                            ? { label: "Invoiced", iso: e.invoicedAt, cls: "bg-green-100 text-green-800" }
+                            : e.completedAt
+                            ? { label: "Completed", iso: e.completedAt, cls: "bg-blue-100 text-blue-800" }
+                            : e.exchangedAt
+                            ? { label: "Exchanged", iso: e.exchangedAt, cls: "bg-amber-100 text-amber-800" }
+                            : e.targetDate
+                            ? { label: "Target", iso: e.targetDate, cls: "bg-gray-100 text-gray-700" }
+                            : null;
+                          if (!pick) return <span>—</span>;
+                          const d = new Date(pick.iso);
+                          const dateStr = isNaN(d.getTime()) ? "—" : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" });
+                          return (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-xs">{dateStr}</span>
+                              <span className={`inline-flex items-center px-1 py-0 rounded text-[9px] font-medium w-fit ${pick.cls}`}>{pick.label}</span>
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td className="px-2 py-1.5 text-gray-600 truncate max-w-[100px]">{e.dealStatus || "—"}</td>
                       <td className="px-2 py-1.5 text-xs truncate max-w-[100px]">
                         {e.stage === "pipeline" ? (

@@ -778,8 +778,13 @@ export const crmDeals = pgTable("crm_deals", {
   acquisitionAgentId: varchar("acquisition_agent_id"),
   purchaserAgentId: varchar("purchaser_agent_id"),
   leasingAgentId: varchar("leasing_agent_id"),
-  timelineStart: text("timeline_start"),
-  timelineEnd: text("timeline_end"),
+  // ── Deal date journey: target → exchanged → completed → invoiced ─────
+  // One canonical timeline. targetDate is the working forecast (editable).
+  // The actuals get stamped (or back-filled) when status flips to EXC/COM/INV.
+  targetDate: timestamp("target_date"),
+  exchangedAt: timestamp("exchanged_at"),
+  completedAt: timestamp("completed_at"),
+  invoicedAt: timestamp("invoiced_at"),
   pricing: real("pricing"),
   yieldPercent: real("yield_percent"),
   feeAgreement: text("fee_agreement"),
@@ -797,7 +802,6 @@ export const crmDeals = pgTable("crm_deals", {
   rentFree: real("rent_free"),
   leaseLength: real("lease_length"),
   breakOption: text("break_option"),
-  completionDate: text("completion_date"),
   rentAnalysis: real("rent_analysis"),
   comments: text("comments"),
   lastInteraction: text("last_interaction"),
@@ -807,13 +811,11 @@ export const crmDeals = pgTable("crm_deals", {
   invoicingEntityId: varchar("invoicing_entity_id"),
   invoicingEmail: text("invoicing_email"),
   feePercentage: real("fee_percentage"),
-  completionTiming: text("completion_timing"),
   invoicingNotes: text("invoicing_notes"),
   poNumber: text("po_number"),
   kycApproved: boolean("kyc_approved").default(false),
   kycApprovedAt: timestamp("kyc_approved_at"),
   kycApprovedBy: text("kyc_approved_by"),
-  hotsCompletedAt: timestamp("hots_completed_at"),
   // AML/MLR 2017 compliance fields
   amlRiskLevel: text("aml_risk_level"), // low, medium, high, critical
   amlSourceOfFunds: text("aml_source_of_funds"), // mortgage, cash, investment, pension, inheritance, sale_proceeds, other
@@ -848,7 +850,6 @@ export const crmDeals = pgTable("crm_deals", {
   draftLeaseReceivedAt: timestamp("draft_lease_received_at"),
   commentsReturnedAt: timestamp("comments_returned_at"),
   engrossmentAt: timestamp("engrossment_at"),
-  completionTargetDate: timestamp("completion_target_date"),
   solicitorNotes: text("solicitor_notes"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

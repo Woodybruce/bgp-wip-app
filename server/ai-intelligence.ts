@@ -76,25 +76,26 @@ export function registerAIIntelligenceRoutes(app: Express) {
           });
         }
 
-        if (deal.completionDate) {
-          const completionDate = new Date(deal.completionDate);
-          const daysUntil = Math.floor((completionDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        if (deal.targetDate) {
+          const targetDate = new Date(deal.targetDate);
+          const targetStr = targetDate.toLocaleDateString("en-GB");
+          const daysUntil = Math.floor((targetDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
           if (daysUntil >= 0 && daysUntil <= 14) {
             alerts.push({
               type: "approaching_completion",
               severity: daysUntil <= 3 ? "high" : "medium",
               dealId: deal.id,
               dealName: deal.name,
-              message: `Completion date in ${daysUntil} day${daysUntil !== 1 ? "s" : ""} (${deal.completionDate})`,
+              message: `Target date in ${daysUntil} day${daysUntil !== 1 ? "s" : ""} (${targetStr})`,
             });
           }
-          if (daysUntil < 0) {
+          if (daysUntil < 0 && !deal.exchangedAt && !deal.completedAt) {
             alerts.push({
               type: "overdue_completion",
               severity: "high",
               dealId: deal.id,
               dealName: deal.name,
-              message: `Completion date was ${Math.abs(daysUntil)} days ago (${deal.completionDate}) but deal is still "${deal.status}"`,
+              message: `Target date was ${Math.abs(daysUntil)} days ago (${targetStr}) but deal is still "${deal.status}"`,
             });
           }
         }
@@ -397,7 +398,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
           rentPa: d.rentPa,
           pricePsf: d.pricePsf,
           totalArea: d.totalAreaSqft,
-          completionDate: d.completionDate,
+          completionDate: d.completedAt ? new Date(d.completedAt).toISOString().slice(0, 10) : null,
           tenant: d.name,
         })),
         investmentComps: relevantInvComps.map(c => ({
@@ -405,7 +406,7 @@ export function registerAIIntelligenceRoutes(app: Express) {
           price: c.price,
           yield: c.netInitialYield,
           sqft: c.totalSqft,
-          date: c.completionDate,
+          date: c.transactionDate,
         })),
       };
 
@@ -562,7 +563,9 @@ export function registerAIIntelligenceRoutes(app: Express) {
         breakOption: deal.breakOption,
         rentFree: deal.rentFree,
         capitalContribution: deal.capitalContribution,
-        completionDate: deal.completionDate,
+        targetDate: deal.targetDate,
+        exchangedAt: deal.exchangedAt,
+        completedAt: deal.completedAt,
         comments: deal.comments,
       };
 

@@ -1128,7 +1128,7 @@ router.get("/api/kyc/board/deals", requireAuth, async (_req: Request, res: Respo
       `SELECT
          d.id, d.name, d.status, d.deal_type, d.fee, d.updated_at, d.property_id,
          d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id,
-         d.kyc_approved, d.hots_completed_at,
+         d.kyc_approved, d.exchanged_at, d.completed_at,
          p.name AS property_name,
          lc.name AS landlord_name, lc.kyc_status AS landlord_kyc, lc.kyc_expires_at AS landlord_kyc_expires,
          tc.name AS tenant_name,   tc.kyc_status AS tenant_kyc,   tc.kyc_expires_at AS tenant_kyc_expires,
