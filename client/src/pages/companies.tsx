@@ -205,6 +205,48 @@ function KycInlineSummary({ company }: { company: CrmCompany }) {
   );
 }
 
+function SubCompaniesPanel({ parentId, parentName }: { parentId: string; parentName: string }) {
+  const { data: subs = [] } = useQuery<any[]>({
+    queryKey: ["/api/crm/companies", parentId, "sub-companies"],
+    queryFn: async () => {
+      const res = await fetch(`/api/crm/companies/${parentId}/sub-companies`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+  if (!subs.length) return null;
+  return (
+    <Card>
+      <CardContent className="p-3 space-y-2">
+        <h3 className="font-semibold text-xs flex items-center gap-1.5">
+          <Building2 className="w-3.5 h-3.5 text-teal-500" />
+          Sub-entities ({subs.length})
+        </h3>
+        <div className="space-y-1">
+          {subs.map((sub: any) => (
+            <Link key={sub.id} href={`/companies/${sub.id}`}>
+              <div className="flex items-center justify-between px-2 py-1.5 rounded hover:bg-muted/60 cursor-pointer transition-colors">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Building2 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                  <span className="text-sm truncate">{sub.name}</span>
+                  {sub.company_type && <Badge variant="outline" className="text-[10px] shrink-0">{sub.company_type}</Badge>}
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {sub.kyc_status === "pass" && <Badge className="text-[9px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 border-0 px-1.5"><CheckCircle2 className="w-2.5 h-2.5 mr-0.5 inline" />KYC</Badge>}
+                  {sub.kyc_status === "warning" && <Badge className="text-[9px] bg-yellow-100 text-yellow-700 border-0 px-1.5"><AlertCircle className="w-2.5 h-2.5 mr-0.5 inline" />Review</Badge>}
+                  {sub.kyc_status === "fail" && <Badge className="text-[9px] bg-red-100 text-red-700 border-0 px-1.5"><XCircle className="w-2.5 h-2.5 mr-0.5 inline" />Fail</Badge>}
+                  {!sub.kyc_status && <Badge variant="outline" className="text-[9px] px-1.5"><ShieldCheck className="w-2.5 h-2.5 mr-0.5 inline" />No KYC</Badge>}
+                  {sub.aml_risk && <Badge className={`text-[9px] px-1.5 border-0 ${sub.aml_risk === "high" ? "bg-red-100 text-red-700" : sub.aml_risk === "medium" ? "bg-yellow-100 text-yellow-700" : "bg-green-100 text-green-700"}`}>{sub.aml_risk}</Badge>}
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function CompaniesHouseCard({ company }: { company: CrmCompany }) {
   const { toast } = useToast();
   const chData = company.companiesHouseData as any;
@@ -1055,20 +1097,21 @@ function CompanyDetail({ id }: { id: string }) {
 
   const enrichCompanyMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/apollo/enrich-company", { companyId: id });
+      const res = await apiRequest("POST", `/api/companies-house/auto-kyc/${id}`, {});
       return res.json();
     },
     onSuccess: (data: any) => {
-      if (data.success) {
-        queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", id] });
-        queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
-        if (data.updatedFields?.length > 0) {
-          toast({ title: "Company enriched", description: `Updated: ${data.updatedFields.join(", ")}` });
-        } else {
-          toast({ title: "Already enriched", description: "All available data already present on this company" });
-        }
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      if (!data.success && data.kycStatus === "not_found") {
+        toast({ title: "No match found", description: "Couldn't match to Companies House — try setting a CH number or domain manually", variant: "destructive" });
+      } else if (data.kycStatus === "pass") {
+        const parts: string[] = ["CH verified"];
+        if (data.experian) parts.push("Experian credit data");
+        if (data.riskLevel) parts.push(`Risk: ${data.riskLevel}`);
+        toast({ title: "Enrichment complete", description: parts.join(" · ") });
       } else {
-        toast({ title: "No match found", description: "Apollo couldn't find this company — try adding a domain or website", variant: "destructive" });
+        toast({ title: "Enrichment run", description: data.message || `KYC status: ${data.kycStatus || "updated"}` });
       }
     },
     onError: (err: Error) => {
@@ -1236,6 +1279,8 @@ function CompanyDetail({ id }: { id: string }) {
               </div>
             </CardContent>
           </Card>
+
+          <SubCompaniesPanel parentId={id} parentName={company.name} />
 
           {(() => {
             const t = (company.companyType || "").toLowerCase();

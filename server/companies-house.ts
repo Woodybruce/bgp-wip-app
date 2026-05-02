@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "./auth";
 import { scraperFetch, isScraperApiAvailable } from "./utils/scraperapi";
+import { runAllAmlChecks } from "./kyc-orchestrator";
 
 const router = Router();
 
@@ -1148,6 +1149,11 @@ router.post("/api/companies-house/auto-kyc/:companyId", requireAuth, async (req,
     if (!result.success && result.kycStatus === "not_found") {
       return res.json(result);
     }
+    // Always run sanctions + full AML sweep after CH/Experian so the KYC badge
+    // is never issued without sanctions clearance, even outside of a deal stage.
+    runAllAmlChecks(req.params.companyId, null, userId).catch(err =>
+      console.error("[auto-kyc] post-KYC sanctions sweep failed:", err.message)
+    );
     res.json(result);
   } catch (err: any) {
     if (err.message?.includes("not configured")) {
