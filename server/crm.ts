@@ -5845,6 +5845,20 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     res.json({ classified, processed: untyped.length, remaining });
   });
 
+  // ── Assign ungrouped properties to "Properties" bucket ───────────────────
+  app.post("/api/admin/fix-ungrouped-properties", requireAuth, async (_req, res) => {
+    try {
+      const result = await pool.query(
+        `UPDATE crm_properties
+         SET group_name = 'Properties'
+         WHERE (group_name IS NULL OR group_name = '')
+           AND (status NOT IN ('Investment Comp') OR status IS NULL)
+         RETURNING id`
+      );
+      res.json({ fixed: result.rowCount });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // ── Clean up corrupted assetClass values (JSON arrays stored in text col) ──
   app.post("/api/admin/fix-asset-class", requireAuth, async (_req, res) => {
     try {

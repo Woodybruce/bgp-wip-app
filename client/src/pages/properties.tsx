@@ -4064,7 +4064,7 @@ export function LinkedLandRegistryPanel({ propertyId }: { propertyId: string }) 
 export default function Properties() {
   const [, params] = useRoute("/properties/:id");
   const [search, setSearch] = useState("");
-  const [activeGroup, setActiveGroup] = useState("all");
+  const [activeGroup, setActiveGroup] = useState("Properties");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
@@ -4485,7 +4485,7 @@ function PropertiesList({
             className={`flex-1 min-w-[140px] cursor-pointer transition-colors ${
               activeGroup === g.id ? "border-primary bg-primary/5" : ""
             }`}
-            onClick={() => setActiveGroup(activeGroup === g.id ? "all" : g.id)}
+            onClick={() => setActiveGroup(activeGroup === g.id ? "Properties" : g.id)}
             data-testid={`card-group-${g.id.toLowerCase()}`}
           >
             <CardContent className="p-3">
@@ -4511,7 +4511,7 @@ function PropertiesList({
               <Users className="w-4 h-4 text-muted-foreground" />
               <div>
                 <p className="text-lg font-bold" data-testid="text-group-count-all">{items.length}</p>
-                <p className="text-xs text-muted-foreground">All</p>
+                <p className="text-xs text-muted-foreground">All (inc. comps)</p>
               </div>
             </div>
           </CardContent>
