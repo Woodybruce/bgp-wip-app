@@ -72,6 +72,7 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
   const [curating, setCurating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [openEmail, setOpenEmail] = useState<{ msgId: string; mailboxEmail: string } | null>(null);
+  const [openMeeting, setOpenMeeting] = useState<{ eventId: string; mailboxEmail: string } | null>(null);
   const { toast } = useToast();
 
   // Initial cached read
@@ -177,6 +178,7 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
                 emailHits={data.emailHits}
                 meetingHits={data.meetingHits}
                 onOpenEmail={(h) => setOpenEmail({ msgId: h.msgId, mailboxEmail: h.mailboxEmail || "" })}
+                onOpenMeeting={(h) => setOpenMeeting({ eventId: h.eventId, mailboxEmail: h.mailboxEmail || "" })}
               />
             </div>
           )}
@@ -188,6 +190,14 @@ export function AIActivityCard({ subjectType, subjectId, title, compact, autoCur
           msgId={openEmail.msgId}
           mailboxEmail={openEmail.mailboxEmail}
           onClose={() => setOpenEmail(null)}
+        />
+      )}
+
+      {openMeeting && (
+        <MeetingViewerDialog
+          eventId={openMeeting.eventId}
+          mailboxEmail={openMeeting.mailboxEmail}
+          onClose={() => setOpenMeeting(null)}
         />
       )}
     </>
@@ -215,11 +225,13 @@ function ActivityMarkdown({
   emailHits,
   meetingHits,
   onOpenEmail,
+  onOpenMeeting,
 }: {
   markdown: string;
   emailHits: EmailRef[];
   meetingHits: MeetingRef[];
   onOpenEmail: (h: { msgId: string; mailboxEmail: string | undefined }) => void;
+  onOpenMeeting: (h: { eventId: string; mailboxEmail: string | undefined }) => void;
 }) {
   let keyCounter = 0;
   const parseInline = (text: string): ReactNode[] => {
@@ -253,14 +265,21 @@ function ActivityMarkdown({
         const idx = parseInt(m[4], 10);
         const h = meetingHits[idx - 1];
         const title = h ? `${h.subject || ""} — ${h.organiser || ""}` : `Meeting #${idx}`;
+        const disabled = !h?.mailboxEmail || !h?.eventId;
         out.push(
-          <span
+          <button
             key={`m-${keyCounter++}`}
+            type="button"
+            disabled={disabled}
+            onClick={() => h && onOpenMeeting({ eventId: h.eventId, mailboxEmail: h.mailboxEmail })}
             title={title}
-            className="inline-flex items-center text-[10px] font-mono px-1 py-0 mx-0.5 rounded border bg-violet-100/60 text-violet-700 border-violet-300 dark:bg-violet-900/30 dark:text-violet-300"
+            className={`inline-flex items-center text-[10px] font-mono px-1 py-0 mx-0.5 rounded border ${disabled
+              ? "bg-violet-100/30 text-violet-600/60 border-violet-200/60 cursor-not-allowed"
+              : "bg-violet-100/60 text-violet-700 border-violet-300 hover:bg-violet-200/70 cursor-pointer dark:bg-violet-900/30 dark:text-violet-300"
+            }`}
           >
             <CalendarDays className="w-2.5 h-2.5 mr-0.5" />M{idx}
-          </span>
+          </button>
         );
       } else if (m[5]) {
         out.push(<strong key={`b-${keyCounter++}`}>{m[6]}</strong>);
@@ -384,6 +403,132 @@ function EmailViewerDialog({ msgId, mailboxEmail, onClose }: { msgId: string; ma
               {email.bodyContentType === "html" && email.bodyHtml
                 ? <div className="prose prose-xs max-w-none" dangerouslySetInnerHTML={{ __html: email.bodyHtml }} />
                 : <pre className="whitespace-pre-wrap font-sans">{email.bodyText || stripHtml(email.bodyHtml)}</pre>}
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface MeetingDetail {
+  id: string;
+  subject: string;
+  bodyContentType: "text" | "html";
+  bodyHtml: string;
+  bodyText: string;
+  start: string | null;
+  end: string | null;
+  timeZone: string | null;
+  isAllDay: boolean;
+  isCancelled: boolean;
+  showAs: string | null;
+  location: string | null;
+  organizer: { name?: string; email?: string };
+  attendees: Array<{ name?: string; email?: string; response: string | null; type: string | null }>;
+  isOnlineMeeting: boolean;
+  joinUrl: string | null;
+  webLink: string | null;
+  categories: string[];
+}
+
+function MeetingViewerDialog({ eventId, mailboxEmail, onClose }: { eventId: string; mailboxEmail: string; onClose: () => void }) {
+  const [event, setEvent] = useState<MeetingDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true); setError(null);
+      try {
+        const res = await fetch(
+          `/api/activity/meeting/${encodeURIComponent(mailboxEmail)}/${encodeURIComponent(eventId)}`,
+          { headers: getAuthHeaders(), credentials: "include" }
+        );
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        if (!cancelled) setEvent(data);
+      } catch (err: any) {
+        if (!cancelled) setError(err?.message || "Failed to load meeting");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [eventId, mailboxEmail]);
+
+  const stripHtml = (html: string) => { if (!html) return ""; const tmp = document.createElement("div"); tmp.innerHTML = html; return tmp.textContent || tmp.innerText || ""; };
+  const fmtDateRange = (e: MeetingDetail) => {
+    if (!e.start) return "";
+    const s = new Date(e.start);
+    const day = s.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+    if (e.isAllDay) return `${day} (all day)`;
+    const stime = s.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    if (!e.end) return `${day} · ${stime}`;
+    const ee = new Date(e.end);
+    const etime = ee.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    return `${day} · ${stime}–${etime}`;
+  };
+  const respColor = (r: string | null) => {
+    if (r === "accepted") return "bg-emerald-50 text-emerald-700 border-emerald-200";
+    if (r === "declined") return "bg-red-50 text-red-700 border-red-200";
+    if (r === "tentativelyAccepted") return "bg-amber-50 text-amber-700 border-amber-200";
+    return "bg-zinc-50 text-zinc-600 border-zinc-200";
+  };
+
+  return (
+    <Dialog open={true} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="text-base pr-8 flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-violet-500" />
+            {loading ? "Loading meeting…" : event?.subject || "Meeting"}
+            {event?.isCancelled && <Badge className="bg-red-50 text-red-700 border-red-200 text-[10px]">Cancelled</Badge>}
+          </DialogTitle>
+        </DialogHeader>
+
+        {loading && <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}
+        {error && <div className="py-8 text-center"><AlertCircle className="w-8 h-8 mx-auto text-destructive mb-2" /><p className="text-sm text-muted-foreground">{error}</p></div>}
+
+        {event && !loading && (
+          <>
+            <div className="border-b pb-2 mb-2 text-xs space-y-0.5">
+              <div><span className="text-muted-foreground">When:</span> <span className="font-medium">{fmtDateRange(event)}</span> {event.timeZone && <span className="text-muted-foreground">({event.timeZone})</span>}</div>
+              {event.location && <div><span className="text-muted-foreground">Where:</span> {event.location}</div>}
+              <div><span className="text-muted-foreground">Organiser:</span> <span className="font-medium">{event.organizer.name || event.organizer.email}</span> {event.organizer.email && event.organizer.name && <span className="text-muted-foreground">&lt;{event.organizer.email}&gt;</span>}</div>
+            </div>
+
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              {event.joinUrl && (
+                <a href={event.joinUrl} target="_blank" rel="noreferrer">
+                  <Button size="sm" className="h-7 text-xs gap-1"><ExternalLink className="w-3 h-3" />Join</Button>
+                </a>
+              )}
+              {event.webLink && (
+                <a href={event.webLink} target="_blank" rel="noreferrer">
+                  <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">Open in Outlook <ExternalLink className="w-3 h-3" /></Button>
+                </a>
+              )}
+            </div>
+
+            {event.attendees.length > 0 && (
+              <div className="border rounded p-2 mb-2 bg-muted/20">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1.5">{event.attendees.length} attendee{event.attendees.length !== 1 ? "s" : ""}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {event.attendees.map((a, i) => (
+                    <Badge key={i} variant="outline" className={`text-[10px] ${respColor(a.response)}`}>
+                      {a.name || a.email}{a.type === "optional" && <span className="ml-1 italic">(optional)</span>}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto border rounded p-3 bg-background text-xs">
+              {event.bodyContentType === "html" && event.bodyHtml
+                ? <div className="prose prose-xs max-w-none" dangerouslySetInnerHTML={{ __html: event.bodyHtml }} />
+                : <pre className="whitespace-pre-wrap font-sans">{event.bodyText || stripHtml(event.bodyHtml) || <span className="text-muted-foreground italic">No agenda / notes attached to the invite.</span>}</pre>}
             </div>
           </>
         )}

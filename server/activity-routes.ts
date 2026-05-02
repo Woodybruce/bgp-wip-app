@@ -198,6 +198,55 @@ export function registerActivityRoutes(app: Express) {
     }
   });
 
+  // Fetch a single calendar event by mailbox + eventId. Backs the
+  // <MeetingViewerDialog> opened by [M#] chips in <AIActivityCard>.
+  // Mirrors /api/pathway/email/:mailbox/:msgId for emails — Graph IDs
+  // are mailbox-scoped so we need both.
+  app.get("/api/activity/meeting/:mailboxEmail/:eventId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { graphRequest } = await import("./shared-mailbox");
+      const mailboxEmail = String(req.params.mailboxEmail);
+      const eventId = String(req.params.eventId);
+
+      const ev: any = await graphRequest(
+        `/users/${encodeURIComponent(mailboxEmail)}/events/${encodeURIComponent(eventId)}?$select=id,subject,bodyPreview,body,start,end,location,organizer,attendees,isOnlineMeeting,onlineMeeting,webLink,isAllDay,isCancelled,showAs,categories`,
+        { headers: { "X-AnchorMailbox": mailboxEmail } }
+      );
+
+      res.json({
+        id: ev.id,
+        subject: ev.subject || "(No subject)",
+        bodyContentType: ev.body?.contentType || "text",
+        bodyHtml: ev.body?.contentType === "html" ? (ev.body?.content || "") : "",
+        bodyText: ev.body?.contentType === "text" ? (ev.body?.content || "") : (ev.bodyPreview || ""),
+        start: ev.start?.dateTime || null,
+        end: ev.end?.dateTime || null,
+        timeZone: ev.start?.timeZone || null,
+        isAllDay: !!ev.isAllDay,
+        isCancelled: !!ev.isCancelled,
+        showAs: ev.showAs || null,
+        location: ev.location?.displayName || null,
+        organizer: {
+          name: ev.organizer?.emailAddress?.name,
+          email: ev.organizer?.emailAddress?.address,
+        },
+        attendees: (ev.attendees || []).map((a: any) => ({
+          name: a.emailAddress?.name,
+          email: a.emailAddress?.address,
+          response: a.status?.response || null,
+          type: a.type || null,
+        })),
+        isOnlineMeeting: !!ev.isOnlineMeeting,
+        joinUrl: ev.onlineMeeting?.joinUrl || null,
+        webLink: ev.webLink || null,
+        categories: ev.categories || [],
+      });
+    } catch (err: any) {
+      console.error(`[activity meeting fetch ${req.params.mailboxEmail}/${req.params.eventId}]`, err?.message);
+      res.status(500).json({ error: err?.message || "Failed to fetch meeting" });
+    }
+  });
+
   // Fresh curation — expensive (~30s, full ChatBGP turn). Writes through
   // to the cache and denormalises lastInteraction onto the record.
   app.post("/api/activity/:subjectType/:subjectId/curate", requireAuth, async (req: Request, res: Response) => {
