@@ -46,6 +46,7 @@ interface WipDealEntry {
   amtWip: number | null;
   amtInvoice: number | null;
   month: string | null;
+  instructedAt: string | null;
   targetDate: string | null;
   exchangedAt: string | null;
   completedAt: string | null;

@@ -261,6 +261,7 @@ const COLUMN_LABELS: Record<string, string> = {
   rentFree: "Rent Free",
   leaseLength: "Lease Length",
   breakOption: "Break Option",
+  instructedAt: "Instructed",
   targetDate: "Target Date",
   exchangedAt: "Exchanged",
   completedAt: "Completed",
@@ -386,6 +387,7 @@ interface DealFormData {
   rentFree: string;
   leaseLength: string;
   breakOption: string;
+  instructedAt: string;
   targetDate: string;
   exchangedAt: string;
   completedAt: string;
@@ -429,6 +431,7 @@ const emptyForm: DealFormData = {
   rentFree: "",
   leaseLength: "",
   breakOption: "",
+  instructedAt: "",
   targetDate: "",
   exchangedAt: "",
   completedAt: "",
@@ -473,6 +476,7 @@ function dealToForm(deal: CrmDeal): DealFormData {
     rentFree: deal.rentFree != null ? String(deal.rentFree) : "",
     leaseLength: deal.leaseLength != null ? String(deal.leaseLength) : "",
     breakOption: deal.breakOption != null ? String(deal.breakOption) : "",
+    instructedAt: deal.instructedAt ? new Date(deal.instructedAt).toISOString().slice(0, 10) : "",
     targetDate: deal.targetDate ? new Date(deal.targetDate).toISOString().slice(0, 10) : "",
     exchangedAt: deal.exchangedAt ? new Date(deal.exchangedAt).toISOString().slice(0, 10) : "",
     completedAt: deal.completedAt ? new Date(deal.completedAt).toISOString().slice(0, 10) : "",
@@ -522,6 +526,7 @@ function formToPayload(form: DealFormData, changeReason?: string): Record<string
     rentFree: parseNum(form.rentFree),
     leaseLength: parseNum(form.leaseLength),
     breakOption: parseNum(form.breakOption),
+    instructedAt: form.instructedAt || null,
     targetDate: form.targetDate || null,
     exchangedAt: form.exchangedAt || null,
     completedAt: form.completedAt || null,
@@ -1064,6 +1069,10 @@ export function DealFormDialog({
                     </>
                   )}
 
+                  <div>
+                    <Label>Instructed</Label>
+                    <Input type="date" value={form.instructedAt} onChange={(e) => set("instructedAt", e.target.value)} data-testid="input-deal-instructed-at" />
+                  </div>
                   <div>
                     <Label>Target Date</Label>
                     <Input type="date" value={form.targetDate} onChange={(e) => set("targetDate", e.target.value)} data-testid="input-deal-target-date" />
@@ -3336,7 +3345,7 @@ export function DealAuditLog({ dealId }: { dealId: string }) {
       yieldPercent: "yield", feeAgreement: "fee agreement", rentPa: "rent PA",
       capitalContribution: "capital contribution", rentFree: "rent free",
       leaseLength: "lease length", breakOption: "break option",
-      targetDate: "target date", exchangedAt: "exchanged", completedAt: "completed", invoicedAt: "invoiced",
+      instructedAt: "instructed", targetDate: "target date", exchangedAt: "exchanged", completedAt: "completed", invoicedAt: "invoiced",
       tenureText: "tenure", assetClass: "asset class",
       comments: "comments", amlCheckCompleted: "AML check", totalAreaSqft: "total area",
       propertyId: "property", landlordId: "landlord", tenantId: "tenant",
@@ -3851,6 +3860,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     rentFree: true,
     leaseLength: true,
     breakOption: true,
+    instructedAt: false,
     targetDate: true,
     exchangedAt: false,
     completedAt: false,
@@ -4642,6 +4652,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.rentFree && <TableHead className="min-w-[80px] text-right">Rent Free</TableHead>}
                     {visibleColumns.leaseLength && <TableHead className="min-w-[80px] text-right">Lease Length</TableHead>}
                     {visibleColumns.breakOption && <TableHead className="min-w-[80px] text-right">Break Option</TableHead>}
+                    {visibleColumns.instructedAt && <TableHead className="min-w-[110px]">Instructed</TableHead>}
                     {visibleColumns.targetDate && <TableHead className="min-w-[120px]">Target Date</TableHead>}
                     {visibleColumns.exchangedAt && <TableHead className="min-w-[110px]">Exchanged</TableHead>}
                     {visibleColumns.completedAt && <TableHead className="min-w-[110px]">Completed</TableHead>}
@@ -5049,6 +5060,11 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onSave={(v) => handleInlineSave(deal.id, "breakOption", v)}
                             suffix=" years"
                           />
+                        </TableCell>
+                      )}
+                      {visibleColumns.instructedAt && (
+                        <TableCell className="px-1.5 py-1">
+                          {deal.instructedAt ? formatDate(deal.instructedAt) : "—"}
                         </TableCell>
                       )}
                       {visibleColumns.targetDate && (

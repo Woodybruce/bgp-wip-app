@@ -778,9 +778,11 @@ export const crmDeals = pgTable("crm_deals", {
   acquisitionAgentId: varchar("acquisition_agent_id"),
   purchaserAgentId: varchar("purchaser_agent_id"),
   leasingAgentId: varchar("leasing_agent_id"),
-  // ── Deal date journey: target → exchanged → completed → invoiced ─────
-  // One canonical timeline. targetDate is the working forecast (editable).
+  // ── Deal date journey: instructed → target → exchanged → completed → invoiced ──
+  // instructedAt = when BGP was formally put on the deal (set once, editable).
+  // targetDate is the working forecast (editable).
   // The actuals get stamped (or back-filled) when status flips to EXC/COM/INV.
+  instructedAt: timestamp("instructed_at"),
   targetDate: timestamp("target_date"),
   exchangedAt: timestamp("exchanged_at"),
   completedAt: timestamp("completed_at"),

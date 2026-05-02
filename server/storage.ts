@@ -964,7 +964,7 @@ export class DatabaseStorage implements IStorage {
 
   async updateCrmDeal(id: string, updates: Partial<InsertCrmDeal>): Promise<CrmDeal> {
     // Coerce any date-string values to Date objects for Drizzle timestamp columns
-    const tsFields = ["kycApprovedAt", "targetDate", "exchangedAt", "completedAt", "invoicedAt", "amlEddCompletedAt", "amlIdVerifiedAt", "amlSarFiledAt"];
+    const tsFields = ["kycApprovedAt", "instructedAt", "targetDate", "exchangedAt", "completedAt", "invoicedAt", "amlEddCompletedAt", "amlIdVerifiedAt", "amlSarFiledAt"];
     const coerced: any = { ...updates };
     for (const f of tsFields) {
       if (coerced[f] && typeof coerced[f] === "string") {

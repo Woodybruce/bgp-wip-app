@@ -1097,7 +1097,8 @@ export function setupCrmRoutes(app: Express) {
   // Idempotent — re-running is a no-op once the old columns are gone.
   (async () => {
     try {
-      // 1. Add the four new columns (timestamps).
+      // 1. Add the five new columns (timestamps).
+      await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS instructed_at TIMESTAMP`);
       await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS target_date TIMESTAMP`);
       await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS exchanged_at TIMESTAMP`);
       await pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP`);
@@ -5153,6 +5154,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               amtWip: isInvoiced ? 0 : agentFee,
               amtInvoice: agentInvoiceAmt,
               month: deriveMonth(deal),
+              instructedAt: deal.instructedAt || null,
               targetDate: deal.targetDate || null,
               exchangedAt: deal.exchangedAt || null,
               completedAt: deal.completedAt || null,
@@ -5185,6 +5187,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               amtWip: isInvoiced ? 0 : totalFee,
               amtInvoice: totalInvoiceAmt,
               month: deriveMonth(deal),
+              instructedAt: deal.instructedAt || null,
               targetDate: deal.targetDate || null,
               exchangedAt: deal.exchangedAt || null,
               completedAt: deal.completedAt || null,
@@ -5215,6 +5218,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 amtWip: isInvoiced ? 0 : perAgentFee,
                 amtInvoice: perAgentInvoice,
                 month: deriveMonth(deal),
+                instructedAt: deal.instructedAt || null,
                 targetDate: deal.targetDate || null,
                 exchangedAt: deal.exchangedAt || null,
                 completedAt: deal.completedAt || null,

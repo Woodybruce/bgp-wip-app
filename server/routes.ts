@@ -4089,6 +4089,9 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
         timeline.push({ type: "deal_created", date: deal.created_at, detail: `Deal "${deal.name}" created`, icon: "plus" });
       }
 
+      if (deal.instructed_at) {
+        timeline.push({ type: "instructed", date: deal.instructed_at, detail: "Instructed", icon: "briefcase" });
+      }
       if (deal.target_date) {
         timeline.push({ type: "target", date: deal.target_date, detail: "Target date", icon: "target" });
       }
