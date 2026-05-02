@@ -307,13 +307,22 @@ export async function importWipFromBuffer(
   const excelSerialToDate = (serial: number): Date =>
     new Date((serial - 25569) * 86400 * 1000);
 
+  // Clamp to BGP-plausible year window — protects against Excel 2-digit-year
+  // ambiguity (e.g. "Sep-01" stored as 2001 instead of 2026). Anything before
+  // currentYear-15 or after currentYear+5 is treated as a parse artefact.
+  const clampYr = (y: number): number => {
+    const now = new Date().getUTCFullYear();
+    if (y < now - 15 || y > now + 5) return now;
+    return y;
+  };
+
   const parseFiscalYear = (raw: any): number | null => {
     if (!raw) return null;
     // XLSX may return a native Date when the cell is date-formatted
     if (raw instanceof Date) {
       if (isNaN(raw.getTime())) return null;
       const mIdx0 = raw.getUTCMonth();
-      const yr = raw.getUTCFullYear();
+      const yr = clampYr(raw.getUTCFullYear());
       return mIdx0 >= 3 ? yr + 1 : yr;
     }
     const s = String(raw).trim();
@@ -321,12 +330,12 @@ export async function importWipFromBuffer(
     if (mDash) {
       const mIdx = monthOrder.indexOf(mDash[1].slice(0, 3));
       const yrRaw = parseInt(mDash[2]);
-      const yr = mDash[2].length === 2 ? 2000 + yrRaw : yrRaw;
+      const yr = clampYr(mDash[2].length === 2 ? 2000 + yrRaw : yrRaw);
       if (mIdx >= 0 && !isNaN(yr)) return mIdx >= 3 ? yr + 1 : yr;
     }
     const mYearFirst = s.match(/^(\d{4})[-/](\d{1,2})/);
     if (mYearFirst) {
-      const yr = parseInt(mYearFirst[1]);
+      const yr = clampYr(parseInt(mYearFirst[1]));
       const mIdx0 = parseInt(mYearFirst[2]) - 1;
       if (!isNaN(yr) && mIdx0 >= 0 && mIdx0 < 12) return mIdx0 >= 3 ? yr + 1 : yr;
     }
@@ -337,7 +346,7 @@ export async function importWipFromBuffer(
       if (serial >= 40000 && serial <= 60000) {
         const d = excelSerialToDate(serial);
         const mIdx0 = d.getUTCMonth();
-        const yr = d.getUTCFullYear();
+        const yr = clampYr(d.getUTCFullYear());
         return mIdx0 >= 3 ? yr + 1 : yr;
       }
     }
@@ -351,28 +360,35 @@ export async function importWipFromBuffer(
   };
 
   // Derive a "Mon-YY" label from any date-like value (MonthYear text, Excel serial,
-  // JS Date object, or formatted date string).
+  // JS Date object, or formatted date string). Year is clamped to the BGP-plausible
+  // window so an Excel "Sep-01" (= 2001) is normalised to current year.
   const deriveMonthLabel = (raw: any): string | null => {
     if (!raw) return null;
     // XLSX may return a native Date when the cell is date-formatted
     if (raw instanceof Date) {
       if (isNaN(raw.getTime())) return null;
-      return `${monthOrder[raw.getUTCMonth()]}-${String(raw.getUTCFullYear()).slice(2)}`;
+      return `${monthOrder[raw.getUTCMonth()]}-${String(clampYr(raw.getUTCFullYear())).slice(2)}`;
     }
     const s = String(raw).trim();
     if (!s) return null;
-    if (/^[A-Za-z]{3}-\d{2,4}$/.test(s)) return s;
+    // Pre-stamp "Mon-YY" — but if YY parses to a year outside window, normalise
+    const preStamped = s.match(/^([A-Za-z]{3})-(\d{2,4})$/);
+    if (preStamped) {
+      const yrRaw = parseInt(preStamped[2]);
+      const yr = clampYr(preStamped[2].length === 2 ? 2000 + yrRaw : yrRaw);
+      return `${preStamped[1]}-${String(yr).slice(2)}`;
+    }
     // Excel serial number (e.g. 46357 = Feb-26); range 40000-60000 = 2009-2064
     if (/^\d+$/.test(s)) {
       const serial = parseInt(s);
       if (serial >= 40000 && serial <= 60000) {
         const d = excelSerialToDate(serial);
-        return `${monthOrder[d.getUTCMonth()]}-${String(d.getUTCFullYear()).slice(2)}`;
+        return `${monthOrder[d.getUTCMonth()]}-${String(clampYr(d.getUTCFullYear())).slice(2)}`;
       }
     }
     const d = new Date(s);
     if (!isNaN(d.getTime())) {
-      return `${monthOrder[d.getUTCMonth()]}-${String(d.getUTCFullYear()).slice(2)}`;
+      return `${monthOrder[d.getUTCMonth()]}-${String(clampYr(d.getUTCFullYear())).slice(2)}`;
     }
     return null;
   };
@@ -803,13 +819,24 @@ export function normalizeTeamName(raw: string | null | undefined): string | null
   return trimmed;
 }
 
+// Clamp a year that came out of a date-string parse to the BGP-plausible
+// window (currentYear-15 → currentYear+5). Anything outside is almost
+// certainly a data-entry error or Excel 2-digit-year artefact (e.g. "Sep-01"
+// stored as 2001 instead of the intended 2026), so we snap to the current
+// year. Used by every WIP date parser.
+function clampWipYear(y: number): number {
+  const now = new Date().getUTCFullYear();
+  if (y < now - 15 || y > now + 5) return now;
+  return y;
+}
+
 function parseWipMonthToDate(month: string | null): Date | null {
   if (!month) return null;
   const m = month.trim();
   // "2026-04" or "2026-4"
   const iso = m.match(/^(\d{4})-(\d{1,2})$/);
   if (iso) {
-    const y = parseInt(iso[1], 10), mo = parseInt(iso[2], 10);
+    const y = clampWipYear(parseInt(iso[1], 10)), mo = parseInt(iso[2], 10);
     if (mo >= 1 && mo <= 12) return new Date(Date.UTC(y, mo - 1, 1));
   }
   // "Apr-26" / "April-2026"
@@ -820,6 +847,7 @@ function parseWipMonthToDate(month: string | null): Date | null {
     if (idx >= 0) {
       let y = parseInt(named[2], 10);
       if (y < 100) y += 2000;
+      y = clampWipYear(y);
       return new Date(Date.UTC(y, idx, 1));
     }
   }
