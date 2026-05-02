@@ -245,6 +245,8 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
 
   const [sharepointDialogOpen, setSharepointDialogOpen] = useState(false);
   const [sharepointUrlInput, setSharepointUrlInput] = useState("");
+  const [feeEditing, setFeeEditing] = useState(false);
+  const [feeInput, setFeeInput] = useState("");
 
   const updateSharepointMutation = useMutation({
     mutationFn: async (url: string | null) => {
@@ -275,6 +277,15 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     },
   });
 
+  const handleFeeSave = async () => {
+    const val = parseFloat(feeInput.replace(/[^0-9.]/g, ""));
+    if (!isNaN(val)) {
+      await apiRequest("PUT", `/api/crm/deals/${id}`, { fee: val });
+      invalidateDealCaches(id);
+    }
+    setFeeEditing(false);
+  };
+
   if (isLoading) {
     return (
       <div className="p-4 sm:p-6 space-y-4">
@@ -302,7 +313,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     { label: "Pricing", value: deal.pricing, format: "currency" },
     { label: "Rent PA", value: deal.rentPa, format: "currency" },
     { label: "Yield", value: deal.yieldPercent, format: "percent" },
-    { label: "Fee", value: deal.fee, format: "currency" },
     { label: "Total Area (sqft)", value: deal.totalAreaSqft, format: "number" },
     { label: "GF Area (sqft)", value: deal.gfAreaSqft, format: "number" },
     { label: "FF Area (sqft)", value: deal.ffAreaSqft, format: "number" },
@@ -472,6 +482,38 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 </p>
               </div>
             ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[10px] text-muted-foreground">Total Fee</p>
+            {feeEditing ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">£</span>
+                <Input
+                  autoFocus
+                  type="number"
+                  min="0"
+                  className="h-7 w-32 text-xs font-mono"
+                  value={feeInput}
+                  onChange={(e) => setFeeInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleFeeSave(); if (e.key === "Escape") setFeeEditing(false); }}
+                />
+                <Button size="sm" className="h-7 px-2 text-xs" onClick={handleFeeSave}>Save</Button>
+                <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setFeeEditing(false)}>Cancel</Button>
+              </div>
+            ) : (
+              <button
+                className="text-sm font-mono font-semibold hover:underline cursor-pointer"
+                onClick={() => { setFeeInput(deal.fee != null ? String(deal.fee) : ""); setFeeEditing(true); }}
+                data-testid="button-edit-fee"
+              >
+                {deal.fee != null ? formatCurrency(deal.fee) : <span className="text-muted-foreground text-xs">Set fee…</span>}
+              </button>
+            )}
           </div>
         </CardContent>
       </Card>
