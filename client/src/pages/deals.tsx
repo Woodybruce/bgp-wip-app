@@ -106,7 +106,7 @@ import type { CrmDeal, CrmProperty, CrmCompany, CrmContact, DealFeeAllocation, A
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
-import { CRM_OPTIONS } from "@/lib/crm-options";
+import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { PageLayout } from "@/components/page-layout";
 import { EmptyState } from "@/components/empty-state";
@@ -1036,12 +1036,14 @@ export function DealFormDialog({
                         <Label>Basement (sqft)</Label>
                         <Input type="number" min="0" value={form.basementAreaSqft} onChange={(e) => set("basementAreaSqft", e.target.value)} data-testid="input-deal-basement-area" />
                       </div>
+                      {isRetailAssetClass(form.assetClass) && (
+                        <div>
+                          <Label>ITZA (sqft)</Label>
+                          <Input type="number" min="0" value={form.itzaAreaSqft} onChange={(e) => set("itzaAreaSqft", e.target.value)} data-testid="input-deal-itza-area" />
+                        </div>
+                      )}
                       <div>
-                        <Label>ITZA (sqft)</Label>
-                        <Input type="number" min="0" value={form.itzaAreaSqft} onChange={(e) => set("itzaAreaSqft", e.target.value)} data-testid="input-deal-itza-area" />
-                      </div>
-                      <div>
-                        <Label>Total Area (sqft)</Label>
+                        <Label>{areaBasisFromAssetClass(form.assetClass)} Area (sqft)</Label>
                         <Input type="number" value={(() => { const t = (parseFloat(form.basementAreaSqft) || 0) + (parseFloat(form.gfAreaSqft) || 0) + (parseFloat(form.ffAreaSqft) || 0); return t > 0 ? String(t) : ""; })()} readOnly className="bg-muted" data-testid="input-deal-total-area" />
                       </div>
                     </>
@@ -4933,12 +4935,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         <TableCell className="px-1.5 py-1">
                           <div className="space-y-0.5">
                             {[
-                              { label: "GF", value: deal.gfAreaSqft, field: "gfAreaSqft" },
-                              { label: "FF", value: deal.ffAreaSqft, field: "ffAreaSqft" },
-                              { label: "Bsmt", value: deal.basementAreaSqft, field: "basementAreaSqft" },
-                              { label: "ITZA", value: deal.itzaAreaSqft, field: "itzaAreaSqft" },
-                              { label: "Total", value: deal.totalAreaSqft, field: "totalAreaSqft" },
-                            ].map(({ label, value, field }) => (
+                              { label: "GF", value: deal.gfAreaSqft, field: "gfAreaSqft", show: true },
+                              { label: "FF", value: deal.ffAreaSqft, field: "ffAreaSqft", show: true },
+                              { label: "Bsmt", value: deal.basementAreaSqft, field: "basementAreaSqft", show: true },
+                              { label: "ITZA", value: deal.itzaAreaSqft, field: "itzaAreaSqft", show: isRetailAssetClass(deal.assetClass) },
+                              { label: deal.areaBasis || areaBasisFromAssetClass(deal.assetClass), value: deal.totalAreaSqft, field: "totalAreaSqft", show: true },
+                            ].filter(r => r.show).map(({ label, value, field }) => (
                               <div key={field} className="flex items-center gap-1.5">
                                 <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">{label}</span>
                                 <InlineNumber

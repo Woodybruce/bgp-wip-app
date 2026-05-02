@@ -444,3 +444,13 @@ export const CRM_OPTIONS = {
 
   compDealType: ["Purchase", "Lease Acquisition", "Lease Disposal", "Sale"],
 } as const;
+
+const GIA_CLASSES = ["Industrial", "Warehouse", "Residential", "Logistics", "Car Park", "Land", "Student"];
+
+export function areaBasisFromAssetClass(assetClass: string | null | undefined): "GIA" | "NIA" {
+  return GIA_CLASSES.some(c => (assetClass || "").includes(c)) ? "GIA" : "NIA";
+}
+
+export function isRetailAssetClass(assetClass: string | null | undefined): boolean {
+  return /retail/i.test(assetClass || "");
+}

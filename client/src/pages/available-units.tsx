@@ -36,7 +36,7 @@ import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
 import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
 import { useTeam } from "@/lib/team-context";
-import { CRM_OPTIONS } from "@/lib/crm-options";
+import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { DEAL_TYPE_COLORS, DEAL_TEAM_COLORS } from "@/pages/deals";
 import {
   Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
@@ -1184,12 +1184,12 @@ export default function AvailableUnitsPage() {
                         <div className="space-y-0.5">
                           {deal ? (
                             [
-                              { label: "GF", value: deal.gfAreaSqft, field: "gfAreaSqft" },
-                              { label: "FF", value: deal.ffAreaSqft, field: "ffAreaSqft" },
-                              { label: "Bsmt", value: deal.basementAreaSqft, field: "basementAreaSqft" },
-                              { label: "ITZA", value: deal.itzaAreaSqft, field: "itzaAreaSqft" },
-                              { label: "Total", value: deal.totalAreaSqft, field: "totalAreaSqft" },
-                            ].map(({ label, value, field }) => (
+                              { label: "GF", value: deal.gfAreaSqft, field: "gfAreaSqft", show: true },
+                              { label: "FF", value: deal.ffAreaSqft, field: "ffAreaSqft", show: true },
+                              { label: "Bsmt", value: deal.basementAreaSqft, field: "basementAreaSqft", show: true },
+                              { label: "ITZA", value: deal.itzaAreaSqft, field: "itzaAreaSqft", show: isRetailAssetClass(deal.assetClass) },
+                              { label: deal.areaBasis || areaBasisFromAssetClass(deal.assetClass), value: deal.totalAreaSqft, field: "totalAreaSqft", show: true },
+                            ].filter(r => r.show).map(({ label, value, field }) => (
                               <div key={field} className="flex items-center gap-1.5">
                                 <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">{label}</span>
                                 <InlineNumber

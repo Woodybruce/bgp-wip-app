@@ -793,6 +793,7 @@ export const crmDeals = pgTable("crm_deals", {
   feeAgreementUrl: text("fee_agreement_url"),
   fee: real("fee"),
   amlCheckCompleted: text("aml_check_completed"),
+  areaBasis: text("area_basis"),  // "NIA" | "GIA" — derived from asset class, overridable
   totalAreaSqft: real("total_area_sqft"),
   basementAreaSqft: real("basement_area_sqft"),
   gfAreaSqft: real("gf_area_sqft"),

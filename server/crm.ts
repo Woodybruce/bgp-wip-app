@@ -1103,6 +1103,7 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
 export function setupCrmRoutes(app: Express) {
   // Ensure new comp columns exist (safe to re-run)
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS fee_agreement_url TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS area_basis TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_url TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_title TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_contact_id VARCHAR`).catch(() => {});
@@ -2451,7 +2452,7 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         "yieldPercent", "feeAgreement", "feeAgreementUrl", "rentPa", "capitalContribution", "rentFree",
         "leaseLength", "breakOption", "targetDate", "exchangedAt", "completedAt", "invoicedAt", "tenureText", "assetClass",
         "comments", "amlCheckCompleted", "totalAreaSqft", "basementAreaSqft",
-        "gfAreaSqft", "ffAreaSqft", "itzaAreaSqft", "propertyId", "landlordId",
+        "gfAreaSqft", "ffAreaSqft", "itzaAreaSqft", "areaBasis", "propertyId", "landlordId",
         "tenantId", "vendorId", "purchaserId", "invoicingEntityId", "kycApproved",
         "feePercentage", "invoicingNotes", "poNumber",
         "amlRiskLevel", "amlSourceOfFunds", "amlSourceOfWealth", "amlPepStatus",

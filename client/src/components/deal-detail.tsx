@@ -83,6 +83,7 @@ import {
   DealRelatedEmails,
   DealRelatedMeetings,
 } from "@/pages/deals";
+import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 // DealAmlStatusCard removed — KYC pack now consolidated on Compliance Board
 
 // Collapsible card pattern reused across the deal page for heavy panels.
@@ -343,13 +344,15 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     );
   }
 
+  const _areaBasis = deal.areaBasis || areaBasisFromAssetClass(deal.assetClass);
+  const _isRetail = isRetailAssetClass(deal.assetClass);
   const numericFields: { label: string; value: number | null | undefined; format?: "currency" | "number" | "percent" }[] = [
     { label: "Pricing", value: deal.pricing, format: "currency" },
     { label: "Rent PA", value: deal.rentPa, format: "currency" },
     { label: "Yield", value: deal.yieldPercent, format: "percent" },
-    { label: "Total Area (sqft)", value: deal.totalAreaSqft, format: "number" },
+    { label: `${_areaBasis} Area (sqft)`, value: deal.totalAreaSqft, format: "number" },
     { label: "Price PSF", value: deal.pricePsf, format: "currency" },
-    { label: "Price ITZA", value: deal.priceItza, format: "currency" },
+    ...(_isRetail ? [{ label: "Price ITZA", value: deal.priceItza, format: "currency" as const }] : []),
     { label: "Capital Contribution", value: deal.capitalContribution, format: "currency" },
     { label: "Rent Free (months)", value: deal.rentFree, format: "number" },
     { label: "Lease Length (years)", value: deal.leaseLength, format: "number" },
@@ -568,7 +571,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
               { label: "GF", value: deal.gfAreaSqft },
               { label: "FF", value: deal.ffAreaSqft },
               { label: "Bsmt", value: deal.basementAreaSqft },
-              { label: "ITZA", value: deal.itzaAreaSqft },
+              ...(_isRetail ? [{ label: "ITZA", value: deal.itzaAreaSqft }] : []),
             ].some(f => f.value != null) && (
               <div className="flex flex-col py-1 col-span-2">
                 <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Floor Breakdown</p>
@@ -577,7 +580,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                     { label: "GF", value: deal.gfAreaSqft },
                     { label: "FF", value: deal.ffAreaSqft },
                     { label: "Bsmt", value: deal.basementAreaSqft },
-                    { label: "ITZA", value: deal.itzaAreaSqft },
+                    ...(_isRetail ? [{ label: "ITZA", value: deal.itzaAreaSqft }] : []),
                   ].filter(f => f.value != null).map(f => (
                     <span key={f.label} className="text-xs font-mono">
                       <span className="text-[9px] text-muted-foreground/70 uppercase mr-0.5">{f.label}</span>
