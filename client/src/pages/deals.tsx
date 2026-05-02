@@ -247,7 +247,6 @@ const COLUMN_LABELS: Record<string, string> = {
   fee: "Fee",
   feeAlloc: "Fee Split",
   feeAgreement: "Fee Agreement",
-  amlCheck: "AML Check",
   invoicingEntity: "Invoicing Entity",
   area: "Total Area",
   basementArea: "Basement Area",
@@ -3861,7 +3860,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     fee: true,
     feeAlloc: true,
     feeAgreement: true,
-    amlCheck: true,
     invoicingEntity: true,
     area: true,
     basementArea: true,
@@ -4657,7 +4655,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.pricing && <TableHead className="min-w-[100px] text-right">Pricing</TableHead>}
                     {visibleColumns.yield && <TableHead className="min-w-[80px] text-right">Yield %</TableHead>}
                     {visibleColumns.feeAgreement && <TableHead className="min-w-[100px]">Fee Agreement</TableHead>}
-                    {visibleColumns.amlCheck && <TableHead className="min-w-[80px]">AML Check</TableHead>}
                     {visibleColumns.invoicingEntity && <TableHead className="min-w-[150px]">Invoicing Entity</TableHead>}
                     {visibleColumns.area && <TableHead className="min-w-[100px] text-right">Total Area sqft</TableHead>}
                     {visibleColumns.basementArea && <TableHead className="min-w-[100px] text-right">Basement Area</TableHead>}
@@ -4930,16 +4927,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             options={CRM_OPTIONS.dealFeeAgreement}
                             colorMap={DEAL_FEE_AGREEMENT_COLORS}
                             onSave={(v) => handleInlineSave(deal.id, "feeAgreement", v || null)}
-                          />
-                        </TableCell>
-                      )}
-                      {visibleColumns.amlCheck && (
-                        <TableCell className="px-1.5 py-1">
-                          <InlineLabelSelect
-                            value={deal.amlCheckCompleted}
-                            options={CRM_OPTIONS.dealAmlCheck}
-                            colorMap={DEAL_AML_COLORS}
-                            onSave={(v) => handleInlineSave(deal.id, "amlCheckCompleted", v || null)}
                           />
                         </TableCell>
                       )}

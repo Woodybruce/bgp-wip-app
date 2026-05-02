@@ -790,6 +790,7 @@ export const crmDeals = pgTable("crm_deals", {
   pricing: real("pricing"),
   yieldPercent: real("yield_percent"),
   feeAgreement: text("fee_agreement"),
+  feeAgreementUrl: text("fee_agreement_url"),
   fee: real("fee"),
   amlCheckCompleted: text("aml_check_completed"),
   totalAreaSqft: real("total_area_sqft"),

@@ -19,7 +19,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Search, Plus, Pencil, Trash2, Link2, ArrowRightLeft, Store, Eye, Building2,
   FileText, Upload, Sparkles, Download, X, File, Star, CalendarDays, HandCoins,
-  ChevronDown, ExternalLink,
+  ChevronDown, ExternalLink, AlertTriangle, FileBadge,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -1045,6 +1045,7 @@ export default function AvailableUnitsPage() {
                 <TableHead className="text-right">Fee</TableHead>
                 <TableHead>BGP Contact</TableHead>
                 <TableHead>WIP Deal</TableHead>
+                <TableHead className="w-[110px]">Fee Agreement</TableHead>
                 <TableHead>Marketing</TableHead>
                 <TableHead className="w-[100px] sticky right-0 z-20 border-l bg-card">Actions</TableHead>
               </TableRow>
@@ -1326,6 +1327,49 @@ export default function AvailableUnitsPage() {
                               <ArrowRightLeft className="h-3 w-3" />
                             </Button>
                           </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="px-1.5 py-1">
+                        {deal ? (
+                          deal.feeAgreementUrl ? (
+                            <div className="flex items-center gap-1">
+                              <a
+                                href={deal.feeAgreementUrl.startsWith("http") ? deal.feeAgreementUrl : `https://${deal.feeAgreementUrl}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-green-700 hover:underline"
+                                title="Open fee agreement"
+                              >
+                                <FileBadge className="h-3.5 w-3.5" />
+                                View
+                              </a>
+                              <button
+                                className="text-[10px] text-muted-foreground hover:text-foreground ml-1"
+                                title="Change URL"
+                                onClick={() => {
+                                  const url = window.prompt("Fee agreement URL:", deal.feeAgreementUrl || "");
+                                  if (url !== null) dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url || null });
+                                }}
+                              >✎</button>
+                            </div>
+                          ) : (
+                            <button
+                              className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-800"
+                              title="No fee agreement on file — click to add link"
+                              onClick={() => {
+                                const url = window.prompt("Paste fee agreement URL (SharePoint / OneDrive link):");
+                                if (url) {
+                                  dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreementUrl", value: url });
+                                  dealInlineUpdate.mutate({ id: deal.id, field: "feeAgreement", value: "YES" });
+                                }
+                              }}
+                            >
+                              <AlertTriangle className="h-3.5 w-3.5" />
+                              Missing
+                            </button>
+                          )
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </TableCell>
                       <TableCell>
