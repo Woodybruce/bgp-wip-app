@@ -996,10 +996,6 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
         (deal.teams || []).map((t: string) => normalizeTeamName(t)).filter(Boolean) as string[]
       ));
       const agentArr = (deal.agents || []).filter(Boolean);
-      let dealType = 'Leasing';
-      if (teamArr.some((t: string) => t === 'Investment')) dealType = 'Investment';
-      else if (teamArr.some((t: string) => t === 'Tenant Rep')) dealType = 'Tenant Rep';
-      else if (teamArr.some((t: string) => t === 'Lease Advisory')) dealType = 'Lease Advisory';
 
       // Sage WIP rows are post-NEG by definition; default to NEG when no status code present
       let status = 'NEG';
@@ -1047,15 +1043,16 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
         await client.query(
           `UPDATE crm_deals
              SET name=$1, group_name=$2, property_id=$3, landlord_id=$4, tenant_id=$5,
-                 deal_type=$6, status=$7, team=$8::text[], internal_agent=$9::text[],
-                 fee=$10, comments=$11,
-                 target_date = COALESCE(target_date, $12),
-                 completed_at = COALESCE(completed_at, $13),
-                 invoiced_at = COALESCE(invoiced_at, $14),
-                 invoicing_entity_id = COALESCE($16, invoicing_entity_id),
+                 deal_type = CASE WHEN deal_type IN ('Leasing', 'Investment', 'Tenant Rep', 'Lease Advisory') THEN NULL ELSE deal_type END,
+                 status=$6, team=$7::text[], internal_agent=$8::text[],
+                 fee=$9, comments=$10,
+                 target_date = COALESCE(target_date, $11),
+                 completed_at = COALESCE(completed_at, $12),
+                 invoiced_at = COALESCE(invoiced_at, $13),
+                 invoicing_entity_id = COALESCE($15, invoicing_entity_id),
                  updated_at=NOW()
-           WHERE id=$15`,
-          [dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, existingId, billingEntityId]
+           WHERE id=$14`,
+          [dealName, deal.group_name || '', propertyId, landlordId, tenantId, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, existingId, billingEntityId]
         );
         // Write hard FKs back onto every wip_entries row for this ref so
         // future reads don't have to re-derive from strings.
@@ -1068,8 +1065,8 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
         const dealId = randomUUID();
         await client.query(
           `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, target_date, completed_at, invoiced_at, invoicing_entity_id, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::text[], $11, $12, $13, $14, $15, $16, NOW(), NOW())`,
-          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, billingEntityId]
+           VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8::text[], $9::text[], $10, $11, $12, $13, $14, $15, NOW(), NOW())`,
+          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, billingEntityId]
         );
         await client.query(
           `UPDATE wip_entries SET deal_id=$1, property_id=$2 WHERE ref=$3`,

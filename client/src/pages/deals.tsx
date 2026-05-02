@@ -4603,6 +4603,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
+                    {visibleColumns.tenant && <TableHead className="min-w-[120px]">Tenant</TableHead>}
+                    {visibleColumns.fee && <TableHead className="min-w-[80px] text-right">Fee</TableHead>}
+                    {visibleColumns.feeAlloc && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
                     {visibleColumns.agent && <TableHead className="min-w-[80px]">BGP Contact</TableHead>}
                     {visibleColumns.assetClass && (
                       <TableHead className="min-w-[80px]">
@@ -4615,7 +4618,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       </TableHead>
                     )}
                     {visibleColumns.clientContact && <TableHead className="min-w-[120px]">Client Contact</TableHead>}
-                    {visibleColumns.tenant && <TableHead className="min-w-[120px]">Tenant</TableHead>}
                     {visibleColumns.vendor && <TableHead className="min-w-[120px]">Vendor</TableHead>}
                     {visibleColumns.purchaser && <TableHead className="min-w-[120px]">Purchaser</TableHead>}
                     {visibleColumns.vendorAgent && <TableHead className="min-w-[120px]">Vendor Agent</TableHead>}
@@ -4624,8 +4626,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.leasingAgent && <TableHead className="min-w-[120px]">Leasing Agent</TableHead>}
                     {visibleColumns.pricing && <TableHead className="min-w-[100px] text-right">Pricing</TableHead>}
                     {visibleColumns.yield && <TableHead className="min-w-[80px] text-right">Yield %</TableHead>}
-                    {visibleColumns.fee && <TableHead className="min-w-[80px] text-right">Fee</TableHead>}
-                    {visibleColumns.feeAlloc && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
                     {visibleColumns.feeAgreement && <TableHead className="min-w-[100px]">Fee Agreement</TableHead>}
                     {visibleColumns.amlCheck && <TableHead className="min-w-[80px]">AML Check</TableHead>}
                     {visibleColumns.invoicingEntity && <TableHead className="min-w-[150px]">Invoicing Entity</TableHead>}
@@ -4739,6 +4739,33 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
+                      {visibleColumns.tenant && (
+                        <TableCell className="px-1.5 py-1">
+                          <div className="w-[110px] overflow-hidden">
+                            <InlineLinkSelect
+                              value={deal.tenantId}
+                              options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}
+                              href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
+                              onSave={(v) => handleInlineSave(deal.id, "tenantId", v || null)}
+                              placeholder="Link tenant"
+                            />
+                          </div>
+                        </TableCell>
+                      )}
+                      {visibleColumns.fee && (
+                        <TableCell className="px-1.5 py-1">
+                          <InlineNumber
+                            value={deal.fee}
+                            onSave={(v) => handleInlineSave(deal.id, "fee", v)}
+                            prefix="£"
+                          />
+                        </TableCell>
+                      )}
+                      {visibleColumns.feeAlloc && (
+                        <TableCell className="px-1.5 py-1">
+                          <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} />
+                        </TableCell>
+                      )}
                       {visibleColumns.agent && (
                         <TableCell className="px-1.5 py-1">
                           <InlineMultiSelect
@@ -4769,19 +4796,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onSave={(v) => handleInlineSave(deal.id, "clientContactId", v || null)}
                             placeholder="Link contact"
                           />
-                        </TableCell>
-                      )}
-                      {visibleColumns.tenant && (
-                        <TableCell className="px-1.5 py-1">
-                          <div className="w-[110px] overflow-hidden">
-                            <InlineLinkSelect
-                              value={deal.tenantId}
-                              options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}
-                              href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
-                              onSave={(v) => handleInlineSave(deal.id, "tenantId", v || null)}
-                              placeholder="Link tenant"
-                            />
-                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.vendor && (
@@ -4878,20 +4892,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onSave={(v) => handleInlineSave(deal.id, "yieldPercent", v)}
                             suffix="%"
                           />
-                        </TableCell>
-                      )}
-                      {visibleColumns.fee && (
-                        <TableCell className="px-1.5 py-1">
-                          <InlineNumber
-                            value={deal.fee}
-                            onSave={(v) => handleInlineSave(deal.id, "fee", v)}
-                            prefix="£"
-                          />
-                        </TableCell>
-                      )}
-                      {visibleColumns.feeAlloc && (
-                        <TableCell className="px-1.5 py-1">
-                          <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} />
                         </TableCell>
                       )}
                       {visibleColumns.feeAgreement && (

@@ -617,6 +617,16 @@ import { pool } from "./db";
   }
   console.log(`[auto-migrate] Schema migration complete — ${ok} applied, ${skipped} skipped`);
 
+  // ── Clean up WIP-sync-derived team values from deal_type ───────────────
+  // Early versions of syncWipToCrmDeals wrote team names ('Leasing', 'Investment',
+  // 'Tenant Rep', 'Lease Advisory') into deal_type. NULL them so proper CRM
+  // deal types can be set without being overwritten on each re-import.
+  try {
+    await pool.query(`UPDATE crm_deals SET deal_type = NULL WHERE deal_type IN ('Leasing', 'Investment', 'Tenant Rep', 'Lease Advisory')`);
+  } catch (e: any) {
+    console.warn('[auto-migrate] deal_type cleanup skipped:', e.message);
+  }
+
   // ── Backfill property_units from existing available_units ──────────────
   // Dedupe by (property_id, lower(trim(unit_name))). Each existing listing
   // gets its unit_id wired; any deal linked to that listing also gets unit_id.
