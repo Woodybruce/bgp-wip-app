@@ -56,13 +56,14 @@ import { useState, useMemo, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, invalidateDealCaches } from "@/lib/queryClient";
+import { apiRequest, queryClient, invalidateDealCaches, getAuthHeaders } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schema";
 import { buildUserColorMap } from "@/lib/agent-colors";
 import { Breadcrumbs } from "@/components/breadcrumbs";
 import { BrandProfilePanel } from "@/components/brand-profile-panel";
 import { DEAL_STATUS_LABELS, legacyToCode } from "@shared/deal-status";
+import { InlineLinkSelect } from "@/components/inline-edit";
 import {
   DEAL_STATUS_COLORS,
   DEAL_TYPE_COLORS,
@@ -286,6 +287,26 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     setFeeEditing(false);
   };
 
+  const handlePartySave = async (field: "tenantId" | "landlordId" | "vendorId" | "purchaserId" | "invoicingEntityId", value: string | null) => {
+    await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
+    invalidateDealCaches(id);
+    if (value) {
+      const co = companies.find(c => c.id === value);
+      toast({ title: "Running AML checks", description: `Screening ${co?.name || "party"}...` });
+      try {
+        await fetch(`/api/kyc/run-all-checks`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ dealId: id, bothSides: true }),
+        });
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      } catch (err: any) {
+        console.error("[AML] auto-run failed:", err.message);
+      }
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="p-4 sm:p-6 space-y-4">
@@ -338,11 +359,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     { label: "Status", value: deal.status, colorMap: DEAL_STATUS_COLORS },
     { label: "Team", value: Array.isArray(deal.team) ? deal.team.join(", ") : deal.team, colorMap: DEAL_TEAM_COLORS },
     { label: "Asset Class", value: deal.assetClass, colorMap: DEAL_ASSET_CLASS_COLORS },
-    { label: "Landlord", value: linkedLandlordName, href: deal.landlordId ? `/companies/${deal.landlordId}` : undefined },
-    { label: "Tenant", value: linkedTenantName, href: deal.tenantId ? `/companies/${deal.tenantId}` : undefined },
-    { label: "Vendor", value: linkedVendorName, href: deal.vendorId ? `/companies/${deal.vendorId}` : undefined },
-    { label: "Purchaser", value: linkedPurchaserName, href: deal.purchaserId ? `/companies/${deal.purchaserId}` : undefined },
-    { label: "Billing Entity", value: linkedBillingName, href: deal.invoicingEntityId ? `/companies/${deal.invoicingEntityId}` : undefined },
     { label: "Tenure", value: deal.tenureText },
     { label: "Fee Agreement", value: deal.feeAgreement, colorMap: DEAL_FEE_AGREEMENT_COLORS },
     { label: "AML Check", value: deal.amlCheckCompleted, colorMap: DEAL_AML_COLORS },
@@ -419,6 +435,64 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 )}
               </div>
             ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="p-3 space-y-2">
+          <p className="text-[10px] text-muted-foreground font-medium">Parties</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-2">
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] text-muted-foreground leading-tight">Landlord</p>
+              <InlineLinkSelect
+                value={deal.landlordId}
+                options={companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name }))}
+                href={deal.landlordId ? `/companies/${deal.landlordId}` : undefined}
+                onSave={(v) => handlePartySave("landlordId", v || null)}
+                placeholder="Link landlord"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] text-muted-foreground leading-tight">Tenant</p>
+              <InlineLinkSelect
+                value={deal.tenantId}
+                options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name }))}
+                href={deal.tenantId ? `/companies/${deal.tenantId}` : undefined}
+                onSave={(v) => handlePartySave("tenantId", v || null)}
+                placeholder="Link tenant"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] text-muted-foreground leading-tight">Vendor</p>
+              <InlineLinkSelect
+                value={deal.vendorId}
+                options={companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.vendorId).map(c => ({ id: c.id, name: c.name }))}
+                href={deal.vendorId ? `/companies/${deal.vendorId}` : undefined}
+                onSave={(v) => handlePartySave("vendorId", v || null)}
+                placeholder="Link vendor"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] text-muted-foreground leading-tight">Purchaser</p>
+              <InlineLinkSelect
+                value={deal.purchaserId}
+                options={companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name }))}
+                href={deal.purchaserId ? `/companies/${deal.purchaserId}` : undefined}
+                onSave={(v) => handlePartySave("purchaserId", v || null)}
+                placeholder="Link purchaser"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <p className="text-[10px] text-muted-foreground leading-tight">Billing Entity</p>
+              <InlineLinkSelect
+                value={deal.invoicingEntityId}
+                options={companies.map(c => ({ id: c.id, name: c.name }))}
+                href={deal.invoicingEntityId ? `/companies/${deal.invoicingEntityId}` : undefined}
+                onSave={(v) => handlePartySave("invoicingEntityId", v || null)}
+                placeholder="Link billing entity"
+              />
+            </div>
           </div>
         </CardContent>
       </Card>

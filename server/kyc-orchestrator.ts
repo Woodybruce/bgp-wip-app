@@ -743,12 +743,15 @@ router.post("/api/kyc/run-all-checks", requireAuth, async (req: Request, res: Re
       targets.push(companyId);
     } else if (dealId && bothSides) {
       const d = await pool.query(
-        `SELECT tenant_id, landlord_id FROM crm_deals WHERE id = $1`,
+        `SELECT tenant_id, landlord_id, vendor_id, purchaser_id, invoicing_entity_id FROM crm_deals WHERE id = $1`,
         [dealId],
       );
       if (!d.rows[0]) return res.status(404).json({ error: "Deal not found" });
-      if (d.rows[0].tenant_id) targets.push(d.rows[0].tenant_id);
-      if (d.rows[0].landlord_id) targets.push(d.rows[0].landlord_id);
+      // Dedupe — same company can sit in multiple roles (e.g. landlord = billing entity).
+      const seen = new Set<string>();
+      for (const id of [d.rows[0].tenant_id, d.rows[0].landlord_id, d.rows[0].vendor_id, d.rows[0].purchaser_id, d.rows[0].invoicing_entity_id]) {
+        if (id && !seen.has(id)) { seen.add(id); targets.push(id); }
+      }
     } else {
       return res.status(400).json({ error: "Provide companyId, or dealId with bothSides=true" });
     }

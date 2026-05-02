@@ -4060,6 +4060,21 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         })
         .catch(() => {});
     }
+
+    // Counterparty/client party change → fire full AML sweep on both sides of the deal.
+    // Mirror of the invoicingEntityId auto-KYC, scoped to the deal so tenant + landlord both get screened.
+    if ((field === "tenantId" || field === "landlordId" || field === "vendorId" || field === "purchaserId") && value) {
+      const entity = companies.find((c: any) => c.id === String(value));
+      toast({ title: "Running AML checks", description: `Screening ${entity?.name || "party"}...` });
+      fetch(`/api/kyc/run-all-checks`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ dealId, bothSides: true }),
+      }).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] });
+      }).catch(() => {});
+    }
   }, [deals, companies, toast]);
 
   const toggleColumn = useCallback((key: string) => {
