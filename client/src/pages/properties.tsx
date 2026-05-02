@@ -741,7 +741,7 @@ export function InlineOwnerLink({
       <DropdownMenuTrigger asChild>
         <button className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1">
           <Plus className="w-3 h-3" />
-          Set {label.toLowerCase()}
+          {label}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-64">
@@ -4734,8 +4734,7 @@ function PropertiesList({
                       </TableCell>
                       {visibleColumns.landlord && (
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
-                          <div className="grid grid-cols-[auto_1fr] gap-x-1.5 gap-y-0.5 items-center">
-                            <span className="text-[9px] uppercase text-muted-foreground tracking-wide">F</span>
+                          <div className="flex flex-col gap-0.5">
                             <InlineOwnerLink
                               propertyId={item.id}
                               companyId={(item as any).freeholderId}
@@ -4743,7 +4742,6 @@ function PropertiesList({
                               label="Freeholder"
                               allCompanies={allCompanies}
                             />
-                            <span className="text-[9px] uppercase text-muted-foreground tracking-wide">LL</span>
                             <InlineOwnerLink
                               propertyId={item.id}
                               companyId={(item as any).longLeaseholderId}
@@ -4751,7 +4749,6 @@ function PropertiesList({
                               label="Long Leaseholder"
                               allCompanies={allCompanies}
                             />
-                            <span className="text-[9px] uppercase text-muted-foreground tracking-wide">SL</span>
                             <InlineOwnerLink
                               propertyId={item.id}
                               companyId={(item as any).seniorLenderId}
@@ -4759,7 +4756,6 @@ function PropertiesList({
                               label="Senior Lender"
                               allCompanies={allCompanies}
                             />
-                            <span className="text-[9px] uppercase text-muted-foreground tracking-wide">JL</span>
                             <InlineOwnerLink
                               propertyId={item.id}
                               companyId={(item as any).juniorLenderId}
