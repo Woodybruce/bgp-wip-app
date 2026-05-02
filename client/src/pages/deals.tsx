@@ -1166,14 +1166,18 @@ export function DealFormDialog({
   );
 }
 
-function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap }: { dealId: string; dealFee: number | null | undefined; allAllocations: Record<string, DealFeeAllocation[]> | undefined; colorMap?: Record<string, string> }) {
+function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap, onClick }: { dealId: string; dealFee: number | null | undefined; allAllocations: Record<string, DealFeeAllocation[]> | undefined; colorMap?: Record<string, string>; onClick?: () => void }) {
   const allocations = allAllocations?.[dealId];
-  if (!allocations || allocations.length === 0) {
-    return <span className="text-xs text-muted-foreground">—</span>;
-  }
   const fee = dealFee || 0;
+  if (!allocations || allocations.length === 0) {
+    return (
+      <button onClick={onClick} className="text-xs text-muted-foreground hover:text-foreground hover:underline cursor-pointer">
+        + Add split
+      </button>
+    );
+  }
   return (
-    <div className="space-y-0.5" data-testid={`fee-alloc-summary-${dealId}`}>
+    <div className="space-y-0.5 cursor-pointer group" onClick={onClick} data-testid={`fee-alloc-summary-${dealId}`}>
       {allocations.map((a, i) => {
         const amount = a.allocationType === "percentage"
           ? (fee ?? 0) * (a.percentage || 0) / 100
@@ -3922,6 +3926,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
 
   const [listApprovalGateOpen, setListApprovalGateOpen] = useState(false);
   const [listApprovalGateMsg, setListApprovalGateMsg] = useState("");
+  const [feeAllocEditDeal, setFeeAllocEditDeal] = useState<CrmDeal | null>(null);
   const inlineUpdateMutation = useMutation({
     mutationFn: async ({ id, field, value }: { id: string; field: string; value: unknown }) => {
       await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
@@ -4763,7 +4768,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                       )}
                       {visibleColumns.feeAlloc && (
                         <TableCell className="px-1.5 py-1">
-                          <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} />
+                          <FeeAllocCell dealId={deal.id} dealFee={deal.fee} allAllocations={allFeeAllocations} colorMap={userColorMap2} onClick={() => setFeeAllocEditDeal(deal)} />
                         </TableCell>
                       )}
                       {visibleColumns.agent && (
@@ -5159,6 +5164,25 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           />
         </>
       )}
+
+      <Dialog open={!!feeAllocEditDeal} onOpenChange={(open) => !open && setFeeAllocEditDeal(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm">{feeAllocEditDeal?.name || "Fee Split"}</DialogTitle>
+            <DialogDescription className="text-xs">
+              {feeAllocEditDeal?.fee != null ? `Total fee: ${formatCurrency(feeAllocEditDeal.fee)}` : "Set fee on the deal first"}
+            </DialogDescription>
+          </DialogHeader>
+          {feeAllocEditDeal && (
+            <FeeAllocationCard
+              dealId={feeAllocEditDeal.id}
+              dealFee={feeAllocEditDeal.fee}
+              users={users.map(u => ({ id: String(u.id), name: u.name }))}
+              colorMap={userColorMap2}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={!!deleteListDeal} onOpenChange={(open) => !open && setDeleteListDeal(null)}>
         <AlertDialogContent>
