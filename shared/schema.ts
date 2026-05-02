@@ -514,6 +514,8 @@ export const crmCompanies = pgTable("crm_companies", {
   preferredAssetClasses: text("preferred_asset_classes").array(),
   preferredGeographies: text("preferred_geographies").array(),
   lendingAppetiteNotes: text("lending_appetite_notes"),
+  // Latest curated email/meeting timestamp from ai-activity-curator (ISO string)
+  lastInteraction: text("last_interaction"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

@@ -1104,6 +1104,25 @@ export function setupCrmRoutes(app: Express) {
   // Ensure new comp columns exist (safe to re-run)
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS fee_agreement_url TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS area_basis TEXT`).catch(() => {});
+  // Activity curator cache — see server/ai-activity-curator.ts. One row per
+  // (subject_type, subject_id). Each curate call costs ~30s and 50k+ tokens
+  // so we cache aggressively; clients pass `refresh: true` to bypass.
+  pool.query(`
+    CREATE TABLE IF NOT EXISTS crm_activity_cache (
+      subject_type TEXT NOT NULL,
+      subject_id   TEXT NOT NULL,
+      markdown     TEXT NOT NULL DEFAULT '',
+      email_refs   JSONB NOT NULL DEFAULT '[]',
+      meeting_refs JSONB NOT NULL DEFAULT '[]',
+      latest_at    TIMESTAMPTZ,
+      generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (subject_type, subject_id)
+    )
+  `).catch(() => {});
+  // last_interaction columns (ISO timestamp string; existing schema uses TEXT)
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS last_interaction TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_interaction TEXT`).catch(() => {});
+  pool.query(`ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS last_interaction TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_url TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_title TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_contact_id VARCHAR`).catch(() => {});

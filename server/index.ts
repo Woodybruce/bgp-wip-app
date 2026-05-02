@@ -1053,6 +1053,8 @@ app.use("/api/branding/assets", express.static(
   setupCrmRoutes(app);
   app.use(companiesHouseRouter);
   registerPropertyPathwayRoutes(app);
+  const { registerActivityRoutes } = await import("./activity-routes");
+  registerActivityRoutes(app);
   registerDemeterRoutes(app);
   registerRetailContextPlanRoutes(app);
   registerMapLayerRoutes(app);
