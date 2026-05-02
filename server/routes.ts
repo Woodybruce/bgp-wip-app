@@ -2817,16 +2817,28 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     try {
       const [item] = await db.select().from(investmentTracker).where(eq(investmentTracker.id, req.params.id));
       if (!item) return res.status(404).json({ message: "Not found" });
+      // Idempotent — if already linked, return the existing deal
+      if (item.dealId) {
+        const existing = await storage.getCrmDeal(item.dealId);
+        if (existing) return res.json({ ...existing, alreadyLinked: true });
+      }
       const property = item.propertyId ? await storage.getCrmProperty(item.propertyId) : null;
+      // Sales board: client = landlord; Purchases board: vendor = the seller side
+      const landlordCompanyId = item.boardType === "Sales" ? item.clientId : null;
+      const vendorCompanyId   = item.boardType === "Sales" ? null          : item.vendorId;
       const deal = await storage.createCrmDeal({
         name: item.assetName || property?.name || "Investment Deal",
         propertyId: item.propertyId || undefined,
-        status: "SOL",
+        status: item.status && ["REP","SPEC","LIVE","AVA","NEG","SOL","EXC","COM","WIT","INV"].includes(item.status) ? item.status : "REP",
         dealType: (item.boardType === "Sales") ? "Sale" : "Acquisition",
         groupName: "Investment - Active",
         team: ["Investment"],
+        landlordId: landlordCompanyId || undefined,
+        vendorId:   vendorCompanyId   || undefined,
+        internalAgent: item.agentUserIds || [],
         fee: item.fee || undefined,
-      });
+        comments: `Converted from investment tracker on ${new Date().toISOString().slice(0,10)}.`,
+      } as any);
       await db.update(investmentTracker).set({ dealId: deal.id, updatedAt: new Date() }).where(eq(investmentTracker.id, req.params.id));
       res.json(deal);
     } catch (e: any) {
