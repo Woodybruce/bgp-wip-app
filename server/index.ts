@@ -354,6 +354,18 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS investment_hunter_flag BOOLEAN DEFAULT false`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS investment_hunter_notes TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS asset_manager_contact_id VARCHAR`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS website TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS concept_status TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_analysis TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_analysis_at TIMESTAMP`,
+    // crm_properties drift
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS postcode TEXT`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS latitude TEXT`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS longitude TEXT`,
+    `ALTER TABLE crm_properties ADD COLUMN IF NOT EXISTS tags TEXT`,
+    // crm_contacts drift
+    `ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS phone_mobile TEXT`,
+    `ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS sub_group TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_crm_companies_acquiring_now ON crm_companies(acquiring_now) WHERE acquiring_now = true`,
     `CREATE INDEX IF NOT EXISTS idx_crm_companies_distress_flag ON crm_companies(distress_flag) WHERE distress_flag = true`,
     `CREATE INDEX IF NOT EXISTS idx_crm_companies_letting_hunter ON crm_companies(letting_hunter_flag) WHERE letting_hunter_flag = true`,
