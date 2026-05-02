@@ -1141,6 +1141,17 @@ export function DealFormDialog({
             </Button>
           </DialogFooter>
         </form>
+
+        {isEdit && deal && (
+          <div className="px-6 pb-4">
+            <FeeAllocationCard
+              dealId={deal.id}
+              dealFee={parseFloat(form.fee) || deal.fee}
+              users={users.map(u => ({ id: String(u.id), name: u.name }))}
+              colorMap={buildUserColorMap(users as any)}
+            />
+          </div>
+        )}
       </DialogContent>
 
       <AlertDialog open={approvalGateOpen} onOpenChange={setApprovalGateOpen}>
