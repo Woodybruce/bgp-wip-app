@@ -543,13 +543,24 @@ export async function archiveOrphanedWipDeals(
   try {
     await client.query("BEGIN");
 
+    // After syncWipToCrmDeals has run, every current wip_entries row points
+    // at a crm_deals row via deal_id. A deal is an orphan iff its previous
+    // sync left a "WIP Ref:" tag on comments AND no current wip_entries row
+    // references it. Using the FK avoids the comments/name-format drift that
+    // caused live deals to be archived in earlier cycles (refs 4697, 5097,
+    // 5144, 5173 etc.).
+    const { rows: linkedDealIds } = await client.query(
+      `SELECT DISTINCT deal_id FROM wip_entries WHERE deal_id IS NOT NULL`
+    );
+    const linkedSet = new Set<string>(linkedDealIds.map((r: any) => String(r.deal_id)));
+
+    // Belt-and-braces: also collect the raw refs in case some wip_entries
+    // rows weren't FK-stamped this cycle (e.g. partial-failure mid-sync).
     const { rows: currentRefs } = await client.query(
       `SELECT DISTINCT ref FROM wip_entries WHERE ref IS NOT NULL AND ref != ''`
     );
     const currentRefSet = new Set<string>(currentRefs.map((r: any) => String(r.ref)));
 
-    // Pull every deal whose comments tag a WIP Ref. Don't archive deals
-    // that were never synced from WIP (leasing units, available units, etc).
     const { rows: candidates } = await client.query(
       `SELECT id, name, status, fee, comments
          FROM crm_deals
@@ -559,12 +570,13 @@ export async function archiveOrphanedWipDeals(
 
     const orphans: { id: string; name: string; ref: string; status: string; fee: number }[] = [];
     for (const d of candidates) {
-      const m = (d.comments || "").match(/WIP Ref: (\d+)/);
-      if (!m) continue;
-      const ref = m[1];
-      if (!currentRefSet.has(ref)) {
-        orphans.push({ id: d.id, name: d.name, ref, status: d.status, fee: Number(d.fee) || 0 });
-      }
+      // Primary check: is this deal linked from current wip_entries?
+      if (linkedSet.has(d.id)) continue;
+      // Fallback check: does the comments-tagged ref still exist in this import?
+      const m = (d.comments || "").match(/WIP Ref:\s*(\d+)/);
+      const ref = m ? m[1] : "";
+      if (ref && currentRefSet.has(ref)) continue;
+      orphans.push({ id: d.id, name: d.name, ref, status: d.status, fee: Number(d.fee) || 0 });
     }
 
     if (orphans.length > 0) {

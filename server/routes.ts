@@ -2262,6 +2262,54 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  // Un-archive any WIP-tagged deals that are pointed to by the current
+  // wip_entries import — recovery for the orphan-archive false-positives
+  // that hit refs like 4697, 5097, 5144, 5173 after the May Sage reload.
+  app.post("/api/admin/restore-wrongly-archived-deals", requireAuth, async (req: any, res) => {
+    try {
+      const adminId = req.session?.userId || req.tokenUserId;
+      const [admin] = await pool.query("SELECT is_admin FROM users WHERE id = $1", [adminId]).then(r => r.rows);
+      if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
+
+      // Refs currently in wip_entries (the post-May-1-import view).
+      const { rows: liveRefs } = await pool.query(
+        `SELECT DISTINCT ref FROM wip_entries WHERE ref IS NOT NULL AND ref != ''`
+      );
+      const liveRefSet = new Set<string>(liveRefs.map((r: any) => String(r.ref)));
+
+      const { rows: archived } = await pool.query(
+        `SELECT id, name, comments
+           FROM crm_deals
+          WHERE status = 'ARCH'
+            AND comments LIKE '[ARCHIVED %'
+            AND comments LIKE '%WIP Ref:%'`
+      );
+
+      const restored: { id: string; name: string; ref: string }[] = [];
+      for (const d of archived) {
+        const m = (d.comments || "").match(/WIP Ref:\s*(\d+)/);
+        if (!m) continue;
+        const ref = m[1];
+        if (!liveRefSet.has(ref)) continue;
+        const cleaned = (d.comments || "").replace(/^\[ARCHIVED [^\]]+\]\s*/, "");
+        const newStatus = (d.comments || "").includes("Status: SOL") ? "SOL"
+          : (d.comments || "").includes("Status: EXC") ? "EXC"
+          : (d.comments || "").includes("Status: COM") ? "COM"
+          : (d.comments || "").includes("Status: INV") ? "INV"
+          : "NEG";
+        await pool.query(
+          `UPDATE crm_deals SET status = $1, comments = $2, updated_at = NOW() WHERE id = $3`,
+          [newStatus, cleaned, d.id]
+        );
+        restored.push({ id: d.id, name: d.name, ref });
+      }
+
+      res.json({ restored: restored.length, deals: restored });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Restore failed" });
+    }
+  });
+
   app.post("/api/admin/wipe-deals", requireAuth, async (req: any, res) => {
     try {
       const adminId = req.session?.userId || req.tokenUserId;
