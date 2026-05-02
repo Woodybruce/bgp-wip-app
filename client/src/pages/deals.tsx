@@ -248,11 +248,7 @@ const COLUMN_LABELS: Record<string, string> = {
   feeAlloc: "Fee Split",
   feeAgreement: "Fee Agreement",
   invoicingEntity: "Invoicing Entity",
-  area: "Total Area",
-  basementArea: "Basement Area",
-  gfArea: "GF Area",
-  ffArea: "FF Area",
-  itzaArea: "ITZA Area",
+  floorAreas: "Floor Areas",
   pricePsf: "Price PSF",
   priceItza: "Price ITZA",
   rentPa: "Rent PA",
@@ -3861,11 +3857,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     feeAlloc: true,
     feeAgreement: true,
     invoicingEntity: true,
-    area: true,
-    basementArea: true,
-    gfArea: true,
-    ffArea: true,
-    itzaArea: true,
+    floorAreas: true,
     pricePsf: true,
     priceItza: true,
     rentPa: true,
@@ -4656,11 +4648,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.yield && <TableHead className="min-w-[80px] text-right">Yield %</TableHead>}
                     {visibleColumns.feeAgreement && <TableHead className="min-w-[100px]">Fee Agreement</TableHead>}
                     {visibleColumns.invoicingEntity && <TableHead className="min-w-[150px]">Invoicing Entity</TableHead>}
-                    {visibleColumns.area && <TableHead className="min-w-[100px] text-right">Total Area sqft</TableHead>}
-                    {visibleColumns.basementArea && <TableHead className="min-w-[100px] text-right">Basement Area</TableHead>}
-                    {visibleColumns.gfArea && <TableHead className="min-w-[80px] text-right">GF Area</TableHead>}
-                    {visibleColumns.ffArea && <TableHead className="min-w-[80px] text-right">FF Area</TableHead>}
-                    {visibleColumns.itzaArea && <TableHead className="min-w-[80px] text-right">ITZA Area</TableHead>}
+                    {visibleColumns.floorAreas && <TableHead className="min-w-[140px]">Floor Areas</TableHead>}
                     {visibleColumns.pricePsf && <TableHead className="min-w-[80px] text-right">Price PSF</TableHead>}
                     {visibleColumns.priceItza && <TableHead className="min-w-[80px] text-right">Price ITZA</TableHead>}
                     {visibleColumns.rentPa && <TableHead className="min-w-[100px] text-right">Rent PA</TableHead>}
@@ -4941,47 +4929,27 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
-                      {visibleColumns.area && (
-                        <TableCell className="px-1.5 py-1 text-right text-muted-foreground">
-                          {((deal.basementAreaSqft || 0) + (deal.gfAreaSqft || 0) + (deal.ffAreaSqft || 0)) > 0
-                            ? ((deal.basementAreaSqft || 0) + (deal.gfAreaSqft || 0) + (deal.ffAreaSqft || 0)).toLocaleString() + " sqft"
-                            : "—"}
-                        </TableCell>
-                      )}
-                      {visibleColumns.basementArea && (
+                      {visibleColumns.floorAreas && (
                         <TableCell className="px-1.5 py-1">
-                          <InlineNumber
-                            value={deal.basementAreaSqft}
-                            onSave={(v) => handleInlineSave(deal.id, "basementAreaSqft", v)}
-                            suffix=" sqft"
-                          />
-                        </TableCell>
-                      )}
-                      {visibleColumns.gfArea && (
-                        <TableCell className="px-1.5 py-1">
-                          <InlineNumber
-                            value={deal.gfAreaSqft}
-                            onSave={(v) => handleInlineSave(deal.id, "gfAreaSqft", v)}
-                            suffix=" sqft"
-                          />
-                        </TableCell>
-                      )}
-                      {visibleColumns.ffArea && (
-                        <TableCell className="px-1.5 py-1">
-                          <InlineNumber
-                            value={deal.ffAreaSqft}
-                            onSave={(v) => handleInlineSave(deal.id, "ffAreaSqft", v)}
-                            suffix=" sqft"
-                          />
-                        </TableCell>
-                      )}
-                      {visibleColumns.itzaArea && (
-                        <TableCell className="px-1.5 py-1">
-                          <InlineNumber
-                            value={deal.itzaAreaSqft}
-                            onSave={(v) => handleInlineSave(deal.id, "itzaAreaSqft", v)}
-                            suffix=" sqft"
-                          />
+                          <div className="space-y-0.5">
+                            {[
+                              { label: "GF", value: deal.gfAreaSqft, field: "gfAreaSqft" },
+                              { label: "FF", value: deal.ffAreaSqft, field: "ffAreaSqft" },
+                              { label: "Bsmt", value: deal.basementAreaSqft, field: "basementAreaSqft" },
+                              { label: "ITZA", value: deal.itzaAreaSqft, field: "itzaAreaSqft" },
+                              { label: "Total", value: deal.totalAreaSqft, field: "totalAreaSqft" },
+                            ].map(({ label, value, field }) => (
+                              <div key={field} className="flex items-center gap-1.5">
+                                <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">{label}</span>
+                                <InlineNumber
+                                  value={value}
+                                  onSave={(v) => handleInlineSave(deal.id, field, v)}
+                                  suffix=" sf"
+                                  className="text-xs"
+                                />
+                              </div>
+                            ))}
+                          </div>
                         </TableCell>
                       )}
                       {visibleColumns.pricePsf && (
