@@ -1075,6 +1075,40 @@ export function setupCrmRoutes(app: Express) {
     }
   })();
 
+  // Property auto-match sweep — for every active deal with property_id IS NULL,
+  // extract the building name from "Property - Tenant" and run wipFuzzyMatch
+  // against crm_properties. Stamps the FK if matched. Idempotent — only
+  // touches NULL rows. Skips ARCH/COM/INV (historic, not worth backfilling).
+  (async () => {
+    try {
+      const { rows: deals } = await pool.query(
+        `SELECT id, name FROM crm_deals
+          WHERE property_id IS NULL
+            AND status NOT IN ('ARCH','COM','INV')
+            AND name IS NOT NULL AND name != ''`
+      );
+      if (deals.length === 0) return;
+      const { rows: props } = await pool.query(`SELECT id, LOWER(TRIM(name)) AS name_lower FROM crm_properties`);
+      const propMap = new Map<string, string>();
+      for (const p of props) propMap.set(p.name_lower, p.id);
+
+      let matched = 0;
+      for (const d of deals) {
+        // Deal names are typically "Property - Tenant" (see syncWipToCrmDeals)
+        const propName = String(d.name).split(" - ")[0]?.trim();
+        if (!propName) continue;
+        const propertyId = wipFuzzyMatch(propName, propMap);
+        if (propertyId) {
+          await pool.query(`UPDATE crm_deals SET property_id=$1 WHERE id=$2`, [propertyId, d.id]);
+          matched++;
+        }
+      }
+      if (matched > 0) console.log(`[crm] Property auto-match swept ${matched} deals (of ${deals.length} unlinked)`);
+    } catch (e: any) {
+      console.error("[crm] Property auto-match sweep failed:", e?.message);
+    }
+  })();
+
   app.use("/api/crm", requireAuth);
   app.get("/api/crm/stats", async (_req, res) => {
     try {
