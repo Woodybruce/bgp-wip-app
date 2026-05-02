@@ -834,6 +834,11 @@ export function DealFormDialog({
             </div>
 
             <div>
+              <Label>Target Date</Label>
+              <Input type="date" value={form.targetDate} onChange={(e) => set("targetDate", e.target.value)} data-testid="input-deal-target-date" />
+            </div>
+
+            <div>
               <Label>BGP Contact</Label>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -1072,10 +1077,6 @@ export function DealFormDialog({
                   <div>
                     <Label>Instructed</Label>
                     <Input type="date" value={form.instructedAt} onChange={(e) => set("instructedAt", e.target.value)} data-testid="input-deal-instructed-at" />
-                  </div>
-                  <div>
-                    <Label>Target Date</Label>
-                    <Input type="date" value={form.targetDate} onChange={(e) => set("targetDate", e.target.value)} data-testid="input-deal-target-date" />
                   </div>
                   <div>
                     <Label>Exchanged</Label>
