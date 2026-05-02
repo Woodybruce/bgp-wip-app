@@ -4839,8 +4839,8 @@ function PropertiesList({
                       )}
                       {visibleColumns.assetClass && (
                         <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
-                          <InlineEngagement
-                            value={item.assetClass}
+                          <InlineLabelSelect
+                            value={Array.isArray(item.assetClass) ? item.assetClass[0] : item.assetClass}
                             options={ASSET_CLASS_OPTIONS}
                             colorMap={ASSET_CLASS_COLORS}
                             onSave={(val) => inlineUpdateMutation.mutate({ id: item.id, field: "assetClass", value: val })}

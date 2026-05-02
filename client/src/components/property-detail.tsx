@@ -373,7 +373,7 @@ export function PropertyDetail({ id }: { id: string }) {
                   </div>
                   <div>
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Asset Class</p>
-                    <InlineEngagement value={property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
+                    <InlineLabelSelect value={Array.isArray(property.assetClass) ? property.assetClass[0] : property.assetClass} options={ASSET_CLASS_OPTIONS} colorMap={ASSET_CLASS_COLORS} onSave={(val) => inlineUpdate("assetClass", val)} placeholder="Set class" />
                   </div>
                   <div>
                     <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Tenure</p>

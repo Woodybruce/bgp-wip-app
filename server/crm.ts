@@ -5845,6 +5845,30 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     res.json({ classified, processed: untyped.length, remaining });
   });
 
+  // ── Clean up corrupted assetClass values (JSON arrays stored in text col) ──
+  app.post("/api/admin/fix-asset-class", requireAuth, async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, asset_class FROM crm_properties WHERE asset_class IS NOT NULL AND asset_class NOT IN ('Retail','Office','Industrial','Residential','Mixed Use','Mixed-Use','F&B','Leisure','Healthcare','Other','Land','Student','Hotel','Car Park','Logistics')`
+      );
+      let fixed = 0;
+      const KNOWN = new Set(["Retail","Office","Industrial","Residential","Mixed Use","Mixed-Use","F&B","Leisure","Healthcare","Other","Land","Student","Hotel","Car Park","Logistics"]);
+      for (const row of rows) {
+        let raw: string = row.asset_class || "";
+        // Strip outer parens/braces/brackets, unescape, extract first recognisable value
+        raw = raw.replace(/^[({"\[]+|[)}"\\!\]]+$/g, "").replace(/\\"/g, '"').replace(/\\\\"/g, '"');
+        // Split on comma and find first known value
+        const parts = raw.split(",").map(p => p.trim().replace(/^["']+|["']+$/g, ""));
+        const clean = parts.find(p => KNOWN.has(p)) || parts[0]?.substring(0, 50) || null;
+        if (clean !== row.asset_class) {
+          await pool.query(`UPDATE crm_properties SET asset_class = $1 WHERE id = $2`, [clean, row.id]);
+          fixed++;
+        }
+      }
+      res.json({ scanned: rows.length, fixed });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
+
   // ── Brand bible seed endpoint ─────────────────────────────────────────
   app.post("/api/admin/seed-brands", requireAuth, async (_req, res) => {
     const SEED_BRANDS: { name: string; companyType: string }[] = [
