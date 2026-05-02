@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import type { CrmProperty } from "@shared/schema";
+import { loadGoogleMaps, isGoogleMapsLoaded } from "@/lib/google-maps-loader";
 
 const STATUS_COLORS: Record<string, string> = {
   "BGP Active": "bg-emerald-500",
@@ -81,44 +82,6 @@ interface DistanceLine {
   label: google.maps.InfoWindow;
 }
 
-let googleScriptLoaded = false;
-let googleScriptLoading = false;
-let loadCallbacks: (() => void)[] = [];
-
-function loadGoogleMapsScript(): Promise<void> {
-  return new Promise((resolve) => {
-    if (googleScriptLoaded) {
-      resolve();
-      return;
-    }
-    loadCallbacks.push(resolve);
-    if (googleScriptLoading) return;
-    googleScriptLoading = true;
-
-    const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-    if (!apiKey) {
-      googleScriptLoading = false;
-      loadCallbacks.forEach((cb) => cb());
-      loadCallbacks = [];
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places,geometry`;
-    script.async = true;
-    script.onload = () => {
-      googleScriptLoaded = true;
-      loadCallbacks.forEach((cb) => cb());
-      loadCallbacks = [];
-    };
-    script.onerror = () => {
-      googleScriptLoading = false;
-      loadCallbacks.forEach((cb) => cb());
-      loadCallbacks = [];
-    };
-    document.head.appendChild(script);
-  });
-}
 
 function formatDistance(metres: number): string {
   if (metres < 1000) return `${Math.round(metres)}m`;
@@ -167,7 +130,7 @@ export default function PropertyMap() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedProperty, setSelectedProperty] = useState<string | null>(null);
-  const [scriptReady, setScriptReady] = useState(googleScriptLoaded);
+  const [scriptReady, setScriptReady] = useState(isGoogleMapsLoaded());
   const [viewMode, setViewMode] = useState<"map" | "split">("split");
   const mapRef = useRef<HTMLDivElement>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
@@ -195,7 +158,7 @@ export default function PropertyMap() {
   });
 
   useEffect(() => {
-    loadGoogleMapsScript().then(() => setScriptReady(true));
+    loadGoogleMaps().then((ok) => { if (ok) setScriptReady(true); });
   }, []);
 
   const propertiesWithCoords = useMemo(() => {

@@ -43,7 +43,7 @@ export function loadGoogleMaps(): Promise<boolean> {
     }
 
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places,geometry`;
     script.async = true;
     script.onload = () => {
       loaded = true;
