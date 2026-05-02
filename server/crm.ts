@@ -826,14 +826,14 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
       const dealName = `${deal.project || ''} - ${deal.tenant || ''}`;
       const fee = (deal.total_wip || 0) + (deal.total_invoice || 0);
       const comments = `WIP Ref: ${deal.ref}. WIP: £${(deal.total_wip || 0).toLocaleString()}. Invoiced: £${(deal.total_invoice || 0).toLocaleString()}. Status: ${deal.deal_status || 'N/A'}.`;
-      const teamPg = `{${teamArr.map((t: string) => `"${t}"`).join(',')}}`;
-      const agentPg = `{${agentArr.map((a: string) => `"${a}"`).join(',')}}`;
+      const teamPg = teamArr;
+      const agentPg = agentArr;
       const completionDate = parseWipMonthToDate(deal.month);
 
       if (wipRefToDealId.has(deal.ref)) {
         const existingId = wipRefToDealId.get(deal.ref)!;
         await client.query(
-          `UPDATE crm_deals SET name=$1, group_name=$2, property_id=$3, landlord_id=$4, tenant_id=$5, deal_type=$6, status=$7, team=$8, internal_agent=$9, fee=$10, comments=$11, completion_date=$12, updated_at=NOW() WHERE id=$13`,
+          `UPDATE crm_deals SET name=$1, group_name=$2, property_id=$3, landlord_id=$4, tenant_id=$5, deal_type=$6, status=$7, team=$8::text[], internal_agent=$9::text[], fee=$10, comments=$11, completion_date=$12, updated_at=NOW() WHERE id=$13`,
           [dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, completionDate, existingId]
         );
         updated++;
@@ -841,7 +841,7 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
         const dealId = randomUUID();
         await client.query(
           `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, completion_date, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::text[], $11, $12, $13, NOW(), NOW())`,
           [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, completionDate]
         );
 
@@ -4910,8 +4910,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         ));
         const changed = normalized.length !== arr.length || normalized.some((v, i) => v !== arr[i]);
         if (changed) {
-          const pgArr = `{${normalized.map(t => `"${t.replace(/"/g, '\\"')}"`).join(',')}}`;
-          await pool.query(`UPDATE crm_deals SET team=$1, updated_at=NOW() WHERE id=$2`, [pgArr, d.id]);
+          await pool.query(`UPDATE crm_deals SET team=$1::text[], updated_at=NOW() WHERE id=$2`, [normalized, d.id]);
           dealsUpdated++;
         }
       }
