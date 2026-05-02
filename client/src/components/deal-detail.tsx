@@ -56,7 +56,7 @@ import { useState, useMemo, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest, queryClient, invalidateDealCaches } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact } from "@shared/schema";
 import { buildUserColorMap } from "@/lib/agent-colors";
@@ -239,7 +239,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     },
   });
 
@@ -253,7 +253,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     onSuccess: () => {
       toast({ title: "SharePoint link updated" });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       setSharepointDialogOpen(false);
     },
     onError: (err: Error) => {
@@ -267,7 +267,7 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     },
     onSuccess: () => {
       toast({ title: "Deal deleted" });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       navigate(isComps ? "/comps" : "/deals");
     },
     onError: (err: Error) => {

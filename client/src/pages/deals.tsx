@@ -100,7 +100,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { useRoute, Link, useLocation } from "wouter";
 import type { CrmDeal, CrmProperty, CrmCompany, CrmContact, DealFeeAllocation, AvailableUnit, PropertyUnit } from "@shared/schema";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
@@ -618,7 +618,7 @@ export function DealFormDialog({
     },
     onSuccess: async () => {
       toast({ title: isEdit ? "Deal updated" : "Deal created" });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
       if (isEdit) {
         queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id] });
@@ -1711,7 +1711,7 @@ function HotsChecklistDialog({
     },
     onSuccess: async () => {
       toast({ title: "HOTs checklist completed", description: "Deal moved to HOTs with all details saved." });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/fee-allocations"] });
 
       if (form.invoicingEntityId) {
@@ -2198,7 +2198,7 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
     apiRequest("PUT", `/api/crm/deals/${dealId}`, { invoicingEntityId: entityId || null })
       .then(() => {
         queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId] });
-        queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+        invalidateDealCaches();
         if (entityId) {
           toast({ title: "Running KYC", description: `Checking ${entity?.name || "entity"} via Companies House...` });
           fetch(`/api/companies-house/auto-kyc/${entityId}`, { method: "POST", credentials: "include", headers: getAuthHeaders() })
@@ -2272,7 +2272,7 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
       setReference("");
       setAmount(0);
       refetchInvoices();
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
     },
     onError: (err: Error) => {
@@ -2288,7 +2288,7 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
     onSuccess: () => {
       toast({ title: "Invoice synced" });
       refetchInvoices();
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
     },
     onError: (err: Error) => {
@@ -2754,7 +2754,7 @@ export function DealKYCPanel({ deal, companies }: { deal: CrmDeal; companies: Cr
     try {
       await apiRequest("PUT", `/api/crm/deals/${deal.id}`, { kycApproved: true });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       toast({ title: "KYC Approved", description: "This deal is now cleared for invoicing." });
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -2910,7 +2910,7 @@ export function DealAMLChecklist({ deal }: { deal: CrmDeal }) {
     try {
       await apiRequest("PUT", `/api/crm/deals/${deal.id}`, { [field]: value });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
@@ -2923,7 +2923,7 @@ export function DealAMLChecklist({ deal }: { deal: CrmDeal }) {
     try {
       await apiRequest("PUT", `/api/crm/deals/${deal.id}`, fields);
       queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", deal.id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
@@ -3596,7 +3596,7 @@ function AiMatchDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
     },
     onSuccess: (data) => {
       toast({ title: "Matches applied", description: `${data.applied} links created successfully` });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       onOpenChange(false);
       setSuggestions([]);
       setSelectedMatches(new Set());
@@ -3927,7 +3927,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     },
     onError: (err: Error) => {
       if (err.message.includes("Senior approval required")) {
@@ -3946,7 +3946,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     },
     onSuccess: () => {
       toast({ title: "Deal deleted" });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       setDeleteListDeal(null);
     },
     onError: (err: Error) => {
@@ -3959,7 +3959,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       await apiRequest("POST", "/api/crm/deals/bulk-update", { ids, field, value });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       setSelectedIds(new Set());
       toast({ title: "Deals updated" });
     },
@@ -3973,7 +3973,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       await apiRequest("POST", "/api/crm/deals/bulk-delete", { ids });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       setSelectedIds(new Set());
       setBulkDeleteOpen(false);
       toast({ title: "Deals deleted" });
@@ -4295,7 +4295,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                   throw new Error(err.message || `Request failed (${res.status})`);
                 }
                 const data = await res.json();
-                queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+                invalidateDealCaches();
                 toast({ title: "Rent Analysis Complete", description: `${data.analysed} deals analysed, ${data.updated} updated${data.emailSent ? " — report sent to Tom" : ""}` });
               } catch (err: any) { toast({ title: "Error", description: err?.message || "Rent analysis failed", variant: "destructive" }); }
               setRentAnalysisRunning(false);

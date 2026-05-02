@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useCallback, useEffect } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -24,7 +24,7 @@ import bgpLogo from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import { useTeam } from "@/lib/team-context";
 import { useBrand } from "@/lib/brand-context";
 import { Link } from "wouter";
-import { apiRequest, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { RefreshCw } from "lucide-react";
 import { legacyToCode, WIP_STATUSES } from "@shared/deal-status";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -881,7 +881,6 @@ export default function WipReport() {
   const [appendUploading, setAppendUploading] = useState(false);
   const [syncingXero, setSyncingXero] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const queryClient = useQueryClient();
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds(prev => {
@@ -922,7 +921,7 @@ export default function WipReport() {
       const data = await res.json();
       toast({ title: append ? "Data Added" : "WIP Updated", description: `${append ? "Appended" : "Imported"} ${data.imported} entries from spreadsheet.` });
       filtersInitialized.current = false;
-      queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+      invalidateDealCaches();
     } catch (err: any) {
       toast({ title: "Upload failed", description: err?.message || "Could not import file.", variant: "destructive" });
     } finally {
@@ -1263,7 +1262,7 @@ export default function WipReport() {
         description: parts.join(", "),
         variant: data.errors?.length ? "destructive" : "default",
       });
-      queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+      invalidateDealCaches();
     } catch (err: any) {
       toast({ title: "Sync failed", description: err.message, variant: "destructive" });
     } finally {
@@ -1653,7 +1652,7 @@ export default function WipReport() {
                                       headers: { "Content-Type": "application/json", ...getAuthHeaders() },
                                       body: JSON.stringify({ targetDate: val }),
                                     });
-                                    queryClient.invalidateQueries({ queryKey: ["/api/wip"] });
+                                    invalidateDealCaches();
                                   }}
                                 />
                               ) : dateStr ? (

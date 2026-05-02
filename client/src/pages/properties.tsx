@@ -97,7 +97,7 @@ import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useRoute, Link } from "wouter";
-import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineSelect, InlineLabelSelect, InlineNumber, InlineMultiSelect } from "@/components/inline-edit";
 import { buildUserColorMap } from "@/lib/agent-colors";
@@ -910,7 +910,7 @@ export function InlineDeals({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/property-deal-links"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     },
     onError: (err: any) => {
       toast({ title: "Failed to link deal", description: err.message, variant: "destructive" });
@@ -923,7 +923,7 @@ export function InlineDeals({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/crm/property-deal-links"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     },
     onError: (err: any) => {
       toast({ title: "Failed to unlink deal", description: err.message, variant: "destructive" });

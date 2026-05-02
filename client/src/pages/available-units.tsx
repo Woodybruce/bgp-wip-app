@@ -31,7 +31,7 @@ import {
 import { useState, useMemo, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineNumber, InlineSelect, InlineLabelSelect, InlineMultiSelect, InlineLinkSelect } from "@/components/inline-edit";
 import type { AvailableUnit, CrmProperty, CrmDeal, CrmCompany, CrmContact, UnitMarketingFile, UnitViewing, UnitOffer, PropertyUnit } from "@shared/schema";
@@ -577,7 +577,7 @@ export default function AvailableUnitsPage() {
       await apiRequest("PUT", `/api/crm/deals/${id}`, { [field]: value });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
     },
     onError: (e: any) => toast({ title: "Error saving", description: e.message, variant: "destructive" }),
   });
@@ -654,7 +654,7 @@ export default function AvailableUnitsPage() {
     mutationFn: (id: string) => apiRequest("POST", `/api/available-units/${id}/create-deal`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       toast({ title: "Deal created and linked" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -667,7 +667,7 @@ export default function AvailableUnitsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/available-units"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       setWipUnit(null);
       toast({ title: "Solicitors — WIP deal created" });
     },

@@ -28,7 +28,7 @@ import { CardContent } from "@/components/ui/card";
 import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { Button } from "@/components/ui/button";
 
-import { apiRequest, queryClient, getAuthHeaders } from "@/lib/queryClient";
+import { apiRequest, queryClient, getAuthHeaders, invalidateDealCaches } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ViewToggle } from "@/components/mobile-card-view";
 import { InlineText, InlineNumber, InlineSelect, InlineDate, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
@@ -996,7 +996,7 @@ export default function InvestmentTrackerPage() {
     mutationFn: (id: string) => apiRequest("POST", `/api/investment-tracker/${id}/create-deal`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/investment-tracker"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] });
+      invalidateDealCaches();
       toast({ title: "WIP deal created and linked" });
     },
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
