@@ -4639,7 +4639,7 @@ function PropertiesList({
                       />
                     </TableHead>
                     <TableHead className="min-w-[280px] w-[280px]">Property</TableHead>
-                    {visibleColumns.landlord && <TableHead className="min-w-[140px]">Ownership</TableHead>}
+                    {visibleColumns.landlord && <TableHead className="w-[110px] max-w-[110px]">Ownership</TableHead>}
                     {visibleColumns.status && (
                       <TableHead className="min-w-[90px] w-[90px]">
                         <ColumnFilterPopover
@@ -4670,11 +4670,11 @@ function PropertiesList({
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.deals && <TableHead className="w-[140px] max-w-[140px]">WIP</TableHead>}
-                    {visibleColumns.tenants && <TableHead className="min-w-[140px]">Tenants</TableHead>}
-                    {visibleColumns.agents && <TableHead className="min-w-[120px]">BGP Contacts</TableHead>}
+                    {visibleColumns.deals && <TableHead className="w-[280px] max-w-[280px]">WIP</TableHead>}
+                    {visibleColumns.tenants && <TableHead className="w-[110px] max-w-[110px]">Tenants</TableHead>}
+                    {visibleColumns.agents && <TableHead className="w-[110px] max-w-[110px]">BGP Contacts</TableHead>}
                     {visibleColumns.sqft && <TableHead className="min-w-[60px] w-[60px]">Sq Ft</TableHead>}
-                    {visibleColumns.folderTree && <TableHead className="min-w-[140px]">Folder Tree</TableHead>}
+                    {visibleColumns.folderTree && <TableHead className="w-[110px] max-w-[110px]">Folder Tree</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -4736,7 +4736,7 @@ function PropertiesList({
                         </div>
                       </TableCell>
                       {visibleColumns.landlord && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
                           <div className="flex flex-col gap-0.5">
                             <InlineOwnerLink
                               propertyId={item.id}
@@ -4803,7 +4803,7 @@ function PropertiesList({
                         </TableCell>
                       )}
                       {visibleColumns.deals && (
-                        <TableCell className="px-1.5 py-1 w-[140px] max-w-[140px]" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[280px] max-w-[280px]" onClick={(e) => e.stopPropagation()}>
                           <InlineDeals
                             propertyId={item.id}
                             dealLinks={dealLinks}
@@ -4812,7 +4812,7 @@ function PropertiesList({
                         </TableCell>
                       )}
                       {visibleColumns.tenants && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
                           <InlineTenants
                             propertyId={item.id}
                             tenantLinks={tenantLinks}
@@ -4821,7 +4821,7 @@ function PropertiesList({
                         </TableCell>
                       )}
                       {visibleColumns.agents && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
                           <InlineAgents
                             propertyId={item.id}
                             agentLinks={agentLinks}
@@ -4842,7 +4842,7 @@ function PropertiesList({
                         </TableCell>
                       )}
                       {visibleColumns.folderTree && (
-                        <TableCell className="px-1.5 py-1" onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="px-1.5 py-1 w-[110px] max-w-[110px]" onClick={(e) => e.stopPropagation()}>
                           <InlineFolderTree
                             propertyId={item.id}
                             propertyName={item.name}
