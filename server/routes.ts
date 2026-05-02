@@ -2262,6 +2262,23 @@ Respond ONLY with a JSON array: [{"category":"...","learning":"..."},...]`
     }
   });
 
+  app.post("/api/admin/wipe-deals", requireAuth, async (req: any, res) => {
+    try {
+      const adminId = req.session?.userId || req.tokenUserId;
+      const [admin] = await pool.query("SELECT is_admin FROM users WHERE id = $1", [adminId]).then(r => r.rows);
+      if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
+
+      // Wipe in FK-safe order: clear deal_id references, then delete deals
+      await pool.query("UPDATE wip_entries SET deal_id = NULL, property_id = NULL");
+      const result = await pool.query("DELETE FROM crm_deals");
+      const deleted = result.rowCount ?? 0;
+
+      res.json({ deleted, message: `Wiped ${deleted} deal(s). Ready for fresh WIP import.` });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Wipe failed" });
+    }
+  });
+
   app.post("/api/available-units/migrate-letting-deals", requireAuth, async (req, res) => {
     try {
       const { crmDeals, availableUnits } = await import("@shared/schema");

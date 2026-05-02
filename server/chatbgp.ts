@@ -3243,6 +3243,21 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
+      name: "wipe_crm_deals",
+      description: "ADMIN ONLY. Wipe ALL crm_deals from the database so the user can start fresh with a clean WIP import. Clears deal_id/property_id references in wip_entries first, then deletes all deals. Use when the user says 'nuke all deals', 'delete all deals', 'clean reload', or equivalent. After wiping, tell the user to re-import their WIP Excel to repopulate.",
+      parameters: {
+        type: "object",
+        properties: {
+          confirm: { type: "boolean", description: "Must be true to proceed. Ask the user to confirm before setting this." },
+        },
+        required: ["confirm"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "query_turnover",
       description: "Search the Turnover Data Board — brand/operator revenue intelligence. Use when the user asks about a brand's turnover, revenue, sales performance, £/sqft, or occupational cost data. Can filter by company/brand name, property, category (F&B, Retail, Leisure, etc.), or period.",
       parameters: {
@@ -6662,6 +6677,28 @@ Be thorough — include every unit row you can classify, across all properties i
     } catch (err: any) {
       console.error("[chatbgp] import_wip_excel error:", err?.message, err?.stack);
       return { data: { error: `WIP import failed: ${err?.message || "unknown error"}` } };
+    }
+  }
+
+  if (fnName === "wipe_crm_deals") {
+    try {
+      const { confirm } = fnArgs as { confirm?: boolean };
+      if (!confirm) return { data: { error: "Wipe not confirmed. Set confirm: true to proceed." } };
+      const protocol = (req.headers["x-forwarded-proto"] as string) || req.protocol;
+      const host = (req.headers["x-forwarded-host"] as string) || (req.headers.host as string);
+      const baseUrl = `${protocol}://${host}`;
+      const resp = await fetch(`${baseUrl}/api/admin/wipe-deals`, {
+        method: "POST",
+        headers: { cookie: req.headers.cookie || "", authorization: req.headers.authorization || "" },
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        return { data: { error: (err as any).message || `Wipe failed (${resp.status})` } };
+      }
+      const result = await resp.json();
+      return { data: result };
+    } catch (err: any) {
+      return { data: { error: `wipe_crm_deals failed: ${err?.message}` } };
     }
   }
 
