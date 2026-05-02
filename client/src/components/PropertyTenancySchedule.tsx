@@ -81,9 +81,10 @@ function fmtCurrency(v: number | string) {
   return "£" + n.toLocaleString("en-GB", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
-function fmtNum(v: number | string, dp = 0) {
+function fmtNum(v: number | string | null | undefined, dp = 0) {
+  if (v === null || v === undefined || v === "") return "—";
   const n = Number(v);
-  if (!n) return "—";
+  if (!Number.isFinite(n)) return "—";
   return n.toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 }
 

@@ -541,7 +541,9 @@ function TargetTenantPanel({ unitId, propertyId, targets, onRefresh }: {
 }
 
 function PropertyCard({ prop }: { prop: LeasingProperty }) {
-  const occupancy = prop.unit_count > 0 ? Math.round((prop.occupied_count / prop.unit_count) * 100) : 0;
+  const unitCount = Number(prop.unit_count) || 0;
+  const occupiedCount = Number(prop.occupied_count) || 0;
+  const occupancy = unitCount > 0 ? Math.round((occupiedCount / unitCount) * 100) : 0;
   return (
     <Link href={`/leasing-schedule/${prop.id}`}>
       <div className="border rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer bg-white dark:bg-gray-900" data-testid={`property-card-${prop.id}`}>
@@ -2369,7 +2371,9 @@ export default function LeasingSchedulePage() {
               </TableHeader>
               <TableBody>
                 {filtered.map(p => {
-                  const occ = p.unit_count > 0 ? Math.round((p.occupied_count / p.unit_count) * 100) : 0;
+                  const uc = Number(p.unit_count) || 0;
+                  const oc = Number(p.occupied_count) || 0;
+                  const occ = uc > 0 ? Math.round((oc / uc) * 100) : 0;
                   return (
                     <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50">
                       <TableCell>

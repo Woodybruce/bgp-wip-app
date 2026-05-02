@@ -1149,7 +1149,7 @@ function FeeAllocCell({ dealId, dealFee, allAllocations, colorMap }: { dealId: s
     <div className="space-y-0.5" data-testid={`fee-alloc-summary-${dealId}`}>
       {allocations.map((a, i) => {
         const amount = a.allocationType === "percentage"
-          ? fee * (a.percentage || 0) / 100
+          ? (fee ?? 0) * (a.percentage || 0) / 100
           : a.fixedAmount || 0;
         const initials = a.agentName.split(" ").map(n => n[0]).join("").slice(0, 2);
         const bg = colorMap?.[a.agentName] || "bg-primary/10";
