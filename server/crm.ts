@@ -114,15 +114,54 @@ export async function importWipFromBuffer(
 ): Promise<{ success: true; imported: number; layout: "legacy" | "sage_transactionsexpo" | "unknown"; sync: any; enrichment: any; diagnostics?: any }> {
   const XLSX = await import("xlsx");
   const wb = XLSX.read(buffer, { type: "buffer" });
-  const sheet = wb.Sheets[wb.SheetNames[0]];
-  const data: any[] = XLSX.utils.sheet_to_json(sheet, { defval: null, cellDates: true });
-  if (data.length === 0) throw new Error("No data found in file");
+
+  // Scan all sheets for one that matches known WIP column signatures.
+  // "AuditInvoices_OrdersWIP" and similar custom sheet names won't be
+  // SheetNames[0] so we can't hardcode the index.
+  const normaliseKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const WIP_COLS = new Set(["headernumber", "netamount", "ref", "amtwip", "amtinvoice"]);
+
+  let data: any[] = [];
+  let foundSheet = "";
+
+  for (const name of wb.SheetNames) {
+    const ws = wb.Sheets[name];
+    // Try normal header detection first
+    let rows: any[] = (XLSX.utils.sheet_to_json as any)(ws, { defval: null, cellDates: true });
+    if (rows.length > 0) {
+      const keys = new Set(Object.keys(rows[0]).map(normaliseKey));
+      if ([...WIP_COLS].some(c => keys.has(c))) { data = rows; foundSheet = name; break; }
+    }
+    // Header might not be on row 1 — scan first 10 rows to find it
+    const rawRows: any[][] = (XLSX.utils.sheet_to_json as any)(ws, { header: 1, defval: null }) as any[][];
+    for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
+      const candidate = rawRows[i];
+      if (!candidate) continue;
+      const normCols = candidate.map((c: any) => normaliseKey(String(c ?? "")));
+      if (normCols.some((c: string) => WIP_COLS.has(c))) {
+        // Re-parse using this row as header
+        rows = (XLSX.utils.sheet_to_json as any)(ws, { header: candidate, range: i, defval: null, cellDates: true });
+        rows = rows.slice(1); // drop the header row itself
+        if (rows.length > 0) { data = rows; foundSheet = name; break; }
+      }
+    }
+    if (data.length > 0) break;
+  }
+
+  if (data.length === 0) {
+    const sheetList = wb.SheetNames.join(", ");
+    throw new Error(
+      `No data found in file. Sheets found: [${sheetList}]. ` +
+      `The importer looks for columns: HEADER_NUMBER, NetAmount (Sage) or Ref, Amt WIP (legacy). ` +
+      `If your export uses different column names, share a sample row and we can extend the parser.`
+    );
+  }
 
   // Build a case- and punctuation-insensitive key map per row, so column
   // names like "HEADER_NUMBER" / "Header Number" / "headerNumber" all
   // resolve to the same value. Sage exports sometimes change punctuation
   // between report versions and we want the importer to keep working.
-  const normaliseKey = (k: string) => k.toLowerCase().replace(/[^a-z0-9]/g, "");
+  // (normaliseKey is already declared above for sheet scanning)
   const buildKeyMap = (row: any): Record<string, any> => {
     const out: Record<string, any> = {};
     if (!row) return out;
