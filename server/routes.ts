@@ -5244,6 +5244,62 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
     }
   });
 
+  // ── ONS Inflation data (RPI + CPI annual averages) ───────────────────────
+  // Fetches from ONS public API and caches for 12 hours so the RPI/CPI
+  // calculator in comps always shows the latest published annual rates.
+  // Falls back to hardcoded data if ONS API is unreachable.
+  const INFLATION_FALLBACK = [
+    { year: 2015, rpi: 1.0, cpi: 0.0 }, { year: 2016, rpi: 1.8, cpi: 0.7 },
+    { year: 2017, rpi: 3.6, cpi: 2.7 }, { year: 2018, rpi: 3.3, cpi: 2.5 },
+    { year: 2019, rpi: 2.6, cpi: 1.8 }, { year: 2020, rpi: 1.5, cpi: 0.9 },
+    { year: 2021, rpi: 4.1, cpi: 2.6 }, { year: 2022, rpi: 11.6, cpi: 9.1 },
+    { year: 2023, rpi: 9.7, cpi: 7.3 }, { year: 2024, rpi: 3.6, cpi: 2.5 },
+    { year: 2025, rpi: 4.0, cpi: 2.6 },
+  ];
+  let inflationCache: { data: typeof INFLATION_FALLBACK; fetchedAt: number } | null = null;
+
+  async function fetchOnsAnnualRates(): Promise<typeof INFLATION_FALLBACK> {
+    // ONS mm23 dataset: D7BT = RPI 12-month rate, D7G7 = CPI 12-month rate
+    const [rpiRes, cpiRes] = await Promise.all([
+      fetch("https://api.ons.gov.uk/v1/datasets/mm23/timeseries/chaw/data"),
+      fetch("https://api.ons.gov.uk/v1/datasets/mm23/timeseries/d7g7/data"),
+    ]);
+    if (!rpiRes.ok || !cpiRes.ok) throw new Error("ONS API unavailable");
+    const [rpiJson, cpiJson]: any[] = await Promise.all([rpiRes.json(), cpiRes.json()]);
+
+    // ONS returns annual data as array of { year, value }
+    const rpiByYear = new Map<number, number>();
+    for (const row of rpiJson.years || []) {
+      const yr = parseInt(row.year); const val = parseFloat(row.value);
+      if (!isNaN(yr) && !isNaN(val)) rpiByYear.set(yr, val);
+    }
+    const result: typeof INFLATION_FALLBACK = [];
+    for (const row of cpiJson.years || []) {
+      const yr = parseInt(row.year); const cpi = parseFloat(row.value);
+      if (!isNaN(yr) && !isNaN(cpi) && yr >= 2015) {
+        result.push({ year: yr, rpi: rpiByYear.get(yr) ?? cpi + 1.2, cpi });
+      }
+    }
+    return result.sort((a, b) => a.year - b.year);
+  }
+
+  app.get("/api/inflation-data", requireAuth, async (_req, res) => {
+    try {
+      const now = Date.now();
+      if (!inflationCache || now - inflationCache.fetchedAt > 12 * 3600 * 1000) {
+        try {
+          const fresh = await fetchOnsAnnualRates();
+          if (fresh.length > 0) inflationCache = { data: fresh, fetchedAt: now };
+        } catch {
+          // ONS unreachable — use or keep cached/fallback data
+        }
+      }
+      res.json({ data: inflationCache?.data ?? INFLATION_FALLBACK, source: inflationCache ? "ons" : "fallback" });
+    } catch (e: any) {
+      res.json({ data: INFLATION_FALLBACK, source: "fallback" });
+    }
+  });
+
   return httpServer;
 }
 

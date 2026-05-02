@@ -482,20 +482,14 @@ function computeNetEffective(comp: CrmComp): number {
   return avgHeadline - annualisedIncentive;
 }
 
-// UK RPI / CPI annual averages — last 10 years (ONS published annual % change).
-// Used by the indexation calculator for RPI / CPI lease reviews. Update annually.
-const UK_INDEX_DATA: { year: number; rpi: number; cpi: number }[] = [
-  { year: 2015, rpi: 1.0, cpi: 0.0 },
-  { year: 2016, rpi: 1.8, cpi: 0.7 },
-  { year: 2017, rpi: 3.6, cpi: 2.7 },
-  { year: 2018, rpi: 3.3, cpi: 2.5 },
-  { year: 2019, rpi: 2.6, cpi: 1.8 },
-  { year: 2020, rpi: 1.5, cpi: 0.9 },
-  { year: 2021, rpi: 4.1, cpi: 2.6 },
-  { year: 2022, rpi: 11.6, cpi: 9.1 },
-  { year: 2023, rpi: 9.7, cpi: 7.3 },
-  { year: 2024, rpi: 3.6, cpi: 2.5 },
-  { year: 2025, rpi: 4.0, cpi: 2.6 },  // ONS annual average — verify at ons.gov.uk/economy/inflationandpriceindices
+// Fallback data used until live ONS data loads.
+const UK_INDEX_FALLBACK: { year: number; rpi: number; cpi: number }[] = [
+  { year: 2015, rpi: 1.0, cpi: 0.0 }, { year: 2016, rpi: 1.8, cpi: 0.7 },
+  { year: 2017, rpi: 3.6, cpi: 2.7 }, { year: 2018, rpi: 3.3, cpi: 2.5 },
+  { year: 2019, rpi: 2.6, cpi: 1.8 }, { year: 2020, rpi: 1.5, cpi: 0.9 },
+  { year: 2021, rpi: 4.1, cpi: 2.6 }, { year: 2022, rpi: 11.6, cpi: 9.1 },
+  { year: 2023, rpi: 9.7, cpi: 7.3 }, { year: 2024, rpi: 3.6, cpi: 2.5 },
+  { year: 2025, rpi: 4.0, cpi: 2.6 },
 ];
 
 // Inline-edit cell that stores raw numbers but displays them with thousands separators.
@@ -715,11 +709,27 @@ function DealCell({
 
 function RpiCpiCalculator() {
   const [baseRent, setBaseRent] = useState("");
-  const [startYear, setStartYear] = useState<number>(UK_INDEX_DATA[0].year);
-  const [endYear, setEndYear] = useState<number>(UK_INDEX_DATA[UK_INDEX_DATA.length - 1].year);
   const [index, setIndex] = useState<"rpi" | "cpi">("rpi");
   const [cap, setCap] = useState("");
   const [collar, setCollar] = useState("");
+
+  const { data: inflationResp } = useQuery<{ data: typeof UK_INDEX_FALLBACK; source: string }>({
+    queryKey: ["/api/inflation-data"],
+    staleTime: 12 * 3600 * 1000,
+  });
+  const UK_INDEX_DATA = inflationResp?.data ?? UK_INDEX_FALLBACK;
+  const isLive = inflationResp?.source === "ons";
+
+  const [startYear, setStartYear] = useState<number>(UK_INDEX_FALLBACK[0].year);
+  const [endYear, setEndYear] = useState<number>(UK_INDEX_FALLBACK[UK_INDEX_FALLBACK.length - 1].year);
+
+  // Update end year when live data loads with a newer year
+  useEffect(() => {
+    if (UK_INDEX_DATA.length > 0) {
+      const latestYear = UK_INDEX_DATA[UK_INDEX_DATA.length - 1].year;
+      setEndYear(prev => prev === UK_INDEX_FALLBACK[UK_INDEX_FALLBACK.length - 1].year ? latestYear : prev);
+    }
+  }, [UK_INDEX_DATA.length]);
 
   const rent = parseFloat(baseRent.replace(/[^0-9.-]/g, "")) || 0;
   const capN = parseFloat(cap) || Infinity;
@@ -840,7 +850,7 @@ function RpiCpiCalculator() {
           </table>
         </div>
         <p className="text-[10px] text-muted-foreground mt-2">
-          Source: UK ONS — annual averages of monthly Retail Price Index (RPI) and Consumer Price Index (CPI). Apply the cap/collar to each year's indexation before compounding (standard UK lease convention).
+          {isLive ? "Live" : "Cached"} ONS data — annual averages of RPI and CPI. Cap/collar applied per year before compounding (standard UK lease convention).
         </p>
       </div>
     </div>
