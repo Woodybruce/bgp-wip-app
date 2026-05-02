@@ -175,13 +175,24 @@ function TaskRow({ task, subtasks, onToggle, onEdit, onDelete, onPin, onAddSubta
           )}
         </div>
         {task.description && (
-          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2" dangerouslySetInnerHTML={{
-            __html: task.description
-              .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-              .replace(/\*(.*?)\*/g, "<em>$1</em>")
-              .replace(/\n/g, " · ")
-              .slice(0, 200)
-          }} />
+          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+            {(() => {
+              const truncated = task.description.replace(/\n/g, " · ").slice(0, 200);
+              const parts: React.ReactNode[] = [];
+              const regex = /(\*\*[^*]+\*\*)|(\*[^*]+\*)/g;
+              let last = 0;
+              let match: RegExpExecArray | null;
+              let key = 0;
+              while ((match = regex.exec(truncated)) !== null) {
+                if (match.index > last) parts.push(truncated.slice(last, match.index));
+                if (match[1]) parts.push(<strong key={key++}>{match[1].slice(2, -2)}</strong>);
+                else if (match[2]) parts.push(<em key={key++}>{match[2].slice(1, -1)}</em>);
+                last = match.index + match[0].length;
+              }
+              if (last < truncated.length) parts.push(truncated.slice(last));
+              return parts;
+            })()}
+          </p>
         )}
         <div className="flex items-center gap-3 mt-1 flex-wrap">
           {dueInfo && (

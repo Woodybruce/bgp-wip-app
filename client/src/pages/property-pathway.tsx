@@ -1,5 +1,6 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { useLocation, Link } from "wouter";
+import DOMPurify from "dompurify";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -3212,7 +3213,7 @@ function EmailViewerDialog({ msgId, mailboxEmail, onClose }: { msgId: string; ma
               {email.bodyContentType === "html" && email.bodyHtml ? (
                 <div
                   className="text-sm prose prose-sm max-w-none dark:prose-invert [&_a]:text-primary [&_a]:underline [&_img]:max-w-full [&_table]:border-collapse"
-                  dangerouslySetInnerHTML={{ __html: email.bodyHtml }}
+                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(email.bodyHtml, { FORBID_TAGS: ["script", "style", "iframe", "object", "embed"], FORBID_ATTR: ["onerror", "onload", "onclick"] }) }}
                 />
               ) : (
                 <pre className="text-sm whitespace-pre-wrap font-sans">{email.bodyText || "(No body content)"}</pre>
