@@ -931,17 +931,17 @@ export function InlineDeals({
   });
 
   return (
-    <div className="flex items-center gap-1 flex-wrap">
+    <div className="flex items-center gap-1 flex-wrap max-w-[130px]">
       {linkedDeals.map(deal => (
-        <div key={deal.id} className="flex items-center gap-0.5">
+        <div key={deal.id} className="flex items-center gap-0.5 min-w-0">
           <Link href={`/deals/${deal.id}`}>
             <Badge
               variant="outline"
-              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted"
+              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted max-w-[110px]"
               data-testid={`deal-badge-${deal.id}`}
             >
-              <Handshake className="w-2.5 h-2.5 mr-0.5 text-muted-foreground" />
-              {deal.name}
+              <Handshake className="w-2.5 h-2.5 mr-0.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{deal.name}</span>
             </Badge>
           </Link>
           <button
@@ -4667,7 +4667,7 @@ function PropertiesList({
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.deals && <TableHead className="min-w-[140px]">WIP</TableHead>}
+                    {visibleColumns.deals && <TableHead className="min-w-[140px] w-[140px]">WIP</TableHead>}
                     {visibleColumns.tenants && <TableHead className="min-w-[140px]">Tenants</TableHead>}
                     {visibleColumns.agents && <TableHead className="min-w-[120px]">BGP Contacts</TableHead>}
                     {visibleColumns.sqft && <TableHead className="min-w-[60px] w-[60px]">Sq Ft</TableHead>}
