@@ -453,6 +453,138 @@ export async function runSearchEmailsTool(opts: { query: string; top: number; ma
   }
 }
 
+// Shared implementation of the search_calendar tool. Mirrors
+// runSearchEmailsTool — same mailbox fan-out semantics, same auth paths,
+// same shape of return value but for Outlook calendar events.
+//
+// Used by ChatBGP itself and by the AI activity curator
+// (server/ai-activity-curator.ts) when it needs to find historic
+// meetings about a deal / brand / landlord across all 31 BGP mailboxes.
+//
+// Graph supports `/users/{id}/events?$search="query"` which matches
+// against subject, body, attendees and location. Date-bounded by
+// optional startDateTime / endDateTime params (default: last 18 months
+// to next 6 months — covers most "is there a meeting about X?" needs).
+export async function runSearchCalendarTool(opts: {
+  query: string;
+  top: number;
+  mailbox: string;
+  startDateTime?: string;
+  endDateTime?: string;
+  req: any;
+}): Promise<{ events: any[]; scope: string } | { error: string }> {
+  const { query, top, mailbox, req } = opts;
+
+  // Default to last 18 months → next 6 months. Wide enough to catch the
+  // historic comms a deal / brand curation typically wants.
+  const defaultStart = new Date(); defaultStart.setMonth(defaultStart.getMonth() - 18);
+  const defaultEnd = new Date(); defaultEnd.setMonth(defaultEnd.getMonth() + 6);
+  const startDateTime = opts.startDateTime || defaultStart.toISOString();
+  const endDateTime = opts.endDateTime || defaultEnd.toISOString();
+
+  const mapEvent = (ev: any, via?: string, mailboxEmail?: string) => ({
+    id: ev.id,
+    eventId: ev.id,
+    subject: (ev.subject || "(No subject)") + (via ? ` · via ${via}` : ""),
+    organiser: ev.organizer?.emailAddress?.name || ev.organizer?.emailAddress?.address || "Unknown",
+    organiserEmail: ev.organizer?.emailAddress?.address || "",
+    start: ev.start?.dateTime || null,
+    end: ev.end?.dateTime || null,
+    location: ev.location?.displayName || null,
+    isAllDay: !!ev.isAllDay,
+    isCancelled: !!ev.isCancelled,
+    attendees: (ev.attendees || []).map((a: any) => a.emailAddress?.name || a.emailAddress?.address).filter(Boolean).slice(0, 20),
+    preview: (ev.bodyPreview || "").slice(0, 200).replace(/\n/g, " "),
+    // Mailbox-scoped event ID — caller must pass mailboxEmail back to
+    // /api/activity/meeting/:mailbox/:eventId or any /events/{id} call.
+    mailboxEmail: mailboxEmail || undefined,
+  });
+
+  const selectFields = "id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,bodyPreview";
+
+  // App-token path (mailbox=email or mailbox=all)
+  if (mailbox && mailbox !== "me") {
+    try {
+      const { graphRequest } = await import("./shared-mailbox");
+      const mailboxes: Array<{ email: string; owner: string }> = [];
+      if (mailbox === "all") {
+        const { db } = await import("./db");
+        const { users } = await import("@shared/schema");
+        const { eq } = await import("drizzle-orm");
+        mailboxes.push({ email: "chatbgp@brucegillinghampollard.com", owner: "Shared inbox" });
+        try {
+          const activeUsers = await db
+            .select({ username: users.username, email: users.email, name: users.name })
+            .from(users)
+            .where(eq(users.isActive, true));
+          for (const u of activeUsers) {
+            const mb = u.email || u.username;
+            if (mb && /@brucegillinghampollard\.com$/i.test(mb) && mb.toLowerCase() !== "chatbgp@brucegillinghampollard.com") {
+              mailboxes.push({ email: mb, owner: u.name || mb });
+            }
+          }
+        } catch {}
+      } else {
+        mailboxes.push({ email: mailbox, owner: mailbox });
+      }
+
+      const seen = new Set<string>();
+      const collected: any[] = [];
+      const errors: string[] = [];
+      for (const mb of mailboxes) {
+        try {
+          // Use /events?$search — matches against subject/body/attendees/
+          // location. Combine with $filter on the date range. Graph
+          // rejects $orderby alongside $search, so we sort client-side.
+          const filter = `start/dateTime ge '${startDateTime}' and end/dateTime le '${endDateTime}'`;
+          const url = `/users/${encodeURIComponent(mb.email)}/events?$search=${encodeURIComponent(`"${query}"`)}&$filter=${encodeURIComponent(filter)}&$top=${top}&$select=${encodeURIComponent(selectFields)}`;
+          const data = await graphRequest(url, { headers: { Prefer: "outlook.timezone=\"Europe/London\"" } });
+          for (const ev of data?.value || []) {
+            if (seen.has(ev.id)) continue;
+            seen.add(ev.id);
+            collected.push(mapEvent(ev, mailbox === "all" ? mb.owner : undefined, mb.email));
+          }
+        } catch (err: any) {
+          errors.push(`${mb.email}: ${String(err?.message || err).slice(0, 120)}`);
+        }
+      }
+      collected.sort((a, b) => new Date(b.start || 0).getTime() - new Date(a.start || 0).getTime());
+      const scope = mailbox === "all" ? `${mailboxes.length} calendars` : mailbox;
+      if (collected.length === 0 && errors.length > 0) {
+        return { error: `No results, and all calendars errored. First: ${errors[0]}` };
+      }
+      return { events: collected.slice(0, top), scope };
+    } catch (err: any) {
+      return { error: `App-token calendar search setup error: ${err?.message || "unknown"}` };
+    }
+  }
+
+  // Default path: delegated /me/events
+  try {
+    const token = await getValidMsToken(req);
+    if (!token) return { error: "Not connected to Microsoft 365. Please sign in first." };
+    const filter = `start/dateTime ge '${startDateTime}' and end/dateTime le '${endDateTime}'`;
+    const url = "https://graph.microsoft.com/v1.0/me/events?" + new URLSearchParams({
+      $search: `"${query}"`,
+      $filter: filter,
+      $top: String(top),
+      $select: selectFields,
+    });
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Prefer: "outlook.timezone=\"Europe/London\"", "Content-Type": "application/json" } });
+    if (!res.ok) {
+      const errText = await res.text();
+      return { error: `Calendar search failed: ${res.status} ${errText.slice(0, 200)}` };
+    }
+    const data = await res.json();
+    const events = (data.value || [])
+      .sort((a: any, b: any) => new Date(b.start?.dateTime || 0).getTime() - new Date(a.start?.dateTime || 0).getTime())
+      .map((ev: any) => mapEvent(ev));
+    return { events, scope: "my calendar" };
+  } catch (err: any) {
+    return { error: `Calendar search error: ${err?.message || "unknown"}` };
+  }
+}
+
 export function invalidateContextCache(prefix?: string): void {
   if (!prefix) {
     contextCache.clear();
@@ -499,6 +631,7 @@ function getToolProgressLabel(toolName: string): string {
     send_email: "Sending email...",
     reply_email: "Replying to email...",
     search_emails: "Searching emails...",
+    search_calendar: "Searching calendars...",
     query_calendar: "Checking calendar...",
     query_wip: "Querying pipeline...",
     query_xero: "Looking up invoices...",
@@ -2248,6 +2381,25 @@ export async function getAvailableTools(): Promise<{
           query: { type: "string", description: "Search query — matches against subject, body, sender, recipients, and attachments. Use KQL syntax: e.g. 'from:john subject:proposal', 'hasattachment:true landsec', 'received>=2025-01-01'" },
           top: { type: "number", description: "Number of results to return (default 25, max 50)" },
           mailbox: { type: "string", description: "Optional. A specific BGP mailbox email address (e.g. 'jack@brucegillinghampollard.com') to search, OR the literal string 'all' to fan out across every active BGP user's mailbox plus the shared inbox. Omit to search only the current user's inbox." },
+        },
+        required: ["query"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "search_calendar",
+      description: "Search Outlook calendars for meetings matching a query. By default searches the signed-in user's calendar. Pass `mailbox` to search a specific BGP teammate's calendar, or 'all' to fan out across every team member's calendar plus the shared inbox. Matches against subject, body, attendees, and location. Date-bounded — defaults to last 18 months → next 6 months. Returns up to 50 results sorted by start date desc. Use when the user asks about historic or upcoming meetings, viewings, or calendar history about a deal/brand/landlord/property. Distinct from query_calendar which only lists upcoming events in a date range without keyword search.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query — matches subject, body, attendees, location. e.g. 'Aurora Capital', '18-22 Haymarket', 'rent review meeting'." },
+          top: { type: "number", description: "Number of results to return (default 25, max 50)." },
+          mailbox: { type: "string", description: "Optional. A specific BGP mailbox email (e.g. 'jack@brucegillinghampollard.com') to search, OR the literal 'all' to fan out across every active BGP calendar plus the shared inbox. Omit to search only the current user's calendar." },
+          startDateTime: { type: "string", description: "Optional ISO date-time lower bound (default: 18 months ago). Events must start on or after this." },
+          endDateTime: { type: "string", description: "Optional ISO date-time upper bound (default: 6 months from now). Events must end on or before this." },
         },
         required: ["query"],
       },
@@ -5876,6 +6028,26 @@ async function executeCrmToolRaw(
       return { data: { results: results.messages, count: results.messages.length, query: searchQuery, scope: results.scope } };
     } catch (searchErr: any) {
       return { data: { error: `Email search error: ${searchErr?.message || "Unknown error"}` } };
+    }
+  }
+
+  if (fnName === "search_calendar") {
+    try {
+      const searchQuery = fnArgs.query;
+      const top = Math.min(fnArgs.top || 25, 50);
+      const mailboxArg = typeof fnArgs.mailbox === "string" ? fnArgs.mailbox.trim().toLowerCase() : "";
+      const results = await runSearchCalendarTool({
+        query: searchQuery,
+        top,
+        mailbox: mailboxArg,
+        startDateTime: fnArgs.startDateTime,
+        endDateTime: fnArgs.endDateTime,
+        req,
+      });
+      if ("error" in results) return { data: { error: results.error } };
+      return { data: { results: results.events, count: results.events.length, query: searchQuery, scope: results.scope } };
+    } catch (searchErr: any) {
+      return { data: { error: `Calendar search error: ${searchErr?.message || "Unknown error"}` } };
     }
   }
 
