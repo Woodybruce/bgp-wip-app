@@ -1031,7 +1031,7 @@ export default function AvailableUnitsPage() {
                 <TableHead className="w-[140px]">Team</TableHead>
                 <TableHead className="w-[140px]">Unit</TableHead>
                 <TableHead>Floor</TableHead>
-                <TableHead className="text-right">Sq Ft</TableHead>
+                <TableHead className="min-w-[140px]">Floor Areas</TableHead>
                 <TableHead className="text-right">Asking Rent</TableHead>
                 <TableHead className="text-right">Rates p.a.</TableHead>
                 <TableHead className="text-right">SC p.a.</TableHead>
@@ -1180,13 +1180,41 @@ export default function AvailableUnitsPage() {
                           onSave={v => inlineUpdate(u.id, "floor", v)}
                         />
                       </TableCell>
-                      <TableCell className="text-right">
-                        <InlineNumber
-                          value={u.sqft}
-                          onSave={v => inlineUpdate(u.id, "sqft", v)}
-                          placeholder="—"
-                          className="text-right"
-                        />
+                      <TableCell className="px-1.5 py-1">
+                        <div className="space-y-0.5">
+                          {deal ? (
+                            [
+                              { label: "GF", value: deal.gfAreaSqft, field: "gfAreaSqft" },
+                              { label: "FF", value: deal.ffAreaSqft, field: "ffAreaSqft" },
+                              { label: "Bsmt", value: deal.basementAreaSqft, field: "basementAreaSqft" },
+                              { label: "ITZA", value: deal.itzaAreaSqft, field: "itzaAreaSqft" },
+                              { label: "Total", value: deal.totalAreaSqft, field: "totalAreaSqft" },
+                            ].map(({ label, value, field }) => (
+                              <div key={field} className="flex items-center gap-1.5">
+                                <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">{label}</span>
+                                <InlineNumber
+                                  value={value}
+                                  onSave={v => {
+                                    dealInlineUpdate.mutate({ id: deal.id, field, value: v });
+                                    if (field === "totalAreaSqft") inlineUpdate(u.id, "sqft", v);
+                                  }}
+                                  suffix=" sf"
+                                  className="text-xs"
+                                />
+                              </div>
+                            ))
+                          ) : (
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">Total</span>
+                              <InlineNumber
+                                value={u.sqft}
+                                onSave={v => inlineUpdate(u.id, "sqft", v)}
+                                suffix=" sf"
+                                className="text-xs"
+                              />
+                            </div>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className="text-right">
                         <InlineNumber
