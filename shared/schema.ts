@@ -1346,6 +1346,9 @@ export const wipEntries = pgTable("wip_entries", {
   groupName: text("group_name"),
   project: text("project"),
   tenant: text("tenant"),
+  // Billing entity from the Sage NAME column — the company that pays the invoice.
+  // Resolved to invoicing_entity_id on crm_deals at sync time.
+  billingEntity: text("billing_entity"),
   team: text("team"),
   agent: text("agent"),
   amtWip: real("amt_wip"),

@@ -423,6 +423,7 @@ export async function importWipFromBuffer(
         groupName: pick(kr, "Group") || null,
         project: pick(kr, "Project") || null,
         tenant: pick(kr, "Tenant") || null,
+        billingEntity: pick(kr, "NAME", "Name", "BillingName", "ClientName") || null,
         team: normalizeTeamName(pick(kr, "Team")),
         agent: pick(kr, "Agent") || null,
         amtWip: parseFloat(pick(kr, "Amt WIP", "AmtWIP")) || 0,
@@ -445,7 +446,8 @@ export async function importWipFromBuffer(
       ref: headerNum || null,
       groupName: pick(kr, "Group") || null,
       project: pick(kr, "Project") || null,
-      tenant: pick(kr, "Tenant") || pick(kr, "Client") || null,
+      tenant: pick(kr, "Tenant") || null,
+      billingEntity: pick(kr, "NAME", "Name", "BillingName", "ClientName") || null,
       team: normalizeTeamName(pick(kr, "Team")),
       agent: (() => {
         const a = String(pick(kr, "Agent") || "").trim().replace(/\s*\(BGP House\)/i, "").trim();
@@ -865,6 +867,7 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
         MIN(group_name) as group_name,
         MIN(project) as project,
         MIN(tenant) as tenant,
+        MIN(billing_entity) as billing_entity,
         ARRAY_AGG(DISTINCT team) FILTER (WHERE team IS NOT NULL AND team != '' AND team != 'BGP') as teams,
         ARRAY_AGG(DISTINCT agent) FILTER (WHERE agent IS NOT NULL AND agent != '' AND agent != 'BGP') as agents,
         SUM(amt_wip) as total_wip,
@@ -952,6 +955,21 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
         }
       }
 
+      // ── Billing entity (Sage NAME column) ──────────────────────────────
+      // The company that pays the invoice. Auto-create if not in CRM yet.
+      let billingEntityId: string | null = null;
+      if (deal.billing_entity?.trim()) {
+        billingEntityId = wipFuzzyMatch(deal.billing_entity, compMap);
+        if (!billingEntityId) {
+          billingEntityId = randomUUID();
+          await client.query(
+            `INSERT INTO crm_companies (id, name, company_type, created_at, updated_at) VALUES ($1, $2, 'Billing Entity', NOW(), NOW())`,
+            [billingEntityId, deal.billing_entity.trim()]
+          );
+          compMap.set(deal.billing_entity.trim().toLowerCase(), billingEntityId);
+        }
+      }
+
       const teamArr = Array.from(new Set(
         (deal.teams || []).map((t: string) => normalizeTeamName(t)).filter(Boolean) as string[]
       ));
@@ -1012,9 +1030,10 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
                  target_date = COALESCE(target_date, $12),
                  completed_at = COALESCE(completed_at, $13),
                  invoiced_at = COALESCE(invoiced_at, $14),
+                 invoicing_entity_id = COALESCE($16, invoicing_entity_id),
                  updated_at=NOW()
            WHERE id=$15`,
-          [dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, existingId]
+          [dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, existingId, billingEntityId]
         );
         // Write hard FKs back onto every wip_entries row for this ref so
         // future reads don't have to re-derive from strings.
@@ -1026,9 +1045,9 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
       } else {
         const dealId = randomUUID();
         await client.query(
-          `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, target_date, completed_at, invoiced_at, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::text[], $11, $12, $13, $14, $15, NOW(), NOW())`,
-          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt]
+          `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, target_date, completed_at, invoiced_at, invoicing_entity_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::text[], $11, $12, $13, $14, $15, $16, NOW(), NOW())`,
+          [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, targetDate, completedAt, invoicedAt, billingEntityId]
         );
         await client.query(
           `UPDATE wip_entries SET deal_id=$1, property_id=$2 WHERE ref=$3`,
@@ -1076,6 +1095,7 @@ export function setupCrmRoutes(app: Express) {
   // wip_entries hard FKs (mirror schema.ts) — safe to re-run on each boot
   pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS deal_id VARCHAR`).catch(() => {});
   pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS property_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS billing_entity TEXT`).catch(() => {});
   pool.query(`CREATE INDEX IF NOT EXISTS idx_wip_entries_deal_id ON wip_entries (deal_id)`).catch(() => {});
   pool.query(`CREATE INDEX IF NOT EXISTS idx_wip_entries_property_id ON wip_entries (property_id)`).catch(() => {});
 
