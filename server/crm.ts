@@ -110,8 +110,8 @@ function parseAiJson(raw: string): any {
  */
 export async function importWipFromBuffer(
   buffer: Buffer,
-  opts: { append?: boolean } = {},
-): Promise<{ success: true; imported: number; layout: "legacy" | "sage_transactionsexpo" | "unknown"; sync: any; enrichment: any; diagnostics?: any }> {
+  opts: { append?: boolean; archiveOrphans?: boolean } = {},
+): Promise<{ success: true; imported: number; layout: "legacy" | "sage_transactionsexpo" | "unknown"; sync: any; enrichment: any; orphans?: any; diagnostics?: any }> {
   const XLSX = await import("xlsx");
   const wb = XLSX.read(buffer, { type: "buffer" });
 
@@ -497,7 +497,75 @@ export async function importWipFromBuffer(
     ? await enrichWipDealsFromSage(pool, enrichments)
     : { skipped: "legacy layout — no per-agent slice / billing entity data in this format" };
 
-  return { success: true, imported: rows.length, layout, sync: syncResult, enrichment: enrichmentResult, diagnostics };
+  // Source-of-truth mode: archive any crm_deals that were previously synced
+  // from a WIP import (have "WIP Ref: N" in comments) but whose ref is no
+  // longer present in the freshly loaded wip_entries. Soft delete only —
+  // sets status='ARCH' and prepends [ARCHIVED <date>] to comments so the
+  // operation is reversible.
+  let orphansResult: any = undefined;
+  if (opts.archiveOrphans && !opts.append) {
+    orphansResult = await archiveOrphanedWipDeals(pool);
+  }
+
+  return { success: true, imported: rows.length, layout, sync: syncResult, enrichment: enrichmentResult, orphans: orphansResult, diagnostics };
+}
+
+/**
+ * Find crm_deals that were synced from a previous WIP import (comments contain
+ * "WIP Ref: N") but whose ref is no longer in the freshly loaded wip_entries,
+ * and soft-archive them. Pure soft delete — no data loss, fully reversible.
+ */
+export async function archiveOrphanedWipDeals(
+  dbPool: Pool,
+): Promise<{ archived: number; deals: { id: string; name: string; ref: string; status: string; fee: number }[] }> {
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const { rows: currentRefs } = await client.query(
+      `SELECT DISTINCT ref FROM wip_entries WHERE ref IS NOT NULL AND ref != ''`
+    );
+    const currentRefSet = new Set<string>(currentRefs.map((r: any) => String(r.ref)));
+
+    // Pull every deal whose comments tag a WIP Ref. Don't archive deals
+    // that were never synced from WIP (leasing units, available units, etc).
+    const { rows: candidates } = await client.query(
+      `SELECT id, name, status, fee, comments
+         FROM crm_deals
+        WHERE comments LIKE 'WIP Ref: %'
+          AND status NOT IN ('ARCH', 'COM', 'INV')`
+    );
+
+    const orphans: { id: string; name: string; ref: string; status: string; fee: number }[] = [];
+    for (const d of candidates) {
+      const m = (d.comments || "").match(/WIP Ref: (\d+)/);
+      if (!m) continue;
+      const ref = m[1];
+      if (!currentRefSet.has(ref)) {
+        orphans.push({ id: d.id, name: d.name, ref, status: d.status, fee: Number(d.fee) || 0 });
+      }
+    }
+
+    if (orphans.length > 0) {
+      const stamp = new Date().toISOString().slice(0, 10);
+      for (const o of orphans) {
+        await client.query(
+          `UPDATE crm_deals SET status='ARCH', comments=CONCAT('[ARCHIVED ${stamp} — not in latest WIP] ', comments), updated_at=NOW() WHERE id=$1`,
+          [o.id]
+        );
+      }
+    }
+
+    await client.query("COMMIT");
+    console.log(`[WIP Sync] Archived ${orphans.length} orphan deals not in latest WIP file`);
+    return { archived: orphans.length, deals: orphans };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("[WIP Sync] Archive error:", err);
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -4966,7 +5034,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
       try {
         if (!(await isWipSenior(req))) return res.status(403).json({ error: "Not authorised" });
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-        const result = await importWipFromBuffer(req.file.buffer, { append: req.query.append === "true" });
+        const result = await importWipFromBuffer(req.file.buffer, {
+          append: req.query.append === "true",
+          archiveOrphans: req.query.archiveOrphans === "true" || req.query.sourceOfTruth === "true",
+        });
         res.json(result);
       } catch (e: any) {
         res.status(500).json({ error: e.message });

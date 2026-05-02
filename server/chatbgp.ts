@@ -3233,6 +3233,7 @@ export async function getAvailableTools(): Promise<{
           chatMediaFilename: { type: "string", description: "The chat-media filename of the uploaded Excel (e.g. '1745689452345-abc123def.xlsx'). Use when the user has dragged the file into chat." },
           sharepointUrl: { type: "string", description: "A SharePoint share URL (e.g. 'https://...sharepoint.com/.../IQ...') pointing at the WIP Excel. Use when the user pastes a share link instead of dragging the file in. Either this or chatMediaFilename must be supplied." },
           mode: { type: "string", enum: ["replace", "append"], description: "replace = wipe wip_entries and reload from file (default — what Sage gives you each quarter). append = keep existing rows and add new ones. Default: replace." },
+          sourceOfTruth: { type: "boolean", description: "When true (and mode='replace'), also soft-archive any crm_deals previously synced from a WIP import whose ref is no longer in the file. Sets status='ARCH' and tags comments with [ARCHIVED <date>] — fully reversible. Use this for the start-of-year cutover when the new file is the definitive list. Default: false." },
         },
         required: [],
       },
@@ -6619,7 +6620,8 @@ Be thorough — include every unit row you can classify, across all properties i
       }
 
       const { importWipFromBuffer } = await import("./crm");
-      const result = await importWipFromBuffer(buffer, { append: mode === "append" });
+      const archiveOrphans = mode === "replace" && fnArgs.sourceOfTruth === true;
+      const result = await importWipFromBuffer(buffer, { append: mode === "append", archiveOrphans });
 
       // Trim the sync result for the chat reply — the agent only needs
       // headline numbers, not the full row-level breakdown. `layout`
@@ -6647,6 +6649,13 @@ Be thorough — include every unit row you can classify, across all properties i
             tenantRepSearchesCreated: enrich.tenantRepSearchesCreated ?? null,
             skipped: enrich.skipped ?? null,
           },
+          orphans: result.orphans
+            ? {
+                archived: result.orphans.archived,
+                deals: result.orphans.deals.slice(0, 50),
+                truncated: result.orphans.deals.length > 50,
+              }
+            : null,
         },
         action: { type: "wip_imported", imported: result.imported, layout: result.layout },
       };
