@@ -40,6 +40,7 @@ interface WipDealEntry {
   groupName: string | null;
   project: string | null;
   tenant: string | null;
+  billingEntity: string | null;
   team: string | null;
   agent: string | null;
   assetClass: string | null;
@@ -1562,13 +1563,14 @@ export default function WipReport() {
                     {[
                       { key: "dealRef", label: "Ref", width: "w-16" },
                       { key: "ref", label: "Deal", width: "w-40" },
-                      { key: "groupName", label: "Group", width: "w-28" },
+                      { key: "groupName", label: "Client", width: "w-28" },
                       { key: "tenant", label: "Tenant", width: "w-32" },
-                      { key: "project", label: "Project", width: "w-32" },
+                      { key: "project", label: "Property", width: "w-32" },
+                      { key: "billingEntity", label: "Billing Entity", width: "w-32" },
                       { key: "team", label: "Team", width: "w-32" },
-                      { key: "amtWip", label: "Amt WIP", width: "w-24" },
-                      { key: "amtInvoice", label: "Amt invoice", width: "w-24" },
-                      { key: "dealDate", label: "Date", width: "w-28" },
+                      { key: "amtWip", label: "Fee", width: "w-24" },
+                      { key: "amtInvoice", label: "Fee Split", width: "w-24" },
+                      { key: "dealDate", label: "Target Date", width: "w-28" },
                       { key: "dealType", label: "Deal Type", width: "w-24" },
                       { key: "assetClass", label: "Asset Class", width: "w-24" },
                       { key: "agent", label: "BGP Contact", width: "w-20" },
@@ -1615,6 +1617,7 @@ export default function WipReport() {
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[130px]">{e.groupName || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.tenant || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.project || "—"}</td>
+                      <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.billingEntity || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-700 truncate max-w-[150px]">{e.team || "—"}</td>
                       <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
                         {e.amtWip ? formatFullCurrency(e.amtWip) : "—"}
@@ -1687,7 +1690,7 @@ export default function WipReport() {
                 </tbody>
                 <tfoot className="bg-gray-100 border-t font-semibold">
                   <tr>
-                    <td colSpan={7} className="px-2 py-1.5 text-gray-800">Total</td>
+                    <td colSpan={8} className="px-2 py-1.5 text-gray-800">Total</td>
                     <td className="px-2 py-1.5 text-gray-900 font-mono text-right">
                       {formatFullCurrency(sortedDetailEntries.reduce((s, e) => s + (e.amtWip || 0), 0))}
                     </td>

@@ -5144,6 +5144,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         const teamStr = Array.isArray(deal.team) ? deal.team.join(", ") : (deal.team || null);
         const propertyName = deal.propertyId ? propMap.get(deal.propertyId) || null : null;
         const tenantName = deal.tenantId ? compMap.get(deal.tenantId) || null : null;
+        const billingEntityName = deal.invoicingEntityId ? compMap.get(deal.invoicingEntityId) || null : null;
         const invoice = invoicesByDeal.get(deal.id);
         const stage = deriveStage(deal.status);
         const isInvoiced = stage === "invoiced";
@@ -5171,6 +5172,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               groupName: deal.groupName || null,
               project: propertyName,
               tenant: tenantName,
+              billingEntity: billingEntityName,
               team: teamStr,
               agent: alloc.agentName,
               assetClass: deal.assetClass || null,
@@ -5204,6 +5206,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
               groupName: deal.groupName || null,
               project: propertyName,
               tenant: tenantName,
+              billingEntity: billingEntityName,
               team: teamStr,
               agent: null,
               assetClass: deal.assetClass || null,
@@ -5235,6 +5238,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
                 groupName: deal.groupName || null,
                 project: propertyName,
                 tenant: tenantName,
+                billingEntity: billingEntityName,
                 team: teamStr,
                 agent: agentName,
                 assetClass: deal.assetClass || null,
