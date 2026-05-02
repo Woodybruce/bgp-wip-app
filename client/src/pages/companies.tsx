@@ -1092,6 +1092,11 @@ function CompanyDetail({ id }: { id: string }) {
           <CardContent className="py-12 text-center">
             <AlertCircle className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
             <h3 className="font-medium mb-1">Company not found</h3>
+            <p className="text-xs text-muted-foreground mb-4">It may have been merged or removed.</p>
+            <Button variant="outline" size="sm" onClick={() => navigate("/companies")} data-testid="button-back-to-companies">
+              <ArrowLeft className="w-3.5 h-3.5 mr-1.5" />
+              Back to Companies
+            </Button>
           </CardContent>
         </Card>
       </div>

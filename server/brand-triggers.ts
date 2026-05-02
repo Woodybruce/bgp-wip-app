@@ -28,6 +28,13 @@ import { computeHunterScore } from "./hunter-score";
 
 const router = Router();
 const BGP_GREEN = "#2E5E3F";
+// Claude brand palette — used for transactional emails.
+const CLAUDE_CORAL = "#C15F3C";
+const CLAUDE_CREAM = "#F0EEE6";
+const CLAUDE_INK = "#1F1F1E";
+const CLAUDE_MUTED = "#87867F";
+const CLAUDE_BORDER = "#E0DEDA";
+const CLAUDE_FONT = `ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
 
 const HOT_THRESHOLD = 70;
 const COOLING_THRESHOLD = 50;
@@ -297,12 +304,12 @@ function renderDigestEmail(events: TriggerEvent[]): { subject: string; body: str
   const rows = events.map(e => {
     const url = `${baseUrl}/companies/${e.brandId}`;
     return `
-    <tr style="border-bottom:1px solid #e5e7eb">
-      <td style="padding:10px 12px;font-size:13px;white-space:nowrap">${TYPE_EMOJI[e.type]}</td>
-      <td style="padding:10px 12px">
-        <div style="font-weight:600;font-size:13px;color:#111827"><a href="${url}" style="color:${BGP_GREEN};text-decoration:none">${e.brandName}</a></div>
-        <div style="font-size:12px;color:#6b7280;margin-top:2px">${e.headline}</div>
-        <div style="font-size:12px;color:#374151;margin-top:4px">${e.detail}</div>
+    <tr style="border-bottom:1px solid ${CLAUDE_BORDER}">
+      <td style="padding:12px 14px;font-size:14px;white-space:nowrap;vertical-align:top">${TYPE_EMOJI[e.type]}</td>
+      <td style="padding:12px 14px">
+        <div style="font-weight:600;font-size:14px;color:${CLAUDE_INK};letter-spacing:-0.01em"><a href="${url}" style="color:${CLAUDE_CORAL};text-decoration:none">${e.brandName}</a></div>
+        <div style="font-size:13px;color:${CLAUDE_MUTED};margin-top:3px">${e.headline}</div>
+        <div style="font-size:13px;color:${CLAUDE_INK};margin-top:5px;line-height:1.45">${e.detail}</div>
       </td>
     </tr>`;
   }).join("");
@@ -310,17 +317,17 @@ function renderDigestEmail(events: TriggerEvent[]): { subject: string; body: str
   const body = `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
-<body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;background:#fff">
-  <div style="background:${BGP_GREEN};padding:14px 18px;border-radius:8px 8px 0 0">
-    <h1 style="color:white;margin:0;font-size:17px;font-weight:700">BGP Brand Alerts — ${new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" })}</h1>
-    <p style="color:rgba(255,255,255,0.8);margin:4px 0 0;font-size:12px">${events.length} alert${events.length !== 1 ? "s" : ""} today</p>
-  </div>
-  <div style="border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;overflow:hidden">
+<body style="font-family:${CLAUDE_FONT};max-width:600px;margin:0 auto;padding:24px;background:${CLAUDE_CREAM};color:${CLAUDE_INK}">
+  <div style="background:#fff;border:1px solid ${CLAUDE_BORDER};border-radius:12px;overflow:hidden">
+    <div style="padding:20px 22px;border-bottom:1px solid ${CLAUDE_BORDER}">
+      <h1 style="color:${CLAUDE_INK};margin:0;font-size:20px;font-weight:600;letter-spacing:-0.02em;font-family:${CLAUDE_FONT}">BGP Brand Alerts</h1>
+      <p style="color:${CLAUDE_MUTED};margin:4px 0 0;font-size:13px">${new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short" })} · ${events.length} alert${events.length !== 1 ? "s" : ""} today</p>
+    </div>
     <table style="width:100%;border-collapse:collapse">
       <tbody>${rows}</tbody>
     </table>
   </div>
-  <p style="margin:16px 0 0;font-size:11px;color:#9ca3af">
+  <p style="margin:18px 4px 0;font-size:12px;color:${CLAUDE_MUTED};font-family:${CLAUDE_FONT}">
     Bruce Gillingham Pollard · Brand alerts · You're receiving this because you cover these brands.
   </p>
 </body>

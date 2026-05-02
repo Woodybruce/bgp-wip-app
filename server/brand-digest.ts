@@ -20,6 +20,13 @@ import { sendSharedMailboxEmail } from "./shared-mailbox";
 
 const router = Router();
 const BGP_GREEN = "#2E5E3F";
+// Claude brand palette — used for transactional emails.
+const CLAUDE_CORAL = "#C15F3C";
+const CLAUDE_CREAM = "#F0EEE6";
+const CLAUDE_INK = "#1F1F1E";
+const CLAUDE_MUTED = "#87867F";
+const CLAUDE_BORDER = "#E0DEDA";
+const CLAUDE_FONT = `ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif`;
 
 const DIGEST_DAYS = 14;
 
@@ -123,30 +130,30 @@ function renderDigestHtml(data: Awaited<ReturnType<typeof loadDigestData>>): str
 
   const brandBlocks = brands.map(b => {
     const url = `${baseUrl}/companies/${b.id}`;
-    const rolloutTag = b.rollout_status ? `<span style="display:inline-block;padding:1px 6px;background:#e7f3eb;color:${BGP_GREEN};border-radius:4px;font-size:11px;font-weight:600;margin-left:6px">${ROLLOUT_LABELS[b.rollout_status] || b.rollout_status}</span>` : "";
-    const hunterTag = b.hunter_flag ? `<span style="display:inline-block;padding:1px 6px;background:#fef3c7;color:#92400e;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px">🔥 Hunter</span>` : "";
+    const rolloutTag = b.rollout_status ? `<span style="display:inline-block;padding:2px 7px;background:${CLAUDE_CREAM};color:${CLAUDE_CORAL};border-radius:4px;font-size:11px;font-weight:600;margin-left:6px">${ROLLOUT_LABELS[b.rollout_status] || b.rollout_status}</span>` : "";
+    const hunterTag = b.hunter_flag ? `<span style="display:inline-block;padding:2px 7px;background:#fef3c7;color:#92400e;border-radius:4px;font-size:11px;font-weight:600;margin-left:4px">🔥 Hunter</span>` : "";
 
     const signalRows = b.signals.map((s: any) => {
       const emoji = SIGNAL_EMOJI[s.signal_type] || "•";
-      const sentColor = s.sentiment === "positive" ? "#065f46" : s.sentiment === "negative" ? "#991b1b" : "#374151";
+      const sentColor = s.sentiment === "positive" ? "#065f46" : s.sentiment === "negative" ? "#991b1b" : CLAUDE_INK;
       return `<tr>
-        <td style="padding:3px 0;font-size:12px;color:${sentColor}">${emoji} <strong>${(s.signal_type || "").replace(/_/g, " ")}</strong> — ${s.headline || ""}</td>
+        <td style="padding:3px 0;font-size:13px;color:${sentColor}">${emoji} <strong>${(s.signal_type || "").replace(/_/g, " ")}</strong> — ${s.headline || ""}</td>
       </tr>`;
     }).join("");
 
     const pressRows = b.press.map((p: any) => {
       const daysLabel = p.days_ago === 0 ? "Today" : p.days_ago === 1 ? "Yesterday" : `${p.days_ago}d ago`;
       return `<tr>
-        <td style="padding:2px 0;font-size:11px;color:#6b7280">📰 <a href="${p.url}" style="color:#374151;text-decoration:none">${p.title}</a> ${p.source ? `<span style="color:#9ca3af">· ${p.source}</span>` : ""} <span style="color:#9ca3af">${daysLabel}</span></td>
+        <td style="padding:2px 0;font-size:12px;color:${CLAUDE_MUTED}">📰 <a href="${p.url}" style="color:${CLAUDE_INK};text-decoration:none">${p.title}</a> ${p.source ? `<span style="color:${CLAUDE_MUTED}">· ${p.source}</span>` : ""} <span style="color:${CLAUDE_MUTED}">${daysLabel}</span></td>
       </tr>`;
     }).join("");
 
     return `
-      <div style="margin-bottom:20px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
-        <div style="background:#f9fafb;padding:10px 14px;border-bottom:1px solid #e5e7eb">
-          <a href="${url}" style="font-size:14px;font-weight:700;color:${BGP_GREEN};text-decoration:none">${b.name}</a>${rolloutTag}${hunterTag}
+      <div style="margin-bottom:14px;border:1px solid ${CLAUDE_BORDER};border-radius:10px;overflow:hidden;background:#fff">
+        <div style="padding:12px 16px;border-bottom:1px solid ${CLAUDE_BORDER}">
+          <a href="${url}" style="font-size:15px;font-weight:600;letter-spacing:-0.01em;color:${CLAUDE_CORAL};text-decoration:none">${b.name}</a>${rolloutTag}${hunterTag}
         </div>
-        <div style="padding:10px 14px">
+        <div style="padding:12px 16px">
           ${b.signals.length > 0 ? `<table style="width:100%;border-collapse:collapse">${signalRows}</table>` : ""}
           ${b.press.length > 0 ? `<table style="width:100%;border-collapse:collapse;margin-top:${b.signals.length > 0 ? 6 : 0}px">${pressRows}</table>` : ""}
         </div>
@@ -154,25 +161,23 @@ function renderDigestHtml(data: Awaited<ReturnType<typeof loadDigestData>>): str
   }).join("");
 
   const emptyNote = brands.length === 0
-    ? `<p style="color:#6b7280;text-align:center;padding:24px">No brand activity detected in the past ${DIGEST_DAYS} days.</p>`
+    ? `<p style="color:${CLAUDE_MUTED};text-align:center;padding:24px">No brand activity detected in the past ${DIGEST_DAYS} days.</p>`
     : "";
 
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;padding:20px;background:#ffffff">
-  <div style="background:${BGP_GREEN};padding:16px 20px;border-radius:8px 8px 0 0;margin-bottom:0">
-    <h1 style="color:white;margin:0;font-size:20px;font-weight:700">BGP Brand Intelligence</h1>
-    <p style="color:rgba(255,255,255,0.8);margin:4px 0 0;font-size:13px">Fortnightly digest · ${dateRange}</p>
-  </div>
-  <div style="background:#f0f4f2;padding:10px 20px;border-radius:0 0 8px 8px;margin-bottom:20px">
-    <p style="margin:0;font-size:13px;color:#374151">
+<body style="font-family:${CLAUDE_FONT};max-width:640px;margin:0 auto;padding:24px;background:${CLAUDE_CREAM};color:${CLAUDE_INK}">
+  <div style="background:#fff;border:1px solid ${CLAUDE_BORDER};border-radius:12px;padding:20px 22px;margin-bottom:16px">
+    <h1 style="color:${CLAUDE_INK};margin:0;font-size:20px;font-weight:600;letter-spacing:-0.02em">BGP Brand Intelligence</h1>
+    <p style="color:${CLAUDE_MUTED};margin:4px 0 0;font-size:13px">Fortnightly digest · ${dateRange}</p>
+    <p style="margin:10px 0 0;font-size:13px;color:${CLAUDE_INK}">
       <strong>${brands.length} tracked brand${brands.length === 1 ? "" : "s"}</strong> with new signals or press coverage this fortnight.
     </p>
   </div>
   ${emptyNote}
   ${brandBlocks}
-  <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:11px;color:#9ca3af;text-align:center">
+  <div style="margin-top:18px;font-size:12px;color:${CLAUDE_MUTED};text-align:center">
     Bruce Gillingham Pollard · Brand Intelligence Digest · Auto-generated by BGP Dashboard
   </div>
 </body>
