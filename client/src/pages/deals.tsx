@@ -267,7 +267,6 @@ const COLUMN_LABELS: Record<string, string> = {
   completedAt: "Completed",
   invoicedAt: "Invoiced",
   rentAnalysis: "Rent Analysis",
-  comments: "Comments",
   sharepoint: "SharePoint",
 
 };
@@ -3882,7 +3881,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     completedAt: false,
     invoicedAt: false,
     rentAnalysis: true,
-    comments: true,
     sharepoint: true,
   });
 
@@ -4679,7 +4677,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.completedAt && <TableHead className="min-w-[110px]">Completed</TableHead>}
                     {visibleColumns.invoicedAt && <TableHead className="min-w-[110px]">Invoiced</TableHead>}
                     {visibleColumns.rentAnalysis && <TableHead className="min-w-[100px] text-right">Rent Analysis</TableHead>}
-                    {visibleColumns.comments && <TableHead className="min-w-[200px]">Comments</TableHead>}
                     {visibleColumns.sharepoint && <TableHead className="min-w-[140px]">SharePoint Files</TableHead>}
                     <TableHead className="w-[40px]"></TableHead>
                   </TableRow>
@@ -5100,11 +5097,6 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                             onSave={(v) => handleInlineSave(deal.id, "rentAnalysis", v)}
                             prefix="£"
                           />
-                        </TableCell>
-                      )}
-                      {visibleColumns.comments && (
-                        <TableCell className="px-1.5 py-1 max-w-[200px]">
-                          <span className="truncate block">{deal.comments || "—"}</span>
                         </TableCell>
                       )}
                       {visibleColumns.sharepoint && (
