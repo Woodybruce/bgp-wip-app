@@ -348,10 +348,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     { label: "Rent PA", value: deal.rentPa, format: "currency" },
     { label: "Yield", value: deal.yieldPercent, format: "percent" },
     { label: "Total Area (sqft)", value: deal.totalAreaSqft, format: "number" },
-    { label: "GF Area (sqft)", value: deal.gfAreaSqft, format: "number" },
-    { label: "FF Area (sqft)", value: deal.ffAreaSqft, format: "number" },
-    { label: "Basement (sqft)", value: deal.basementAreaSqft, format: "number" },
-    { label: "ITZA (sqft)", value: deal.itzaAreaSqft, format: "number" },
     { label: "Price PSF", value: deal.pricePsf, format: "currency" },
     { label: "Price ITZA", value: deal.priceItza, format: "currency" },
     { label: "Capital Contribution", value: deal.capitalContribution, format: "currency" },
@@ -374,7 +370,6 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
     { label: "Asset Class", value: deal.assetClass, colorMap: DEAL_ASSET_CLASS_COLORS },
     { label: "Tenure", value: deal.tenureText },
     { label: "Fee Agreement", value: deal.feeAgreement, colorMap: DEAL_FEE_AGREEMENT_COLORS },
-    { label: "AML Check", value: deal.amlCheckCompleted, colorMap: DEAL_AML_COLORS },
     { label: "Instructed", value: deal.instructedAt ? formatDate(deal.instructedAt) : null },
     { label: "Target Date", value: deal.targetDate ? formatDate(deal.targetDate) : null },
     { label: "Exchanged", value: deal.exchangedAt ? formatDate(deal.exchangedAt) : null },
@@ -569,6 +564,29 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                 </p>
               </div>
             ))}
+            {[
+              { label: "GF", value: deal.gfAreaSqft },
+              { label: "FF", value: deal.ffAreaSqft },
+              { label: "Bsmt", value: deal.basementAreaSqft },
+              { label: "ITZA", value: deal.itzaAreaSqft },
+            ].some(f => f.value != null) && (
+              <div className="flex flex-col py-1 col-span-2">
+                <p className="text-[10px] text-muted-foreground leading-tight mb-0.5">Floor Breakdown</p>
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                  {[
+                    { label: "GF", value: deal.gfAreaSqft },
+                    { label: "FF", value: deal.ffAreaSqft },
+                    { label: "Bsmt", value: deal.basementAreaSqft },
+                    { label: "ITZA", value: deal.itzaAreaSqft },
+                  ].filter(f => f.value != null).map(f => (
+                    <span key={f.label} className="text-xs font-mono">
+                      <span className="text-[9px] text-muted-foreground/70 uppercase mr-0.5">{f.label}</span>
+                      {formatNumber(f.value)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
