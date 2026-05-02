@@ -949,8 +949,28 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
       const agentPg = agentArr;
       const completionDate = parseWipMonthToDate(deal.month);
 
-      if (wipRefToDealId.has(deal.ref)) {
-        const existingId = wipRefToDealId.get(deal.ref)!;
+      // Dedupe lookup — if no ref→id link exists yet, check whether an active
+      // deal already exists with the same name + landlord + tenant. Stops the
+      // importer creating duplicate rows for the same deal across reimports.
+      let resolvedDealId = wipRefToDealId.get(deal.ref);
+      if (!resolvedDealId) {
+        const { rows: dupes } = await client.query(
+          `SELECT id FROM crm_deals
+            WHERE LOWER(name) = LOWER($1)
+              AND COALESCE(landlord_id, '') = COALESCE($2, '')
+              AND COALESCE(tenant_id, '')   = COALESCE($3, '')
+              AND status NOT IN ('ARCH', 'COM')
+            LIMIT 1`,
+          [dealName, landlordId, tenantId]
+        );
+        if (dupes.length > 0) {
+          resolvedDealId = dupes[0].id;
+          wipRefToDealId.set(deal.ref, resolvedDealId);
+        }
+      }
+
+      if (resolvedDealId) {
+        const existingId = resolvedDealId;
         await client.query(
           `UPDATE crm_deals SET name=$1, group_name=$2, property_id=$3, landlord_id=$4, tenant_id=$5, deal_type=$6, status=$7, team=$8::text[], internal_agent=$9::text[], fee=$10, comments=$11, completion_date=$12, updated_at=NOW() WHERE id=$13`,
           [dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, completionDate, existingId]
@@ -1011,6 +1031,22 @@ export function setupCrmRoutes(app: Express) {
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_company TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_phone TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS contact_email TEXT`).catch(() => {});
+
+  // wip_entries hard FKs (mirror schema.ts) — safe to re-run on each boot
+  pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS deal_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE wip_entries ADD COLUMN IF NOT EXISTS property_id VARCHAR`).catch(() => {});
+  pool.query(`CREATE INDEX IF NOT EXISTS idx_wip_entries_deal_id ON wip_entries (deal_id)`).catch(() => {});
+  pool.query(`CREATE INDEX IF NOT EXISTS idx_wip_entries_property_id ON wip_entries (property_id)`).catch(() => {});
+
+  // crm_deals soft dedupe — partial unique index on (lower(name), landlord_id, tenant_id)
+  // for active deals only. Stops syncWipToCrmDeals from re-creating duplicate
+  // Brent Cross / Bullring rows on every reimport. Historic dupes (status='ARCH'
+  // or 'COM') are excluded so the index can be created without conflicts.
+  pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_crm_deals_dedupe
+       ON crm_deals (LOWER(name), COALESCE(landlord_id, ''), COALESCE(tenant_id, ''))
+       WHERE status NOT IN ('ARCH', 'COM')`
+  ).catch(() => {});
 
   app.use("/api/crm", requireAuth);
   app.get("/api/crm/stats", async (_req, res) => {
