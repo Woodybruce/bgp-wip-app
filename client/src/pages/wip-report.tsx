@@ -496,7 +496,7 @@ function ReconciliationTab() {
             <Badge className="bg-blue-100 text-blue-700 border-blue-200 text-xs">{data!.unmatchedProjects.length}</Badge>
           </div>
           <div className="px-4 py-3 text-xs text-gray-600 space-y-1">
-            <p className="text-[11px] text-muted-foreground mb-2">These Project names didn't match a CRM property — new bare records were created. Add addresses via the Properties section.</p>
+            <p className="text-[11px] text-muted-foreground mb-2">These Property names didn't match a CRM property — new bare records were created. Add addresses via the Properties section.</p>
             {data!.unmatchedProjects.map(p => (
               <div key={p} className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
@@ -1465,7 +1465,7 @@ export default function WipReport() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <ClickableSummaryTable
-              title="Group"
+              title="Client"
               data={groupData}
               valueLabel="Net fees"
               activeValue={clickFilterActiveField === "groupName" ? clickFilterActiveValue : null}
@@ -1493,7 +1493,7 @@ export default function WipReport() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <ClickableSummaryTable
-              title="Project"
+              title="Property"
               data={projectData}
               valueLabel="Net fees"
               activeValue={clickFilterActiveField === "project" ? clickFilterActiveValue : null}
@@ -1533,7 +1533,7 @@ export default function WipReport() {
               </div>
               {clickFilter && (
                 <Badge variant="secondary" className="text-[10px]">
-                  Filtered by {clickFilter.field === "groupName" ? "Group" : clickFilter.field === "dealStatus" ? "Status" : clickFilter.field}: {clickFilter.value}
+                  Filtered by {clickFilter.field === "groupName" ? "Client" : clickFilter.field === "project" ? "Property" : clickFilter.field === "dealStatus" ? "Status" : clickFilter.field}: {clickFilter.value}
                 </Badge>
               )}
             </div>

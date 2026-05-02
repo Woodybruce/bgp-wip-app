@@ -935,12 +935,19 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
         }
       }
 
-      // ── Client group (Group column) — must match existing CRM company ──
-      // Never auto-create: if no fuzzy match, surface in reconciliation.
+      // ── Client group (Group column) — the BGP client who instructed the deal ──
       let landlordId: string | null = null;
       if (deal.group_name?.trim()) {
         landlordId = wipFuzzyMatch(deal.group_name, compMap);
-        if (!landlordId) unmatchedGroups.add(deal.group_name.trim());
+        if (!landlordId) {
+          landlordId = randomUUID();
+          await client.query(
+            `INSERT INTO crm_companies (id, name, company_type, created_at, updated_at) VALUES ($1, $2, 'Client', NOW(), NOW())`,
+            [landlordId, deal.group_name.trim()]
+          );
+          compMap.set(deal.group_name.trim().toLowerCase(), landlordId);
+          unmatchedGroups.add(deal.group_name.trim());
+        }
       }
 
       // ── Tenant ─────────────────────────────────────────────────────────
