@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ChatBGP — Logo Concepts</title>
+<style>
+  :root {
+    --ink: #1F1F1E;
+    --cream: #F0EEE6;
+    --coral: #C15F3C;
+    --muted: #87867F;
+    --border: #E0DEDA;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--cream);
+    color: var(--ink);
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    padding: 32px 24px 64px;
+  }
+  h1 {
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 0 0 6px;
+  }
+  .lede { color: var(--muted); font-size: 13px; margin: 0 0 32px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 22px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+  .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .name {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 18px;
+  }
+  .marks {
+    display: flex;
+    gap: 18px;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .mark { width: 72px; height: 72px; }
+  .mark-sm { width: 36px; height: 36px; }
+  .desc {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.5;
+    max-width: 240px;
+  }
+  .row-light { background: #fff; padding: 10px; border-radius: 10px; }
+  .row-dark { background: var(--ink); padding: 10px; border-radius: 10px; }
+  header { max-width: 1200px; margin: 0 auto 32px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ChatBGP — Logo Concepts</h1>
+  <p class="lede">Five directions. Each shown as a 72px primary mark + 36px sized down. Light and dark backgrounds.</p>
+</header>
+
+<div class="grid">
+
+  <!-- 1. CURRENT (reference) -->
+  <div class="card">
+    <div class="label">00 · Current</div>
+    <div class="name">App-icon sparkle</div>
+    <div class="marks">
+      <div class="row-light">
+        <svg class="mark" viewBox="0 0 72 72">
+          <rect x="0" y="0" width="72" height="72" rx="16" fill="#1F1F1E"/>
+          <path d="M36 18 l3.5 10.5 L50 32 l-10.5 3.5 L36 46 l-3.5-10.5 L22 32 l10.5-3.5 z" fill="#fff"/>
+          <path d="M50 40 l1.6 4.8 L56.4 46.4 l-4.8 1.6 L50 52.8 l-1.6-4.8 L43.6 46.4 l4.8-1.6 z" fill="#fff"/>
+        </svg>
+      </div>
+      <div class="row-light">
+        <svg class="mark-sm" viewBox="0 0 72 72">
+          <rect x="0" y="0" width="72" height="72" rx="16" fill="#1F1F1E"/>
+          <path d="M36 18 l3.5 10.5 L50 32 l-10.5 3.5 L36 46 l-3.5-10.5 L22 32 l10.5-3.5 z" fill="#fff"/>
+          <path d="M50 40 l1.6 4.8 L56.4 46.4 l-4.8 1.6 L50 52.8 l-1.6-4.8 L43.6 46.4 l4.8-1.6 z" fill="#fff"/>
+        </svg>
+      </div>
+    </div>
+    <p class="desc">Current mark — clean, ChatGPT-style. Reference for comparison.</p>
+  </div>
+
+  <!-- 1. BGP-NATIVE SPARKLE -->
+  <div class="card">
+    <div class="label">01 · BGP Sparkle</div>
+    <div class="name">B-shaped sparkle strokes</div>
+    <div class="marks">
+      <div class="row-light">
+        <svg class="mark" viewBox="0 0 72 72">
+          <rect x="0" y="0" width="72" height="72" rx="16" fill="#1F1F1E"/>
+          <!-- vertical spine (the B's stem) -->
+          <rect x="26" y="18" width="3" height="36" rx="1.5" fill="#fff"/>
+          <!-- upper bowl as a half-sparkle -->
+          <path d="M29 22 q14 2 14 8 q0 6 -14 8 z" fill="#fff"/>
+          <!-- lower bowl -->
+          <path d="M29 38 q16 2 16 8 q0 6 -16 8 z" fill="#fff"/>
+          <!-- accent mini-sparkle -->
+          <path d="M52 22 l1.4 4.2 L57.6 27.6 l-4.2 1.4 L52 33.2 l-1.4-4.2 L46.4 27.6 l4.2-1.4 z" fill="#C15F3C"/>
+        </svg>
+      </div>
+      <div class="row-light">
+        <svg class="mark-sm" viewBox="0 0 72 72">
+          <rect x="0" y="0" width="72" height="72" rx="16" fill="#1F1F1E"/>
+          <rect x="26" y="18" width="3" height="36" rx="1.5" fill="#fff"/>
+          <path d="M29 22 q14 2 14 8 q0 6 -14 8 z" fill="#fff"/>
+          <path d="M29 38 q16 2 16 8 q0 6 -16 8 z" fill="#fff"/>
+          <path d="M52 22 l1.4 4.2 L57.6 27.6 l-4.2 1.4 L52 33.2 l-1.4-4.2 L46.4 27.6 l4.2-1.4 z" fill="#C15F3C"/>
+        </svg>
+      </div>
+    </div>
+    <p class="desc">A "B" letterform anchors the mark. Coral sparkle accent ties to BGP wordmark — reads brand-first, AI-second.</p>
+  </div>
+
+  <!-- 2. CORAL SPARKLE -->
+  <div class="card">
+    <div class="label">02 · Claude Coral</div>
+    <div class="name">Coral sparkle on dark</div>
+    <div class="marks">
+      <div class="row-light">
+        <svg class="mark" viewBox="0 0 72 72">
+          <rect x="0" y="0" width="72" height="72" rx="16" fill="#1F1F1E"/>
+          <path d="M36 18 l3.5 10.5 L50 32 l-10.5 3.5 L36 46 l-3.5-10.5 L22 32 l10.5-3.5 z" fill="#C15F3C"/>
+          <path d="M50 40 l1.6 4.8 L56.4 46.4 l-4.8 1.6 L50 52.8 l-1.6-4.8 L43.6 46.4 l4.8-1.6 z" fill="#C15F3C"/>
+        </svg>
+      </div>
+      <div class="row-light">
+        <svg class="mark-sm" viewBox="0 0 72 72">
+          <rect x="0" y="0" width="72" height="72" rx="16" fill="#1F1F1E"/>
+          <path d="M36 18 l3.5 10.5 L50 32 l-10.5 3.5 L36 46 l-3.5-10.5 L22 32 l10.5-3.5 z" fill="#C15F3C"/>
+          <path d="M50 40 l1.6 4.8 L56.4 46.4 l-4.8 1.6 L50 52.8 l-1.6-4.8 L43.6 46.4 l4.8-1.6 z" fill="#C15F3C"/>
+        </svg>
+      </div>
+    </div>
+    <p class="desc">Same shape as current, swapped to Claude coral. Instantly distinct from white-sparkle clones (Linear/Notion/etc).</p>
+  </div>
+
+  <!-- 3. SPEECH BUBBLE + SPARK -->
+  <div class="card">
+    <div class="label">03 · Chat Bubble</div>
+    <div class="name">Squircle with bubble tail</div>
+    <div class="marks">
+      <div class="row-light">
+        <svg class="mark" viewBox="0 0 72 72">
+          <!-- squircle body -->
+          <path d="M16 8 h40 a8 8 0 0 1 8 8 v32 a8 8 0 0 1 -8 8 h-22 l-12 8 v-8 h-6 a8 8 0 0 1 -8 -8 v-32 a8 8 0 0 1 8 -8 z" fill="#1F1F1E"/>
+          <path d="M36 18 l3 9 L48 30 l-9 3 L36 42 l-3-9 L24 30 l9-3 z" fill="#fff"/>
+          <path d="M48 36 l1.4 4.2 L53.6 41.6 l-4.2 1.4 L48 47.2 l-1.4-4.2 L42.4 41.6 l4.2-1.4 z" fill="#C15F3C"/>
+        </svg>
+      </div>
+      <div class="row-light">
+        <svg class="mark-sm" viewBox="0 0 72 72">
+          <path d="M16 8 h40 a8 8 0 0 1 8 8 v32 a8 8 0 0 1 -8 8 h-22 l-12 8 v-8 h-6 a8 8 0 0 1 -8 -8 v-32 a8 8 0 0 1 8 -8 z" fill="#1F1F1E"/>
+          <path d="M36 18 l3 9 L48 30 l-9 3 L36 42 l-3-9 L24 30 l9-3 z" fill="#fff"/>
+          <path d="M48 36 l1.4 4.2 L53.6 41.6 l-4.2 1.4 L48 47.2 l-1.4-4.2 L42.4 41.6 l4.2-1.4 z" fill="#C15F3C"/>
+        </svg>
+      </div>
+    </div>
+    <p class="desc">Subtle chat-bubble tail makes "Chat" obvious without being literal. Coral spark adds AI cue.</p>
+  </div>
+
+  <!-- 4. PROPERTY PIN + SPARKLE -->
+  <div class="card">
+    <div class="label">04 · Property + AI</div>
+    <div class="name">Window-grid silhouette</div>
+    <div class="marks">
+      <div class="row-light">
+        <svg class="mark" viewBox="0 0 72 72">
+          <rect x="0" y="0" width="72" height="72" rx="16" fill="#1F1F1E"/>
+          <!-- building grid: 3x4 panes -->
+          <g fill="#fff" opacity="0.92">
+            <rect x="20" y="20" width="8" height="10" rx="1"/>
+            <rect x="32" y="20" width="8" height="10" rx="1"/>
+            <rect x="44" y="20" width="8" height="10" rx="1"/>
+            <rect x="20" y="34" width="8" height="10" rx="1"/>
+            <rect x="32" y="34" width="8" height="10" rx="1"/>
+            <rect x="44" y="34" width="8" height="10" rx="1"/>
+            <rect x="20" y="48" width="8" height="6" rx="1"/>
+            <rect x="32" y="48" width="8" height="6" rx="1"/>
+            <rect x="44" y="48" width="8" height="6" rx="1"/>
+          </g>
+          <!-- one pane "lit" with coral sparkle -->
+          <rect x="32" y="34" width="8" height="10" rx="1" fill="#C15F3C"/>
+          <path d="M36 36.5 l1 3 L40 40.5 l-3 1 L36 44.5 l-1-3 L32 40.5 l3-1 z" fill="#fff"/>
+        </svg>
+      </div>
+      <div class="row-light">
+        <svg class="mark-sm" viewBox="0 0 72 72">
+          <rect x="0" y="0" width="72" height="72" rx="16" fill="#1F1F1E"/>
+          <g fill="#fff" opacity="0.92">
+            <rect x="20" y="20" width="8" height="10" rx="1"/>
+            <rect x="32" y="20" width="8" height="10" rx="1"/>
+            <rect x="44" y="20" width="8" height="10" rx="1"/>
+            <rect x="20" y="34" width="8" height="10" rx="1"/>
+            <rect x="32" y="34" width="8" height="10" rx="1"/>
+            <rect x="44" y="34" width="8" height="10" rx="1"/>
+            <rect x="20" y="48" width="8" height="6" rx="1"/>
+            <rect x="32" y="48" width="8" height="6" rx="1"/>
+            <rect x="44" y="48" width="8" height="6" rx="1"/>
+          </g>
+          <rect x="32" y="34" width="8" height="10" rx="1" fill="#C15F3C"/>
+        </svg>
+      </div>
+    </div>
+    <p class="desc">A building façade with one window "lit up" by AI. Ties ChatBGP visually to the property domain.</p>
+  </div>
+
+  <!-- 5. WORDMARK-LED -->
+  <div class="card">
+    <div class="label">05 · Wordmark</div>
+    <div class="name">Chat<strong>BGP</strong> · sparkle dot</div>
+    <div class="marks" style="height:72px">
+      <div class="row-light" style="display:flex;align-items:center;height:72px;padding:0 16px">
+        <svg viewBox="0 0 200 50" style="height:38px;width:auto">
+          <text x="2" y="36" font-family="ui-sans-serif, -apple-system, system-ui, sans-serif" font-weight="400" font-size="32" fill="#1F1F1E" letter-spacing="-1">Cha</text>
+          <!-- sparkle replaces dot of 't' -->
+          <path d="M65 14 l1.4 4.2 L70.6 19.6 l-4.2 1.4 L65 25.2 l-1.4-4.2 L59.4 19.6 l4.2-1.4 z" fill="#C15F3C"/>
+          <text x="58" y="36" font-family="ui-sans-serif, -apple-system, system-ui, sans-serif" font-weight="400" font-size="32" fill="#1F1F1E" letter-spacing="-1">t</text>
+          <text x="76" y="36" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="32" fill="#1F1F1E" letter-spacing="-0.5">BGP</text>
+        </svg>
+      </div>
+    </div>
+    <div class="marks" style="margin-top:0">
+      <div class="row-dark" style="display:flex;align-items:center;padding:8px 14px">
+        <svg viewBox="0 0 200 50" style="height:24px;width:auto">
+          <text x="2" y="36" font-family="ui-sans-serif, -apple-system, system-ui, sans-serif" font-weight="400" font-size="32" fill="#fff" letter-spacing="-1">Cha</text>
+          <path d="M65 14 l1.4 4.2 L70.6 19.6 l-4.2 1.4 L65 25.2 l-1.4-4.2 L59.4 19.6 l4.2-1.4 z" fill="#C15F3C"/>
+          <text x="58" y="36" font-family="ui-sans-serif, -apple-system, system-ui, sans-serif" font-weight="400" font-size="32" fill="#fff" letter-spacing="-1">t</text>
+          <text x="76" y="36" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="32" fill="#fff" letter-spacing="-0.5">BGP</text>
+        </svg>
+      </div>
+    </div>
+    <p class="desc">"Chat" in clean grotesque, "BGP" in BGP's existing serif. Coral sparkle replaces the dot of the t. Reads as a sub-brand.</p>
+  </div>
+
+</div>
+
+<div style="max-width:1200px;margin:32px auto 0;padding:18px 22px;background:#fff;border:1px solid var(--border);border-radius:12px">
+  <p style="margin:0;font-size:13px;color:var(--ink)">
+    <strong>How to view:</strong> Run the app locally and visit <code style="background:var(--cream);padding:2px 6px;border-radius:4px">/chatbgp-logo-concepts.html</code>. Tell me which one you want and I'll wire it into the email header, app sidebar, and PWA icon.
+  </p>
+</div>
+
+</body>
+</html>
