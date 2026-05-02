@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
+import { AIActivityTrigger } from "@/components/ai-activity-card";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
@@ -314,6 +315,7 @@ export default function BrandHunterBoard() {
                               <Bookmark className="w-4 h-4" />
                             )}
                           </button>
+                          <AIActivityTrigger subjectType="brand" subjectId={brand.id} title={`${brand.name} — Activity`} />
                         </div>
                       </div>
 

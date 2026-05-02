@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Building2, Flame, Search, ArrowUpDown, Clock, AlertTriangle } from "lucide-react";
 import { Link } from "wouter";
+import { AIActivityTrigger } from "@/components/ai-activity-card";
 
 type Row = {
   id: string;
@@ -89,6 +90,7 @@ export default function HuntersLetting() {
                     <Th label="Stale agent" k="staleAgentCount" sortKey={sortKey} setSortKey={setSortKey} />
                     <Th label="New acq" k="recentAcq" sortKey={sortKey} setSortKey={setSortKey} />
                     <th className="text-left px-2 py-2 font-medium text-[10px] uppercase tracking-wide text-muted-foreground">Why</th>
+                    <th className="px-2 py-2 w-[90px]"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -117,6 +119,9 @@ export default function HuntersLetting() {
                       <td className="px-2 py-2 text-center">{r.recentAcq || "—"}</td>
                       <td className="px-2 py-2 text-muted-foreground max-w-[280px] truncate" title={r.lettingHunterNotes || ""}>
                         {r.lettingHunterNotes || "—"}
+                      </td>
+                      <td className="px-2 py-2 text-right">
+                        <AIActivityTrigger subjectType="landlord" subjectId={r.id} title={`${r.name} — Activity`} />
                       </td>
                     </tr>
                   ))}

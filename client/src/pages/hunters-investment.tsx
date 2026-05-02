@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { TrendingUp, TrendingDown, AlertTriangle, Search, ArrowUpDown } from "lucide-react";
 import { Link } from "wouter";
+import { AIActivityTrigger } from "@/components/ai-activity-card";
 
 type Row = {
   id: string;
@@ -104,6 +105,7 @@ export default function HuntersInvestment() {
                         <Th label="Mandate" align="left" />
                         <Th label="Acq 12mo" />
                         <Th label="Notes" align="left" />
+                        <th className="px-2 py-2 w-[90px]"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -126,6 +128,7 @@ export default function HuntersInvestment() {
                           </td>
                           <td className="px-2 py-2 text-center">{r.acq12mo || "—"}</td>
                           <td className="px-2 py-2 text-muted-foreground max-w-[260px] truncate" title={r.acquiringNowNotes || ""}>{r.acquiringNowNotes || "—"}</td>
+                          <td className="px-2 py-2 text-right"><AIActivityTrigger subjectType="brand" subjectId={r.id} title={`${r.name} — Activity`} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -156,6 +159,7 @@ export default function HuntersInvestment() {
                         <Th label="Disp value" />
                         <Th label="Yrs fund end" />
                         <Th label="Notes" align="left" />
+                        <th className="px-2 py-2 w-[90px]"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -177,6 +181,7 @@ export default function HuntersInvestment() {
                           <td className="px-2 py-2 text-muted-foreground max-w-[260px] truncate" title={r.distressNotes || r.disposingNowNotes || ""}>
                             {r.distressNotes || r.disposingNowNotes || "—"}
                           </td>
+                          <td className="px-2 py-2 text-right"><AIActivityTrigger subjectType="landlord" subjectId={r.id} title={`${r.name} — Activity`} /></td>
                         </tr>
                       ))}
                     </tbody>

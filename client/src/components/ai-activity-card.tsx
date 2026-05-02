@@ -24,6 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Sparkles, RefreshCw, Mail, CalendarDays, AlertCircle, Loader2, ExternalLink, Copy, Download, Paperclip } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { getAuthHeaders } from "@/lib/queryClient";
@@ -388,5 +389,47 @@ function EmailViewerDialog({ msgId, mailboxEmail, onClose }: { msgId: string; ma
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Compact trigger button — opens a side sheet containing the full
+ * AIActivityCard for the given subject. Used on list views (hunter
+ * pages, deal lists, company lists) where a full card per row would
+ * be too much visual weight.
+ */
+export function AIActivityTrigger({
+  subjectType,
+  subjectId,
+  title,
+  variant = "ghost",
+}: {
+  subjectType: ActivitySubjectType;
+  subjectId: string;
+  title?: string;
+  variant?: "ghost" | "outline" | "default";
+}) {
+  return (
+    <Sheet>
+      <SheetTrigger asChild>
+        <Button
+          variant={variant}
+          size="sm"
+          className="h-7 text-[11px] gap-1"
+          onClick={(e) => e.stopPropagation()}
+          data-testid={`ai-activity-trigger-${subjectType}-${subjectId}`}
+        >
+          <Sparkles className="w-3 h-3 text-purple-500" /> Activity
+        </Button>
+      </SheetTrigger>
+      <SheetContent side="right" className="w-[600px] sm:max-w-[600px] overflow-y-auto">
+        <SheetHeader>
+          <SheetTitle>{title || "AI-curated activity"}</SheetTitle>
+        </SheetHeader>
+        <div className="mt-4">
+          <AIActivityCard subjectType={subjectType} subjectId={subjectId} title={title} />
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
