@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { queryClient, apiRequest, getAuthHeaders } from "@/lib/queryClient";
 import { useChatBGPState } from "@/contexts/chatbgp-context";
+import { AIActivityCard } from "@/components/ai-activity-card";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1002,7 +1003,16 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
             </div>
           </div>
         ) : (
-          <div className="w-full flex flex-col">
+          <div className="w-full flex flex-col gap-2.5">
+            {/* AI-curated activity — emails + meetings about this brand,
+                pulled from across all 31 mailboxes and filtered by ChatBGP.
+                Same engine as the deal page, contact page, and hunter rows. */}
+            <AIActivityCard
+              subjectType={(c.company_type || "").toLowerCase().includes("landlord") ? "landlord" : "brand"}
+              subjectId={companyId}
+              title={`${c.name} — Activity`}
+              compact
+            />
             {/* ── Details card ─────────────────────────────── */}
             {(() => {
               const a = c.head_office_address;

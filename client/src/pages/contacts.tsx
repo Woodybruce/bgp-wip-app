@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { AIActivityCard } from "@/components/ai-activity-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1258,6 +1259,11 @@ function ContactDetail({ id }: { id: string }) {
               </>
             );
           })()}
+
+          {/* AI-curated activity — emails + calendar invites involving this
+              contact, filtered by ChatBGP across all 31 mailboxes. Same
+              engine as the deal page, brand profile, and hunter rows. */}
+          <AIActivityCard subjectType="contact" subjectId={id} title="Contact Activity (AI curated)" />
 
           <InteractionTimeline contactId={id} />
         </div>
