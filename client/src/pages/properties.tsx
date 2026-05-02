@@ -931,13 +931,13 @@ export function InlineDeals({
   });
 
   return (
-    <div className="flex items-center gap-1 flex-wrap max-w-[130px]">
+    <div className="flex flex-col gap-0.5 w-full">
       {linkedDeals.map(deal => (
-        <div key={deal.id} className="flex items-center gap-0.5 min-w-0">
-          <Link href={`/deals/${deal.id}`}>
+        <div key={deal.id} className="flex items-center gap-0.5 min-w-0 group/deal">
+          <Link href={`/deals/${deal.id}`} className="min-w-0 flex-1">
             <Badge
               variant="outline"
-              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted max-w-[110px]"
+              className="text-[10px] px-1.5 py-0 cursor-pointer hover:bg-muted w-full justify-start"
               data-testid={`deal-badge-${deal.id}`}
             >
               <Handshake className="w-2.5 h-2.5 mr-0.5 shrink-0 text-muted-foreground" />
@@ -945,7 +945,7 @@ export function InlineDeals({
             </Badge>
           </Link>
           <button
-            className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center"
+            className="w-3.5 h-3.5 rounded-full hover:bg-destructive/20 flex items-center justify-center shrink-0 opacity-0 group-hover/deal:opacity-100 transition-opacity"
             onClick={() => unlinkMutation.mutate(deal.id)}
             data-testid={`remove-deal-${deal.id}`}
           >
@@ -956,10 +956,11 @@ export function InlineDeals({
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
-            className="w-5 h-5 rounded-full border border-dashed border-muted-foreground/30 hover:border-foreground/50 flex items-center justify-center transition-colors"
+            className="text-[10px] text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1 self-start"
             data-testid={`add-deal-${propertyId}`}
           >
-            <Plus className="w-3 h-3 text-muted-foreground" />
+            <Plus className="w-3 h-3" />
+            WIP
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-64">
