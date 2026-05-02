@@ -1353,6 +1353,11 @@ export const wipEntries = pgTable("wip_entries", {
   invoiceNo: text("invoice_no"),
   orderNumber: text("order_number"),
   fiscalYear: integer("fiscal_year"),
+  // Hard links populated by syncWipToCrmDeals at import time. Removes the
+  // need to re-derive crm_deals/crm_properties from project/tenant strings
+  // on every read. Nullable for legacy rows pre-backfill.
+  dealId: varchar("deal_id"),
+  propertyId: varchar("property_id"),
 });
 
 export const insertWipEntrySchema = createInsertSchema(wipEntries).omit({ id: true });

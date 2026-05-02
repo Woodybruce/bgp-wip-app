@@ -858,11 +858,23 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
     const compMap = new Map<string, string>();
     for (const c of existingCompanies) compMap.set(c.name_lower, c.id);
 
-    const { rows: existingDeals } = await client.query(`SELECT id, comments FROM crm_deals`);
     const wipRefToDealId = new Map<string, string>();
+
+    // Prefer the hard FK on wip_entries (set by previous import). Falls back
+    // to the legacy "WIP Ref: N" comment regex for deals predating the FK.
+    const { rows: existingFkRefs } = await client.query(
+      `SELECT DISTINCT ref, deal_id FROM wip_entries WHERE ref IS NOT NULL AND ref != '' AND deal_id IS NOT NULL`
+    );
+    for (const r of existingFkRefs) {
+      // Verify the deal still exists before trusting the link
+      const { rows: stillThere } = await client.query(`SELECT 1 FROM crm_deals WHERE id=$1`, [r.deal_id]);
+      if (stillThere.length > 0) wipRefToDealId.set(String(r.ref), r.deal_id);
+    }
+
+    const { rows: existingDeals } = await client.query(`SELECT id, comments FROM crm_deals`);
     for (const d of existingDeals) {
       const match = d.comments?.match(/WIP Ref: (\d+)/);
-      if (match) wipRefToDealId.set(match[1], d.id);
+      if (match && !wipRefToDealId.has(match[1])) wipRefToDealId.set(match[1], d.id);
     }
 
     let created = 0, updated = 0, propertiesCreated = 0;
@@ -943,6 +955,12 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
           `UPDATE crm_deals SET name=$1, group_name=$2, property_id=$3, landlord_id=$4, tenant_id=$5, deal_type=$6, status=$7, team=$8::text[], internal_agent=$9::text[], fee=$10, comments=$11, completion_date=$12, updated_at=NOW() WHERE id=$13`,
           [dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, completionDate, existingId]
         );
+        // Write hard FKs back onto every wip_entries row for this ref so
+        // future reads don't have to re-derive from strings.
+        await client.query(
+          `UPDATE wip_entries SET deal_id=$1, property_id=$2 WHERE ref=$3`,
+          [existingId, propertyId, deal.ref]
+        );
         updated++;
       } else {
         const dealId = randomUUID();
@@ -950,6 +968,10 @@ export async function syncWipToCrmDeals(dbPool: Pool) {
           `INSERT INTO crm_deals (id, name, group_name, property_id, landlord_id, tenant_id, deal_type, status, team, internal_agent, fee, comments, completion_date, created_at, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text[], $10::text[], $11, $12, $13, NOW(), NOW())`,
           [dealId, dealName, deal.group_name || '', propertyId, landlordId, tenantId, dealType, status, teamPg, agentPg, fee, comments, completionDate]
+        );
+        await client.query(
+          `UPDATE wip_entries SET deal_id=$1, property_id=$2 WHERE ref=$3`,
+          [dealId, propertyId, deal.ref]
         );
 
         if (landlordId) {
