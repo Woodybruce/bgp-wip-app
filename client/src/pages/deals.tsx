@@ -978,27 +978,27 @@ export function DealFormDialog({
                   {showPricing && (
                     <div>
                       <Label>Pricing ({"\u00A3"})</Label>
-                      <Input type="number" value={form.pricing} onChange={(e) => set("pricing", e.target.value)} data-testid="input-deal-pricing" />
+                      <Input type="number" min="0" value={form.pricing} onChange={(e) => set("pricing", e.target.value)} data-testid="input-deal-pricing" />
                     </div>
                   )}
 
                   {showRent && (
                     <div>
                       <Label>Rent PA ({"\u00A3"})</Label>
-                      <Input type="number" value={form.rentPa} onChange={(e) => set("rentPa", e.target.value)} data-testid="input-deal-rent-pa" />
+                      <Input type="number" min="0" value={form.rentPa} onChange={(e) => set("rentPa", e.target.value)} data-testid="input-deal-rent-pa" />
                     </div>
                   )}
 
                   {showYield && (
                     <div>
                       <Label>Yield %</Label>
-                      <Input type="number" step="0.01" value={form.yieldPercent} onChange={(e) => set("yieldPercent", e.target.value)} data-testid="input-deal-yield" />
+                      <Input type="number" step="0.01" min="0" max="100" value={form.yieldPercent} onChange={(e) => set("yieldPercent", e.target.value)} data-testid="input-deal-yield" />
                     </div>
                   )}
 
                   <div>
                     <Label>Fee ({"\u00A3"})</Label>
-                    <Input type="number" value={form.fee} onChange={(e) => set("fee", e.target.value)} data-testid="input-deal-fee" />
+                    <Input type="number" min="0" value={form.fee} onChange={(e) => set("fee", e.target.value)} data-testid="input-deal-fee" />
                   </div>
 
                   <div>
@@ -1016,19 +1016,19 @@ export function DealFormDialog({
                     <>
                       <div>
                         <Label>GF Area (sqft)</Label>
-                        <Input type="number" value={form.gfAreaSqft} onChange={(e) => set("gfAreaSqft", e.target.value)} data-testid="input-deal-gf-area" />
+                        <Input type="number" min="0" value={form.gfAreaSqft} onChange={(e) => set("gfAreaSqft", e.target.value)} data-testid="input-deal-gf-area" />
                       </div>
                       <div>
                         <Label>FF Area (sqft)</Label>
-                        <Input type="number" value={form.ffAreaSqft} onChange={(e) => set("ffAreaSqft", e.target.value)} data-testid="input-deal-ff-area" />
+                        <Input type="number" min="0" value={form.ffAreaSqft} onChange={(e) => set("ffAreaSqft", e.target.value)} data-testid="input-deal-ff-area" />
                       </div>
                       <div>
                         <Label>Basement (sqft)</Label>
-                        <Input type="number" value={form.basementAreaSqft} onChange={(e) => set("basementAreaSqft", e.target.value)} data-testid="input-deal-basement-area" />
+                        <Input type="number" min="0" value={form.basementAreaSqft} onChange={(e) => set("basementAreaSqft", e.target.value)} data-testid="input-deal-basement-area" />
                       </div>
                       <div>
                         <Label>ITZA (sqft)</Label>
-                        <Input type="number" value={form.itzaAreaSqft} onChange={(e) => set("itzaAreaSqft", e.target.value)} data-testid="input-deal-itza-area" />
+                        <Input type="number" min="0" value={form.itzaAreaSqft} onChange={(e) => set("itzaAreaSqft", e.target.value)} data-testid="input-deal-itza-area" />
                       </div>
                       <div>
                         <Label>Total Area (sqft)</Label>
@@ -1041,19 +1041,19 @@ export function DealFormDialog({
                     <>
                       <div>
                         <Label>Lease Length (years)</Label>
-                        <Input type="number" step="0.5" value={form.leaseLength} onChange={(e) => set("leaseLength", e.target.value)} data-testid="input-deal-lease-length" />
+                        <Input type="number" step="0.5" min="0" value={form.leaseLength} onChange={(e) => set("leaseLength", e.target.value)} data-testid="input-deal-lease-length" />
                       </div>
                       <div>
                         <Label>Break Option (years)</Label>
-                        <Input type="number" step="0.5" value={form.breakOption} onChange={(e) => set("breakOption", e.target.value)} data-testid="input-deal-break-option" />
+                        <Input type="number" step="0.5" min="0" value={form.breakOption} onChange={(e) => set("breakOption", e.target.value)} data-testid="input-deal-break-option" />
                       </div>
                       <div>
                         <Label>Rent Free (months)</Label>
-                        <Input type="number" value={form.rentFree} onChange={(e) => set("rentFree", e.target.value)} data-testid="input-deal-rent-free" />
+                        <Input type="number" min="0" value={form.rentFree} onChange={(e) => set("rentFree", e.target.value)} data-testid="input-deal-rent-free" />
                       </div>
                       <div>
                         <Label>Capital Contribution ({"\u00A3"})</Label>
-                        <Input type="number" value={form.capitalContribution} onChange={(e) => set("capitalContribution", e.target.value)} data-testid="input-deal-capital-contribution" />
+                        <Input type="number" min="0" value={form.capitalContribution} onChange={(e) => set("capitalContribution", e.target.value)} data-testid="input-deal-capital-contribution" />
                       </div>
                     </>
                   )}

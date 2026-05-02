@@ -68,7 +68,7 @@ export function BillingEntityPanel({ company }: { company: Company }) {
           </div>
           <div className="border border-border/40 rounded p-1.5">
             <div className="text-[9px] text-muted-foreground uppercase tracking-wide">KYC checked</div>
-            <div className="text-xs font-medium">{company.kycCheckedAt ? new Date(company.kycCheckedAt).toLocaleDateString() : "—"}</div>
+            <div className="text-xs font-medium">{company.kycCheckedAt ? new Date(company.kycCheckedAt).toLocaleDateString("en-GB") : "—"}</div>
           </div>
         </div>
         {addr && (

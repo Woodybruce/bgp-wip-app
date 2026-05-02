@@ -1383,7 +1383,7 @@ export default function AvailableUnitsPage() {
 
       <UnitFormDialog
         open={createOpen}
-        onOpenChange={setCreateOpen}
+        onOpenChange={(v) => { setCreateOpen(v); if (!v) setForm(emptyForm); }}
         title="Add Available Unit"
         form={form}
         setForm={setForm}
@@ -1396,7 +1396,7 @@ export default function AvailableUnitsPage() {
 
       <UnitFormDialog
         open={!!editItem}
-        onOpenChange={v => { if (!v) setEditItem(null); }}
+        onOpenChange={v => { if (!v) { setEditItem(null); setForm(emptyForm); } }}
         title="Edit Unit"
         form={form}
         setForm={setForm}
@@ -1578,6 +1578,7 @@ export default function AvailableUnitsPage() {
                 <Label className="text-xs mb-1">Lease Length (years)</Label>
                 <Input
                   type="number"
+                  min="0"
                   value={wipForm.leaseLength}
                   onChange={e => setWipForm(f => ({ ...f, leaseLength: e.target.value }))}
                   placeholder="0"
@@ -1588,6 +1589,7 @@ export default function AvailableUnitsPage() {
                 <Label className="text-xs mb-1">Rent Free (months)</Label>
                 <Input
                   type="number"
+                  min="0"
                   value={wipForm.rentFree}
                   onChange={e => setWipForm(f => ({ ...f, rentFree: e.target.value }))}
                   placeholder="0"
@@ -1813,11 +1815,11 @@ export default function AvailableUnitsPage() {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <Label className="text-xs">Rent Free (months)</Label>
-                  <Input type="number" value={offerForm.rentFreeMonths} onChange={e => setOfferForm(f => ({ ...f, rentFreeMonths: e.target.value }))} placeholder="0" data-testid="offer-rent-free" />
+                  <Input type="number" min="0" value={offerForm.rentFreeMonths} onChange={e => setOfferForm(f => ({ ...f, rentFreeMonths: e.target.value }))} placeholder="0" data-testid="offer-rent-free" />
                 </div>
                 <div>
                   <Label className="text-xs">Term (years)</Label>
-                  <Input type="number" value={offerForm.termYears} onChange={e => setOfferForm(f => ({ ...f, termYears: e.target.value }))} placeholder="0" data-testid="offer-term" />
+                  <Input type="number" min="0" value={offerForm.termYears} onChange={e => setOfferForm(f => ({ ...f, termYears: e.target.value }))} placeholder="0" data-testid="offer-term" />
                 </div>
                 <div>
                   <Label className="text-xs">Break Option</Label>

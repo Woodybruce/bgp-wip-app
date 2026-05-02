@@ -220,11 +220,17 @@ function MyTasksWidget() {
   });
   const [quickInput, setQuickInput] = useState("");
   const activeTasks = tasksData.filter((t: any) => t.status !== "done");
-  const overdueTasks = activeTasks.filter((t: any) => t.due_date && new Date(t.due_date) < new Date());
+  const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; };
+  const overdueTasks = activeTasks.filter((t: any) => {
+    if (!t.due_date) return false;
+    const due = new Date(t.due_date); due.setHours(0, 0, 0, 0);
+    return due < startOfToday();
+  });
   const priorityIcon = (p: string) => p === "urgent" ? <Flame className="w-2.5 h-2.5 text-red-500" /> : p === "high" ? <AlertTriangle className="w-2.5 h-2.5 text-orange-500" /> : null;
   const dueLabel = (d: string | null) => {
     if (!d) return null;
-    const diff = Math.floor((new Date(d).getTime() - new Date().setHours(0,0,0,0)) / 86400000);
+    const due = new Date(d); due.setHours(0, 0, 0, 0);
+    const diff = Math.floor((due.getTime() - startOfToday().getTime()) / 86400000);
     if (diff < 0) return <span className="text-[10px] text-red-600 font-medium">{Math.abs(diff)}d overdue</span>;
     if (diff === 0) return <span className="text-[10px] text-orange-600 font-medium">Today</span>;
     if (diff === 1) return <span className="text-[10px] text-blue-600">Tomorrow</span>;

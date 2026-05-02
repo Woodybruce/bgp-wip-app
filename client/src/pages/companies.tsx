@@ -797,7 +797,7 @@ function CompanyFormDialog({
 }) {
   const { toast } = useToast();
   const isEdit = !!company;
-  const [formData, setFormData] = useState({
+  const buildInitial = () => ({
     name: company?.name || "",
     companyType: company?.companyType || "",
     domain: company?.domain || "",
@@ -805,6 +805,8 @@ function CompanyFormDialog({
     description: company?.description || "",
     companyProfileUrl: company?.companyProfileUrl || "",
   });
+  const [formData, setFormData] = useState(buildInitial);
+  useEffect(() => { if (open) setFormData(buildInitial()); }, [open, company?.id]);
 
   const [aiLoading, setAiLoading] = useState(false);
 
@@ -849,7 +851,14 @@ function CompanyFormDialog({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) return;
-    mutation.mutate(formData);
+    mutation.mutate({
+      ...formData,
+      name: formData.name.trim(),
+      domain: formData.domain.trim(),
+      domainUrl: formData.domainUrl.trim(),
+      description: formData.description.trim(),
+      companyProfileUrl: formData.companyProfileUrl.trim(),
+    });
   };
 
   return (

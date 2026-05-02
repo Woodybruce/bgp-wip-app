@@ -237,7 +237,7 @@ function ContactFormDialog({
 }) {
   const { toast } = useToast();
   const isEdit = !!contact;
-  const [formData, setFormData] = useState({
+  const buildInitial = () => ({
     name: contact?.name || "",
     groupName: contact?.groupName || "",
     role: contact?.role || "",
@@ -251,6 +251,8 @@ function ContactFormDialog({
     nextMeetingDate: contact?.nextMeetingDate || "",
     notes: contact?.notes || "",
   });
+  const [formData, setFormData] = useState(buildInitial);
+  useEffect(() => { if (open) setFormData(buildInitial()); }, [open, contact?.id]);
 
   const mutation = useMutation({
     mutationFn: async (data: typeof formData) => {
@@ -825,7 +827,7 @@ function ContactDetail({ id }: { id: string }) {
     queryKey: ["/api/crm/contacts", id],
   });
 
-  const { data: companies } = useQuery<CrmCompany[]>({
+  const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
   });
 
@@ -1395,7 +1397,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
     queryKey: ["/api/crm/contacts"],
   });
 
-  const { data: companies } = useQuery<CrmCompany[]>({
+  const { data: companies = [] } = useQuery<CrmCompany[]>({
     queryKey: ["/api/crm/companies"],
   });
 

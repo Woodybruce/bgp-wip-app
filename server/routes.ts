@@ -716,8 +716,12 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/team-members/:id/team", requireAuth, async (req, res) => {
+  app.patch("/api/team-members/:id/team", requireAuth, async (req: any, res) => {
     try {
+      const adminId = req.session.userId || req.tokenUserId;
+      const [admin] = await pool.query("SELECT is_admin FROM users WHERE id = $1", [adminId]).then(r => r.rows);
+      if (!admin?.is_admin) return res.status(403).json({ message: "Admin access required" });
+
       const { id } = req.params;
       const { team } = req.body;
       if (!team || typeof team !== "string") {
