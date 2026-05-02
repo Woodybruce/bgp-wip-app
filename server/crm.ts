@@ -1117,6 +1117,53 @@ export function setupCrmRoutes(app: Express) {
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
+  // Landlord board — aggregated view of every Landlord company with WIP
+  // fees, active deal count, properties, contacts, and last touchpoint.
+  // All data is already in the CRM; this endpoint just rolls it up.
+  app.get("/api/crm/landlords", async (_req, res) => {
+    try {
+      const { rows } = await pool.query(`
+        SELECT
+          c.id, c.name, c.company_type, c.domain, c.head_office_address,
+          c.investment_hunter_flag, c.last_interaction_at, c.bgp_contact_user_ids,
+          COALESCE(deal_stats.active_deals, 0) AS active_deals,
+          COALESCE(deal_stats.total_fee, 0) AS total_fee,
+          COALESCE(deal_stats.last_deal_update, NULL) AS last_deal_update,
+          COALESCE(prop_stats.property_count, 0) AS property_count,
+          COALESCE(contact_stats.contact_count, 0) AS contact_count
+        FROM crm_companies c
+        LEFT JOIN (
+          SELECT landlord_id,
+                 COUNT(*) FILTER (WHERE status NOT IN ('ARCH','COM','INV','WIT')) AS active_deals,
+                 SUM(COALESCE(fee, 0)) FILTER (WHERE status NOT IN ('ARCH','WIT')) AS total_fee,
+                 MAX(updated_at) AS last_deal_update
+            FROM crm_deals
+           WHERE landlord_id IS NOT NULL
+           GROUP BY landlord_id
+        ) deal_stats ON deal_stats.landlord_id = c.id
+        LEFT JOIN (
+          SELECT company_id, COUNT(DISTINCT property_id) AS property_count
+            FROM crm_company_properties
+           GROUP BY company_id
+        ) prop_stats ON prop_stats.company_id = c.id
+        LEFT JOIN (
+          SELECT company_id, COUNT(*) AS contact_count
+            FROM crm_contacts
+           WHERE company_id IS NOT NULL
+           GROUP BY company_id
+        ) contact_stats ON contact_stats.company_id = c.id
+        WHERE LOWER(COALESCE(c.company_type, '')) IN ('landlord', 'landlord/freeholder', 'investor', 'reit')
+           OR EXISTS (SELECT 1 FROM crm_deals d WHERE d.landlord_id = c.id AND d.status NOT IN ('ARCH'))
+           OR EXISTS (SELECT 1 FROM crm_properties p WHERE p.freeholder_id = c.id OR p.long_leaseholder_id = c.id)
+        ORDER BY total_fee DESC NULLS LAST, c.name ASC
+      `);
+      res.json({ landlords: rows });
+    } catch (e: any) {
+      console.error("[landlords]", e?.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   app.get("/api/enrichment/stats", requireAuth, async (_req, res) => {
     try {
       const sixMonthsAgo = new Date();

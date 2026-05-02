@@ -43,6 +43,7 @@ const DealsHub = lazy(() => import("@/pages/deals-hub"));
 const Requirements = lazy(() => import("@/pages/requirements"));
 const News = lazy(() => import("@/pages/news"));
 const PeoplePage = lazy(() => import("@/pages/people"));
+const LandlordsPage = lazy(() => import("@/pages/landlords"));
 const SharePoint = lazy(() => import("@/pages/sharepoint"));
 const Calendar = lazy(() => import("@/pages/calendar"));
 const Mail = lazy(() => import("@/pages/mail"));
@@ -138,6 +139,7 @@ function Router() {
       <Route path="/companies/:id" component={PeoplePage} />
       <Route path="/contacts" component={PeoplePage} />
       <Route path="/contacts/:id" component={PeoplePage} />
+      <Route path="/landlords" component={LandlordsPage} />
       <Route path="/sharepoint" component={SharePoint} />
       <Route path="/calendar" component={Calendar} />
       <Route path="/mail" component={Mail} />
