@@ -224,6 +224,19 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   }, [deal?.id]);
 
   const linkedProperty = deal?.propertyId ? properties.find((p) => p.id === deal.propertyId) : null;
+  const propertyPostcode = linkedProperty?.postcode || (linkedProperty?.address as any)?.postcode || null;
+
+  const { data: marketTone } = useQuery<any>({
+    queryKey: ["/api/market-tone", propertyPostcode],
+    queryFn: async () => {
+      const res = await fetch(`/api/market-tone?postcode=${encodeURIComponent(propertyPostcode!)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!propertyPostcode,
+    staleTime: 30 * 60 * 1000,
+  });
+
   const linkedLandlord = deal?.landlordId ? companies.find((c) => c.id === deal.landlordId) : null;
   const linkedTenant = deal?.tenantId ? companies.find((c) => c.id === deal.tenantId) : null;
   const linkedInvoicingEntity = deal?.invoicingEntityId ? companies.find((c) => c.id === deal.invoicingEntityId) : null;
@@ -833,6 +846,36 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
                     )}
                   </div>
                 </Link>
+              </SidebarSection>
+            )}
+
+            {marketTone && (
+              <SidebarSection open={sidebarSections.market ?? true} onToggle={() => toggleSidebar("market")} icon={TrendingUp} title="Local Market Tone" testId="toggle-sidebar-market">
+                <div className="space-y-1.5 text-xs">
+                  {[
+                    { key: "retail", label: "Retail" },
+                    { key: "offices", label: "Offices" },
+                    { key: "restaurants", label: "F&B" },
+                  ].map(({ key, label }) => {
+                    const rents = marketTone.commercial?.[key];
+                    const val = key === "offices" ? marketTone.commercial?.officesValuation : marketTone.commercial?.retailValuation;
+                    if (!rents && !val) return null;
+                    return (
+                      <div key={key} className="flex items-start justify-between gap-2 py-0.5">
+                        <span className="text-muted-foreground shrink-0">{label}</span>
+                        <div className="text-right">
+                          {rents?.avgQuotingRentPerSqft != null && (
+                            <span className="font-medium">£{rents.avgQuotingRentPerSqft.toFixed(2)}<span className="text-muted-foreground font-normal">/sqft</span></span>
+                          )}
+                          {val?.rentEstimate?.low != null && val?.rentEstimate?.high != null && (
+                            <span className="text-muted-foreground"> (£{val.rentEstimate.low.toFixed(2)}–{val.rentEstimate.high.toFixed(2)})</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <p className="text-[10px] text-muted-foreground pt-0.5">{propertyPostcode} · PropertyData</p>
+                </div>
               </SidebarSection>
             )}
 

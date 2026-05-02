@@ -249,8 +249,29 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
   const [editItem, setEditItem] = useState<CrmRequirementsLeasing | null>(null);
   const [deleteItem, setDeleteItem] = useState<CrmRequirementsLeasing | null>(null);
   const [matchItem, setMatchItem] = useState<CrmRequirementsLeasing | null>(null);
+  const [pipnetSyncing, setPipnetSyncing] = useState(false);
   const { toast } = useToast();
   const [, navigate] = useLocation();
+
+  const syncPipnet = async () => {
+    setPipnetSyncing(true);
+    try {
+      const res = await fetch("/api/external-requirements/import-pipnet", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ allPages: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Sync failed");
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      toast({ title: "Pipnet synced", description: `${data.imported} requirement${data.imported !== 1 ? "s" : ""} imported / updated from ${data.total} found` });
+    } catch (err: any) {
+      toast({ title: "Pipnet sync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSyncing(false);
+    }
+  };
 
   const { data: items = [], isLoading, error } = useQuery<CrmRequirementsLeasing[]>({
     queryKey: ["/api/crm/requirements-leasing"],
@@ -569,6 +590,17 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
             Clear
           </Button>
         )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={syncPipnet}
+          disabled={pipnetSyncing}
+          data-testid="button-sync-pipnet"
+          title="Import active retail requirements from Pipnet"
+        >
+          {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+          Sync Pipnet
+        </Button>
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />
           Add Requirement

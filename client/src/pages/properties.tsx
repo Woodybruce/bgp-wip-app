@@ -3091,6 +3091,18 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
     staleTime: 10 * 60 * 1000,
   });
 
+  const { data: marketTone } = useQuery<any>({
+    queryKey: ["/api/market-tone", postcode],
+    queryFn: async () => {
+      if (!postcode) return null;
+      const res = await fetch(`/api/market-tone?postcode=${encodeURIComponent(postcode)}`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: !!postcode,
+    staleTime: 30 * 60 * 1000,
+  });
+
   const [fetchingTitle, setFetchingTitle] = useState<string | null>(null);
   const [aiMatch, setAiMatch] = useState<{ matchIndex: number | null; titleNumber: string | null; confidence: string; reason: string } | null>(null);
   const [aiMatchLoading, setAiMatchLoading] = useState(false);
@@ -3596,7 +3608,57 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                   ))}
                 </IntelligenceSection>
               )}
-              {hasPdStats && (
+              {marketTone && (
+                <IntelligenceSection icon={TrendingUp} title="Commercial Market Tone" defaultOpen>
+                  <div className="space-y-2 text-xs">
+                    {[
+                      { key: "retail", label: "Retail" },
+                      { key: "offices", label: "Offices" },
+                      { key: "restaurants", label: "F&B / Restaurants" },
+                    ].map(({ key, label }) => {
+                      const rents = marketTone.commercial?.[key];
+                      const val = key === "offices" ? marketTone.commercial?.officesValuation : marketTone.commercial?.retailValuation;
+                      if (!rents && !val) return null;
+                      return (
+                        <div key={key} className="p-2 bg-muted/30 rounded space-y-1">
+                          <p className="font-medium text-[11px]">{label} <span className="text-muted-foreground font-normal">· {rents?.postcodeUsed || val?.postcodeUsed}</span></p>
+                          <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+                            {rents?.avgQuotingRentPerSqft != null && (
+                              <span>Quoting <span className="font-semibold">£{rents.avgQuotingRentPerSqft.toFixed(2)}/sqft</span></span>
+                            )}
+                            {rents?.avgQuotingRent != null && (
+                              <span>Avg rent <span className="font-semibold">£{Number(rents.avgQuotingRent).toLocaleString()}</span></span>
+                            )}
+                            {val?.rentEstimate?.perSqft != null && (
+                              <span>ERV <span className="font-semibold">£{val.rentEstimate.perSqft.toFixed(2)}/sqft</span></span>
+                            )}
+                            {val?.rentEstimate?.low != null && val?.rentEstimate?.high != null && (
+                              <span className="text-muted-foreground">range £{val.rentEstimate.low.toFixed(2)}–£{val.rentEstimate.high.toFixed(2)}</span>
+                            )}
+                            {val?.saleEstimate?.perSqft != null && (
+                              <span>Sale <span className="font-semibold">£{val.saleEstimate.perSqft.toFixed(0)}/sqft</span></span>
+                            )}
+                            {rents?.pointsAnalysed != null && (
+                              <span className="text-muted-foreground">{rents.pointsAnalysed} comps</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {marketTone.residential?.rents?.avgRentPerSqft != null && (
+                      <div className="p-2 bg-muted/30 rounded space-y-1">
+                        <p className="font-medium text-[11px]">Residential <span className="text-muted-foreground font-normal">· {marketTone.residential.rents.postcodeUsed}</span></p>
+                        <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+                          {marketTone.residential.rents.avgRent != null && <span>Avg rent <span className="font-semibold">£{Number(marketTone.residential.rents.avgRent).toLocaleString()}/mo</span></span>}
+                          {marketTone.residential.sold?.avgPricePerSqft != null && <span>Sold <span className="font-semibold">£{marketTone.residential.sold.avgPricePerSqft.toFixed(0)}/sqft</span></span>}
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-[10px] text-muted-foreground">Source: PropertyData · {new Date(marketTone.generatedAt).toLocaleDateString("en-GB")}</p>
+                  </div>
+                </IntelligenceSection>
+              )}
+              {hasPdStats && !marketTone && (
                 <IntelligenceSection icon={TrendingUp} title="Market Stats (PropertyData)">
                   <div className="grid grid-cols-2 gap-2">
                     {data.propertyDataCoUk["postcode-key-stats"].data.average_price && (
@@ -3615,12 +3677,6 @@ export function PropertyIntelligencePanel({ property }: { property: CrmProperty 
                       <div className="p-2 bg-muted/30 rounded">
                         <p className="text-muted-foreground">Avg Yield</p>
                         <p className="font-semibold">{data.propertyDataCoUk["postcode-key-stats"].data.average_yield}</p>
-                      </div>
-                    )}
-                    {data.propertyDataCoUk["postcode-key-stats"].data.turnover && (
-                      <div className="p-2 bg-muted/30 rounded">
-                        <p className="text-muted-foreground">Annual Turnover</p>
-                        <p className="font-semibold">{data.propertyDataCoUk["postcode-key-stats"].data.turnover}</p>
                       </div>
                     )}
                   </div>

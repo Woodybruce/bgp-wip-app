@@ -1403,6 +1403,19 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/market-tone", requireAuth, async (req, res) => {
+    try {
+      const postcode = (req.query.postcode as string || "").trim();
+      if (!postcode) return res.status(400).json({ error: "postcode required" });
+      const { fetchPropertyDataMarketTone } = await import("./propertydata-market");
+      const tone = await fetchPropertyDataMarketTone(postcode);
+      if (!tone) return res.status(503).json({ error: "PropertyData not configured or no data for this postcode" });
+      res.json(tone);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/external-requirements/search-pipnet", requireAuth, async (req, res) => {
     try {
       const { type, location, minSize, maxSize, client } = req.body;
