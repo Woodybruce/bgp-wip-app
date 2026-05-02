@@ -1196,6 +1196,15 @@ export default function AvailableUnitsPage() {
                                   value={value}
                                   onSave={v => {
                                     dealInlineUpdate.mutate({ id: deal.id, field, value: v });
+                                    // Auto-sum GF+FF+Bsmt into Total (mirrors Deals board logic)
+                                    if (field === "gfAreaSqft" || field === "ffAreaSqft" || field === "basementAreaSqft") {
+                                      const gf = field === "gfAreaSqft" ? (v || 0) : (deal.gfAreaSqft || 0);
+                                      const ff = field === "ffAreaSqft" ? (v || 0) : (deal.ffAreaSqft || 0);
+                                      const bsmt = field === "basementAreaSqft" ? (v || 0) : (deal.basementAreaSqft || 0);
+                                      const total = gf + ff + bsmt || null;
+                                      dealInlineUpdate.mutate({ id: deal.id, field: "totalAreaSqft", value: total });
+                                      inlineUpdate(u.id, "sqft", total);
+                                    }
                                     if (field === "totalAreaSqft") inlineUpdate(u.id, "sqft", v);
                                   }}
                                   suffix=" sf"
