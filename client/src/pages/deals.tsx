@@ -93,6 +93,7 @@ import {
   BookmarkCheck,
   Mail,
   CalendarDays,
+  Upload,
 } from "lucide-react";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
@@ -110,6 +111,7 @@ import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS, areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { MobileCardView, ViewToggle, type MobileCardItem } from "@/components/mobile-card-view";
 import { PageLayout } from "@/components/page-layout";
+import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { DealKanban } from "@/components/deal-kanban";
 import { Breadcrumbs } from "@/components/breadcrumbs";
@@ -3849,6 +3851,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
   const [search, setSearch] = useState("");
   const [activeGroup, setActiveGroup] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [aiMatchOpen, setAiMatchOpen] = useState(false);
   const [rentAnalysisRunning, setRentAnalysisRunning] = useState(false);
   const [deleteListDeal, setDeleteListDeal] = useState<{ id: string; name: string } | null>(null);
@@ -4392,6 +4395,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           <Button variant="outline" onClick={() => setAiMatchOpen(true)} data-testid="button-ai-match">
             <Brain className="w-4 h-4 mr-2" />
             AI Match
+          </Button>
+          <Button variant="outline" onClick={() => setShowImport(true)} data-testid="button-import-deals">
+            <Upload className="w-4 h-4 mr-2" />
+            Import
           </Button>
           <Button onClick={() => setCreateOpen(true)} data-testid="button-create-deal">
             <Plus className="w-4 h-4 mr-2" />
@@ -5546,6 +5553,12 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <ImportAnythingDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        defaultTarget="crm_deals"
+        onCommitted={() => queryClient.invalidateQueries({ queryKey: ["/api/crm/deals"] })}
+      />
     </PageLayout>
   );
 }

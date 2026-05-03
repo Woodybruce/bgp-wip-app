@@ -30,12 +30,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Users, AlertCircle, X, Plus, ArrowLeft, Loader2, Pencil, Trash2, Mail, Send, CheckCircle2, Building, UserCircle, Phone, AtSign, Calendar, ArrowUpRight, ArrowDownLeft, Clock, RefreshCw, Video, MessageSquare, Handshake, ClipboardList, Globe, MapPin, Sparkles, UserPlus, Archive, ChevronLeft, ChevronRight, Crown, Linkedin, Zap, Briefcase, TrendingUp } from "lucide-react";
+import { Search, Users, AlertCircle, X, Plus, ArrowLeft, Loader2, Pencil, Trash2, Mail, Send, CheckCircle2, Building, UserCircle, Phone, AtSign, Calendar, ArrowUpRight, ArrowDownLeft, Clock, RefreshCw, Video, MessageSquare, Handshake, ClipboardList, Globe, MapPin, Sparkles, UserPlus, Archive, ChevronLeft, ChevronRight, Crown, Linkedin, Zap, Briefcase, TrendingUp, Upload } from "lucide-react";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { useRoute, Link } from "wouter";
 import { apiRequest, queryClient, getQueryFn, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -1379,6 +1380,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [mailDialogOpen, setMailDialogOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [editingContact, setEditingContact] = useState<CrmContact | null>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const { toast } = useToast();
@@ -1809,6 +1811,12 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
 
   return (
     <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="contacts-page">
+      <ImportAnythingDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        defaultTarget="crm_contacts"
+        onCommitted={() => queryClient.invalidateQueries({ queryKey: ["/api/crm/contacts"] })}
+      />
       <MailOutDialog
         open={mailDialogOpen}
         onOpenChange={setMailDialogOpen}
@@ -1878,6 +1886,10 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
           >
             <Sparkles className={`w-4 h-4 mr-2 ${discoverMutation.isPending ? "animate-pulse" : ""}`} />
             {discoverMutation.isPending ? "Scanning..." : "Discover Contacts"}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => setShowImport(true)} data-testid="button-import-contacts">
+            <Upload className="w-4 h-4 mr-2" />
+            Import
           </Button>
           <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-contact">
             <Plus className="w-4 h-4 mr-2" />

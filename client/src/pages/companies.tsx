@@ -43,6 +43,7 @@ import {
 import { Search, Building, Building2, AlertCircle, X, Plus, ArrowLeft, Loader2, Pencil, Trash2, Users, Handshake, Globe, MapPin, Filter, ChevronDown, ChevronUp, Check, Sparkles, ShieldCheck, ExternalLink, CheckCircle2, XCircle, Clock, Circle, Download, FolderTree, Folder, FolderOpen, ChevronRight, Briefcase, Crown, LinkIcon, Upload, FileText, RefreshCw, ArrowUp, UserCheck, FileSearch, Copy, Bot, BotOff, Zap } from "lucide-react";
 import { CompanyLeasingSchedule as CompanyLeasingScheduleSection } from "@/pages/leasing-schedule";
 import { ScrollableTable } from "@/components/scrollable-table";
+import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { trackRecentItem } from "@/hooks/use-recent-items";
@@ -2016,6 +2017,7 @@ function CompanyList() {
   const [search, setSearch] = useState("");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createOpen, setCreateOpen] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const { toast } = useToast();
 
   const [trlImporting, setTrlImporting] = useState<string | null>(null);
@@ -2278,6 +2280,12 @@ function CompanyList() {
   return (
     <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="companies-page">
       <CompanyFormDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <ImportAnythingDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        defaultTarget="crm_companies"
+        onCommitted={() => queryClient.invalidateQueries({ queryKey: ["/api/crm/companies"] })}
+      />
 
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
@@ -2306,6 +2314,10 @@ function CompanyList() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Button variant="outline" size="sm" onClick={() => setShowImport(true)} data-testid="button-import-companies">
+            <Upload className="w-4 h-4 mr-2" />
+            Import
+          </Button>
           <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-company">
             <Plus className="w-4 h-4 mr-2" />
             New Company

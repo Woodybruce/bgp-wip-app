@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { PageLayout } from "@/components/page-layout";
+import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import {
   Table,
   TableBody,
@@ -89,6 +90,7 @@ import {
   Bookmark,
   BookmarkCheck,
   Link2,
+  Upload,
 } from "lucide-react";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
@@ -4067,6 +4069,7 @@ export default function Properties() {
   const [activeGroup, setActiveGroup] = useState("Properties");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   const urlParams = new URLSearchParams(window.location.search);
   const teamParam = urlParams.get("team");
@@ -4455,6 +4458,14 @@ function PropertiesList({
           >
             <ShieldAlert className="w-4 h-4 mr-2" />
             Landlord Health
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setShowImport(true)}
+            data-testid="button-import-properties"
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Import
           </Button>
           <Button
             onClick={() => setCreateDialogOpen(true)}
@@ -5001,7 +5012,12 @@ function PropertiesList({
         </AlertDialogContent>
       </AlertDialog>
       </>}
-
+      <ImportAnythingDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        defaultTarget="crm_properties"
+        onCommitted={() => queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] })}
+      />
     </PageLayout>
   );
 }
