@@ -150,6 +150,28 @@ async function sendAndStoreReply(
   await storage.upsertWaConversation(toNumber, contactName, replyText.slice(0, 100));
 }
 
+async function resolveUserIdFromPhone(fromNumber: string): Promise<{ userId: string; matched: boolean; userName: string | null }> {
+  const digits = fromNumber.replace(/[^0-9]/g, "");
+  if (!digits) return { userId: `wa:${fromNumber}`, matched: false, userName: null };
+  try {
+    const { db } = await import("./db");
+    const { users } = await import("@shared/schema");
+    const { sql } = await import("drizzle-orm");
+    const candidates = await db
+      .select({ id: users.id, name: users.name, phone: users.phone })
+      .from(users)
+      .where(
+        sql`regexp_replace(coalesce(${users.phone}, ''), '[^0-9]', '', 'g') LIKE '%' || ${digits} || '%' OR ${digits} LIKE '%' || regexp_replace(coalesce(${users.phone}, ''), '[^0-9]', '', 'g') || '%'`,
+      );
+    if (candidates && candidates.length > 0) {
+      return { userId: candidates[0].id, matched: true, userName: candidates[0].name };
+    }
+  } catch (err: any) {
+    console.error(`[whatsapp-ai] Phone-to-user lookup failed: ${err?.message}`);
+  }
+  return { userId: `wa:${digits}`, matched: false, userName: null };
+}
+
 async function runChatBgpWhatsAppReply(
   messageBody: string,
   fromNumber: string,
@@ -170,7 +192,9 @@ async function runChatBgpWhatsAppReply(
   const startTime = Date.now();
   const TIMEOUT_MS = 90_000;
   const MAX_LOOPS = 10;
-  const userId = `wa:${fromNumber}`;
+  const resolved = await resolveUserIdFromPhone(fromNumber);
+  const userId = resolved.userId;
+  console.log(`[whatsapp-ai] Resolved userId=${userId} matched=${resolved.matched} userName=${resolved.userName ?? "—"}`);
 
   try {
     const chatbgp = await import("./chatbgp");
@@ -470,6 +494,7 @@ export function setupWhatsAppRoutes(app: Express) {
 
               // Document/file sent via WhatsApp → auto-ingest via universal pipeline.
               const mediaObj = msg.document || msg.image;
+              const mediaCaption = (msg.document?.caption || msg.image?.caption || "").trim();
               if ((msg.type === "document" || msg.type === "image") && mediaObj?.id && config.token) {
                 (async () => {
                   try {
@@ -480,6 +505,12 @@ export function setupWhatsAppRoutes(app: Express) {
                     const errCount = Array.isArray(result.errors) ? result.errors.length : 0;
                     const reply = `✅ Imported from ${overrideName}:\n${result.narrative}\n\n${result.written} record(s) written${errCount > 0 ? `, ${errCount} error(s)` : ""}.`;
                     await sendWhatsAppText(config, fromNumber, reply);
+                    if (mediaCaption) {
+                      const followUp = `${mediaCaption}\n\n[Context: I just imported the file "${overrideName}" — ${result.written} record(s) created. Reply to the user about their question or instruction above, in light of the import result.]`;
+                      runChatBgpWhatsAppReply(followUp, fromNumber, contactName, conversation.id, config).catch(
+                        (err: any) => console.error("[whatsapp-ai] Caption follow-up error:", err?.message),
+                      );
+                    }
                   } catch (err: any) {
                     console.error("[whatsapp-ingest]", err?.message);
                     await sendWhatsAppText(config, fromNumber, `❌ Couldn't import that file: ${err?.message || "unknown error"}. Try sending it via the BGP app instead.`).catch(() => {});
