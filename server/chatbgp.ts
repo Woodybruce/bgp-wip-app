@@ -7267,28 +7267,37 @@ Be thorough — include every unit row you can classify, across all properties i
         try { parsed = JSON.parse(errBody); } catch {}
         const meta = parsed?.error || {};
         const code = meta.code;
+        const subcode = meta.error_subcode;
         // Map the most common Meta error codes to a one-line action so the
         // assistant tells the user the fix instead of paraphrasing the error.
-        const FIX_HINTS: Record<number, string> = {
-          190: "Access token is expired or invalid. Generate a new permanent system-user token in Meta Business Manager → System Users, with whatsapp_business_messaging + whatsapp_business_management scopes and 'Never' expiry, then update WHATSAPP_TOKEN_V2 in Railway.",
-          200: "Token is missing the required scope. Re-issue with both whatsapp_business_messaging AND whatsapp_business_management ticked.",
-          10: "System user is not assigned to the WhatsApp app. In Business Settings → System Users, click the user, Add Assets, pick the WhatsApp app with Full control.",
-          2500: "Token is not bound to the WhatsApp Business Account. Re-assign the system user to the WABA.",
-          131030: "Recipient is not on the allowed list. The business is still in test/development mode — either add the recipient to test numbers in API Setup, or complete Business Verification in Meta Business Manager.",
-          131047: "The 24-hour customer service window has expired — the recipient hasn't messaged the business number in the last 24h. Either ask them to message first, or use an approved message template.",
-          132000: "Phone number is not registered with the WhatsApp Business Account. Re-add it in WhatsApp Manager → Phone Numbers.",
-          131009: "Parameter validation failed (usually a malformed phone number). Use full international format like 447980313675, no leading zero or '+'.",
-          368: "Number has been temporarily flagged by Meta for quality. Check the quality rating in WhatsApp Manager and reduce send volume.",
+        const FIX_HINTS: Record<string, string> = {
+          "190": "Access token is expired or invalid. Generate a new permanent system-user token in Meta Business Manager → System Users, with whatsapp_business_messaging + whatsapp_business_management scopes and 'Never' expiry, then update WHATSAPP_TOKEN_V2 in Railway.",
+          "200": "Token is missing the required scope. Re-issue with both whatsapp_business_messaging AND whatsapp_business_management ticked.",
+          "10": "System user is not assigned to the WhatsApp app. In Business Settings → System Users, click the user, Add Assets, pick the WhatsApp app with Full control.",
+          "2500": "Token is not bound to the WhatsApp Business Account. Re-assign the system user to the WABA.",
+          "100": "Bad parameter — usually the wrong WHATSAPP_PHONE_NUMBER_ID. Get the correct numeric ID from developers.facebook.com → your WhatsApp app → WhatsApp → API Setup (shown directly under the From-number dropdown), and update it in Railway.",
+          "100:33": "The token cannot see the phone number ID. Either (a) the ID was copied from a different WhatsApp app/WABA than the one your token belongs to — get it from developers.facebook.com → your WhatsApp app → API Setup; or (b) the system user that owns the token doesn't have Full Control over the WhatsApp app AND the WhatsApp Business Account — fix in Business Settings → System Users → Add Assets.",
+          "131030": "Recipient is not on the allowed list. The business is still in test/development mode — either add the recipient to test numbers in API Setup, or complete Business Verification in Meta Business Manager.",
+          "131047": "The 24-hour customer service window has expired — the recipient hasn't messaged the business number in the last 24h. Either ask them to message first, or use an approved message template.",
+          "132000": "Phone number is not registered with the WhatsApp Business Account. Re-add it in WhatsApp Manager → Phone Numbers.",
+          "131009": "Parameter validation failed (usually a malformed phone number). Use full international format like 447980313675, no leading zero or '+'.",
+          "368": "Number has been temporarily flagged by Meta for quality. Check the quality rating in WhatsApp Manager and reduce send volume.",
         };
+        const subcodeKey = code != null && subcode != null ? `${code}:${subcode}` : null;
+        const fixHint = (subcodeKey && FIX_HINTS[subcodeKey])
+          || (code != null && FIX_HINTS[String(code)])
+          || (code != null
+            ? "Unknown Meta error — check Railway logs and Meta Business Manager for details."
+            : "No structured error code returned by Graph API.");
         return {
           data: {
             error: "WhatsApp send failed",
             httpStatus: waResponse.status,
             metaCode: code ?? null,
-            metaSubcode: meta.error_subcode ?? null,
+            metaSubcode: subcode ?? null,
             metaMessage: meta.message ?? null,
             metaType: meta.type ?? null,
-            fixHint: code != null ? FIX_HINTS[code] || "Unknown Meta error — check Railway logs and Meta Business Manager for details." : "No structured error code returned by Graph API.",
+            fixHint,
             instruction: "Tell the user the metaCode and fixHint verbatim; do not paraphrase.",
           },
         };
