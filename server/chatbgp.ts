@@ -632,6 +632,8 @@ function getToolProgressLabel(toolName: string): string {
     reply_email: "Replying to email...",
     search_emails: "Searching emails...",
     search_calendar: "Searching calendars...",
+    ingest_file: "Parsing file...",
+    commit_ingest: "Writing to CRM...",
     query_calendar: "Checking calendar...",
     query_wip: "Querying pipeline...",
     query_xero: "Looking up invoices...",
@@ -2402,6 +2404,39 @@ export async function getAvailableTools(): Promise<{
           endDateTime: { type: "string", description: "Optional ISO date-time upper bound (default: 6 months from now). Events must end on or before this." },
         },
         required: ["query"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "ingest_file",
+      description: "Parse a file (Excel / PDF / CSV / pasted text / SharePoint share link) and produce a preview of records to write to a CRM table. ALWAYS call this BEFORE commit_ingest. Returns a commitToken plus a diff summary (adds, updates, no-change, needs-review). Show the summary to the user before calling commit_ingest. Replaces all the rigid format-specific importers (import_leasing_schedule, import_wip_report, etc.) — works on any file shape because the parsing is AI-driven.",
+      parameters: {
+        type: "object",
+        properties: {
+          target: { type: "string", description: "What kind of records to extract. One of: leasing_schedule_units | crm_deals | crm_companies | crm_contacts | crm_properties." },
+          shareUrl: { type: "string", description: "A SharePoint or OneDrive share link (e.g. https://brucegillinghampollardlimited.sharepoint.com/...). Resolves and downloads the file silently. Mutually exclusive with text." },
+          text: { type: "string", description: "Pasted text content (CSV, table, notes). Mutually exclusive with shareUrl. For uploaded files, the user uses the UI dialog." },
+          filename: { type: "string", description: "Optional filename label for pasted text (defaults to 'pasted.txt')." },
+        },
+        required: ["target"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "commit_ingest",
+      description: "Apply the writes from a previously-built ingest preview. Call this only after the user has reviewed the preview from ingest_file and confirmed they want to proceed. Use the commitToken returned by ingest_file. Returns counts of records written / skipped / errored.",
+      parameters: {
+        type: "object",
+        properties: {
+          commitToken: { type: "string", description: "The commitToken from a prior ingest_file call." },
+        },
+        required: ["commitToken"],
       },
     },
   });
@@ -6015,6 +6050,47 @@ async function executeCrmToolRaw(
       return { data: { success: true, action: "email_replied", messageId: fnArgs.messageId }, action: { type: "email_sent" } };
     } catch (replyErr: any) {
       return { data: { error: `Failed to reply to email: ${replyErr?.message || "Unknown error"}` } };
+    }
+  }
+
+  if (fnName === "ingest_file") {
+    try {
+      const { readFile, parseWithClaude, buildDiff, listIngestTargets } = await import("./universal-ingest");
+      const { resolveSharePointShareLink } = await import("./sharepoint-resolver");
+      const target = fnArgs.target as any;
+      if (!listIngestTargets().includes(target)) {
+        return { data: { error: `target must be one of: ${listIngestTargets().join(", ")}` } };
+      }
+      let bytes: Buffer;
+      let filename: string;
+      if (typeof fnArgs.shareUrl === "string" && fnArgs.shareUrl.trim()) {
+        const r = await resolveSharePointShareLink(fnArgs.shareUrl.trim());
+        if (r.isFolder) return { data: { error: `Folder share — pick a single file. Children: ${r.folderChildren?.map((c: any) => c.filename).join(", ")}` } };
+        bytes = r.bytes; filename = r.filename;
+      } else if (typeof fnArgs.text === "string" && fnArgs.text.trim()) {
+        bytes = Buffer.from(fnArgs.text, "utf-8");
+        filename = (fnArgs.filename as string) || "pasted.txt";
+      } else {
+        return { data: { error: "Provide either shareUrl or text" } };
+      }
+      const file = readFile({ bytes, filename });
+      const { records } = await parseWithClaude({ file, target });
+      const preview = await buildDiff({ target, records, filename });
+      return { data: { commitToken: preview.commitToken, target: preview.target, filename: preview.filename, totalParsed: preview.totalParsed, summary: preview.summary, sample: preview.diff.slice(0, 5) } };
+    } catch (err: any) {
+      return { data: { error: `Ingest failed: ${err?.message || "unknown"}` } };
+    }
+  }
+
+  if (fnName === "commit_ingest") {
+    try {
+      const { commitDiff } = await import("./universal-ingest");
+      const userId = (req as any)?.user?.id || "chatbgp";
+      const userName = (req as any)?.user?.name;
+      const result = await commitDiff({ commitToken: fnArgs.commitToken, userId, userName });
+      return { data: result };
+    } catch (err: any) {
+      return { data: { error: `Commit failed: ${err?.message || "unknown"}` } };
     }
   }
 

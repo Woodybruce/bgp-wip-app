@@ -22,6 +22,7 @@ import {
   listIngestTargets,
   type IngestTarget,
 } from "./universal-ingest";
+import { resolveSharePointShareLink } from "./sharepoint-resolver";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -47,16 +48,27 @@ export function registerIngestRoutes(app: Express) {
       let filename: string;
       const textRaw = req.body?.text;
       const filenameRaw = req.body?.filename;
+      const shareUrlRaw = req.body?.shareUrl;
       const textVal = Array.isArray(textRaw) ? textRaw[0] : textRaw;
       const filenameVal = Array.isArray(filenameRaw) ? filenameRaw[0] : filenameRaw;
+      const shareUrl = Array.isArray(shareUrlRaw) ? shareUrlRaw[0] : shareUrlRaw;
       if (req.file) {
         bytes = req.file.buffer;
         filename = req.file.originalname;
+      } else if (typeof shareUrl === "string" && /sharepoint\.com|onedrive/i.test(shareUrl)) {
+        const resolved = await resolveSharePointShareLink(shareUrl);
+        if (resolved.isFolder) {
+          return res.status(400).json({
+            error: "Folder share link — pick a single file. Children: " + (resolved.folderChildren?.map((c) => c.filename).join(", ") || "none"),
+          });
+        }
+        bytes = resolved.bytes;
+        filename = resolved.filename;
       } else if (typeof textVal === "string" && textVal.trim()) {
         bytes = Buffer.from(textVal, "utf-8");
         filename = (typeof filenameVal === "string" && filenameVal) || "pasted.txt";
       } else {
-        return res.status(400).json({ error: "Provide either a file or text in the body" });
+        return res.status(400).json({ error: "Provide a file, a SharePoint share link, or pasted text" });
       }
 
       const file = readFile({ bytes, filename });

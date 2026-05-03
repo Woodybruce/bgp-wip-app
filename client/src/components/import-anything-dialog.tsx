@@ -62,6 +62,7 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "leas
   const [target, setTarget] = useState<IngestTarget>(defaultTarget);
   const [file, setFile] = useState<File | null>(null);
   const [pastedText, setPastedText] = useState("");
+  const [shareUrl, setShareUrl] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [preview, setPreview] = useState<IngestPreview | null>(null);
   const [isCommitting, setIsCommitting] = useState(false);
@@ -70,6 +71,7 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "leas
   const reset = useCallback(() => {
     setFile(null);
     setPastedText("");
+    setShareUrl("");
     setPreview(null);
     setIsUploading(false);
     setIsCommitting(false);
@@ -81,8 +83,8 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "leas
   }, [reset, onOpenChange]);
 
   const handleUpload = async () => {
-    if (!file && !pastedText.trim()) {
-      toast({ title: "Nothing to upload", description: "Drop a file or paste some text first.", variant: "destructive" });
+    if (!file && !pastedText.trim() && !shareUrl.trim()) {
+      toast({ title: "Nothing to upload", description: "Drop a file, paste a SharePoint link, or paste some text.", variant: "destructive" });
       return;
     }
     setIsUploading(true);
@@ -91,6 +93,7 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "leas
       const fd = new FormData();
       fd.append("target", target);
       if (file) fd.append("file", file);
+      else if (shareUrl.trim()) fd.append("shareUrl", shareUrl.trim());
       else fd.append("text", pastedText);
       const r = await fetch("/api/ingest", { method: "POST", credentials: "include", headers: getAuthHeaders(), body: fd });
       if (!r.ok) {
@@ -191,13 +194,25 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "leas
             </div>
 
             <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Or paste a SharePoint / OneDrive share link</Label>
+              <input
+                type="text"
+                value={shareUrl}
+                onChange={(e) => setShareUrl(e.target.value)}
+                placeholder="https://… brucegillinghampollardlimited.sharepoint.com/…"
+                disabled={!!file}
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+
+            <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">Or paste text directly</Label>
               <Textarea
                 value={pastedText}
                 onChange={(e) => setPastedText(e.target.value)}
                 placeholder="Paste a CSV, table, or notes here…"
                 rows={4}
-                disabled={!!file}
+                disabled={!!file || !!shareUrl.trim()}
               />
             </div>
           </div>
