@@ -127,7 +127,7 @@ export function HandwritingPanel() {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-20 right-4 z-50 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:scale-105 transition-transform"
+          className="hidden md:flex fixed bottom-20 right-4 z-50 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg items-center justify-center hover:scale-105 transition-transform"
           title="Open handwriting panel"
           data-testid="button-open-handwriting"
         >
@@ -138,10 +138,10 @@ export function HandwritingPanel() {
       {/* Panel */}
       {open && (
         <div
-          className={`fixed z-50 bg-background border rounded-xl shadow-2xl transition-all ${
+          className={`hidden md:block fixed z-50 bg-background border rounded-xl shadow-2xl transition-all ${
             minimized
               ? "bottom-20 right-4 w-48 h-10"
-              : "bottom-4 right-4 w-[400px] h-[380px] flex flex-col"
+              : "bottom-4 right-4 w-[400px] h-[380px] md:flex md:flex-col"
           }`}
           data-testid="handwriting-panel"
         >
