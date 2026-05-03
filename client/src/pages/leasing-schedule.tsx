@@ -4,6 +4,7 @@ import { useRoute, useLocation, Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ViewToggle } from "@/components/mobile-card-view";
+import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -703,6 +704,7 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [statFilter, setStatFilter] = useState<string | null>(null);
   const [showAddUnit, setShowAddUnit] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
   const [importParsing, setImportParsing] = useState(false);
   const [importPreview, setImportPreview] = useState<{ sheetName: string; sheetCount: number; rowsScanned: number; units: any[] } | null>(null);
@@ -986,11 +988,20 @@ function PropertyScheduleView({ propertyId }: { propertyId: string }) {
           <Button variant="outline" size="sm" onClick={handleExport} data-testid="btn-export">
             <Download className="w-3.5 h-3.5 mr-1" />Export
           </Button>
+          <Button variant="outline" size="sm" onClick={() => setShowImport(true)} data-testid="btn-import">
+            <Upload className="w-3.5 h-3.5 mr-1" />Import
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setShowAddUnit(true)} data-testid="btn-add-unit">
             <Plus className="w-3.5 h-3.5 mr-1" />Add Unit
           </Button>
         </div>
       </div>
+      <ImportAnythingDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        defaultTarget="leasing_schedule_units"
+        onCommitted={() => queryClient.invalidateQueries({ queryKey: ["/api/leasing-schedule-units"] })}
+      />
 
       {privacyInfo?.privacy_enabled && privacyInfo.assigned_agents.length > 0 && (
         <div className="flex items-center gap-2 px-3 py-2 bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800 rounded-lg text-xs">

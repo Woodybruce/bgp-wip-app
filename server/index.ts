@@ -1055,6 +1055,8 @@ app.use("/api/branding/assets", express.static(
   registerPropertyPathwayRoutes(app);
   const { registerActivityRoutes } = await import("./activity-routes");
   registerActivityRoutes(app);
+  const { registerIngestRoutes } = await import("./ingest-routes");
+  registerIngestRoutes(app);
   registerDemeterRoutes(app);
   registerRetailContextPlanRoutes(app);
   registerMapLayerRoutes(app);
