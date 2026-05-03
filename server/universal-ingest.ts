@@ -39,6 +39,7 @@ import { pool } from "./db";
 // ─────────────────────────────────────────────────────────────────────────
 
 export type IngestTarget = "leasing_schedule_units" | "crm_deals" | "crm_companies" | "crm_contacts" | "crm_properties";
+export type IngestTargetOrAuto = IngestTarget | "auto";
 
 interface TargetSpec {
   table: string;
@@ -358,6 +359,95 @@ async function callClaudeOnce(args: {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Auto-classify — first-pass AI call that looks at the file content and
+// picks which target table fits. Lets the UI offer a single drop zone:
+// drop anything, AI works out what it is.
+// ─────────────────────────────────────────────────────────────────────────
+
+export async function classifyTarget(file: ReadFileResult): Promise<{
+  target: IngestTarget;
+  confidence: "high" | "medium" | "low";
+  reasoning: string;
+}> {
+  const anthropic = getAnthropicClient();
+  const sample = file.kind === "pdf"
+    ? `(PDF document: ${file.filename})`
+    : (file.text || "").slice(0, 8_000);
+  const userContent: any[] = [];
+  if (file.kind === "pdf" && file.pdfBase64) {
+    userContent.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: file.pdfBase64 } });
+    userContent.push({ type: "text", text: `Filename: ${file.filename}\n\nClassify what kind of property CRM data this contains.` });
+  } else {
+    userContent.push({
+      type: "text",
+      text: `Filename: ${file.filename}\n\nFirst 8k chars:\n${sample}\n\nClassify what kind of property CRM data this contains.`,
+    });
+  }
+  const resp = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 600,
+    system: `You classify uploaded files for a property CRM. Return ONLY JSON: {"target": "<one of: leasing_schedule_units | crm_deals | crm_companies | crm_contacts | crm_properties>", "confidence": "<high|medium|low>", "reasoning": "<one sentence>"}.
+
+Hints:
+- Leasing schedule / letting tracker / rent roll / void schedule / target tenant list → leasing_schedule_units
+- Deal pipeline / WIP / completed transactions / fee schedule → crm_deals
+- Brand list / company database / tenant list → crm_companies
+- Agent contact list / staff directory / brand contacts → crm_contacts
+- Property database / building list / portfolio → crm_properties`,
+    messages: [{ role: "user", content: userContent }],
+  });
+  const textBlock = resp.content.find((b: any) => b.type === "text") as any;
+  const cleaned = (textBlock?.text || "").trim().replace(/^```(?:json)?\s*/, "").replace(/\s*```\s*$/, "");
+  const parsed = JSON.parse(cleaned);
+  return {
+    target: parsed.target,
+    confidence: parsed.confidence,
+    reasoning: parsed.reasoning,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Narrative summary — runs after buildDiff. Generates a 2-3 sentence
+// description of what was found and what will change. Surfaced at the top
+// of the preview so the user sees "I recognised this as X, found Y, will
+// add Z" before they ever look at the diff list.
+// ─────────────────────────────────────────────────────────────────────────
+
+export async function summariseDiff(args: {
+  preview: IngestPreview;
+}): Promise<string> {
+  const { preview } = args;
+  const anthropic = getAnthropicClient();
+  const sample = preview.diff.slice(0, 8).map((d) => ({
+    type: d.type,
+    name: d.record.unit_name || d.record.name || d.record.email || "(unnamed)",
+    changedFields: d.changedFields,
+    unmatchedRefs: d.unmatchedRefs,
+  }));
+  const resp = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 400,
+    system: "You write a 2-3 sentence plain-English summary for a property CRM operator. State what kind of file you recognised, the headline counts, and any standout findings (e.g. 'archives 3 brands that have gone quiet'). Conversational, not formal. NO preamble like 'Here is your summary'.",
+    messages: [{
+      role: "user",
+      content: `Filename: ${preview.filename}
+Target table: ${preview.target}
+Total parsed: ${preview.totalParsed}
+Adds: ${preview.summary.adds}
+Updates: ${preview.summary.updates}
+No-change: ${preview.summary.noChange}
+Needs review: ${preview.summary.needsReview}
+
+First 8 entries: ${JSON.stringify(sample, null, 2)}
+
+Write the summary.`,
+    }],
+  });
+  const textBlock = resp.content.find((b: any) => b.type === "text") as any;
+  return (textBlock?.text || "").trim();
+}
+
 export async function parseWithClaude(args: {
   file: ReadFileResult;
   target: IngestTarget;
@@ -490,6 +580,11 @@ export interface IngestPreview {
   diff: DiffRecord[];
   summary: { adds: number; updates: number; noChange: number; needsReview: number };
   commitToken: string;
+  /** AI narrative ("I recognised this as TPE Portman's leasing schedule…").
+   *  Optional — populated by summariseDiff after the preview is built. */
+  narrative?: string;
+  /** Filled in when the user provided target=auto. */
+  autoClassified?: { confidence: "high" | "medium" | "low"; reasoning: string };
 }
 
 const PENDING_INGESTS = new Map<string, { preview: IngestPreview; expiresAt: number }>();

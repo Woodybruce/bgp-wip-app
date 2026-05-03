@@ -20,6 +20,8 @@ import {
   commitDiff,
   getPendingPreview,
   listIngestTargets,
+  classifyTarget,
+  summariseDiff,
   type IngestTarget,
 } from "./universal-ingest";
 import { resolveSharePointShareLink } from "./sharepoint-resolver";
@@ -39,9 +41,11 @@ export function registerIngestRoutes(app: Express) {
   app.post("/api/ingest", requireAuth, upload.single("file"), async (req: Request, res: Response) => {
     try {
       const targetRaw = req.body?.target;
-      const target = (Array.isArray(targetRaw) ? targetRaw[0] : String(targetRaw || "")) as IngestTarget;
-      if (!listIngestTargets().includes(target)) {
-        return res.status(400).json({ error: `target must be one of: ${listIngestTargets().join(", ")}` });
+      const targetVal = (Array.isArray(targetRaw) ? targetRaw[0] : String(targetRaw || "auto")) as string;
+      // "auto" triggers AI classification — UI default, so users can just drop a file.
+      const targetIsAuto = targetVal === "auto" || !targetVal;
+      if (!targetIsAuto && !listIngestTargets().includes(targetVal as IngestTarget)) {
+        return res.status(400).json({ error: `target must be one of: auto | ${listIngestTargets().join(", ")}` });
       }
 
       let bytes: Buffer;
@@ -72,8 +76,20 @@ export function registerIngestRoutes(app: Express) {
       }
 
       const file = readFile({ bytes, filename });
+      let target: IngestTarget;
+      let autoClassified: { confidence: "high" | "medium" | "low"; reasoning: string } | undefined;
+      if (targetIsAuto) {
+        const cls = await classifyTarget(file);
+        target = cls.target;
+        autoClassified = { confidence: cls.confidence, reasoning: cls.reasoning };
+      } else {
+        target = targetVal as IngestTarget;
+      }
       const { records } = await parseWithClaude({ file, target });
       const preview = await buildDiff({ target, records, filename });
+      preview.autoClassified = autoClassified;
+      // Narrative is best-effort — never block the preview if it fails.
+      try { preview.narrative = await summariseDiff({ preview }); } catch { /* skip */ }
       res.json(preview);
     } catch (err: any) {
       console.error("[ingest preview]", err?.message);

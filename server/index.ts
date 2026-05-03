@@ -1057,6 +1057,8 @@ app.use("/api/branding/assets", express.static(
   registerActivityRoutes(app);
   const { registerIngestRoutes } = await import("./ingest-routes");
   registerIngestRoutes(app);
+  const { registerGenericCrmRoutes } = await import("./generic-crm-routes");
+  registerGenericCrmRoutes(app);
   registerDemeterRoutes(app);
   registerRetailContextPlanRoutes(app);
   registerMapLayerRoutes(app);

@@ -634,6 +634,10 @@ function getToolProgressLabel(toolName: string): string {
     search_calendar: "Searching calendars...",
     ingest_file: "Parsing file...",
     commit_ingest: "Writing to CRM...",
+    read_record: "Reading record...",
+    update_record: "Updating record...",
+    bulk_update_records: "Bulk updating...",
+    list_records: "Listing records...",
     query_calendar: "Checking calendar...",
     query_wip: "Querying pipeline...",
     query_xero: "Looking up invoices...",
@@ -2422,6 +2426,74 @@ export async function getAvailableTools(): Promise<{
           filename: { type: "string", description: "Optional filename label for pasted text (defaults to 'pasted.txt')." },
         },
         required: ["target"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "read_record",
+      description: "Read a single CRM record by id. Returns every field, including ones not exposed in narrower tools. Use when you need to inspect the current state of a deal/company/contact/property/leasing unit/lease event/comp/requirement before updating it.",
+      parameters: {
+        type: "object",
+        properties: {
+          table: { type: "string", description: "One of: crm_deals | crm_companies | crm_contacts | crm_properties | leasing_schedule_units | crm_lease_events | crm_comps | crm_requirements_leasing." },
+          id: { type: "string", description: "The record's UUID (or text primary key for tables that use one)." },
+        },
+        required: ["table", "id"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "list_records",
+      description: "List records on any whitelisted CRM table with optional simple equality filters. Use to find records before updating, or to count things. Returns up to 50 rows by default (max 500 — bump via `limit`).",
+      parameters: {
+        type: "object",
+        properties: {
+          table: { type: "string", description: "One of: crm_deals | crm_companies | crm_contacts | crm_properties | leasing_schedule_units | crm_lease_events | crm_comps | crm_requirements_leasing." },
+          filters: { type: "object", description: "Equality filters as JSON, e.g. {\"status\": \"LIVE\", \"deal_type\": \"Sale\"}. Field names must exist on the table — invalid fields are silently ignored." },
+          limit: { type: "number", description: "Default 50, max 500." },
+          offset: { type: "number", description: "For pagination." },
+        },
+        required: ["table"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "update_record",
+      description: "Update one or more fields on a single CRM record. Field names are validated against the live schema — anything that doesn't exist on the table is dropped and reported back as `unknownFields`. This replaces every narrow per-feature update tool. ANY field on a whitelisted table can be updated.",
+      parameters: {
+        type: "object",
+        properties: {
+          table: { type: "string", description: "One of: crm_deals | crm_companies | crm_contacts | crm_properties | leasing_schedule_units | crm_lease_events | crm_comps | crm_requirements_leasing." },
+          id: { type: "string", description: "The record's primary key." },
+          fields: { type: "object", description: "Partial update payload as JSON, e.g. {\"status\": \"LIVE\", \"fee\": 50000}. Use null to clear a field." },
+        },
+        required: ["table", "id", "fields"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "bulk_update_records",
+      description: "Update many records at once that match a filter. SAFETY: refuses to run with no filter, refuses to update more than 500 rows in a call. Use for cleanup tasks like 'set internal_agent to Harry Elliott on every deal where it currently equals H'.",
+      parameters: {
+        type: "object",
+        properties: {
+          table: { type: "string", description: "One of: crm_deals | crm_companies | crm_contacts | crm_properties | leasing_schedule_units | crm_lease_events | crm_comps | crm_requirements_leasing." },
+          filter: { type: "object", description: "Equality filters that select the rows to update. Required — at least one valid field must match. e.g. {\"deal_type\": \"Sale\", \"team\": \"Investment\"}." },
+          fields: { type: "object", description: "Fields to set on every matched row, e.g. {\"status\": \"COM\"}. Same validation rules as update_record." },
+        },
+        required: ["table", "filter", "fields"],
       },
     },
   });
@@ -6101,6 +6173,55 @@ async function executeCrmToolRaw(
     } catch (err: any) {
       return { data: { error: `Commit failed: ${err?.message || "unknown"}` } };
     }
+  }
+
+  if (fnName === "read_record") {
+    try {
+      const { readRecord } = await import("./generic-crm");
+      const row = await readRecord(fnArgs.table, fnArgs.id);
+      return { data: row || { error: "Record not found" } };
+    } catch (err: any) { return { data: { error: err?.message } }; }
+  }
+
+  if (fnName === "list_records") {
+    try {
+      const { listRecords } = await import("./generic-crm");
+      const rows = await listRecords({
+        table: fnArgs.table,
+        filters: fnArgs.filters || {},
+        limit: fnArgs.limit,
+        offset: fnArgs.offset,
+      });
+      return { data: { rows, count: rows.length } };
+    } catch (err: any) { return { data: { error: err?.message } }; }
+  }
+
+  if (fnName === "update_record") {
+    try {
+      const { updateRecord } = await import("./generic-crm");
+      const result = await updateRecord({
+        table: fnArgs.table,
+        id: fnArgs.id,
+        fields: fnArgs.fields || {},
+        userId: (req as any)?.user?.id || "chatbgp",
+        userName: (req as any)?.user?.name || "ChatBGP",
+      });
+      return { data: result };
+    } catch (err: any) { return { data: { error: err?.message } }; }
+  }
+
+  if (fnName === "bulk_update_records") {
+    try {
+      const { bulkUpdateRecords } = await import("./generic-crm");
+      const result = await bulkUpdateRecords({
+        table: fnArgs.table,
+        filter: fnArgs.filter || {},
+        fields: fnArgs.fields || {},
+        userId: (req as any)?.user?.id || "chatbgp",
+        userName: (req as any)?.user?.name || "ChatBGP",
+      });
+      return { data: result };
+    } catch (err: any) { return { data: { error: err?.message } }; }
   }
 
   if (fnName === "search_emails") {
