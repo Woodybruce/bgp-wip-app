@@ -135,8 +135,15 @@ async function runChatBgpWhatsAppReply(
   conversationId: string,
   config: ReturnType<typeof getWhatsAppConfig>,
 ): Promise<void> {
-  if (!config.token || !config.phoneNumberId) return;
-  if (!messageBody || messageBody === "[Media]") return;
+  console.log(`[whatsapp-ai] ENTRY from=${fromNumber} body="${messageBody.slice(0, 80)}" convId=${conversationId}`);
+  if (!config.token || !config.phoneNumberId) {
+    console.warn(`[whatsapp-ai] Skipped: config missing (token=${!!config.token}, phoneNumberId=${!!config.phoneNumberId})`);
+    return;
+  }
+  if (!messageBody || messageBody === "[Media]") {
+    console.log(`[whatsapp-ai] Skipped: empty or media-only message`);
+    return;
+  }
 
   const startTime = Date.now();
   const TIMEOUT_MS = 90_000;
@@ -150,25 +157,50 @@ async function runChatBgpWhatsAppReply(
     const recentHistory = history
       .slice(-20)
       .filter((m) => m.body && m.body.trim() && m.body !== "[Media]");
-    const historyMessages = recentHistory.map((m) => ({
+    let historyMessages = recentHistory.map((m) => ({
       role: m.direction === "outbound" ? ("assistant" as const) : ("user" as const),
       content: (m.body || "").trim(),
     }));
+    while (historyMessages.length > 0 && historyMessages[0].role !== "user") {
+      historyMessages.shift();
+    }
+    if (historyMessages.length === 0) {
+      historyMessages = [{ role: "user", content: messageBody }];
+    }
+    console.log(`[whatsapp-ai] History: ${historyMessages.length} messages, first role=${historyMessages[0]?.role}, last role=${historyMessages[historyMessages.length - 1]?.role}`);
 
     const fakeReq = {
       session: { userId },
       headers: {},
     } as unknown as Request;
 
+    console.log(`[whatsapp-ai] Loading prompt + tools + context...`);
     const [systemPrompt, learnings, memoryContext, allTools, calendarContext] = await Promise.all([
       chatbgp
         .buildSystemPrompt()
-        .catch(() => "You are ChatBGP, the AI assistant for Bruce Gillingham Pollard, a London commercial property agency."),
-      chatbgp.getBusinessLearningsContext().catch(() => ""),
-      chatbgp.getMemoryContext(userId).catch(() => ""),
-      chatbgp.getAvailableTools().catch(() => ({ tools: [] as any[] })),
-      chatbgp.getEmailAndCalendarContext(fakeReq).catch(() => ""),
+        .catch((e: any) => {
+          console.error(`[whatsapp-ai] buildSystemPrompt failed: ${e?.message}`);
+          return "You are ChatBGP, the AI assistant for Bruce Gillingham Pollard, a London commercial property agency.";
+        }),
+      chatbgp.getBusinessLearningsContext().catch((e: any) => {
+        console.error(`[whatsapp-ai] getBusinessLearningsContext failed: ${e?.message}`);
+        return "";
+      }),
+      chatbgp.getMemoryContext(userId).catch((e: any) => {
+        console.error(`[whatsapp-ai] getMemoryContext failed: ${e?.message}`);
+        return "";
+      }),
+      chatbgp.getAvailableTools().catch((e: any) => {
+        console.error(`[whatsapp-ai] getAvailableTools failed: ${e?.message}`);
+        return { tools: [] as any[] };
+      }),
+      chatbgp.getEmailAndCalendarContext(fakeReq).catch((e: any) => {
+        console.error(`[whatsapp-ai] getEmailAndCalendarContext failed: ${e?.message}`);
+        return "";
+      }),
     ]);
+    const toolCount = (allTools as any).tools?.length ?? 0;
+    console.log(`[whatsapp-ai] Loaded: ${toolCount} tools, sysPrompt=${systemPrompt.length}c, learnings=${learnings.length}c, memories=${memoryContext.length}c, calendar=${calendarContext.length}c`);
 
     const senderLabel = contactName ? `${contactName} (+${fromNumber})` : `+${fromNumber}`;
     const whatsappSystemPrompt =
@@ -204,8 +236,10 @@ async function runChatBgpWhatsAppReply(
       }) as Promise<T>;
     };
 
+    console.log(`[whatsapp-ai] Calling Claude (model=${completionOptions.model}, msgs=${completionOptions.messages.length}, tools=${completionOptions.tools?.length ?? 0})...`);
     let claudeResponse = (await withTimeout(chatbgp.callClaude(completionOptions))) as any;
     let currentMessage = claudeResponse.choices?.[0]?.message;
+    console.log(`[whatsapp-ai] Claude returned in ${Date.now() - startTime}ms (tool_calls=${currentMessage?.tool_calls?.length ?? 0}, content=${(currentMessage?.content || "").slice(0, 100)})`);
     let loopCount = 0;
     let finalReply = "";
 
@@ -217,6 +251,7 @@ async function runChatBgpWhatsAppReply(
       loopCount++;
       const toolCall = currentMessage.tool_calls[0];
       const fnName = toolCall.function.name;
+      console.log(`[whatsapp-ai] Tool call ${loopCount}: ${fnName}`);
       let fnArgs: any;
       try {
         fnArgs = JSON.parse(toolCall.function.arguments || "{}");
