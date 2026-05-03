@@ -44,6 +44,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -327,6 +328,8 @@ function InlineMultiSelect({
   valueDisplay?: (v: string) => string;
 }) {
   const current: string[] = Array.isArray(value) ? value : value ? [value] : [];
+  const knownValues = new Set(options.map(o => o.value));
+  const orphaned = current.filter(v => !knownValues.has(v));
 
   const toggle = (name: string) => {
     const next = current.includes(name)
@@ -363,6 +366,20 @@ function InlineMultiSelect({
             <span className="truncate">{o.label}</span>
           </DropdownMenuItem>
         ))}
+        {orphaned.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            {orphaned.map(v => (
+              <DropdownMenuItem key={v} onClick={() => toggle(v)}>
+                <div className="w-3 h-3 rounded-sm border border-primary bg-primary mr-2 flex items-center justify-center">
+                  <span className="text-primary-foreground text-[8px]">✓</span>
+                </div>
+                <span className="truncate text-muted-foreground line-through">{v}</span>
+                <X className="w-3 h-3 ml-auto text-muted-foreground" />
+              </DropdownMenuItem>
+            ))}
+          </>
+        )}
         {current.length > 0 && (
           <DropdownMenuItem onClick={() => onSave([])} data-testid={`${testId}-clear-all`}>
             <X className="w-3 h-3 mr-2 text-muted-foreground" />
