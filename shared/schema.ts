@@ -458,6 +458,7 @@ export const crmCompanies = pgTable("crm_companies", {
   backers: text("backers"), // free-text: "Sequoia, Index Ventures" etc.
   instagramHandle: text("instagram_handle"),
   tiktokHandle: text("tiktok_handle"),
+  xHandle: text("x_handle"),
   // ── Brand Hunter expansion signals ───────────────────────────────────────
   deptStorePresence: text("dept_store_presence"), // e.g. "Selfridges (popup 2024), Harvey Nichols"
   franchiseActivity: text("franchise_activity"),  // e.g. "UAE master franchise 2023, France 2024"

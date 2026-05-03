@@ -4,7 +4,7 @@ import { db } from "./db";
 import { newsSources, newsArticles, newsEngagement, teamNewsPreferences, crmProperties, crmComps } from "@shared/schema";
 import { eq, desc, sql, and, inArray, gte, isNull } from "drizzle-orm";
 import { rssappHealth, createRssAppFeed, deleteRssAppFeed } from "./rssapp";
-import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications } from "./news-brand-linking";
+import { ensureBrandGoogleNewsFeeds, linkRecentArticlesToBrands, backfillSignalClassifications, previewBrandSocialFeeds, ensureBrandSocialFeeds, type SocialPlatform } from "./news-brand-linking";
 import { users } from "@shared/schema";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { getAppToken, graphRequest } from "./shared-mailbox";
@@ -901,6 +901,38 @@ export function setupNewsFeedRoutes(app: Express) {
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Per-brand social feeds via RSS.app (Instagram / X / LinkedIn).
+  // Preview shows what *would* be created without burning RSS.app quota.
+  // ?platforms=instagram,x,linkedin (default: all). ?limit=N caps the plan.
+  function parsePlatforms(raw: unknown): SocialPlatform[] | undefined {
+    if (typeof raw !== "string" || !raw) return undefined;
+    const allowed: SocialPlatform[] = ["instagram", "x", "linkedin"];
+    const picked = raw.split(",").map(s => s.trim().toLowerCase()).filter((s): s is SocialPlatform => (allowed as string[]).includes(s));
+    return picked.length ? picked : undefined;
+  }
+
+  app.get("/api/news-feed/brand-social/preview", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const platforms = parsePlatforms(req.query.platforms);
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const result = await previewBrandSocialFeeds({ platforms, limit });
+      res.json({ count: result.plan.length, existing: result.existing, plan: result.plan });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Preview failed" });
+    }
+  });
+
+  app.post("/api/news-feed/brand-social/refresh", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const platforms = parsePlatforms(req.query.platforms);
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+      const result = await ensureBrandSocialFeeds({ platforms, limit });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Refresh failed" });
     }
   });
 

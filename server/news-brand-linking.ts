@@ -3,7 +3,7 @@
 import { db } from "./db";
 import { crmCompanies, newsSources, newsArticles, brandSignals } from "@shared/schema";
 import { eq, and, sql, desc, isNotNull } from "drizzle-orm";
-import { googleNewsRssUrl } from "./rssapp";
+import { googleNewsRssUrl, createRssAppFeed } from "./rssapp";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 
 type SignalType = "opening" | "closure" | "funding" | "exec_change" | "sector_move" | "news" | "rumour";
@@ -190,6 +190,129 @@ export async function ensureBrandGoogleNewsFeeds(): Promise<{ created: number; t
     created++;
   }
   return { created, total: tracked.length, refreshed };
+}
+
+// ─── Per-brand social feeds via RSS.app ──────────────────────────────────
+// Mirrors ensureBrandGoogleNewsFeeds but creates RSS.app feeds for each
+// brand's IG / X / LinkedIn handle. Reuses the same `brand:<id>` category
+// tag so the existing brand-signal pipeline picks posts up automatically.
+
+export type SocialPlatform = "instagram" | "x" | "linkedin";
+
+const SOCIAL_TYPE: Record<SocialPlatform, string> = {
+  instagram: "rssapp_instagram",
+  x: "rssapp_x",
+  linkedin: "rssapp_linkedin",
+};
+
+// Build a public profile URL for RSS.app to consume. Returns null if the
+// stored handle isn't usable (empty, personal LinkedIn URL, etc.).
+function socialProfileUrl(platform: SocialPlatform, brand: {
+  instagramHandle: string | null;
+  xHandle: string | null;
+  linkedinUrl: string | null;
+}): string | null {
+  if (platform === "instagram") {
+    const h = brand.instagramHandle?.replace(/^@/, "").trim();
+    return h ? `https://www.instagram.com/${h}/` : null;
+  }
+  if (platform === "x") {
+    const h = brand.xHandle?.replace(/^@/, "").trim();
+    return h ? `https://x.com/${h}` : null;
+  }
+  if (platform === "linkedin") {
+    const url = brand.linkedinUrl?.trim();
+    if (!url) return null;
+    // RSS.app reliably handles company pages but not personal profiles.
+    if (!/linkedin\.com\/company\//i.test(url)) return null;
+    return url;
+  }
+  return null;
+}
+
+export interface BrandSocialFeedPlan {
+  brandId: string;
+  brandName: string;
+  platform: SocialPlatform;
+  url: string;
+}
+
+// Returns the list of brand × platform feeds that *would* be created.
+// Excludes brands that already have a feed for that platform. Read-only,
+// makes no RSS.app calls — safe to run before paying for feeds.
+export async function previewBrandSocialFeeds(opts?: {
+  platforms?: SocialPlatform[];
+  limit?: number;
+}): Promise<{ plan: BrandSocialFeedPlan[]; existing: number }> {
+  const platforms = opts?.platforms?.length ? opts.platforms : (["instagram", "x", "linkedin"] as SocialPlatform[]);
+
+  const tracked = await db
+    .select({
+      id: crmCompanies.id,
+      name: crmCompanies.name,
+      instagramHandle: crmCompanies.instagramHandle,
+      xHandle: crmCompanies.xHandle,
+      linkedinUrl: crmCompanies.linkedinUrl,
+    })
+    .from(crmCompanies)
+    .where(and(eq(crmCompanies.isTrackedBrand, true), sql`${crmCompanies.mergedIntoId} IS NULL`));
+
+  const existingRows = await db
+    .select({ category: newsSources.category, type: newsSources.type })
+    .from(newsSources)
+    .where(sql`${newsSources.category} LIKE 'brand:%'`);
+  const existingKey = new Set(
+    existingRows
+      .filter(r => !!r.type && r.type.startsWith("rssapp_"))
+      .map(r => `${r.category}|${r.type}`)
+  );
+
+  const plan: BrandSocialFeedPlan[] = [];
+  for (const brand of tracked) {
+    for (const platform of platforms) {
+      const url = socialProfileUrl(platform, brand);
+      if (!url) continue;
+      const key = `brand:${brand.id}|${SOCIAL_TYPE[platform]}`;
+      if (existingKey.has(key)) continue;
+      plan.push({ brandId: brand.id, brandName: brand.name, platform, url });
+    }
+  }
+
+  const limited = typeof opts?.limit === "number" ? plan.slice(0, opts.limit) : plan;
+  return { plan: limited, existing: existingKey.size };
+}
+
+// Actually creates the RSS.app feeds and inserts news_sources rows. Honours
+// the same dedupe logic as preview. Continues past per-feed failures so a
+// single bad handle doesn't kill the batch.
+export async function ensureBrandSocialFeeds(opts?: {
+  platforms?: SocialPlatform[];
+  limit?: number;
+}): Promise<{ created: number; skipped: number; errors: { brandName: string; platform: SocialPlatform; error: string }[] }> {
+  const { plan } = await previewBrandSocialFeeds(opts);
+  let created = 0;
+  let skipped = 0;
+  const errors: { brandName: string; platform: SocialPlatform; error: string }[] = [];
+
+  for (const item of plan) {
+    try {
+      const feed = await createRssAppFeed(item.url);
+      await db.insert(newsSources).values({
+        name: `${item.brandName} (${item.platform})`,
+        url: item.url,
+        feedUrl: feed.rss_feed_url,
+        type: SOCIAL_TYPE[item.platform],
+        category: `${BRAND_CATEGORY_PREFIX}${item.brandId}`,
+        active: true,
+      });
+      created++;
+    } catch (err: any) {
+      errors.push({ brandName: item.brandName, platform: item.platform, error: (err?.message || "unknown").slice(0, 200) });
+      skipped++;
+    }
+  }
+
+  return { created, skipped, errors };
 }
 
 // For a single article, decides which tracked brands it mentions and writes
