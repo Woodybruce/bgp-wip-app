@@ -122,6 +122,14 @@ body {
   border-bottom: 1px solid hsl(var(--border));
 }
 
+/* shadcn <Table> wraps tables in `<div className="relative w-full overflow-auto">`.
+   That extra overflow context makes sticky thead pin to the wrapper instead of
+   our outer .table-scroll-container, so the header scrolls with the rows.
+   Neutralise it whenever the table is inside a ScrollableTable. */
+.table-scroll-container .relative.w-full.overflow-auto {
+  overflow: visible !important;
+}
+
 .sync-scroll-bottom {
   overflow-x: auto;
   overflow-y: hidden;
