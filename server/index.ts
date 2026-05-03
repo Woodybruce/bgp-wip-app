@@ -749,6 +749,112 @@ const httpServer = createServer(app);
 // Railway health check — unauthenticated, before all middleware
 app.get("/api/ping", (_req, res) => res.json({ status: "ok" }));
 
+// Privacy policy — public, unauthenticated. Required by Meta for app
+// publishing (WhatsApp Business API webhook).
+app.get("/privacy", (_req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy Policy — Bruce Gillingham Pollard</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#222;line-height:1.55}
+  h1{font-size:1.8rem;margin-bottom:0.2rem}
+  h2{font-size:1.2rem;margin-top:2rem;border-bottom:1px solid #eee;padding-bottom:6px}
+  .meta{color:#888;font-size:0.9rem;margin-bottom:2rem}
+  ul{padding-left:1.2rem}
+  a{color:#0a58ca}
+  footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #eee;color:#888;font-size:0.85rem}
+</style>
+</head>
+<body>
+<h1>Privacy Policy</h1>
+<p class="meta">Bruce Gillingham Pollard LLP &middot; Last updated: 3 May 2026</p>
+
+<p>This Privacy Policy describes how Bruce Gillingham Pollard LLP ("BGP", "we", "us", "our") collects, uses and shares information when you interact with the BGP property dashboard ("the Service"), including via our WhatsApp Business channel.</p>
+
+<h2>1. Who we are</h2>
+<p>Bruce Gillingham Pollard LLP is a Central London commercial property consultancy. The Service is an internal property management platform used by BGP staff and authorised contacts. For data protection enquiries, contact us at <a href="mailto:info@brucegillinghampollard.com">info@brucegillinghampollard.com</a>.</p>
+
+<h2>2. Information we collect</h2>
+<ul>
+  <li><strong>Account information</strong> &mdash; name, email, role, team membership of authorised users.</li>
+  <li><strong>CRM data</strong> &mdash; contact, company, deal, property and requirement records you create or that we receive in the course of business.</li>
+  <li><strong>Communications</strong> &mdash; emails, WhatsApp messages, and chat threads sent to or from BGP through the Service. WhatsApp messages are received via the Meta WhatsApp Business API.</li>
+  <li><strong>Usage data</strong> &mdash; logs of features used, timestamps, IP address, and device/browser metadata for security and audit purposes.</li>
+</ul>
+
+<h2>3. How we use your information</h2>
+<ul>
+  <li>To provide the Service and respond to enquiries on WhatsApp, email and other channels.</li>
+  <li>To maintain client and prospect records as part of our property advisory business.</li>
+  <li>To improve our internal tools, including AI-assisted features, diagnostics and audit logs.</li>
+  <li>To comply with legal, regulatory and contractual obligations.</li>
+</ul>
+
+<h2>4. WhatsApp Business API</h2>
+<p>When you message our WhatsApp Business number, the message and its metadata (sender phone number, profile name visible to WhatsApp, timestamps) are delivered to us via Meta's WhatsApp Business API and stored securely in our system. Replies sent from our number are also stored. We use this data only to respond to you and to maintain a record of our communications. We do not sell or share WhatsApp message content with third parties for advertising purposes.</p>
+
+<h2>5. Lawful basis</h2>
+<p>We process personal data on the basis of legitimate interests (managing client relationships and conducting our property advisory business), contract (where you instruct us), consent (where required), and legal obligation (where applicable).</p>
+
+<h2>6. Sharing</h2>
+<p>We share information only with:</p>
+<ul>
+  <li>Service providers who help us run the Service (cloud hosting, AI providers, email and messaging providers, identity verification providers) under appropriate data-protection terms.</li>
+  <li>Professional advisers and regulators where legally required.</li>
+  <li>Counterparties in property transactions to the extent necessary to progress an instruction (e.g. solicitors, surveyors).</li>
+</ul>
+
+<h2>7. Retention</h2>
+<p>We retain personal data for as long as necessary to provide the Service and meet our legal and business obligations. Communications and CRM records are typically retained for the duration of the client relationship plus seven years.</p>
+
+<h2>8. Your rights</h2>
+<p>Subject to applicable law (including UK GDPR), you have the right to access, correct, delete or restrict processing of your personal data, to object to processing, and to data portability. To exercise any of these rights, email <a href="mailto:info@brucegillinghampollard.com">info@brucegillinghampollard.com</a>. You also have the right to lodge a complaint with the UK Information Commissioner's Office (<a href="https://ico.org.uk">ico.org.uk</a>).</p>
+
+<h2>9. Security</h2>
+<p>We use industry-standard technical and organisational measures, including TLS in transit, access controls, and encrypted storage, to protect personal data. No system is perfectly secure; please use a strong password and tell us immediately if you suspect any unauthorised access.</p>
+
+<h2>10. International transfers</h2>
+<p>Our service providers may process data outside the United Kingdom and the European Economic Area. Where this happens, we rely on appropriate safeguards (such as Standard Contractual Clauses) as required by law.</p>
+
+<h2>11. Cookies</h2>
+<p>The Service uses session cookies strictly necessary to keep you signed in. We do not use advertising or third-party tracking cookies.</p>
+
+<h2>12. Changes to this policy</h2>
+<p>We may update this policy from time to time. The "Last updated" date at the top of this page indicates when it was last revised.</p>
+
+<h2>13. Contact</h2>
+<p>Bruce Gillingham Pollard LLP<br>
+24 Lowndes Street, London SW1X 9HY, United Kingdom<br>
+<a href="mailto:info@brucegillinghampollard.com">info@brucegillinghampollard.com</a></p>
+
+<footer>&copy; ${new Date().getFullYear()} Bruce Gillingham Pollard LLP. All rights reserved.</footer>
+</body>
+</html>`);
+});
+
+// Square BGP mark for Meta App icon upload (and other 1024x1024 needs).
+// Renders the public icon.svg at 1024x1024 PNG.
+app.get("/bgp-mark.png", async (_req, res) => {
+  try {
+    const sharp = (await import("sharp")).default;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+      <rect width="512" height="512" fill="#2E5E3F"/>
+      <text x="256" y="320" font-family="Georgia, 'Times New Roman', serif" font-size="240" font-weight="700" text-anchor="middle" fill="#ffffff" letter-spacing="-8">BGP</text>
+    </svg>`;
+    const png = await sharp(Buffer.from(svg)).resize(1024, 1024).png().toBuffer();
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.setHeader("Content-Disposition", "inline; filename=\"BGP-mark-1024.png\"");
+    res.send(png);
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to render mark", message: err?.message });
+  }
+});
+
 /**
  * ScraperAPI status check — confirms the key is set + valid, reports the
  * remaining credit balance and plan, and runs a single test fetch through
