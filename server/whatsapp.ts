@@ -89,6 +89,204 @@ export async function sendWhatsAppText(config: ReturnType<typeof getWhatsAppConf
   } catch { return false; }
 }
 
+async function sendAndStoreReply(
+  replyText: string,
+  toNumber: string,
+  conversationId: string,
+  contactName: string | null,
+  config: ReturnType<typeof getWhatsAppConfig>,
+): Promise<void> {
+  const MAX_LEN = 3900;
+  const chunks: string[] = [];
+  let remaining = replyText.trim();
+  while (remaining.length > MAX_LEN) {
+    let cutAt = remaining.lastIndexOf("\n", MAX_LEN);
+    if (cutAt < MAX_LEN / 2) cutAt = remaining.lastIndexOf(" ", MAX_LEN);
+    if (cutAt < MAX_LEN / 2) cutAt = MAX_LEN;
+    chunks.push(remaining.slice(0, cutAt));
+    remaining = remaining.slice(cutAt).trim();
+  }
+  if (remaining) chunks.push(remaining);
+
+  for (const chunk of chunks) {
+    const sent = await sendWhatsAppText(config, toNumber, chunk);
+    if (!sent) {
+      console.error(`[whatsapp-ai] Failed to send chunk to ${toNumber}`);
+      continue;
+    }
+    await storage.createWaMessage({
+      conversationId,
+      direction: "outbound",
+      fromNumber: config.phoneNumberId || "",
+      toNumber,
+      body: chunk,
+      status: "sent",
+      timestamp: new Date(),
+    });
+  }
+
+  await storage.upsertWaConversation(toNumber, contactName, replyText.slice(0, 100));
+}
+
+async function runChatBgpWhatsAppReply(
+  messageBody: string,
+  fromNumber: string,
+  contactName: string | null,
+  conversationId: string,
+  config: ReturnType<typeof getWhatsAppConfig>,
+): Promise<void> {
+  if (!config.token || !config.phoneNumberId) return;
+  if (!messageBody || messageBody === "[Media]") return;
+
+  const startTime = Date.now();
+  const TIMEOUT_MS = 90_000;
+  const MAX_LOOPS = 10;
+  const userId = `wa:${fromNumber}`;
+
+  try {
+    const chatbgp = await import("./chatbgp");
+
+    const history = await storage.getWaMessages(conversationId);
+    const recentHistory = history
+      .slice(-20)
+      .filter((m) => m.body && m.body.trim() && m.body !== "[Media]");
+    const historyMessages = recentHistory.map((m) => ({
+      role: m.direction === "outbound" ? ("assistant" as const) : ("user" as const),
+      content: (m.body || "").trim(),
+    }));
+
+    const fakeReq = {
+      session: { userId },
+      headers: {},
+    } as unknown as Request;
+
+    const [systemPrompt, learnings, memoryContext, allTools, calendarContext] = await Promise.all([
+      chatbgp
+        .buildSystemPrompt()
+        .catch(() => "You are ChatBGP, the AI assistant for Bruce Gillingham Pollard, a London commercial property agency."),
+      chatbgp.getBusinessLearningsContext().catch(() => ""),
+      chatbgp.getMemoryContext(userId).catch(() => ""),
+      chatbgp.getAvailableTools().catch(() => ({ tools: [] as any[] })),
+      chatbgp.getEmailAndCalendarContext(fakeReq).catch(() => ""),
+    ]);
+
+    const senderLabel = contactName ? `${contactName} (+${fromNumber})` : `+${fromNumber}`;
+    const whatsappSystemPrompt =
+      systemPrompt +
+      learnings +
+      memoryContext +
+      calendarContext +
+      `\n\n---\nIMPORTANT — WHATSAPP REPLY MODE\n` +
+      `You are replying over WhatsApp to ${senderLabel}.\n` +
+      `- Plain text only — no markdown headers, tables, or heavy bullet lists. Short paragraphs and simple line breaks read best on WhatsApp.\n` +
+      `- Keep replies concise and conversational (2–5 sentences usually). If a longer answer is genuinely needed, send it, but stay under 3500 characters.\n` +
+      `- You have access to the full ChatBGP toolset — use tools when the user asks for CRM, calendar, email, KYC, document or other lookups.\n` +
+      `- If the user shares a useful insight, lesson, or correction worth remembering company-wide, call save_learning so future conversations benefit.\n` +
+      `- If the message is purely a casual acknowledgement ("ok", "thanks", "got it") and no real reply is needed, respond with exactly __SKIP__ and nothing else.\n`;
+
+    const completionOptions: any = {
+      model: "claude-sonnet-4-6",
+      messages: [
+        { role: "system", content: whatsappSystemPrompt },
+        ...historyMessages,
+      ],
+      max_completion_tokens: 2048,
+      tools: (allTools as any).tools?.length ? (allTools as any).tools : undefined,
+    };
+
+    const withTimeout = <T,>(p: Promise<T>): Promise<T> => {
+      let timer: NodeJS.Timeout | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("WhatsApp AI reply timed out")), TIMEOUT_MS);
+      });
+      return Promise.race([p, timeoutPromise]).finally(() => {
+        if (timer) clearTimeout(timer);
+      }) as Promise<T>;
+    };
+
+    let claudeResponse = (await withTimeout(chatbgp.callClaude(completionOptions))) as any;
+    let currentMessage = claudeResponse.choices?.[0]?.message;
+    let loopCount = 0;
+    let finalReply = "";
+
+    while (
+      currentMessage?.tool_calls &&
+      currentMessage.tool_calls.length > 0 &&
+      loopCount < MAX_LOOPS
+    ) {
+      loopCount++;
+      const toolCall = currentMessage.tool_calls[0];
+      const fnName = toolCall.function.name;
+      let fnArgs: any;
+      try {
+        fnArgs = JSON.parse(toolCall.function.arguments || "{}");
+      } catch (parseErr: any) {
+        console.error("[whatsapp-ai] Bad tool args JSON:", parseErr?.message);
+        completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
+        completionOptions.messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify({ error: "Invalid JSON in tool arguments" }),
+        });
+        claudeResponse = (await withTimeout(chatbgp.callClaude(completionOptions))) as any;
+        currentMessage = claudeResponse.choices?.[0]?.message;
+        continue;
+      }
+
+      try {
+        const result = await chatbgp.handleCrmToolCall(
+          fnName,
+          fnArgs,
+          fakeReq,
+          completionOptions,
+          currentMessage,
+          toolCall,
+        );
+        if (result?.handled && result.response) {
+          finalReply = result.response.reply || "";
+          break;
+        }
+        completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
+        completionOptions.messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(result?.response ?? { error: "Tool not handled" }),
+        });
+        claudeResponse = (await withTimeout(chatbgp.callClaude(completionOptions))) as any;
+        currentMessage = claudeResponse.choices?.[0]?.message;
+      } catch (toolErr: any) {
+        console.error("[whatsapp-ai] Tool error:", toolErr?.message);
+        completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
+        completionOptions.messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: JSON.stringify({ error: toolErr?.message || "Tool execution failed" }),
+        });
+        claudeResponse = (await withTimeout(chatbgp.callClaude(completionOptions))) as any;
+        currentMessage = claudeResponse.choices?.[0]?.message;
+      }
+    }
+
+    if (!finalReply) finalReply = currentMessage?.content || "";
+
+    if (!finalReply || finalReply.trim() === "__SKIP__") {
+      console.log(`[whatsapp-ai] Skipped reply to ${fromNumber} in ${Date.now() - startTime}ms`);
+      return;
+    }
+
+    await sendAndStoreReply(finalReply.trim(), fromNumber, conversationId, contactName, config);
+    console.log(
+      `[whatsapp-ai] Replied to ${fromNumber} in ${Date.now() - startTime}ms (${loopCount} tool calls)`,
+    );
+
+    chatbgp
+      .extractAndSaveMemories(userId, messageBody, finalReply.trim())
+      .catch((err: any) => console.error("[whatsapp-ai] Memory extraction error:", err?.message));
+  } catch (err: any) {
+    console.error("[whatsapp-ai] Reply failed:", err?.message);
+  }
+}
+
 async function sendWhatsAppDocument(config: ReturnType<typeof getWhatsAppConfig>, to: string, pdfBuffer: Buffer, filename: string, caption: string): Promise<boolean> {
   try {
     const formData = new FormData();
@@ -203,10 +401,18 @@ export function setupWhatsAppRoutes(app: Express) {
 
               console.log(`WhatsApp message from ${fromNumber}: ${messageBody.slice(0, 50)}`);
 
-              if (messageBody && messageBody !== "[Media]" && messageBody.length > 10) {
-                const docHandled = await detectAndGenerateDocument(messageBody, fromNumber, config);
+              if (messageBody && messageBody !== "[Media]") {
+                const docHandled = messageBody.length > 10
+                  ? await detectAndGenerateDocument(messageBody, fromNumber, config)
+                  : false;
                 if (docHandled) continue;
 
+                runChatBgpWhatsAppReply(messageBody, fromNumber, contactName, conversation.id, config).catch(
+                  (err: any) => console.error("[whatsapp-ai] Top-level error:", err?.message),
+                );
+              }
+
+              if (messageBody && messageBody !== "[Media]" && messageBody.length > 10) {
                 try {
                   const existingLeads = await storage.getLeadsByEmailId(conversation.id);
                   const recentLeads = existingLeads.filter((l) => {
