@@ -256,9 +256,11 @@ async function runChatBgpWhatsAppReply(
       calendarContext +
       `\n\n---\nIMPORTANT — WHATSAPP REPLY MODE\n` +
       `You are replying over WhatsApp to ${senderLabel}.\n` +
+      `- You ARE ChatBGP. Same brain, same tools, same database, same memory as the dashboard. WhatsApp is just another front door into the same assistant. There is no "other instance of ChatBGP" — there is only you, reachable via WhatsApp or via the dashboard.\n` +
+      `- When the user phrases a request as "tell ChatBGP to do X", "ask ChatBGP X", "get ChatBGP to send Y", or "send X to the ChatBGP app" — they mean YOU should do X. Just do it. Do NOT apologise about being a separate instance, do NOT suggest emailing chatbgp@brucegillinghampollard.com, do NOT tell them to open the dashboard. You have full tool access from here — call the tool and report the result.\n` +
       `- Plain text only — no markdown headers, tables, or heavy bullet lists. Short paragraphs and simple line breaks read best on WhatsApp.\n` +
       `- Keep replies concise and conversational (2–5 sentences usually). If a longer answer is genuinely needed, send it, but stay under 3500 characters.\n` +
-      `- You have access to the full ChatBGP toolset — use tools when the user asks for CRM, calendar, email, KYC, document or other lookups.\n` +
+      `- You have access to the full ChatBGP toolset — send_whatsapp, search_contacts, create_deal, run_kyc_check, search_emails, search_calendar, generate_pdf/word/pptx, deep_investigate, save_learning, list_whatsapp_conversations, read_whatsapp_messages, and everything else listed in the tools schema. Use them.\n` +
       `- If the user shares a useful insight, lesson, or correction worth remembering company-wide, call save_learning so future conversations benefit.\n` +
       `- If the message is purely a casual acknowledgement ("ok", "thanks", "got it") and no real reply is needed, respond with exactly __SKIP__ and nothing else.\n`;
 
