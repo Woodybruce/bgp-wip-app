@@ -50,6 +50,7 @@ interface BrandProfile {
     backers: string | null;
     instagram_handle: string | null;
     tiktok_handle: string | null;
+    x_handle: string | null;
     dept_store_presence: string | null;
     franchise_activity: string | null;
     hunter_flag: boolean;
@@ -817,6 +818,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
       backers: c.backers || "",
       instagram_handle: c.instagram_handle || "",
       tiktok_handle: c.tiktok_handle || "",
+      x_handle: c.x_handle || "",
       dept_store_presence: c.dept_store_presence || "",
       franchise_activity: c.franchise_activity || "",
       hunter_flag: c.hunter_flag ?? false,
@@ -944,7 +946,7 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <Label className="text-xs">Backers / investors</Label>
               <Input value={(form.backers as string) || ""} onChange={(e) => setForm({ ...form, backers: e.target.value })} placeholder="e.g. Sequoia, Index Ventures" />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <div>
                 <Label className="text-xs">Instagram handle</Label>
                 <Input value={(form.instagram_handle as string) || ""} onChange={(e) => setForm({ ...form, instagram_handle: e.target.value })} placeholder="@brandname" />
@@ -952,6 +954,10 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
               <div>
                 <Label className="text-xs">TikTok handle</Label>
                 <Input value={(form.tiktok_handle as string) || ""} onChange={(e) => setForm({ ...form, tiktok_handle: e.target.value })} placeholder="@brandname" />
+              </div>
+              <div>
+                <Label className="text-xs">X handle</Label>
+                <Input value={(form.x_handle as string) || ""} onChange={(e) => setForm({ ...form, x_handle: e.target.value })} placeholder="@brandname" />
               </div>
             </div>
             <div>
@@ -1117,6 +1123,18 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   data-testid="link-instagram"
                 >
                   <Instagram className="w-3 h-3" /> Instagram
+                </a>
+              )}
+              {c.x_handle && (
+                <a
+                  href={`https://x.com/${c.x_handle.replace(/^@/, "")}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/60 bg-background hover:bg-muted/50 text-xs font-medium transition-colors"
+                  data-testid="link-x"
+                >
+                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>
+                  X
                 </a>
               )}
               {c.phone && (
@@ -1456,6 +1474,19 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
                   </div>
                 );
               })()}
+              {c.x_handle && (
+                <div>
+                  <a
+                    href={`https://x.com/${c.x_handle.replace(/^@/, "")}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm text-primary hover:underline flex items-center gap-1"
+                  >
+                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>
+                    {c.x_handle}
+                  </a>
+                </div>
+              )}
               {c.dept_store_presence && (
                 <div className="col-span-2">
                   <div className="text-xs text-muted-foreground flex items-center gap-1 mb-1">

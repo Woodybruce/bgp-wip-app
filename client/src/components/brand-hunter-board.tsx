@@ -37,6 +37,7 @@ interface HunterBrand {
   backers: string | null;
   instagram_handle: string | null;
   tiktok_handle: string | null;
+  x_handle: string | null;
   dept_store_presence: string | null;
   franchise_activity: string | null;
   hunter_flag: boolean;
@@ -357,7 +358,7 @@ export default function BrandHunterBoard() {
                             <span className="truncate">{brand.backers}</span>
                           </div>
                         )}
-                        {(brand.instagram_handle || brand.tiktok_handle) && (
+                        {(brand.instagram_handle || brand.tiktok_handle || brand.x_handle) && (
                           <div className="flex items-center gap-2">
                             {brand.instagram_handle && (
                               <a
@@ -375,6 +376,16 @@ export default function BrandHunterBoard() {
                                 className="flex items-center gap-0.5 hover:text-slate-800"
                               >
                                 <TikTokIcon className="w-3 h-3" /> {brand.tiktok_handle}
+                              </a>
+                            )}
+                            {brand.x_handle && (
+                              <a
+                                href={`https://x.com/${brand.x_handle.replace(/^@/, "")}`}
+                                target="_blank" rel="noreferrer"
+                                className="flex items-center gap-0.5 hover:text-slate-800"
+                              >
+                                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" /></svg>
+                                {brand.x_handle}
                               </a>
                             )}
                           </div>

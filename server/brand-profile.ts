@@ -132,7 +132,7 @@ router.get("/api/brand/:companyId/profile", requireAuth, async (req: Request, re
               kyc_status, kyc_expires_at, aml_risk_level, aml_pep_status,
               is_tracked_brand, tracking_reason, brand_group_id, parent_company_id,
               concept_pitch, store_count, rollout_status, backers, instagram_handle,
-              tiktok_handle, dept_store_presence, franchise_activity, hunter_flag,
+              tiktok_handle, x_handle, dept_store_presence, franchise_activity, hunter_flag,
               stock_ticker, uk_entity_name, agent_type, concept_status,
               ai_generated_fields, last_enriched_at,
               bgp_contact_crm, bgp_contact_user_ids,
@@ -704,7 +704,7 @@ router.patch("/api/brand/:companyId", requireAuth, async (req: Request, res: Res
     const allowed = [
       "is_tracked_brand", "tracking_reason", "brand_group_id",
       "concept_pitch", "store_count", "rollout_status", "backers",
-      "instagram_handle", "tiktok_handle", "dept_store_presence",
+      "instagram_handle", "tiktok_handle", "x_handle", "dept_store_presence",
       "franchise_activity", "hunter_flag", "stock_ticker", "uk_entity_name", "agent_type",
       "concept_status",
     ];
