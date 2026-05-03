@@ -4839,28 +4839,46 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         const isInvestment = ["Sale", "Purchase", "Investment Sale", "Investment Acquisition"].includes(deal.dealType || "") || !!deal.vendorId || !!deal.purchaserId;
                         const rows = isInvestment
                           ? [
-                              { label: "V", value: deal.vendorId, field: "vendorId", options: companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.vendorId).map(c => ({ id: c.id, name: c.name })) },
-                              { label: "P", value: deal.purchaserId, field: "purchaserId", options: companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name })) },
+                              { label: "V", value: deal.vendorId, field: "vendorId", contactValue: (deal as any).vendorContactId, contactField: "vendorContactId", options: companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.vendorId).map(c => ({ id: c.id, name: c.name })) },
+                              { label: "P", value: deal.purchaserId, field: "purchaserId", contactValue: (deal as any).purchaserContactId, contactField: "purchaserContactId", options: companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name })) },
                             ]
                           : [
-                              { label: "LL", value: deal.landlordId, field: "landlordId", options: companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name })) },
-                              { label: "T", value: deal.tenantId, field: "tenantId", options: companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name })) },
+                              { label: "LL", value: deal.landlordId, field: "landlordId", contactValue: (deal as any).landlordContactId, contactField: "landlordContactId", options: companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name })) },
+                              { label: "T", value: deal.tenantId, field: "tenantId", contactValue: (deal as any).tenantContactId, contactField: "tenantContactId", options: companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name })) },
                             ];
                         return (
                           <TableCell className="px-1.5 py-1">
-                            <div className="space-y-0.5 w-[150px]">
-                              {rows.map(({ label, value, field, options }) => (
-                                <div key={field} className="flex items-center gap-1.5">
-                                  <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-5 shrink-0">{label}</span>
-                                  <InlineLinkSelect
-                                    value={value}
-                                    options={options}
-                                    href={value ? `/companies/${value}` : undefined}
-                                    onSave={(v) => handleInlineSave(deal.id, field, v || null)}
-                                    placeholder="Link"
-                                  />
-                                </div>
-                              ))}
+                            <div className="space-y-0.5 w-[160px]">
+                              {rows.map(({ label, value, field, options, contactValue, contactField }) => {
+                                const contactOptions = value
+                                  ? contacts.filter(c => c.companyId === value || c.id === contactValue).map(c => ({ id: c.id, name: c.name || c.email || "Unknown" }))
+                                  : [];
+                                return (
+                                  <div key={field}>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-5 shrink-0">{label}</span>
+                                      <InlineLinkSelect
+                                        value={value}
+                                        options={options}
+                                        href={value ? `/companies/${value}` : undefined}
+                                        onSave={(v) => handleInlineSave(deal.id, field, v || null)}
+                                        placeholder="Link"
+                                      />
+                                    </div>
+                                    {value && (
+                                      <div className="flex items-center gap-1.5 pl-[26px]">
+                                        <InlineLinkSelect
+                                          value={contactValue || ""}
+                                          options={contactOptions}
+                                          href={contactValue ? `/contacts/${contactValue}` : undefined}
+                                          onSave={(v) => handleInlineSave(deal.id, contactField, v || null)}
+                                          placeholder="+ contact"
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </TableCell>
                         );
@@ -4869,28 +4887,46 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         const isInvestment = ["Sale", "Purchase", "Investment Sale", "Investment Acquisition"].includes(deal.dealType || "") || !!deal.vendorId || !!deal.purchaserId;
                         const rows = isInvestment
                           ? [
-                              { label: "V", value: deal.vendorAgentId, field: "vendorAgentId" },
-                              { label: "P", value: deal.purchaserAgentId, field: "purchaserAgentId" },
+                              { label: "V", value: deal.vendorAgentId, field: "vendorAgentId", contactValue: (deal as any).vendorAgentContactId, contactField: "vendorAgentContactId" },
+                              { label: "P", value: deal.purchaserAgentId, field: "purchaserAgentId", contactValue: (deal as any).purchaserAgentContactId, contactField: "purchaserAgentContactId" },
                             ]
                           : [
-                              { label: "LL", value: deal.leasingAgentId, field: "leasingAgentId" },
-                              { label: "T", value: deal.acquisitionAgentId, field: "acquisitionAgentId" },
+                              { label: "LL", value: deal.leasingAgentId, field: "leasingAgentId", contactValue: (deal as any).leasingAgentContactId, contactField: "leasingAgentContactId" },
+                              { label: "T", value: deal.acquisitionAgentId, field: "acquisitionAgentId", contactValue: (deal as any).acquisitionAgentContactId, contactField: "acquisitionAgentContactId" },
                             ];
                         return (
                           <TableCell className="px-1.5 py-1">
-                            <div className="space-y-0.5 w-[150px]">
-                              {rows.map(({ label, value, field }) => (
-                                <div key={field} className="flex items-center gap-1.5">
-                                  <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-5 shrink-0">{label}</span>
-                                  <InlineLinkSelect
-                                    value={value}
-                                    options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
-                                    href={value ? `/companies/${value}` : undefined}
-                                    onSave={(v) => handleInlineSave(deal.id, field, v || null)}
-                                    placeholder="Link agent"
-                                  />
-                                </div>
-                              ))}
+                            <div className="space-y-0.5 w-[160px]">
+                              {rows.map(({ label, value, field, contactValue, contactField }) => {
+                                const contactOptions = value
+                                  ? contacts.filter(c => c.companyId === value || c.id === contactValue).map(c => ({ id: c.id, name: c.name || c.email || "Unknown" }))
+                                  : [];
+                                return (
+                                  <div key={field}>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-5 shrink-0">{label}</span>
+                                      <InlineLinkSelect
+                                        value={value}
+                                        options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
+                                        href={value ? `/companies/${value}` : undefined}
+                                        onSave={(v) => handleInlineSave(deal.id, field, v || null)}
+                                        placeholder="Link agent"
+                                      />
+                                    </div>
+                                    {value && (
+                                      <div className="flex items-center gap-1.5 pl-[26px]">
+                                        <InlineLinkSelect
+                                          value={contactValue || ""}
+                                          options={contactOptions}
+                                          href={contactValue ? `/contacts/${contactValue}` : undefined}
+                                          onSave={(v) => handleInlineSave(deal.id, contactField, v || null)}
+                                          placeholder="+ contact"
+                                        />
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </TableCell>
                         );

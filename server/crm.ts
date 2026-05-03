@@ -1123,6 +1123,15 @@ export function setupCrmRoutes(app: Express) {
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS last_interaction TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_interaction TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS last_interaction TEXT`).catch(() => {});
+  // Per-side contact people on deals — one named person per principal/agent.
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS landlord_contact_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS tenant_contact_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS vendor_contact_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS purchaser_contact_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS vendor_agent_contact_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS acquisition_agent_contact_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS purchaser_agent_contact_id VARCHAR`).catch(() => {});
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS leasing_agent_contact_id VARCHAR`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_url TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_title TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_contact_id VARCHAR`).catch(() => {});

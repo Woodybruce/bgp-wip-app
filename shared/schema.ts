@@ -768,18 +768,26 @@ export const crmDeals = pgTable("crm_deals", {
   propertyId: varchar("property_id"),
   unitId: varchar("unit_id"), // → property_units.id (one unit may have many deals over time)
   landlordId: varchar("landlord_id"),
+  landlordContactId: varchar("landlord_contact_id"),
   dealType: text("deal_type"),
   status: text("status"),
   team: text("team").array(),
   internalAgent: text("internal_agent").array(),
   tenantId: varchar("tenant_id"),
+  tenantContactId: varchar("tenant_contact_id"),
   clientContactId: varchar("client_contact_id"),
   vendorId: varchar("vendor_id"),
+  vendorContactId: varchar("vendor_contact_id"),
   purchaserId: varchar("purchaser_id"),
+  purchaserContactId: varchar("purchaser_contact_id"),
   vendorAgentId: varchar("vendor_agent_id"),
+  vendorAgentContactId: varchar("vendor_agent_contact_id"),
   acquisitionAgentId: varchar("acquisition_agent_id"),
+  acquisitionAgentContactId: varchar("acquisition_agent_contact_id"),
   purchaserAgentId: varchar("purchaser_agent_id"),
+  purchaserAgentContactId: varchar("purchaser_agent_contact_id"),
   leasingAgentId: varchar("leasing_agent_id"),
+  leasingAgentContactId: varchar("leasing_agent_contact_id"),
   // ── Deal date journey: instructed → target → exchanged → completed → invoiced ──
   // instructedAt = when BGP was formally put on the deal (set once, editable).
   // targetDate is the working forecast (editable).
