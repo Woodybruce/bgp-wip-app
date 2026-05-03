@@ -837,15 +837,26 @@ app.get("/privacy", (_req, res) => {
 });
 
 // Square BGP mark for Meta App icon upload (and other 1024x1024 needs).
-// Renders the public icon.svg at 1024x1024 PNG.
+// Renders via the canvas module so font rendering works on Railway's Linux
+// container (sharp's SVG text rendering depends on system fonts that aren't
+// installed in the production image).
 app.get("/bgp-mark.png", async (_req, res) => {
   try {
-    const sharp = (await import("sharp")).default;
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-      <rect width="512" height="512" fill="#2E5E3F"/>
-      <text x="256" y="320" font-family="Georgia, 'Times New Roman', serif" font-size="240" font-weight="700" text-anchor="middle" fill="#ffffff" letter-spacing="-8">BGP</text>
-    </svg>`;
-    const png = await sharp(Buffer.from(svg)).resize(1024, 1024).png().toBuffer();
+    const { createCanvas } = await import("canvas");
+    const SIZE = 1024;
+    const canvas = createCanvas(SIZE, SIZE);
+    const ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = "#2E5E3F";
+    ctx.fillRect(0, 0, SIZE, SIZE);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 480px serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("BGP", SIZE / 2, SIZE / 2 + 40);
+
+    const png = canvas.toBuffer("image/png");
     res.setHeader("Content-Type", "image/png");
     res.setHeader("Cache-Control", "public, max-age=86400");
     res.setHeader("Content-Disposition", "inline; filename=\"BGP-mark-1024.png\"");
