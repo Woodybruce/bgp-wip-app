@@ -114,20 +114,17 @@ body {
 .table-scroll-container::-webkit-scrollbar-thumb:hover {
   background: rgba(0,0,0,0.35);
 }
-.table-scroll-container thead th {
+/* Excel-style sticky table headers across the app. Applies to every
+   <thead><th> by default — sticky uses whatever scroll context is
+   nearest (a .table-scroll-container if wrapped, otherwise the page
+   outlet). Background is set so rows scrolling underneath don't bleed
+   through. */
+thead th {
   position: sticky;
   top: 0;
   z-index: 10;
   background: hsl(var(--card));
   border-bottom: 1px solid hsl(var(--border));
-}
-
-/* shadcn <Table> wraps tables in `<div className="relative w-full overflow-auto">`.
-   That extra overflow context makes sticky thead pin to the wrapper instead of
-   our outer .table-scroll-container, so the header scrolls with the rows.
-   Neutralise it whenever the table is inside a ScrollableTable. */
-.table-scroll-container .relative.w-full.overflow-auto {
-  overflow: visible !important;
 }
 
 .sync-scroll-bottom {
