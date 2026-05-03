@@ -269,7 +269,7 @@ async function runChatBgpWhatsAppReply(
       }
 
       try {
-        const result = await chatbgp.handleCrmToolCall(
+        const result: any = await chatbgp.handleCrmToolCall(
           fnName,
           fnArgs,
           fakeReq,
@@ -279,13 +279,23 @@ async function runChatBgpWhatsAppReply(
         );
         if (result?.handled && result.response) {
           finalReply = result.response.reply || "";
+          console.log(`[whatsapp-ai] Tool ${fnName} returned final reply (${finalReply.length}c)`);
           break;
+        }
+        let toolResultPayload: any;
+        if (result?.data !== undefined) {
+          toolResultPayload = result.data;
+        } else if (result?.handled === false) {
+          toolResultPayload = { error: `Tool ${fnName} is not available over WhatsApp.` };
+          console.warn(`[whatsapp-ai] Tool ${fnName} not handled by handleCrmToolCall`);
+        } else {
+          toolResultPayload = result?.response ?? { error: "Tool returned no result" };
         }
         completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
         completionOptions.messages.push({
           role: "tool",
           tool_call_id: toolCall.id,
-          content: JSON.stringify(result?.response ?? { error: "Tool not handled" }),
+          content: JSON.stringify(toolResultPayload),
         });
         claudeResponse = (await withTimeout(chatbgp.callClaude(completionOptions))) as any;
         currentMessage = claudeResponse.choices?.[0]?.message;
