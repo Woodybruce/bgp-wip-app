@@ -495,10 +495,15 @@ export function setupWhatsAppRoutes(app: Express) {
 
               console.log(`WhatsApp message from ${fromNumber}: ${messageBody.slice(0, 50)}`);
 
-              // Document/file sent via WhatsApp → auto-ingest via universal pipeline.
+              // Document sent via WhatsApp → auto-ingest via universal pipeline.
+              // Images: skip auto-ingest by default (most are conversational, not property data).
+              // Only auto-ingest an image when the caption clearly asks for it.
               const mediaObj = msg.document || msg.image;
               const mediaCaption = (msg.document?.caption || msg.image?.caption || "").trim();
-              if ((msg.type === "document" || msg.type === "image") && mediaObj?.id && config.token) {
+              const captionWantsImport = /\b(import|ingest|add|upload|save|file)\s+(this|that|it|the\s+\w+)\b|\b(this is|here'?s)\s+(a\s+)?(brochure|deal|property|leasing|rent|schedule|contact|company|list)\b/i.test(mediaCaption);
+              const shouldAutoIngest = msg.type === "document" || (msg.type === "image" && captionWantsImport);
+
+              if (shouldAutoIngest && mediaObj?.id && config.token) {
                 (async () => {
                   try {
                     await sendWhatsAppText(config, fromNumber, "⏳ Processing your file — I'll import it and let you know what was found...");
@@ -519,6 +524,18 @@ export function setupWhatsAppRoutes(app: Express) {
                     await sendWhatsAppText(config, fromNumber, `❌ Couldn't import that file: ${err?.message || "unknown error"}. Try sending it via the BGP app instead.`).catch(() => {});
                   }
                 })();
+                continue;
+              }
+
+              // Plain image (no import-intent caption) — let ChatBGP respond
+              // conversationally rather than misleadingly claim it was "imported".
+              if (msg.type === "image" && mediaObj?.id) {
+                const aiBody = mediaCaption
+                  ? `${mediaCaption}\n\n[The user attached an image. You don't have direct vision over it from WhatsApp yet — acknowledge that you can see they sent an image and ask what they'd like you to do with it (e.g. add a property, log against a contact, just save it). If they explicitly say it's a brochure or property, suggest they re-send with a caption like "import this brochure" so the auto-ingest pipeline runs.]`
+                  : `[The user sent an image with no caption. Acknowledge it briefly and ask what they'd like done with it. Don't claim to have read the image.]`;
+                runChatBgpWhatsAppReply(aiBody, fromNumber, contactName, conversation.id, config).catch(
+                  (err: any) => console.error("[whatsapp-ai] Image follow-up error:", err?.message),
+                );
                 continue;
               }
 
