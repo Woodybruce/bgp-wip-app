@@ -1132,6 +1132,26 @@ export function setupCrmRoutes(app: Express) {
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS acquisition_agent_contact_id VARCHAR`).catch(() => {});
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS purchaser_agent_contact_id VARCHAR`).catch(() => {});
   pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS leasing_agent_contact_id VARCHAR`).catch(() => {});
+  // break_party — Tenant / Landlord / Mutual. Adds a structured party
+  // alongside the existing free-text break_option. One-off backfill below
+  // parses any party keyword out of existing break_option text and strips
+  // text from break_option so it ends up holding just the year number.
+  pool.query(`ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS break_party TEXT`).then(async () => {
+    try {
+      await pool.query(`UPDATE crm_deals SET break_party = 'Mutual'   WHERE break_party IS NULL AND break_option ILIKE '%mutual%'`);
+      await pool.query(`UPDATE crm_deals SET break_party = 'Landlord' WHERE break_party IS NULL AND break_option ILIKE '%landlord%'`);
+      await pool.query(`UPDATE crm_deals SET break_party = 'Tenant'   WHERE break_party IS NULL AND break_option ILIKE '%tenant%'`);
+      // Strip non-numeric chars from break_option only when it still has letters
+      // (so subsequent boots become no-ops once values are pure numbers).
+      await pool.query(`
+        UPDATE crm_deals
+        SET break_option = NULLIF(TRIM(REGEXP_REPLACE(break_option, '[^0-9.]', '', 'g')), '')
+        WHERE break_option ~ '[A-Za-z]'
+      `);
+    } catch (err: any) {
+      console.warn(`[crm boot] break_party backfill skipped: ${err?.message}`);
+    }
+  }).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_url TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_title TEXT`).catch(() => {});
   pool.query(`ALTER TABLE crm_comps ADD COLUMN IF NOT EXISTS source_contact_id VARCHAR`).catch(() => {});

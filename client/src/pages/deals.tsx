@@ -268,6 +268,8 @@ const COLUMN_LABELS: Record<string, string> = {
   contacts: "Contacts",
   principals: "Principals",
   agents: "Agents",
+  leaseTerms: "Lease Terms",
+  investmentTerms: "Investment Terms",
 };
 
 export function formatCurrency(val: number | null | undefined): string {
@@ -3896,20 +3898,22 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     contacts: true,
     principals: true,
     agents: true,
-    pricing: true,
-    yield: true,
+    leaseTerms: true,
+    investmentTerms: true,
+    pricing: false,
+    yield: false,
     fee: true,
     feeAlloc: true,
     feeAgreement: true,
     invoicingEntity: true,
     floorAreas: true,
-    pricePsf: true,
-    priceItza: true,
-    rentPa: true,
-    capitalContribution: true,
-    rentFree: true,
-    leaseLength: true,
-    breakOption: true,
+    pricePsf: false,
+    priceItza: false,
+    rentPa: false,
+    capitalContribution: false,
+    rentFree: false,
+    leaseLength: false,
+    breakOption: false,
     instructedAt: false,
     targetDate: true,
     exchangedAt: false,
@@ -4720,6 +4724,8 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                     {visibleColumns.feeAgreement && <TableHead className="min-w-[100px]">Fee Agreement</TableHead>}
                     {visibleColumns.invoicingEntity && <TableHead className="min-w-[150px]">Invoicing Entity</TableHead>}
                     {visibleColumns.floorAreas && <TableHead className="min-w-[140px]">Floor Areas</TableHead>}
+                    {visibleColumns.leaseTerms && <TableHead className="min-w-[160px]">Lease Terms</TableHead>}
+                    {visibleColumns.investmentTerms && <TableHead className="min-w-[150px]">Investment Terms</TableHead>}
                     {visibleColumns.pricePsf && <TableHead className="min-w-[80px] text-right">Price PSF</TableHead>}
                     {visibleColumns.priceItza && <TableHead className="min-w-[80px] text-right">Price ITZA</TableHead>}
                     {visibleColumns.rentPa && <TableHead className="min-w-[100px] text-right">Rent PA</TableHead>}
@@ -5144,6 +5150,70 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                                 />
                               </div>
                             ))}
+                          </div>
+                        </TableCell>
+                      )}
+                      {visibleColumns.leaseTerms && (
+                        <TableCell className="px-1.5 py-1">
+                          <div className="space-y-0.5 w-[160px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-9 shrink-0">Rent</span>
+                              <InlineNumber value={deal.rentPa} onSave={(v) => handleInlineSave(deal.id, "rentPa", v)} prefix="£" suffix=" pa" className="text-xs" />
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-9 shrink-0">CapEx</span>
+                              <InlineNumber value={deal.capitalContribution} onSave={(v) => handleInlineSave(deal.id, "capitalContribution", v)} prefix="£" className="text-xs" />
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-9 shrink-0">RF</span>
+                              <InlineNumber value={deal.rentFree} onSave={(v) => handleInlineSave(deal.id, "rentFree", v)} suffix=" mo" className="text-xs" />
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-9 shrink-0">Term</span>
+                              <InlineNumber value={deal.leaseLength} onSave={(v) => handleInlineSave(deal.id, "leaseLength", v)} suffix=" yr" className="text-xs" />
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-9 shrink-0">Break</span>
+                              <div className="flex items-center gap-1 flex-1">
+                                <InlineNumber
+                                  value={deal.breakOption == null || deal.breakOption === "" ? null : Number(deal.breakOption)}
+                                  onSave={(v) => handleInlineSave(deal.id, "breakOption", v == null ? null : String(v))}
+                                  suffix=" yr"
+                                  className="text-xs"
+                                />
+                                <InlineSelect
+                                  value={(deal as any).breakParty}
+                                  options={["Tenant", "Landlord", "Mutual"]}
+                                  onSave={(v) => handleInlineSave(deal.id, "breakParty", v || null)}
+                                  placeholder="—"
+                                  className="text-[10px]"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </TableCell>
+                      )}
+                      {visibleColumns.investmentTerms && (
+                        <TableCell className="px-1.5 py-1">
+                          <div className="space-y-0.5 w-[150px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-12 shrink-0">Pricing</span>
+                              <InlineNumber value={deal.pricing} onSave={(v) => handleInlineSave(deal.id, "pricing", v)} prefix="£" className="text-xs" />
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-12 shrink-0">Yield</span>
+                              <InlineNumber value={deal.yieldPercent} onSave={(v) => handleInlineSave(deal.id, "yieldPercent", v)} suffix="%" className="text-xs" />
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-12 shrink-0">PSF</span>
+                              <InlineNumber value={deal.pricePsf} onSave={(v) => handleInlineSave(deal.id, "pricePsf", v)} prefix="£" className="text-xs" />
+                            </div>
+                            {isRetailAssetClass(deal.assetClass) && (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-12 shrink-0">ITZA</span>
+                                <InlineNumber value={deal.priceItza} onSave={(v) => handleInlineSave(deal.id, "priceItza", v)} prefix="£" className="text-xs" />
+                              </div>
+                            )}
                           </div>
                         </TableCell>
                       )}

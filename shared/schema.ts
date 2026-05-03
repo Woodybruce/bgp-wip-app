@@ -816,6 +816,7 @@ export const crmDeals = pgTable("crm_deals", {
   rentFree: real("rent_free"),
   leaseLength: real("lease_length"),
   breakOption: text("break_option"),
+  breakParty: text("break_party"),  // "Tenant" | "Landlord" | "Mutual"
   rentAnalysis: real("rent_analysis"),
   comments: text("comments"),
   lastInteraction: text("last_interaction"),
