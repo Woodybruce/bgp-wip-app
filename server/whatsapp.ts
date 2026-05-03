@@ -239,10 +239,43 @@ export function setupWhatsAppRoutes(app: Express) {
     }
   });
 
-  app.get("/api/whatsapp/status", requireAuth, (_req: Request, res: Response) => {
+  app.get("/api/whatsapp/status", requireAuth, async (_req: Request, res: Response) => {
     const config = getWhatsAppConfig();
     const connected = !!(config.token && config.phoneNumberId);
-    res.json({ connected });
+    if (!connected) return res.json({ connected: false, tokenValid: false });
+
+    // Probe the Graph API to confirm the token actually works against this
+    // phone number. Cheap GET, surfaces token expiry / number detachment /
+    // permission issues without requiring a real send.
+    try {
+      const probe = await fetch(`${GRAPH_API_URL}/${config.phoneNumberId}?fields=display_phone_number,verified_name,quality_rating`, {
+        headers: { Authorization: `Bearer ${config.token}` },
+      });
+      if (probe.ok) {
+        const data = await probe.json().catch(() => ({}));
+        return res.json({
+          connected: true,
+          tokenValid: true,
+          displayPhoneNumber: data.display_phone_number,
+          verifiedName: data.verified_name,
+          qualityRating: data.quality_rating,
+        });
+      }
+      const body: any = await probe.json().catch(() => ({}));
+      return res.json({
+        connected: true,
+        tokenValid: false,
+        error: {
+          status: probe.status,
+          code: body?.error?.code,
+          subcode: body?.error?.error_subcode,
+          message: body?.error?.message,
+          type: body?.error?.type,
+        },
+      });
+    } catch (err: any) {
+      return res.json({ connected: true, tokenValid: false, error: { message: err?.message || "Probe failed" } });
+    }
   });
 
   app.get("/api/whatsapp/conversations", requireAuth, async (_req: Request, res: Response) => {
@@ -308,9 +341,16 @@ export function setupWhatsAppRoutes(app: Express) {
       );
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => null);
+        const errorData: any = await response.json().catch(() => null);
         console.error("WhatsApp send error:", response.status, errorData);
-        return res.status(500).json({ message: "Failed to send message" });
+        const metaErr = errorData?.error || {};
+        return res.status(response.status === 401 || response.status === 403 ? response.status : 502).json({
+          message: metaErr.message || "Failed to send message",
+          code: metaErr.code,
+          subcode: metaErr.error_subcode,
+          type: metaErr.type,
+          status: response.status,
+        });
       }
 
       const data = await response.json();
