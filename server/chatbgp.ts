@@ -1130,6 +1130,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **Maps**: navigate_to "property-map" with lat/lng/zoom. Tell users to use built-in Radius/Distance buttons.
 - **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London F&B, London Retail, etc.
 - **deep_investigate**: If report.property.ambiguous === true, present options as numbered list and ask user to pick. Never guess.
+- **send_whatsapp** (CRITICAL): When the user confirms a send, you MUST call send_whatsapp again — DO NOT just reply "Sent!" in text. The tool returns the actual Meta API result; if it returns an error you MUST tell the user the message did not go and quote the metaCode/metaMessage. Never claim a message was delivered without a successful tool result. If you don't know the recipient's number, look it up via search_contacts or ask the user — do not guess. After a successful send, paraphrase the tool's confirmation using the actual recipient and message that the tool received, not what was discussed earlier.
 
 ## Memory Systems
 1. **Auto-memories** (per-user): Extracted automatically after conversations. Loaded in future chats.
@@ -3553,7 +3554,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "send_whatsapp",
-      description: "Send a WhatsApp message to a phone number. Use when the user asks you to message someone on WhatsApp. The message is sent from the BGP business WhatsApp number. Always confirm with the user before sending.",
+      description: "Send a WhatsApp message to a phone number. Use when the user asks you to message someone on WhatsApp. The message is sent from the BGP business WhatsApp number. Workflow: (1) confirm recipient number and message text with the user; (2) WHEN THE USER SAYS YES, CALL THIS TOOL — never reply 'Sent!' in plain text without firing the tool, and never assume an earlier confirmation already sent the message; (3) report back using the tool's success/failure result verbatim. If the tool returns an error, tell the user the message did NOT go and quote the metaCode and metaMessage.",
       parameters: {
         type: "object",
         properties: {
