@@ -96,8 +96,8 @@ body {
 .table-scroll-container {
   overflow-x: auto;
   overflow-y: auto;
-  max-height: calc(100vh - 280px);
-  flex: 1 1 auto;
+  max-height: calc(100vh - 200px);
+  flex: 1 1 0%;
   min-height: 0;
 }
 .table-scroll-container::-webkit-scrollbar {
