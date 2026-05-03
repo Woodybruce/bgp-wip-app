@@ -3578,6 +3578,37 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
+      name: "list_whatsapp_conversations",
+      description: "List recent WhatsApp conversations the BGP business number has had. Use when the user asks 'who's messaged us on WhatsApp?', 'show me my WhatsApp conversations', or to find a specific contact's conversation ID. Returns conversation list with phone, contact name, last message preview, last message time, and unread count.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max number of conversations to return (default 20)" },
+          search: { type: "string", description: "Optional substring to filter by contact name, phone number, or last message preview" },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "read_whatsapp_messages",
+      description: "Read the message history for a specific WhatsApp conversation. Use when the user asks 'what did X say on WhatsApp?', 'show me my WhatsApp chat with Y', or to look up an inbound reply. Pass either the conversation ID (from list_whatsapp_conversations) or the recipient phone number. Returns chronological messages with direction (inbound/outbound), body, and timestamp.",
+      parameters: {
+        type: "object",
+        properties: {
+          conversationId: { type: "string", description: "Conversation UUID (from list_whatsapp_conversations)" },
+          phone: { type: "string", description: "Phone number in international format (e.g. '447980313675'). Used if conversationId is not given." },
+          limit: { type: "number", description: "Max number of messages to return, most recent first (default 50)" },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "bulk_update_crm",
       description: "Update multiple CRM records at once. Use when you need to apply the same change to several deals, contacts, companies, or properties — e.g. updating status on a batch of deals, adding notes to multiple contacts, or changing an agent assignment across records. Much faster than updating one at a time.",
       parameters: {
@@ -7233,6 +7264,86 @@ Be thorough — include every unit row you can classify, across all properties i
       };
     } catch (err: any) {
       return { data: { connected: false, tokenValid: false, error: `Probe failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "list_whatsapp_conversations") {
+    try {
+      const { storage } = await import("./storage");
+      const all = await storage.getWaConversations();
+      const limit = typeof fnArgs.limit === "number" && fnArgs.limit > 0 ? Math.min(fnArgs.limit, 200) : 20;
+      const search = typeof fnArgs.search === "string" ? fnArgs.search.trim().toLowerCase() : "";
+      const filtered = search
+        ? all.filter((c) =>
+            (c.contactName || "").toLowerCase().includes(search) ||
+            (c.waPhoneNumber || "").includes(search) ||
+            (c.lastMessagePreview || "").toLowerCase().includes(search),
+          )
+        : all;
+      const slice = filtered.slice(0, limit).map((c) => ({
+        id: c.id,
+        phone: c.waPhoneNumber,
+        contactName: c.contactName,
+        lastMessagePreview: c.lastMessagePreview,
+        lastMessageAt: c.lastMessageAt,
+        unreadCount: c.unreadCount,
+      }));
+      return {
+        data: {
+          totalConversations: all.length,
+          returned: slice.length,
+          conversations: slice,
+          instruction: "Summarise the conversations naturally. Quote contact names and previews verbatim.",
+        },
+      };
+    } catch (err: any) {
+      return { data: { error: `Failed to list WhatsApp conversations: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "read_whatsapp_messages") {
+    try {
+      const { storage } = await import("./storage");
+      let conversationId: string | undefined = fnArgs.conversationId;
+      if (!conversationId && fnArgs.phone) {
+        const phone = String(fnArgs.phone).replace(/[^0-9]/g, "");
+        const all = await storage.getWaConversations();
+        const match = all.find((c) => c.waPhoneNumber === phone);
+        if (!match) {
+          return { data: { error: `No WhatsApp conversation found for phone ${phone}` } };
+        }
+        conversationId = match.id;
+      }
+      if (!conversationId) {
+        return { data: { error: "Provide either conversationId or phone." } };
+      }
+      const conversation = await storage.getWaConversation(conversationId);
+      if (!conversation) {
+        return { data: { error: `Conversation ${conversationId} not found.` } };
+      }
+      const limit = typeof fnArgs.limit === "number" && fnArgs.limit > 0 ? Math.min(fnArgs.limit, 200) : 50;
+      const messages = await storage.getWaMessages(conversationId);
+      const recent = messages.slice(-limit).map((m) => ({
+        direction: m.direction,
+        body: m.body,
+        timestamp: m.timestamp,
+        status: m.status,
+      }));
+      return {
+        data: {
+          conversation: {
+            id: conversation.id,
+            phone: conversation.waPhoneNumber,
+            contactName: conversation.contactName,
+          },
+          totalMessages: messages.length,
+          returned: recent.length,
+          messages: recent,
+          instruction: "Quote inbound message bodies verbatim. Do not invent or paraphrase replies.",
+        },
+      };
+    } catch (err: any) {
+      return { data: { error: `Failed to read WhatsApp messages: ${err?.message}` } };
     }
   }
 
