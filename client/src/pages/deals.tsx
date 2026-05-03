@@ -4355,6 +4355,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     <PageLayout
       title={isCompsMode ? "Leasing Comps" : "Deals"}
       icon={Handshake}
+      fullHeight
       subtitle={isCompsMode
         ? `${baseDeals.length} completed deal${baseDeals.length !== 1 ? "s" : ""} — comparable transactions`
         : urlTeamParam
