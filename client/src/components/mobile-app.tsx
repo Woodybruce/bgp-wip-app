@@ -411,7 +411,13 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
 
   const handleLongPress = useRef<NodeJS.Timeout | null>(null);
   const handleTouchStart = () => {
-    handleLongPress.current = setTimeout(() => setShowActions(true), 400);
+    handleLongPress.current = setTimeout(() => {
+      // AI messages have no Edit/Delete affordances — long-press just copies
+      // the whole bubble. User messages still show the menu so Edit/Delete
+      // stay reachable.
+      if (!isUser) handleCopy();
+      else setShowActions(true);
+    }, 400);
   };
   const handleTouchEnd = () => {
     if (handleLongPress.current) clearTimeout(handleLongPress.current);
@@ -496,17 +502,6 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               <div className="text-[15px] leading-[1.7] text-gray-900 whitespace-pre-wrap break-words">
                 <RenderMessageContent content={message.content} onCheckboxClick={onCheckboxClick} isUserBubble={false} selectedCheckboxes={selectedCheckboxes} />
               </div>
-              {showActions && (
-                <div className="absolute -top-8 left-0 flex items-center gap-1 bg-white rounded-xl shadow-lg border border-gray-200 px-1 py-1 z-20 animate-in fade-in zoom-in-95 duration-150">
-                  <button onClick={handleCopy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-gray-700 active:bg-gray-100" data-testid="button-copy-message">
-                    <Copy className="w-3.5 h-3.5" /> Copy
-                  </button>
-                  <div className="w-px h-4 bg-gray-200" />
-                  <button onClick={() => setShowActions(false)} className="px-2 py-1.5 rounded-lg active:bg-gray-100">
-                    <X className="w-3.5 h-3.5 text-gray-400" />
-                  </button>
-                </div>
-              )}
             </div>
           )}
           {message.action && <ActionCard action={message.action} />}
@@ -548,7 +543,7 @@ function MobileMessageBubble({ message, currentUserId, threadId, isGroupChat, on
               <RenderMessageContent content={message.content} onCheckboxClick={!isUser ? onCheckboxClick : undefined} isUserBubble={isOwn ? true : false} selectedCheckboxes={!isUser ? selectedCheckboxes : undefined} />
             </div>
             {showActions && (
-              <div className={`absolute -top-8 ${isOwn ? "right-0" : "left-0"} flex items-center gap-1 bg-white rounded-xl shadow-lg border border-gray-200 px-1 py-1 z-20 animate-in fade-in zoom-in-95 duration-150`}>
+              <div className={`absolute -top-11 ${isOwn ? "right-0" : "left-0"} flex items-center gap-1 bg-white rounded-xl shadow-lg border border-gray-200 px-1 py-1 z-20 animate-in fade-in zoom-in-95 duration-150`}>
                 <button onClick={handleCopy} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-gray-700 active:bg-gray-100" data-testid="button-copy-message">
                   <Copy className="w-3.5 h-3.5" /> Copy
                 </button>
