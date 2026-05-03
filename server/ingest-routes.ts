@@ -5,10 +5,14 @@
  *   POST /api/ingest                — preview a file (multipart/form-data)
  *   POST /api/ingest/:token/commit  — commit a previously-previewed ingest
  *   GET  /api/ingest/targets        — list supported ingest targets
+ *   POST /api/ingest/folder         — ingest all data files in a SharePoint folder
  *
  * The two-phase flow is mandatory: every ingest produces a preview first,
  * the user (or ChatBGP, via the wrapping tool) reviews it, then triggers
  * the commit. Tokens expire after 1h.
+ *
+ * Exception: folder ingestion auto-commits each child (the act of sharing
+ * the folder link is the confirmation). Returns a multi-file summary.
  */
 import type { Express, Request, Response } from "express";
 import multer from "multer";
@@ -22,14 +26,21 @@ import {
   listIngestTargets,
   classifyTarget,
   summariseDiff,
+  ingestBytes,
   type IngestTarget,
 } from "./universal-ingest";
-import { resolveSharePointShareLink } from "./sharepoint-resolver";
+import { resolveSharePointShareLink, downloadFolderChild } from "./sharepoint-resolver";
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 },
 });
+
+const DATA_EXTS = new Set(["xlsx", "xls", "csv", "pdf", "txt", "ods"]);
+function isDataFilename(name: string): boolean {
+  const ext = name.split(".").pop()?.toLowerCase() || "";
+  return DATA_EXTS.has(ext);
+}
 
 export function registerIngestRoutes(app: Express) {
   app.get("/api/ingest/targets", requireAuth, (_req: Request, res: Response) => {
@@ -62,9 +73,26 @@ export function registerIngestRoutes(app: Express) {
       } else if (typeof shareUrl === "string" && /sharepoint\.com|onedrive/i.test(shareUrl)) {
         const resolved = await resolveSharePointShareLink(shareUrl);
         if (resolved.isFolder) {
-          return res.status(400).json({
-            error: "Folder share link — pick a single file. Children: " + (resolved.folderChildren?.map((c) => c.filename).join(", ") || "none"),
-          });
+          // Folder link → auto-ingest all data files, return multi-file summary.
+          const dataFiles = (resolved.folderChildren || []).filter(c => isDataFilename(c.filename));
+          if (dataFiles.length === 0) {
+            return res.status(400).json({
+              error: "Folder share link — no importable data files found. Files: " +
+                (resolved.folderChildren?.map(c => c.filename).join(", ") || "none"),
+            });
+          }
+          const userId = (req as any).user?.id || "system";
+          const results: Array<{ filename: string; written: number; skipped: number; target: string; narrative: string; error?: string }> = [];
+          for (const child of dataFiles.slice(0, 10)) { // cap at 10 files
+            try {
+              const childBytes = await downloadFolderChild(child.downloadUrl);
+              const r = await ingestBytes({ bytes: childBytes, filename: child.filename, userId });
+              results.push({ filename: child.filename, written: r.written, skipped: r.skipped, target: r.target, narrative: r.narrative });
+            } catch (err: any) {
+              results.push({ filename: child.filename, written: 0, skipped: 0, target: "unknown", narrative: "", error: err?.message });
+            }
+          }
+          return res.json({ folderIngest: true, folderName: resolved.filename, files: results });
         }
         bytes = resolved.bytes;
         filename = resolved.filename;

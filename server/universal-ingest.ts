@@ -38,7 +38,7 @@ import { pool } from "./db";
 // optional ref resolver. Engine itself never changes.
 // ─────────────────────────────────────────────────────────────────────────
 
-export type IngestTarget = "leasing_schedule_units" | "crm_deals" | "crm_companies" | "crm_contacts" | "crm_properties";
+export type IngestTarget = "leasing_schedule_units" | "crm_deals" | "crm_companies" | "crm_contacts" | "crm_properties" | "crm_comps" | "crm_requirements_leasing";
 export type IngestTargetOrAuto = IngestTarget | "auto";
 
 interface TargetSpec {
@@ -150,6 +150,54 @@ const TARGETS: Record<IngestTarget, TargetSpec> = {
       asset_class (string or null)
     `,
     matchKey: ["name"],
+  },
+  crm_comps: {
+    table: "crm_comps",
+    fields: `
+      name (string — a short descriptor, e.g. "18-22 Haymarket — Zara 2024"),
+      address (string or null — full property address),
+      tenant (string or null),
+      landlord (string or null),
+      deal_type (one of: New Letting | Renewal | Rent Review | Investment Sale | Investment Acquisition | Assignment | Sub-Letting or null),
+      comp_type (one of: Leasing | Investment or null),
+      area_sqft (string or null — total area, e.g. "2,500"),
+      headline_rent (string or null — annual rent, e.g. "£250,000 pa"),
+      zone_a_rate (string or null — Zone A rate per sq ft),
+      pricing (string or null — purchase/sale price for investment comps),
+      yield_percent (string or null),
+      rent_free (string or null — rent-free period),
+      capex (string or null — capital contribution),
+      term (string or null — lease term, e.g. "10 years"),
+      completion_date (string or null — date deal completed),
+      comments (string or null)
+    `,
+    matchKey: ["name"],
+    resolveRefs: async (record) => {
+      if (record.property_address) {
+        record.property_id = await resolvePropertyId(record.property_address);
+        delete record.property_address;
+      }
+      return record;
+    },
+  },
+  crm_requirements_leasing: {
+    table: "crm_requirements_leasing",
+    fields: `
+      name (string — company name or requirement label),
+      status (one of: Active | On Hold | Completed | Cancelled or null),
+      use (array of strings — e.g. ["Retail", "F&B"] — use classes sought),
+      size (array of strings — size ranges sought, e.g. ["1,000-2,000 sqft"]),
+      requirement_locations (array of strings — areas or streets of interest),
+      comments (string or null — any additional notes or requirements)
+    `,
+    matchKey: ["name"],
+    resolveRefs: async (record) => {
+      if (record.company_name) {
+        record.company_id = await resolveCompanyId(record.company_name);
+        delete record.company_name;
+      }
+      return record;
+    },
   },
 };
 
@@ -786,4 +834,27 @@ export function getPendingPreview(commitToken: string): IngestPreview | null {
 
 export function listIngestTargets(): IngestTarget[] {
   return Object.keys(TARGETS) as IngestTarget[];
+}
+
+/**
+ * One-shot ingest: classify → parse → diff → commit.
+ * Returns a plain-English summary for email/WhatsApp replies.
+ * Used by ambient ingest paths (email attachments, WhatsApp documents)
+ * where the deliberate act of sending the file IS the confirmation.
+ */
+export async function ingestBytes(args: {
+  bytes: Buffer;
+  filename: string;
+  userId?: string;
+  userName?: string;
+}): Promise<{ written: number; skipped: number; errors: { record: any; error: string }[]; target: IngestTarget; narrative: string }> {
+  const file = readFile({ bytes: args.bytes, filename: args.filename });
+  const cls = await classifyTarget(file);
+  const { records } = await parseWithClaude({ file, target: cls.target });
+  const preview = await buildDiff({ target: cls.target, records, filename: args.filename });
+  try { preview.narrative = await summariseDiff({ preview }); } catch { /* skip */ }
+  const result = await commitDiff({ commitToken: preview.commitToken, userId: args.userId || "ambient" });
+  const narrative = preview.narrative ||
+    `Imported ${result.written} record(s) into ${cls.target} from ${args.filename}.`;
+  return { ...result, target: cls.target, narrative };
 }

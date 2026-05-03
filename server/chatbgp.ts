@@ -2421,7 +2421,7 @@ export async function getAvailableTools(): Promise<{
       parameters: {
         type: "object",
         properties: {
-          target: { type: "string", description: "What kind of records to extract. One of: leasing_schedule_units | crm_deals | crm_companies | crm_contacts | crm_properties." },
+          target: { type: "string", description: "What kind of records to extract. One of: leasing_schedule_units | crm_deals | crm_companies | crm_contacts | crm_properties | crm_comps | crm_requirements_leasing. Leave as 'auto' for AI to decide." },
           shareUrl: { type: "string", description: "A SharePoint or OneDrive share link (e.g. https://brucegillinghampollardlimited.sharepoint.com/...). Resolves and downloads the file silently. Mutually exclusive with text." },
           text: { type: "string", description: "Pasted text content (CSV, table, notes). Mutually exclusive with shareUrl. For uploaded files, the user uses the UI dialog." },
           filename: { type: "string", description: "Optional filename label for pasted text (defaults to 'pasted.txt')." },

@@ -3,12 +3,57 @@ import { requireAuth } from "./auth";
 import { db } from "./db";
 import { chatbgpEmailLog, crmContacts, crmCompanies, crmInteractions, users } from "@shared/schema";
 import { eq, desc, sql, and } from "drizzle-orm";
-import { getSharedMailboxMessages, getSharedMailboxMessageById, sendFromSharedMailbox, replyToSharedMailboxMessage, markMessageRead, getAppToken, EmailAttachment } from "./shared-mailbox";
+import { getSharedMailboxMessages, getSharedMailboxMessageById, sendFromSharedMailbox, replyToSharedMailboxMessage, markMessageRead, getAppToken, EmailAttachment, graphRequest } from "./shared-mailbox";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
 import { generateAutonomousDocument, exportDocumentToPdf } from "./document-templates";
+import { ingestBytes } from "./universal-ingest";
 
 const SHARED_MAILBOX = "chatbgp@brucegillinghampollard.com";
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
+
+const DATA_MIME_TYPES = new Set([
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/csv",
+  "application/csv",
+  "application/pdf",
+  "text/plain",
+  "application/vnd.oasis.opendocument.spreadsheet",
+]);
+
+function isDataFile(filename: string, contentType?: string): boolean {
+  if (contentType && DATA_MIME_TYPES.has(contentType.split(";")[0].trim().toLowerCase())) return true;
+  const ext = (filename || "").split(".").pop()?.toLowerCase() || "";
+  return ["xlsx", "xls", "csv", "pdf", "txt", "ods"].includes(ext);
+}
+
+async function fetchAndIngestAttachments(messageId: string, fromEmail: string): Promise<string> {
+  try {
+    const attList = await graphRequest(
+      `/users/${SHARED_MAILBOX}/messages/${messageId}/attachments?$select=id,name,contentType,size,isInline`
+    );
+    const dataAtts = (attList.value || []).filter(
+      (a: any) => !a.isInline && isDataFile(a.name, a.contentType) && (a.size || 0) < 25 * 1024 * 1024
+    );
+    if (dataAtts.length === 0) return "";
+    const summaries: string[] = [];
+    for (const att of dataAtts) {
+      try {
+        const detail = await graphRequest(`/users/${SHARED_MAILBOX}/messages/${messageId}/attachments/${att.id}`);
+        const bytes = Buffer.from(detail.contentBytes, "base64");
+        const result = await ingestBytes({ bytes, filename: att.name, userId: fromEmail, userName: fromEmail });
+        summaries.push(`**${att.name}**: ${result.narrative}`);
+      } catch (err: any) {
+        console.warn(`[email-ingest] Attachment ${att.name} failed: ${err?.message}`);
+        summaries.push(`**${att.name}**: could not parse (${err?.message})`);
+      }
+    }
+    return summaries.join("\n");
+  } catch (err: any) {
+    console.warn(`[email-ingest] fetchAndIngestAttachments failed: ${err?.message}`);
+    return "";
+  }
+}
 
 // Convert Microsoft Graph message HTML/text body to a plain-text string
 // that preserves readable structure. The old extractor preferred
@@ -765,7 +810,14 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
             actionsTaken = result.actions;
             console.log(`[email-processor] Instruction processed for "${subject}": ${result.actions.length} actions, reply=${!!result.reply}`);
 
-            const replyText = result.reply || `Hi — I've received your email "${subject}" and logged it. If you need me to take a specific action, try sending a more detailed instruction via the ChatBGP dashboard or email.`;
+            // Also ingest any data file attachments alongside the instruction.
+            const attachIngest = await fetchAndIngestAttachments(messageId, fromEmail);
+            if (attachIngest) {
+              actionsTaken.push({ type: "attachment_ingested", result: attachIngest, success: true });
+            }
+
+            const replyText = (result.reply || `Hi — I've received your email "${subject}" and logged it.`) +
+              (attachIngest ? `\n\nAttachment import:\n${attachIngest}` : "");
             replySent = await sendReplyWithFallback(messageId, fromEmail, subject, replyText, actionsTaken, result.attachments);
             break;
           }
@@ -801,14 +853,23 @@ async function processNewEmails(): Promise<{ processed: number; errors: number }
           }
 
           case "document": {
-            actionsTaken.push({
-              type: "document_received",
-              result: `Document email noted: ${subject}. Attachments should be filed via the dashboard.`,
-              success: true,
-            });
-            if (isRegisteredUser) {
-              const docReply = `Thanks — I've received the document "${subject}". It's been noted and can be filed via the BGP dashboard.`;
-              replySent = await sendReplyWithFallback(messageId, fromEmail, subject, docReply, actionsTaken);
+            const ingestSummary = await fetchAndIngestAttachments(messageId, fromEmail);
+            if (ingestSummary) {
+              actionsTaken.push({ type: "attachment_ingested", result: ingestSummary, success: true });
+              if (isRegisteredUser) {
+                const docReply = `Thanks — I've processed the attachments from "${subject}":\n\n${ingestSummary}`;
+                replySent = await sendReplyWithFallback(messageId, fromEmail, subject, docReply, actionsTaken);
+              }
+            } else {
+              actionsTaken.push({
+                type: "document_received",
+                result: `Document email noted: ${subject}. No importable data files found.`,
+                success: true,
+              });
+              if (isRegisteredUser) {
+                const docReply = `Thanks — I've received your email "${subject}". I couldn't find any importable data files (Excel, CSV, or PDF). If you meant to send a leasing schedule or similar, try attaching the file directly.`;
+                replySent = await sendReplyWithFallback(messageId, fromEmail, subject, docReply, actionsTaken);
+              }
             }
             break;
           }
@@ -1048,7 +1109,7 @@ export function registerEmailProcessorRoutes(app: Express) {
 
   app.post("/api/email-processor/reprocess/:id", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const logId = parseInt(req.params.id);
+      const logId = parseInt(String(req.params.id));
       if (isNaN(logId)) return res.status(400).json({ message: "Invalid log ID" });
       const [logEntry] = await db.select().from(chatbgpEmailLog).where(eq(chatbgpEmailLog.id, logId)).limit(1);
       if (!logEntry) return res.status(404).json({ message: "Log entry not found" });

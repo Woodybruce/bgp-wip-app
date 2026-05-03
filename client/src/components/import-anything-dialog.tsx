@@ -55,6 +55,10 @@ interface IngestPreview {
   commitToken: string;
   narrative?: string;
   autoClassified?: { confidence: "high" | "medium" | "low"; reasoning: string };
+  // Folder ingest result — returned instead of normal preview when a folder link is shared.
+  folderIngest?: true;
+  folderName?: string;
+  files?: Array<{ filename: string; written: number; skipped: number; target: string; narrative: string; error?: string }>;
 }
 
 interface ImportAnythingDialogProps {
@@ -237,6 +241,8 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "auto
               setShowAdvanced={setShowAdvanced}
               isUploading={isUploading}
             />
+          ) : preview.folderIngest ? (
+            <FolderPreviewPane preview={preview} />
           ) : (
             <PreviewPane preview={preview} />
           )}
@@ -251,6 +257,11 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "auto
                   <><Sparkles className="w-4 h-4 mr-2" /> Analyse</>
                 )}
               </Button>
+            </>
+          ) : preview.folderIngest ? (
+            <>
+              <Button variant="ghost" onClick={() => setPreview(null)}>Import another</Button>
+              <Button onClick={handleClose}>Done</Button>
             </>
           ) : (
             <>
@@ -388,6 +399,34 @@ function DropZone(props: {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Folder ingest result pane ────────────────────────────────────────────
+function FolderPreviewPane({ preview }: { preview: IngestPreview }) {
+  const files = preview.files || [];
+  const totalWritten = files.reduce((s, f) => s + f.written, 0);
+  const errors = files.filter(f => f.error).length;
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border bg-gradient-to-br from-primary/5 to-transparent p-4 flex items-start gap-3">
+        <Sparkles className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+        <div className="text-sm leading-relaxed">
+          Imported {files.length} file{files.length !== 1 ? "s" : ""} from <strong>{preview.folderName}</strong> — {totalWritten} records written{errors > 0 ? `, ${errors} failed` : ""}.
+        </div>
+      </div>
+      <div className="space-y-2">
+        {files.map((f, i) => (
+          <div key={i} className={`rounded-md border px-3 py-2 text-sm flex items-start gap-2 ${f.error ? "border-destructive/30 bg-destructive/5" : "bg-card"}`}>
+            {f.error ? <AlertTriangle className="w-4 h-4 text-destructive shrink-0 mt-0.5" /> : <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0 mt-0.5" />}
+            <div className="flex-1 min-w-0">
+              <div className="font-medium truncate">{f.filename}</div>
+              {f.error ? <div className="text-xs text-destructive mt-0.5">{f.error}</div> : <div className="text-xs text-muted-foreground mt-0.5">{f.narrative || `${f.written} written, ${f.skipped} skipped`}</div>}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { storage } from "./storage";
 import { z } from "zod";
 import { autoProcessAndPush } from "./news-intelligence";
 import { callClaude, CHATBGP_HELPER_MODEL, safeParseJSON } from "./utils/anthropic-client";
+import { ingestBytes } from "./universal-ingest";
 
 const GRAPH_API_VERSION = "v21.0";
 const GRAPH_API_URL = `https://graph.facebook.com/${GRAPH_API_VERSION}`;
@@ -15,6 +16,27 @@ export function getWhatsAppConfig() {
   const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   return { token, phoneNumberId, verifyToken, appSecret };
+}
+
+async function downloadWhatsAppMedia(mediaId: string, token: string): Promise<{ bytes: Buffer; filename: string; mimeType: string }> {
+  // Step 1: get the media URL
+  const metaRes = await fetch(`${GRAPH_API_URL}/${mediaId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!metaRes.ok) throw new Error(`WhatsApp media meta ${metaRes.status}`);
+  const meta = await metaRes.json();
+  const mediaUrl: string = meta.url;
+  const mimeType: string = meta.mime_type || "application/octet-stream";
+  // Step 2: download the actual bytes
+  const dataRes = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${token}` } });
+  if (!dataRes.ok) throw new Error(`WhatsApp media download ${dataRes.status}`);
+  const arrayBuffer = await dataRes.arrayBuffer();
+  const bytes = Buffer.from(arrayBuffer);
+  // Derive filename from mime type
+  const ext = mimeType.split("/").pop()?.replace("vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx")
+    .replace("vnd.ms-excel", "xls") || "bin";
+  const filename = `whatsapp_${mediaId}.${ext}`;
+  return { bytes, filename, mimeType };
 }
 
 function verifyWebhookSignature(req: Request, appSecret: string): boolean {
@@ -332,7 +354,7 @@ async function runChatBgpWhatsAppReply(
   }
 }
 
-async function sendWhatsAppDocument(config: ReturnType<typeof getWhatsAppConfig>, to: string, pdfBuffer: Buffer, filename: string, caption: string): Promise<boolean> {
+export async function sendWhatsAppDocument(config: ReturnType<typeof getWhatsAppConfig>, to: string, pdfBuffer: Buffer, filename: string, caption: string): Promise<boolean> {
   try {
     const formData = new FormData();
     formData.append("messaging_product", "whatsapp");
@@ -445,6 +467,26 @@ export function setupWhatsAppRoutes(app: Express) {
               });
 
               console.log(`WhatsApp message from ${fromNumber}: ${messageBody.slice(0, 50)}`);
+
+              // Document/file sent via WhatsApp → auto-ingest via universal pipeline.
+              const mediaObj = msg.document || msg.image;
+              if ((msg.type === "document" || msg.type === "image") && mediaObj?.id && config.token) {
+                (async () => {
+                  try {
+                    await sendWhatsAppText(config, fromNumber, "⏳ Processing your file — I'll import it and let you know what was found...");
+                    const { bytes, filename } = await downloadWhatsAppMedia(mediaObj.id, config.token!);
+                    const overrideName = msg.document?.filename || filename;
+                    const result = await ingestBytes({ bytes, filename: overrideName, userId: fromNumber, userName: contactName || fromNumber });
+                    const errCount = Array.isArray(result.errors) ? result.errors.length : 0;
+                    const reply = `✅ Imported from ${overrideName}:\n${result.narrative}\n\n${result.written} record(s) written${errCount > 0 ? `, ${errCount} error(s)` : ""}.`;
+                    await sendWhatsAppText(config, fromNumber, reply);
+                  } catch (err: any) {
+                    console.error("[whatsapp-ingest]", err?.message);
+                    await sendWhatsAppText(config, fromNumber, `❌ Couldn't import that file: ${err?.message || "unknown error"}. Try sending it via the BGP app instead.`).catch(() => {});
+                  }
+                })();
+                continue;
+              }
 
               if (messageBody && messageBody !== "[Media]") {
                 const docHandled = messageBody.length > 10
