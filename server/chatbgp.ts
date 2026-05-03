@@ -3881,9 +3881,6 @@ async function getTeamMemberMapping(): Promise<Record<string, { name: string; em
 }
 
 
-const SHAREPOINT_HOST = "brucegillinghampollardlimited.sharepoint.com";
-const SHAREPOINT_SITE_PATH = "/sites/BGP";
-
 async function resolveOneDriveShortLink(url: string): Promise<string> {
   if (url.includes("1drv.ms") || url.includes("onedrive.live.com")) {
     try {

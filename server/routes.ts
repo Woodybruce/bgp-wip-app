@@ -36,6 +36,8 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, inArray } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
+import { registerIngestRoutes } from "./ingest-routes";
+import { registerGenericCrmRoutes } from "./generic-crm-routes";
 import { importTrlRequirement } from "./trl";
 import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements } from "./pipnet";
 import { executeSeedSql } from "./seed";
@@ -5398,6 +5400,9 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       res.json({ data: INFLATION_FALLBACK, source: "fallback" });
     }
   });
+
+  registerIngestRoutes(app);
+  registerGenericCrmRoutes(app);
 
   return httpServer;
 }

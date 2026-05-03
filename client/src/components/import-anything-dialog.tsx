@@ -15,7 +15,7 @@
  * Backed by /api/ingest. The same backbone serves the leasing tracker,
  * deals, comps, lease events — every "Import" button on every board.
  */
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
@@ -62,9 +62,11 @@ interface ImportAnythingDialogProps {
   onOpenChange: (open: boolean) => void;
   defaultTarget?: IngestTargetOrAuto;
   onCommitted?: (result: { written: number; skipped: number; target: IngestTarget }) => void;
+  preloadedFile?: File;
+  preloadedShareUrl?: string;
 }
 
-export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "auto", onCommitted }: ImportAnythingDialogProps) {
+export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "auto", onCommitted, preloadedFile, preloadedShareUrl }: ImportAnythingDialogProps) {
   const { toast } = useToast();
   const [target, setTarget] = useState<IngestTargetOrAuto>(defaultTarget);
   const [file, setFile] = useState<File | null>(null);
@@ -75,6 +77,7 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "auto
   const [isCommitting, setIsCommitting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const preloadedRef = useRef<File | null>(null);
 
   const reset = useCallback(() => {
     setFile(null);
@@ -89,6 +92,25 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "auto
     reset();
     onOpenChange(false);
   }, [reset, onOpenChange]);
+
+  // When the dialog opens with a preloaded file or share URL (e.g. from global
+  // drag-drop or global paste), auto-start processing immediately.
+  useEffect(() => {
+    if (open && preloadedFile && preloadedFile !== preloadedRef.current) {
+      preloadedRef.current = preloadedFile;
+      reset();
+      setFile(preloadedFile);
+      setTimeout(() => handleUpload(preloadedFile), 0);
+    } else if (open && preloadedShareUrl && !preloadedFile) {
+      reset();
+      setShareUrl(preloadedShareUrl);
+      setTimeout(() => handleUploadShareUrl(preloadedShareUrl), 0);
+    }
+    if (!open) {
+      preloadedRef.current = null;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, preloadedFile, preloadedShareUrl]);
 
   const handleUpload = async (overrideFile?: File) => {
     const fileToUse = overrideFile || file;
@@ -113,6 +135,27 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "auto
       setPreview(json);
     } catch (err: any) {
       toast({ title: "Couldn't parse", description: err?.message || "Try a different file.", variant: "destructive" });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleUploadShareUrl = async (url: string) => {
+    setIsUploading(true);
+    setPreview(null);
+    try {
+      const fd = new FormData();
+      fd.append("target", target);
+      fd.append("shareUrl", url);
+      const r = await fetch("/api/ingest", { method: "POST", credentials: "include", headers: getAuthHeaders(), body: fd });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.error || `${r.status}: failed`);
+      }
+      const json: IngestPreview = await r.json();
+      setPreview(json);
+    } catch (err: any) {
+      toast({ title: "Couldn't fetch file", description: err?.message || "Check the link and try again.", variant: "destructive" });
     } finally {
       setIsUploading(false);
     }

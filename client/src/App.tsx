@@ -22,6 +22,7 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { ConnectionStatus } from "@/components/connection-status";
 import { GlobalSearch } from "@/components/global-search";
 import { NotificationCenter } from "@/components/notification-center";
+import { GlobalDropZone } from "@/components/global-drop-zone";
 import bgpLogoDark from "@assets/BGP_BlackHolder_1771853582461.png";
 import bgpLogoLight from "@assets/BGP_WhiteHolder.png_-_new_1771853582466.png";
 import LoginPage from "@/pages/login";
@@ -348,6 +349,7 @@ function AuthenticatedApp() {
   const isForceDesktop = getForceDesktop();
 
   return (
+    <GlobalDropZone>
     <SidebarProvider style={style as React.CSSProperties}>
       {/* ChatBGPProvider is hoisted to AppContent so the full-page /chatbgp
           view and the side panel share the same messages / activeThreadId —
@@ -395,6 +397,7 @@ function AuthenticatedApp() {
         </button>
       )}
     </SidebarProvider>
+    </GlobalDropZone>
   );
 }
 
