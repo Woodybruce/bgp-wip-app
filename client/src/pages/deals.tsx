@@ -264,7 +264,9 @@ const COLUMN_LABELS: Record<string, string> = {
   rentAnalysis: "Rent Analysis",
   sharepoint: "SharePoint",
   lastInteraction: "Last Touch",
-
+  contacts: "Contacts",
+  principals: "Principals",
+  agents: "Agents",
 };
 
 export function formatCurrency(val: number | null | undefined): string {
@@ -3854,20 +3856,23 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     }
   }, [activeTeam]);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
-    landlord: true,
+    landlord: false,
     status: true,
     type: true,
     team: true,
-    agent: true,
+    agent: false,
     assetClass: true,
-    clientContact: true,
-    tenant: true,
-    vendor: true,
-    purchaser: true,
-    vendorAgent: true,
-    acquisitionAgent: true,
-    purchaserAgent: true,
-    leasingAgent: true,
+    clientContact: false,
+    tenant: false,
+    vendor: false,
+    purchaser: false,
+    vendorAgent: false,
+    acquisitionAgent: false,
+    purchaserAgent: false,
+    leasingAgent: false,
+    contacts: true,
+    principals: true,
+    agents: true,
     pricing: true,
     yield: true,
     fee: true,
@@ -4641,6 +4646,9 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
+                    {visibleColumns.contacts && <TableHead className="min-w-[140px]">Contacts</TableHead>}
+                    {visibleColumns.principals && <TableHead className="min-w-[150px]">Principals</TableHead>}
+                    {visibleColumns.agents && <TableHead className="min-w-[150px]">Agents</TableHead>}
                     {visibleColumns.tenant && <TableHead className="min-w-[120px]">Tenant</TableHead>}
                     {visibleColumns.fee && <TableHead className="min-w-[80px] text-right">Fee</TableHead>}
                     {visibleColumns.feeAlloc && <TableHead className="min-w-[120px]">Fee Split</TableHead>}
@@ -4772,6 +4780,92 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                           />
                         </TableCell>
                       )}
+                      {visibleColumns.contacts && (
+                        <TableCell className="px-1.5 py-1">
+                          <div className="space-y-0.5 w-[140px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">BGP</span>
+                              <InlineMultiSelect
+                                value={deal.internalAgent}
+                                options={users.map(u => ({ label: u.name, value: u.name }))}
+                                placeholder="Set"
+                                onSave={(v) => handleInlineSave(deal.id, "internalAgent", v.length > 0 ? v : null)}
+                                testId={`inline-deal-agent-${deal.id}`}
+                              />
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-7 shrink-0">Client</span>
+                              <InlineLinkSelect
+                                value={deal.clientContactId}
+                                options={contacts.map(c => ({ id: c.id, name: c.name || c.email || "Unknown" }))}
+                                href={deal.clientContactId ? `/contacts/${deal.clientContactId}` : undefined}
+                                onSave={(v) => handleInlineSave(deal.id, "clientContactId", v || null)}
+                                placeholder="Link"
+                              />
+                            </div>
+                          </div>
+                        </TableCell>
+                      )}
+                      {visibleColumns.principals && (() => {
+                        const isInvestment = ["Sale", "Purchase", "Investment Sale", "Investment Acquisition"].includes(deal.dealType || "") || !!deal.vendorId || !!deal.purchaserId;
+                        const rows = isInvestment
+                          ? [
+                              { label: "V", value: deal.vendorId, field: "vendorId", options: companies.filter(c => c.companyType === "Vendor" || c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.id === deal.vendorId).map(c => ({ id: c.id, name: c.name })) },
+                              { label: "P", value: deal.purchaserId, field: "purchaserId", options: companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.companyType === "Investor" || c.id === deal.purchaserId).map(c => ({ id: c.id, name: c.name })) },
+                            ]
+                          : [
+                              { label: "LL", value: deal.landlordId, field: "landlordId", options: companies.filter(c => c.companyType === "Landlord" || c.companyType === "Landlord / Client" || c.companyType === "Client" || c.companyType?.startsWith("Tenant") || c.id === deal.landlordId).map(c => ({ id: c.id, name: c.name })) },
+                              { label: "T", value: deal.tenantId, field: "tenantId", options: companies.filter(c => c.companyType?.startsWith("Tenant") || c.companyType === "Purchaser" || c.id === deal.tenantId).map(c => ({ id: c.id, name: c.name })) },
+                            ];
+                        return (
+                          <TableCell className="px-1.5 py-1">
+                            <div className="space-y-0.5 w-[150px]">
+                              {rows.map(({ label, value, field, options }) => (
+                                <div key={field} className="flex items-center gap-1.5">
+                                  <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-5 shrink-0">{label}</span>
+                                  <InlineLinkSelect
+                                    value={value}
+                                    options={options}
+                                    href={value ? `/companies/${value}` : undefined}
+                                    onSave={(v) => handleInlineSave(deal.id, field, v || null)}
+                                    placeholder="Link"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </TableCell>
+                        );
+                      })()}
+                      {visibleColumns.agents && (() => {
+                        const isInvestment = ["Sale", "Purchase", "Investment Sale", "Investment Acquisition"].includes(deal.dealType || "") || !!deal.vendorId || !!deal.purchaserId;
+                        const rows = isInvestment
+                          ? [
+                              { label: "V", value: deal.vendorAgentId, field: "vendorAgentId" },
+                              { label: "P", value: deal.purchaserAgentId, field: "purchaserAgentId" },
+                            ]
+                          : [
+                              { label: "LL", value: deal.leasingAgentId, field: "leasingAgentId" },
+                              { label: "T", value: deal.acquisitionAgentId, field: "acquisitionAgentId" },
+                            ];
+                        return (
+                          <TableCell className="px-1.5 py-1">
+                            <div className="space-y-0.5 w-[150px]">
+                              {rows.map(({ label, value, field }) => (
+                                <div key={field} className="flex items-center gap-1.5">
+                                  <span className="text-[9px] text-muted-foreground/70 uppercase tracking-wide w-5 shrink-0">{label}</span>
+                                  <InlineLinkSelect
+                                    value={value}
+                                    options={agentCompanies.map(c => ({ id: c.id, name: c.name }))}
+                                    href={value ? `/companies/${value}` : undefined}
+                                    onSave={(v) => handleInlineSave(deal.id, field, v || null)}
+                                    placeholder="Link agent"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </TableCell>
+                        );
+                      })()}
                       {visibleColumns.tenant && (
                         <TableCell className="px-1.5 py-1">
                           <div className="w-[110px] overflow-hidden">
