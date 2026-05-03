@@ -305,6 +305,10 @@ function LastTouchCell({ iso }: { iso: string | null | undefined }) {
 // ColumnFilterPopover imported from shared component
 
 
+function dealUserInitials(name: string): string {
+  return name.split(/\s+/).filter(Boolean).map(p => p[0]).join("").toUpperCase().slice(0, 2);
+}
+
 function InlineMultiSelect({
   value,
   options,
@@ -312,6 +316,7 @@ function InlineMultiSelect({
   placeholder,
   onSave,
   testId,
+  valueDisplay,
 }: {
   value: string[] | string | null;
   options: { label: string; value: string }[];
@@ -319,6 +324,7 @@ function InlineMultiSelect({
   placeholder: string;
   onSave: (val: string[]) => void;
   testId?: string;
+  valueDisplay?: (v: string) => string;
 }) {
   const current: string[] = Array.isArray(value) ? value : value ? [value] : [];
 
@@ -340,8 +346,8 @@ function InlineMultiSelect({
             </span>
           ) : (
             current.map(v => (
-              <Badge key={v} className={`text-[10px] px-1.5 py-0 text-white ${colorMap?.[v] || "bg-zinc-500"}`}>
-                {v}
+              <Badge key={v} className={`text-[10px] px-1.5 py-0 text-white ${colorMap?.[v] || "bg-zinc-500"}`} title={v}>
+                {valueDisplay ? valueDisplay(v) : v}
               </Badge>
             ))
           )}
@@ -4134,6 +4140,15 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
     return Array.from(s).sort();
   }, [deals]);
 
+  const internalAgentValues = useMemo(() => {
+    const s = new Set<string>();
+    deals.forEach((d) => {
+      const agents = Array.isArray(d.internalAgent) ? d.internalAgent : d.internalAgent ? [d.internalAgent as any] : [];
+      agents.forEach((a: string) => { if (a) s.add(a); });
+    });
+    return Array.from(s).sort();
+  }, [deals]);
+
   const activeFilterCount = useMemo(() => {
     return Object.values(columnFilters).reduce((sum, arr) => sum + arr.length, 0);
   }, [columnFilters]);
@@ -4218,6 +4233,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
         }
       }
       if (columnFilters["assetClass"]?.length && (!deal.assetClass || !columnFilters["assetClass"].includes(deal.assetClass))) return false;
+      if (columnFilters["internalAgent"]?.length) {
+        const agents: string[] = Array.isArray(deal.internalAgent) ? deal.internalAgent : deal.internalAgent ? [deal.internalAgent as any] : [];
+        if (!agents.some((a) => columnFilters["internalAgent"].includes(a))) return false;
+      }
       if (search) {
         const s = search.toLowerCase();
         const propName = deal.propertyId ? (properties.find(p => p.id === deal.propertyId)?.name || "") : "";
@@ -4646,7 +4665,16 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                         />
                       </TableHead>
                     )}
-                    {visibleColumns.contacts && <TableHead className="min-w-[140px]">Contacts</TableHead>}
+                    {visibleColumns.contacts && (
+                      <TableHead className="min-w-[140px]">
+                        <ColumnFilterPopover
+                          label="Contacts"
+                          options={internalAgentValues}
+                          activeFilters={columnFilters["internalAgent"] || []}
+                          onToggleFilter={(val) => toggleFilter("internalAgent", val)}
+                        />
+                      </TableHead>
+                    )}
                     {visibleColumns.principals && <TableHead className="min-w-[150px]">Principals</TableHead>}
                     {visibleColumns.agents && <TableHead className="min-w-[150px]">Agents</TableHead>}
                     {visibleColumns.tenant && <TableHead className="min-w-[120px]">Tenant</TableHead>}
@@ -4791,6 +4819,7 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
                                 placeholder="Set"
                                 onSave={(v) => handleInlineSave(deal.id, "internalAgent", v.length > 0 ? v : null)}
                                 testId={`inline-deal-agent-${deal.id}`}
+                                valueDisplay={dealUserInitials}
                               />
                             </div>
                             <div className="flex items-center gap-1.5">
