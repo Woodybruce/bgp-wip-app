@@ -436,9 +436,42 @@ export default function WhatsApp() {
     );
   }
 
+  const qualityColor =
+    status?.qualityRating === "GREEN"
+      ? "bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/30"
+      : status?.qualityRating === "YELLOW"
+        ? "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/30"
+        : status?.qualityRating === "RED"
+          ? "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30"
+          : "bg-muted text-muted-foreground";
+
   return (
-    <div className="h-[calc(100vh-3rem)]">
-      <div className="flex h-full">
+    <div className="h-[calc(100vh-3rem)] flex flex-col">
+      <div className="border-b bg-muted/30 px-4 py-1.5 flex items-center gap-2 text-xs shrink-0">
+        <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" data-testid="indicator-connected" />
+        <span className="text-muted-foreground">Connected as</span>
+        <span className="font-medium truncate" data-testid="text-verified-name">
+          {status.verifiedName || "WhatsApp Business"}
+        </span>
+        {status.displayPhoneNumber && (
+          <>
+            <span className="text-muted-foreground">·</span>
+            <span className="font-mono" data-testid="text-display-phone">
+              {status.displayPhoneNumber}
+            </span>
+          </>
+        )}
+        {status.qualityRating && (
+          <Badge
+            variant="outline"
+            className={`ml-auto text-[10px] h-4 px-1.5 ${qualityColor}`}
+            data-testid="badge-quality-rating"
+          >
+            {status.qualityRating}
+          </Badge>
+        )}
+      </div>
+      <div className="flex flex-1 min-h-0">
         <div className="w-80 shrink-0 hidden md:flex flex-col">
           <ConversationList
             conversations={conversations}

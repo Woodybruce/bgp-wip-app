@@ -1208,7 +1208,7 @@ Drizzle: camelCase (JS) = snake_case (SQL). dealType = deal_type, assetClass = a
   return prompt;
 }
 
-async function getMemoryContext(userId: string): Promise<string> {
+export async function getMemoryContext(userId: string): Promise<string> {
   try {
     const memories = await storage.getMemories(userId);
     if (!memories || memories.length === 0) return "";
@@ -1284,7 +1284,7 @@ export async function getBusinessLearningsContext(): Promise<string> {
   }
 }
 
-async function extractAndSaveMemories(
+export async function extractAndSaveMemories(
   userId: string,
   userMessage: string,
   assistantReply: string
