@@ -152,7 +152,7 @@ export default function VoaRatingsPage() {
   const topDescCodes = (descCodes || []).slice(0, 30);
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="voa-ratings-page">
+    <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="voa-ratings-page">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Business Rates</h1>
@@ -259,8 +259,8 @@ export default function VoaRatingsPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="p-0">
+        <Card className="flex-1 min-h-0 flex flex-col">
+          <CardContent className="p-0 flex-1 min-h-0 flex flex-col">
             {isLoading ? (
               <div className="p-6 space-y-3">
                 {[1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-12" />)}

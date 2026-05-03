@@ -1808,7 +1808,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="contacts-page">
+    <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="contacts-page">
       <MailOutDialog
         open={mailDialogOpen}
         onOpenChange={setMailDialogOpen}
@@ -1990,7 +1990,7 @@ function ContactList({ teamFilter }: { teamFilter?: string | null }) {
               </CardContent>
             </Card>
           ) : (
-            <Card>
+            <Card className="flex-1 min-h-0 flex flex-col">
               <ScrollableTable minWidth={2200}>
                 <Table>
                   <TableHeader>

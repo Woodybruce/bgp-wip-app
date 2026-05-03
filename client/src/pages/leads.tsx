@@ -199,7 +199,7 @@ export default function Leads() {
   }
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="leads-page">
+    <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="leads-page">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -307,7 +307,7 @@ export default function Leads() {
               </CardContent>
             </Card>
           ) : (
-            <Card>
+            <Card className="flex-1 min-h-0 flex flex-col">
               <ScrollableTable minWidth={1200}>
                 <Table>
                   <TableHeader>

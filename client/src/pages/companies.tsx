@@ -2276,7 +2276,7 @@ function CompanyList() {
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="companies-page">
+    <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="companies-page">
       <CompanyFormDialog open={createOpen} onOpenChange={setCreateOpen} />
 
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -2460,7 +2460,7 @@ function CompanyList() {
               </CardContent>
             </Card>
           ) : (
-            <Card>
+            <Card className="flex-1 min-h-0 flex flex-col">
               <ScrollableTable minWidth={1800}>
                 <Table>
                   <TableHeader>

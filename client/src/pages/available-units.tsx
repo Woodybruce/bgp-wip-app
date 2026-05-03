@@ -795,7 +795,7 @@ export default function AvailableUnitsPage() {
   }
 
   return (
-    <div className="p-4 md:p-6 space-y-4" data-testid="available-units-page">
+    <div className="h-full flex flex-col p-4 md:p-6 gap-4 min-h-0" data-testid="available-units-page">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Letting Tracker</h1>
@@ -1006,7 +1006,7 @@ export default function AvailableUnitsPage() {
         </div>
       )}
 
-      <Card>
+      <Card className="flex-1 min-h-0 flex flex-col">
         <ScrollableTable minWidth={2600}>
           <Table>
             <TableHeader>

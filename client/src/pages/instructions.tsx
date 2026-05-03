@@ -1057,7 +1057,7 @@ function InstructionsList({
   });
 
   return (
-    <div className="p-4 sm:p-6 space-y-6" data-testid="instructions-page">
+    <div className="h-full flex flex-col p-4 sm:p-6 gap-6 min-h-0" data-testid="instructions-page">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
@@ -1165,8 +1165,8 @@ function InstructionsList({
         )}
       </div>
 
-      <Card>
-        <CardContent className="p-0">
+      <Card className="flex-1 min-h-0 flex flex-col">
+        <CardContent className="p-0 flex-1 min-h-0 flex flex-col">
           {isLoading ? (
             <div className="p-4 space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
