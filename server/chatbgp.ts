@@ -3497,6 +3497,15 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
+      name: "check_whatsapp_status",
+      description: "Probe the WhatsApp Business API to verify that the configured token + phone number ID still work against Meta's Graph API. Use when a send has failed, when the user asks 'is WhatsApp working?', or when troubleshooting WhatsApp issues. Returns the exact Meta error code and a one-line fix hint when something's wrong, so you can tell the user precisely what's broken instead of paraphrasing.",
+      parameters: { type: "object", properties: {} },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "bulk_update_crm",
       description: "Update multiple CRM records at once. Use when you need to apply the same change to several deals, contacts, companies, or properties — e.g. updating status on a batch of deals, adding notes to multiple contacts, or changing an agent assignment across records. Much faster than updating one at a time.",
       parameters: {
@@ -7060,6 +7069,55 @@ Be thorough — include every unit row you can classify, across all properties i
     }
   }
 
+  if (fnName === "check_whatsapp_status") {
+    try {
+      const token = process.env.WHATSAPP_TOKEN_V2 || process.env.WHATSAPP_ACCESS_TOKEN;
+      const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+      if (!token || !phoneNumberId) {
+        return {
+          data: {
+            connected: false,
+            tokenValid: false,
+            error: "WhatsApp not configured — WHATSAPP_TOKEN_V2 and/or WHATSAPP_PHONE_NUMBER_ID env vars are missing on the server. Tell the user to set them in Railway and redeploy.",
+            instruction: "Tell the user the connected/tokenValid status and the error verbatim; do not paraphrase.",
+          },
+        };
+      }
+      const probe = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}?fields=display_phone_number,verified_name,quality_rating`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (probe.ok) {
+        const info: any = await probe.json().catch(() => ({}));
+        return {
+          data: {
+            connected: true,
+            tokenValid: true,
+            displayPhoneNumber: info.display_phone_number,
+            verifiedName: info.verified_name,
+            qualityRating: info.quality_rating,
+            instruction: "WhatsApp is working. Tell the user the verified name and phone number.",
+          },
+        };
+      }
+      const body: any = await probe.json().catch(() => ({}));
+      const meta = body?.error || {};
+      return {
+        data: {
+          connected: true,
+          tokenValid: false,
+          httpStatus: probe.status,
+          metaCode: meta.code ?? null,
+          metaSubcode: meta.error_subcode ?? null,
+          metaMessage: meta.message ?? null,
+          metaType: meta.type ?? null,
+          instruction: "Tell the user the metaCode and metaMessage verbatim. Do not paraphrase.",
+        },
+      };
+    } catch (err: any) {
+      return { data: { connected: false, tokenValid: false, error: `Probe failed: ${err?.message}` } };
+    }
+  }
+
   if (fnName === "send_whatsapp") {
     try {
       const token = process.env.WHATSAPP_TOKEN_V2 || process.env.WHATSAPP_ACCESS_TOKEN;
@@ -7084,7 +7142,35 @@ Be thorough — include every unit row you can classify, across all properties i
       });
       if (!waResponse.ok) {
         const errBody = await waResponse.text();
-        return { data: { error: `WhatsApp send failed: ${waResponse.status} ${errBody.substring(0, 200)}` } };
+        let parsed: any = null;
+        try { parsed = JSON.parse(errBody); } catch {}
+        const meta = parsed?.error || {};
+        const code = meta.code;
+        // Map the most common Meta error codes to a one-line action so the
+        // assistant tells the user the fix instead of paraphrasing the error.
+        const FIX_HINTS: Record<number, string> = {
+          190: "Access token is expired or invalid. Generate a new permanent system-user token in Meta Business Manager → System Users, with whatsapp_business_messaging + whatsapp_business_management scopes and 'Never' expiry, then update WHATSAPP_TOKEN_V2 in Railway.",
+          200: "Token is missing the required scope. Re-issue with both whatsapp_business_messaging AND whatsapp_business_management ticked.",
+          10: "System user is not assigned to the WhatsApp app. In Business Settings → System Users, click the user, Add Assets, pick the WhatsApp app with Full control.",
+          2500: "Token is not bound to the WhatsApp Business Account. Re-assign the system user to the WABA.",
+          131030: "Recipient is not on the allowed list. The business is still in test/development mode — either add the recipient to test numbers in API Setup, or complete Business Verification in Meta Business Manager.",
+          131047: "The 24-hour customer service window has expired — the recipient hasn't messaged the business number in the last 24h. Either ask them to message first, or use an approved message template.",
+          132000: "Phone number is not registered with the WhatsApp Business Account. Re-add it in WhatsApp Manager → Phone Numbers.",
+          131009: "Parameter validation failed (usually a malformed phone number). Use full international format like 447980313675, no leading zero or '+'.",
+          368: "Number has been temporarily flagged by Meta for quality. Check the quality rating in WhatsApp Manager and reduce send volume.",
+        };
+        return {
+          data: {
+            error: "WhatsApp send failed",
+            httpStatus: waResponse.status,
+            metaCode: code ?? null,
+            metaSubcode: meta.error_subcode ?? null,
+            metaMessage: meta.message ?? null,
+            metaType: meta.type ?? null,
+            fixHint: code != null ? FIX_HINTS[code] || "Unknown Meta error — check Railway logs and Meta Business Manager for details." : "No structured error code returned by Graph API.",
+            instruction: "Tell the user the metaCode and fixHint verbatim; do not paraphrase.",
+          },
+        };
       }
       const waResult = await waResponse.json() as any;
       return {
