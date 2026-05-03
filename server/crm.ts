@@ -6094,7 +6094,7 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         SELECT
           c.id, c.name, c.company_type, c.domain, c.description,
           c.rollout_status, c.store_count,
-          c.backers, c.instagram_handle, c.tiktok_handle,
+          c.backers, c.instagram_handle, c.tiktok_handle, c.x_handle,
           c.dept_store_presence, c.franchise_activity,
           c.hunter_flag, c.concept_pitch, c.stock_ticker,
           c.brand_analysis,
