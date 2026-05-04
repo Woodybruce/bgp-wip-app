@@ -88,9 +88,9 @@ function flattenStripeParams(obj: Record<string, any>, prefix = ""): Record<stri
 // ─── CARD CATEGORY LIMITS ──────────────────────────────────────────────────
 
 const BLOCKED_MCCS = [
-  "7995", // Gambling
-  "6011", // ATM cash
-  "6010", // Manual cash
+  "betting_casino_gambling",
+  "automated_cash_disburse",
+  "manual_cash_disburse",
 ];
 
 function spendingControls(opts: { monthlyLimit: number; dailyLimit: number; singleTxLimit: number }) {
