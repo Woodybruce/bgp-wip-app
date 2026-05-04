@@ -358,6 +358,13 @@ async function userCanAccessExpense(req: Request, expenseId: string): Promise<bo
 }
 
 export function setupStripeIssuingRoutes(app: Express) {
+  // Startup diagnostic — log which STRIPE_ vars exist and their lengths
+  const stripeVarNames = Object.keys(process.env).filter(k => k.startsWith("STRIPE"));
+  console.log(`[stripe] Env vars present: ${stripeVarNames.join(", ") || "NONE"}`);
+  for (const name of stripeVarNames) {
+    const v = process.env[name] ?? "";
+    console.log(`[stripe]   ${name}: length=${v.length}, first4=${JSON.stringify(v.slice(0,4))}, last4=${JSON.stringify(v.slice(-4))}`);
+  }
 
   // List all cardholders (admin)
   app.get("/api/expenses/cardholders", requireAdmin, async (req: Request, res: Response) => {
