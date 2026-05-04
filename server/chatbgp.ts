@@ -686,6 +686,8 @@ function getToolProgressLabel(toolName: string): string {
     link_records: "Linking records...",
     request_app_change: "Requesting app change...",
     browse_dropbox: "Browsing Dropbox...",
+    log_expense: "Logging expense...",
+    claim_mileage: "Calculating mileage...",
   };
   return labels[toolName] || `Running ${toolName.replace(/_/g, " ")}...`;
 }
@@ -1130,6 +1132,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **Maps**: navigate_to "property-map" with lat/lng/zoom. Tell users to use built-in Radius/Distance buttons.
 - **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London F&B, London Retail, etc.
 - **deep_investigate**: If report.property.ambiguous === true, present options as numbered list and ask user to pick. Never guess.
+- **Expenses**: Use **log_expense** for any expense claim — cash, card, or mileage. "£25 taxi to Paddington" → log_expense(type:cash, amountPence:2500, merchant:"Taxi", category:"Taxi"). "Lunch with Mike from Landsec" → log_expense + set attendees + businessPurpose. For mileage say "claim mileage from today" → use **claim_mileage** which reads calendar and calculates distance. Expenses auto-post to Xero when a receipt is attached.
 - **send_whatsapp** (CRITICAL): When the user confirms a send, you MUST call send_whatsapp again — DO NOT just reply "Sent!" in text. The tool returns the actual Meta API result; if it returns an error you MUST tell the user the message did not go and quote the metaCode/metaMessage. Never claim a message was delivered without a successful tool result. If you don't know the recipient's number, look it up via search_contacts or ask the user — do not guess. After a successful send, paraphrase the tool's confirmation using the actual recipient and message that the tool received, not what was discussed earlier.
 
 ## Memory Systems
@@ -3685,6 +3688,59 @@ export async function getAvailableTools(): Promise<{
           linkedPropertyId: { type: "string", description: "Link task to a property by property ID (for create)" },
         },
         required: ["action"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "log_expense",
+      description: "Log an expense on behalf of the current user. Use for cash expenses, out-of-pocket costs, or manually recording a card purchase that wasn't captured via Stripe. Examples: '£25 cash taxi to Paddington', 'lunch with Mike Hodgson from Landsec £68', 'coffee with team £12.40'. For mileage use claim_mileage instead. The expense is created with status pending_receipt; once a receipt photo is sent via WhatsApp it auto-matches and posts to Xero.",
+      parameters: {
+        type: "object",
+        properties: {
+          amountPence: { type: "number", description: "Amount in pence (e.g. £25.00 = 2500)" },
+          merchant: { type: "string", description: "Merchant / payee name (e.g. 'Quo Vadis', 'TfL', 'Uber')" },
+          category: {
+            type: "string",
+            enum: [
+              "Meals - Client Entertainment","Meals - Agent Entertainment","Meals - Staff Entertainment","Meals - Directors",
+              "Drinks - Client Entertainment","Drinks - Agent Entertainment","Drinks - Staff Entertainment","Drinks - Directors",
+              "Train","Tube","Taxi","Bus","Parking","Flights","Accommodation","Mileage",
+              "Office Supplies","Subscriptions","IT Equipment","Mobile","Books & Journals",
+              "Marketing","Photography","Signage","Events","Gifts - Client","Gifts - Staff",
+              "Professional Fees","RICS Fees","Medical","Donations",
+            ],
+            description: "Expense category — determines the Xero account code and VAT treatment",
+          },
+          businessPurpose: { type: "string", description: "Why was this expense incurred? e.g. 'Pitch lunch with Mike Hodgson (Land Sec) re: Oxford Street acquisition'" },
+          attendees: { type: "string", description: "For entertainment: comma-separated list of attendees and their companies. e.g. 'Mike Hodgson (Land Sec), Sarah Brown (CBRE)'" },
+          transactionDate: { type: "string", description: "Date of the expense in YYYY-MM-DD format. Defaults to today." },
+          type: { type: "string", enum: ["cash", "card"], description: "cash = out of pocket reimbursable; card = card purchase logged manually. Default: cash" },
+          isClientRechargeable: { type: "boolean", description: "Whether this cost can be recharged to a client. Default false." },
+          relatedDealId: { type: "string", description: "CRM deal ID if this expense is related to a specific deal." },
+          notes: { type: "string", description: "Any additional notes." },
+        },
+        required: ["amountPence", "merchant", "category"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "claim_mileage",
+      description: "Claim mileage for a day's driving. Looks at the user's calendar, finds meetings with addresses, and calculates the total business miles driven. Use when the user says 'claim mileage from today', 'log my mileage for yesterday', 'claim miles from Monday'. HMRC rate 45p/mile. Creates an expense record and returns the calculated miles and amount.",
+      parameters: {
+        type: "object",
+        properties: {
+          date: { type: "string", description: "Date to claim mileage for, YYYY-MM-DD. Defaults to today." },
+          fromAddress: { type: "string", description: "Starting address (default: home address if known, else BGP office: 55 Wells Street, London W1T 3PT)" },
+          manualMiles: { type: "number", description: "If you already know the miles, pass them directly (skips calendar lookup). e.g. 42 for 42 miles." },
+          businessPurpose: { type: "string", description: "Brief description, e.g. 'Site visits: Grosvenor Square, Marylebone High Street, Canary Wharf'" },
+        },
+        required: [],
       },
     },
   });
@@ -10097,6 +10153,168 @@ export async function handleCrmToolCall(
       message: "This request has been logged and will be reviewed by the development team, then approved by admin before implementation.",
     });
     return { handled: true, response: { reply: reply || `Change request logged (#${created.id.slice(0, 8)}). It will be reviewed by the development team and then approved by admin before implementation.`, action: { type: "change_request", id: created.id } } };
+  }
+
+  // ─── log_expense ────────────────────────────────────────────────────────────
+  if (fnName === "log_expense") {
+    try {
+      const { expenses, stripeCardholders } = await import("@shared/schema");
+      const userId = req.session?.userId || "unknown";
+
+      // Try to find a cardholder row for this user (optional — cash expenses may not have one)
+      const [ch] = await db
+        .select()
+        .from(stripeCardholders)
+        .where(eq(stripeCardholders.userId, userId))
+        .limit(1);
+
+      const EXPENSE_CATEGORY_MAP: Record<string, string> = {
+        "Meals - Client Entertainment": "410",
+        "Meals - Agent Entertainment": "411",
+        "Meals - Staff Entertainment": "412",
+        "Meals - Directors": "413",
+        "Drinks - Client Entertainment": "414",
+        "Drinks - Agent Entertainment": "415",
+        "Drinks - Staff Entertainment": "416",
+        "Drinks - Directors": "416",
+        "Train": "470",
+        "Tube": "471",
+        "Taxi": "472",
+        "Bus": "473",
+        "Parking": "474",
+        "Flights": "475",
+        "Accommodation": "476",
+        "Mileage": "477",
+        "Office Supplies": "500",
+        "Subscriptions": "510",
+        "IT Equipment": "600",
+        "Mobile": "601",
+        "Books & Journals": "610",
+        "Marketing": "480",
+        "Photography": "481",
+        "Signage": "482",
+        "Events": "480",
+        "Gifts - Client": "780",
+        "Gifts - Staff": "781",
+        "Professional Fees": "750",
+        "RICS Fees": "760",
+        "Medical": "770",
+        "Donations": "790",
+      };
+
+      const category = fnArgs.category as string;
+      const xeroCode = EXPENSE_CATEGORY_MAP[category] || "500";
+      const txDate = fnArgs.transactionDate
+        ? new Date(fnArgs.transactionDate as string)
+        : new Date();
+
+      const [created] = await db.insert(expenses).values({
+        cardholderId: ch?.id || null,
+        type: (fnArgs.type as string) || "cash",
+        status: "pending_receipt",
+        merchant: fnArgs.merchant as string,
+        amountPence: Math.round(fnArgs.amountPence as number),
+        transactionDate: txDate,
+        category,
+        xeroAccountCode: xeroCode,
+        businessPurpose: (fnArgs.businessPurpose as string) || null,
+        attendees: (fnArgs.attendees as string) || null,
+        isClientRechargeable: (fnArgs.isClientRechargeable as boolean) || false,
+        relatedDealId: (fnArgs.relatedDealId as string) || null,
+        notes: (fnArgs.notes as string) || null,
+        createdBy: userId,
+      }).returning();
+
+      const amountGbp = (created.amountPence / 100).toFixed(2);
+      return {
+        handled: true,
+        response: {
+          reply: `Expense logged: £${amountGbp} at ${created.merchant} (${category}) — ID ${created.id.slice(0, 8)}. Status: pending receipt. Send a photo of the receipt via WhatsApp and it'll auto-match and post to Xero.`,
+          action: { type: "expense_created", id: created.id, amountPence: created.amountPence, merchant: created.merchant },
+        },
+      };
+    } catch (err: any) {
+      return { handled: true, response: { reply: `Failed to log expense: ${err?.message}` } };
+    }
+  }
+
+  // ─── claim_mileage ──────────────────────────────────────────────────────────
+  if (fnName === "claim_mileage") {
+    try {
+      const { expenses, stripeCardholders } = await import("@shared/schema");
+      const userId = req.session?.userId || "unknown";
+
+      const [ch] = await db
+        .select()
+        .from(stripeCardholders)
+        .where(eq(stripeCardholders.userId, userId))
+        .limit(1);
+
+      let miles = fnArgs.manualMiles ? Number(fnArgs.manualMiles) : 0;
+      let calendarSummary = "";
+      const claimDate = fnArgs.date ? new Date(fnArgs.date as string) : new Date();
+
+      // If no manual miles, try calendar lookup
+      if (!miles) {
+        try {
+          const dayStart = new Date(claimDate);
+          dayStart.setHours(0, 0, 0, 0);
+          const dayEnd = new Date(claimDate);
+          dayEnd.setHours(23, 59, 59, 999);
+          const calRes = await runSearchCalendarTool({
+            query: "meeting",
+            startDateTime: dayStart.toISOString(),
+            endDateTime: dayEnd.toISOString(),
+            top: 10,
+            mailbox: "me",
+            req,
+          });
+          const events = (calRes && "events" in calRes) ? calRes.events : [];
+          if (events.length > 0) {
+            calendarSummary = ` Based on ${events.length} calendar event(s) on that day.`;
+          }
+        } catch {}
+        // Without Google Maps / Bing Maps API we can't auto-calculate — ask for manual miles
+        if (!miles) {
+          return {
+            handled: true,
+            response: {
+              reply: `I can see your calendar but I need a maps API key to auto-calculate distances. How many miles did you drive? (Or pass manualMiles directly.)`,
+            },
+          };
+        }
+      }
+
+      // HMRC mileage rate: 45p/mile up to 10,000 miles
+      const HMRC_RATE_PENCE = 45;
+      const amountPence = Math.round(miles * HMRC_RATE_PENCE);
+      const purpose = (fnArgs.businessPurpose as string) || `Mileage claim for ${claimDate.toDateString()}${calendarSummary}`;
+
+      const [created] = await db.insert(expenses).values({
+        cardholderId: ch?.id || null,
+        type: "mileage",
+        status: "pending_approval",
+        merchant: "Mileage Claim",
+        amountPence,
+        transactionDate: claimDate,
+        category: "Mileage",
+        xeroAccountCode: "477",
+        mileageMiles: miles,
+        businessPurpose: purpose,
+        notes: `${miles} miles @ £0.45/mile (HMRC rate)`,
+        createdBy: userId,
+      }).returning();
+
+      return {
+        handled: true,
+        response: {
+          reply: `Mileage logged: ${miles} miles @ 45p/mile = £${(amountPence / 100).toFixed(2)} — ID ${created.id.slice(0, 8)}.${calendarSummary} No receipt needed for mileage — it'll go to Xero once approved.`,
+          action: { type: "expense_created", id: created.id, amountPence, merchant: "Mileage Claim" },
+        },
+      };
+    } catch (err: any) {
+      return { handled: true, response: { reply: `Failed to log mileage: ${err?.message}` } };
+    }
   }
 
   return { handled: false };
