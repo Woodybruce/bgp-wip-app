@@ -413,6 +413,48 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Smoke test — creates a sandbox cardholder + card, returns details.
+  app.post("/api/expenses/smoke-test", requireAuth, async (req: Request, res: Response) => {
+    try {
+      if (!process.env.STRIPE_SECRET_KEY) {
+        return res.status(400).json({ error: "STRIPE_SECRET_KEY not set" });
+      }
+      const userId = `test-${Date.now()}`;
+      const ch = await createCardholder({
+        userId,
+        name: req.body?.name || "Woody Bruce (Test)",
+        email: req.body?.email || "test@bgpllp.co.uk",
+        phone: req.body?.phone,
+      });
+      const { card, stripeCard } = await issueVirtualCard(ch.id);
+      res.json({
+        cardholder: ch,
+        card,
+        stripeCard: { id: stripeCard.id, last4: stripeCard.last4, status: stripeCard.status, brand: stripeCard.brand },
+        nextSteps: [
+          "Cardholder + virtual card created in Stripe sandbox",
+          "Now go to https://dashboard.stripe.com/test/issuing/cards/" + stripeCard.id,
+          "Click 'Create test transaction' to fire a webhook",
+          "Check /api/expenses to see the resulting expense record",
+        ],
+      });
+    } catch (e: any) {
+      console.error("[smoke-test] failed:", e);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Manually post a finalised expense to Xero (used after receipt parsing if auto-post failed)
+  app.post("/api/expenses/:id/post-to-xero", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { postExpenseToXero } = await import("./expense-xero-poster");
+      const result = await postExpenseToXero({ session: req.session, expenseId: String(req.params.id) });
+      res.json({ success: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Stripe webhook — uses raw body captured by express.json verify callback
   app.post("/api/stripe/webhook", async (req: Request, res: Response) => {
     try {

@@ -18,7 +18,7 @@ export function getWhatsAppConfig() {
   return { token, phoneNumberId, verifyToken, appSecret };
 }
 
-async function downloadWhatsAppMedia(mediaId: string, token: string): Promise<{ bytes: Buffer; filename: string; mimeType: string }> {
+export async function downloadWhatsAppMedia(mediaId: string, token: string): Promise<{ bytes: Buffer; filename: string; mimeType: string }> {
   // Step 1: get the media URL
   const metaRes = await fetch(`${GRAPH_API_URL}/${mediaId}`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -504,6 +504,28 @@ export function setupWhatsAppRoutes(app: Express) {
               });
 
               console.log(`WhatsApp message from ${fromNumber}: ${messageBody.slice(0, 50)}`);
+
+              // Receipt-matching path — if the sender is a registered cardholder
+              // and has a pending_receipt expense within the last 24h, treat this
+              // photo/document as the receipt for that expense.
+              if ((msg.type === "image" || msg.type === "document") && (msg.document || msg.image)?.id && config.token) {
+                try {
+                  const { tryMatchReceiptToExpense } = await import("./expense-receipt-handler");
+                  const matched = await tryMatchReceiptToExpense({
+                    fromNumber,
+                    contactName: contactName || fromNumber,
+                    mediaId: (msg.document || msg.image)!.id,
+                    mediaType: msg.type,
+                    caption: (msg.document?.caption || msg.image?.caption || "").trim(),
+                    config,
+                    sendReply: (text: string) => sendWhatsAppText(config, fromNumber, text),
+                  });
+                  if (matched) continue;
+                } catch (err: any) {
+                  console.error("[whatsapp-receipt]", err?.message);
+                  // fall through to existing ingest / vision paths
+                }
+              }
 
               // Auto-ingest only fires when the caption clearly indicates intent
               // ("import this brochure", "this is a leasing schedule", etc.) — for
