@@ -504,13 +504,16 @@ export function setupWhatsAppRoutes(app: Express) {
 
               console.log(`WhatsApp message from ${fromNumber}: ${messageBody.slice(0, 50)}`);
 
-              // Document sent via WhatsApp → auto-ingest via universal pipeline.
-              // Images: skip auto-ingest by default (most are conversational, not property data).
-              // Only auto-ingest an image when the caption clearly asks for it.
+              // Auto-ingest only fires when the caption clearly indicates intent
+              // ("import this brochure", "this is a leasing schedule", etc.) — for
+              // both images and documents. Without intent, route through ChatBGP
+              // so it can read the file and respond conversationally, like on the
+              // dashboard. The universal-ingest pipeline (built on the other
+              // branch) is preserved and still triggered when intent is clear.
               const mediaObj = msg.document || msg.image;
               const mediaCaption = (msg.document?.caption || msg.image?.caption || "").trim();
               const captionWantsImport = /\b(import|ingest|add|upload|save|file)\s+(this|that|it|the\s+\w+)\b|\b(this is|here'?s)\s+(a\s+)?(brochure|deal|property|leasing|rent|schedule|contact|company|list)\b/i.test(mediaCaption);
-              const shouldAutoIngest = msg.type === "document" || (msg.type === "image" && captionWantsImport);
+              const shouldAutoIngest = (msg.type === "document" || msg.type === "image") && captionWantsImport;
 
               if (shouldAutoIngest && mediaObj?.id && config.token) {
                 (async () => {
@@ -557,6 +560,45 @@ export function setupWhatsAppRoutes(app: Express) {
                   const aiBody = mediaCaption || "(see attached image)";
                   runChatBgpWhatsAppReply(aiBody, fromNumber, contactName, conversation.id, config, imageAttachment).catch(
                     (err: any) => console.error("[whatsapp-ai] Image follow-up error:", err?.message),
+                  );
+                })();
+                continue;
+              }
+
+              // Plain document (no import-intent caption) — extract text and
+              // pass to ChatBGP so it can read and reply naturally. ChatBGP can
+              // still call CRM tools if the user asks it to.
+              if (msg.type === "document" && mediaObj?.id && config.token) {
+                (async () => {
+                  let extractedText = "";
+                  let docFilename = msg.document?.filename || `document`;
+                  try {
+                    const { bytes, filename } = await downloadWhatsAppMedia(mediaObj.id, config.token!);
+                    docFilename = msg.document?.filename || filename;
+                    const fs = await import("fs");
+                    const path = await import("path");
+                    const os = await import("os");
+                    const tmpPath = path.join(os.tmpdir(), `wa-${Date.now()}-${docFilename.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
+                    fs.writeFileSync(tmpPath, bytes);
+                    try {
+                      const { extractTextFromFile } = await import("./chatbgp");
+                      extractedText = await extractTextFromFile(tmpPath, docFilename);
+                    } finally {
+                      try { fs.unlinkSync(tmpPath); } catch {}
+                    }
+                  } catch (err: any) {
+                    console.error(`[whatsapp-ai] Document extract failed: ${err?.message}`);
+                    extractedText = "";
+                  }
+                  const truncated = extractedText.length > 30000
+                    ? extractedText.slice(0, 30000) + "\n…[truncated]"
+                    : extractedText;
+                  const intro = mediaCaption || "(attached document)";
+                  const aiBody = truncated
+                    ? `${intro}\n\n--- Attached file: ${docFilename} ---\n${truncated}`
+                    : `${intro}\n\n[Attached file: ${docFilename} — couldn't extract text from it.]`;
+                  runChatBgpWhatsAppReply(aiBody, fromNumber, contactName, conversation.id, config).catch(
+                    (err: any) => console.error("[whatsapp-ai] Document follow-up error:", err?.message),
                   );
                 })();
                 continue;
