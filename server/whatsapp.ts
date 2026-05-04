@@ -156,15 +156,16 @@ async function resolveUserIdFromPhone(fromNumber: string): Promise<{ userId: str
   try {
     const { db } = await import("./db");
     const { users } = await import("@shared/schema");
-    const { sql } = await import("drizzle-orm");
-    const candidates = await db
+    const allUsers = await db
       .select({ id: users.id, name: users.name, phone: users.phone })
-      .from(users)
-      .where(
-        sql`regexp_replace(coalesce(${users.phone}, ''), '[^0-9]', '', 'g') LIKE '%' || ${digits} || '%' OR ${digits} LIKE '%' || regexp_replace(coalesce(${users.phone}, ''), '[^0-9]', '', 'g') || '%'`,
-      );
-    if (candidates && candidates.length > 0) {
-      return { userId: candidates[0].id, matched: true, userName: candidates[0].name };
+      .from(users);
+    for (const u of allUsers) {
+      if (!u.phone) continue;
+      const userDigits = String(u.phone).replace(/[^0-9]/g, "");
+      if (!userDigits) continue;
+      if (digits === userDigits || digits.endsWith(userDigits) || userDigits.endsWith(digits)) {
+        return { userId: u.id, matched: true, userName: u.name };
+      }
     }
   } catch (err: any) {
     console.error(`[whatsapp-ai] Phone-to-user lookup failed: ${err?.message}`);
@@ -178,14 +179,19 @@ async function runChatBgpWhatsAppReply(
   contactName: string | null,
   conversationId: string,
   config: ReturnType<typeof getWhatsAppConfig>,
+  imageAttachment?: { mediaType: string; base64: string },
 ): Promise<void> {
-  console.log(`[whatsapp-ai] ENTRY from=${fromNumber} body="${messageBody.slice(0, 80)}" convId=${conversationId}`);
+  console.log(`[whatsapp-ai] ENTRY from=${fromNumber} body="${messageBody.slice(0, 80)}" convId=${conversationId} hasImage=${!!imageAttachment}`);
   if (!config.token || !config.phoneNumberId) {
     console.warn(`[whatsapp-ai] Skipped: config missing (token=${!!config.token}, phoneNumberId=${!!config.phoneNumberId})`);
     return;
   }
-  if (!messageBody || messageBody === "[Media]") {
-    console.log(`[whatsapp-ai] Skipped: empty or media-only message`);
+  if (!messageBody && !imageAttachment) {
+    console.log(`[whatsapp-ai] Skipped: empty message and no attachment`);
+    return;
+  }
+  if (messageBody === "[Media]" && !imageAttachment) {
+    console.log(`[whatsapp-ai] Skipped: media-only message with no extracted attachment`);
     return;
   }
 
@@ -203,7 +209,7 @@ async function runChatBgpWhatsAppReply(
     const recentHistory = history
       .slice(-20)
       .filter((m) => m.body && m.body.trim() && m.body !== "[Media]");
-    let historyMessages = recentHistory.map((m) => ({
+    let historyMessages: any[] = recentHistory.map((m) => ({
       role: m.direction === "outbound" ? ("assistant" as const) : ("user" as const),
       content: (m.body || "").trim(),
     }));
@@ -211,9 +217,21 @@ async function runChatBgpWhatsAppReply(
       historyMessages.shift();
     }
     if (historyMessages.length === 0) {
-      historyMessages = [{ role: "user", content: messageBody }];
+      historyMessages = [{ role: "user", content: messageBody || "(image)" }];
     }
-    console.log(`[whatsapp-ai] History: ${historyMessages.length} messages, first role=${historyMessages[0]?.role}, last role=${historyMessages[historyMessages.length - 1]?.role}`);
+    if (imageAttachment) {
+      const lastIdx = historyMessages.length - 1;
+      const lastMsg = historyMessages[lastIdx];
+      const lastText = typeof lastMsg.content === "string" ? lastMsg.content : "";
+      historyMessages[lastIdx] = {
+        role: "user",
+        content: [
+          { type: "text", text: lastText || "(see attached image)" },
+          { type: "image_url", image_url: { url: `data:${imageAttachment.mediaType};base64,${imageAttachment.base64}` } },
+        ],
+      };
+    }
+    console.log(`[whatsapp-ai] History: ${historyMessages.length} messages, first role=${historyMessages[0]?.role}, last role=${historyMessages[historyMessages.length - 1]?.role}, image=${!!imageAttachment}`);
 
     const fakeReq = {
       session: { userId },
@@ -527,15 +545,29 @@ export function setupWhatsAppRoutes(app: Express) {
                 continue;
               }
 
-              // Plain image (no import-intent caption) — let ChatBGP respond
-              // conversationally rather than misleadingly claim it was "imported".
-              if (msg.type === "image" && mediaObj?.id) {
-                const aiBody = mediaCaption
-                  ? `${mediaCaption}\n\n[The user attached an image. You don't have direct vision over it from WhatsApp yet — acknowledge that you can see they sent an image and ask what they'd like you to do with it (e.g. add a property, log against a contact, just save it). If they explicitly say it's a brochure or property, suggest they re-send with a caption like "import this brochure" so the auto-ingest pipeline runs.]`
-                  : `[The user sent an image with no caption. Acknowledge it briefly and ask what they'd like done with it. Don't claim to have read the image.]`;
-                runChatBgpWhatsAppReply(aiBody, fromNumber, contactName, conversation.id, config).catch(
-                  (err: any) => console.error("[whatsapp-ai] Image follow-up error:", err?.message),
-                );
+              // Plain image (no import-intent caption) — pass to ChatBGP with
+              // vision so it can actually see and respond to the image content.
+              if (msg.type === "image" && mediaObj?.id && config.token) {
+                (async () => {
+                  let imageAttachment: { mediaType: string; base64: string } | undefined;
+                  try {
+                    const { bytes, mimeType } = await downloadWhatsAppMedia(mediaObj.id, config.token!);
+                    if (bytes && bytes.length > 0 && bytes.length < 5 * 1024 * 1024) {
+                      imageAttachment = {
+                        mediaType: mimeType.startsWith("image/") ? mimeType : "image/jpeg",
+                        base64: bytes.toString("base64"),
+                      };
+                    } else if (bytes && bytes.length >= 5 * 1024 * 1024) {
+                      console.warn(`[whatsapp-ai] Image too large for vision (${bytes.length}B), skipping`);
+                    }
+                  } catch (err: any) {
+                    console.error(`[whatsapp-ai] Image download failed: ${err?.message}`);
+                  }
+                  const aiBody = mediaCaption || "(see attached image)";
+                  runChatBgpWhatsAppReply(aiBody, fromNumber, contactName, conversation.id, config, imageAttachment).catch(
+                    (err: any) => console.error("[whatsapp-ai] Image follow-up error:", err?.message),
+                  );
+                })();
                 continue;
               }
 
