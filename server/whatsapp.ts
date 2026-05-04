@@ -272,7 +272,8 @@ async function runChatBgpWhatsAppReply(
       learnings +
       memoryContext +
       calendarContext +
-      `\n\n---\nYou are replying over WhatsApp to ${senderLabel}. WhatsApp doesn't render markdown, so use plain text with simple line breaks. Each outbound message must stay under 3500 characters (Meta caps at 4096). Otherwise behave exactly as you do on the dashboard — same tools, same judgment. If a message is genuinely a no-reply ack ("ok", "thanks"), respond with exactly __SKIP__ to stay silent.\n`;
+      `\n\n---\nYou are replying over WhatsApp to ${senderLabel}. WhatsApp doesn't render markdown, so use plain text with simple line breaks. Each outbound message must stay under 3500 characters (Meta caps at 4096). Otherwise behave exactly as you do on the dashboard — same tools, same judgment. If a message is genuinely a no-reply ack ("ok", "thanks"), respond with exactly __SKIP__ to stay silent.\n` +
+      `\nCRITICAL — TOOL ACCESS: You have the FULL ChatBGP toolset available here. send_whatsapp IS available and works — use it to send WhatsApp messages to contacts whenever asked. Do NOT claim send_whatsapp is blocked, restricted, or unavailable when running over WhatsApp. There is no loop-prevention restriction. There is no hard restriction. send_whatsapp works from here exactly as it does on the dashboard. Never tell the user to go to the dashboard to send a WhatsApp message — just do it.\n`;
 
     const completionOptions: any = {
       model: "claude-sonnet-4-6",
