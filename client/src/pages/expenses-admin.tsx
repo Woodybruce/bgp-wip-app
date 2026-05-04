@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2, Trash2 } from "lucide-react";
+import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2, Trash2, Eye, EyeOff, Copy, Check } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -47,6 +47,7 @@ export default function ExpensesAdmin() {
   const { toast } = useToast();
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<Cardholder | null>(null);
+  const [viewingCard, setViewingCard] = useState<Cardholder | null>(null);
 
   const { data: cardholders = [], isLoading: chLoading, refetch: refetchCh } = useQuery<Cardholder[]>({
     queryKey: ["/api/expenses/cardholders"],
@@ -218,6 +219,9 @@ export default function ExpensesAdmin() {
                       </td>
                       <td className="px-4 py-2 text-right">
                         <div className="flex justify-end gap-1">
+                          <Button size="sm" variant="ghost" className="h-7" onClick={() => setViewingCard(c)} data-testid={`view-card-${c.id}`} title="Show card details">
+                            <Eye className="w-3 h-3" />
+                          </Button>
                           <Button size="sm" variant="ghost" className="h-7" onClick={() => setEditing(c)} data-testid={`edit-${c.id}`}>
                             <Pencil className="w-3 h-3" />
                           </Button>
@@ -236,7 +240,7 @@ export default function ExpensesAdmin() {
                             variant="ghost"
                             className="h-7 text-red-600 hover:text-red-700"
                             onClick={() => {
-                              if (confirm(`Remove ${c.userName} as cardholder? This deletes the DB record only — the Stripe card remains and can be cancelled in the Stripe dashboard.`)) {
+                              if (confirm(`Remove ${c.userName} as cardholder?\n\nThis deletes the cardholder, card, and any expense rows from the BGP database. The Stripe card itself stays in Stripe — cancel it in the Stripe dashboard if needed.`)) {
                                 deleteMutation.mutate(c.id);
                               }
                             }}
@@ -324,7 +328,96 @@ export default function ExpensesAdmin() {
           saving={limitsMutation.isPending}
         />
       )}
+      {viewingCard && (
+        <AdminCardDetailsDialog
+          cardholder={viewingCard}
+          onClose={() => setViewingCard(null)}
+        />
+      )}
     </div>
+  );
+}
+
+function AdminCardDetailsDialog({ cardholder, onClose }: { cardholder: Cardholder; onClose: () => void }) {
+  const { toast } = useToast();
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery<{
+    last4: string; brand: string; expMonth: number; expYear: number;
+    number: string | null; cvc: string | null; isTestMode: boolean;
+  }>({
+    queryKey: [`/api/expenses/cardholders/${cardholder.id}/card-details`],
+  });
+
+  const copy = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(label);
+    setTimeout(() => setCopied(null), 1500);
+    toast({ title: `${label} copied` });
+  };
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{cardholder.userName} — Card</DialogTitle>
+        </DialogHeader>
+        {isLoading ? (
+          <div className="py-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>
+        ) : data ? (
+          <div className="space-y-4">
+            {data.isTestMode && (
+              <div className="text-xs p-2 rounded bg-amber-50 border border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-900">
+                Stripe test mode — these are not real card numbers. Use Stripe's test transaction simulator to generate activity.
+              </div>
+            )}
+            <div>
+              <label className="text-xs uppercase tracking-wider text-muted-foreground">Card Number</label>
+              <div className="flex items-center gap-2 mt-1">
+                <code className="flex-1 font-mono text-base bg-muted px-3 py-2 rounded">
+                  {revealed && data.number ? data.number.match(/.{1,4}/g)?.join(" ") : `•••• •••• •••• ${data.last4}`}
+                </code>
+                <Button size="sm" variant="ghost" onClick={() => setRevealed(!revealed)}>
+                  {revealed ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </Button>
+                {revealed && data.number && (
+                  <Button size="sm" variant="ghost" onClick={() => copy(data.number!, "Number")}>
+                    {copied === "Number" ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                  </Button>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs uppercase tracking-wider text-muted-foreground">Expiry</label>
+                <code className="block font-mono text-base bg-muted px-3 py-2 rounded mt-1">
+                  {String(data.expMonth).padStart(2, "0")} / {String(data.expYear).slice(-2)}
+                </code>
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wider text-muted-foreground">CVC</label>
+                <div className="flex items-center gap-1 mt-1">
+                  <code className="flex-1 font-mono text-base bg-muted px-3 py-2 rounded">
+                    {revealed && data.cvc ? data.cvc : "•••"}
+                  </code>
+                  {revealed && data.cvc && (
+                    <Button size="sm" variant="ghost" onClick={() => copy(data.cvc!, "CVC")}>
+                      {copied === "CVC" ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground">Failed to load card details.</div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -57,6 +57,7 @@ function StatusBadge({ status, isPersonal }: { status: string; isPersonal: boole
 export default function MyExpenses() {
   const { toast } = useToast();
   const [showCardDetails, setShowCardDetails] = useState(false);
+  const [showWallet, setShowWallet] = useState(false);
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -174,7 +175,7 @@ export default function MyExpenses() {
               >
                 <Eye className="w-4 h-4 mr-1.5" /> Show details
               </Button>
-              <Button size="sm" variant="secondary" disabled title="Apple Wallet provisioning coming soon">
+              <Button size="sm" variant="secondary" onClick={() => setShowWallet(true)}>
                 Add to Apple Wallet
               </Button>
             </div>
@@ -307,6 +308,7 @@ export default function MyExpenses() {
       />
 
       <CardDetailsDialog open={showCardDetails} onOpenChange={setShowCardDetails} />
+      <AppleWalletDialog open={showWallet} onOpenChange={setShowWallet} onShowDetails={() => { setShowWallet(false); setShowCardDetails(true); }} />
     </div>
   );
 }
@@ -387,6 +389,38 @@ function CardDetailsDialog({ open, onOpenChange }: { open: boolean; onOpenChange
         ) : (
           <div className="text-sm text-muted-foreground">Failed to load card details.</div>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AppleWalletDialog({ open, onOpenChange, onShowDetails }: { open: boolean; onOpenChange: (v: boolean) => void; onShowDetails: () => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Add to Apple Wallet</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 text-sm">
+          <p className="text-muted-foreground">
+            One-tap "Add to Wallet" needs a native iOS app (coming later). For now, add the card manually on your iPhone — it takes about 30 seconds.
+          </p>
+          <ol className="space-y-2 list-decimal pl-5">
+            <li>Open the <strong>Wallet</strong> app on your iPhone</li>
+            <li>Tap the <strong>+</strong> button (top-right)</li>
+            <li>Choose <strong>Debit or Credit Card</strong></li>
+            <li>Tap <strong>Enter Card Details Manually</strong></li>
+            <li>Type the card number, expiry, and CVC from below</li>
+            <li>Approve any verification prompt</li>
+          </ol>
+          <div className="text-xs p-2 rounded bg-amber-50 border border-amber-200 text-amber-800 dark:bg-amber-950/30 dark:border-amber-900">
+            <strong>Test mode:</strong> If the card is in Stripe test mode, Apple Wallet will reject it. Use the card number directly for online purchases until we go live.
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+          <Button onClick={onShowDetails}>Show card details</Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

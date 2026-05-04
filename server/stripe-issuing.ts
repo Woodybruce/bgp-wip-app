@@ -416,19 +416,23 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
-  // Delete cardholder + cards (admin) — removes DB rows. Stripe cardholder/card stays
-  // (Stripe does not allow hard delete; existing cards become inactive via Stripe dashboard if needed).
+  // Delete cardholder + cards + expenses (admin) — removes DB rows.
+  // Stripe-side cardholder/card remain (Stripe doesn't allow hard delete via API);
+  // cancel them in the Stripe dashboard if needed.
   app.delete("/api/expenses/cardholders/:id", requireAdmin, async (req: Request, res: Response) => {
     try {
       const id = String(req.params.id);
       const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, id)).limit(1);
       if (!ch) return res.status(404).json({ error: "Cardholder not found" });
-      // Block delete if there are expenses for this cardholder
-      const exp = await db.select().from(expenses).where(eq(expenses.cardholderId, id)).limit(1);
-      if (exp.length > 0) return res.status(400).json({ error: "Cardholder has expenses — cannot delete. Freeze the card instead." });
+      // Cascade: delete receipts → expenses → cards → cardholder
+      const expRows = await db.select().from(expenses).where(eq(expenses.cardholderId, id));
+      for (const e of expRows) {
+        await db.delete(expenseReceipts).where(eq(expenseReceipts.expenseId, e.id));
+      }
+      await db.delete(expenses).where(eq(expenses.cardholderId, id));
       await db.delete(stripeCards).where(eq(stripeCards.cardholderId, id));
       await db.delete(stripeCardholders).where(eq(stripeCardholders.id, id));
-      res.json({ success: true });
+      res.json({ success: true, deletedExpenses: expRows.length });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
@@ -572,6 +576,32 @@ export function setupStripeIssuingRoutes(app: Express) {
           pendingReceipts,
           totalThisMonth: monthly.length,
         },
+      });
+    } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Admin: reveal full card details for ANY cardholder (test mode reveals number+cvc)
+  app.get("/api/expenses/cardholders/:id/card-details", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const [card] = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, id)).limit(1);
+      if (!card) return res.status(404).json({ error: "No card found for this cardholder" });
+      const isTest = stripeKey().startsWith("sk_test_");
+      const path = isTest
+        ? `/issuing/cards/${card.stripeCardId}?expand[]=number&expand[]=cvc`
+        : `/issuing/cards/${card.stripeCardId}`;
+      const stripeCard = await stripeRequest("GET", path);
+      res.json({
+        last4: stripeCard.last4,
+        brand: stripeCard.brand,
+        expMonth: stripeCard.exp_month,
+        expYear: stripeCard.exp_year,
+        number: isTest ? stripeCard.number : null,
+        cvc: isTest ? stripeCard.cvc : null,
+        isTestMode: isTest,
       });
     } catch (e: any) {
       console.error("[expenses] route error:", e?.message, e?.stack);
