@@ -36,7 +36,8 @@ export type AllowedTable =
   | "leasing_schedule_units"
   | "crm_lease_events"
   | "crm_comps"
-  | "crm_requirements_leasing";
+  | "crm_requirements_leasing"
+  | "lease_events";
 
 export const ALLOWED_TABLES: AllowedTable[] = [
   "crm_deals",
@@ -47,6 +48,7 @@ export const ALLOWED_TABLES: AllowedTable[] = [
   "crm_lease_events",
   "crm_comps",
   "crm_requirements_leasing",
+  "lease_events",
 ];
 
 const AUDIT_TABLES: Partial<Record<AllowedTable, string>> = {

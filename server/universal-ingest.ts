@@ -38,7 +38,7 @@ import { pool } from "./db";
 // optional ref resolver. Engine itself never changes.
 // ─────────────────────────────────────────────────────────────────────────
 
-export type IngestTarget = "leasing_schedule_units" | "crm_deals" | "crm_companies" | "crm_contacts" | "crm_properties" | "crm_comps" | "crm_requirements_leasing";
+export type IngestTarget = "leasing_schedule_units" | "crm_deals" | "crm_companies" | "crm_contacts" | "crm_properties" | "crm_comps" | "crm_requirements_leasing" | "lease_events";
 export type IngestTargetOrAuto = IngestTarget | "auto";
 
 interface TargetSpec {
@@ -195,6 +195,31 @@ const TARGETS: Record<IngestTarget, TargetSpec> = {
       if (record.company_name) {
         record.company_id = await resolveCompanyId(record.company_name);
         delete record.company_name;
+      }
+      return record;
+    },
+  },
+  lease_events: {
+    table: "lease_events",
+    fields: `
+      address (string — property address),
+      tenant (string or null — tenant name),
+      unit_ref (string or null — unit reference, e.g. "Unit 4" or "Ground Floor"),
+      event_type (one of: Expiry | Break | Rent Review | New Letting | Renewal | Regear | Notice | Void | Other),
+      event_date (ISO date or null — when the event occurs),
+      current_rent (string or null — passing rent, e.g. "£45,000 pa"),
+      estimated_erv (string or null — estimated rental value),
+      sqft (string or null),
+      status (one of: Monitoring | Active | Completed | Cancelled or null),
+      notes (string or null — any commentary)
+    `,
+    matchKey: ["address", "event_type", "event_date"],
+    resolveRefs: async (record) => {
+      if (record.address) {
+        record.property_id = await resolvePropertyId(record.address);
+      }
+      if (record.tenant) {
+        record.tenant_company_id = await resolveCompanyId(record.tenant);
       }
       return record;
     },
@@ -619,6 +644,9 @@ export interface DiffRecord {
   changedFields?: string[];
   unmatchedRefs?: string[];
   droppedFields?: string[];
+  /** Snapshot of existing field values when diff was built — used to detect
+   *  manual edits between preview and commit. */
+  existingSnapshot?: Record<string, any>;
 }
 
 export interface IngestPreview {
@@ -686,12 +714,17 @@ export async function buildDiff(args: {
     if (changedFields.length === 0) {
       diff.push({ type: "no_change", record: clean, existingId: existingRow.id });
     } else {
+      // Snapshot current values for changed fields — lets commitDiff detect
+      // manual edits that happened between preview and commit.
+      const snapshot: Record<string, any> = {};
+      for (const f of changedFields) snapshot[f] = existingRow[f];
       diff.push({
         type: "update",
         record: clean,
         existingId: existingRow.id,
         changedFields,
         droppedFields: dropped.length ? dropped : undefined,
+        existingSnapshot: snapshot,
       });
     }
   }
@@ -738,6 +771,9 @@ export async function commitDiff(args: {
   commitToken: string;
   userId: string;
   userName?: string;
+  /** When true, skip updates where the DB value has changed since the diff
+   *  was built — protects manual edits from being overwritten on re-ingest. */
+  protectManualEdits?: boolean;
 }): Promise<CommitResult> {
   const pending = PENDING_INGESTS.get(args.commitToken);
   if (!pending) throw new Error("Commit token expired or not found");
@@ -774,7 +810,23 @@ export async function commitDiff(args: {
         }
         result.written++;
       } else if (entry.type === "update" && entry.existingId && entry.changedFields) {
-        const cols = entry.changedFields;
+        // Re-ingest safety: if the record was manually edited since the diff
+        // was built, only update fields that haven't been touched.
+        let cols = entry.changedFields;
+        if (args.protectManualEdits && entry.existingSnapshot && cols.length > 0) {
+          const current = await pool.query(`SELECT * FROM ${spec.table} WHERE id = $1 LIMIT 1`, [entry.existingId]);
+          if (current.rows[0]) {
+            const currentRow = current.rows[0];
+            cols = cols.filter((f) => {
+              const snapVal = normaliseForCompare(entry.existingSnapshot![f]);
+              const curVal = normaliseForCompare(currentRow[f]);
+              // If the current DB value still matches our snapshot, it hasn't
+              // been manually edited — safe to overwrite.
+              return snapVal === curVal;
+            });
+            if (cols.length === 0) { result.skipped++; continue; }
+          }
+        }
         const setClause = cols.map((c, i) => `${c} = $${i + 1}`).join(", ");
         const values = cols.map((c) => entry.record[c]);
         values.push(entry.existingId);
@@ -836,11 +888,49 @@ export function listIngestTargets(): IngestTarget[] {
   return Object.keys(TARGETS) as IngestTarget[];
 }
 
+/** Ask Claude if this file likely contains data for multiple target tables. */
+async function classifyMultiTarget(file: ReadFileResult): Promise<Array<{ target: IngestTarget; confidence: "high" | "medium" | "low" }>> {
+  const sample = file.text.slice(0, 4000);
+  const client = new Anthropic();
+  const msg = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 256,
+    messages: [{
+      role: "user",
+      content: `You are classifying a file for import into a property CRM. The available target tables are:
+- leasing_schedule_units: unit-by-unit schedule of a property (rent, status, tenant, break dates)
+- crm_deals: deal pipeline (transactions, lettings, investments)
+- crm_companies: companies / brands / investors
+- crm_contacts: individual people (name, email, phone)
+- crm_properties: property records
+- crm_comps: comparable transactions (evidence of market deals)
+- crm_requirements_leasing: active tenant requirements
+- lease_events: lease expiries, breaks, rent reviews
+
+Can this file contain data for MORE THAN ONE of these tables? Return JSON only:
+{"targets": [{"target": "<name>", "confidence": "high|medium|low"}, ...]}
+Only include targets with medium or high confidence. Maximum 3 targets.
+
+File sample:
+${sample}`,
+    }],
+  });
+  try {
+    const raw = (msg.content[0] as any).text || "";
+    const json = JSON.parse(raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim());
+    return (json.targets || []).filter((t: any) =>
+      listIngestTargets().includes(t.target) && (t.confidence === "high" || t.confidence === "medium")
+    );
+  } catch {
+    return [];
+  }
+}
+
 /**
- * One-shot ingest: classify → parse → diff → commit.
- * Returns a plain-English summary for email/WhatsApp replies.
- * Used by ambient ingest paths (email attachments, WhatsApp documents)
- * where the deliberate act of sending the file IS the confirmation.
+ * One-shot ambient ingest: classify → (multi-)parse → diff → commit.
+ * Used by email attachments, WhatsApp documents, and drag-drop.
+ * Protects manual edits — won't overwrite fields changed by a human since
+ * the last ingest. Emits a socket notification on success.
  */
 export async function ingestBytes(args: {
   bytes: Buffer;
@@ -849,12 +939,58 @@ export async function ingestBytes(args: {
   userName?: string;
 }): Promise<{ written: number; skipped: number; errors: { record: any; error: string }[]; target: IngestTarget; narrative: string }> {
   const file = readFile({ bytes: args.bytes, filename: args.filename });
-  const cls = await classifyTarget(file);
-  const { records } = await parseWithClaude({ file, target: cls.target });
-  const preview = await buildDiff({ target: cls.target, records, filename: args.filename });
-  try { preview.narrative = await summariseDiff({ preview }); } catch { /* skip */ }
-  const result = await commitDiff({ commitToken: preview.commitToken, userId: args.userId || "ambient" });
-  const narrative = preview.narrative ||
-    `Imported ${result.written} record(s) into ${cls.target} from ${args.filename}.`;
-  return { ...result, target: cls.target, narrative };
+  const userId = args.userId || "ambient";
+
+  // Try multi-target classification first for complex files (Excel with multiple sheets)
+  let targets: Array<{ target: IngestTarget; confidence: "high" | "medium" | "low" }> = [];
+  if (file.kind === "excel" && file.sheetTexts && file.sheetTexts.length > 1) {
+    try { targets = await classifyMultiTarget(file); } catch { /* fall back to single */ }
+  }
+
+  // Single-target path (most common)
+  if (targets.length <= 1) {
+    const cls = targets[0] || await classifyTarget(file);
+    const { records } = await parseWithClaude({ file, target: cls.target });
+    const preview = await buildDiff({ target: cls.target, records, filename: args.filename });
+    try { preview.narrative = await summariseDiff({ preview }); } catch { /* skip */ }
+    const result = await commitDiff({ commitToken: preview.commitToken, userId, userName: args.userName, protectManualEdits: true });
+    const narrative = preview.narrative ||
+      `Imported ${result.written} record(s) into ${cls.target} from ${args.filename}.`;
+    // Notify connected clients
+    try {
+      const { getIO } = await import("./websocket");
+      getIO()?.emit("ingest_complete", { filename: args.filename, target: cls.target, written: result.written, userId });
+    } catch { /* non-fatal */ }
+    return { ...result, target: cls.target, narrative };
+  }
+
+  // Multi-target path
+  let totalWritten = 0, totalSkipped = 0;
+  const allErrors: { record: any; error: string }[] = [];
+  const summaries: string[] = [];
+  let primaryTarget = targets[0].target;
+
+  for (const t of targets) {
+    try {
+      const { records } = await parseWithClaude({ file, target: t.target });
+      if (records.length === 0) continue;
+      const preview = await buildDiff({ target: t.target, records, filename: args.filename });
+      const result = await commitDiff({ commitToken: preview.commitToken, userId, userName: args.userName, protectManualEdits: true });
+      totalWritten += result.written;
+      totalSkipped += result.skipped;
+      allErrors.push(...result.errors);
+      if (result.written > 0) summaries.push(`${result.written} ${t.target} records`);
+    } catch (err: any) {
+      console.warn(`[ingest-multi] ${t.target} failed: ${err?.message}`);
+    }
+  }
+
+  const narrative = summaries.length > 0
+    ? `Imported from ${args.filename}: ${summaries.join(", ")}.`
+    : `No records imported from ${args.filename}.`;
+  try {
+    const { getIO } = await import("./websocket");
+    getIO()?.emit("ingest_complete", { filename: args.filename, targets: targets.map(t => t.target), written: totalWritten, userId });
+  } catch { /* non-fatal */ }
+  return { written: totalWritten, skipped: totalSkipped, errors: allErrors, target: primaryTarget, narrative };
 }

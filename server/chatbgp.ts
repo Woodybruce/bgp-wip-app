@@ -652,7 +652,7 @@ function getToolProgressLabel(toolName: string): string {
     search_news: "Searching news...",
     search_green_street: "Searching Green Street...",
     query_leasing_schedule: "Querying leasing schedule...",
-    import_leasing_schedule: "Importing leasing schedule...",
+    import_leasing_schedule: "Parsing file...",
     query_turnover: "Querying turnover data...",
     tfl_nearby: "Finding nearby stations...",
     scan_duplicates: "Scanning for duplicates...",
@@ -1121,7 +1121,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **KYC**: run_kyc_check for Companies House + sanctions + financial strength. deep_investigate for full D&B-style intelligence combining all sources.
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
-- **Leasing schedule**: query_leasing_schedule for read. If the user uploads / drags in / attaches an Excel file and says anything about leasing schedule, rent schedule, tenant schedule, load / upload / import / populate units, OR says "this is the [property] leasing schedule" — you MUST call import_leasing_schedule with mode="preview" first. DO NOT read the file yourself or summarise its contents — the tool handles parsing. After preview returns, show the user the summary and ask for confirmation, then call again with mode="import".
+- **Leasing schedule / any data file**: query_leasing_schedule for read. For IMPORTS — any Excel, CSV, PDF, or pasted text — always use **ingest_file** (not import_leasing_schedule which no longer exists). ingest_file auto-classifies the file, parses it with AI, and returns a preview. Show the preview to the user, then call commit_ingest to write.
 - **Documents (plain text)**: generate_pdf (TEXT ONLY — no imagery, no design), generate_word, generate_pptx, export_to_excel. Use these ONLY for internal text reports.
 - **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use **generate_designed_deck** (Gamma — full visual design with imagery). NEVER use generate_pdf for these. Don't apologise afterwards about the PDF being "just text" — pick the right tool upfront.
 - **Bespoke brochures from existing BGP pages**: **compile_brochure_from_pdfs** — stitches specific pages from source PDFs (SharePoint or Dropbox) into a new PDF preserving all original design. Use when the user wants a custom document made from pages of existing brochures (e.g. "pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard"). Ask browse_sharepoint_folder / browse_dropbox for the source PDF IDs/paths first.
@@ -2421,7 +2421,7 @@ export async function getAvailableTools(): Promise<{
       parameters: {
         type: "object",
         properties: {
-          target: { type: "string", description: "What kind of records to extract. One of: leasing_schedule_units | crm_deals | crm_companies | crm_contacts | crm_properties | crm_comps | crm_requirements_leasing. Leave as 'auto' for AI to decide." },
+          target: { type: "string", description: "What kind of records to extract. One of: leasing_schedule_units | crm_deals | crm_companies | crm_contacts | crm_properties | crm_comps | crm_requirements_leasing | lease_events. Leave as 'auto' for AI to decide." },
           shareUrl: { type: "string", description: "A SharePoint or OneDrive share link (e.g. https://brucegillinghampollardlimited.sharepoint.com/...). Resolves and downloads the file silently. Mutually exclusive with text." },
           text: { type: "string", description: "Pasted text content (CSV, table, notes). Mutually exclusive with shareUrl. For uploaded files, the user uses the UI dialog." },
           filename: { type: "string", description: "Optional filename label for pasted text (defaults to 'pasted.txt')." },
@@ -3465,40 +3465,8 @@ export async function getAvailableTools(): Promise<{
     },
   });
 
-  tools.push({
-    type: "function",
-    function: {
-      name: "import_leasing_schedule",
-      description: "Import leasing schedule data from an uploaded Excel file into the Leasing Schedule Board (leasing_schedule_units table). The workbook can contain multiple properties — the tool parses property headers and unit rows intelligently. The file must have been uploaded to this chat first (drag & drop, or via file picker). Use when the user asks to import / upload / load / populate / restore a leasing schedule, or says they've dragged in a leasing schedule file. ALWAYS call with mode='preview' first, show the user a summary, then call again with mode='import' only after they confirm.",
-      parameters: {
-        type: "object",
-        properties: {
-          mediaFilename: { type: "string", description: "Name of the uploaded Excel file (e.g. 'Landsec_Leasing_Schedule.xlsx'). Must already be uploaded to this chat." },
-          mode: { type: "string", enum: ["preview", "import"], description: "preview = parse and show what would be imported, no DB writes. import = insert rows into database. Default: preview." },
-          propertyFilter: { type: "string", description: "Optional: import only one property from the file (partial name match, e.g. 'Westgate'). Omit to import every property in the workbook." },
-        },
-        required: ["mediaFilename"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "import_wip_excel",
-      description: "Import a Sage WIP (Work-in-Progress) Excel export end-to-end. Auto-detects either Sage layout: legacy 'WIP by deal' (Ref, Amt WIP, Amt invoice, …) or current Sage TransactionsExpo (HEADER_NUMBER, NetAmount, NAME, ADDRESS_*, STOCK_CODE, DealStatus, …). Wipes wip_entries and reloads (or appends with mode='append'), then on the TransactionsExpo layout ALSO populates: (1) crm_deals via syncWipToCrmDeals, (2) crm_companies billing entities from NAME + ADDRESS_*, with `invoicing_entity_id` stamped on each deal, (3) deal_fee_allocations from per-Agent NetAmount slices (CON049 STOCK_CODE tagged as BGP House), (4) tenant_rep_searches kanban entries for any NEG-status deals. Idempotent — safe to re-run on each Sage export. Pass either `chatMediaFilename` (file dragged into chat) OR `sharepointUrl` (a SharePoint share link the user pastes). By default REPLACES wip_entries — use mode='append' only for incremental updates between full Sage exports.",
-      parameters: {
-        type: "object",
-        properties: {
-          chatMediaFilename: { type: "string", description: "The chat-media filename of the uploaded Excel (e.g. '1745689452345-abc123def.xlsx'). Use when the user has dragged the file into chat." },
-          sharepointUrl: { type: "string", description: "A SharePoint share URL (e.g. 'https://...sharepoint.com/.../IQ...') pointing at the WIP Excel. Use when the user pastes a share link instead of dragging the file in. Either this or chatMediaFilename must be supplied." },
-          mode: { type: "string", enum: ["replace", "append"], description: "replace = wipe wip_entries and reload from file (default — what Sage gives you each quarter). append = keep existing rows and add new ones. Default: replace." },
-          sourceOfTruth: { type: "boolean", description: "When true (and mode='replace'), also soft-archive any crm_deals previously synced from a WIP import whose ref is no longer in the file. Sets status='ARCH' and tags comments with [ARCHIVED <date>] — fully reversible. Use this for the start-of-year cutover when the new file is the definitive list. Default: false." },
-        },
-        required: [],
-      },
-    },
-  });
+  // import_leasing_schedule and import_wip_excel removed — replaced by
+  // ingest_file which handles any file format with AI-driven parsing.
 
   tools.push({
     type: "function",
@@ -6732,7 +6700,11 @@ async function executeCrmToolRaw(
     }
   }
 
-  if (fnName === "import_leasing_schedule") {
+  if (fnName === "import_leasing_schedule" || fnName === "import_wip_excel") {
+    return { data: { error: `${fnName} has been retired. Use ingest_file instead — it handles any file format including leasing schedules and WIP exports.` } };
+  }
+
+  if (fnName === "__import_leasing_schedule_legacy") {
     try {
       const mediaFilename = String(fnArgs.mediaFilename || "").trim();
       const mode = (fnArgs.mode === "import" ? "import" : "preview") as "preview" | "import";
@@ -6960,7 +6932,7 @@ Be thorough — include every unit row you can classify, across all properties i
     }
   }
 
-  if (fnName === "import_wip_excel") {
+  if (fnName === "__import_wip_excel_legacy") {
     try {
       const chatMediaFilename = String(fnArgs.chatMediaFilename || "").trim();
       const sharepointUrl = String(fnArgs.sharepointUrl || "").trim();
