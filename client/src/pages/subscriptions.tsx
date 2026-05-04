@@ -6,6 +6,7 @@ import { ExternalLink, Search, Building2, FileText, MapPin, Newspaper, ShieldChe
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 type IntegrationItem = {
   key: string;
@@ -208,6 +209,8 @@ export default function Subscriptions() {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [expandedCard, setExpandedCard] = useState<string | null>(null);
   const [keysExpanded, setKeysExpanded] = useState(false);
+  const [chartIniting, setChartIniting] = useState(false);
+  const { toast } = useToast();
 
   const { data: keyStatus, isLoading: keysLoading, refetch: refetchKeys, isFetching: keysFetching } = useQuery<IntegrationsStatus>({
     queryKey: ["/api/integrations/status"],
@@ -364,6 +367,38 @@ export default function Subscriptions() {
                       >
                         <ExternalLink className="w-3 h-3 mr-1" />
                         Connect Xero
+                      </Button>
+                    )}
+                    {label === "Xero" && result.ok && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-[11px] mt-1.5"
+                        disabled={chartIniting}
+                        onClick={async () => {
+                          setChartIniting(true);
+                          try {
+                            const r = await apiRequest("POST", "/api/xero/initialise-chart");
+                            const data = await r.json();
+                            if (data.success) {
+                              toast({
+                                title: "Xero chart set up",
+                                description: `${data.accounts.created} accounts created, ${data.accounts.skipped} already existed. ${data.trackingCategories.created} tracking categories created.`,
+                                duration: 6000,
+                              });
+                            } else {
+                              toast({ title: "Setup failed", description: data.error, variant: "destructive", duration: 6000 });
+                            }
+                          } catch (e: any) {
+                            toast({ title: "Setup failed", description: e?.message || "Unknown error", variant: "destructive", duration: 6000 });
+                          } finally {
+                            setChartIniting(false);
+                          }
+                        }}
+                        data-testid="button-init-xero-chart"
+                      >
+                        {chartIniting ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+                        Initialise Chart of Accounts
                       </Button>
                     )}
                   </div>
