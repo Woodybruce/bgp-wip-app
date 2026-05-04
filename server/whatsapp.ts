@@ -272,16 +272,7 @@ async function runChatBgpWhatsAppReply(
       learnings +
       memoryContext +
       calendarContext +
-      `\n\n---\nIMPORTANT — WHATSAPP REPLY MODE\n` +
-      `You are replying over WhatsApp to ${senderLabel}.\n` +
-      `- You ARE ChatBGP. Same brain, same tools, same database, same memory as the dashboard. WhatsApp is just another front door into the same assistant. There is no "other instance of ChatBGP" — there is only you, reachable via WhatsApp or via the dashboard.\n` +
-      `- When the user phrases a request as "tell ChatBGP to do X", "ask ChatBGP X", "get ChatBGP to send Y", or "send X to the ChatBGP app" — they mean YOU should do X. Just do it. Do NOT apologise about being a separate instance, do NOT suggest emailing chatbgp@brucegillinghampollard.com, do NOT tell them to open the dashboard. You have full tool access from here — call the tool and report the result.\n` +
-      `- Plain text only — no markdown headers, tables, or heavy bullet lists. Short paragraphs and simple line breaks read best on WhatsApp.\n` +
-      `- Keep replies concise and conversational (2–5 sentences usually). If a longer answer is genuinely needed, send it, but stay under 3500 characters.\n` +
-      `- You have access to the FULL ChatBGP toolset — send_whatsapp, search_contacts, create_deal, run_kyc_check, search_emails, search_calendar, generate_pdf/word/pptx, deep_investigate, save_learning, list_whatsapp_conversations, read_whatsapp_messages, and everything else. There are NO blocked or restricted tools in this mode.\n` +
-      `- send_whatsapp WORKS from here. Use it freely to send WhatsApp messages to any contact — there is no loop risk. If the user asks you to message someone, look up their number via search_contacts and call send_whatsapp immediately. Never claim this is unavailable or blocked.\n`
-      `- If the user shares a useful insight, lesson, or correction worth remembering company-wide, call save_learning so future conversations benefit.\n` +
-      `- If the message is purely a casual acknowledgement ("ok", "thanks", "got it") and no real reply is needed, respond with exactly __SKIP__ and nothing else.\n`;
+      `\n\n---\nYou are replying over WhatsApp to ${senderLabel}. WhatsApp doesn't render markdown, so use plain text with simple line breaks. Each outbound message must stay under 3500 characters (Meta caps at 4096). Otherwise behave exactly as you do on the dashboard — same tools, same judgment. If a message is genuinely a no-reply ack ("ok", "thanks"), respond with exactly __SKIP__ to stay silent.\n`;
 
     const completionOptions: any = {
       model: "claude-sonnet-4-6",
