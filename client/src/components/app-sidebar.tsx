@@ -119,6 +119,7 @@ const adminNavBase = [
   { title: "Leads", url: "/leads", icon: UserPlus },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, badge: "AI" },
   { title: "Subscriptions & APIs", url: "/subscriptions", icon: CreditCard },
+  { title: "Expenses", url: "/expenses", icon: Receipt },
   { title: "Office Add-ins", url: "/addins", icon: Puzzle },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
