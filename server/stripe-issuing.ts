@@ -67,7 +67,16 @@ function flattenStripeParams(obj: Record<string, any>, prefix = ""): Record<stri
   for (const [k, v] of Object.entries(obj)) {
     if (v === undefined || v === null) continue;
     const key = prefix ? `${prefix}[${k}]` : k;
-    if (typeof v === "object" && !Array.isArray(v)) {
+    if (Array.isArray(v)) {
+      v.forEach((item, i) => {
+        const itemKey = `${key}[${i}]`;
+        if (item !== null && typeof item === "object") {
+          Object.assign(out, flattenStripeParams(item, itemKey));
+        } else {
+          out[itemKey] = item;
+        }
+      });
+    } else if (typeof v === "object") {
       Object.assign(out, flattenStripeParams(v, key));
     } else {
       out[key] = v;
