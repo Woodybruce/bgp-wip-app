@@ -352,28 +352,14 @@ export default function Subscriptions() {
                     </p>
                     <p className="text-muted-foreground leading-snug">{result.message}</p>
                     {label === "Xero" && !result.ok && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-6 text-[11px] mt-1.5"
-                        onClick={async () => {
-                          try {
-                            const r = await apiRequest("GET", "/api/xero/auth");
-                            const data = await r.json();
-                            if (data?.url) {
-                              window.location.href = data.url;
-                            } else {
-                              toast({ title: "Xero auth failed", description: data?.message || "No URL returned", variant: "destructive" });
-                            }
-                          } catch (e: any) {
-                            toast({ title: "Xero auth failed", description: e?.message || "Request failed", variant: "destructive" });
-                          }
-                        }}
+                      <a
+                        href="/api/xero/connect"
+                        className="inline-flex items-center h-6 text-[11px] mt-1.5 px-2 border border-input rounded-md hover-elevate"
                         data-testid="button-connect-xero"
                       >
                         <ExternalLink className="w-3 h-3 mr-1" />
-                        Connect Xero
-                      </Button>
+                        Connect / Reconnect Xero
+                      </a>
                     )}
                     {label === "Xero" && result.ok && (
                       <Button

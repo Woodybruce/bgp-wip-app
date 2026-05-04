@@ -188,6 +188,33 @@ export function setupXeroRoutes(app: Express) {
     });
   });
 
+  // Direct-redirect connect endpoint — use this from anchors/links rather than
+  // the JSON-returning /api/xero/auth so the browser handles the redirect chain
+  // without any client-side fetch logic that can silently fail.
+  app.get("/api/xero/connect", requireAuth, async (req: Request, res: Response) => {
+    const clientId = process.env.XERO_CLIENT_ID;
+    if (!clientId) {
+      return res.redirect("/?xero_error=" + encodeURIComponent("XERO_CLIENT_ID not set in environment"));
+    }
+
+    const state = crypto.randomBytes(32).toString("hex");
+    req.session.xeroOAuthState = state;
+    const redirectUri = getRedirectUri(req);
+
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings",
+      state,
+    });
+
+    req.session.save((err) => {
+      if (err) console.error("[Xero] Session save error in /connect:", err);
+      res.redirect(`${XERO_AUTH_URL}?${params.toString()}`);
+    });
+  });
+
   app.get("/api/xero/auth", requireAuth, async (req: Request, res: Response) => {
     let clientId = process.env.XERO_CLIENT_ID;
     if (!clientId) {
