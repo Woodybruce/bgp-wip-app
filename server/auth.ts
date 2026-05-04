@@ -747,8 +747,9 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
     if (!row.is_admin && !emailMatches) {
       return res.status(403).json({ message: "Admin access required" });
     }
-  } catch (_e) {
-    return res.status(500).json({ message: "Auth check failed" });
+  } catch (e: any) {
+    console.error("[requireAdmin] DB check failed:", e?.message);
+    return res.status(500).json({ message: "Auth check failed", detail: e?.message });
   }
   next();
 }

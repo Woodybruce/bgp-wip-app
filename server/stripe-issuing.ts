@@ -345,6 +345,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       const rows = await db.select().from(stripeCardholders).orderBy(stripeCardholders.userName);
       res.json(rows);
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -363,6 +364,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       const { card } = await issueVirtualCard(ch.id);
       res.json({ cardholder: ch, card });
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -379,6 +381,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       });
       res.json({ success: true });
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -391,6 +394,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       await setCardholderStatus(String(req.params.id), status);
       res.json({ success: true });
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -401,6 +405,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       const rows = await db.select().from(expenses).orderBy(desc(expenses.transactionDate)).limit(200);
       res.json(rows);
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -414,6 +419,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (!row) return res.status(404).json({ error: "Not found" });
       res.json(row);
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -435,6 +441,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       await db.update(expenses).set(updates as any).where(eq(expenses.id, id));
       res.json({ success: true });
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -477,6 +484,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       const result = await postExpenseToXero({ session: req.session, expenseId: String(req.params.id) });
       res.json({ success: true, ...result });
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -517,6 +525,7 @@ export function setupStripeIssuingRoutes(app: Express) {
         },
       });
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -549,6 +558,7 @@ export function setupStripeIssuingRoutes(app: Express) {
         isTestMode: isTest,
       });
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -615,6 +625,7 @@ export function setupStripeIssuingRoutes(app: Express) {
         res.json({ success: true, parsed: null, error: `Saved but parsing failed: ${e?.message}` });
       }
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -678,6 +689,7 @@ export function setupStripeIssuingRoutes(app: Express) {
         byCategory,
       });
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -696,6 +708,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       }).where(eq(expenses.id, String(req.params.id)));
       res.json({ success: true });
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
@@ -710,6 +723,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (!result) return res.status(400).json({ error: "Xero not connected — admin needs to connect Xero on the Subscriptions page" });
       res.json({ success: true, ...result });
     } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
       res.status(500).json({ error: e?.message });
     }
   });
