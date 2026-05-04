@@ -416,6 +416,25 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
+  // Delete cardholder + cards (admin) — removes DB rows. Stripe cardholder/card stays
+  // (Stripe does not allow hard delete; existing cards become inactive via Stripe dashboard if needed).
+  app.delete("/api/expenses/cardholders/:id", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const id = String(req.params.id);
+      const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, id)).limit(1);
+      if (!ch) return res.status(404).json({ error: "Cardholder not found" });
+      // Block delete if there are expenses for this cardholder
+      const exp = await db.select().from(expenses).where(eq(expenses.cardholderId, id)).limit(1);
+      if (exp.length > 0) return res.status(400).json({ error: "Cardholder has expenses — cannot delete. Freeze the card instead." });
+      await db.delete(stripeCards).where(eq(stripeCards.cardholderId, id));
+      await db.delete(stripeCardholders).where(eq(stripeCardholders.id, id));
+      res.json({ success: true });
+    } catch (e: any) {
+      console.error("[expenses] route error:", e?.message, e?.stack);
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // Freeze / unfreeze
   app.patch("/api/expenses/cardholders/:id/status", requireAdmin, async (req: Request, res: Response) => {
     try {

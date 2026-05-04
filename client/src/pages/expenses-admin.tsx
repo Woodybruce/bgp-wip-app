@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2 } from "lucide-react";
+import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2, Trash2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -74,6 +74,18 @@ export default function ExpensesAdmin() {
       toast({ title: "Card status updated" });
     },
     onError: (e: any) => toast({ title: "Update failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const r = await apiRequest("DELETE", `/api/expenses/cardholders/${id}`);
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/expenses/cardholders"] });
+      toast({ title: "Cardholder removed" });
+    },
+    onError: (e: any) => toast({ title: "Delete failed", description: e?.message, variant: "destructive" }),
   });
 
   const limitsMutation = useMutation({
@@ -218,6 +230,20 @@ export default function ExpensesAdmin() {
                             title={c.status === "active" ? "Freeze card" : "Unfreeze card"}
                           >
                             <Snowflake className={`w-3 h-3 ${c.status === "inactive" ? "text-amber-600" : ""}`} />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-red-600 hover:text-red-700"
+                            onClick={() => {
+                              if (confirm(`Remove ${c.userName} as cardholder? This deletes the DB record only — the Stripe card remains and can be cancelled in the Stripe dashboard.`)) {
+                                deleteMutation.mutate(c.id);
+                              }
+                            }}
+                            data-testid={`delete-${c.id}`}
+                            title="Remove cardholder"
+                          >
+                            <Trash2 className="w-3 h-3" />
                           </Button>
                         </div>
                       </td>
