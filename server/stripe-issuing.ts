@@ -14,7 +14,7 @@
  * All amounts in pence (Stripe convention).
  */
 import type { Express, Request, Response } from "express";
-import { requireAuth } from "./auth";
+import { requireAuth, requireAdmin } from "./auth";
 import { db } from "./db";
 import { stripeCardholders, stripeCards, expenses, expenseReceipts } from "@shared/schema";
 import { eq, desc, and, gte, sql } from "drizzle-orm";
@@ -317,10 +317,30 @@ function verifyStripeSignature(payload: Buffer, header: string, secret: string) 
 
 // ─── ROUTES ────────────────────────────────────────────────────────────────
 
+// Check that the current user owns this expense (or is admin). Returns true if allowed.
+async function userCanAccessExpense(req: Request, expenseId: string): Promise<boolean> {
+  const userId = (req.session as any)?.userId;
+  if (!userId) return false;
+  const [exp] = await db.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1);
+  if (!exp) return false;
+  if (exp.createdBy === userId) return true;
+  if (exp.cardholderId) {
+    const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.id, exp.cardholderId)).limit(1);
+    if (ch?.userId === userId) return true;
+  }
+  // Admin override — check is_admin or ADMIN_EMAILS
+  try {
+    const { pool } = await import("./db");
+    const r = await pool.query("SELECT is_admin, email FROM users WHERE id = $1", [userId]);
+    if (r.rows[0]?.is_admin) return true;
+  } catch {}
+  return false;
+}
+
 export function setupStripeIssuingRoutes(app: Express) {
 
   // List all cardholders (admin)
-  app.get("/api/expenses/cardholders", requireAuth, async (req: Request, res: Response) => {
+  app.get("/api/expenses/cardholders", requireAdmin, async (req: Request, res: Response) => {
     try {
       const rows = await db.select().from(stripeCardholders).orderBy(stripeCardholders.userName);
       res.json(rows);
@@ -330,7 +350,7 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Create cardholder + issue virtual card
-  app.post("/api/expenses/cardholders", requireAuth, async (req: Request, res: Response) => {
+  app.post("/api/expenses/cardholders", requireAdmin, async (req: Request, res: Response) => {
     try {
       const { userId, name, email, phone, monthlyLimit, dailyLimit, singleTxLimit } = req.body;
       if (!userId || !name || !email) return res.status(400).json({ error: "userId, name, email required" });
@@ -348,7 +368,7 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Update limits (admin)
-  app.patch("/api/expenses/cardholders/:id/limits", requireAuth, async (req: Request, res: Response) => {
+  app.patch("/api/expenses/cardholders/:id/limits", requireAdmin, async (req: Request, res: Response) => {
     try {
       const { monthlyLimit, dailyLimit, singleTxLimit } = req.body;
       await updateCardholderLimits({
@@ -364,7 +384,7 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Freeze / unfreeze
-  app.patch("/api/expenses/cardholders/:id/status", requireAuth, async (req: Request, res: Response) => {
+  app.patch("/api/expenses/cardholders/:id/status", requireAdmin, async (req: Request, res: Response) => {
     try {
       const { status } = req.body;
       if (status !== "active" && status !== "inactive") return res.status(400).json({ error: "status must be active or inactive" });
@@ -376,7 +396,7 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // List expenses
-  app.get("/api/expenses", requireAuth, async (req: Request, res: Response) => {
+  app.get("/api/expenses", requireAdmin, async (req: Request, res: Response) => {
     try {
       const rows = await db.select().from(expenses).orderBy(desc(expenses.transactionDate)).limit(200);
       res.json(rows);
@@ -385,10 +405,12 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
-  // Get single expense
+  // Get single expense (owner or admin)
   app.get("/api/expenses/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const [row] = await db.select().from(expenses).where(eq(expenses.id, String(req.params.id))).limit(1);
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
+      const [row] = await db.select().from(expenses).where(eq(expenses.id, id)).limit(1);
       if (!row) return res.status(404).json({ error: "Not found" });
       res.json(row);
     } catch (e: any) {
@@ -396,9 +418,11 @@ export function setupStripeIssuingRoutes(app: Express) {
     }
   });
 
-  // Update expense (category, business purpose, personal flag, etc.)
+  // Update expense (owner or admin)
   app.patch("/api/expenses/:id", requireAuth, async (req: Request, res: Response) => {
     try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
       const allowed = ["category", "xeroAccountCode", "businessPurpose", "attendees", "isPersonal",
                        "isClientRechargeable", "relatedDealId", "notes", "status"];
       const updates: Record<string, any> = { updatedAt: new Date() };
@@ -408,7 +432,7 @@ export function setupStripeIssuingRoutes(app: Express) {
       if (updates.category && EXPENSE_CATEGORY_MAP[updates.category]) {
         updates.xeroAccountCode = EXPENSE_CATEGORY_MAP[updates.category].code;
       }
-      await db.update(expenses).set(updates as any).where(eq(expenses.id, String(req.params.id)));
+      await db.update(expenses).set(updates as any).where(eq(expenses.id, id));
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e?.message });
@@ -416,7 +440,7 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Smoke test — creates a sandbox cardholder + card, returns details.
-  app.post("/api/expenses/smoke-test", requireAuth, async (req: Request, res: Response) => {
+  app.post("/api/expenses/smoke-test", requireAdmin, async (req: Request, res: Response) => {
     try {
       if (!process.env.STRIPE_SECRET_KEY) {
         return res.status(400).json({ error: "STRIPE_SECRET_KEY not set" });
@@ -447,7 +471,7 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Manually post a finalised expense to Xero (used after receipt parsing if auto-post failed)
-  app.post("/api/expenses/:id/post-to-xero", requireAuth, async (req: Request, res: Response) => {
+  app.post("/api/expenses/:id/post-to-xero", requireAdmin, async (req: Request, res: Response) => {
     try {
       const { postExpenseToXero } = await import("./expense-xero-poster");
       const result = await postExpenseToXero({ session: req.session, expenseId: String(req.params.id) });
@@ -534,6 +558,7 @@ export function setupStripeIssuingRoutes(app: Express) {
   app.post("/api/expenses/:id/receipt", requireAuth, receiptUpload.single("receipt"), async (req: Request, res: Response) => {
     try {
       const expenseId = String(req.params.id);
+      if (!(await userCanAccessExpense(req, expenseId))) return res.status(403).json({ error: "Forbidden" });
       const file = req.file;
       if (!file) return res.status(400).json({ error: "No file uploaded" });
 
@@ -595,7 +620,7 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Admin overview — totals + per-cardholder breakdown
-  app.get("/api/expenses/admin/summary", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/expenses/admin/summary", requireAdmin, async (_req: Request, res: Response) => {
     try {
       const allCh = await db.select().from(stripeCardholders);
       const allExp = await db.select().from(expenses);
@@ -660,6 +685,8 @@ export function setupStripeIssuingRoutes(app: Express) {
   // Mark personal — adds to payroll deduction list
   app.patch("/api/expenses/:id/mark-personal", requireAuth, async (req: Request, res: Response) => {
     try {
+      const id = String(req.params.id);
+      if (!(await userCanAccessExpense(req, id))) return res.status(403).json({ error: "Forbidden" });
       await db.update(expenses).set({
         isPersonal: true,
         category: "Personal (deduct from payroll)",
@@ -674,7 +701,7 @@ export function setupStripeIssuingRoutes(app: Express) {
   });
 
   // Approve & post to Xero (one-click)
-  app.post("/api/expenses/:id/approve", requireAuth, async (req: Request, res: Response) => {
+  app.post("/api/expenses/:id/approve", requireAdmin, async (req: Request, res: Response) => {
     try {
       const expenseId = String(req.params.id);
       const { withSystemXero } = await import("./xero-system-session");

@@ -305,7 +305,7 @@ export function AppSidebar() {
         <SidebarSeparator />
         <NavSection label="Microsoft 365" items={microsoftNav} storageKey="ms" defaultOpen={false} />
         <SidebarSeparator />
-        <NavSection label="Admin" items={adminNav} storageKey="admin" defaultOpen={false} />
+        {user?.isAdmin && <NavSection label="Admin" items={adminNav} storageKey="admin" defaultOpen={false} />}
       </SidebarContent>
 
       <SidebarFooter className="p-3 space-y-2">

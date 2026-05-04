@@ -12,6 +12,10 @@ import { resolveCompanyScope, getClientTeamInfo } from "./company-scope";
 const ADMIN_EMAILS = new Set([
   "woody@brucegillinghampollard.com",
   "rupert@brucegillinghampollard.com",
+  "layla@brucegillinghampollard.com",
+  "wendy@brucegillinghampollard.com",
+  "charlotte@brucegillinghampollard.com",
+  "jack@brucegillinghampollard.com",
 ]);
 
 async function ensureAdminFlag(userId: string, email: string) {
@@ -727,6 +731,25 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       return res.status(403).json({ message: "Your account has been deactivated. Please contact an administrator." });
     }
   } catch (_e) {}
+  next();
+}
+
+export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  const userId = req.session.userId || req.tokenUserId;
+  if (!userId) return res.status(401).json({ message: "Not authenticated" });
+  if (!req.session.userId && req.tokenUserId) req.session.userId = req.tokenUserId;
+  try {
+    const result = await pool.query("SELECT is_active, is_admin, email FROM users WHERE id = $1", [userId]);
+    if (result.rows.length === 0) return res.status(401).json({ message: "Not authenticated" });
+    const row = result.rows[0];
+    if (row.is_active === false) return res.status(403).json({ message: "Account deactivated" });
+    const emailMatches = ADMIN_EMAILS.has(String(row.email || "").toLowerCase().trim());
+    if (!row.is_admin && !emailMatches) {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+  } catch (_e) {
+    return res.status(500).json({ message: "Auth check failed" });
+  }
   next();
 }
 
