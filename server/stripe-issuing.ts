@@ -133,6 +133,16 @@ export async function createCardholder(args: {
         country: "GB",
       },
     },
+    individual: {
+      first_name: args.name.split(" ")[0] || args.name,
+      last_name: args.name.split(" ").slice(1).join(" ") || args.name,
+      card_issuing: {
+        user_terms_acceptance: {
+          date: Math.floor(Date.now() / 1000),
+          ip: "127.0.0.1",
+        },
+      },
+    },
     spending_controls: spendingControls({ monthlyLimit: monthly, dailyLimit: daily, singleTxLimit: singleTx }),
   });
 
