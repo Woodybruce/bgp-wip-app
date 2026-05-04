@@ -328,7 +328,13 @@ async function runChatBgpWhatsAppReply(
       }
 
       try {
-        const result: any = await chatbgp.handleCrmToolCall(
+        // Try the legacy CRM dispatcher first (handles a subset with friendly summaries),
+        // then fall back to the unified raw executor (handles send_whatsapp, search_*,
+        // KYC, calendar, email, SharePoint, file generation, web search, deep_investigate,
+        // ingest, navigation — basically everything else). Without this fallback, anything
+        // outside handleCrmToolCall returns "Tool not handled" and Claude wrongly believes
+        // the tool is blocked over WhatsApp.
+        let result: any = await chatbgp.handleCrmToolCall(
           fnName,
           fnArgs,
           fakeReq,
@@ -341,15 +347,19 @@ async function runChatBgpWhatsAppReply(
           console.log(`[whatsapp-ai] Tool ${fnName} returned final reply (${finalReply.length}c)`);
           break;
         }
-        let toolResultPayload: any;
-        if (result?.data !== undefined) {
-          toolResultPayload = result.data;
-        } else if (result?.handled === false) {
-          toolResultPayload = { error: `Tool ${fnName} is not available over WhatsApp.` };
-          console.warn(`[whatsapp-ai] Tool ${fnName} not handled by handleCrmToolCall`);
-        } else {
-          toolResultPayload = result?.response ?? { error: "Tool returned no result" };
+        if (!(result?.data !== undefined || result?.response !== undefined)) {
+          // handleCrmToolCall returned { handled: false } — try the unified executor.
+          console.log(`[whatsapp-ai] ${fnName} not in handleCrmToolCall, trying executeCrmToolRaw`);
+          try {
+            result = await chatbgp.executeCrmToolRaw(fnName, fnArgs, fakeReq);
+          } catch (rawErr: any) {
+            console.error(`[whatsapp-ai] executeCrmToolRaw failed for ${fnName}:`, rawErr?.message);
+            result = { data: { error: rawErr?.message || "Tool execution failed" } };
+          }
         }
+        const toolResultPayload = result?.data !== undefined
+          ? result.data
+          : (result?.response ?? { error: "Tool returned no result" });
         completionOptions.messages.push({ role: "assistant", content: null, tool_calls: [toolCall] });
         completionOptions.messages.push({
           role: "tool",

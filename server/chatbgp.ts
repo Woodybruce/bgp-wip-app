@@ -4693,7 +4693,7 @@ export async function extractTextFromFile(filePath: string, originalName: string
 
 const CHAT_UPLOADS_DIR = path.join(process.cwd(), "ChatBGP", "chat-files");
 
-async function executeCrmToolRaw(
+export async function executeCrmToolRaw(
   fnName: string,
   fnArgs: any,
   req: Request
