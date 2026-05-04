@@ -204,7 +204,7 @@ export function setupXeroRoutes(app: Express) {
       response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
-      scope: "openid profile email offline_access accounting.invoices accounting.contacts",
+      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings",
       state,
     });
 
@@ -309,6 +309,17 @@ export function setupXeroRoutes(app: Express) {
   app.post("/api/xero/disconnect", requireAuth, async (req: Request, res: Response) => {
     req.session.xeroTokens = undefined;
     res.json({ success: true });
+  });
+
+  app.post("/api/xero/initialise-chart", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { initialiseXeroChart } = await import("./xero-chart-setup");
+      const result = await initialiseXeroChart(req.session);
+      res.json({ success: true, ...result });
+    } catch (e: any) {
+      console.error("[xero-chart] init failed:", e);
+      res.status(500).json({ success: false, error: e?.message || String(e) });
+    }
   });
 
   app.get("/api/xero/contacts", requireAuth, async (req: Request, res: Response) => {
