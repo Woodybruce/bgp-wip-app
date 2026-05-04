@@ -55,6 +55,14 @@ export default function ExpensesAdmin() {
     queryKey: ["/api/expenses"],
   });
 
+  const { data: summary, refetch: refetchSummary } = useQuery<{
+    totalMonthPence: number; totalMonthCount: number;
+    pendingReceipts: number; pendingApproval: number; postedToXero: number; personalFlagged: number;
+    cardholderCount: number; activeCards: number;
+    byCardholder: Array<{ cardholderId: string; name: string; spentPence: number; monthlyLimit: number; utilisation: number; txCount: number; status: string }>;
+    byCategory: Array<{ category: string; count: number; pence: number }>;
+  }>({ queryKey: ["/api/expenses/admin/summary"] });
+
   const freezeMutation = useMutation({
     mutationFn: async (args: { id: string; status: "active" | "inactive" }) => {
       const r = await apiRequest("PATCH", `/api/expenses/cardholders/${args.id}/status`, { status: args.status });
@@ -88,13 +96,67 @@ export default function ExpensesAdmin() {
           <p className="text-sm text-muted-foreground">Stripe Issuing card programme — manage limits, freeze cards, review expenses</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => { refetchCh(); refetchExp(); }}>
+          <Button variant="outline" size="sm" onClick={() => { refetchCh(); refetchExp(); refetchSummary(); }}>
             <RefreshCw className="w-4 h-4 mr-1.5" />
             Refresh
           </Button>
           <CreateCardholderDialog open={showCreate} onOpenChange={setShowCreate} onCreated={() => refetchCh()} />
         </div>
       </div>
+
+      {summary && (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <SummaryTile label="Spend this month" value={fmt(summary.totalMonthPence)} sub={`${summary.totalMonthCount} txs`} />
+          <SummaryTile label="Active cards" value={`${summary.activeCards}`} sub={`of ${summary.cardholderCount} cardholders`} />
+          <SummaryTile label="Receipts needed" value={`${summary.pendingReceipts}`} tone={summary.pendingReceipts > 0 ? "warn" : "ok"} />
+          <SummaryTile label="Pending approval" value={`${summary.pendingApproval}`} tone={summary.pendingApproval > 0 ? "warn" : "ok"} />
+          <SummaryTile label="Posted to Xero" value={`${summary.postedToXero}`} tone="ok" />
+        </div>
+      )}
+
+      {summary && summary.byCardholder.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg">Spend by Cardholder (this month)</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/30">
+                  <tr className="text-left">
+                    <th className="px-4 py-2 font-medium">Name</th>
+                    <th className="px-4 py-2 font-medium text-right">Spent</th>
+                    <th className="px-4 py-2 font-medium text-right">Limit</th>
+                    <th className="px-4 py-2 font-medium text-right">Utilisation</th>
+                    <th className="px-4 py-2 font-medium text-right">Transactions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.byCardholder.map(row => (
+                    <tr key={row.cardholderId} className="border-t">
+                      <td className="px-4 py-2 font-medium">{row.name}</td>
+                      <td className="px-4 py-2 text-right font-mono">{fmt(row.spentPence)}</td>
+                      <td className="px-4 py-2 text-right font-mono text-muted-foreground">{fmtLimit(row.monthlyLimit)}</td>
+                      <td className="px-4 py-2 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${row.utilisation > 90 ? "bg-red-500" : row.utilisation > 70 ? "bg-amber-500" : "bg-emerald-500"}`}
+                              style={{ width: `${Math.min(100, row.utilisation)}%` }}
+                            />
+                          </div>
+                          <span className="font-mono text-xs w-10">{row.utilisation}%</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 text-right text-muted-foreground">{row.txCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-3">
@@ -375,5 +437,17 @@ function EditLimitsDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+
+function SummaryTile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "ok" | "warn" }) {
+  const valueClass = tone === "warn" ? "text-amber-600" : tone === "ok" ? "text-emerald-600" : "";
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <div className="text-xs uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className={`text-2xl font-bold mt-1 ${valueClass}`}>{value}</div>
+      {sub && <div className="text-xs text-muted-foreground mt-0.5">{sub}</div>}
+    </div>
   );
 }

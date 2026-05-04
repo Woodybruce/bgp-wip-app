@@ -17,8 +17,10 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { db } from "./db";
 import { stripeCardholders, stripeCards, expenses, expenseReceipts } from "@shared/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, gte, sql } from "drizzle-orm";
 import crypto from "crypto";
+import multer from "multer";
+import { saveFile } from "./file-storage";
 
 const STRIPE_API = "https://api.stripe.com/v1";
 
@@ -449,6 +451,236 @@ export function setupStripeIssuingRoutes(app: Express) {
     try {
       const { postExpenseToXero } = await import("./expense-xero-poster");
       const result = await postExpenseToXero({ session: req.session, expenseId: String(req.params.id) });
+      res.json({ success: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // ─── SELF-SERVICE (per-user) ──────────────────────────────────────────────
+
+  // Get my cardholder + card + expenses + monthly summary
+  app.get("/api/expenses/me", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any)?.userId;
+      if (!userId) return res.status(401).json({ error: "Not logged in" });
+
+      const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, userId)).limit(1);
+      if (!ch) return res.json({ cardholder: null, card: null, expenses: [], summary: null });
+
+      const [card] = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, ch.id)).limit(1);
+
+      const myExpenses = await db.select().from(expenses).where(eq(expenses.cardholderId, ch.id)).orderBy(desc(expenses.transactionDate)).limit(100);
+
+      // Month-to-date spend
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      const monthly = myExpenses.filter(e => e.transactionDate && new Date(e.transactionDate) >= startOfMonth && !e.isPersonal);
+      const monthlySpend = monthly.reduce((sum, e) => sum + (e.amountPence || 0), 0);
+      const pendingReceipts = myExpenses.filter(e => e.status === "pending_receipt").length;
+
+      res.json({
+        cardholder: ch,
+        card: card || null,
+        expenses: myExpenses,
+        summary: {
+          monthlySpendPence: monthlySpend,
+          monthlyLimitPence: ch.monthlyLimit,
+          remainingPence: Math.max(0, ch.monthlyLimit - monthlySpend),
+          pendingReceipts,
+          totalThisMonth: monthly.length,
+        },
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Reveal full card details for the logged-in user (test mode only)
+  // In live mode this should switch to Stripe Issuing Elements (client-side reveal)
+  app.get("/api/expenses/me/card-details", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req.session as any)?.userId;
+      if (!userId) return res.status(401).json({ error: "Not logged in" });
+      const [ch] = await db.select().from(stripeCardholders).where(eq(stripeCardholders.userId, userId)).limit(1);
+      if (!ch) return res.status(404).json({ error: "No card issued for this user" });
+      const [card] = await db.select().from(stripeCards).where(eq(stripeCards.cardholderId, ch.id)).limit(1);
+      if (!card) return res.status(404).json({ error: "No card found" });
+
+      // Stripe test-mode: ?expand[]=number&expand[]=cvc returns the full PAN
+      const isTest = stripeKey().startsWith("sk_test_");
+      const path = isTest
+        ? `/issuing/cards/${card.stripeCardId}?expand[]=number&expand[]=cvc`
+        : `/issuing/cards/${card.stripeCardId}`;
+      const stripeCard = await stripeRequest("GET", path);
+
+      res.json({
+        last4: stripeCard.last4,
+        brand: stripeCard.brand,
+        expMonth: stripeCard.exp_month,
+        expYear: stripeCard.exp_year,
+        number: isTest ? stripeCard.number : null,
+        cvc: isTest ? stripeCard.cvc : null,
+        isTestMode: isTest,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Upload a receipt for an expense from the web (alternative to WhatsApp photo)
+  const receiptUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+  app.post("/api/expenses/:id/receipt", requireAuth, receiptUpload.single("receipt"), async (req: Request, res: Response) => {
+    try {
+      const expenseId = String(req.params.id);
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: "No file uploaded" });
+
+      const [exp] = await db.select().from(expenses).where(eq(expenses.id, expenseId)).limit(1);
+      if (!exp) return res.status(404).json({ error: "Expense not found" });
+
+      const storageKey = `expense-receipts/${expenseId}-${Date.now()}-${file.originalname}`;
+      await saveFile(storageKey, file.buffer, file.mimetype, file.originalname);
+
+      await db.insert(expenseReceipts).values({
+        expenseId,
+        storageKey,
+        mimeType: file.mimetype,
+        filename: file.originalname,
+      });
+
+      // Try to parse the receipt and auto-update the expense
+      try {
+        const { parseReceiptImage } = await import("./expense-receipt-parser");
+        const parsed = await parseReceiptImage({ imageBytes: file.buffer, mimeType: file.mimetype });
+        const updates: Record<string, any> = {
+          receiptFilename: file.originalname,
+          receiptUrl: storageKey,
+          updatedAt: new Date(),
+        };
+        if (parsed.merchant && !exp.merchant) updates.merchant = parsed.merchant;
+        if (parsed.category && !exp.category) {
+          updates.category = parsed.category;
+          if (EXPENSE_CATEGORY_MAP[parsed.category]) updates.xeroAccountCode = EXPENSE_CATEGORY_MAP[parsed.category].code;
+        }
+        if (parsed.totalPence && !exp.amountPence) updates.amountPence = parsed.totalPence;
+        updates.status = "pending_approval";
+        await db.update(expenses).set(updates).where(eq(expenses.id, expenseId));
+
+        // Auto-post to Xero if confidence is high
+        if (parsed.confidence === "high" && updates.category) {
+          try {
+            const { withSystemXero } = await import("./xero-system-session");
+            const { postExpenseToXero } = await import("./expense-xero-poster");
+            await withSystemXero((session) => postExpenseToXero({ session, expenseId }));
+          } catch (e: any) {
+            console.warn("[receipt-upload] auto-post to Xero failed:", e?.message);
+          }
+        }
+
+        res.json({ success: true, parsed, autoposted: parsed.confidence === "high" });
+      } catch (e: any) {
+        // Receipt saved but parsing failed — let user fix manually
+        await db.update(expenses).set({
+          receiptFilename: file.originalname,
+          receiptUrl: storageKey,
+          updatedAt: new Date(),
+        }).where(eq(expenses.id, expenseId));
+        res.json({ success: true, parsed: null, error: `Saved but parsing failed: ${e?.message}` });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Admin overview — totals + per-cardholder breakdown
+  app.get("/api/expenses/admin/summary", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const allCh = await db.select().from(stripeCardholders);
+      const allExp = await db.select().from(expenses);
+
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
+
+      const monthExp = allExp.filter(e => e.transactionDate && new Date(e.transactionDate) >= startOfMonth);
+
+      const totalMonthPence = monthExp.filter(e => !e.isPersonal).reduce((s, e) => s + (e.amountPence || 0), 0);
+      const totalMonthCount = monthExp.length;
+      const pendingReceipts = allExp.filter(e => e.status === "pending_receipt").length;
+      const pendingApproval = allExp.filter(e => e.status === "pending_approval").length;
+      const postedToXero = monthExp.filter(e => e.status === "posted_to_xero").length;
+      const personalFlagged = monthExp.filter(e => e.isPersonal).length;
+
+      // Spend by cardholder this month
+      const byCh = allCh.map(ch => {
+        const exps = monthExp.filter(e => e.cardholderId === ch.id && !e.isPersonal);
+        const spent = exps.reduce((s, e) => s + (e.amountPence || 0), 0);
+        return {
+          cardholderId: ch.id,
+          name: ch.userName,
+          spentPence: spent,
+          monthlyLimit: ch.monthlyLimit,
+          utilisation: ch.monthlyLimit > 0 ? Math.round((spent / ch.monthlyLimit) * 100) : 0,
+          txCount: exps.length,
+          status: ch.status,
+        };
+      }).sort((a, b) => b.spentPence - a.spentPence);
+
+      // Spend by category this month
+      const catMap: Record<string, { count: number; pence: number }> = {};
+      for (const e of monthExp.filter(e => !e.isPersonal)) {
+        const k = e.category || "Uncategorised";
+        if (!catMap[k]) catMap[k] = { count: 0, pence: 0 };
+        catMap[k].count += 1;
+        catMap[k].pence += e.amountPence || 0;
+      }
+      const byCategory = Object.entries(catMap)
+        .map(([category, v]) => ({ category, ...v }))
+        .sort((a, b) => b.pence - a.pence);
+
+      res.json({
+        totalMonthPence,
+        totalMonthCount,
+        pendingReceipts,
+        pendingApproval,
+        postedToXero,
+        personalFlagged,
+        cardholderCount: allCh.length,
+        activeCards: allCh.filter(c => c.status === "active").length,
+        byCardholder: byCh,
+        byCategory,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Mark personal — adds to payroll deduction list
+  app.patch("/api/expenses/:id/mark-personal", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await db.update(expenses).set({
+        isPersonal: true,
+        category: "Personal (deduct from payroll)",
+        xeroAccountCode: "910",
+        status: "pending_approval",
+        updatedAt: new Date(),
+      }).where(eq(expenses.id, String(req.params.id)));
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
+  // Approve & post to Xero (one-click)
+  app.post("/api/expenses/:id/approve", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const expenseId = String(req.params.id);
+      const { withSystemXero } = await import("./xero-system-session");
+      const { postExpenseToXero } = await import("./expense-xero-poster");
+      const result = await withSystemXero((session) => postExpenseToXero({ session, expenseId }));
+      if (!result) return res.status(400).json({ error: "Xero not connected — admin needs to connect Xero on the Subscriptions page" });
       res.json({ success: true, ...result });
     } catch (e: any) {
       res.status(500).json({ error: e?.message });

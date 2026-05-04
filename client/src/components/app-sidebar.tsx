@@ -81,6 +81,7 @@ import { History } from "lucide-react";
 const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
+  { title: "My Card", url: "/my-expenses", icon: CreditCard },
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "Deals", url: "/deals", icon: BarChart3 },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
