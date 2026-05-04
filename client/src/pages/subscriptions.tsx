@@ -351,7 +351,7 @@ export default function Subscriptions() {
                       {result.status ? <span className="text-muted-foreground font-normal ml-1">({result.status})</span> : null}
                     </p>
                     <p className="text-muted-foreground leading-snug">{result.message}</p>
-                    {label === "Xero" && !result.ok && result.message.toLowerCase().includes("session") && (
+                    {label === "Xero" && !result.ok && (
                       <Button
                         variant="outline"
                         size="sm"
@@ -360,8 +360,14 @@ export default function Subscriptions() {
                           try {
                             const r = await apiRequest("GET", "/api/xero/auth");
                             const data = await r.json();
-                            if (data?.url) window.location.href = data.url;
-                          } catch {}
+                            if (data?.url) {
+                              window.location.href = data.url;
+                            } else {
+                              toast({ title: "Xero auth failed", description: data?.message || "No URL returned", variant: "destructive" });
+                            }
+                          } catch (e: any) {
+                            toast({ title: "Xero auth failed", description: e?.message || "Request failed", variant: "destructive" });
+                          }
                         }}
                         data-testid="button-connect-xero"
                       >
