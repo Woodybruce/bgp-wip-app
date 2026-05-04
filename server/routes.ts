@@ -38,6 +38,7 @@ import { eq, ilike, or, sql, and, desc, inArray } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
 import { registerIngestRoutes } from "./ingest-routes";
 import { registerGenericCrmRoutes } from "./generic-crm-routes";
+import { setupStripeIssuingRoutes } from "./stripe-issuing";
 import { importTrlRequirement } from "./trl";
 import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements } from "./pipnet";
 import { executeSeedSql } from "./seed";
@@ -5403,6 +5404,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
 
   registerIngestRoutes(app);
   registerGenericCrmRoutes(app);
+  setupStripeIssuingRoutes(app);
 
   return httpServer;
 }

@@ -2430,3 +2430,73 @@ export const demeterConfig = pgTable("demeter_config", {
 });
 
 export type DemeterConfig = typeof demeterConfig.$inferSelect;
+
+// ─── Stripe Issuing / Expenses ────────────────────────────────────────────────
+
+export const stripeCardholders = pgTable("stripe_cardholders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: text("user_id").notNull().unique(),
+  userName: text("user_name").notNull(),
+  email: text("email").notNull(),
+  phone: text("phone"),
+  stripeCardholderId: text("stripe_cardholder_id").notNull().unique(),
+  monthlyLimit: integer("monthly_limit").notNull().default(100000),  // pence
+  dailyLimit: integer("daily_limit").notNull().default(25000),       // pence
+  singleTxLimit: integer("single_tx_limit").notNull().default(25000),// pence
+  status: text("status").notNull().default("active"),                // active | inactive | blocked
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const stripeCards = pgTable("stripe_cards", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  cardholderId: varchar("cardholder_id").notNull().references(() => stripeCardholders.id),
+  stripeCardId: text("stripe_card_id").notNull().unique(),
+  last4: text("last4"),
+  status: text("status").notNull().default("active"),  // active | inactive | canceled
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const expenses = pgTable("expenses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  cardholderId: varchar("cardholder_id").references(() => stripeCardholders.id),
+  stripeTransactionId: text("stripe_transaction_id").unique(),       // null for cash expenses
+  type: text("type").notNull().default("card"),                      // card | cash | mileage
+  status: text("status").notNull().default("pending_receipt"),       // pending_receipt | pending_approval | approved | rejected | posted_to_xero
+  merchant: text("merchant"),
+  amountPence: integer("amount_pence").notNull(),
+  currency: text("currency").notNull().default("gbp"),
+  transactionDate: timestamp("transaction_date"),
+  category: text("category"),                                        // maps to Xero account name
+  xeroAccountCode: text("xero_account_code"),
+  xeroTrackingProperty: text("xero_tracking_property"),
+  xeroTrackingPerson: text("xero_tracking_person"),
+  xeroExpenseId: text("xero_expense_id"),                            // set once posted to Xero
+  receiptUrl: text("receipt_url"),
+  receiptFilename: text("receipt_filename"),
+  businessPurpose: text("business_purpose"),                         // "Lunch with Mike Hodgson (Land Sec)"
+  attendees: text("attendees"),                                      // from calendar cross-ref
+  calendarEventId: text("calendar_event_id"),
+  isPersonal: boolean("is_personal").default(false),
+  isClientRechargeable: boolean("is_client_rechargeable").default(false),
+  relatedDealId: varchar("related_deal_id"),
+  mileageMiles: real("mileage_miles"),
+  notes: text("notes"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const expenseReceipts = pgTable("expense_receipts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  expenseId: varchar("expense_id").notNull().references(() => expenses.id),
+  storageKey: text("storage_key").notNull(),     // path in object storage / base64 ref
+  mimeType: text("mime_type"),
+  filename: text("filename"),
+  uploadedAt: timestamp("uploaded_at").defaultNow(),
+});
+
+export type StripeCardholder = typeof stripeCardholders.$inferSelect;
+export type StripeCard = typeof stripeCards.$inferSelect;
+export type Expense = typeof expenses.$inferSelect;
+export type ExpenseReceipt = typeof expenseReceipts.$inferSelect;
