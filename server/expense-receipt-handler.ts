@@ -120,10 +120,9 @@ export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean
   let xeroResult: { posted: boolean; error?: string } = { posted: false };
   try {
     const { postExpenseToXero } = await import("./expense-xero-poster");
-    // Need an admin session to post. Look up the admin Xero session.
-    const adminSession = await getAdminXeroSession();
-    if (adminSession) {
-      await postExpenseToXero({ session: adminSession, expenseId: target.id });
+    const { withSystemXero } = await import("./xero-system-session");
+    const result = await withSystemXero((session) => postExpenseToXero({ session, expenseId: target.id }));
+    if (result) {
       xeroResult.posted = true;
     } else {
       xeroResult.error = "no admin Xero session — sitting in queue for manual post";
@@ -148,10 +147,3 @@ export async function tryMatchReceiptToExpense(args: MatchArgs): Promise<boolean
   return true;
 }
 
-async function getAdminXeroSession(): Promise<any | null> {
-  // Best-effort: pull the most recent session with a Xero token from sessions table.
-  // For now: returns null in dev. Wired up properly once we add an admin-session
-  // service-account pattern. This means transactions stay in pending_approval
-  // until a logged-in admin triggers the post.
-  return null;
-}

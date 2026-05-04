@@ -74,6 +74,7 @@ const AddinPowerPoint = lazy(() => import("@/pages/addin-powerpoint"));
 const AddinAdobe = lazy(() => import("@/pages/addin-adobe"));
 const ImageStudio = lazy(() => import("@/pages/image-studio"));
 const AddinsPage = lazy(() => import("@/pages/addins"));
+const ExpensesAdmin = lazy(() => import("@/pages/expenses-admin"));
 const AvailableUnitsPage = lazy(() => import("@/pages/available-units"));
 const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandsHub = lazy(() => import("@/pages/brands-hub"));
@@ -189,6 +190,7 @@ function Router() {
       <Route path="/marketing-files" component={MarketingFilesPage} />
       <Route path="/addins" component={AddinsPage} />
       <Route path="/edozo" component={PropertiesHub} />
+      <Route path="/expenses" component={ExpensesAdmin} />
       <Route component={NotFound} />
     </Switch>
     </Suspense>

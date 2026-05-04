@@ -292,6 +292,15 @@ export function setupXeroRoutes(app: Express) {
 
       delete req.session.xeroOAuthState;
 
+      // Capture system-wide Xero session so background jobs (Stripe webhooks,
+      // expense auto-post) can call Xero without an HTTP request context.
+      try {
+        const { captureSystemXeroSession } = await import("./xero-system-session");
+        await captureSystemXeroSession(req.session);
+      } catch (sysErr: any) {
+        console.warn("[Xero] System session capture failed:", sysErr?.message);
+      }
+
       req.session.save((saveErr) => {
         if (saveErr) console.error("[Xero] Session save error after callback:", saveErr);
         if (!req.session.xeroTokens?.tenantId) {
