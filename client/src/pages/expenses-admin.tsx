@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CreditCard, Snowflake, CheckCircle2, AlertCircle, Plus, Pencil, RefreshCw, Loader2 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -100,7 +101,7 @@ export default function ExpensesAdmin() {
             <RefreshCw className="w-4 h-4 mr-1.5" />
             Refresh
           </Button>
-          <CreateCardholderDialog open={showCreate} onOpenChange={setShowCreate} onCreated={() => refetchCh()} />
+          <CreateCardholderDialog open={showCreate} onOpenChange={setShowCreate} onCreated={() => refetchCh()} existingUserIds={cardholders.map(c => c.userId)} />
         </div>
       </div>
 
@@ -313,8 +314,12 @@ function ExpenseStatusBadge({ status }: { status: string }) {
   return <Badge variant="outline" className={conf.className}>{conf.label}</Badge>;
 }
 
-function CreateCardholderDialog({ open, onOpenChange, onCreated }: { open: boolean; onOpenChange: (v: boolean) => void; onCreated: () => void }) {
+interface UserOption { id: string; name?: string; email?: string; firstName?: string; lastName?: string; phone?: string; }
+
+function CreateCardholderDialog({ open, onOpenChange, onCreated, existingUserIds }: { open: boolean; onOpenChange: (v: boolean) => void; onCreated: () => void; existingUserIds: string[] }) {
   const { toast } = useToast();
+  const { data: users = [] } = useQuery<UserOption[]>({ queryKey: ["/api/users"] });
+  const [selectedUserId, setSelectedUserId] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -322,10 +327,23 @@ function CreateCardholderDialog({ open, onOpenChange, onCreated }: { open: boole
   const [daily, setDaily] = useState(250);
   const [singleTx, setSingleTx] = useState(250);
 
+  const eligibleUsers = users.filter(u => !existingUserIds.includes(u.id));
+
+  const handleUserSelect = (userId: string) => {
+    setSelectedUserId(userId);
+    const u = users.find(x => x.id === userId);
+    if (u) {
+      const display = u.name || [u.firstName, u.lastName].filter(Boolean).join(" ") || u.email || "";
+      setName(display);
+      setEmail(u.email || "");
+      setPhone(u.phone || "");
+    }
+  };
+
   const createMutation = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", "/api/expenses/cardholders", {
-        userId: email.replace(/[^a-z0-9]/gi, "_").toLowerCase(),
+        userId: selectedUserId,
         name, email, phone,
         monthlyLimit: monthly, dailyLimit: daily, singleTxLimit: singleTx,
       });
@@ -334,7 +352,7 @@ function CreateCardholderDialog({ open, onOpenChange, onCreated }: { open: boole
     onSuccess: () => {
       onOpenChange(false);
       onCreated();
-      setName(""); setEmail(""); setPhone("");
+      setSelectedUserId(""); setName(""); setEmail(""); setPhone("");
       toast({ title: "Cardholder created", description: "Virtual card issued in Stripe" });
     },
     onError: (e: any) => toast({ title: "Create failed", description: e?.message, variant: "destructive" }),
@@ -354,6 +372,22 @@ function CreateCardholderDialog({ open, onOpenChange, onCreated }: { open: boole
         </DialogHeader>
         <div className="space-y-3 py-2">
           <div>
+            <Label htmlFor="ch-user">Staff member</Label>
+            <Select value={selectedUserId} onValueChange={handleUserSelect}>
+              <SelectTrigger id="ch-user">
+                <SelectValue placeholder="Select a staff member" />
+              </SelectTrigger>
+              <SelectContent>
+                {eligibleUsers.length === 0 ? (
+                  <SelectItem value="__none__" disabled>All users already have cards</SelectItem>
+                ) : eligibleUsers.map(u => {
+                  const display = u.name || [u.firstName, u.lastName].filter(Boolean).join(" ") || u.email || u.id;
+                  return <SelectItem key={u.id} value={u.id}>{display}{u.email ? ` — ${u.email}` : ""}</SelectItem>;
+                })}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
             <Label htmlFor="ch-name">Full name</Label>
             <Input id="ch-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Sam Smith" />
           </div>
@@ -362,7 +396,7 @@ function CreateCardholderDialog({ open, onOpenChange, onCreated }: { open: boole
             <Input id="ch-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="sam@bgpllp.co.uk" />
           </div>
           <div>
-            <Label htmlFor="ch-phone">WhatsApp number (E.164)</Label>
+            <Label htmlFor="ch-phone">WhatsApp number — international format, e.g. +447700900000</Label>
             <Input id="ch-phone" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+447700900000" />
           </div>
           <div className="grid grid-cols-3 gap-2 pt-2">
@@ -382,7 +416,7 @@ function CreateCardholderDialog({ open, onOpenChange, onCreated }: { open: boole
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={() => createMutation.mutate()} disabled={!name || !email || createMutation.isPending}>
+          <Button onClick={() => createMutation.mutate()} disabled={!selectedUserId || !name || !email || createMutation.isPending}>
             {createMutation.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : null}
             Create + Issue Card
           </Button>
