@@ -810,6 +810,63 @@ import { pool } from "./db";
   } catch (e: any) {
     console.warn(`[backfill-units] failed: ${e.message}`);
   }
+
+  // ── Seed staff start dates from employment contracts (May 2026) ────────
+  // Idempotent — ON CONFLICT only updates start_date, never overwrites other fields.
+  // Nick Goodman is a consultant (not employee) so pension_opt_in = false.
+  try {
+    const staffSeed: Array<{ name: string; startDate: string; title: string | null; consultant?: boolean }> = [
+      { name: "Jack Barratt",            startDate: "2012-09-03", title: "Director" },
+      { name: "Victoria Broadhead",      startDate: "2013-05-07", title: "Director" },
+      { name: "Nick Halley",             startDate: "2014-09-01", title: "Associate Director" },
+      { name: "Charlotte Brunt",         startDate: "2014-12-01", title: "Associate Surveyor" },
+      { name: "Dominic Tixerant",        startDate: "2016-09-05", title: "Associate Director" },
+      { name: "Lucy Cope",               startDate: "2017-09-04", title: "Senior Surveyor" },
+      { name: "Layla",                   startDate: "2017-10-16", title: "PA / Office Manager" },
+      { name: "Pete Wood",               startDate: "2018-08-20", title: "Director" },
+      { name: "Cara Milligan",           startDate: "2019-06-10", title: "Personal Assistant" },
+      { name: "Evie North",              startDate: "2019-10-07", title: null },
+      { name: "Jamie Orme",              startDate: "2020-06-01", title: "Director" },
+      { name: "Nick Goodman",            startDate: "2020-05-18", title: "Consultant",        consultant: true },
+      { name: "Harry Cody",              startDate: "2020-09-14", title: "Associate Director" },
+      { name: "Alex Todd",               startDate: "2021-09-01", title: null },
+      { name: "Lizzie Knights",          startDate: "2022-03-21", title: "Director" },
+      { name: "Lucy Gardiner",           startDate: "2022-08-08", title: "Associate Director" },
+      { name: "Rob Barnes",              startDate: "2022-09-05", title: "Graduate Surveyor" },
+      { name: "William Penfold",         startDate: "2023-05-01", title: null },
+      { name: "Oliver Wilkinson",        startDate: "2023-07-03", title: "Associate Director" },
+      { name: "Danny Cardosi",           startDate: "2024-01-03", title: "Senior Surveyor" },
+      { name: "Harry Elliott",           startDate: "2024-04-24", title: null },
+      { name: "Emily Cann",              startDate: "2024-09-09", title: "Graduate Surveyor" },
+      { name: "Jonny Palmer",            startDate: "2024-09-09", title: "Graduate Surveyor" },
+      { name: "Tom Cater",               startDate: "2025-01-01", title: "Associate Director" },
+      { name: "Harriette Walker",        startDate: "2025-05-19", title: "PA" },
+      { name: "Paris Fixman",            startDate: "2025-07-21", title: "Graduate Surveyor" },
+      { name: "Libby Evans",             startDate: "2025-08-11", title: "Graduate Surveyor" },
+      { name: "Tiggy Savage",            startDate: "2025-09-01", title: "Graduate Surveyor" },
+      { name: "Luke Donohoe",            startDate: "2025-09-22", title: "Graduate Surveyor" },
+      { name: "Kate Martin",             startDate: "2026-04-01", title: null },
+      { name: "Carly Cunliffe",          startDate: "2026-05-05", title: "Graduate Surveyor" },
+    ];
+    let seeded = 0;
+    for (const s of staffSeed) {
+      const r = await pool.query(
+        `INSERT INTO staff_profiles (user_id, start_date, title, status, holiday_entitlement, pension_opt_in, pension_rate)
+         SELECT u.id, $2, $3, 'active', 25, $4, $5
+         FROM users u WHERE u.name ILIKE $1 AND u.is_active = true
+         LIMIT 1
+         ON CONFLICT (user_id) DO UPDATE SET
+           start_date = CASE WHEN staff_profiles.start_date IS NULL THEN EXCLUDED.start_date ELSE staff_profiles.start_date END,
+           title = CASE WHEN staff_profiles.title IS NULL THEN EXCLUDED.title ELSE staff_profiles.title END,
+           updated_at = now()`,
+        [`%${s.name}%`, s.startDate, s.title, !s.consultant, s.consultant ? 0.0 : 5.0]
+      );
+      if (r.rowCount) seeded++;
+    }
+    console.log(`[seed-staff] ${seeded} staff profiles seeded/updated`);
+  } catch (e: any) {
+    console.warn(`[seed-staff] failed: ${e.message}`);
+  }
 })();
 import { setupAuth } from "./auth";
 import { setupMicrosoftRoutes } from "./microsoft";
