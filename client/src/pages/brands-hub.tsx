@@ -574,11 +574,12 @@ function BrandExplorer() {
     try { return localStorage.getItem("brand-explorer-search") || ""; } catch { return ""; }
   });
 
-  const { data: allCompanies = [] } = useQuery<any[]>({
+  const { data: allCompanies = [], isLoading: companiesLoading, isError: companiesError } = useQuery<any[]>({
     queryKey: ["/api/crm/companies"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/crm/companies");
-      return res.json();
+      const d = await res.json();
+      return Array.isArray(d) ? d : [];
     },
     staleTime: 120_000,
   });
@@ -755,6 +756,15 @@ function BrandExplorer() {
           <div className="col-span-full text-center py-12 text-muted-foreground">
             <Store className="w-10 h-10 mx-auto mb-2 opacity-20" />
             <p className="text-sm">No brands found</p>
+            {allCompanies.length > 0 && companies.length === 0 && (
+              <p className="text-xs mt-1 text-amber-500">{allCompanies.length} companies loaded but none typed as "Tenant - ..." — check company types in CRM</p>
+            )}
+            {allCompanies.length === 0 && companiesError && (
+              <p className="text-xs mt-1 text-red-500">Failed to load companies from server — try refreshing</p>
+            )}
+            {allCompanies.length === 0 && !companiesError && !companiesLoading && (
+              <p className="text-xs mt-1">No companies in CRM — <a href="/companies" className="underline">check CRM</a></p>
+            )}
           </div>
         )}
       </div>
