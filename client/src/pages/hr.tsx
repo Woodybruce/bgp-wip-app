@@ -282,7 +282,7 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
 
   const { data: requests = [] } = useQuery<HolidayRequest[]>({
     queryKey: [`/api/hr/holidays`, person.id],
-    queryFn: () => fetch(`/api/hr/holidays?userId=${person.id}`, { credentials: "include" }).then(r => r.json()),
+    queryFn: () => apiRequest("GET", `/api/hr/holidays?userId=${person.id}`).then(r => r.json()).then(d => Array.isArray(d) ? d : []),
   });
 
   const createMutation = useMutation({
@@ -429,7 +429,7 @@ function DocumentsTab({ person, isAdmin }: { person: StaffMember; isAdmin: boole
 
   const { data: docs = [] } = useQuery<HrDocument[]>({
     queryKey: [`/api/hr/documents`, person.id],
-    queryFn: () => fetch(`/api/hr/documents?userId=${person.id}`, { credentials: "include" }).then(r => r.json()),
+    queryFn: () => apiRequest("GET", `/api/hr/documents?userId=${person.id}`).then(r => r.json()).then(d => Array.isArray(d) ? d : []),
   });
 
   const addMutation = useMutation({
