@@ -93,6 +93,7 @@ const TodayPage = lazy(() => import("@/pages/today"));
 const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
 const TenantRep = lazy(() => import("@/pages/tenant-rep"));
+const HRPage = lazy(() => import("@/pages/hr"));
 
 
 function PageLoader() {
@@ -193,6 +194,8 @@ function Router() {
       <Route path="/edozo" component={PropertiesHub} />
       <Route path="/expenses" component={ExpensesAdmin} />
       <Route path="/my-expenses" component={MyExpenses} />
+      <Route path="/hr" component={HRPage} />
+      <Route path="/hr/:userId">{(params) => <HRPage />}</Route>
       <Route component={NotFound} />
     </Switch>
     </Suspense>

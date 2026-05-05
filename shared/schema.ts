@@ -2500,3 +2500,86 @@ export type StripeCardholder = typeof stripeCardholders.$inferSelect;
 export type StripeCard = typeof stripeCards.$inferSelect;
 export type Expense = typeof expenses.$inferSelect;
 export type ExpenseReceipt = typeof expenseReceipts.$inferSelect;
+
+// ─── HR Module ────────────────────────────────────────────────────────────────
+
+export const staffProfiles = pgTable("staff_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().unique(),
+  title: text("title"),
+  startDate: text("start_date"),      // ISO date string
+  endDate: text("end_date"),          // set when leaver
+  status: text("status").notNull().default("active"), // active | leaver
+  salaryCurrent: integer("salary_current"),           // pence
+  managerId: varchar("manager_id"),
+  department: text("department"),
+  ricsPathway: text("rics_pathway"),
+  apcStatus: text("apc_status"),      // not_started | in_progress | completed
+  apcAssessmentDate: text("apc_assessment_date"),
+  education: text("education"),
+  bio: text("bio"),
+  emergencyContactName: text("emergency_contact_name"),
+  emergencyContactPhone: text("emergency_contact_phone"),
+  emergencyContactRelation: text("emergency_contact_relation"),
+  holidayEntitlement: integer("holiday_entitlement").default(25),
+  pensionOptIn: boolean("pension_opt_in").default(true),
+  pensionRate: real("pension_rate").default(5.0),
+  contractSharepointUrl: text("contract_sharepoint_url"),
+  passportSharepointUrl: text("passport_sharepoint_url"),
+  linkedinUrl: text("linkedin_url"),
+  xeroTrackingName: text("xero_tracking_name"), // how they appear in Xero tracking
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertStaffProfileSchema = createInsertSchema(staffProfiles).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertStaffProfile = z.infer<typeof insertStaffProfileSchema>;
+export type StaffProfile = typeof staffProfiles.$inferSelect;
+
+export const salaryHistory = pgTable("salary_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  salaryPence: integer("salary_pence").notNull(),
+  effectiveDate: text("effective_date").notNull(), // ISO date string
+  reason: text("reason"),  // annual_review | promotion | joining | adjustment
+  notes: text("notes"),
+  recordedBy: varchar("recorded_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSalaryHistorySchema = createInsertSchema(salaryHistory).omit({ id: true, createdAt: true });
+export type InsertSalaryHistory = z.infer<typeof insertSalaryHistorySchema>;
+export type SalaryHistory = typeof salaryHistory.$inferSelect;
+
+export const holidayRequests = pgTable("holiday_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  startDate: text("start_date").notNull(),
+  endDate: text("end_date").notNull(),
+  daysCount: real("days_count").notNull(),
+  status: text("status").notNull().default("pending"), // pending | approved | rejected | cancelled
+  notes: text("notes"),
+  approvedBy: varchar("approved_by"),
+  approvedAt: timestamp("approved_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertHolidayRequestSchema = createInsertSchema(holidayRequests).omit({ id: true, createdAt: true, approvedAt: true });
+export type InsertHolidayRequest = z.infer<typeof insertHolidayRequestSchema>;
+export type HolidayRequest = typeof holidayRequests.$inferSelect;
+
+export const hrDocuments = pgTable("hr_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id"),           // null = company-wide
+  docType: text("doc_type").notNull(),  // contract | passport | review | policy | payslip | other
+  name: text("name").notNull(),
+  sharepointUrl: text("sharepoint_url"),
+  sharepointDriveId: text("sharepoint_drive_id"),
+  sharepointItemId: text("sharepoint_item_id"),
+  reviewYear: integer("review_year"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertHrDocumentSchema = createInsertSchema(hrDocuments).omit({ id: true, createdAt: true });
+export type InsertHrDocument = z.infer<typeof insertHrDocumentSchema>;
+export type HrDocument = typeof hrDocuments.$inferSelect;
