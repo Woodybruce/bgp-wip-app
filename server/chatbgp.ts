@@ -1136,10 +1136,11 @@ Legacy specialised tools still work as fallbacks, but prefer the primitives abov
 - If a tool returns an error, report the error honestly to the user. Don't pretend it succeeded and then say "give it 20 seconds to rebuild".
 
 ## Key Tool Workflows
-- **CRM**: search_crm (fuzzy matching) → create/update entities. Search broadly with multiple variations before saying something doesn't exist.
+- **CRM reads**: sql_query → compose any SELECT. Use describe_schema first if unsure of column names. Search broadly before saying something doesn't exist.
+- **CRM writes**: sql_write → insert/update/delete any CRM table. Validated against schema; every write is audited.
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
 - **KYC**: run_kyc_check for Companies House + sanctions + financial strength. deep_investigate for full D&B-style intelligence combining all sources.
-- **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
+- **Web research**: web_search → read_file(url) → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
 - **Chat file uploads** (CRITICAL): When the user's message contains a \`/api/chat-media/\` URL — e.g. \`[Live WIP 5th May.xlsx](/api/chat-media/xxx-filename.xlsx)\` — they have dragged or attached that file into the chat. You MUST call \`read_file\` with that URL immediately to read and process the file. Do NOT just acknowledge the link or say "I can see you've shared a file" without actually reading it. Pass the full \`/api/chat-media/...\` path as the \`url\` argument. For Excel/CSV use startRow/maxRows to page; for PDF/Word/text use startChar/maxChars.
 - **SharePoint / any file**: \`read_file\` handles all file sources — SharePoint links, OneDrive links, Dropbox paths, public URLs, and chat-media uploads. For subfolder navigation still use browse_sharepoint_folder (driveId+itemId); then pass the driveId+itemId to read_file. For large files, read_file returns totalRows (Excel/CSV) or totalChars (text/PDF) — call again with startRow or startChar incremented. Default Excel page is 300 rows; default text page is 100,000 chars.
 - **Leasing schedule / any data file**: query_leasing_schedule for read. For IMPORTS — any Excel, CSV, PDF, or pasted text — always use **ingest_file** (not import_leasing_schedule which no longer exists). ingest_file auto-classifies the file, parses it with AI, and returns a preview. Show the preview to the user, then call commit_ingest to write.
@@ -1148,11 +1149,11 @@ Legacy specialised tools still work as fallbacks, but prefer the primitives abov
 - **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use \`write_file(type:"deck")\` (Gamma — full visual design with imagery). NEVER use pdf for these. Don't apologise about the PDF being "just text" — pick the right type upfront.
 - **Bespoke brochures from existing BGP pages**: \`write_file(type:"brochure")\` — stitches specific pages from source PDFs into a new PDF preserving all original design. Ask browse_sharepoint_folder / browse_dropbox for source PDF IDs/paths first, then pass as sources array.
 - **Bulk file-move**: **copy_dropbox_to_sharepoint** — copies raw PDF binaries from Dropbox into a SharePoint folder. Use when the user says "pull these into a SharePoint folder". Do NOT claim SharePoint "glitched" if upload fails — report the exact error.
-- **Email attachment → SharePoint**: when the user asks to save a brochure / floor plans / any email attachment to SharePoint, use **download_email_attachment** with \`action: "save_to_sharepoint"\` and a \`folderPath\`. This is the ONLY correct tool for that flow — it pulls the binary from Graph and uploads it in one step. Do NOT try \`upload_to_sharepoint\` for email attachments; that tool only handles chat-media files (generated docs, files dragged into the chat). If you reach for upload_to_sharepoint and get a "file not found in chat-media" error, that's the signal you should be using download_email_attachment instead.
+- **Email attachment → SharePoint**: use **download_email_attachment** with \`action: "save_to_sharepoint"\` and a \`folderPath\`. To READ an email attachment use **read_file** with the attachmentId + messageId. Do NOT use upload_to_sharepoint for email attachments — it only handles files already in chat-media storage.
 - **Maps**: navigate_to "property-map" with lat/lng/zoom. Tell users to use built-in Radius/Distance buttons.
 - **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London F&B, London Retail, etc.
 - **deep_investigate**: If report.property.ambiguous === true, present options as numbered list and ask user to pick. Never guess.
-- **Expenses**: Use **log_expense** for any expense claim — cash, card, or mileage. "£25 taxi to Paddington" → log_expense(type:cash, amountPence:2500, merchant:"Taxi", category:"Taxi"). "Lunch with Mike from Landsec" → log_expense + set attendees + businessPurpose. For mileage say "claim mileage from today" → use **claim_mileage** which reads calendar and calculates distance. Expenses auto-post to Xero when a receipt is attached.
+- **Expenses**: Use **log_expense** for any expense claim — cash, card, or mileage. "£25 taxi to Paddington" → log_expense(type:cash, amountPence:2500, merchant:"Taxi", category:"Taxi"). "Lunch with Mike from Landsec" → log_expense + set attendees + businessPurpose. For mileage → **claim_mileage** which reads calendar and calculates distance. Expenses auto-post to Xero when a receipt is attached.
 - **send_whatsapp** (CRITICAL): When the user confirms a send, you MUST call send_whatsapp again — DO NOT just reply "Sent!" in text. The tool returns the actual Meta API result; if it returns an error you MUST tell the user the message did not go and quote the metaCode/metaMessage. Never claim a message was delivered without a successful tool result. If you don't know the recipient's number, look it up via search_contacts or ask the user — do not guess. After a successful send, paraphrase the tool's confirmation using the actual recipient and message that the tool received, not what was discussed earlier.
 
 ## Memory Systems
@@ -1201,7 +1202,7 @@ When the message comes from one of the partners, be a bit familiar. Use your jud
 These are starting cues only — if save_learning memories or past chats contradict them, trust the memories.
 
 ## Fun facts / shared knowledge
-You have search_knowledge_base and search_chat_history. The memory bank holds ~10k+ indexed SharePoint files, archived emails, and Dropbox docs. Use them. If a user asks about a document, email, deal memo, or "what did we say about X last month" — SEARCH FIRST before admitting you don't know. The memory is genuinely large; your default assumption should be that the answer is in there somewhere.
+You have search_knowledge_base and sql_query. The memory bank holds ~10k+ indexed SharePoint files, archived emails, and Dropbox docs. Use search_knowledge_base first when the user asks about a document, email, deal memo, or "what did we say about X last month". For CRM data use sql_query. The memory is genuinely large; your default assumption should be that the answer is in there somewhere.
 
 ## You Are Claude — No Limits
 General-purpose AI with property expertise. Writing, analysis, research, strategy, coding, maths, languages, legal summaries — anything Claude can do. NEVER refuse because it's "outside scope."
@@ -1798,28 +1799,6 @@ export async function getAvailableTools(): Promise<{
       return `Template "${t.name}" (id: ${t.id}): ${t.description || ""}. Fields: ${fieldsList}`;
     }).join("\n");
 
-    tools.push({
-      type: "function",
-      function: {
-        name: "generate_document",
-        description: `Generate a professional property document from a template. Available templates:\n${templateDescriptions}`,
-        parameters: {
-          type: "object",
-          properties: {
-            templateId: {
-              type: "string",
-              description: "The template ID to use",
-            },
-            fieldValues: {
-              type: "object",
-              description: "Key-value pairs of field IDs and their values. Use the field IDs from the template descriptions.",
-              additionalProperties: true,
-            },
-          },
-          required: ["templateId", "fieldValues"],
-        },
-      },
-    });
   }
 
   // ── PHASE 1 CONSOLIDATED TOOLS ────────────────────────────────────────
@@ -2057,52 +2036,6 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "read_sharepoint_file",
-      description: "[DEPRECATED — use read_file instead] Read and extract the contents of a file from SharePoint or OneDrive. Use this when the user shares ANY SharePoint or OneDrive link or asks you to open/look at a file. Supports both team SharePoint (brucegillinghampollardlimited.sharepoint.com) and personal OneDrive (brucegillinghampollardlimited-my.sharepoint.com) URLs. Supports Excel (.xlsx/.xls), Word (.docx), PDF, CSV, and text files. You can provide either a sharing URL, a file path, or driveId + itemId from a previous browse_sharepoint_folder result. For large Excel files, use startRow and maxRows to page through the data — the response will include totalRows so you know how many passes are needed.",
-      parameters: {
-        type: "object",
-        properties: {
-          url: {
-            type: "string",
-            description: "A SharePoint sharing URL (e.g. https://brucegillinghampollardlimited-my.sharepoint.com/:x:/g/personal/...) or a file path in the BGP SharePoint document library (e.g. 'Investment/Deal Files/report.xlsx'). Can be omitted when using driveId + itemId.",
-          },
-          driveId: {
-            type: "string",
-            description: "The driveId from a previous browse_sharepoint_folder result. Use together with itemId to read a file without needing a sharing URL.",
-          },
-          itemId: {
-            type: "string",
-            description: "The itemId from a previous browse_sharepoint_folder result. Use together with driveId to read a file directly.",
-          },
-          startRow: {
-            type: "number",
-            description: "For Excel/CSV files: the 0-based data row to start reading from (excludes the header row). Default 0. Use to page through large files.",
-          },
-          maxRows: {
-            type: "number",
-            description: "For Excel/CSV files: maximum number of data rows to return. Default 300. Increase to 500 for wider reads.",
-          },
-          sheetName: {
-            type: "string",
-            description: "For Excel files: the specific sheet name to read. If omitted, all sheets are returned.",
-          },
-          startChar: {
-            type: "number",
-            description: "For PDF/Word/text files: the 0-based character offset to start reading from. Default 0. Use to page through long documents — the response includes totalChars so you know how much remains.",
-          },
-          maxChars: {
-            type: "number",
-            description: "For PDF/Word/text files: maximum number of characters to return. Default 100000 (~30 pages). Increase for very large documents but watch context usage.",
-          },
-        },
-        required: [],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
       name: "browse_sharepoint_folder",
       description: "Browse the contents of a SharePoint or OneDrive folder. Use this when the user shares ANY SharePoint or OneDrive folder link (containing /:f:/) or asks you to look at what's in a folder. Supports both team SharePoint and personal OneDrive URLs. Returns a list of files and subfolders with their names, types, sizes, driveId and itemId. To drill into a subfolder, call this tool again with the subfolder's driveId and itemId from the previous result — this is the most reliable way to navigate subfolders on personal OneDrive.",
       parameters: {
@@ -2181,168 +2114,6 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "create_deal",
-      description: "[DEPRECATED — use sql_write instead] Create a new deal in the BGP CRM. Use when the user asks to add a deal, log a transaction, or start tracking a new piece of work.",
-      parameters: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "Deal name (usually the property address)" },
-          team: { type: "array", items: { type: "string" }, description: "Team(s): London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
-          groupName: { type: "string", description: "Pipeline stage: Under Offer, Exchanged, Completed, New Instructions, etc." },
-          dealType: { type: "string", description: "Type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
-          status: { type: "string", description: "Status of the deal" },
-          pricing: { type: "number", description: "Deal value/price in GBP" },
-          fee: { type: "number", description: "BGP fee in GBP" },
-          rentPa: { type: "number", description: "Annual rent in GBP" },
-          totalAreaSqft: { type: "number", description: "Total area in sq ft" },
-          comments: { type: "string", description: "Any additional notes" },
-        },
-        required: ["name"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "update_deal",
-      description: "[DEPRECATED — use sql_write instead] Update an existing deal in the CRM. Use when the user asks to change a deal's status, price, stage, or any other field.",
-      parameters: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "The deal ID (UUID)" },
-          name: { type: "string" },
-          team: { type: "array", items: { type: "string" } },
-          groupName: { type: "string" },
-          dealType: { type: "string" },
-          status: { type: "string" },
-          pricing: { type: "number" },
-          fee: { type: "number" },
-          rentPa: { type: "number" },
-          totalAreaSqft: { type: "number" },
-          comments: { type: "string" },
-        },
-        required: ["id"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "create_contact",
-      description: "[DEPRECATED — use sql_write instead] Create a new contact in the BGP CRM. Use when the user mentions a new person to track.",
-      parameters: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "Full name" },
-          email: { type: "string", description: "Email address" },
-          phone: { type: "string", description: "Phone number" },
-          role: { type: "string", description: "Job title/role" },
-          companyName: { type: "string", description: "Company name" },
-          contactType: { type: "string", description: "Type: Landlord, Tenant, Agent, Surveyor, Solicitor, etc." },
-          notes: { type: "string" },
-        },
-        required: ["name"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "update_contact",
-      description: "[DEPRECATED — use sql_write instead] Update an existing contact in the CRM.",
-      parameters: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "The contact ID (UUID)" },
-          name: { type: "string" },
-          email: { type: "string" },
-          phone: { type: "string" },
-          role: { type: "string" },
-          companyName: { type: "string" },
-          contactType: { type: "string" },
-          notes: { type: "string" },
-        },
-        required: ["id"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "create_company",
-      description: "[DEPRECATED — use sql_write instead] Create a new company in the BGP CRM.",
-      parameters: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "Company name" },
-          companyType: { type: "string", description: "Type: Landlord, Tenant, Agent, Developer, Investor, etc." },
-          description: { type: "string", description: "Brief description" },
-          domain: { type: "string", description: "Website domain" },
-          groupName: { type: "string", description: "CRM group" },
-        },
-        required: ["name"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "update_company",
-      description: "[DEPRECATED — use sql_write instead] Update an existing company in the CRM.",
-      parameters: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "The company ID (UUID)" },
-          name: { type: "string" },
-          companyType: { type: "string" },
-          description: { type: "string" },
-          domain: { type: "string" },
-          groupName: { type: "string" },
-        },
-        required: ["id"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "search_crm",
-      description: "[DEPRECATED — use sql_query instead] Search across the BGP CRM for deals, contacts, companies, properties, investment tracker items, and available units by keyword. Searches broadly — splits multi-word queries to find partial matches (e.g. '16 Tottenham Court Road' will find '6-17 Tottenham Court Road'). Use this to find records before updating or to answer user questions about specific items.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Search keyword or phrase. For addresses/properties, try the street name without the number as well." },
-          entityType: { type: "string", enum: ["deals", "contacts", "companies", "properties", "investment", "units", "requirements", "comps", "all"], description: "Which entity type to search. Default: all" },
-        },
-        required: ["query"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "get_brand_profile",
-      description: "[DEPRECATED — use sql_query instead] Get the full BGP brand bible for a tracked retail brand — covenant (Companies House health, traffic light), rollout velocity (openings/closures last 12m), store footprint, rent affordability vs peer comps, turnover history, active requirements, pitched-to history (every leasing schedule this brand has been a target on), completed + active deals, agent representations, contacts with last touchpoint, and the AI-classified signals timeline. Use this when the user asks 'who should pitch for X', 'is brand Y expanding', 'what's their covenant', 'when did we last touch them', or anything about a specific retail brand.",
-      parameters: {
-        type: "object",
-        properties: {
-          companyId: { type: "string", description: "The company UUID. Prefer this when known." },
-          name: { type: "string", description: "Brand name — used if companyId isn't known. Matched case-insensitive." },
-        },
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
       name: "update_investment_tracker",
       description: "Update an existing investment tracker item. Use when the user asks to change an investment record's status, client, price, notes, or any other field. Search first to find the record ID.",
       parameters: {
@@ -2370,23 +2141,6 @@ export async function getAvailableTools(): Promise<{
           address: { type: "string" },
         },
         required: ["id"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "delete_record",
-      description: "[DEPRECATED — use sql_write instead] Delete a record from the CRM. Only use after confirming with the user. This is irreversible.",
-      parameters: {
-        type: "object",
-        properties: {
-          entityType: { type: "string", enum: ["deal", "contact", "company", "property"], description: "Type of record to delete" },
-          id: { type: "string", description: "The record ID (UUID)" },
-          confirmName: { type: "string", description: "The name of the record being deleted, for confirmation" },
-        },
-        required: ["entityType", "id", "confirmName"],
       },
     },
   });
@@ -2547,96 +2301,6 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "generate_pdf",
-      description: "[DEPRECATED — use write_file(type:'pdf') instead] Generate a PLAIN-TEXT PDF report (no imagery, no visual design — headings, paragraphs, bullets only). Use ONLY for internal text summaries like meeting notes or data digests. DO NOT use for brochures, pitch decks, client-facing documents, placemaking materials, or anything the user describes as 'great-looking', 'designed', 'brochure', 'deck', 'pitch', or 'playbook' — for those use `generate_designed_deck` (Gamma, full visual design) or `compile_brochure_from_pdfs` (stitch real pages from existing BGP brochures).",
-      parameters: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "Document title for the PDF filename and header" },
-          htmlContent: { type: "string", description: "Full HTML content to render in the PDF. Use <h1>-<h4> for headings, <p> for paragraphs, <ul>/<li> for bullet points, and numbered steps as '1. Step text'. Use <strong> for emphasis. Keep formatting clean and professional. Do NOT use emoji characters — they will not render correctly in the PDF font. Instead use plain text labels like 'Tip:', 'Important:', 'Note:' etc." },
-          orientation: { type: "string", enum: ["portrait", "landscape"], description: "Page orientation. Default portrait." },
-        },
-        required: ["title", "htmlContent"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "generate_word",
-      description: "[DEPRECATED — use write_file(type:'word') instead] Generate a native Microsoft Word (.docx) document with professional formatting and BGP branding. Use when the user asks for a Word document, editable report, or anything they want to open and edit in Word.",
-      parameters: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "Document title for the filename and header" },
-          sections: {
-            type: "array",
-            description: "Array of content sections to include in the document",
-            items: {
-              type: "object",
-              properties: {
-                heading: { type: "string", description: "Section heading (optional)" },
-                level: { type: "number", description: "Heading level: 1 for main headings, 2 for sub-headings (default 1)" },
-                paragraphs: { type: "array", items: { type: "string" }, description: "Array of paragraph texts" },
-                bullets: { type: "array", items: { type: "string" }, description: "Array of bullet point texts" },
-                table: {
-                  type: "object",
-                  description: "Optional table data",
-                  properties: {
-                    headers: { type: "array", items: { type: "string" } },
-                    rows: { type: "array", items: { type: "array", items: { type: "string" } } },
-                  },
-                },
-              },
-            },
-          },
-        },
-        required: ["title", "sections"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "generate_pptx",
-      description: "[DEPRECATED — use write_file(type:'pptx') instead] Generate a native Microsoft PowerPoint (.pptx) presentation with professional formatting and BGP branding. Use when the user asks for a PowerPoint, presentation, slides, or deck.",
-      parameters: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "Presentation title for the filename and title slide" },
-          subtitle: { type: "string", description: "Optional subtitle for the title slide" },
-          slides: {
-            type: "array",
-            description: "Array of slides to include in the presentation",
-            items: {
-              type: "object",
-              properties: {
-                title: { type: "string", description: "Slide title" },
-                bullets: { type: "array", items: { type: "string" }, description: "Array of bullet point texts for the slide" },
-                notes: { type: "string", description: "Optional speaker notes for the slide" },
-                table: {
-                  type: "object",
-                  description: "Optional table to display on the slide",
-                  properties: {
-                    headers: { type: "array", items: { type: "string" } },
-                    rows: { type: "array", items: { type: "array", items: { type: "string" } } },
-                  },
-                },
-              },
-              required: ["title"],
-            },
-          },
-        },
-        required: ["title", "slides"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
       name: "send_email",
       description: "Send a NEW email from the BGP shared mailbox (chatbgp@brucegillinghampollard.com). Use ONLY for brand new emails, NOT for replying to existing threads. For replies, use reply_email instead to preserve email threading.",
       parameters: {
@@ -2690,7 +2354,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "search_calendar",
-      description: "[DEPRECATED — use sql_query instead] Search Outlook calendars for meetings matching a query. By default searches the signed-in user's calendar. Pass `mailbox` to search a specific BGP teammate's calendar, or 'all' to fan out across every team member's calendar plus the shared inbox. Matches against subject, body, attendees, and location. Date-bounded — defaults to last 18 months → next 6 months. Returns up to 50 results sorted by start date desc. Use when the user asks about historic or upcoming meetings, viewings, or calendar history about a deal/brand/landlord/property. Distinct from query_calendar which only lists upcoming events in a date range without keyword search.",
+      description: "Search Outlook calendars for meetings matching a query. By default searches the signed-in user's calendar. Pass `mailbox` to search a specific BGP teammate's calendar, or 'all' to fan out across every team member's calendar plus the shared inbox. Matches against subject, body, attendees, and location. Date-bounded — defaults to last 18 months → next 6 months. Returns up to 50 results sorted by start date desc. Use when the user asks about historic or upcoming meetings, viewings, or calendar history about a deal/brand/landlord/property. Distinct from query_calendar which only lists upcoming events in a date range without keyword search.",
       parameters: {
         type: "object",
         properties: {
@@ -2726,40 +2390,6 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "read_record",
-      description: "[DEPRECATED — use sql_query instead] Read a single CRM record by id. Returns every field, including ones not exposed in narrower tools. Use when you need to inspect the current state of a deal/company/contact/property/leasing unit/lease event/comp/requirement before updating it.",
-      parameters: {
-        type: "object",
-        properties: {
-          table: { type: "string", description: "One of: crm_deals | crm_companies | crm_contacts | crm_properties | leasing_schedule_units | crm_lease_events | crm_comps | crm_requirements_leasing." },
-          id: { type: "string", description: "The record's UUID (or text primary key for tables that use one)." },
-        },
-        required: ["table", "id"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "list_records",
-      description: "[DEPRECATED — use sql_query instead] List records on any whitelisted CRM table with optional simple equality filters. Use to find records before updating, or to count things. Returns up to 50 rows by default (max 500 — bump via `limit`).",
-      parameters: {
-        type: "object",
-        properties: {
-          table: { type: "string", description: "One of: crm_deals | crm_companies | crm_contacts | crm_properties | leasing_schedule_units | crm_lease_events | crm_comps | crm_requirements_leasing." },
-          filters: { type: "object", description: "Equality filters as JSON, e.g. {\"status\": \"LIVE\", \"deal_type\": \"Sale\"}. Field names must exist on the table — invalid fields are silently ignored." },
-          limit: { type: "number", description: "Default 50, max 500." },
-          offset: { type: "number", description: "For pagination." },
-        },
-        required: ["table"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
       name: "update_record",
       description: "Update one or more fields on a single CRM record. Field names are validated against the live schema — anything that doesn't exist on the table is dropped and reported back as `unknownFields`. This replaces every narrow per-feature update tool. ANY field on a whitelisted table can be updated.",
       parameters: {
@@ -2770,23 +2400,6 @@ export async function getAvailableTools(): Promise<{
           fields: { type: "object", description: "Partial update payload as JSON, e.g. {\"status\": \"LIVE\", \"fee\": 50000}. Use null to clear a field." },
         },
         required: ["table", "id", "fields"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "bulk_update_records",
-      description: "[DEPRECATED — use sql_write instead] Update many records at once that match a filter. SAFETY: refuses to run with no filter, refuses to update more than 500 rows in a call. Use for cleanup tasks like 'set internal_agent to Harry Elliott on every deal where it currently equals H'.",
-      parameters: {
-        type: "object",
-        properties: {
-          table: { type: "string", description: "One of: crm_deals | crm_companies | crm_contacts | crm_properties | leasing_schedule_units | crm_lease_events | crm_comps | crm_requirements_leasing." },
-          filter: { type: "object", description: "Equality filters that select the rows to update. Required — at least one valid field must match. e.g. {\"deal_type\": \"Sale\", \"team\": \"Investment\"}." },
-          fields: { type: "object", description: "Fields to set on every matched row, e.g. {\"status\": \"COM\"}. Same validation rules as update_record." },
-        },
-        required: ["table", "filter", "fields"],
       },
     },
   });
@@ -2826,7 +2439,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "download_email_attachment",
-      description: "[DEPRECATED — use read_file (for reading) or upload_to_sharepoint for saves instead] Download an email attachment and either (a) read its content, or (b) save it directly to a SharePoint folder. THIS IS THE TOOL TO USE when the user asks to 'save this brochure to SharePoint', 'file this attachment under …', 'put the floor plans in the Due Diligence folder', or anything that moves an email attachment into SharePoint. Set `action: 'save_to_sharepoint'` and pass `folderPath` — the tool downloads the binary from Graph and uploads it in a single step. DO NOT try to use upload_to_sharepoint for email attachments; that tool only works for chat-media files. For 'read' mode: PDF/Word/Excel/CSV/text return extracted text; other binaries return metadata. Use get_email_attachments first to get the attachment ID. If the email is in another user's mailbox (came from search_emails with mailboxEmail), you MUST pass the same mailboxEmail here — Graph IDs are mailbox-scoped.",
+      description: "Download an email attachment and either (a) read its content, or (b) save it directly to a SharePoint folder. THIS IS THE TOOL TO USE when the user asks to 'save this brochure to SharePoint', 'file this attachment under …', 'put the floor plans in the Due Diligence folder', or anything that moves an email attachment into SharePoint. Set `action: 'save_to_sharepoint'` and pass `folderPath` — the tool downloads the binary from Graph and uploads it in a single step. DO NOT try to use upload_to_sharepoint for email attachments; that tool only works for chat-media files. For 'read' mode: PDF/Word/Excel/CSV/text return extracted text; other binaries return metadata. Use get_email_attachments first to get the attachment ID. If the email is in another user's mailbox (came from search_emails with mailboxEmail), you MUST pass the same mailboxEmail here — Graph IDs are mailbox-scoped.",
       parameters: {
         type: "object",
         properties: {
@@ -2950,62 +2563,8 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "log_viewing",
-      description: "[DEPRECATED — use sql_write instead] Log a viewing for an investment tracker item or a leasing unit. Search for the item first to get the ID.",
-      parameters: {
-        type: "object",
-        properties: {
-          entityType: { type: "string", enum: ["investment", "unit"], description: "Whether this is for an investment tracker item or a leasing unit" },
-          entityId: { type: "string", description: "The investment tracker ID or unit ID" },
-          company: { type: "string", description: "Company/party viewing" },
-          contact: { type: "string", description: "Contact name" },
-          viewingDate: { type: "string", description: "Date of viewing (YYYY-MM-DD)" },
-          viewingTime: { type: "string", description: "Time of viewing (HH:MM)" },
-          attendees: { type: "string", description: "Who attended" },
-          notes: { type: "string" },
-          outcome: { type: "string", description: "e.g. Interested, Not Interested, Follow-up, Offer Made" },
-        },
-        required: ["entityType", "entityId", "viewingDate"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "log_offer",
-      description: "[DEPRECATED — use sql_write instead] Log an offer for an investment tracker item or a leasing unit. Search first to find the record ID.",
-      parameters: {
-        type: "object",
-        properties: {
-          entityType: { type: "string", enum: ["investment", "unit"], description: "Whether this is for an investment tracker item or a leasing unit" },
-          entityId: { type: "string", description: "The investment tracker ID or unit ID" },
-          company: { type: "string", description: "Company making the offer" },
-          contact: { type: "string", description: "Contact name" },
-          offerDate: { type: "string", description: "Date of offer (YYYY-MM-DD)" },
-          offerPrice: { type: "number", description: "Offer price (for investment)" },
-          niy: { type: "number", description: "Net initial yield % (for investment)" },
-          rentPa: { type: "number", description: "Annual rent offered (for leasing)" },
-          rentFreeMonths: { type: "number", description: "Rent-free period in months (for leasing)" },
-          termYears: { type: "number", description: "Lease term in years (for leasing)" },
-          breakOption: { type: "string", description: "Break clause details (for leasing)" },
-          incentives: { type: "string", description: "Other incentives" },
-          premium: { type: "number", description: "Premium/key money" },
-          fittingOutContribution: { type: "number", description: "Fitting out contribution" },
-          conditions: { type: "string", description: "Conditions attached to offer" },
-          status: { type: "string", description: "e.g. Pending, Accepted, Rejected, Withdrawn" },
-          notes: { type: "string" },
-        },
-        required: ["entityType", "entityId", "offerDate"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
       name: "create_property",
-      description: "[DEPRECATED — use sql_write instead] Create a new property in the CRM. Use when the user mentions a new property, building, or address that needs to be tracked. Always search first to avoid duplicates. If you provide a postcode in the address, the system will AUTOMATICALLY run Land Registry lookup, AI-match the freehold title, identify the owner, create/link the landlord company, and prepare KYC. You do NOT need to do this manually — just provide the address with postcode and it all happens.",
+      description: "Create a new property in the CRM. Use when the user mentions a new property, building, or address that needs to be tracked. Always search first to avoid duplicates. If you provide a postcode in the address, the system will AUTOMATICALLY run Land Registry lookup, AI-match the freehold title, identify the owner, create/link the landlord company, and prepare KYC. You do NOT need to do this manually — just provide the address with postcode and it all happens.",
       parameters: {
         type: "object",
         properties: {
@@ -3028,29 +2587,6 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "create_requirement",
-      description: "[DEPRECATED — use sql_write instead] Log a new tenant or buyer requirement. Use when someone says a company is looking for space, a tenant needs premises, or an investor is seeking a property. Categories: 'Leasing' for tenants, 'Investment' for buyers.",
-      parameters: {
-        type: "object",
-        properties: {
-          category: { type: "string", enum: ["Leasing", "Investment"], description: "Leasing for tenants, Investment for buyers" },
-          companyName: { type: "string", description: "Company/tenant/buyer name" },
-          contactName: { type: "string", description: "Main contact person" },
-          sizeMin: { type: "string", description: "Minimum size requirement (e.g. '2,000 sq ft')" },
-          sizeMax: { type: "string", description: "Maximum size requirement (e.g. '5,000 sq ft')" },
-          budget: { type: "string", description: "Budget or rent expectation (e.g. '£50 psf', '£5m-£10m')" },
-          location: { type: "string", description: "Preferred area/location (e.g. 'Mayfair', 'SW1', 'West End')" },
-          notes: { type: "string", description: "Additional details about the requirement" },
-          priority: { type: "string", enum: ["high", "medium", "low"], description: "Priority level" },
-        },
-        required: ["category", "companyName"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
       name: "create_diary_entry",
       description: "Create a diary entry — log a meeting, call, viewing, or any scheduled event. Use when the user says they have a meeting, need to log an event, or schedule something.",
       parameters: {
@@ -3064,55 +2600,6 @@ export async function getAvailableTools(): Promise<{
           type: { type: "string", enum: ["meeting", "call", "viewing", "note", "task"], description: "Type of entry" },
         },
         required: ["title", "person", "day", "time"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "update_property",
-      description: "[DEPRECATED — use sql_write instead] Update an existing property in the CRM. Search first to find the property ID.",
-      parameters: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "The property ID (UUID)" },
-          name: { type: "string", description: "Property name" },
-          address: { type: "object", description: "Address as JSON object with fields: street, city, postcode", properties: { street: { type: "string" }, city: { type: "string" }, postcode: { type: "string" } } },
-          agent: { type: "string", description: "BGP agent responsible" },
-          assetClass: { type: "string", description: "e.g. Retail, Office, Residential, Mixed-Use" },
-          tenure: { type: "string", description: "e.g. Freehold, Leasehold" },
-          sqft: { type: "number", description: "Size in square feet" },
-          status: { type: "string", description: "e.g. Active, Pipeline, Completed" },
-          notes: { type: "string" },
-          folderTeams: { type: "array", items: { type: "string" }, description: "Teams this property belongs to" },
-        },
-        required: ["id"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "update_requirement",
-      description: "[DEPRECATED — use sql_write instead] Update an existing tenant or buyer requirement. Search first to find the requirement ID.",
-      parameters: {
-        type: "object",
-        properties: {
-          id: { type: "string", description: "The requirement ID (UUID)" },
-          category: { type: "string", enum: ["Leasing", "Investment"] },
-          companyName: { type: "string" },
-          contactName: { type: "string" },
-          sizeMin: { type: "string" },
-          sizeMax: { type: "string" },
-          budget: { type: "string" },
-          location: { type: "string" },
-          status: { type: "string", enum: ["active", "fulfilled", "withdrawn", "on_hold"] },
-          notes: { type: "string" },
-          priority: { type: "string", enum: ["high", "medium", "low"] },
-        },
-        required: ["id"],
       },
     },
   });
@@ -3187,23 +2674,6 @@ export async function getAvailableTools(): Promise<{
           propertyId: { type: "string", description: "Link to CRM property ID if known" },
         },
         required: ["propertyName"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "link_entities",
-      description: "[DEPRECATED — use sql_write instead] Create a relationship between CRM records — link a contact or company to a deal, property, or requirement. Use when the user says a contact is involved in a deal, a company owns a property, etc.",
-      parameters: {
-        type: "object",
-        properties: {
-          linkType: { type: "string", enum: ["contact-deal", "contact-property", "contact-requirement", "company-property", "company-deal"], description: "Type of relationship to create" },
-          sourceId: { type: "string", description: "ID of the contact or company" },
-          targetId: { type: "string", description: "ID of the deal, property, or requirement to link to" },
-        },
-        required: ["linkType", "sourceId", "targetId"],
       },
     },
   });
@@ -3318,22 +2788,6 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "generate_image",
-      description: "[DEPRECATED — use write_file(type:'image') instead] Generate an image using AI (Nano Banana). Use for property marketing visuals, document illustrations, presentation graphics, floor plan sketches, area photos, or any visual content the user needs. Returns a base64 image that can be displayed in chat. Use when the user asks for an image, a visual, a graphic, or when creating marketing materials that would benefit from imagery.",
-      parameters: {
-        type: "object",
-        properties: {
-          prompt: { type: "string", description: "Detailed description of the image to generate. Be specific about style, content, lighting, perspective. For property images, include details about the building type, area, and aesthetic." },
-          style: { type: "string", description: "Optional style hint: 'photo' for photorealistic, 'illustration' for drawn/graphic style, 'architectural' for technical/blueprint style", enum: ["photo", "illustration", "architectural"] },
-        },
-        required: ["prompt"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
       name: "browse_image_studio",
       description: "Search and browse the BGP Image Studio library. Returns images with their file names, categories, tags, descriptions, areas, addresses, brand names, and property types. Use when the user asks about images in the studio, wants to find a specific photo, or asks what images are available.",
       parameters: {
@@ -3376,36 +2830,8 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "save_to_image_studio",
-      description: "[DEPRECATED — use write_file(type:'image_studio') instead] Save an image to the BGP Image Studio library. Can save: (1) an AI-generated image from a previous generate_image call by providing the imageUrl, (2) a base64-encoded image directly, (3) a SharePoint image by providing sharepointDriveId + sharepointItemId, or (4) any public image URL via fetchUrl (e.g. company logos from Clearbit: 'https://logo.clearbit.com/pret.com'). Use when the user wants to save a generated image, upload an image, import SharePoint headshots/photos, or bulk-import company logos.",
-      parameters: {
-        type: "object",
-        properties: {
-          imageUrl: { type: "string", description: "URL of a previously generated image (from generate_image action), e.g. '/api/chat-media/xxx.png'" },
-          base64Data: { type: "string", description: "Base64-encoded image data (alternative to imageUrl)" },
-          mimeType: { type: "string", description: "MIME type if using base64Data, e.g. 'image/png', 'image/jpeg'" },
-          fetchUrl: { type: "string", description: "A public HTTPS image URL to fetch and save, e.g. 'https://logo.clearbit.com/savills.com' for company logos. Must be https://. Do not use for SharePoint — use sharepointDriveId+itemId for that." },
-          sharepointDriveId: { type: "string", description: "SharePoint driveId of the image file (from a browse_sharepoint_folder result). Use together with sharepointItemId to import a SharePoint image directly." },
-          sharepointItemId: { type: "string", description: "SharePoint itemId of the image file (from a browse_sharepoint_folder result). Use together with sharepointDriveId." },
-          fileName: { type: "string", description: "Name for the image file, e.g. 'Oxford Street Retail View'" },
-          category: { type: "string", description: "Category: Exteriors, Interiors, Floor Plans, Properties, Areas, Marketing, Brands, Generated, Other", enum: ["Exteriors", "Interiors", "Floor Plans", "Properties", "Areas", "Marketing", "Brands", "Generated", "Other"] },
-          description: { type: "string", description: "Optional description of the image" },
-          area: { type: "string", description: "Optional area/location, e.g. 'West End', 'City of London'" },
-          address: { type: "string", description: "Optional full address, e.g. '100 Oxford Street, London W1D 1LL'" },
-          brandName: { type: "string", description: "Optional brand name (for Brands category), e.g. 'Pret A Manger'" },
-          propertyType: { type: "string", description: "Optional property type", enum: ["Office", "Retail", "Industrial", "Warehouse", "Mixed Use", "Residential", "Restaurant", "Leisure", "Development", "Other"] },
-          tags: { type: "array", items: { type: "string" }, description: "Optional tags for the image" },
-        },
-        required: ["fileName", "category"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
       name: "capture_pdf_pages",
-      description: "[DEPRECATED — use read_file instead] Render a PDF brochure into images and save each page to the Image Studio. Use when the user says 'take images of this brochure', 'capture the pages', 'save brochure images', or similar. Requires the SharePoint driveId and itemId from a browse_sharepoint_folder result. Works silently in the background — no viewer needed.",
+      description: "Render a PDF brochure into images and save each page to the Image Studio. Use when the user says 'take images of this brochure', 'capture the pages', 'save brochure images', or similar. Requires the SharePoint driveId and itemId from a browse_sharepoint_folder result. Works silently in the background — no viewer needed.",
       parameters: {
         type: "object",
         properties: {
@@ -3417,58 +2843,6 @@ export async function getAvailableTools(): Promise<{
           maxPages: { type: "number", description: "Maximum pages to capture (default: all). Use 1 for cover-only." },
         },
         required: ["driveId", "itemId", "fileName"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "generate_designed_deck",
-      description: "[DEPRECATED — use write_file(type:'deck') instead] Generate a properly designed, visually polished deck, brochure, pitch document, or playbook using Gamma. Full visual design with photography, typography, and layout — NOT a text-only PDF. Use this whenever the user asks for a brochure, deck, pitch, presentation, playbook, placemaking document, or any client-facing visual output. Returns both a PDF and a PPTX. This is the ONLY tool for making good-looking client documents from scratch.",
-      parameters: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "Document title (also used for the filename)." },
-          inputText: { type: "string", description: "The full content to build the deck from — Gamma turns this into a designed document. Write 500-3000 words of structured content with headings and bullet points. Be specific and substantive — Gamma uses this verbatim to design the pages." },
-          format: { type: "string", enum: ["presentation", "document", "social"], description: "'presentation' = slide deck (use for pitches/decks), 'document' = long-form brochure (use for playbooks/reports), 'social' = square social post. Default: 'document'." },
-          numCards: { type: "number", description: "Target number of pages/slides (default: let Gamma decide)." },
-          themeName: { type: "string", description: "Gamma theme name for visual style (optional — Gamma picks a good default)." },
-          exportAs: { type: "string", enum: ["pdf", "pptx"], description: "Output format. Default 'pdf'. Use 'pptx' if the user wants to edit in PowerPoint." },
-          additionalInstructions: { type: "string", description: "Style guidance for Gamma, e.g. 'Use a minimal design with lots of imagery. Tone: property investment, British, professional.'" },
-        },
-        required: ["title", "inputText"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "compile_brochure_from_pdfs",
-      description: "[DEPRECATED — use write_file(type:'brochure') instead] Stitch specific pages from existing PDF brochures into a single new PDF, preserving all original design, imagery, and typography. Use when the user wants a bespoke brochure made from real BGP brochure pages (e.g. 'take pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard'). The output is a properly designed document because the pages ARE properly designed — you're just assembling them. Source PDFs must be accessible via SharePoint or Dropbox.",
-      parameters: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "Title for the new combined PDF (used for the filename)." },
-          sources: {
-            type: "array",
-            description: "Ordered list of source PDF slices. Each item contributes its specified pages to the final output, in the order given.",
-            items: {
-              type: "object",
-              properties: {
-                source: { type: "string", enum: ["sharepoint", "dropbox"], description: "Where the source PDF lives." },
-                sharepointDriveId: { type: "string", description: "SharePoint driveId (required if source=sharepoint)" },
-                sharepointItemId: { type: "string", description: "SharePoint itemId (required if source=sharepoint)" },
-                dropboxPath: { type: "string", description: "Dropbox file path or ID (required if source=dropbox)" },
-                pages: { type: "array", items: { type: "number" }, description: "1-indexed page numbers to include (e.g. [3,4,5,6,7,8,9,10,11,12]). Use ranges if needed." },
-                label: { type: "string", description: "Optional human label for this source (for logging/debug)." },
-              },
-              required: ["source", "pages"],
-            },
-          },
-        },
-        required: ["title", "sources"],
       },
     },
   });
@@ -3503,73 +2877,12 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "ingest_url",
-      description: "[DEPRECATED — use read_file instead] Fetch and read content from an external URL — works with PDFs, research reports, and web pages. Use when the user shares a link and wants you to read, summarise, or add it to the news feed. Can also save the content as a news article.",
-      parameters: {
-        type: "object",
-        properties: {
-          url: { type: "string", description: "The URL to fetch and read" },
-          addToNews: { type: "boolean", description: "If true, save the content as a news article in the BGP news feed" },
-          sourceName: { type: "string", description: "Source name for the article (e.g. 'Savills Research', 'CBRE', 'Knight Frank')" },
-        },
-        required: ["url"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "export_to_excel",
-      description: "[DEPRECATED — use write_file(type:'excel') instead] Generate a downloadable Excel (.xlsx) file from structured table data. Use when you extract comps tables, schedules, financial data, or any tabular information from brochures, PDFs, or documents and the user wants it as an Excel file. Also use proactively when presenting tabular data that would be useful to download. Returns a download link.",
-      parameters: {
-        type: "object",
-        properties: {
-          filename: { type: "string", description: "Name for the Excel file (without extension), e.g. 'Travelodge_Southwark_Comps'" },
-          sheets: {
-            type: "array",
-            description: "Array of sheets to include in the workbook",
-            items: {
-              type: "object",
-              properties: {
-                name: { type: "string", description: "Sheet/tab name, e.g. 'Comps', 'Summary'" },
-                headers: { type: "array", items: { type: "string" }, description: "Column headers" },
-                rows: { type: "array", items: { type: "array", items: { type: "string" } }, description: "Array of rows, each row is an array of cell values as strings" },
-              },
-              required: ["name", "headers", "rows"],
-            },
-          },
-        },
-        required: ["filename", "sheets"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
       name: "web_search",
       description: "Search the internet for any topic. Use when you need to find information from the web — planning applications, property details, company information, market data, news, or any other publicly available information. Returns search results with titles, URLs, and snippets. You can then use ingest_url to read specific result pages in detail.",
       parameters: {
         type: "object",
         properties: {
           query: { type: "string", description: "The search query — be specific. e.g. 'Battersea Power Station Phase 1 ground floor retail plans', 'Wandsworth planning portal 2010/3897'" },
-        },
-        required: ["query"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "search_news",
-      description: "[DEPRECATED — use sql_query instead] Search the BGP news feed for articles by keyword. Use when the user asks about property news, market news, or mentions a company/location and wants to see relevant articles.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Search term — property name, company, location, or topic" },
-          limit: { type: "number", description: "Max results to return (default 10)" },
         },
         required: ["query"],
       },
@@ -3638,98 +2951,6 @@ export async function getAvailableTools(): Promise<{
   });
 
   tools.push({
-    type: "function",
-    function: {
-      name: "log_lease_event",
-      description: "[DEPRECATED — use sql_write instead] Log an upcoming lease event (rent review, break, expiry, renewal option) to the Lease Events tracker. Use when the user mentions an upcoming lease event in conversation, or when you extract one from an email/brochure/WhatsApp. Lease advisory team uses this as their BD pipeline. Always set sourceEvidence to match where the info came from.",
-      parameters: {
-        type: "object",
-        properties: {
-          tenant: { type: "string", description: "Tenant company name" },
-          address: { type: "string", description: "Property address" },
-          unitRef: { type: "string", description: "Unit reference, e.g. 'Unit 2A' or floor number" },
-          eventType: { type: "string", enum: ["Rent Review", "Break Option", "Lease Expiry", "Renewal Option", "Service Charge", "Other"], description: "Type of lease event" },
-          eventDate: { type: "string", description: "Event date as ISO date string (YYYY-MM-DD)" },
-          noticeDate: { type: "string", description: "Notice date as ISO (for break options)" },
-          currentRent: { type: "string", description: "Current rent, e.g. '£125,000 pa'" },
-          estimatedErv: { type: "string", description: "Estimated rental value if known" },
-          sqft: { type: "string", description: "Unit size" },
-          sourceEvidence: { type: "string", enum: ["Email", "WhatsApp", "File", "Brochure", "News", "SharePoint", "Dropbox", "Manual", "ChatBGP", "BGP Direct"], description: "Where this information came from" },
-          sourceUrl: { type: "string", description: "Link back to the source (email URL, SharePoint link, etc.)" },
-          sourceTitle: { type: "string", description: "Short title for the source, e.g. 'Pete's email — 14 Apr'" },
-          notes: { type: "string", description: "Any context from the source" },
-        },
-        required: ["tenant", "eventType"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "query_wip",
-      description: "[DEPRECATED — use sql_query instead] Query the WIP (Work In Progress) pipeline data. Use when the user asks about pipeline value, deal counts, team performance, overdue deals, or wants a summary of current deals. Can filter by team, status, or deal type.",
-      parameters: {
-        type: "object",
-        properties: {
-          team: { type: "string", description: "Filter by team: London F&B, London Retail, National Leasing, Investment, Tenant Rep, Development, Lease Advisory, Office / Corporate" },
-          status: { type: "string", description: "Filter by status/stage e.g. Under Offer, Exchanged, Completed, New Instructions" },
-          dealType: { type: "string", description: "Filter by deal type: Letting, Acquisition, Sale, Lease Renewal, Rent Review" },
-          summaryOnly: { type: "boolean", description: "If true, return just totals and counts. If false, return deal details." },
-        },
-        required: [],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "query_xero",
-      description: "[DEPRECATED — use sql_query instead] Look up Xero invoices linked to CRM deals. Use when the user asks about invoicing status, whether a fee has been invoiced, or payment status.",
-      parameters: {
-        type: "object",
-        properties: {
-          dealId: { type: "string", description: "CRM deal ID to check invoices for" },
-          query: { type: "string", description: "Search term to find invoices by reference, number, or deal name" },
-        },
-        required: [],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "scan_duplicates",
-      description: "[DEPRECATED — use sql_query instead] Scan for duplicate records in the CRM. Use when the user wants to check if a contact, company, or property already exists, or asks to clean up duplicates.",
-      parameters: {
-        type: "object",
-        properties: {
-          entityType: { type: "string", enum: ["contacts", "companies", "properties"], description: "Which entity type to scan for duplicates" },
-        },
-        required: ["entityType"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function" as const,
-    function: {
-      name: "save_learning",
-      description: "[DEPRECATED — use sql_write instead] Save a piece of business knowledge or insight that ChatBGP has learned during this conversation. This persists across all future conversations, making ChatBGP smarter about BGP's business over time. Only save genuinely useful, reusable knowledge — not transient details.",
-      parameters: {
-        type: "object",
-        properties: {
-          category: { type: "string", enum: ["client_intel", "market_knowledge", "bgp_process", "property_insight", "team_preference", "general"], description: "Category of the learning" },
-          learning: { type: "string", description: "The specific knowledge or insight to remember. Be concise but include enough context to be useful in future conversations. E.g. 'The Cadogan Estate (SW1) prefer to deal directly with Charlotte Roberts for any leasing enquiries.'" },
-        },
-        required: ["category", "learning"],
-      },
-    },
-  });
-
-  tools.push({
     type: "function" as const,
     function: {
       name: "log_app_feedback",
@@ -3763,26 +2984,6 @@ export async function getAvailableTools(): Promise<{
     },
   });
 
-  tools.push({
-    type: "function",
-    function: {
-      name: "query_leasing_schedule",
-      description: "[DEPRECATED — use sql_query instead] Search and query the leasing schedule board — unit-level data across all managed properties (Bluewater, Cardiff, White Rose, Trinity Leeds, Westgate Oxford, Lewisham, Finchley Road, Gunwharf Quays, Clark's Village, Braintree Village). Use when the user asks about tenants, vacant units, upcoming lease expiries, rent levels, zones, occupancy costs, or any leasing schedule data. Can filter by property, status (Occupied/Vacant), zone, tenant name, or date range.",
-      parameters: {
-        type: "object",
-        properties: {
-          propertyName: { type: "string", description: "Filter by property name (partial match, e.g. 'Bluewater', 'Cardiff')" },
-          status: { type: "string", enum: ["Occupied", "Vacant", "Under Offer", "In Negotiation"], description: "Filter by unit status" },
-          zone: { type: "string", description: "Filter by zone name (partial match)" },
-          tenantName: { type: "string", description: "Filter by tenant name (partial match)" },
-          expiringWithinMonths: { type: "number", description: "Find units with lease expiry within this many months from now" },
-          limit: { type: "number", description: "Max results to return (default 50)" },
-        },
-        required: [],
-      },
-    },
-  });
-
   // import_leasing_schedule and import_wip_excel removed — replaced by
   // ingest_file which handles any file format with AI-driven parsing.
 
@@ -3804,27 +3005,8 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "query_turnover",
-      description: "[DEPRECATED — use sql_query instead] Search the Turnover Data Board — brand/operator revenue intelligence. Use when the user asks about a brand's turnover, revenue, sales performance, £/sqft, or occupational cost data. Can filter by company/brand name, property, category (F&B, Retail, Leisure, etc.), or period.",
-      parameters: {
-        type: "object",
-        properties: {
-          companyName: { type: "string", description: "Filter by brand/company name (partial match, e.g. 'Pret', 'JD Sports')" },
-          propertyName: { type: "string", description: "Filter by property name (partial match)" },
-          category: { type: "string", description: "Filter by category: F&B, Retail, Leisure, Services, Health & Beauty, Grocery, Fashion, Technology, Hospitality, Other" },
-          period: { type: "string", description: "Filter by period (partial match, e.g. 'FY 2025', '2024')" },
-          limit: { type: "number", description: "Max results to return (default 50)" },
-        },
-        required: [],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
       name: "query_calendar",
-      description: "[DEPRECATED — use sql_query instead] Look up calendar events and diary entries for team members. Use when the user asks about schedules, availability, upcoming meetings, viewings, or 'what's in my diary'. Can check the current user's calendar or any team member's. Returns events from Microsoft Outlook/365.",
+      description: "Look up calendar events and diary entries for team members. Use when the user asks about schedules, availability, upcoming meetings, viewings, or 'what's in my diary'. Can check the current user's calendar or any team member's. Returns events from Microsoft Outlook/365.",
       parameters: {
         type: "object",
         properties: {
@@ -3952,7 +3134,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "browse_dropbox",
-      description: "[DEPRECATED — use read_file instead] Browse and interact with the BGP Dropbox account. Use this to list folders, search for files, or read file contents. Supports listing folder contents, searching by name, and downloading/reading text from documents.",
+      description: "Browse and interact with the BGP Dropbox account. Use for listing folder contents or searching by filename/keyword. To READ a Dropbox file, use read_file with the Dropbox path — it routes to Dropbox automatically.",
       parameters: {
         type: "object",
         properties: {
@@ -3987,31 +3169,8 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
-      name: "manage_tasks",
-      description: "[DEPRECATED — use sql_write instead] Manage the user's personal task list. Create new tasks, mark tasks complete, list open tasks, or delete tasks. Use when the user asks to add a to-do, reminder, follow-up, or task. Also use to check what tasks are pending or mark something as done.",
-      parameters: {
-        type: "object",
-        properties: {
-          action: { type: "string", enum: ["list", "create", "complete", "delete"], description: "Action to perform" },
-          title: { type: "string", description: "Task title (for create)" },
-          description: { type: "string", description: "Task description (for create)" },
-          priority: { type: "string", enum: ["urgent", "high", "medium", "low"], description: "Priority level (for create). Default: medium" },
-          dueDate: { type: "string", description: "Due date in ISO format (for create)" },
-          category: { type: "string", enum: ["follow-up", "meeting", "deal", "admin", "client", "research", "viewing", "personal"], description: "Task category (for create)" },
-          taskId: { type: "string", description: "Task ID (for complete/delete)" },
-          linkedDealId: { type: "string", description: "Link task to a deal by deal ID (for create)" },
-          linkedPropertyId: { type: "string", description: "Link task to a property by property ID (for create)" },
-        },
-        required: ["action"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
       name: "log_expense",
-      description: "[DEPRECATED — use sql_write instead] Log an expense on behalf of the current user. Use for cash expenses, out-of-pocket costs, or manually recording a card purchase that wasn't captured via Stripe. Examples: '£25 cash taxi to Paddington', 'lunch with Mike Hodgson from Landsec £68', 'coffee with team £12.40'. For mileage use claim_mileage instead. The expense is created with status pending_receipt; once a receipt photo is sent via WhatsApp it auto-matches and posts to Xero.",
+      description: "Log an expense on behalf of the current user. Use for cash expenses, out-of-pocket costs, or manually recording a card purchase that wasn't captured via Stripe. Examples: '£25 cash taxi to Paddington', 'lunch with Mike Hodgson from Landsec £68', 'coffee with team £12.40'. For mileage use claim_mileage instead. The expense is created with status pending_receipt; once a receipt photo is sent via WhatsApp it auto-matches and posts to Xero.",
       parameters: {
         type: "object",
         properties: {
@@ -4071,22 +3230,6 @@ export async function getAvailableTools(): Promise<{
           query: { type: "string", description: "Natural-language search query. Supports multi-word phrases, quotes, AND/OR operators (websearch-style)." },
           source: { type: "string", enum: ["sharepoint", "email", "dropbox", "note"], description: "Optional: filter to a single source type." },
           category: { type: "string", description: "Optional: filter by AI-assigned category (e.g., 'lease', 'valuation', 'correspondence')." },
-          limit: { type: "number", description: "Max results to return (default 10, max 50)." },
-        },
-        required: ["query"],
-      },
-    },
-  });
-
-  tools.push({
-    type: "function",
-    function: {
-      name: "search_chat_history",
-      description: "[DEPRECATED — use sql_query instead] Search past ChatBGP conversations by content. Use when the user refers to 'what we discussed before', 'the chat about X', 'that conversation last week', or wants to recall something from prior chat threads. Returns matching messages with thread context.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Natural-language search query over chat message content." },
           limit: { type: "number", description: "Max results to return (default 10, max 50)." },
         },
         required: ["query"],
