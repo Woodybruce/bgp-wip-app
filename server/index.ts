@@ -400,6 +400,8 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS preferred_asset_classes TEXT[]`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS preferred_geographies TEXT[]`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS lending_appetite_notes TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS x_handle TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_interaction TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_crm_companies_lending_active ON crm_companies(lending_active) WHERE lending_active = true`,
 
     // ── Landlord debt / capital event log — distress + activity stream ──

@@ -1122,7 +1122,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
 - **KYC**: run_kyc_check for Companies House + sanctions + financial strength. deep_investigate for full D&B-style intelligence combining all sources.
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
-- **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
+- **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl. For large Excel files read_sharepoint_file returns totalRows — if startRow + returnedRows < totalRows, call again with startRow incremented to read the next page (default 300 rows per call).
 - **Leasing schedule / any data file**: query_leasing_schedule for read. For IMPORTS — any Excel, CSV, PDF, or pasted text — always use **ingest_file** (not import_leasing_schedule which no longer exists). ingest_file auto-classifies the file, parses it with AI, and returns a preview. Show the preview to the user, then call commit_ingest to write.
 - **Documents (plain text)**: generate_pdf (TEXT ONLY — no imagery, no design), generate_word, generate_pptx, export_to_excel. Use these ONLY for internal text reports.
 - **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use **generate_designed_deck** (Gamma — full visual design with imagery). NEVER use generate_pdf for these. Don't apologise afterwards about the PDF being "just text" — pick the right tool upfront.
@@ -1789,7 +1789,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "read_sharepoint_file",
-      description: "Read and extract the contents of a file from SharePoint or OneDrive. Use this when the user shares ANY SharePoint or OneDrive link or asks you to open/look at a file. Supports both team SharePoint (brucegillinghampollardlimited.sharepoint.com) and personal OneDrive (brucegillinghampollardlimited-my.sharepoint.com) URLs. Supports Excel (.xlsx/.xls), Word (.docx), PDF, CSV, and text files. You can provide either a sharing URL, a file path, or driveId + itemId from a previous browse_sharepoint_folder result.",
+      description: "Read and extract the contents of a file from SharePoint or OneDrive. Use this when the user shares ANY SharePoint or OneDrive link or asks you to open/look at a file. Supports both team SharePoint (brucegillinghampollardlimited.sharepoint.com) and personal OneDrive (brucegillinghampollardlimited-my.sharepoint.com) URLs. Supports Excel (.xlsx/.xls), Word (.docx), PDF, CSV, and text files. You can provide either a sharing URL, a file path, or driveId + itemId from a previous browse_sharepoint_folder result. For large Excel files, use startRow and maxRows to page through the data — the response will include totalRows so you know how many passes are needed.",
       parameters: {
         type: "object",
         properties: {
@@ -1804,6 +1804,18 @@ export async function getAvailableTools(): Promise<{
           itemId: {
             type: "string",
             description: "The itemId from a previous browse_sharepoint_folder result. Use together with driveId to read a file directly.",
+          },
+          startRow: {
+            type: "number",
+            description: "For Excel/CSV files: the 0-based data row to start reading from (excludes the header row). Default 0. Use to page through large files.",
+          },
+          maxRows: {
+            type: "number",
+            description: "For Excel/CSV files: maximum number of data rows to return. Default 300. Increase to 500 for wider reads.",
+          },
+          sheetName: {
+            type: "string",
+            description: "For Excel files: the specific sheet name to read. If omitted, all sheets are returned.",
           },
         },
         required: [],
@@ -4481,9 +4493,9 @@ export async function getKnowledgeContext(): Promise<string> {
 }
 
 async function executeReadSharePointFile(
-  args: { url?: string; driveId?: string; itemId?: string },
+  args: { url?: string; driveId?: string; itemId?: string; startRow?: number; maxRows?: number; sheetName?: string },
   token: string | null
-): Promise<{ success: boolean; fileName?: string; content?: string; webUrl?: string; error?: string }> {
+): Promise<{ success: boolean; fileName?: string; content?: string; webUrl?: string; error?: string; totalRows?: number; returnedRows?: number }> {
   if (args.driveId && args.itemId && token) {
     try {
       const itemRes = await fetch(
@@ -4516,8 +4528,17 @@ async function executeReadSharePointFile(
       if (!fsModule.existsSync(dir)) fsModule.mkdirSync(dir, { recursive: true });
       fsModule.writeFileSync(tmpPath, buffer);
       try {
+        const ext = path.extname(fileName).toLowerCase();
+        if ([".xlsx", ".xls", ".csv"].includes(ext)) {
+          const result = await extractExcelWithPagination(tmpPath, fileName, {
+            startRow: args.startRow ?? 0,
+            maxRows: args.maxRows ?? 300,
+            sheetName: args.sheetName,
+          });
+          return { success: true, fileName, webUrl, ...result };
+        }
         const text = await extractTextFromFile(tmpPath, fileName);
-        return { success: true, fileName, content: text.slice(0, 30000), webUrl };
+        return { success: true, fileName, content: text.slice(0, 80000), webUrl };
       } finally {
         try { fsModule.unlinkSync(tmpPath); } catch {}
       }
@@ -4559,8 +4580,17 @@ async function executeReadSharePointFile(
 
     const origName = mediaFilename.replace(/^\d+-/, "");
     try {
+      const ext = path.extname(origName).toLowerCase();
+      if ([".xlsx", ".xls", ".csv"].includes(ext)) {
+        const result = await extractExcelWithPagination(mediaPath, origName, {
+          startRow: args.startRow ?? 0,
+          maxRows: args.maxRows ?? 300,
+          sheetName: args.sheetName,
+        });
+        return { success: true, fileName: origName, webUrl: rawUrl, ...result };
+      }
       const text = await extractTextFromFile(mediaPath, origName);
-      return { success: true, fileName: origName, content: text.slice(0, 30000), webUrl: rawUrl };
+      return { success: true, fileName: origName, content: text.slice(0, 80000), webUrl: rawUrl };
     } catch (err: any) {
       return { success: false, error: `Could not read chat file ${origName}: ${err?.message}` };
     }
@@ -4688,8 +4718,18 @@ async function executeReadSharePointFile(
     }
 
     try {
+      const ext = path.extname(fileName).toLowerCase();
+      if ([".xlsx", ".xls", ".csv"].includes(ext)) {
+        const result = await extractExcelWithPagination(tempPath, fileName, {
+          startRow: args.startRow ?? 0,
+          maxRows: args.maxRows ?? 300,
+          sheetName: args.sheetName,
+        });
+        return { success: true, fileName, webUrl, ...result };
+      }
       const text = await extractTextFromFile(tempPath, fileName);
-      const truncated = text.slice(0, 20000);
+      const limit = 80000;
+      const truncated = text.slice(0, limit);
       return {
         success: true,
         fileName,
@@ -4705,6 +4745,52 @@ async function executeReadSharePointFile(
     console.error("SharePoint file read error:", err?.message);
     return { success: false, error: `Failed to read file: ${err?.message}` };
   }
+}
+
+async function extractExcelWithPagination(
+  filePath: string,
+  originalName: string,
+  opts: { startRow: number; maxRows: number; sheetName?: string }
+): Promise<{ content: string; totalRows: number; returnedRows: number }> {
+  const XLSX = (await import("xlsx")).default;
+  const ext = path.extname(originalName).toLowerCase();
+  const wb = ext === ".csv"
+    ? XLSX.read(fs.readFileSync(filePath, "utf-8"), { type: "string" })
+    : XLSX.readFile(filePath);
+
+  const sheetsToRead = opts.sheetName
+    ? [opts.sheetName].filter(s => wb.SheetNames.includes(s))
+    : wb.SheetNames;
+
+  const parts: string[] = [];
+  let totalRows = 0;
+  let returnedRows = 0;
+
+  for (const sheetName of sheetsToRead) {
+    const ws = wb.Sheets[sheetName];
+    const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as any[][];
+    if (!rows.length) continue;
+
+    const header = rows[0];
+    const dataRows = rows.slice(1);
+    totalRows += dataRows.length;
+
+    const slice = dataRows.slice(opts.startRow, opts.startRow + opts.maxRows);
+    returnedRows += slice.length;
+
+    const csvHeader = header.map(String).join(",");
+    const csvRows = slice.map(r => r.map((v: any) => {
+      const s = String(v ?? "");
+      return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(","));
+
+    parts.push(`--- Sheet: ${sheetName} (rows ${opts.startRow + 1}–${opts.startRow + slice.length} of ${dataRows.length}) ---`);
+    parts.push(csvHeader);
+    parts.push(...csvRows);
+  }
+
+  const content = parts.join("\n");
+  return { content, totalRows, returnedRows };
 }
 
 export async function extractTextFromFile(filePath: string, originalName: string): Promise<string> {
