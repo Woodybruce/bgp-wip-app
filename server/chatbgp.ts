@@ -1237,13 +1237,48 @@ ${schemaToc}`;
   return prompt;
 }
 
-export async function getMemoryContext(userId: string): Promise<string> {
+// ── Phase 3: relevance scoring helper ────────────────────────────────────
+// Lightweight keyword-overlap score — no embeddings needed.
+function scoreRelevance(text: string, query: string): number {
+  if (!query) return 0;
+  const stopWords = new Set(["the", "and", "for", "with", "this", "that", "from", "have", "been", "will", "are", "was", "has"]);
+  const queryWords = query.toLowerCase().split(/\W+/).filter(w => w.length > 3 && !stopWords.has(w));
+  if (queryWords.length === 0) return 0;
+  const textLower = text.toLowerCase();
+  let hits = 0;
+  for (const w of queryWords) {
+    if (textLower.includes(w)) hits++;
+  }
+  return hits / queryWords.length;
+}
+
+export async function getMemoryContext(userId: string, query?: string): Promise<string> {
   try {
     const memories = await storage.getMemories(userId);
     if (!memories || memories.length === 0) return "";
 
+    let chosen: typeof memories;
+    if (query && query.trim()) {
+      // Score each memory against the current query and take the top 20
+      const scored = memories
+        .map(m => ({ m, score: scoreRelevance(m.content + " " + m.category, query) }))
+        .sort((a, b) => b.score - a.score || (b.m.updatedAt?.getTime() ?? 0) - (a.m.updatedAt?.getTime() ?? 0));
+      // Always include the 5 most recent (recency) + top scorers, deduplicated
+      const recent = memories.slice(0, 5);
+      const topScored = scored.filter(s => s.score > 0).slice(0, 15).map(s => s.m);
+      const seen = new Set<string>();
+      chosen = [];
+      for (const m of [...recent, ...topScored]) {
+        if (!seen.has(m.id)) { seen.add(m.id); chosen.push(m); }
+      }
+      chosen = chosen.slice(0, 20);
+    } else {
+      // No query — return most recent 25 across all categories
+      chosen = memories.slice(0, 25);
+    }
+
     const grouped: Record<string, string[]> = {};
-    for (const m of memories) {
+    for (const m of chosen) {
       if (!grouped[m.category]) grouped[m.category] = [];
       grouped[m.category].push(m.content);
     }
@@ -1256,7 +1291,7 @@ export async function getMemoryContext(userId: string): Promise<string> {
 
     for (const [category, items] of Object.entries(grouped)) {
       ctx += `### ${category}\n`;
-      for (const item of items.slice(0, 30)) {
+      for (const item of items) {
         ctx += `- ${item}\n`;
       }
     }
@@ -1267,21 +1302,42 @@ export async function getMemoryContext(userId: string): Promise<string> {
   }
 }
 
-export async function getBusinessLearningsContext(): Promise<string> {
+export async function getBusinessLearningsContext(query?: string): Promise<string> {
   try {
-    const cached = getCached<string>("businessLearnings");
-    if (cached) return cached;
-
-    const { chatbgpLearnings } = await import("@shared/schema");
-    const learnings = await db.select()
-      .from(chatbgpLearnings)
-      .where(eq(chatbgpLearnings.active, true))
-      .orderBy(desc(chatbgpLearnings.createdAt))
-      .limit(100);
+    // Cache the raw learnings list (not the filtered result — query varies per request)
+    const cacheKey = "businessLearnings_raw";
+    let learnings = getCached<any[]>(cacheKey);
+    if (!learnings) {
+      const { chatbgpLearnings } = await import("@shared/schema");
+      learnings = await db.select()
+        .from(chatbgpLearnings)
+        .where(eq(chatbgpLearnings.active, true))
+        .orderBy(desc(chatbgpLearnings.createdAt))
+        .limit(200);
+      setCache(cacheKey, learnings, 5 * 60 * 1000);
+    }
     if (!learnings || learnings.length === 0) return "";
 
+    let chosen: typeof learnings;
+    if (query && query.trim()) {
+      const scored = learnings
+        .map((l: any) => ({ l, score: scoreRelevance(l.learning + " " + (l.category || ""), query) }))
+        .sort((a: any, b: any) => b.score - a.score);
+      // Top 20 by relevance; always include the 5 most recent (already at front due to createdAt DESC)
+      const topScored = scored.filter((s: any) => s.score > 0).slice(0, 15).map((s: any) => s.l);
+      const recent = learnings.slice(0, 5);
+      const seen = new Set<number>();
+      chosen = [];
+      for (const l of [...recent, ...topScored]) {
+        if (!seen.has(l.id)) { seen.add(l.id); chosen.push(l); }
+      }
+      chosen = chosen.slice(0, 20);
+    } else {
+      chosen = learnings.slice(0, 40);
+    }
+
     const grouped: Record<string, string[]> = {};
-    for (const l of learnings) {
+    for (const l of chosen) {
       const cat = l.category || "general";
       if (!grouped[cat]) grouped[cat] = [];
       grouped[cat].push(l.learning);
@@ -1301,11 +1357,10 @@ export async function getBusinessLearningsContext(): Promise<string> {
 
     for (const [category, items] of Object.entries(grouped)) {
       ctx += `### ${categoryLabels[category] || category}\n`;
-      for (const item of items.slice(0, 15)) {
+      for (const item of items) {
         ctx += `- ${item}\n`;
       }
     }
-    setCache("businessLearnings", ctx, 5 * 60 * 1000);
     return ctx;
   } catch (err) {
     console.error("Failed to load business learnings:", err);
@@ -1316,35 +1371,44 @@ export async function getBusinessLearningsContext(): Promise<string> {
 export async function extractAndSaveMemories(
   userId: string,
   userMessage: string,
-  assistantReply: string
+  assistantReply: string,
+  recentTurns?: Array<{ role: "user" | "assistant"; content: string }>
 ): Promise<void> {
   try {
-    const extractionPrompt = `You are the memory system for ChatBGP, the AI assistant at Bruce Gillingham Pollard (BGP), a London property consultancy. Analyse this conversation exchange and extract facts worth remembering PERMANENTLY. These memories persist forever and are loaded into every future conversation — so only save genuinely valuable, reusable knowledge.
+    // Build conversation excerpt: last 3 turns + current exchange
+    let conversationText = "";
+    if (recentTurns && recentTurns.length > 0) {
+      const prior = recentTurns.slice(-4).map(t => `${t.role === "user" ? "User" : "Assistant"}: ${t.content.slice(0, 800)}`).join("\n\n");
+      conversationText = `${prior}\n\nUser: ${userMessage.slice(0, 2000)}\n\nAssistant: ${assistantReply.slice(0, 3000)}`;
+    } else {
+      conversationText = `User: ${userMessage.slice(0, 2000)}\n\nAssistant: ${assistantReply.slice(0, 3000)}`;
+    }
 
-User said: "${userMessage.slice(0, 2000)}"
+    const extractionPrompt = `You are the memory system for ChatBGP, the AI assistant at Bruce Gillingham Pollard (BGP), a London property consultancy. Analyse this conversation and extract facts worth remembering PERMANENTLY. These memories persist forever and are loaded into future conversations — so only save genuinely valuable, reusable knowledge.
 
-Assistant replied: "${assistantReply.slice(0, 3000)}"
+Conversation:
+${conversationText}
 
 Extract facts in these categories:
 - "Preferences" — User's working style, communication preferences, report format preferences, or recurring requests
-- "Deals" — Specific property deals, transactions, negotiations, or pipeline updates mentioned — include property names, companies, fees, and stages
-- "Clients" — Client names, relationships, key contacts, preferences, or important details about who they are. Who prefers to deal with whom
-- "Properties" — Specific properties, addresses, buildings, or locations discussed — include key facts (tenure, size, asset class, landlord)
-- "Relationships" — Who works with whom, which agents handle which clients, who the decision-makers are, team dynamics
+- "Deals" — Specific property deals, transactions, negotiations, or pipeline updates — include property names, companies, fees, and stages
+- "Clients" — Client names, relationships, key contacts, preferences, or important details about who they are
+- "Properties" — Specific properties, addresses, buildings discussed — include key facts (tenure, size, asset class, landlord)
+- "Relationships" — Who works with whom, which agents handle which clients, who the decision-makers are
 - "Market" — Market insights, rent levels, yields, cap rates, comparable evidence, market trends discussed or discovered
 - "Business" — Business decisions, strategies, targets, fee structures, processes, or company information
 - "Personal" — User's role, team, areas of responsibility, expertise, or working patterns
 
 IMPORTANT rules:
-- Only extract facts that would be useful in a FUTURE conversation — not just restating what was discussed
-- Be specific: "Rupert prefers brief pipeline summaries with just deal name, status, and fee" is better than "User likes short reports"
-- Include names, numbers, and specifics whenever possible
-- If the assistant discovered something via a tool (KYC result, web search finding, property lookup), capture the key finding
-- If the user corrected the assistant or clarified something, capture the correction
+- Only extract facts useful in a FUTURE conversation — not just restating what was discussed
+- Be specific: "Rupert prefers brief pipeline summaries with just deal name, status, and fee" beats "User likes short reports"
+- Include names, numbers, and specifics wherever possible
+- If the assistant discovered something via a tool (KYC, web search, property lookup), capture the key finding
+- If the user corrected the assistant, capture the correction
 - Do NOT extract: greetings, generic questions, "thanks", confirmations, or trivial exchanges
-- Do NOT extract facts that are just CRM data (that's already in the database) — only extract INSIGHTS about that data
+- Do NOT extract raw CRM data (it's already in the database) — only extract INSIGHTS about that data
 
-Return a JSON array of objects with "category" and "content" fields. Max 5 items. If nothing worth remembering, return [].
+Return a JSON array of objects with "category" and "content" fields. Max 6 items. If nothing worth remembering, return [].
 
 Example: [{"category": "Relationships", "content": "Charlotte Roberts is the primary BGP contact for The Cadogan Estate — they prefer dealing with her exclusively for all Sloane Street matters"}, {"category": "Market", "content": "Zone A rents on Brompton Road have softened to £250-280 psf, down from £300+ pre-pandemic according to Rupert"}]
 
@@ -1353,7 +1417,7 @@ Return ONLY the JSON array, no other text.`;
     const extraction = await callClaude({
       model: CHATBGP_HELPER_MODEL,
       messages: [{ role: "user", content: extractionPrompt }],
-      max_completion_tokens: 800,
+      max_completion_tokens: 900,
     });
 
     const raw = extraction.choices[0]?.message?.content?.trim() || "[]";
@@ -1362,36 +1426,95 @@ Return ONLY the JSON array, no other text.`;
 
     if (Array.isArray(facts) && facts.length > 0) {
       const existingMemories = await storage.getMemories(userId);
-      const existingContents = new Set(existingMemories.map(m => m.content.toLowerCase().trim()));
 
-      for (const fact of facts.slice(0, 5)) {
-        if (fact.category && fact.content && fact.content.length > 10) {
-          const normalised = fact.content.toLowerCase().trim();
-          const existingArr = Array.from(existingContents);
-          const isDuplicate = existingContents.has(normalised) || 
-            existingArr.some(existing => {
-              if (existing.length < 20 || normalised.length < 20) return false;
-              const words1 = normalised.split(/\s+/);
-              const words2Set = new Set(existing.split(/\s+/));
-              const intersection = words1.filter((w: string) => words2Set.has(w));
-              return intersection.length / Math.max(words1.length, words2Set.size) > 0.7;
-            });
-          
-          if (!isDuplicate) {
-            await storage.createMemory({
-              userId,
-              category: fact.category,
-              content: fact.content,
-              source: "conversation",
-            });
-            existingContents.add(normalised);
+      for (const fact of facts.slice(0, 6)) {
+        if (!fact.category || !fact.content || fact.content.length < 10) continue;
+        const normalised = fact.content.toLowerCase().trim();
+        const factWords = normalised.split(/\s+/);
+
+        // Find near-duplicate: same category + >60% word overlap
+        const nearDupe = existingMemories.find(existing => {
+          if (existing.category !== fact.category) return false;
+          const existingNorm = existing.content.toLowerCase().trim();
+          if (existingNorm === normalised) return true;
+          if (existingNorm.length < 20 || normalised.length < 20) return false;
+          const existWords = new Set(existingNorm.split(/\s+/));
+          const intersection = factWords.filter((w: string) => existWords.has(w));
+          return intersection.length / Math.max(factWords.length, existWords.size) > 0.6;
+        });
+
+        if (nearDupe) {
+          // Update the existing memory with the more specific/recent version if the new one is longer
+          if (fact.content.length > nearDupe.content.length) {
+            try {
+              await pool.query(
+                `UPDATE chatbgp_memories SET content = $1, updated_at = NOW() WHERE id = $2`,
+                [fact.content, nearDupe.id]
+              );
+            } catch {}
           }
+        } else {
+          await storage.createMemory({
+            userId,
+            category: fact.category,
+            content: fact.content,
+            source: "conversation",
+          });
+          existingMemories.push({ ...fact, id: "", userId, createdAt: new Date(), updatedAt: new Date(), source: "conversation" });
         }
       }
     }
   } catch (err) {
     console.error("Memory extraction error:", err);
   }
+}
+
+// ── Phase 3: memory consolidation ────────────────────────────────────────
+// Merges near-duplicate memories within a user's memory bank.
+// Called on-demand from the admin endpoint, not automatically.
+export async function consolidateUserMemories(userId: string): Promise<{ merged: number; deleted: number }> {
+  const memories = await storage.getMemories(userId);
+  let merged = 0;
+  let deleted = 0;
+  const toDelete = new Set<string>();
+
+  for (let i = 0; i < memories.length; i++) {
+    if (toDelete.has(memories[i].id)) continue;
+    const a = memories[i];
+    const aWords = a.content.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+
+    for (let j = i + 1; j < memories.length; j++) {
+      if (toDelete.has(memories[j].id)) continue;
+      const b = memories[j];
+      if (a.category !== b.category) continue;
+
+      const bWords = new Set(b.content.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+      const intersection = aWords.filter(w => bWords.has(w));
+      const overlap = intersection.length / Math.max(aWords.length, bWords.size);
+
+      if (overlap > 0.65) {
+        // Keep the longer/more specific one, delete the shorter
+        const keepA = a.content.length >= b.content.length;
+        if (keepA) {
+          toDelete.add(b.id);
+        } else {
+          // Update a with b's content (more specific), then mark b for deletion
+          try {
+            await pool.query(`UPDATE chatbgp_memories SET content = $1, updated_at = NOW() WHERE id = $2`, [b.content, a.id]);
+            merged++;
+          } catch {}
+          toDelete.add(b.id);
+        }
+        deleted++;
+      }
+    }
+  }
+
+  for (const id of toDelete) {
+    try { await storage.deleteMemory(id); } catch {}
+  }
+
+  return { merged, deleted };
 }
 
 export async function getEmailAndCalendarContext(req: Request): Promise<string> {
@@ -10959,6 +11082,36 @@ export function setupChatBGPRoutes(app: Express) {
     res.json({ connected: hasKey });
   });
 
+  // ── Phase 3: memory admin endpoints ──────────────────────────────────────
+  app.get("/api/chatbgp/memories", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session.userId!;
+      const memories = await storage.getMemories(userId);
+      res.json({ memories, total: memories.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/chatbgp/memories/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      await storage.deleteMemory(String(req.params.id));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/chatbgp/memories/consolidate", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.session.userId!;
+      const result = await consolidateUserMemories(userId);
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/chatbgp/chat-with-files", requireAuth, chatUpload.array("files", 20), async (req: Request, res: Response) => {
     const files = req.files as Express.Multer.File[];
     let messages: Array<{ role: "user" | "assistant"; content: any }> = [];
@@ -11054,12 +11207,14 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       const fileUserId = req.session.userId || (req as any).tokenUserId || "unknown";
+      const lastFileUserMsg = [...messages].reverse().find(m => m.role === "user");
+      const fileQuery = typeof lastFileUserMsg?.content === "string" ? lastFileUserMsg.content.slice(0, 500) : "";
       const [knowledgeContext, fileMemoryContext, fileEmailCalContext, fileCrmCtx, businessLearnings] = await Promise.all([
         withTimeout(getKnowledgeContext(), 8000, ""),
-        withTimeout(getMemoryContext(fileUserId), 8000, ""),
+        withTimeout(getMemoryContext(fileUserId, fileQuery), 8000, ""),
         withTimeout(getEmailAndCalendarContext(req), 8000, ""),
         withTimeout(getCrmContext(), 8000, ""),
-        withTimeout(getBusinessLearningsContext(), 8000, ""),
+        withTimeout(getBusinessLearningsContext(fileQuery), 8000, ""),
       ]);
       let systemPrompt: string;
       try {
@@ -11722,18 +11877,25 @@ export function setupChatBGPRoutes(app: Express) {
     try {
       const { tools } = await getAvailableTools();
       const userId = req.session.userId!;
+
+      // Extract current query for relevance-scored memory retrieval (Phase 3)
+      const incomingMessages: any[] = result.data.messages || [];
+      const lastUserMessage = [...incomingMessages].reverse().find((m: any) => m.role === "user");
+      const currentQuery = typeof lastUserMessage?.content === "string" ? lastUserMessage.content.slice(0, 500) : "";
+      const recentTurnsForMemory = incomingMessages.slice(-6).filter((m: any) => m.role === "user" || m.role === "assistant").map((m: any) => ({ role: m.role as "user" | "assistant", content: typeof m.content === "string" ? m.content : "" }));
+
       // Load contexts with size limits and error handling
       let knowledgeContext2 = "";
       let memoryContext = "";
       let emailCalContext = "";
       let crmCtx = "";
       let businessLearnings2 = "";
-      
+
       try {
         sendProgress("Gathering intelligence...");
         const contextResults = await Promise.all([
-          withTimeout(getMemoryContext(userId), 3000, ""),
-          withTimeout(getBusinessLearningsContext(), 3000, ""),
+          withTimeout(getMemoryContext(userId, currentQuery), 3000, ""),
+          withTimeout(getBusinessLearningsContext(currentQuery), 3000, ""),
           withTimeout(getCrmContext(), 3000, ""),
           withTimeout(getKnowledgeContext(), 3000, ""),
           withTimeout(getEmailAndCalendarContext(req), 3000, ""),
@@ -12039,7 +12201,7 @@ export function setupChatBGPRoutes(app: Express) {
 
             const lastUserMsg = result.data.messages.filter(m => m.role === "user").pop();
             if (lastUserMsg && message.content.length > 20) {
-              extractAndSaveMemories(userId, lastUserMsg.content, message.content).catch(() => {});
+              extractAndSaveMemories(userId, lastUserMsg.content, message.content, recentTurnsForMemory).catch(() => {});
             }
             return;
           }
@@ -12211,9 +12373,11 @@ export function setupChatBGPRoutes(app: Express) {
       // Load full contexts (same as main ChatBGP) so Excel add-in has the same reach
       sendProgress("Gathering intelligence...");
       const userId = req.session.userId!;
+      const lastExcelUserMsg = [...messages].reverse().find(m => m.role === "user");
+      const excelQuery = typeof lastExcelUserMsg?.content === "string" ? lastExcelUserMsg.content.slice(0, 500) : "";
       const [memoryContext, businessLearnings, crmCtx, knowledgeContext, emailCalContext] = await Promise.all([
-        withTimeout(getMemoryContext(userId), 5000, ""),
-        withTimeout(getBusinessLearningsContext(), 5000, ""),
+        withTimeout(getMemoryContext(userId, excelQuery), 5000, ""),
+        withTimeout(getBusinessLearningsContext(excelQuery), 5000, ""),
         withTimeout(getCrmContext(), 5000, ""),
         withTimeout(getKnowledgeContext(), 5000, ""),
         withTimeout(getEmailAndCalendarContext(req), 5000, ""),
