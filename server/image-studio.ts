@@ -950,13 +950,14 @@ export function registerImageStudioRoutes(app: Express) {
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
       if (!image) return res.status(404).json({ error: "Not found" });
 
-      if (image.localPath && fs.existsSync(image.localPath)) {
-        res.setHeader("Content-Type", image.mimeType);
+      const imgBuffer = await readPersistedImage(image.localPath);
+      if (imgBuffer) {
+        res.setHeader("Content-Type", image.mimeType || "image/jpeg");
         res.setHeader("Cache-Control", "public, max-age=86400");
-        return res.sendFile(image.localPath);
+        return res.end(imgBuffer);
       }
 
-      res.status(404).json({ error: "File not found on disk" });
+      res.status(404).json({ error: "Image not found" });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1096,8 +1097,8 @@ export function registerImageStudioRoutes(app: Express) {
       const name = String(req.params.name || "").trim();
       if (!name) return res.status(400).json({ error: "name required" });
 
-      const { rows } = await pool.query<{ id: string; local_path: string | null; mime_type: string }>(
-        `SELECT id, local_path, mime_type
+      const { rows } = await pool.query<{ id: string; local_path: string | null; mime_type: string; thumbnail_data: string | null }>(
+        `SELECT id, local_path, mime_type, thumbnail_data
          FROM image_studio_images
          WHERE lower(trim(brand_name)) = lower(trim($1))
          ORDER BY created_at DESC
@@ -1106,13 +1107,28 @@ export function registerImageStudioRoutes(app: Express) {
       );
 
       const row = rows[0];
-      if (!row || !row.local_path || !fs.existsSync(row.local_path)) {
-        return res.status(404).json({ error: "no logo" });
+      if (!row) return res.status(404).json({ error: "no logo" });
+
+      // Try full image from disk or DB file_storage first
+      const imgBuffer = await readPersistedImage(row.local_path);
+      if (imgBuffer) {
+        res.setHeader("Content-Type", row.mime_type || "image/jpeg");
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.end(imgBuffer);
       }
 
-      res.setHeader("Content-Type", row.mime_type || "image/png");
-      res.setHeader("Cache-Control", "public, max-age=86400");
-      res.sendFile(row.local_path);
+      // Fall back to the thumbnail (base64 stored in DB)
+      if (row.thumbnail_data) {
+        const b64Match = row.thumbnail_data.match(/^data:([^;]+);base64,(.+)$/);
+        if (b64Match) {
+          const buf = Buffer.from(b64Match[2], "base64");
+          res.setHeader("Content-Type", b64Match[1]);
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.end(buf);
+        }
+      }
+
+      return res.status(404).json({ error: "no logo" });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

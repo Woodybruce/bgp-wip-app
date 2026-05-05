@@ -2303,18 +2303,28 @@ function ImageCard({
         </div>
       )}
       <div className="aspect-square" onClick={selectMode ? undefined : onView}>
-        {image.thumbnailData ? (
-          <img
-            src={image.thumbnailData}
-            alt={image.fileName}
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-muted">
-            <ImageIconLucide className="h-8 w-8 text-muted-foreground/30" />
-          </div>
-        )}
+        <img
+          src={image.thumbnailData || `/api/image-studio/${image.id}/full`}
+          alt={image.fileName}
+          className="w-full h-full object-cover"
+          loading="lazy"
+          onError={(e) => {
+            const t = e.currentTarget;
+            if (!t.dataset.fallback) {
+              t.dataset.fallback = "1";
+              t.src = `/api/image-studio/${image.id}/full`;
+            } else {
+              t.style.display = "none";
+              const parent = t.parentElement;
+              if (parent && !parent.querySelector(".img-fallback-icon")) {
+                const div = document.createElement("div");
+                div.className = "img-fallback-icon w-full h-full flex items-center justify-center bg-muted";
+                div.innerHTML = '<svg class="h-8 w-8 text-muted-foreground/30" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+                parent.appendChild(div);
+              }
+            }
+          }}
+        />
       </div>
       <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
       <div className="absolute bottom-0 left-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">

@@ -6023,7 +6023,15 @@ export async function executeCrmToolRaw(
       }
       const uniqueName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
       const localPath = pathModule.default.join(uploadsDir, uniqueName);
-      fsModule.default.writeFileSync(localPath, imageBuffer);
+
+      // Dual-write: disk + DB file_storage so image survives Railway redeploys
+      try { fsModule.default.writeFileSync(localPath, imageBuffer); } catch {}
+      try {
+        const { saveFile } = await import("./file-storage");
+        await saveFile(`image-studio/${uniqueName}`, imageBuffer, `image/${ext}`, `${fileName}.${ext}`);
+      } catch (e: any) {
+        console.warn("[chatbgp] image-studio DB persist failed:", e?.message);
+      }
 
       let width: number | null = null, height: number | null = null;
       let thumbnailData: string | null = null;
