@@ -3,7 +3,7 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { db } from "./db";
 import { users } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 const SHARED_MAILBOX = "chatbgp@brucegillinghampollard.com";
 const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -137,6 +137,37 @@ export interface EmailAttachment {
   contentBytes: string;
 }
 
+async function getSuppressedRecipients(emails: string[]): Promise<Set<string>> {
+  const normalised = emails.map((e) => e.trim().toLowerCase()).filter(Boolean);
+  if (normalised.length === 0) return new Set();
+  const rows = await db
+    .select({ email: users.email, username: users.username, isActive: users.isActive })
+    .from(users)
+    .where(inArray(users.email, normalised));
+  const suppressed = new Set<string>();
+  for (const row of rows) {
+    if (row.isActive === false && row.email) {
+      suppressed.add(row.email.toLowerCase());
+    }
+  }
+  // Also catch users whose username (which is normally the email) matches
+  const usernameRows = await db
+    .select({ username: users.username, isActive: users.isActive })
+    .from(users)
+    .where(inArray(users.username, normalised));
+  for (const row of usernameRows) {
+    if (row.isActive === false) {
+      suppressed.add(row.username.toLowerCase());
+    }
+  }
+  return suppressed;
+}
+
+function filterRecipients(list: string[] | undefined, suppressed: Set<string>): string[] | undefined {
+  if (!list) return list;
+  return list.filter((email) => !suppressed.has(email.trim().toLowerCase()));
+}
+
 export async function sendSharedMailboxEmail(opts: { to: string; subject: string; body: string; cc?: string; attachments?: EmailAttachment[] }): Promise<void> {
   const recipients = [opts.to];
   const ccRecipients = opts.cc ? [opts.cc] : undefined;
@@ -151,13 +182,26 @@ export async function sendFromSharedMailbox(
   bccRecipients?: string[],
   attachments?: EmailAttachment[]
 ): Promise<void> {
-  const toArray = recipients.map((email) => ({
+  const allRecipients = [...recipients, ...(ccRecipients || []), ...(bccRecipients || [])];
+  const suppressed = await getSuppressedRecipients(allRecipients);
+  if (suppressed.size > 0) {
+    console.warn(`[shared-mailbox] Skipping suppressed recipients (account on hold): ${Array.from(suppressed).join(", ")}`);
+  }
+  const filteredRecipients = filterRecipients(recipients, suppressed) || [];
+  if (filteredRecipients.length === 0) {
+    console.warn(`[shared-mailbox] All TO recipients suppressed for "${subject}" — skipping send`);
+    return;
+  }
+  const filteredCc = filterRecipients(ccRecipients, suppressed);
+  const filteredBcc = filterRecipients(bccRecipients, suppressed);
+
+  const toArray = filteredRecipients.map((email) => ({
     emailAddress: { address: email },
   }));
-  const ccArray = ccRecipients?.map((email) => ({
+  const ccArray = filteredCc?.map((email) => ({
     emailAddress: { address: email },
   }));
-  const bccArray = bccRecipients?.map((email) => ({
+  const bccArray = filteredBcc?.map((email) => ({
     emailAddress: { address: email },
   }));
 
@@ -534,18 +578,29 @@ export function setupSharedMailboxRoutes(app: Express) {
       if (!body || typeof body !== "string") {
         return res.status(400).json({ message: "Body is required" });
       }
+      const allRecipients = [...recipients, ...(ccRecipients || []), ...(bccRecipients || [])];
+      const suppressed = await getSuppressedRecipients(allRecipients);
+      if (suppressed.size > 0) {
+        console.warn(`[user-mail] Skipping suppressed recipients (account on hold): ${Array.from(suppressed).join(", ")}`);
+      }
+      const filteredTo = filterRecipients(recipients, suppressed) || [];
+      if (filteredTo.length === 0) {
+        return res.status(409).json({ message: "All recipients are on hold — email not sent", suppressed: Array.from(suppressed) });
+      }
+      const filteredCc = filterRecipients(ccRecipients, suppressed);
+      const filteredBcc = filterRecipients(bccRecipients, suppressed);
       const token = await getAppToken();
-      const toRecipients = recipients.map((r: string) => ({ emailAddress: { address: r } }));
+      const toRecipients = filteredTo.map((r: string) => ({ emailAddress: { address: r } }));
       const message: any = {
         subject,
         body: { contentType: "HTML", content: body },
         toRecipients,
       };
-      if (ccRecipients?.length) {
-        message.ccRecipients = ccRecipients.map((r: string) => ({ emailAddress: { address: r } }));
+      if (filteredCc?.length) {
+        message.ccRecipients = filteredCc.map((r: string) => ({ emailAddress: { address: r } }));
       }
-      if (bccRecipients?.length) {
-        message.bccRecipients = bccRecipients.map((r: string) => ({ emailAddress: { address: r } }));
+      if (filteredBcc?.length) {
+        message.bccRecipients = filteredBcc.map((r: string) => ({ emailAddress: { address: r } }));
       }
       const graphRes = await fetch(
         `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userEmail)}/sendMail`,

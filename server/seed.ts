@@ -36,7 +36,7 @@ const TEAM_MEMBERS = [
   { name: "Emily Cann", username: "emilyc@brucegillinghampollard.com", email: "emilyc@brucegillinghampollard.com", phone: "+44 (0)7516 660 791", role: "Graduate Surveyor", department: "London Leasing", team: "London Leasing" },
   { name: "Will Penfold", username: "willp@brucegillinghampollard.com", email: "willp@brucegillinghampollard.com", phone: "+44 (0)7760 881 270", role: "Graduate Surveyor", department: "London Leasing", team: "London Leasing" },
   { name: "Johnny", username: "johnny@brucegillinghampollard.com", email: "johnny@brucegillinghampollard.com", phone: "", role: "", department: "", team: "" },
-  { name: "Mark Warne", username: "mark.warne@landsec.com", email: "mark.warne@landsec.com", phone: "", role: "Client", department: "Landsec", team: "Landsec" },
+  { name: "Mark Warne", username: "mark.warne@landsec.com", email: "mark.warne@landsec.com", phone: "", role: "Client", department: "Landsec", team: "Landsec", isActive: false },
 ];
 
 const OLD_TO_NEW_USERNAME: Record<string, string> = {
@@ -205,7 +205,17 @@ async function seedUsers() {
         role: member.role || null,
         department: member.department,
         team: (member as any).team || null,
+        isActive: (member as any).isActive ?? true,
       });
+    }
+  }
+
+  // Idempotently sync hold state for accounts flagged as inactive in the seed
+  for (const member of TEAM_MEMBERS) {
+    if ((member as any).isActive === false) {
+      await db.execute(
+        sql`UPDATE ${users} SET is_active = false WHERE username = ${member.username}`
+      );
     }
   }
 
