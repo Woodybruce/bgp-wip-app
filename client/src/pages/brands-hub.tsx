@@ -460,7 +460,7 @@ function BrandExplorer() {
     try { return localStorage.getItem("brand-explorer-search") || ""; } catch { return ""; }
   });
 
-  const { data: allCompanies = [], isLoading: companiesLoading, isError: companiesError } = useQuery<any[]>({
+  const { data: allCompanies = [], isLoading: companiesLoading, isError: companiesError, error: companiesErrorObj } = useQuery<any[]>({
     queryKey: ["/api/crm/companies", "brand-explorer"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/crm/companies");
@@ -662,7 +662,7 @@ function BrandExplorer() {
               <p className="text-xs mt-1 text-amber-500">{companies.length} brands loaded — try clearing the category filter above</p>
             )}
             {allCompanies.length === 0 && companiesError && (
-              <p className="text-xs mt-1 text-red-500">Failed to load companies from server — try refreshing</p>
+              <p className="text-xs mt-1 text-red-500">Failed to load companies — {String((companiesErrorObj as any)?.message || "server error")}</p>
             )}
             {allCompanies.length === 0 && !companiesError && !companiesLoading && (
               <p className="text-xs mt-1">No companies in CRM — <a href="/companies" className="underline">check CRM</a></p>
