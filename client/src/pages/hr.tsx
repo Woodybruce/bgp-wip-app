@@ -817,10 +817,11 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
   const [editOpen, setEditOpen] = useState(false);
   const isOwn = person.id === currentUserId;
 
-  // Card from expenses system
+  // Card from expenses system (admin-only endpoint)
   const { data: cardholder } = useQuery<any>({
     queryKey: ["/api/expenses/cardholders"],
-    select: (data: any[]) => data?.find((c: any) => c.userId === person.id),
+    enabled: isAdmin,
+    select: (data: any[]) => Array.isArray(data) ? data.find((c: any) => c.userId === person.id) : undefined,
   });
 
   const { data: expenseSummary } = useQuery<any>({

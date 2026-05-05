@@ -416,13 +416,13 @@ export default function BrandsHub() {
                             {formatSize(r.size)}
                           </Badge>
                         ) : null}
-                        {r.requirement_locations && r.requirement_locations.length > 0 && (
+                        {Array.isArray(r.requirement_locations) && r.requirement_locations.length > 0 && (
                           <Badge variant="outline" className="text-[9px] px-1.5 py-0">
                             <MapPin className="w-2.5 h-2.5 mr-0.5" />
                             {r.requirement_locations.slice(0, 2).join(", ")}
                           </Badge>
                         )}
-                        {r.use?.length ? (
+                        {Array.isArray(r.use) && r.use.length > 0 ? (
                           <Badge variant="outline" className="text-[9px] px-1.5 py-0">{r.use.join(", ")}</Badge>
                         ) : null}
                       </div>
@@ -584,12 +584,12 @@ function BrandExplorer() {
   });
 
   const companies = useMemo(
-    () => (allCompanies as any[]).filter((c: any) => (c.companyType || "").startsWith("Tenant")),
+    () => Array.isArray(allCompanies) ? allCompanies.filter((c: any) => (c.companyType || "").startsWith("Tenant")) : [],
     [allCompanies]
   );
 
   const companyById = useMemo(
-    () => new Map((allCompanies as any[]).map((c: any) => [c.id, c])),
+    () => new Map(Array.isArray(allCompanies) ? allCompanies.map((c: any) => [c.id, c]) : []),
     [allCompanies]
   );
 
@@ -598,7 +598,7 @@ function BrandExplorer() {
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/news-feed/articles?limit=40");
       const all = await res.json();
-      return (all as any[])
+      return (Array.isArray(all) ? all : [])
         .filter((a: any) => a.category === "Retail" || a.category === "Hospitality")
         .slice(0, 12);
     },
@@ -908,20 +908,21 @@ function AutoTurnoverStatus() {
 function TurnoverResearchPanel({ onResearch, researchingId }: { onResearch: (id: string) => void; researchingId: string | null }) {
   const [search, setSearch] = useState("");
 
-  const { data: companies = [] } = useQuery<any[]>({
-    queryKey: ["/api/crm/companies"],
+  const { data: companiesRaw } = useQuery<any[]>({
+    queryKey: ["/api/crm/companies", "tenants-for-research"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/crm/companies");
       const all = await res.json();
-      return (all as any[]).filter((c: any) => (c.companyType || "").startsWith("Tenant"));
+      return Array.isArray(all) ? all.filter((c: any) => (c.companyType || "").startsWith("Tenant")) : [];
     },
     staleTime: 120_000,
   });
+  const companies = Array.isArray(companiesRaw) ? companiesRaw : [];
 
   const filtered = useMemo(() => {
     if (!search.trim()) return companies.slice(0, 20);
     const s = search.toLowerCase();
-    return companies.filter((c: any) => c.name.toLowerCase().includes(s)).slice(0, 20);
+    return companies.filter((c: any) => (c.name || "").toLowerCase().includes(s)).slice(0, 20);
   }, [companies, search]);
 
   return (
