@@ -452,18 +452,18 @@ export function setupHrRoutes(app: Express) {
   // ── Policy documents (SharePoint-backed) ─────────────────────────────────
 
   app.get("/api/hr/policies", requireAuth, async (_req, res) => {
-    // Return static list of known policy docs from SharePoint HR/Policies & Procedures
+    const base = "https://brucegillinghampollardlimited.sharepoint.com/sites/BGP/Shared%20Documents/HR/Policies%20%26%20Procedures";
     const policies = [
-      { name: "AML Policy", category: "Compliance", sharepointFolder: "AML" },
-      { name: "Anti-Bribery Policy", category: "Compliance", sharepointFolder: "Anti bribery" },
-      { name: "Commission Scheme", category: "Compensation", sharepointFolder: "Commission scheme" },
-      { name: "Complaints Handling Procedure", category: "Operations", sharepointFolder: "Complaints handling procedure" },
-      { name: "Equality Policy", category: "HR", sharepointFolder: "Equality" },
-      { name: "Expenses Policy", category: "Finance", sharepointFolder: "Expenses" },
-      { name: "Fire Safety Policy", category: "Health & Safety", sharepointFolder: "Fire safety" },
-      { name: "Living Wage Policy", category: "HR", sharepointFolder: "Living Wage" },
-      { name: "Maternity Policy", category: "HR", sharepointFolder: "Maternity Policy" },
-      { name: "Safety at Work", category: "Health & Safety", sharepointFolder: "Safety at work" },
+      { name: "AML Policy",                     category: "Compliance",      url: `${base}/AML` },
+      { name: "Anti-Bribery Policy",             category: "Compliance",      url: `${base}/Anti%20bribery` },
+      { name: "Commission Scheme",               category: "Compensation",    url: `${base}/Commission%20scheme` },
+      { name: "Complaints Handling Procedure",   category: "Operations",      url: `${base}/Complaints%20handling%20procedure` },
+      { name: "Equality Policy",                 category: "HR",              url: `${base}/Equality` },
+      { name: "Expenses Policy",                 category: "Finance",         url: `${base}/Expenses` },
+      { name: "Fire Safety Policy",              category: "Health & Safety", url: `${base}/Fire%20safety` },
+      { name: "Living Wage Policy",              category: "HR",              url: `${base}/Living%20Wage` },
+      { name: "Maternity Policy",                category: "HR",              url: `${base}/Maternity%20Policy` },
+      { name: "Safety at Work",                  category: "Health & Safety", url: `${base}/Safety%20at%20work` },
     ];
     res.json(policies);
   });

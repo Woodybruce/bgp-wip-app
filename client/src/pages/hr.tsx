@@ -1028,7 +1028,7 @@ function CardTab({ cardholder, isAdmin, person }: { cardholder: any; isAdmin: bo
 // ── Policies panel ────────────────────────────────────────────────────────────
 
 function PoliciesPanel() {
-  const { data: policies = [] } = useQuery<Array<{ name: string; category: string; sharepointFolder: string }>>({
+  const { data: policies = [] } = useQuery<Array<{ name: string; category: string; url: string }>>({
     queryKey: ["/api/hr/policies"],
   });
 
@@ -1047,11 +1047,12 @@ function PoliciesPanel() {
           <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">{cat}</div>
           <div className="space-y-1.5">
             {items.map(p => (
-              <div key={p.name} className="flex items-center gap-3 p-3 rounded-lg border hover:bg-accent/40 transition-colors">
+              <a key={p.name} href={p.url} target="_blank" rel="noreferrer"
+                className="flex items-center gap-3 p-3 rounded-lg border hover:bg-accent/40 transition-colors no-underline text-foreground">
                 <BookOpen className="w-4 h-4 text-muted-foreground shrink-0" />
                 <span className="text-sm">{p.name}</span>
-                <Badge variant="outline" className="ml-auto text-xs">{p.category}</Badge>
-              </div>
+                <ExternalLink className="w-3.5 h-3.5 text-muted-foreground ml-auto shrink-0" />
+              </a>
             ))}
           </div>
         </div>
