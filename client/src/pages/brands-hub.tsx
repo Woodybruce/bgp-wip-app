@@ -90,6 +90,9 @@ function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string 
   const guessed = guessDomain(name);
 
   const sources: string[] = [];
+  if (name) {
+    sources.push(`/api/brand-logo/${encodeURIComponent(name)}`);
+  }
   if (d) {
     sources.push(`https://logo.clearbit.com/${d}?size=${Math.min(size * 3, 512)}`);
   }

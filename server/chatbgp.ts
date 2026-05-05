@@ -3073,6 +3073,15 @@ export async function getAvailableTools(): Promise<{
   tools.push({
     type: "function",
     function: {
+      name: "dedupe_brand_logos",
+      description: "Remove duplicate brand logos from the Image Studio library. Keeps the OLDEST logo per brand_name (case-insensitive trim) and deletes the rest. Use when the user asks to dedupe or clean up brand logos. Returns the count of rows deleted and the count of unique brand logos kept.",
+      parameters: { type: "object", properties: {} },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "save_to_image_studio",
       description: "Save an image to the BGP Image Studio library. Can save: (1) an AI-generated image from a previous generate_image call by providing the imageUrl, (2) a base64-encoded image directly, (3) a SharePoint image by providing sharepointDriveId + sharepointItemId, or (4) any public image URL via fetchUrl (e.g. company logos from Clearbit: 'https://logo.clearbit.com/pret.com'). Use when the user wants to save a generated image, upload an image, import SharePoint headshots/photos, or bulk-import company logos.",
       parameters: {
@@ -5642,6 +5651,53 @@ export async function executeCrmToolRaw(
       return { data: { total: Number(totalResult.rows[0].count), returned: images.length, images } };
     } catch (err: any) {
       return { data: { error: `Failed to browse Image Studio: ${err.message}` } };
+    }
+  }
+
+  if (fnName === "dedupe_brand_logos") {
+    try {
+      const fsModule = await import("fs");
+      const { rows: dupeIds } = await pool.query<{ id: string; local_path: string | null; sharepoint_drive_id: string | null; sharepoint_item_id: string | null }>(`
+        SELECT id, local_path, sharepoint_drive_id, sharepoint_item_id
+        FROM image_studio_images
+        WHERE brand_name IS NOT NULL AND brand_name <> ''
+          AND id NOT IN (
+            SELECT DISTINCT ON (lower(trim(brand_name))) id
+            FROM image_studio_images
+            WHERE brand_name IS NOT NULL AND brand_name <> ''
+            ORDER BY lower(trim(brand_name)), created_at ASC
+          )
+      `);
+
+      if (!dupeIds.length) {
+        const { rows: keptRows } = await pool.query<{ count: string }>(`SELECT COUNT(*) FROM image_studio_images WHERE brand_name IS NOT NULL AND brand_name <> ''`);
+        return { data: { deleted: 0, kept: parseInt(keptRows[0].count, 10), message: "No duplicates found." } };
+      }
+
+      for (const row of dupeIds) {
+        if (row.local_path && fsModule.existsSync(row.local_path)) {
+          try { fsModule.unlinkSync(row.local_path); } catch {}
+        }
+      }
+
+      const spPairs = dupeIds.filter(r => r.sharepoint_drive_id && r.sharepoint_item_id);
+      if (spPairs.length) {
+        const values = spPairs.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(", ");
+        const params = spPairs.flatMap(r => [r.sharepoint_drive_id, r.sharepoint_item_id]);
+        await pool.query(
+          `INSERT INTO deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id) VALUES ${values} ON CONFLICT (sharepoint_drive_id, sharepoint_item_id) DO NOTHING`,
+          params
+        );
+      }
+
+      const ids = dupeIds.map(r => r.id);
+      await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [ids]);
+      await pool.query(`DELETE FROM image_studio_images WHERE id = ANY($1::text[])`, [ids]);
+
+      const { rows: keptRows } = await pool.query<{ count: string }>(`SELECT COUNT(*) FROM image_studio_images WHERE brand_name IS NOT NULL AND brand_name <> ''`);
+      return { data: { deleted: dupeIds.length, kept: parseInt(keptRows[0].count, 10) } };
+    } catch (err: any) {
+      return { data: { error: `Dedupe failed: ${err.message}` } };
     }
   }
 
