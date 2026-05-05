@@ -1125,6 +1125,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **Chat file uploads** (CRITICAL): When the user's message contains a \`/api/chat-media/\` URL — e.g. \`[Live WIP 5th May.xlsx](/api/chat-media/xxx-filename.xlsx)\` — they have dragged or attached that file into the chat. You MUST call \`read_sharepoint_file\` with that URL immediately to read and process the file. Do NOT just acknowledge the link or say "I can see you've shared a file" without actually reading it. Pass the full \`/api/chat-media/...\` path as the \`url\` argument. For Excel/CSV use startRow/maxRows to page; for PDF/Word/text use startChar/maxChars.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl. For large files read_sharepoint_file returns totalRows (Excel/CSV) or totalChars (PDF/Word/text) — if you haven't reached the end, call again with startRow or startChar incremented to read the next page. Default Excel page is 300 rows; default text page is 100,000 chars (~30 pages of a contract).
 - **Leasing schedule / any data file**: query_leasing_schedule for read. For IMPORTS — any Excel, CSV, PDF, or pasted text — always use **ingest_file** (not import_leasing_schedule which no longer exists). ingest_file auto-classifies the file, parses it with AI, and returns a preview. Show the preview to the user, then call commit_ingest to write.
+- **Sage WIP reconciliation**: When the user uploads a Sage TransactionsExpo export or asks why the WIP total differs from Sage, call **reconcile_sage_wip** with the file URL. It runs server-side in one pass: aggregates by HEADER_NUMBER, diffs against all CRM deals, and returns mismatched, sage-only, and orphan allocation counts. Pass fixDiscrepancies=true to patch CRM fees to match Sage. Never try to reconcile line-by-line in chat — use this tool.
 - **Documents (plain text)**: generate_pdf (TEXT ONLY — no imagery, no design), generate_word, generate_pptx, export_to_excel. Use these ONLY for internal text reports.
 - **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use **generate_designed_deck** (Gamma — full visual design with imagery). NEVER use generate_pdf for these. Don't apologise afterwards about the PDF being "just text" — pick the right tool upfront.
 - **Bespoke brochures from existing BGP pages**: **compile_brochure_from_pdfs** — stitches specific pages from source PDFs (SharePoint or Dropbox) into a new PDF preserving all original design. Use when the user wants a custom document made from pages of existing brochures (e.g. "pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard"). Ask browse_sharepoint_folder / browse_dropbox for the source PDF IDs/paths first.
@@ -3075,6 +3076,23 @@ export async function getAvailableTools(): Promise<{
           category: { type: "string", description: "Optional category filter: Exteriors, Interiors, Floor Plans, Properties, Areas, Marketing, Brands, Generated, Other" },
           limit: { type: "number", description: "Max results to return (default 20, max 50)" },
         },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "reconcile_sage_wip",
+      description: "Server-side reconciliation of a Sage WIP export Excel file against CRM deals. Reads the file, aggregates NetAmount by HEADER_NUMBER, and compares against all CRM deals (matched by deal_ref / WIP Ref) in a single DB pass. Returns a precise diff: matched (exact), mismatched (sage ≠ crm fee), sage_only (no CRM deal found), and orphan allocations (fee splits with no parent deal). Also checks that every deal has correct fee = sum of its allocations. Use when the user uploads a Sage export and wants to know why the totals differ, or wants to patch CRM fees to match Sage. If fixDiscrepancies=true, updates crm_deals.fee to match the Sage total for every mismatched deal.",
+      parameters: {
+        type: "object",
+        properties: {
+          fileUrl: { type: "string", description: "URL of the Sage export — either /api/chat-media/... (uploaded file) or a SharePoint share link" },
+          fixDiscrepancies: { type: "boolean", description: "If true, patch crm_deals.fee to match Sage for each mismatch. Default false (preview only)." },
+          fixAllocations: { type: "boolean", description: "If true, also fix crm_deals.fee = SUM(deal_fee_allocations.fixed_amount) for deals where the total is wrong. Default false." },
+        },
+        required: ["fileUrl"],
       },
     },
   });
@@ -5678,6 +5696,191 @@ export async function executeCrmToolRaw(
       return { data: { total: Number(totalResult.rows[0].count), returned: images.length, images } };
     } catch (err: any) {
       return { data: { error: `Failed to browse Image Studio: ${err.message}` } };
+    }
+  }
+
+  if (fnName === "reconcile_sage_wip") {
+    try {
+      const XLSX = await import("xlsx");
+      const pathMod = await import("path");
+      const fsMod = await import("fs");
+      const { getFile } = await import("./storage");
+
+      // ── 1. Resolve and read the file ──────────────────────────────────────
+      const rawUrl: string = fnArgs.fileUrl || "";
+      let fileBuffer: Buffer | null = null;
+      let originalName = "sage-export.xlsx";
+
+      const chatMediaMatch = rawUrl.match(/\/api\/chat-media\/([^?\s]+)/);
+      if (chatMediaMatch) {
+        const mediaFilename = chatMediaMatch[1];
+        originalName = mediaFilename.replace(/^\d+-[a-f0-9]+-/, "");
+        const localPath = pathMod.join(process.cwd(), "ChatBGP", "chat-media", mediaFilename);
+        if (fsMod.existsSync(localPath)) {
+          fileBuffer = fsMod.readFileSync(localPath);
+        } else {
+          const dbFile = await getFile(`chat-media/${mediaFilename}`);
+          if (dbFile?.data) fileBuffer = Buffer.from(dbFile.data);
+        }
+      } else {
+        return { data: { error: "Please provide a /api/chat-media/ URL. Upload the Sage export via the chat attachment button first." } };
+      }
+
+      if (!fileBuffer) return { data: { error: "Could not read the file. Please re-upload it." } };
+
+      // ── 2. Parse Excel → aggregate NetAmount by HEADER_NUMBER ─────────────
+      const wb = XLSX.read(fileBuffer, { type: "buffer" });
+      const sheetName = wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+      // Flexible column finder — handles casing/spacing variants
+      const pickCol = (row: Record<string, any>, ...names: string[]): any => {
+        for (const n of names) {
+          if (row[n] !== undefined && row[n] !== "") return row[n];
+        }
+        // case-insensitive fallback
+        const lower = names.map(n => n.toLowerCase());
+        for (const k of Object.keys(row)) {
+          if (lower.includes(k.toLowerCase()) && row[k] !== undefined && row[k] !== "") return row[k];
+        }
+        return undefined;
+      };
+
+      const sageByRef = new Map<string, { sageFee: number; rows: number; dealName: string }>();
+      let sageGrandTotal = 0;
+
+      for (const row of rows) {
+        const refRaw = pickCol(row, "HEADER_NUMBER", "HeaderNumber", "Header Number", "Document", "Document*");
+        if (!refRaw) continue;
+        const ref = String(refRaw).trim();
+        if (!ref || ref.toLowerCase() === "total") continue;
+
+        const amtRaw = pickCol(row, "NetAmount", "Net Amount", "Amount", "NET_AMOUNT");
+        const amt = parseFloat(String(amtRaw || 0).replace(/,/g, "")) || 0;
+        if (amt === 0) continue;
+
+        const nameRaw = pickCol(row, "Project", "Tenant", "Description", "Name", "NAME");
+        const name = nameRaw ? String(nameRaw).trim() : "";
+
+        if (!sageByRef.has(ref)) sageByRef.set(ref, { sageFee: 0, rows: 0, dealName: name });
+        const entry = sageByRef.get(ref)!;
+        entry.sageFee += amt;
+        entry.rows++;
+        if (!entry.dealName && name) entry.dealName = name;
+        sageGrandTotal += amt;
+      }
+
+      // ── 3. Query all CRM deals (deal_ref set) + allocation sums ───────────
+      const { rows: crmDeals } = await pool.query<{
+        id: string; deal_ref: number | null; name: string; fee: number | null; alloc_sum: number | null;
+      }>(`
+        SELECT cd.id, cd.deal_ref, cd.name, cd.fee,
+               COALESCE(SUM(dfa.fixed_amount), 0) AS alloc_sum
+        FROM crm_deals cd
+        LEFT JOIN deal_fee_allocations dfa ON dfa.deal_id = cd.id
+        WHERE cd.deal_ref IS NOT NULL
+        GROUP BY cd.id, cd.deal_ref, cd.name, cd.fee
+        ORDER BY cd.deal_ref
+      `);
+
+      const crmByRef = new Map<string, { id: string; name: string; fee: number; allocSum: number }>();
+      let crmGrandTotal = 0;
+      for (const d of crmDeals) {
+        if (!d.deal_ref) continue;
+        const fee = parseFloat(String(d.fee || 0)) || 0;
+        const allocSum = parseFloat(String(d.alloc_sum || 0)) || 0;
+        crmByRef.set(String(d.deal_ref), { id: d.id, name: d.name, fee, allocSum });
+        crmGrandTotal += fee;
+      }
+
+      // ── 4. Check for orphaned allocations ─────────────────────────────────
+      const { rows: orphanRows } = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) FROM deal_fee_allocations WHERE deal_id NOT IN (SELECT id FROM crm_deals)`
+      );
+      const orphanCount = parseInt(orphanRows[0]?.count || "0");
+
+      // ── 5. Diff ────────────────────────────────────────────────────────────
+      const matched: any[] = [];
+      const mismatched: any[] = [];
+      const sageOnly: any[] = [];
+      const allocMismatch: any[] = [];
+
+      for (const [ref, sage] of sageByRef) {
+        const crm = crmByRef.get(ref);
+        if (!crm) {
+          sageOnly.push({ ref, sageFee: sage.sageFee, dealName: sage.dealName });
+          continue;
+        }
+        const diff = Math.abs(sage.sageFee - crm.fee);
+        const allocDiff = Math.abs(crm.fee - crm.allocSum);
+        if (diff < 0.005) {
+          matched.push({ ref, fee: crm.fee, name: crm.name });
+        } else {
+          mismatched.push({ ref, name: crm.name, sageFee: sage.sageFee, crmFee: crm.fee, diff: sage.sageFee - crm.fee, crmId: crm.id });
+        }
+        if (allocDiff > 0.005) {
+          allocMismatch.push({ ref, name: crm.name, crmFee: crm.fee, allocSum: crm.allocSum, allocDiff: crm.fee - crm.allocSum, crmId: crm.id });
+        }
+      }
+
+      // ── 6. Apply fixes if requested ────────────────────────────────────────
+      let fixedFees = 0;
+      let fixedAllocs = 0;
+
+      if (fnArgs.fixDiscrepancies && mismatched.length > 0) {
+        for (const m of mismatched) {
+          await pool.query(`UPDATE crm_deals SET fee = $1, updated_at = NOW() WHERE id = $2`, [m.sageFee, m.crmId]);
+          fixedFees++;
+        }
+      }
+
+      if (fnArgs.fixAllocations && allocMismatch.length > 0) {
+        for (const a of allocMismatch) {
+          await pool.query(`UPDATE crm_deals SET fee = $1, updated_at = NOW() WHERE id = $2`, [a.allocSum, a.crmId]);
+          fixedAllocs++;
+        }
+      }
+
+      const sageTotalDeals = sageByRef.size;
+      const crmTotalDeals = crmByRef.size;
+      const variance = sageGrandTotal - crmGrandTotal;
+
+      return {
+        data: {
+          success: true,
+          summary: {
+            sageGrandTotal: Math.round(sageGrandTotal * 100) / 100,
+            crmGrandTotal: Math.round(crmGrandTotal * 100) / 100,
+            variance: Math.round(variance * 100) / 100,
+            sageTotalDeals,
+            crmTotalDeals,
+            matchedDeals: matched.length,
+            mismatchedDeals: mismatched.length,
+            sageOnlyDeals: sageOnly.length,
+            orphanAllocations: orphanCount,
+            allocMismatchDeals: allocMismatch.length,
+            fixedFees,
+            fixedAllocs,
+          },
+          mismatched: mismatched.map(m => ({
+            ref: m.ref, name: m.name,
+            sageFee: Math.round(m.sageFee * 100) / 100,
+            crmFee: Math.round(m.crmFee * 100) / 100,
+            diff: Math.round(m.diff * 100) / 100,
+          })),
+          sageOnly,
+          allocMismatch: allocMismatch.map(a => ({
+            ref: a.ref, name: a.name,
+            crmFee: Math.round(a.crmFee * 100) / 100,
+            allocSum: Math.round(a.allocSum * 100) / 100,
+            allocDiff: Math.round(a.allocDiff * 100) / 100,
+          })),
+        },
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] reconcile_sage_wip error:", err?.message);
+      return { data: { error: err?.message || "Reconciliation failed" } };
     }
   }
 
