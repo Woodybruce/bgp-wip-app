@@ -827,7 +827,6 @@ import { pool } from "./db";
       { name: "Cara Milligan",           startDate: "2019-06-10", title: "Personal Assistant" },
       { name: "Evie North",              startDate: "2019-10-07", title: null },
       { name: "Jamie Orme",              startDate: "2020-06-01", title: "Director" },
-      { name: "Nick Goodman",            startDate: "2020-05-18", title: "Consultant",        consultant: true },
       { name: "Harry Cody",              startDate: "2020-09-14", title: "Associate Director" },
       { name: "Alex Todd",               startDate: "2021-09-01", title: null },
       { name: "Lizzie Knights",          startDate: "2022-03-21", title: "Director" },
