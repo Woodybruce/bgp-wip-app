@@ -452,6 +452,47 @@ function subMatch(companyType: string, sub: SubCat): boolean {
   return sub.match.some(m => m.toLowerCase() === t);
 }
 
+function AutoCategoriseButton({ uncategorisedCount }: { uncategorisedCount: number }) {
+  const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<{ classified: number; unknown: number; remaining: number } | null>(null);
+
+  if (uncategorisedCount === 0 && !running && !progress) return null;
+
+  const run = async () => {
+    setRunning(true);
+    setProgress({ classified: 0, unknown: 0, remaining: uncategorisedCount });
+    let totalClassified = 0;
+    let totalUnknown = 0;
+    while (true) {
+      try {
+        const res = await apiRequest("POST", "/api/admin/auto-categorise-brands", { limit: 50 });
+        const data = await res.json();
+        totalClassified += data.classified || 0;
+        totalUnknown += data.unknown || 0;
+        setProgress({ classified: totalClassified, unknown: totalUnknown, remaining: data.remaining || 0 });
+        if (!data.processed || data.remaining === 0) break;
+      } catch (e) {
+        break;
+      }
+    }
+    setRunning(false);
+    setTimeout(() => window.location.reload(), 800);
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      {progress && (
+        <span className="text-xs text-muted-foreground">
+          {progress.classified} classified · {progress.unknown} unknown · {progress.remaining} left
+        </span>
+      )}
+      <Button size="sm" variant="outline" onClick={run} disabled={running} className="h-9">
+        {running ? "Categorising..." : `Auto-categorise ${uncategorisedCount}`}
+      </Button>
+    </div>
+  );
+}
+
 function BrandExplorer() {
   const [activeCat, setActiveCat] = useState<string | null>(() => {
     try { return localStorage.getItem("brand-explorer-cat") || null; } catch { return null; }
@@ -617,7 +658,7 @@ function BrandExplorer() {
         </div>
       )}
 
-      {/* Search + count */}
+      {/* Search + count + auto-categorise */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -629,6 +670,7 @@ function BrandExplorer() {
           />
         </div>
         <p className="text-sm text-muted-foreground">{filtered.length} results</p>
+        <AutoCategoriseButton uncategorisedCount={companies.filter(c => c.companyType === "Tenant").length} />
       </div>
 
       {/* Brand cards */}

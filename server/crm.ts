@@ -5895,6 +5895,126 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
     res.json({ classified, processed: untyped.length, remaining });
   });
 
+  // Auto-categorise plain-"Tenant" companies into Brand Explorer subtypes
+  // (Tenant - Fashion, Tenant - Café, etc). Runs in batches of 50 — call
+  // repeatedly until `remaining` returns 0. Match strings here MUST stay
+  // in sync with BRAND_CATEGORIES in client/src/pages/brands-hub.tsx.
+  app.post("/api/admin/auto-categorise-brands", requireAuth, async (req, res) => {
+    const BRAND_SUBTYPES = [
+      "Tenant - Luxury", "Tenant - Luxury Fashion", "Tenant - Luxury Accessories",
+      "Tenant - Luxury Beauty", "Tenant - Jewellery & Watches", "Tenant - Jewellery",
+      "Tenant - Watches",
+      "Tenant - Flagship Fashion", "Tenant - Fashion", "Tenant - Clothing",
+      "Tenant - Apparel", "Tenant - Womenswear", "Tenant - Menswear",
+      "Tenant - Kidswear", "Tenant - Lingerie",
+      "Tenant - Athleisure", "Tenant - Sportswear",
+      "Tenant - Footwear", "Tenant - Shoes",
+      "Tenant - Accessories & Footwear", "Tenant - Accessories",
+      "Tenant - Beauty", "Tenant - Skincare", "Tenant - Fragrance",
+      "Tenant - Beauty & Wellness", "Tenant - Cosmetics",
+      "Tenant - Homewares", "Tenant - Home", "Tenant - Interiors",
+      "Tenant - Lifestyle & Home", "Tenant - Lifestyle", "Tenant - Art",
+      "Tenant - Gifts & Perfumes", "Tenant - Gifts", "Tenant - Gifts & Speciality",
+      "Tenant - Department Store",
+      "Tenant - Technology", "Tenant - Electronics", "Tenant - Tech",
+      "Tenant - Automotive", "Tenant - Cars",
+      "Tenant - Telecoms", "Tenant - Telecommunications",
+      "Tenant - Books", "Tenant - Stationery", "Tenant - Books & Stationery",
+      "Tenant - Financial Services", "Tenant - Bank", "Tenant - Finance",
+      "Tenant - Services", "Tenant - Optician", "Tenant - Travel",
+      "Tenant - Other Services",
+      "Tenant - Retail", "Tenant - General Retail",
+      "Tenant - Fine Dining", "Tenant - Casual Dining", "Tenant - Restaurant",
+      "Tenant - Food & Drink",
+      "Tenant - Quick Service", "Tenant - Fast Casual", "Tenant - Fast Food",
+      "Tenant - QSR",
+      "Tenant - Café", "Tenant - Coffee", "Tenant - Café & Coffee", "Tenant - F&B",
+      "Tenant - Bar", "Tenant - Pub", "Tenant - Wine Bar",
+      "Tenant - Bakery", "Tenant - Patisserie",
+      "Tenant - Cinema", "Tenant - Cinema & Film",
+      "Tenant - Experiential", "Tenant - Activation", "Tenant - Entertainment",
+      "Tenant - Immersive Experience", "Tenant - Immersive",
+      "Tenant - Gaming", "Tenant - Escape Room", "Tenant - Bowling", "Tenant - Arcade",
+      "Tenant - Family Entertainment", "Tenant - Family", "Tenant - Soft Play",
+      "Tenant - Kids Entertainment",
+      "Tenant - Leisure",
+      "Tenant - Arts", "Tenant - Culture", "Tenant - Gallery",
+      "Tenant - Gym", "Tenant - Fitness", "Tenant - Gym & Fitness",
+      "Tenant - Health & Fitness",
+      "Tenant - Wellness", "Tenant - Spa", "Tenant - Hair", "Tenant - Nails",
+      "Tenant - Aesthetics",
+      "Tenant - Yoga", "Tenant - Pilates",
+      "Tenant - Grocery", "Tenant - Convenience", "Tenant - Supermarket",
+      "Tenant - Value Retail", "Tenant - Discount", "Tenant - Pound Store",
+      "Tenant - Trade", "Tenant - DIY", "Tenant - Hardware", "Tenant - Builders Merchants",
+      "Tenant - National Retail", "Tenant - High Street",
+    ];
+    try {
+      const limit = Math.min(parseInt(String(req.body?.limit || "50"), 10), 100);
+      const candidates = await pool.query(
+        `SELECT id, name, domain, description, industry FROM crm_companies
+         WHERE company_type = 'Tenant'
+         ORDER BY name LIMIT $1`,
+        [limit]
+      ).then(r => r.rows);
+
+      if (candidates.length === 0) {
+        return res.json({ message: "No plain-Tenant companies left to categorise", classified: 0, remaining: 0 });
+      }
+
+      const systemPrompt = `You are a UK commercial property CRM classifier. You receive a brand/tenant company and must classify it into ONE of these subtypes (return EXACTLY one of these strings, with the "Tenant - " prefix):
+${BRAND_SUBTYPES.join("\n")}
+
+Guidelines:
+- Pick the most specific subtype that fits — if a fashion brand is luxury, use "Tenant - Luxury Fashion" not "Tenant - Fashion".
+- Restaurants/bars/cafés/quick service all belong under their specific food subtype.
+- If you genuinely cannot identify the brand or it doesn't fit any subtype, return "UNKNOWN".
+- Return ONLY the subtype string or "UNKNOWN", nothing else. No quotes, no explanation.`;
+
+      let classified = 0;
+      let unknown = 0;
+      const results: Array<{ id: string; name: string; from: string; to: string }> = [];
+
+      for (const co of candidates) {
+        try {
+          const userMsg = `"${co.name}"${co.domain ? ` (${co.domain})` : ""}${co.industry ? ` — industry: ${co.industry}` : ""}${co.description ? `\nDescription: ${String(co.description).slice(0, 400)}` : ""}`;
+          const completion = await callClaude({
+            model: CHATBGP_HELPER_MODEL,
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userMsg },
+            ],
+            max_completion_tokens: 30,
+          });
+          const suggested = (completion.choices[0]?.message?.content || "").trim().replace(/^["']|["']$/g, "");
+          if (suggested === "UNKNOWN") {
+            unknown++;
+            continue;
+          }
+          if (BRAND_SUBTYPES.includes(suggested)) {
+            await pool.query(`UPDATE crm_companies SET company_type = $2, updated_at = NOW() WHERE id = $1`, [co.id, suggested]);
+            results.push({ id: co.id, name: co.name, from: "Tenant", to: suggested });
+            classified++;
+          } else {
+            unknown++;
+          }
+        } catch (err: any) {
+          console.error(`[auto-categorise] ${co.name}:`, err.message);
+        }
+      }
+
+      const { rows: [{ count }] } = await pool.query<{ count: string }>(
+        `SELECT COUNT(*) FROM crm_companies WHERE company_type = 'Tenant'`
+      );
+      const remaining = parseInt(count, 10);
+      console.log(`[auto-categorise] classified=${classified} unknown=${unknown} remaining=${remaining}`);
+      res.json({ classified, unknown, processed: candidates.length, remaining, results });
+    } catch (e: any) {
+      console.error("[auto-categorise] failed:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Assign ungrouped properties to "Properties" bucket ───────────────────
   app.post("/api/admin/fix-ungrouped-properties", requireAuth, async (_req, res) => {
     try {
