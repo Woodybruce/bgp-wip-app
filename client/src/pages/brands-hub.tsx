@@ -1,8 +1,7 @@
 import { useState, useMemo, lazy, Suspense } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "wouter";
-import { queryClient, apiRequest } from "@/lib/queryClient";
-import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,9 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { extractDomain, guessDomain } from "@/lib/company-logos";
 import {
-  Store, TrendingUp, Flame, Star, Search, ChevronRight,
-  MapPin, Maximize2, Zap, BarChart3, RefreshCw, Building2,
-  FileText, Trophy, Sparkles, Play, Pause, Newspaper, ExternalLink,
+  Store, Flame, Star, Search, ChevronRight,
+  MapPin, Maximize2, Zap, BarChart3, Building2,
+  FileText, Newspaper, ExternalLink, Sparkles,
   LayoutGrid, Crown, Shirt, Activity, ShoppingBag, Home as HomeIcon,
   Gift, Landmark, Briefcase, Utensils, Coffee, Wine, CakeSlice,
   UtensilsCrossed, Soup, Diamond, Car, Wifi, BookOpen, Smartphone,
@@ -21,7 +20,6 @@ import {
   ShoppingCart, Crosshair,
 } from "lucide-react";
 
-const TurnoverBoard = lazy(() => import("@/pages/turnover-board"));
 const BrandHunterBoard = lazy(() => import("@/components/brand-hunter-board"));
 
 interface HubData {
@@ -80,13 +78,6 @@ interface ActiveReq {
   contact_count: string;
 }
 
-function formatTurnover(val: number): string {
-  if (val >= 1_000_000_000) return `£${(val / 1_000_000_000).toFixed(1)}bn`;
-  if (val >= 1_000_000) return `£${(val / 1_000_000).toFixed(0)}m`;
-  if (val >= 1_000) return `£${(val / 1_000).toFixed(0)}k`;
-  return `£${val.toFixed(0)}`;
-}
-
 function formatSize(sizes: string[] | null): string {
   if (!sizes?.length) return "—";
   return sizes.join(", ");
@@ -130,22 +121,14 @@ function BrandLogo({ name, domain, size = 32 }: { name: string; domain?: string 
   );
 }
 
-function confidenceColour(c: string) {
-  if (c === "High") return "bg-emerald-500";
-  if (c === "Medium") return "bg-amber-500";
-  return "bg-slate-400";
-}
-
-type HubTab = "overview" | "explorer" | "turnover" | "hunter";
+type HubTab = "overview" | "explorer" | "hunter";
 
 export default function BrandsHub() {
-  const { toast } = useToast();
   const searchParams = useSearch();
   const rawTab = new URLSearchParams(searchParams).get("tab");
-  const initialTab: HubTab = rawTab && ["overview", "explorer", "turnover", "hunter"].includes(rawTab) ? rawTab as HubTab : "overview";
+  const initialTab: HubTab = rawTab && ["overview", "explorer", "hunter"].includes(rawTab) ? rawTab as HubTab : "overview";
   const [activeTab, setActiveTab] = useState<HubTab>(initialTab);
   const [search, setSearch] = useState("");
-  const [researchingId, setResearchingId] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery<HubData>({
     queryKey: ["/api/brands/hub"],
@@ -156,31 +139,7 @@ export default function BrandsHub() {
     staleTime: 60_000,
   });
 
-  const researchMut = useMutation({
-    mutationFn: async (companyId: string) => {
-      setResearchingId(companyId);
-      const res = await apiRequest("POST", `/api/brands/research-turnover/${companyId}`);
-      return res.json();
-    },
-    onSuccess: (result) => {
-      setResearchingId(null);
-      queryClient.invalidateQueries({ queryKey: ["/api/brands/hub"] });
-      const t = result.researched?.turnover;
-      toast({
-        title: "Turnover researched",
-        description: t && t > 0
-          ? `${result.entry?.company_name}: ${formatTurnover(t)} (${result.researched.confidence} confidence)`
-          : `No public turnover found for this brand`,
-      });
-    },
-    onError: () => {
-      setResearchingId(null);
-      toast({ title: "Research failed", variant: "destructive" });
-    },
-  });
-
   const totalBrands = parseInt(data?.stats?.total_brands || "0");
-  const brandsWithTurnover = parseInt(data?.stats?.brands_with_turnover || "0");
   const activeReqs = parseInt(data?.stats?.brands_active_req || "0");
 
   const filteredHot = useMemo(() => {
@@ -223,7 +182,6 @@ export default function BrandsHub() {
         {([
           { key: "overview", label: "Overview", icon: BarChart3 },
           { key: "explorer", label: "Brand Explorer", icon: LayoutGrid },
-          { key: "turnover", label: "Turnover Board", icon: TrendingUp },
           { key: "hunter",  label: "Brand Hunter",   icon: Crosshair },
         ] as { key: HubTab; label: string; icon: any }[]).map(t => (
           <button
@@ -248,7 +206,6 @@ export default function BrandsHub() {
         {[
           { label: "Total Brands", value: totalBrands, icon: Store, colour: "text-pink-500" },
           { label: "Active Requirements", value: activeReqs, icon: FileText, colour: "text-blue-500" },
-          { label: "With Turnover Data", value: brandsWithTurnover, icon: BarChart3, colour: "text-emerald-500" },
           { label: "Categories", value: BRAND_CATEGORIES.length, icon: Zap, colour: "text-purple-500" },
         ].map(s => (
           <Card key={s.label}>
@@ -262,55 +219,6 @@ export default function BrandsHub() {
           </Card>
         ))}
       </div>
-
-      {/* ── Turnover Leaderboard ────────────────────────────────────── */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-3 pt-4 px-5">
-          <div className="flex items-center gap-2">
-            <Trophy className="w-4 h-4 text-yellow-500" />
-            <CardTitle className="text-sm font-semibold">Turnover Leaders</CardTitle>
-            <Badge variant="secondary" className="text-[10px]">{data?.topTurnover?.length || 0} tracked</Badge>
-          </div>
-          <Link href="/turnover">
-            <Button variant="ghost" size="sm" className="text-xs h-7">
-              Full board <ChevronRight className="w-3 h-3 ml-0.5" />
-            </Button>
-          </Link>
-        </CardHeader>
-        <CardContent className="px-5 pb-4">
-          {!data?.topTurnover?.length ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <BarChart3 className="w-10 h-10 mx-auto mb-2 opacity-20" />
-              <p className="text-sm">No turnover data yet</p>
-              <p className="text-xs mt-1">Click "Research" on any brand to start building your leaderboard</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {data.topTurnover.map((t, i) => (
-                <div key={t.id} className="flex items-center gap-3 py-2 border-b last:border-0">
-                  <span className={`text-xs font-bold w-5 shrink-0 ${i < 3 ? "text-yellow-500" : "text-muted-foreground"}`}>
-                    {i + 1}
-                  </span>
-                  <BrandLogo name={t.company_name} domain={t.domain} size={28} />
-                  <div className="flex-1 min-w-0">
-                    <Link href={`/companies/${t.company_id}`}>
-                      <p className="text-sm font-medium hover:underline truncate">{t.company_name}</p>
-                    </Link>
-                    <p className="text-[10px] text-muted-foreground">{(t.company_type || "").replace("Tenant - ", "")} · {t.period}</p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-sm font-bold text-emerald-600">{formatTurnover(t.turnover)}</p>
-                    {t.turnover_per_sqft && (
-                      <p className="text-[10px] text-muted-foreground">£{t.turnover_per_sqft.toFixed(0)}/sq ft</p>
-                    )}
-                  </div>
-                  <Badge className={`text-[9px] px-1.5 shrink-0 ${confidenceColour(t.confidence)}`}>{t.confidence}</Badge>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       {/* ── Who's Hot + Super Brands side by side ──────────────────── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -435,32 +343,10 @@ export default function BrandsHub() {
         </CardContent>
       </Card>
 
-      {/* ── Turnover Research Panel ─────────────────────────────────── */}
-      <Card>
-        <CardHeader className="pb-3 pt-4 px-5">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-violet-500" />
-              <CardTitle className="text-sm font-semibold">Research Turnover</CardTitle>
-            </div>
-            <AutoTurnoverStatus />
-          </div>
-        </CardHeader>
-        <CardContent className="px-5 pb-4">
-          <TurnoverResearchPanel onResearch={(id) => researchMut.mutate(id)} researchingId={researchingId} />
-        </CardContent>
-      </Card>
-
       </>)}
 
       {activeTab === "explorer" && (
         <BrandExplorer />
-      )}
-
-      {activeTab === "turnover" && (
-        <Suspense fallback={<Skeleton className="h-64 w-full" />}>
-          <TurnoverBoard embedded={true} />
-        </Suspense>
       )}
 
       {activeTab === "hunter" && (
@@ -820,163 +706,3 @@ function BrandExplorer() {
   );
 }
 
-interface AutoTurnoverStatusData {
-  enabled: boolean;
-  running: boolean;
-  intervalHours: number;
-  batchSize: number;
-  lastRun: string | null;
-  lastResult: { processed?: number; brands?: string[]; error?: string } | null;
-  nextRun: string | null;
-}
-
-function AutoTurnoverStatus() {
-  const { toast } = useToast();
-
-  const { data: status, refetch } = useQuery<AutoTurnoverStatusData>({
-    queryKey: ["/api/brands/turnover-research/status"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/brands/turnover-research/status");
-      return res.json();
-    },
-    refetchInterval: (query) => (query.state.data?.running ? 5000 : 30000),
-    staleTime: 10_000,
-  });
-
-  const toggleMut = useMutation({
-    mutationFn: async (enabled: boolean) => {
-      const res = await apiRequest("POST", "/api/brands/turnover-research/toggle", { enabled });
-      return res.json();
-    },
-    onSuccess: () => refetch(),
-  });
-
-  const runNowMut = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/brands/turnover-research/run-now");
-      return res.json();
-    },
-    onSuccess: () => {
-      toast({ title: "Research cycle started", description: `Researching up to ${status?.batchSize || 4} brands in background` });
-      setTimeout(() => refetch(), 3000);
-    },
-  });
-
-  if (!status) return null;
-
-  const lastRunAgo = status.lastRun
-    ? Math.floor((Date.now() - new Date(status.lastRun).getTime()) / 60000)
-    : null;
-
-  return (
-    <div className="flex items-center gap-2 flex-wrap">
-      {status.running && (
-        <span className="flex items-center gap-1.5 text-[10px] text-violet-600 font-medium">
-          <span className="w-1.5 h-1.5 rounded-full bg-violet-500 animate-pulse" />
-          Researching…
-        </span>
-      )}
-      {!status.running && status.enabled && (
-        <span className="flex items-center gap-1.5 text-[10px] text-emerald-600">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-          Auto-on · {status.intervalHours}h cycle
-          {lastRunAgo !== null && ` · ${lastRunAgo < 60 ? `${lastRunAgo}m ago` : `${Math.floor(lastRunAgo / 60)}h ago`}`}
-          {status.lastResult?.processed ? ` · ${status.lastResult.processed} done` : ""}
-        </span>
-      )}
-      {!status.enabled && (
-        <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-          <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
-          Auto-off
-        </span>
-      )}
-      <Button
-        size="sm"
-        variant="ghost"
-        className="h-6 text-[10px] px-2"
-        onClick={() => runNowMut.mutate()}
-        disabled={runNowMut.isPending || status.running}
-        title="Run a research batch now"
-      >
-        <RefreshCw className={`w-3 h-3 mr-1 ${status.running ? "animate-spin" : ""}`} />
-        Run now
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        className="h-6 text-[10px] px-2"
-        onClick={() => toggleMut.mutate(!status.enabled)}
-        disabled={toggleMut.isPending}
-        title={status.enabled ? "Pause auto-research" : "Resume auto-research"}
-      >
-        {status.enabled ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-      </Button>
-    </div>
-  );
-}
-
-function TurnoverResearchPanel({ onResearch, researchingId }: { onResearch: (id: string) => void; researchingId: string | null }) {
-  const [search, setSearch] = useState("");
-
-  const { data: companiesRaw } = useQuery<any[]>({
-    queryKey: ["/api/crm/companies", "tenants-for-research"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/crm/companies");
-      const all = await res.json();
-      return Array.isArray(all) ? all.filter((c: any) => (c.companyType || "").startsWith("Tenant")) : [];
-    },
-    staleTime: 120_000,
-  });
-  const companies = Array.isArray(companiesRaw) ? companiesRaw : [];
-
-  const filtered = useMemo(() => {
-    if (!search.trim()) return companies.slice(0, 20);
-    const s = search.toLowerCase();
-    return companies.filter((c: any) => (c.name || "").toLowerCase().includes(s)).slice(0, 20);
-  }, [companies, search]);
-
-  return (
-    <div className="space-y-3">
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder="Search a brand to research..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="pl-9 h-9"
-        />
-      </div>
-      {search.trim() && (
-        <div className="space-y-1.5">
-          {filtered.map((c: any) => (
-            <div key={c.id} className="flex items-center gap-3 p-2.5 rounded-lg border bg-card">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{c.name}</p>
-                <p className="text-[10px] text-muted-foreground">{(c.companyType || "").replace("Tenant - ", "")}</p>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs shrink-0"
-                onClick={() => onResearch(c.id)}
-                disabled={researchingId === c.id}
-              >
-                {researchingId === c.id ? (
-                  <><RefreshCw className="w-3 h-3 mr-1 animate-spin" /> Researching…</>
-                ) : (
-                  <><Sparkles className="w-3 h-3 mr-1" /> Research</>
-                )}
-              </Button>
-            </div>
-          ))}
-          {!filtered.length && <p className="text-sm text-muted-foreground">No brands found</p>}
-        </div>
-      )}
-      {!search.trim() && (
-        <p className="text-xs text-muted-foreground">
-          Type a brand name above. Claude will check Companies House accounts + public sources to estimate annual turnover and store it in your Turnover Board.
-        </p>
-      )}
-    </div>
-  );
-}
