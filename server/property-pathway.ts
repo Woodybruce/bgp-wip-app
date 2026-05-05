@@ -4271,10 +4271,12 @@ async function runStage9(runId: string, req: Request): Promise<void> {
   await setStageStatus(runId, "stage9", "running");
 
   try {
-    const wbMod = await import("./why-buy-renderer").catch(() => null as any);
+    let wbModErr: string | undefined;
+    const wbMod = await import("./why-buy-renderer").catch((e: any) => { wbModErr = e?.message; return null as any; });
     if (!wbMod?.renderWhyBuy) {
+      console.error("[pathway stage9] why-buy-renderer load failed:", wbModErr);
       await setStageStatus(runId, "stage9", "failed", {
-        stage9: { documentUrl: undefined },
+        stage9: { reason: wbModErr || "Why Buy renderer could not be loaded" } as any,
       });
       return;
     }
@@ -4288,8 +4290,10 @@ async function runStage9(runId: string, req: Request): Promise<void> {
     });
     await updateRun(runId, { whyBuyDocumentUrl: result.sharepointUrl || result.documentUrl, completedAt: new Date() });
   } catch (err: any) {
-    console.error("[pathway stage9] failed:", err?.message);
-    await setStageStatus(runId, "stage9", "failed");
+    console.error("[pathway stage9] failed:", err?.message, err?.stack?.split("\n")[1]);
+    await setStageStatus(runId, "stage9", "failed", {
+      stage9: { reason: err?.message || "Why Buy PDF generation failed" } as any,
+    });
   }
 }
 

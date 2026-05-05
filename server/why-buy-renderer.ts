@@ -622,8 +622,9 @@ export async function renderWhyBuy(args: { runId: string; req?: Request }): Prom
   }
 
   doc.end();
-  const buf: Buffer = await new Promise((resolve) => {
+  const buf: Buffer = await new Promise((resolve, reject) => {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", (err: Error) => reject(err));
   });
 
   // Persist
