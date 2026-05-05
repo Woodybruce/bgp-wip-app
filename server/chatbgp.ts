@@ -642,6 +642,9 @@ function getToolProgressLabel(toolName: string): string {
     query_wip: "Querying pipeline...",
     query_xero: "Looking up invoices...",
     export_to_excel: "Generating Excel file...",
+    sql_query: "Querying database...",
+    sql_write: "Updating database...",
+    describe_schema: "Inspecting schema...",
     generate_pdf: "Generating PDF...",
     generate_word: "Generating Word document...",
     generate_pptx: "Generating PowerPoint...",
@@ -1098,6 +1101,10 @@ export async function buildSystemPrompt(): Promise<string> {
   const today = new Date();
   const dateStr = today.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
+  // Schema TOC for sql_query / sql_write — Claude consults describe_schema for column detail.
+  const { getSchemaToc } = await import("./sql-tools");
+  const schemaToc = getSchemaToc();
+
   const prompt = `You are ChatBGP, an AI assistant for Bruce Gillingham Pollard (BGP), a leading Central London property consultancy based in Belgravia. Powered by Claude. Today is ${dateStr}.
 
 ## Core Expertise
@@ -1108,6 +1115,13 @@ ${memberList}
 
 ## How You Work
 You are an active operational agent with full CRM read/write access, internet search, SharePoint/OneDrive access, document generation (PDF/Word/PPTX/Excel), email/calendar, and app builder tools. All tool descriptions are in the tools parameter — use them proactively.
+
+## PREFERRED TOOLS (use these first — they replace ~50 legacy narrow tools)
+- **sql_query** — any read against the CRM. Compose your own SELECT. Replaces query_wip, query_xero, query_calendar, query_turnover, query_leasing_schedule, search_crm, list_records, read_record, scan_duplicates, get_brand_profile, search_chat_history, search_calendar, search_news. If you can express your read as SQL, use sql_query. Only fall back to a legacy tool if it does something SQL can't (e.g. external API calls).
+- **sql_write** — any insert / update / delete on CRM tables. Replaces create_deal, update_deal, create_company, update_company, create_contact, update_contact, create_property, update_property, create_requirement, update_requirement, log_offer, log_viewing, log_lease_event, log_expense, manage_tasks, link_entities, bulk_update_records, delete_record, save_learning. Validated against the Drizzle schema; typo'd columns are rejected; every write is audited.
+- **describe_schema** — call with no args for the table list, or with a table name for its columns. Cheap. Use it whenever you're unsure of column names rather than guessing.
+
+The legacy specialised tools still work and you can fall back to them, but prefer the SQL primitives — they let you do joins, aggregations, and multi-table updates in one call instead of chaining 5 narrow tools.
 
 ## HONESTY — never fabricate outcomes
 - Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
@@ -1204,7 +1218,12 @@ crm_deals IS the WIP source of truth. Status determines WIP stage automatically.
 CRM_OPTIONS (crm-options.ts) and color maps (deals.tsx) MUST stay in sync. Missing color map entry = invisible badge. When adding values: update options list → update color map → then update database.
 
 ## DB Column Names
-Drizzle: camelCase (JS) = snake_case (SQL). dealType = deal_type, assetClass = asset_class, etc.`;
+Drizzle: camelCase (JS) = snake_case (SQL). dealType = deal_type, assetClass = asset_class, etc. **For sql_query / sql_write always use the snake_case form** (the underlying DB names).
+
+## Database Tables (TOC for sql_query / sql_write)
+Call describe_schema('table_name') for the column list and types.
+
+${schemaToc}`;
 
 
 
@@ -1675,6 +1694,58 @@ export async function getAvailableTools(): Promise<{
       },
     });
   }
+
+  // ── PHASE 1 CONSOLIDATED TOOLS ────────────────────────────────────────
+  // These three tools replace ~50 narrow CRM read/write tools. Old tools
+  // remain registered as fallbacks; system prompt steers Claude to prefer
+  // these for any non-trivial operation.
+  tools.push({
+    type: "function",
+    function: {
+      name: "sql_query",
+      description: "Run a read-only SELECT or WITH query against the BGP Postgres database. Prefer this over query_wip / query_xero / search_crm / list_records / read_record / scan_duplicates etc. — those are narrow legacy tools. You can join, group, filter, aggregate any way you like. Limited to 500 rows and 15s timeout. INSERT/UPDATE/DELETE/DDL are blocked. Call describe_schema first if you don't know the table or columns.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "A single SELECT or WITH statement. Do not append a semicolon. Example: SELECT name, fee, status FROM crm_deals WHERE status IN ('NEG','EXC') ORDER BY fee DESC" },
+        },
+        required: ["query"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "sql_write",
+      description: "Insert / update / delete rows in the BGP Postgres database. Prefer this over create_deal / update_deal / create_company / update_company / delete_record etc. — those are narrow legacy tools. Every write is validated against the Drizzle schema (typo'd columns are rejected) and recorded in ai_write_audit. Sensitive tables (users, sessions, file_storage) are blocked. UPDATE and DELETE require a where clause.",
+      parameters: {
+        type: "object",
+        properties: {
+          table: { type: "string", description: "Snake-case table name, e.g. 'crm_deals', 'crm_companies', 'chatbgp_learnings'. Call describe_schema for the full list." },
+          op: { type: "string", enum: ["insert", "update", "delete"], description: "Mutation type." },
+          data: { type: "object", description: "Column → value map. Required for insert and update. Snake-case keys matching the DB columns." },
+          where: { type: "object", description: "Column → value map for WHERE clause (AND-joined). Arrays become IN (...). null becomes IS NULL. Required for update and delete." },
+          returning: { type: "boolean", description: "If true (default), returns the affected rows. Set false for bulk ops where you don't need the result." },
+        },
+        required: ["table", "op"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "describe_schema",
+      description: "List BGP database tables, or get the column list and types for one table. Call with no args to get a list of all tables; call with a table name to get its columns. Use this before sql_query/sql_write whenever you're unsure of column names or types — much cheaper than guessing and getting an error.",
+      parameters: {
+        type: "object",
+        properties: {
+          table: { type: "string", description: "Optional. Snake-case table name to inspect. Omit to get the table list." },
+        },
+      },
+    },
+  });
 
   tools.push({
     type: "function",
@@ -5697,6 +5768,35 @@ export async function executeCrmToolRaw(
     } catch (err: any) {
       return { data: { error: `Failed to browse Image Studio: ${err.message}` } };
     }
+  }
+
+  if (fnName === "sql_query") {
+    const { executeSqlQuery } = await import("./sql-tools");
+    const result = await executeSqlQuery(String(fnArgs.query || ""));
+    return { data: result };
+  }
+
+  if (fnName === "sql_write") {
+    const { executeSqlWrite } = await import("./sql-tools");
+    const userId = (req as any)?.session?.userId || (req as any)?.tokenUserId || undefined;
+    const threadId = (req as any)?.body?.threadId || undefined;
+    const result = await executeSqlWrite(
+      {
+        table: String(fnArgs.table || ""),
+        op: fnArgs.op,
+        data: fnArgs.data,
+        where: fnArgs.where,
+        returning: fnArgs.returning !== false,
+      },
+      { userId, threadId }
+    );
+    return { data: result };
+  }
+
+  if (fnName === "describe_schema") {
+    const { executeDescribeSchema } = await import("./sql-tools");
+    const result = executeDescribeSchema(fnArgs.table ? String(fnArgs.table) : undefined);
+    return { data: result };
   }
 
   if (fnName === "reconcile_sage_wip") {
