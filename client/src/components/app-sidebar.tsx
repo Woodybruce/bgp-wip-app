@@ -81,8 +81,6 @@ import { History } from "lucide-react";
 const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
-  { title: "My Card", url: "/my-expenses", icon: CreditCard },
-  { title: "People & HR", url: "/hr", icon: Users },
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "Deals", url: "/deals", icon: BarChart3 },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
@@ -114,6 +112,9 @@ const microsoftNav = [
 ];
 
 const adminNavBase = [
+  { title: "People & HR", url: "/hr", icon: Users },
+  { title: "Expenses", url: "/expenses", icon: Receipt },
+  { title: "My Card", url: "/my-expenses", icon: CreditCard },
   { title: "Reporting", url: "/reporting", icon: TrendingUp },
   { title: "Board Report", url: "/board-report", icon: Presentation },
   { title: "WhatsApp", url: "/whatsapp", icon: MessageCircle },
@@ -121,7 +122,6 @@ const adminNavBase = [
   { title: "Leads", url: "/leads", icon: UserPlus },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles, badge: "AI" },
   { title: "Subscriptions & APIs", url: "/subscriptions", icon: CreditCard },
-  { title: "Expenses", url: "/expenses", icon: Receipt },
   { title: "Office Add-ins", url: "/addins", icon: Puzzle },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
