@@ -2058,7 +2058,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "read_sharepoint_file",
-      description: "Read and extract the contents of a file from SharePoint or OneDrive. Use this when the user shares ANY SharePoint or OneDrive link or asks you to open/look at a file. Supports both team SharePoint (brucegillinghampollardlimited.sharepoint.com) and personal OneDrive (brucegillinghampollardlimited-my.sharepoint.com) URLs. Supports Excel (.xlsx/.xls), Word (.docx), PDF, CSV, and text files. You can provide either a sharing URL, a file path, or driveId + itemId from a previous browse_sharepoint_folder result. For large Excel files, use startRow and maxRows to page through the data — the response will include totalRows so you know how many passes are needed.",
+      description: "[DEPRECATED — use read_file instead] Read and extract the contents of a file from SharePoint or OneDrive. Use this when the user shares ANY SharePoint or OneDrive link or asks you to open/look at a file. Supports both team SharePoint (brucegillinghampollardlimited.sharepoint.com) and personal OneDrive (brucegillinghampollardlimited-my.sharepoint.com) URLs. Supports Excel (.xlsx/.xls), Word (.docx), PDF, CSV, and text files. You can provide either a sharing URL, a file path, or driveId + itemId from a previous browse_sharepoint_folder result. For large Excel files, use startRow and maxRows to page through the data — the response will include totalRows so you know how many passes are needed.",
       parameters: {
         type: "object",
         properties: {
@@ -2182,7 +2182,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "create_deal",
-      description: "Create a new deal in the BGP CRM. Use when the user asks to add a deal, log a transaction, or start tracking a new piece of work.",
+      description: "[DEPRECATED — use sql_write instead] Create a new deal in the BGP CRM. Use when the user asks to add a deal, log a transaction, or start tracking a new piece of work.",
       parameters: {
         type: "object",
         properties: {
@@ -2206,7 +2206,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "update_deal",
-      description: "Update an existing deal in the CRM. Use when the user asks to change a deal's status, price, stage, or any other field.",
+      description: "[DEPRECATED — use sql_write instead] Update an existing deal in the CRM. Use when the user asks to change a deal's status, price, stage, or any other field.",
       parameters: {
         type: "object",
         properties: {
@@ -2231,7 +2231,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "create_contact",
-      description: "Create a new contact in the BGP CRM. Use when the user mentions a new person to track.",
+      description: "[DEPRECATED — use sql_write instead] Create a new contact in the BGP CRM. Use when the user mentions a new person to track.",
       parameters: {
         type: "object",
         properties: {
@@ -2252,7 +2252,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "update_contact",
-      description: "Update an existing contact in the CRM.",
+      description: "[DEPRECATED — use sql_write instead] Update an existing contact in the CRM.",
       parameters: {
         type: "object",
         properties: {
@@ -2274,7 +2274,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "create_company",
-      description: "Create a new company in the BGP CRM.",
+      description: "[DEPRECATED — use sql_write instead] Create a new company in the BGP CRM.",
       parameters: {
         type: "object",
         properties: {
@@ -2293,7 +2293,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "update_company",
-      description: "Update an existing company in the CRM.",
+      description: "[DEPRECATED — use sql_write instead] Update an existing company in the CRM.",
       parameters: {
         type: "object",
         properties: {
@@ -2313,7 +2313,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "search_crm",
-      description: "Search across the BGP CRM for deals, contacts, companies, properties, investment tracker items, and available units by keyword. Searches broadly — splits multi-word queries to find partial matches (e.g. '16 Tottenham Court Road' will find '6-17 Tottenham Court Road'). Use this to find records before updating or to answer user questions about specific items.",
+      description: "[DEPRECATED — use sql_query instead] Search across the BGP CRM for deals, contacts, companies, properties, investment tracker items, and available units by keyword. Searches broadly — splits multi-word queries to find partial matches (e.g. '16 Tottenham Court Road' will find '6-17 Tottenham Court Road'). Use this to find records before updating or to answer user questions about specific items.",
       parameters: {
         type: "object",
         properties: {
@@ -2329,7 +2329,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "get_brand_profile",
-      description: "Get the full BGP brand bible for a tracked retail brand — covenant (Companies House health, traffic light), rollout velocity (openings/closures last 12m), store footprint, rent affordability vs peer comps, turnover history, active requirements, pitched-to history (every leasing schedule this brand has been a target on), completed + active deals, agent representations, contacts with last touchpoint, and the AI-classified signals timeline. Use this when the user asks 'who should pitch for X', 'is brand Y expanding', 'what's their covenant', 'when did we last touch them', or anything about a specific retail brand.",
+      description: "[DEPRECATED — use sql_query instead] Get the full BGP brand bible for a tracked retail brand — covenant (Companies House health, traffic light), rollout velocity (openings/closures last 12m), store footprint, rent affordability vs peer comps, turnover history, active requirements, pitched-to history (every leasing schedule this brand has been a target on), completed + active deals, agent representations, contacts with last touchpoint, and the AI-classified signals timeline. Use this when the user asks 'who should pitch for X', 'is brand Y expanding', 'what's their covenant', 'when did we last touch them', or anything about a specific retail brand.",
       parameters: {
         type: "object",
         properties: {
@@ -2378,7 +2378,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "delete_record",
-      description: "Delete a record from the CRM. Only use after confirming with the user. This is irreversible.",
+      description: "[DEPRECATED — use sql_write instead] Delete a record from the CRM. Only use after confirming with the user. This is irreversible.",
       parameters: {
         type: "object",
         properties: {
@@ -2548,7 +2548,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "generate_pdf",
-      description: "Generate a PLAIN-TEXT PDF report (no imagery, no visual design — headings, paragraphs, bullets only). Use ONLY for internal text summaries like meeting notes or data digests. DO NOT use for brochures, pitch decks, client-facing documents, placemaking materials, or anything the user describes as 'great-looking', 'designed', 'brochure', 'deck', 'pitch', or 'playbook' — for those use `generate_designed_deck` (Gamma, full visual design) or `compile_brochure_from_pdfs` (stitch real pages from existing BGP brochures).",
+      description: "[DEPRECATED — use write_file(type:'pdf') instead] Generate a PLAIN-TEXT PDF report (no imagery, no visual design — headings, paragraphs, bullets only). Use ONLY for internal text summaries like meeting notes or data digests. DO NOT use for brochures, pitch decks, client-facing documents, placemaking materials, or anything the user describes as 'great-looking', 'designed', 'brochure', 'deck', 'pitch', or 'playbook' — for those use `generate_designed_deck` (Gamma, full visual design) or `compile_brochure_from_pdfs` (stitch real pages from existing BGP brochures).",
       parameters: {
         type: "object",
         properties: {
@@ -2565,7 +2565,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "generate_word",
-      description: "Generate a native Microsoft Word (.docx) document with professional formatting and BGP branding. Use when the user asks for a Word document, editable report, or anything they want to open and edit in Word.",
+      description: "[DEPRECATED — use write_file(type:'word') instead] Generate a native Microsoft Word (.docx) document with professional formatting and BGP branding. Use when the user asks for a Word document, editable report, or anything they want to open and edit in Word.",
       parameters: {
         type: "object",
         properties: {
@@ -2601,7 +2601,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "generate_pptx",
-      description: "Generate a native Microsoft PowerPoint (.pptx) presentation with professional formatting and BGP branding. Use when the user asks for a PowerPoint, presentation, slides, or deck.",
+      description: "[DEPRECATED — use write_file(type:'pptx') instead] Generate a native Microsoft PowerPoint (.pptx) presentation with professional formatting and BGP branding. Use when the user asks for a PowerPoint, presentation, slides, or deck.",
       parameters: {
         type: "object",
         properties: {
@@ -2690,7 +2690,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "search_calendar",
-      description: "Search Outlook calendars for meetings matching a query. By default searches the signed-in user's calendar. Pass `mailbox` to search a specific BGP teammate's calendar, or 'all' to fan out across every team member's calendar plus the shared inbox. Matches against subject, body, attendees, and location. Date-bounded — defaults to last 18 months → next 6 months. Returns up to 50 results sorted by start date desc. Use when the user asks about historic or upcoming meetings, viewings, or calendar history about a deal/brand/landlord/property. Distinct from query_calendar which only lists upcoming events in a date range without keyword search.",
+      description: "[DEPRECATED — use sql_query instead] Search Outlook calendars for meetings matching a query. By default searches the signed-in user's calendar. Pass `mailbox` to search a specific BGP teammate's calendar, or 'all' to fan out across every team member's calendar plus the shared inbox. Matches against subject, body, attendees, and location. Date-bounded — defaults to last 18 months → next 6 months. Returns up to 50 results sorted by start date desc. Use when the user asks about historic or upcoming meetings, viewings, or calendar history about a deal/brand/landlord/property. Distinct from query_calendar which only lists upcoming events in a date range without keyword search.",
       parameters: {
         type: "object",
         properties: {
@@ -2727,7 +2727,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "read_record",
-      description: "Read a single CRM record by id. Returns every field, including ones not exposed in narrower tools. Use when you need to inspect the current state of a deal/company/contact/property/leasing unit/lease event/comp/requirement before updating it.",
+      description: "[DEPRECATED — use sql_query instead] Read a single CRM record by id. Returns every field, including ones not exposed in narrower tools. Use when you need to inspect the current state of a deal/company/contact/property/leasing unit/lease event/comp/requirement before updating it.",
       parameters: {
         type: "object",
         properties: {
@@ -2743,7 +2743,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "list_records",
-      description: "List records on any whitelisted CRM table with optional simple equality filters. Use to find records before updating, or to count things. Returns up to 50 rows by default (max 500 — bump via `limit`).",
+      description: "[DEPRECATED — use sql_query instead] List records on any whitelisted CRM table with optional simple equality filters. Use to find records before updating, or to count things. Returns up to 50 rows by default (max 500 — bump via `limit`).",
       parameters: {
         type: "object",
         properties: {
@@ -2778,7 +2778,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "bulk_update_records",
-      description: "Update many records at once that match a filter. SAFETY: refuses to run with no filter, refuses to update more than 500 rows in a call. Use for cleanup tasks like 'set internal_agent to Harry Elliott on every deal where it currently equals H'.",
+      description: "[DEPRECATED — use sql_write instead] Update many records at once that match a filter. SAFETY: refuses to run with no filter, refuses to update more than 500 rows in a call. Use for cleanup tasks like 'set internal_agent to Harry Elliott on every deal where it currently equals H'.",
       parameters: {
         type: "object",
         properties: {
@@ -2826,7 +2826,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "download_email_attachment",
-      description: "Download an email attachment and either (a) read its content, or (b) save it directly to a SharePoint folder. THIS IS THE TOOL TO USE when the user asks to 'save this brochure to SharePoint', 'file this attachment under …', 'put the floor plans in the Due Diligence folder', or anything that moves an email attachment into SharePoint. Set `action: 'save_to_sharepoint'` and pass `folderPath` — the tool downloads the binary from Graph and uploads it in a single step. DO NOT try to use upload_to_sharepoint for email attachments; that tool only works for chat-media files. For 'read' mode: PDF/Word/Excel/CSV/text return extracted text; other binaries return metadata. Use get_email_attachments first to get the attachment ID. If the email is in another user's mailbox (came from search_emails with mailboxEmail), you MUST pass the same mailboxEmail here — Graph IDs are mailbox-scoped.",
+      description: "[DEPRECATED — use read_file (for reading) or upload_to_sharepoint for saves instead] Download an email attachment and either (a) read its content, or (b) save it directly to a SharePoint folder. THIS IS THE TOOL TO USE when the user asks to 'save this brochure to SharePoint', 'file this attachment under …', 'put the floor plans in the Due Diligence folder', or anything that moves an email attachment into SharePoint. Set `action: 'save_to_sharepoint'` and pass `folderPath` — the tool downloads the binary from Graph and uploads it in a single step. DO NOT try to use upload_to_sharepoint for email attachments; that tool only works for chat-media files. For 'read' mode: PDF/Word/Excel/CSV/text return extracted text; other binaries return metadata. Use get_email_attachments first to get the attachment ID. If the email is in another user's mailbox (came from search_emails with mailboxEmail), you MUST pass the same mailboxEmail here — Graph IDs are mailbox-scoped.",
       parameters: {
         type: "object",
         properties: {
@@ -2951,7 +2951,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "log_viewing",
-      description: "Log a viewing for an investment tracker item or a leasing unit. Search for the item first to get the ID.",
+      description: "[DEPRECATED — use sql_write instead] Log a viewing for an investment tracker item or a leasing unit. Search for the item first to get the ID.",
       parameters: {
         type: "object",
         properties: {
@@ -2974,7 +2974,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "log_offer",
-      description: "Log an offer for an investment tracker item or a leasing unit. Search first to find the record ID.",
+      description: "[DEPRECATED — use sql_write instead] Log an offer for an investment tracker item or a leasing unit. Search first to find the record ID.",
       parameters: {
         type: "object",
         properties: {
@@ -3005,7 +3005,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "create_property",
-      description: "Create a new property in the CRM. Use when the user mentions a new property, building, or address that needs to be tracked. Always search first to avoid duplicates. If you provide a postcode in the address, the system will AUTOMATICALLY run Land Registry lookup, AI-match the freehold title, identify the owner, create/link the landlord company, and prepare KYC. You do NOT need to do this manually — just provide the address with postcode and it all happens.",
+      description: "[DEPRECATED — use sql_write instead] Create a new property in the CRM. Use when the user mentions a new property, building, or address that needs to be tracked. Always search first to avoid duplicates. If you provide a postcode in the address, the system will AUTOMATICALLY run Land Registry lookup, AI-match the freehold title, identify the owner, create/link the landlord company, and prepare KYC. You do NOT need to do this manually — just provide the address with postcode and it all happens.",
       parameters: {
         type: "object",
         properties: {
@@ -3029,7 +3029,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "create_requirement",
-      description: "Log a new tenant or buyer requirement. Use when someone says a company is looking for space, a tenant needs premises, or an investor is seeking a property. Categories: 'Leasing' for tenants, 'Investment' for buyers.",
+      description: "[DEPRECATED — use sql_write instead] Log a new tenant or buyer requirement. Use when someone says a company is looking for space, a tenant needs premises, or an investor is seeking a property. Categories: 'Leasing' for tenants, 'Investment' for buyers.",
       parameters: {
         type: "object",
         properties: {
@@ -3072,7 +3072,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "update_property",
-      description: "Update an existing property in the CRM. Search first to find the property ID.",
+      description: "[DEPRECATED — use sql_write instead] Update an existing property in the CRM. Search first to find the property ID.",
       parameters: {
         type: "object",
         properties: {
@@ -3096,7 +3096,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "update_requirement",
-      description: "Update an existing tenant or buyer requirement. Search first to find the requirement ID.",
+      description: "[DEPRECATED — use sql_write instead] Update an existing tenant or buyer requirement. Search first to find the requirement ID.",
       parameters: {
         type: "object",
         properties: {
@@ -3195,7 +3195,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "link_entities",
-      description: "Create a relationship between CRM records — link a contact or company to a deal, property, or requirement. Use when the user says a contact is involved in a deal, a company owns a property, etc.",
+      description: "[DEPRECATED — use sql_write instead] Create a relationship between CRM records — link a contact or company to a deal, property, or requirement. Use when the user says a contact is involved in a deal, a company owns a property, etc.",
       parameters: {
         type: "object",
         properties: {
@@ -3319,7 +3319,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "generate_image",
-      description: "Generate an image using AI (Nano Banana). Use for property marketing visuals, document illustrations, presentation graphics, floor plan sketches, area photos, or any visual content the user needs. Returns a base64 image that can be displayed in chat. Use when the user asks for an image, a visual, a graphic, or when creating marketing materials that would benefit from imagery.",
+      description: "[DEPRECATED — use write_file(type:'image') instead] Generate an image using AI (Nano Banana). Use for property marketing visuals, document illustrations, presentation graphics, floor plan sketches, area photos, or any visual content the user needs. Returns a base64 image that can be displayed in chat. Use when the user asks for an image, a visual, a graphic, or when creating marketing materials that would benefit from imagery.",
       parameters: {
         type: "object",
         properties: {
@@ -3377,7 +3377,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "save_to_image_studio",
-      description: "Save an image to the BGP Image Studio library. Can save: (1) an AI-generated image from a previous generate_image call by providing the imageUrl, (2) a base64-encoded image directly, (3) a SharePoint image by providing sharepointDriveId + sharepointItemId, or (4) any public image URL via fetchUrl (e.g. company logos from Clearbit: 'https://logo.clearbit.com/pret.com'). Use when the user wants to save a generated image, upload an image, import SharePoint headshots/photos, or bulk-import company logos.",
+      description: "[DEPRECATED — use write_file(type:'image_studio') instead] Save an image to the BGP Image Studio library. Can save: (1) an AI-generated image from a previous generate_image call by providing the imageUrl, (2) a base64-encoded image directly, (3) a SharePoint image by providing sharepointDriveId + sharepointItemId, or (4) any public image URL via fetchUrl (e.g. company logos from Clearbit: 'https://logo.clearbit.com/pret.com'). Use when the user wants to save a generated image, upload an image, import SharePoint headshots/photos, or bulk-import company logos.",
       parameters: {
         type: "object",
         properties: {
@@ -3405,7 +3405,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "capture_pdf_pages",
-      description: "Render a PDF brochure into images and save each page to the Image Studio. Use when the user says 'take images of this brochure', 'capture the pages', 'save brochure images', or similar. Requires the SharePoint driveId and itemId from a browse_sharepoint_folder result. Works silently in the background — no viewer needed.",
+      description: "[DEPRECATED — use read_file instead] Render a PDF brochure into images and save each page to the Image Studio. Use when the user says 'take images of this brochure', 'capture the pages', 'save brochure images', or similar. Requires the SharePoint driveId and itemId from a browse_sharepoint_folder result. Works silently in the background — no viewer needed.",
       parameters: {
         type: "object",
         properties: {
@@ -3425,7 +3425,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "generate_designed_deck",
-      description: "Generate a properly designed, visually polished deck, brochure, pitch document, or playbook using Gamma. Full visual design with photography, typography, and layout — NOT a text-only PDF. Use this whenever the user asks for a brochure, deck, pitch, presentation, playbook, placemaking document, or any client-facing visual output. Returns both a PDF and a PPTX. This is the ONLY tool for making good-looking client documents from scratch.",
+      description: "[DEPRECATED — use write_file(type:'deck') instead] Generate a properly designed, visually polished deck, brochure, pitch document, or playbook using Gamma. Full visual design with photography, typography, and layout — NOT a text-only PDF. Use this whenever the user asks for a brochure, deck, pitch, presentation, playbook, placemaking document, or any client-facing visual output. Returns both a PDF and a PPTX. This is the ONLY tool for making good-looking client documents from scratch.",
       parameters: {
         type: "object",
         properties: {
@@ -3446,7 +3446,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "compile_brochure_from_pdfs",
-      description: "Stitch specific pages from existing PDF brochures into a single new PDF, preserving all original design, imagery, and typography. Use when the user wants a bespoke brochure made from real BGP brochure pages (e.g. 'take pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard'). The output is a properly designed document because the pages ARE properly designed — you're just assembling them. Source PDFs must be accessible via SharePoint or Dropbox.",
+      description: "[DEPRECATED — use write_file(type:'brochure') instead] Stitch specific pages from existing PDF brochures into a single new PDF, preserving all original design, imagery, and typography. Use when the user wants a bespoke brochure made from real BGP brochure pages (e.g. 'take pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard'). The output is a properly designed document because the pages ARE properly designed — you're just assembling them. Source PDFs must be accessible via SharePoint or Dropbox.",
       parameters: {
         type: "object",
         properties: {
@@ -3504,7 +3504,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "ingest_url",
-      description: "Fetch and read content from an external URL — works with PDFs, research reports, and web pages. Use when the user shares a link and wants you to read, summarise, or add it to the news feed. Can also save the content as a news article.",
+      description: "[DEPRECATED — use read_file instead] Fetch and read content from an external URL — works with PDFs, research reports, and web pages. Use when the user shares a link and wants you to read, summarise, or add it to the news feed. Can also save the content as a news article.",
       parameters: {
         type: "object",
         properties: {
@@ -3521,7 +3521,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "export_to_excel",
-      description: "Generate a downloadable Excel (.xlsx) file from structured table data. Use when you extract comps tables, schedules, financial data, or any tabular information from brochures, PDFs, or documents and the user wants it as an Excel file. Also use proactively when presenting tabular data that would be useful to download. Returns a download link.",
+      description: "[DEPRECATED — use write_file(type:'excel') instead] Generate a downloadable Excel (.xlsx) file from structured table data. Use when you extract comps tables, schedules, financial data, or any tabular information from brochures, PDFs, or documents and the user wants it as an Excel file. Also use proactively when presenting tabular data that would be useful to download. Returns a download link.",
       parameters: {
         type: "object",
         properties: {
@@ -3564,7 +3564,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "search_news",
-      description: "Search the BGP news feed for articles by keyword. Use when the user asks about property news, market news, or mentions a company/location and wants to see relevant articles.",
+      description: "[DEPRECATED — use sql_query instead] Search the BGP news feed for articles by keyword. Use when the user asks about property news, market news, or mentions a company/location and wants to see relevant articles.",
       parameters: {
         type: "object",
         properties: {
@@ -3641,7 +3641,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "log_lease_event",
-      description: "Log an upcoming lease event (rent review, break, expiry, renewal option) to the Lease Events tracker. Use when the user mentions an upcoming lease event in conversation, or when you extract one from an email/brochure/WhatsApp. Lease advisory team uses this as their BD pipeline. Always set sourceEvidence to match where the info came from.",
+      description: "[DEPRECATED — use sql_write instead] Log an upcoming lease event (rent review, break, expiry, renewal option) to the Lease Events tracker. Use when the user mentions an upcoming lease event in conversation, or when you extract one from an email/brochure/WhatsApp. Lease advisory team uses this as their BD pipeline. Always set sourceEvidence to match where the info came from.",
       parameters: {
         type: "object",
         properties: {
@@ -3668,7 +3668,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "query_wip",
-      description: "Query the WIP (Work In Progress) pipeline data. Use when the user asks about pipeline value, deal counts, team performance, overdue deals, or wants a summary of current deals. Can filter by team, status, or deal type.",
+      description: "[DEPRECATED — use sql_query instead] Query the WIP (Work In Progress) pipeline data. Use when the user asks about pipeline value, deal counts, team performance, overdue deals, or wants a summary of current deals. Can filter by team, status, or deal type.",
       parameters: {
         type: "object",
         properties: {
@@ -3686,7 +3686,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "query_xero",
-      description: "Look up Xero invoices linked to CRM deals. Use when the user asks about invoicing status, whether a fee has been invoiced, or payment status.",
+      description: "[DEPRECATED — use sql_query instead] Look up Xero invoices linked to CRM deals. Use when the user asks about invoicing status, whether a fee has been invoiced, or payment status.",
       parameters: {
         type: "object",
         properties: {
@@ -3702,7 +3702,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "scan_duplicates",
-      description: "Scan for duplicate records in the CRM. Use when the user wants to check if a contact, company, or property already exists, or asks to clean up duplicates.",
+      description: "[DEPRECATED — use sql_query instead] Scan for duplicate records in the CRM. Use when the user wants to check if a contact, company, or property already exists, or asks to clean up duplicates.",
       parameters: {
         type: "object",
         properties: {
@@ -3717,7 +3717,7 @@ export async function getAvailableTools(): Promise<{
     type: "function" as const,
     function: {
       name: "save_learning",
-      description: "Save a piece of business knowledge or insight that ChatBGP has learned during this conversation. This persists across all future conversations, making ChatBGP smarter about BGP's business over time. Only save genuinely useful, reusable knowledge — not transient details.",
+      description: "[DEPRECATED — use sql_write instead] Save a piece of business knowledge or insight that ChatBGP has learned during this conversation. This persists across all future conversations, making ChatBGP smarter about BGP's business over time. Only save genuinely useful, reusable knowledge — not transient details.",
       parameters: {
         type: "object",
         properties: {
@@ -3767,7 +3767,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "query_leasing_schedule",
-      description: "Search and query the leasing schedule board — unit-level data across all managed properties (Bluewater, Cardiff, White Rose, Trinity Leeds, Westgate Oxford, Lewisham, Finchley Road, Gunwharf Quays, Clark's Village, Braintree Village). Use when the user asks about tenants, vacant units, upcoming lease expiries, rent levels, zones, occupancy costs, or any leasing schedule data. Can filter by property, status (Occupied/Vacant), zone, tenant name, or date range.",
+      description: "[DEPRECATED — use sql_query instead] Search and query the leasing schedule board — unit-level data across all managed properties (Bluewater, Cardiff, White Rose, Trinity Leeds, Westgate Oxford, Lewisham, Finchley Road, Gunwharf Quays, Clark's Village, Braintree Village). Use when the user asks about tenants, vacant units, upcoming lease expiries, rent levels, zones, occupancy costs, or any leasing schedule data. Can filter by property, status (Occupied/Vacant), zone, tenant name, or date range.",
       parameters: {
         type: "object",
         properties: {
@@ -3805,7 +3805,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "query_turnover",
-      description: "Search the Turnover Data Board — brand/operator revenue intelligence. Use when the user asks about a brand's turnover, revenue, sales performance, £/sqft, or occupational cost data. Can filter by company/brand name, property, category (F&B, Retail, Leisure, etc.), or period.",
+      description: "[DEPRECATED — use sql_query instead] Search the Turnover Data Board — brand/operator revenue intelligence. Use when the user asks about a brand's turnover, revenue, sales performance, £/sqft, or occupational cost data. Can filter by company/brand name, property, category (F&B, Retail, Leisure, etc.), or period.",
       parameters: {
         type: "object",
         properties: {
@@ -3824,7 +3824,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "query_calendar",
-      description: "Look up calendar events and diary entries for team members. Use when the user asks about schedules, availability, upcoming meetings, viewings, or 'what's in my diary'. Can check the current user's calendar or any team member's. Returns events from Microsoft Outlook/365.",
+      description: "[DEPRECATED — use sql_query instead] Look up calendar events and diary entries for team members. Use when the user asks about schedules, availability, upcoming meetings, viewings, or 'what's in my diary'. Can check the current user's calendar or any team member's. Returns events from Microsoft Outlook/365.",
       parameters: {
         type: "object",
         properties: {
@@ -3952,7 +3952,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "browse_dropbox",
-      description: "Browse and interact with the BGP Dropbox account. Use this to list folders, search for files, or read file contents. Supports listing folder contents, searching by name, and downloading/reading text from documents.",
+      description: "[DEPRECATED — use read_file instead] Browse and interact with the BGP Dropbox account. Use this to list folders, search for files, or read file contents. Supports listing folder contents, searching by name, and downloading/reading text from documents.",
       parameters: {
         type: "object",
         properties: {
@@ -3988,7 +3988,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "manage_tasks",
-      description: "Manage the user's personal task list. Create new tasks, mark tasks complete, list open tasks, or delete tasks. Use when the user asks to add a to-do, reminder, follow-up, or task. Also use to check what tasks are pending or mark something as done.",
+      description: "[DEPRECATED — use sql_write instead] Manage the user's personal task list. Create new tasks, mark tasks complete, list open tasks, or delete tasks. Use when the user asks to add a to-do, reminder, follow-up, or task. Also use to check what tasks are pending or mark something as done.",
       parameters: {
         type: "object",
         properties: {
@@ -4011,7 +4011,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "log_expense",
-      description: "Log an expense on behalf of the current user. Use for cash expenses, out-of-pocket costs, or manually recording a card purchase that wasn't captured via Stripe. Examples: '£25 cash taxi to Paddington', 'lunch with Mike Hodgson from Landsec £68', 'coffee with team £12.40'. For mileage use claim_mileage instead. The expense is created with status pending_receipt; once a receipt photo is sent via WhatsApp it auto-matches and posts to Xero.",
+      description: "[DEPRECATED — use sql_write instead] Log an expense on behalf of the current user. Use for cash expenses, out-of-pocket costs, or manually recording a card purchase that wasn't captured via Stripe. Examples: '£25 cash taxi to Paddington', 'lunch with Mike Hodgson from Landsec £68', 'coffee with team £12.40'. For mileage use claim_mileage instead. The expense is created with status pending_receipt; once a receipt photo is sent via WhatsApp it auto-matches and posts to Xero.",
       parameters: {
         type: "object",
         properties: {
@@ -4082,7 +4082,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "search_chat_history",
-      description: "Search past ChatBGP conversations by content. Use when the user refers to 'what we discussed before', 'the chat about X', 'that conversation last week', or wants to recall something from prior chat threads. Returns matching messages with thread context.",
+      description: "[DEPRECATED — use sql_query instead] Search past ChatBGP conversations by content. Use when the user refers to 'what we discussed before', 'the chat about X', 'that conversation last week', or wants to recall something from prior chat threads. Returns matching messages with thread context.",
       parameters: {
         type: "object",
         properties: {
