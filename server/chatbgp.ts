@@ -691,6 +691,8 @@ function getToolProgressLabel(toolName: string): string {
     browse_dropbox: "Browsing Dropbox...",
     log_expense: "Logging expense...",
     claim_mileage: "Calculating mileage...",
+    read_file: "Reading file...",
+    write_file: "Generating document...",
   };
   return labels[toolName] || `Running ${toolName.replace(/_/g, " ")}...`;
 }
@@ -1116,16 +1118,18 @@ ${memberList}
 ## How You Work
 You are an active operational agent with full CRM read/write access, internet search, SharePoint/OneDrive access, document generation (PDF/Word/PPTX/Excel), email/calendar, and app builder tools. All tool descriptions are in the tools parameter — use them proactively.
 
-## PREFERRED TOOLS (use these first — they replace ~50 legacy narrow tools)
+## PREFERRED TOOLS (use these first — they replace ~70 legacy narrow tools)
 - **sql_query** — any read against the CRM. Compose your own SELECT. Replaces query_wip, query_xero, query_calendar, query_turnover, query_leasing_schedule, search_crm, list_records, read_record, scan_duplicates, get_brand_profile, search_chat_history, search_calendar, search_news. If you can express your read as SQL, use sql_query. Only fall back to a legacy tool if it does something SQL can't (e.g. external API calls).
 - **sql_write** — any insert / update / delete on CRM tables. Replaces create_deal, update_deal, create_company, update_company, create_contact, update_contact, create_property, update_property, create_requirement, update_requirement, log_offer, log_viewing, log_lease_event, log_expense, manage_tasks, link_entities, bulk_update_records, delete_record, save_learning. Validated against the Drizzle schema; typo'd columns are rejected; every write is audited.
-- **describe_schema** — call with no args for the table list, or with a table name for its columns. Cheap. Use it whenever you're unsure of column names rather than guessing.
+- **describe_schema** — call with no args for the table list, or with a table name for its columns. Use it whenever you're unsure of column names rather than guessing.
+- **read_file** — read ANY file: user chat-media uploads (/api/chat-media/...), SharePoint/OneDrive links, Dropbox paths (starting with /), public HTTPS URLs. Replaces read_sharepoint_file, browse_dropbox(action:read), ingest_url, download_email_attachment(action:read). Always use read_file as the first tool when the user shares a file link or asks you to open a file.
+- **write_file** — generate any document. Pass type="pdf"|"word"|"pptx"|"excel"|"deck"|"image"|"image_studio"|"brochure". Replaces generate_pdf, generate_word, generate_pptx, export_to_excel, generate_designed_deck, generate_image, compile_brochure_from_pdfs, save_to_image_studio.
 
-The legacy specialised tools still work and you can fall back to them, but prefer the SQL primitives — they let you do joins, aggregations, and multi-table updates in one call instead of chaining 5 narrow tools.
+Legacy specialised tools still work as fallbacks, but prefer the primitives above — they're simpler, faster, and do the right thing automatically.
 
 ## HONESTY — never fabricate outcomes
 - Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
-- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_designed_deck\`, or \`compile_brochure_from_pdfs\`. A made-up URL will 404 for the user.
+- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`write_file\`, \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_designed_deck\`, or \`compile_brochure_from_pdfs\`. A made-up URL will 404 for the user.
 - If the user asks you to modify something and no suitable tool exists, SAY SO plainly ("I can't edit the PDF renderer from here — that needs a code change"). Offer the closest alternative rather than inventing fake fixes.
 - For template edits, always call \`update_document_template\` with the existing templateId (from the docTemplates list). Don't just describe what you would change — actually change it. After the tool returns, report what the tool confirmed.
 - For template deletions, call \`delete_document_template\` — never just say "removed it".
@@ -1136,13 +1140,13 @@ The legacy specialised tools still work and you can fall back to them, but prefe
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
 - **KYC**: run_kyc_check for Companies House + sanctions + financial strength. deep_investigate for full D&B-style intelligence combining all sources.
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
-- **Chat file uploads** (CRITICAL): When the user's message contains a \`/api/chat-media/\` URL — e.g. \`[Live WIP 5th May.xlsx](/api/chat-media/xxx-filename.xlsx)\` — they have dragged or attached that file into the chat. You MUST call \`read_sharepoint_file\` with that URL immediately to read and process the file. Do NOT just acknowledge the link or say "I can see you've shared a file" without actually reading it. Pass the full \`/api/chat-media/...\` path as the \`url\` argument. For Excel/CSV use startRow/maxRows to page; for PDF/Word/text use startChar/maxChars.
-- **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl. For large files read_sharepoint_file returns totalRows (Excel/CSV) or totalChars (PDF/Word/text) — if you haven't reached the end, call again with startRow or startChar incremented to read the next page. Default Excel page is 300 rows; default text page is 100,000 chars (~30 pages of a contract).
+- **Chat file uploads** (CRITICAL): When the user's message contains a \`/api/chat-media/\` URL — e.g. \`[Live WIP 5th May.xlsx](/api/chat-media/xxx-filename.xlsx)\` — they have dragged or attached that file into the chat. You MUST call \`read_file\` with that URL immediately to read and process the file. Do NOT just acknowledge the link or say "I can see you've shared a file" without actually reading it. Pass the full \`/api/chat-media/...\` path as the \`url\` argument. For Excel/CSV use startRow/maxRows to page; for PDF/Word/text use startChar/maxChars.
+- **SharePoint / any file**: \`read_file\` handles all file sources — SharePoint links, OneDrive links, Dropbox paths, public URLs, and chat-media uploads. For subfolder navigation still use browse_sharepoint_folder (driveId+itemId); then pass the driveId+itemId to read_file. For large files, read_file returns totalRows (Excel/CSV) or totalChars (text/PDF) — call again with startRow or startChar incremented. Default Excel page is 300 rows; default text page is 100,000 chars.
 - **Leasing schedule / any data file**: query_leasing_schedule for read. For IMPORTS — any Excel, CSV, PDF, or pasted text — always use **ingest_file** (not import_leasing_schedule which no longer exists). ingest_file auto-classifies the file, parses it with AI, and returns a preview. Show the preview to the user, then call commit_ingest to write.
 - **Sage WIP reconciliation**: When the user uploads a Sage TransactionsExpo export or asks why the WIP total differs from Sage, call **reconcile_sage_wip** with the file URL. It runs server-side in one pass: aggregates by HEADER_NUMBER, diffs against all CRM deals, and returns mismatched, sage-only, and orphan allocation counts. Pass fixDiscrepancies=true to patch CRM fees to match Sage. Never try to reconcile line-by-line in chat — use this tool.
-- **Documents (plain text)**: generate_pdf (TEXT ONLY — no imagery, no design), generate_word, generate_pptx, export_to_excel. Use these ONLY for internal text reports.
-- **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use **generate_designed_deck** (Gamma — full visual design with imagery). NEVER use generate_pdf for these. Don't apologise afterwards about the PDF being "just text" — pick the right tool upfront.
-- **Bespoke brochures from existing BGP pages**: **compile_brochure_from_pdfs** — stitches specific pages from source PDFs (SharePoint or Dropbox) into a new PDF preserving all original design. Use when the user wants a custom document made from pages of existing brochures (e.g. "pages 3-12 from Grosvenor Pitch and pages 8-15 from Courage Yard"). Ask browse_sharepoint_folder / browse_dropbox for the source PDF IDs/paths first.
+- **Documents (plain text)**: \`write_file(type:"pdf")\` (TEXT ONLY — no imagery), \`write_file(type:"word")\`, \`write_file(type:"pptx")\`, \`write_file(type:"excel")\`. Use for internal text reports.
+- **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use \`write_file(type:"deck")\` (Gamma — full visual design with imagery). NEVER use pdf for these. Don't apologise about the PDF being "just text" — pick the right type upfront.
+- **Bespoke brochures from existing BGP pages**: \`write_file(type:"brochure")\` — stitches specific pages from source PDFs into a new PDF preserving all original design. Ask browse_sharepoint_folder / browse_dropbox for source PDF IDs/paths first, then pass as sources array.
 - **Bulk file-move**: **copy_dropbox_to_sharepoint** — copies raw PDF binaries from Dropbox into a SharePoint folder. Use when the user says "pull these into a SharePoint folder". Do NOT claim SharePoint "glitched" if upload fails — report the exact error.
 - **Email attachment → SharePoint**: when the user asks to save a brochure / floor plans / any email attachment to SharePoint, use **download_email_attachment** with \`action: "save_to_sharepoint"\` and a \`folderPath\`. This is the ONLY correct tool for that flow — it pulls the binary from Graph and uploads it in one step. Do NOT try \`upload_to_sharepoint\` for email attachments; that tool only handles chat-media files (generated docs, files dragged into the chat). If you reach for upload_to_sharepoint and get a "file not found in chat-media" error, that's the signal you should be using download_email_attachment instead.
 - **Maps**: navigate_to "property-map" with lat/lng/zoom. Tell users to use built-in Radius/Distance buttons.
@@ -1743,6 +1747,75 @@ export async function getAvailableTools(): Promise<{
         properties: {
           table: { type: "string", description: "Optional. Snake-case table name to inspect. Omit to get the table list." },
         },
+      },
+    },
+  });
+
+  // ── Phase 2 consolidation: read_file / write_file ──────────────────────────
+  // read_file replaces: read_sharepoint_file, download_email_attachment (read),
+  //   browse_dropbox (read action), ingest_url, capture_pdf_pages
+  // write_file replaces: generate_pdf, generate_word, generate_pptx,
+  //   export_to_excel, generate_designed_deck, generate_document,
+  //   generate_image, compile_brochure_from_pdfs, save_to_image_studio,
+  //   upload_to_sharepoint, move_sharepoint_item, create_sharepoint_folder
+  tools.push({
+    type: "function",
+    function: {
+      name: "read_file",
+      description: "Read the content of ANY file — chat-media uploads, SharePoint/OneDrive links, Dropbox paths, public HTTPS URLs, or email attachments. Use this as the single entry-point for all file reading. Replaces read_sharepoint_file, browse_dropbox (action:read), ingest_url, and download_email_attachment (action:read). Auto-detects source from the URL/path. For Excel/CSV pass startRow+maxRows to page; for text/PDF/Word pass startChar+maxChars. Returns { success, fileName, content, totalRows?, totalChars?, truncated? }.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "The URL or path of the file. Examples: '/api/chat-media/xxx.xlsx' (user upload), 'https://brucegillinghampollardlimited.sharepoint.com/...' (SharePoint), '/BGP Share Drive/Pitches/deck.pdf' (Dropbox path), 'https://example.com/report.pdf' (public URL)." },
+          driveId: { type: "string", description: "SharePoint driveId (from browse_sharepoint_folder result). Use with itemId." },
+          itemId: { type: "string", description: "SharePoint itemId (from browse_sharepoint_folder result). Use with driveId." },
+          attachmentId: { type: "string", description: "Email attachment ID (from get_email_attachments). Use for email attachments." },
+          mailboxEmail: { type: "string", description: "Mailbox email address — required when the attachment is in a shared mailbox (pass same value as the search_emails call)." },
+          messageId: { type: "string", description: "Email message ID — required with attachmentId." },
+          startRow: { type: "number", description: "First data row (0-based) for Excel/CSV paging. Default 0." },
+          maxRows: { type: "number", description: "Max rows to return for Excel/CSV. Default 300." },
+          sheetName: { type: "string", description: "Excel sheet name. Omit for first/only sheet." },
+          startChar: { type: "number", description: "Start character offset for text/PDF/Word paging. Default 0." },
+          maxChars: { type: "number", description: "Max characters for text/PDF/Word. Default 100000." },
+        },
+        required: ["url"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "write_file",
+      description: "Generate a file. Replaces generate_pdf, generate_word, generate_pptx, export_to_excel, generate_designed_deck, generate_image, compile_brochure_from_pdfs, and save_to_image_studio. Pass type to choose format. For SharePoint delivery after generation, use upload_to_sharepoint with the returned chatMediaFilename. Returns { downloadMarkdown?, webUrl?, error }.",
+      parameters: {
+        type: "object",
+        properties: {
+          type: {
+            type: "string",
+            enum: ["pdf", "word", "pptx", "excel", "deck", "image", "image_studio", "brochure"],
+            description: "Output type. 'pdf' = plain-text PDF; 'word' = .docx; 'pptx' = PowerPoint; 'excel' = .xlsx; 'deck' = Gamma designed deck (client-facing, visual); 'image' = AI-generated image; 'image_studio' = save image to BGP Image Studio; 'brochure' = stitch existing PDF pages.",
+          },
+          title: { type: "string", description: "Document title (pdf/word/pptx/excel/deck)." },
+          filename: { type: "string", description: "Suggested filename without extension." },
+          content: { type: "string", description: "Markdown or plain text content for pdf." },
+          htmlContent: { type: "string", description: "HTML content for PDF generation." },
+          sections: { type: "array", description: "Sections array for Word/PPTX. Each: { heading, paragraphs[], bullets[], level }.", items: { type: "object" } },
+          sheets: { type: "array", description: "Sheets for Excel. Each: { name, headers[], rows[][] }.", items: { type: "object" } },
+          prompt: { type: "string", description: "Prompt for Gamma deck generation." },
+          templateId: { type: "string", description: "Gamma template ID." },
+          imagePrompt: { type: "string", description: "Prompt for AI image generation." },
+          imageStyle: { type: "string", description: "Style for image generation." },
+          imageUrl: { type: "string", description: "URL of previously generated image to save to Image Studio." },
+          base64Data: { type: "string", description: "Base64-encoded image data to save to Image Studio." },
+          fetchUrl: { type: "string", description: "Public image URL to fetch and save to Image Studio (e.g. Clearbit logo)." },
+          imageStudioName: { type: "string", description: "Name/label for the Image Studio entry." },
+          imageStudioCategory: { type: "string", description: "Category for the Image Studio entry." },
+          sharepointDriveId: { type: "string", description: "SharePoint driveId (for image_studio from SharePoint)." },
+          sharepointItemId: { type: "string", description: "SharePoint itemId (for image_studio from SharePoint)." },
+          sources: { type: "array", description: "Source PDFs for brochure. Each: { driveId, itemId, pages }.", items: { type: "object" } },
+        },
+        required: ["type"],
       },
     },
   });
@@ -5797,6 +5870,77 @@ export async function executeCrmToolRaw(
     const { executeDescribeSchema } = await import("./sql-tools");
     const result = executeDescribeSchema(fnArgs.table ? String(fnArgs.table) : undefined);
     return { data: result };
+  }
+
+  // ── Phase 2: read_file — unified file reader ─────────────────────────────
+  // Delegates to the appropriate underlying tool by re-dispatching via the
+  // same executeCrmToolRaw function (fnName swap).
+  if (fnName === "read_file") {
+    const url = String(fnArgs.url || "").trim();
+    const { driveId, itemId, attachmentId, messageId, mailboxEmail,
+            startRow, maxRows, sheetName, startChar, maxChars } = fnArgs as any;
+
+    // Email attachment read — delegate to download_email_attachment
+    if (attachmentId && messageId) {
+      return executeCrmToolRaw(
+        "download_email_attachment",
+        { action: "read", attachmentId, messageId, mailboxEmail },
+        req
+      );
+    }
+
+    // Dropbox path (no http prefix, not a /api/ path)
+    if (url && !url.startsWith("http") && !url.startsWith("/api/") && url.startsWith("/")) {
+      return executeCrmToolRaw("browse_dropbox", { action: "read", path: url }, req);
+    }
+
+    // Public HTTPS URL (not SharePoint, not chat-media)
+    if (url && url.startsWith("http") &&
+        !url.includes("sharepoint.com") && !url.includes("onedrive.com") &&
+        !url.includes("/api/chat-media/")) {
+      return executeCrmToolRaw("ingest_url", { url }, req);
+    }
+
+    // SharePoint driveId+itemId — delegate to executeReadSharePointFile directly
+    if (driveId && itemId) {
+      const { getValidMsToken } = await import("./microsoft");
+      const msT = await getValidMsToken(req);
+      const r = await executeReadSharePointFile({ driveId, itemId, startRow, maxRows, sheetName, startChar, maxChars }, msT);
+      return { data: r, action: r.success ? { type: "sharepoint_file", fileName: r.fileName, webUrl: r.webUrl } : undefined };
+    }
+
+    // chat-media or SharePoint/OneDrive URL
+    const { getValidMsToken: getValidMsToken2 } = await import("./microsoft");
+    const msT = await getValidMsToken2(req);
+    const r = await executeReadSharePointFile({ url, startRow, maxRows, sheetName, startChar, maxChars }, msT);
+    return { data: r, action: r.success ? { type: "sharepoint_file", fileName: r.fileName, webUrl: r.webUrl } : undefined };
+  }
+
+  // ── Phase 2: write_file — unified document generator ────────────────────
+  if (fnName === "write_file") {
+    const type = String(fnArgs.type || "");
+
+    if (type === "pdf") return executeCrmToolRaw("generate_pdf", fnArgs, req);
+    if (type === "word") return executeCrmToolRaw("generate_word", fnArgs, req);
+    if (type === "pptx") return executeCrmToolRaw("generate_pptx", fnArgs, req);
+    if (type === "excel") return executeCrmToolRaw("export_to_excel", fnArgs, req);
+    if (type === "deck") return executeCrmToolRaw("generate_designed_deck", fnArgs, req);
+    if (type === "image") {
+      return executeCrmToolRaw("generate_image", { ...fnArgs, prompt: fnArgs.imagePrompt, style: fnArgs.imageStyle }, req);
+    }
+    if (type === "image_studio") {
+      return executeCrmToolRaw("save_to_image_studio", {
+        imageUrl: fnArgs.imageUrl,
+        base64Data: fnArgs.base64Data,
+        fetchUrl: fnArgs.fetchUrl,
+        sharepointDriveId: fnArgs.sharepointDriveId,
+        sharepointItemId: fnArgs.sharepointItemId,
+        fileName: fnArgs.imageStudioName || fnArgs.filename,
+        category: fnArgs.imageStudioCategory,
+      }, req);
+    }
+    if (type === "brochure") return executeCrmToolRaw("compile_brochure_from_pdfs", fnArgs, req);
+    return { data: { error: `Unknown write_file type: ${type}` } };
   }
 
   if (fnName === "reconcile_sage_wip") {
