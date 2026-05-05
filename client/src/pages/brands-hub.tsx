@@ -461,13 +461,13 @@ function BrandExplorer() {
   });
 
   const { data: allCompanies = [], isLoading: companiesLoading, isError: companiesError } = useQuery<any[]>({
-    queryKey: ["/api/crm/companies"],
+    queryKey: ["/api/crm/companies", "brand-explorer"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/crm/companies");
       const d = await res.json();
-      return Array.isArray(d) ? d : [];
+      return Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : []);
     },
-    staleTime: 120_000,
+    staleTime: 60_000,
   });
 
   const companies = useMemo(
@@ -532,6 +532,19 @@ function BrandExplorer() {
     }
     return list.sort((a: any, b: any) => a.name.localeCompare(b.name));
   }, [companies, activeCat, activeSub, activeCatObj, search]);
+
+  if (companiesLoading) {
+    return (
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
+          {[...Array(7)].map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-2">
+          {[...Array(24)].map((_, i) => <Skeleton key={i} className="h-28 rounded-lg" />)}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -643,7 +656,10 @@ function BrandExplorer() {
             <Store className="w-10 h-10 mx-auto mb-2 opacity-20" />
             <p className="text-sm">No brands found</p>
             {allCompanies.length > 0 && companies.length === 0 && (
-              <p className="text-xs mt-1 text-amber-500">{allCompanies.length} companies loaded but none typed as "Tenant - ..." — check company types in CRM</p>
+              <p className="text-xs mt-1 text-amber-500">{allCompanies.length} companies loaded but none typed as Tenant — check company types in CRM</p>
+            )}
+            {allCompanies.length > 0 && companies.length > 0 && (
+              <p className="text-xs mt-1 text-amber-500">{companies.length} brands loaded — try clearing the category filter above</p>
             )}
             {allCompanies.length === 0 && companiesError && (
               <p className="text-xs mt-1 text-red-500">Failed to load companies from server — try refreshing</p>
