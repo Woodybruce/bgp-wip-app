@@ -1122,7 +1122,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
 - **KYC**: run_kyc_check for Companies House + sanctions + financial strength. deep_investigate for full D&B-style intelligence combining all sources.
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
-- **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl. For large Excel files read_sharepoint_file returns totalRows — if startRow + returnedRows < totalRows, call again with startRow incremented to read the next page (default 300 rows per call).
+- **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl. For large files read_sharepoint_file returns totalRows (Excel/CSV) or totalChars (PDF/Word/text) — if you haven't reached the end, call again with startRow or startChar incremented to read the next page. Default Excel page is 300 rows; default text page is 100,000 chars (~30 pages of a contract).
 - **Leasing schedule / any data file**: query_leasing_schedule for read. For IMPORTS — any Excel, CSV, PDF, or pasted text — always use **ingest_file** (not import_leasing_schedule which no longer exists). ingest_file auto-classifies the file, parses it with AI, and returns a preview. Show the preview to the user, then call commit_ingest to write.
 - **Documents (plain text)**: generate_pdf (TEXT ONLY — no imagery, no design), generate_word, generate_pptx, export_to_excel. Use these ONLY for internal text reports.
 - **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use **generate_designed_deck** (Gamma — full visual design with imagery). NEVER use generate_pdf for these. Don't apologise afterwards about the PDF being "just text" — pick the right tool upfront.
@@ -1816,6 +1816,14 @@ export async function getAvailableTools(): Promise<{
           sheetName: {
             type: "string",
             description: "For Excel files: the specific sheet name to read. If omitted, all sheets are returned.",
+          },
+          startChar: {
+            type: "number",
+            description: "For PDF/Word/text files: the 0-based character offset to start reading from. Default 0. Use to page through long documents — the response includes totalChars so you know how much remains.",
+          },
+          maxChars: {
+            type: "number",
+            description: "For PDF/Word/text files: maximum number of characters to return. Default 100000 (~30 pages). Increase for very large documents but watch context usage.",
           },
         },
         required: [],
@@ -4502,9 +4510,9 @@ export async function getKnowledgeContext(): Promise<string> {
 }
 
 async function executeReadSharePointFile(
-  args: { url?: string; driveId?: string; itemId?: string; startRow?: number; maxRows?: number; sheetName?: string },
+  args: { url?: string; driveId?: string; itemId?: string; startRow?: number; maxRows?: number; sheetName?: string; startChar?: number; maxChars?: number },
   token: string | null
-): Promise<{ success: boolean; fileName?: string; content?: string; webUrl?: string; error?: string; totalRows?: number; returnedRows?: number }> {
+): Promise<{ success: boolean; fileName?: string; content?: string; webUrl?: string; error?: string; totalRows?: number; returnedRows?: number; totalChars?: number }> {
   if (args.driveId && args.itemId && token) {
     try {
       const itemRes = await fetch(
@@ -4547,7 +4555,14 @@ async function executeReadSharePointFile(
           return { success: true, fileName, webUrl, ...result };
         }
         const text = await extractTextFromFile(tmpPath, fileName);
-        return { success: true, fileName, content: text.slice(0, 80000), webUrl };
+        const startChar = Math.max(0, args.startChar ?? 0);
+        const maxChars = Math.max(1, args.maxChars ?? 100000);
+        const slice = text.slice(startChar, startChar + maxChars);
+        const totalChars = text.length;
+        const note = totalChars > startChar + slice.length
+          ? `\n\n[Showing chars ${startChar}–${startChar + slice.length} of ${totalChars}. Call again with startChar=${startChar + slice.length} to read more.]`
+          : (startChar > 0 ? `\n\n[Showing chars ${startChar}–${startChar + slice.length} of ${totalChars} (end of file).]` : "");
+        return { success: true, fileName, content: slice + note, webUrl, totalChars };
       } finally {
         try { fsModule.unlinkSync(tmpPath); } catch {}
       }
@@ -4599,7 +4614,14 @@ async function executeReadSharePointFile(
         return { success: true, fileName: origName, webUrl: rawUrl, ...result };
       }
       const text = await extractTextFromFile(mediaPath, origName);
-      return { success: true, fileName: origName, content: text.slice(0, 80000), webUrl: rawUrl };
+      const startChar = Math.max(0, args.startChar ?? 0);
+      const maxChars = Math.max(1, args.maxChars ?? 100000);
+      const slice = text.slice(startChar, startChar + maxChars);
+      const totalChars = text.length;
+      const note = totalChars > startChar + slice.length
+        ? `\n\n[Showing chars ${startChar}–${startChar + slice.length} of ${totalChars}. Call again with startChar=${startChar + slice.length} to read more.]`
+        : (startChar > 0 ? `\n\n[Showing chars ${startChar}–${startChar + slice.length} of ${totalChars} (end of file).]` : "");
+      return { success: true, fileName: origName, content: slice + note, webUrl: rawUrl, totalChars };
     } catch (err: any) {
       return { success: false, error: `Could not read chat file ${origName}: ${err?.message}` };
     }
@@ -4737,15 +4759,19 @@ async function executeReadSharePointFile(
         return { success: true, fileName, webUrl, ...result };
       }
       const text = await extractTextFromFile(tempPath, fileName);
-      const limit = 80000;
-      const truncated = text.slice(0, limit);
+      const startChar = Math.max(0, args.startChar ?? 0);
+      const maxChars = Math.max(1, args.maxChars ?? 100000);
+      const slice = text.slice(startChar, startChar + maxChars);
+      const totalChars = text.length;
+      const note = totalChars > startChar + slice.length
+        ? `\n\n[Showing chars ${startChar}–${startChar + slice.length} of ${totalChars}. Call again with startChar=${startChar + slice.length} to read more.]`
+        : (startChar > 0 ? `\n\n[Showing chars ${startChar}–${startChar + slice.length} of ${totalChars} (end of file).]` : "");
       return {
         success: true,
         fileName,
         webUrl,
-        content: truncated.length < text.length
-          ? `${truncated}\n\n[Content truncated — showing first ${truncated.length} of ${text.length} characters]`
-          : truncated,
+        content: slice + note,
+        totalChars,
       };
     } finally {
       try { fs.unlinkSync(tempPath); } catch {}
