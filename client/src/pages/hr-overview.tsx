@@ -309,89 +309,60 @@ function YouPanel({ user }: { user: AuthUser }) {
 
 // ── 🏛️ Organigram team cards ────────────────────────────────────────────────
 
-function TeamCard({ team, allStaff, expanded, onToggle }: { team: TeamSummary; allStaff: StaffMember[]; expanded: boolean; onToggle: () => void }) {
+// Member-first team card. No per-team billing/pipeline/top-deals — those live
+// on the firm-wide ski target hero. Each card shows the team head pinned at
+// the top with their direct reports listed underneath, organigram-style.
+function TeamCard({ team, allStaff }: { team: TeamSummary; allStaff: StaffMember[] }) {
   const [, navigate] = useLocation();
   const style = teamStyle(team.team);
   const members = useMemo(() => allStaff.filter(s => team.memberIds.includes(s.id)), [allStaff, team.memberIds]);
+  const head = team.head;
+  const others = members.filter(m => m.id !== head?.id);
 
-  const stageBadge = (s: string) => ({ NEG: "bg-amber-500", SOL: "bg-amber-500", EXC: "bg-blue-500", COM: "bg-emerald-500" }[s] || "bg-muted-foreground/30");
+  const MemberRow = ({ m, isHead }: { m: StaffMember | TeamSummary["head"]; isHead?: boolean }) => {
+    if (!m) return null;
+    const profilePic = (m as any).profile_pic_url ?? (m as any).profilePicUrl ?? null;
+    return (
+      <button
+        onClick={() => navigate(`/hr?person=${m.id}`)}
+        className={`w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-white/70 dark:hover:bg-white/5 ${isHead ? "bg-white/60 dark:bg-white/10" : ""}`}
+      >
+        {profilePic ? (
+          <img src={profilePic} alt={m.name} className={`rounded-full object-cover shrink-0 ${isHead ? "w-9 h-9 ring-2 ring-white dark:ring-black/20" : "w-7 h-7"}`} />
+        ) : (
+          <div className={`rounded-full bg-white/80 dark:bg-white/10 flex items-center justify-center font-medium shrink-0 ${isHead ? "w-9 h-9 text-xs ring-2 ring-white dark:ring-black/20" : "w-7 h-7 text-[10px]"}`}>
+            {m.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className={`truncate ${isHead ? "text-sm font-semibold" : "text-xs font-medium"}`}>{m.name}</div>
+          {m.title && <div className="text-[10px] text-muted-foreground truncate">{m.title}</div>}
+        </div>
+        {isHead && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-white/70 dark:bg-white/10 border-white/40 shrink-0">Head</Badge>}
+      </button>
+    );
+  };
 
   return (
-    <div className={`rounded-xl border ${style.border} bg-gradient-to-br ${style.bg} transition-all ${expanded ? "shadow-md" : "shadow-sm hover:shadow-md"}`}>
-      <button
-        onClick={onToggle}
-        className="w-full text-left p-4"
-        data-testid={`team-card-${team.team.replace(/\s+/g, "-").toLowerCase()}`}
-      >
-        <div className="flex items-start gap-3">
-          {team.head?.profilePicUrl ? (
-            <img src={team.head.profilePicUrl} alt={team.head.name} className="w-12 h-12 rounded-full object-cover border-2 border-white dark:border-black/20 shadow-sm shrink-0" />
-          ) : (
-            <div className="w-12 h-12 rounded-full bg-white/70 dark:bg-white/10 flex items-center justify-center font-semibold text-sm shrink-0 border-2 border-white dark:border-black/20 shadow-sm">
-              {team.head?.name?.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase() || "—"}
-            </div>
-          )}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className={`font-semibold text-sm ${style.accent}`}>{team.team}</h3>
-              <Badge variant="outline" className="text-[10px] bg-white/60 dark:bg-white/10 border-white/40">{team.headcount}</Badge>
-            </div>
-            {team.head && (
-              <div className="text-xs text-muted-foreground truncate mt-0.5">
-                Led by <span className="font-medium text-foreground">{team.head.name}</span>{team.head.title ? ` · ${team.head.title}` : ""}
-              </div>
-            )}
-            <div className="mt-2 flex items-baseline gap-1.5">
-              <span className="text-base font-semibold tabular-nums">{fmtMoney(team.pipelinePence)}</span>
-              <span className="text-[11px] text-muted-foreground">pipeline</span>
-            </div>
-            {team.topDeals.length > 0 && (
-              <div className="mt-2 space-y-0.5">
-                {team.topDeals.map(d => (
-                  <div key={d.id} className="flex items-center gap-1.5 text-[11px]">
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${stageBadge(d.status)}`} />
-                    <span className="truncate flex-1 text-muted-foreground">{d.name}</span>
-                    <span className="font-medium tabular-nums shrink-0">{fmtMoney(d.fee)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+    <div className={`rounded-xl border ${style.border} bg-gradient-to-br ${style.bg} shadow-sm hover:shadow-md transition-shadow overflow-hidden`} data-testid={`team-card-${team.team.replace(/\s+/g, "-").toLowerCase()}`}>
+      <div className="px-3 py-2 flex items-center justify-between border-b border-white/40 dark:border-black/20">
+        <h3 className={`font-semibold text-sm ${style.accent}`}>{team.team}</h3>
+        <Badge variant="outline" className="text-[10px] h-5 bg-white/60 dark:bg-white/10 border-white/40">{team.headcount}</Badge>
+      </div>
+      <div className="p-2 space-y-1">
+        {head && <MemberRow m={head} isHead />}
+        {others.length > 0 && (
+          <div className="space-y-0.5 pl-2 border-l border-white/40 dark:border-black/20 ml-3 mt-1">
+            {others.map(m => <MemberRow key={m.id} m={m} />)}
           </div>
-          <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform shrink-0 mt-1 ${expanded ? "rotate-180" : ""}`} />
-        </div>
-      </button>
-      {expanded && members.length > 0 && (
-        <div className="border-t border-white/40 dark:border-black/20 p-3 bg-white/40 dark:bg-black/10">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-            {members.map(m => (
-              <button
-                key={m.id}
-                onClick={(e) => { e.stopPropagation(); navigate(`/hr?person=${m.id}`); }}
-                className="flex items-center gap-2 p-1.5 rounded-md hover:bg-white/60 dark:hover:bg-white/5 transition-colors text-left"
-              >
-                {m.profile_pic_url ? (
-                  <img src={m.profile_pic_url} alt={m.name} className="w-7 h-7 rounded-full object-cover shrink-0" />
-                ) : (
-                  <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center text-[10px] font-medium shrink-0">
-                    {m.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
-                  </div>
-                )}
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium truncate">{m.name}</div>
-                  {m.title && <div className="text-[10px] text-muted-foreground truncate">{m.title}</div>}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
 function OrganigramSection({ allStaff }: { allStaff: StaffMember[] }) {
   const { data, isLoading } = useQuery<{ teams: TeamSummary[] }>({ queryKey: ["/api/hr/team-summary"] });
-  const [expanded, setExpanded] = useState<string | null>(null);
 
   if (isLoading) return <Skeleton className="h-64 w-full rounded-xl" />;
   if (!data?.teams?.length) return null;
@@ -401,20 +372,12 @@ function OrganigramSection({ allStaff }: { allStaff: StaffMember[] }) {
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center justify-between">
           <span className="flex items-center gap-2"><GitBranch className="w-4 h-4 text-primary" /> Teams</span>
-          <span className="text-[11px] font-normal text-muted-foreground">click a team to expand</span>
+          <span className="text-[11px] font-normal text-muted-foreground">click anyone to open their profile</span>
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {data.teams.map(t => (
-            <TeamCard
-              key={t.team}
-              team={t}
-              allStaff={allStaff}
-              expanded={expanded === t.team}
-              onToggle={() => setExpanded(prev => prev === t.team ? null : t.team)}
-            />
-          ))}
+          {data.teams.map(t => <TeamCard key={t.team} team={t} allStaff={allStaff} />)}
         </div>
       </CardContent>
     </Card>
@@ -423,55 +386,130 @@ function OrganigramSection({ allStaff }: { allStaff: StaffMember[] }) {
 
 // ── 🏆 Hunger Games strip ────────────────────────────────────────────────────
 
-function HungerGamesStrip({ allStaff }: { allStaff: StaffMember[] }) {
-  const { data: teamData } = useQuery<{ teams: TeamSummary[] }>({ queryKey: ["/api/hr/team-summary"] });
+interface IndividualLeader {
+  userId: string;
+  name: string;
+  team: string | null;
+  title: string | null;
+  profilePicUrl: string | null;
+  billedPence: number;
+  pipelinePence: number;
+  activeDeals: number;
+  closedThisWeekPence: number;
+  kudosThisWeek: number;
+}
 
-  // For now we surface "top team by pipeline" until per-person metrics ship.
-  // Hunter signals, viewings, AML hygiene etc. wire up in a follow-up.
-  const podium = useMemo(() => {
+interface LeaderboardData {
+  topBiller: IndividualLeader[];
+  topPipeline: IndividualLeader[];
+  topActive: IndividualLeader[];
+  topClosedThisWeek: IndividualLeader[];
+  topKudos: IndividualLeader[];
+}
+
+function HungerGamesStrip({ allStaff: _allStaff }: { allStaff: StaffMember[] }) {
+  const [, navigate] = useLocation();
+  const { data: teamData } = useQuery<{ teams: TeamSummary[] }>({ queryKey: ["/api/hr/team-summary"] });
+  const { data: indiv } = useQuery<LeaderboardData>({ queryKey: ["/api/dashboard/individual-leaderboard"] });
+  const [tab, setTab] = useState<"teams" | "billers" | "pipeline" | "active" | "kudos">("billers");
+
+  const teamPodium = useMemo(() => {
     if (!teamData?.teams) return [];
     return [...teamData.teams].sort((a, b) => b.pipelinePence - a.pipelinePence).slice(0, 3);
   }, [teamData]);
-
-  if (podium.length === 0) return null;
   const medals = ["🥇", "🥈", "🥉"];
+
+  const tabs: Array<{ id: typeof tab; label: string; icon: any }> = [
+    { id: "billers",  label: "Top biller",     icon: Target },
+    { id: "pipeline", label: "Top pipeline",   icon: TrendingUp },
+    { id: "active",   label: "Most active",    icon: Flame },
+    { id: "kudos",    label: "Most kudos",     icon: Star },
+    { id: "teams",    label: "Top team",       icon: Trophy },
+  ];
+
+  const list: IndividualLeader[] = (() => {
+    if (!indiv) return [];
+    if (tab === "billers")  return indiv.topBiller;
+    if (tab === "pipeline") return indiv.topPipeline;
+    if (tab === "active")   return indiv.topActive;
+    if (tab === "kudos")    return indiv.topKudos;
+    return [];
+  })().slice(0, 5);
+
+  const valueOf = (l: IndividualLeader) => {
+    if (tab === "billers")  return fmtMoney(l.billedPence);
+    if (tab === "pipeline") return fmtMoney(l.pipelinePence);
+    if (tab === "active")   return `${l.activeDeals} deals`;
+    if (tab === "kudos")    return `${l.kudosThisWeek} 👏`;
+    return "";
+  };
 
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm flex items-center gap-2">
-          <Trophy className="w-4 h-4 text-amber-500" /> Hunger Games — top teams this week
-          <span className="text-[10px] font-normal text-muted-foreground ml-auto">by pipeline £</span>
+        <CardTitle className="text-sm flex items-center justify-between gap-2 flex-wrap">
+          <span className="flex items-center gap-2"><Trophy className="w-4 h-4 text-amber-500" /> Hunger Games</span>
+          <div className="inline-flex rounded-md border bg-muted/30 p-0.5 text-[11px]">
+            {tabs.map(t => (
+              <button
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                className={`flex items-center gap-1 rounded px-2 py-1 font-medium transition-colors ${tab === t.id ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                <t.icon className="w-3 h-3" /> {t.label}
+              </button>
+            ))}
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          {podium.map((t, i) => {
-            const style = teamStyle(t.team);
-            return (
-              <div key={t.team} className={`rounded-lg border ${style.border} bg-gradient-to-br ${style.bg} p-3 relative`}>
-                <div className="absolute top-2 right-2 text-2xl">{medals[i]}</div>
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{i === 0 ? "Leader" : i === 1 ? "Runner-up" : "Third"}</div>
-                <div className={`font-semibold text-sm ${style.accent}`}>{t.team}</div>
-                <div className="text-lg font-bold tabular-nums mt-0.5">{fmtMoney(t.pipelinePence)}</div>
-                <div className="text-[10px] text-muted-foreground">{t.headcount} {t.headcount === 1 ? "person" : "people"}</div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center">
-          {[
-            { icon: <Target className="w-3 h-3" />, label: "Top biller", value: "Coming soon" },
-            { icon: <Eye className="w-3 h-3" />, label: "Most viewings", value: "Coming soon" },
-            { icon: <Megaphone className="w-3 h-3" />, label: "PR star", value: "Coming soon" },
-            { icon: <Flame className="w-3 h-3" />, label: "Streak", value: "Coming soon" },
-          ].map(m => (
-            <div key={m.label} className="rounded-md border border-dashed p-1.5 text-[10px] text-muted-foreground">
-              <div className="flex items-center justify-center gap-1 font-medium uppercase tracking-wider">{m.icon} {m.label}</div>
-              <div className="mt-0.5 italic opacity-70">{m.value}</div>
+        {tab === "teams" ? (
+          teamPodium.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic text-center py-4">No team data yet.</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {teamPodium.map((t, i) => {
+                const style = teamStyle(t.team);
+                return (
+                  <div key={t.team} className={`rounded-lg border ${style.border} bg-gradient-to-br ${style.bg} p-3 relative`}>
+                    <div className="absolute top-2 right-2 text-2xl">{medals[i]}</div>
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">{i === 0 ? "Leader" : i === 1 ? "Runner-up" : "Third"}</div>
+                    <div className={`font-semibold text-sm ${style.accent}`}>{t.team}</div>
+                    <div className="text-lg font-bold tabular-nums mt-0.5">{fmtMoney(t.pipelinePence)}</div>
+                    <div className="text-[10px] text-muted-foreground">{t.headcount} {t.headcount === 1 ? "person" : "people"}</div>
+                  </div>
+                );
+              })}
             </div>
-          ))}
-        </div>
+          )
+        ) : list.length === 0 ? (
+          <div className="text-xs text-muted-foreground italic text-center py-4">Nothing to show on the {tabs.find(t => t.id === tab)?.label.toLowerCase()} board yet.</div>
+        ) : (
+          <div className="space-y-1.5">
+            {list.map((l, i) => (
+              <button
+                key={l.userId}
+                onClick={() => navigate(`/hr?person=${l.userId}`)}
+                className={`w-full flex items-center gap-3 p-2 rounded-lg border text-left transition-colors hover:bg-accent/40 ${i === 0 ? "bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800" : ""}`}
+                data-testid={`leaderboard-${tab}-${i}`}
+              >
+                <div className="w-7 text-center text-lg shrink-0">{medals[i] || `#${i + 1}`}</div>
+                {l.profilePicUrl ? (
+                  <img src={l.profilePicUrl} alt={l.name} className="w-9 h-9 rounded-full object-cover shrink-0" />
+                ) : (
+                  <div className="w-9 h-9 rounded-full bg-muted flex items-center justify-center text-xs font-medium shrink-0">
+                    {l.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold truncate">{l.name}</div>
+                  <div className="text-[10px] text-muted-foreground truncate">{l.title || l.team || ""}</div>
+                </div>
+                <div className="text-base font-bold tabular-nums shrink-0">{valueOf(l)}</div>
+              </button>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

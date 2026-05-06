@@ -605,6 +605,131 @@ export function setupHrRoutes(app: Express) {
     }
   });
 
+  // ── Individual leaderboards for the Hunger Games strip ───────────────────
+  // Computes per-person rolled-up metrics from crm_deals (split by fee
+  // allocation / internal_agent count) plus expense throughput. Used by the
+  // Hunger Games panel — top biller, top pipeline, most active deals,
+  // top kudos receiver. All YTD scheme year (1 May → 30 Apr).
+  app.get("/api/dashboard/individual-leaderboard", requireAuth, async (_req, res) => {
+    try {
+      const now = new Date();
+      const schemeStart = now.getMonth() >= 4
+        ? new Date(now.getFullYear(), 4, 1)
+        : new Date(now.getFullYear() - 1, 4, 1);
+      const schemeEnd = new Date(schemeStart.getFullYear() + 1, 3, 30);
+      const weekAgo = new Date(now.getTime() - 7 * 86400000);
+
+      // Per-agent share of each deal: explicit allocation OR even split.
+      const dealsRes = await pool.query(
+        `WITH deal_share AS (
+           SELECT a.agent_lower AS agent,
+                  d.id, d.status, d.fee,
+                  COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) AS dt,
+                  CASE
+                    WHEN dfa.percentage IS NOT NULL THEN d.fee * dfa.percentage / 100.0
+                    WHEN dfa.fixed_amount IS NOT NULL THEN dfa.fixed_amount
+                    ELSE d.fee::numeric / GREATEST(COALESCE(array_length(d.internal_agent, 1), 1), 1)
+                  END AS portion
+           FROM crm_deals d
+           CROSS JOIN LATERAL (
+             SELECT DISTINCT LOWER(ag) AS agent_lower FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) ag
+           ) a
+           LEFT JOIN deal_fee_allocations dfa
+             ON dfa.deal_id = d.id AND LOWER(dfa.agent_name) = a.agent_lower
+           WHERE d.fee IS NOT NULL AND d.fee > 0
+         )
+         SELECT agent, status, dt, portion FROM deal_share
+         WHERE dt BETWEEN $1 AND $2`,
+        [schemeStart.toISOString(), schemeEnd.toISOString()]
+      );
+
+      // Build per-agent rollups. We can only attribute to people we recognise
+      // by name in the users table; resolve once up-front.
+      const usersRes = await pool.query(
+        `SELECT u.id, u.name, u.email, u.profile_pic_url, u.team, sp.title, sp.xero_tracking_name
+         FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+         WHERE u.is_active = true AND sp.id IS NOT NULL`
+      );
+      const nameToUser = new Map<string, any>();
+      for (const u of usersRes.rows) {
+        nameToUser.set(u.name.toLowerCase(), u);
+        if (u.xero_tracking_name) nameToUser.set(u.xero_tracking_name.toLowerCase(), u);
+      }
+
+      const agentStats = new Map<string, { user: any; billed: number; pipeline: number; activeCount: number; recentClose: number }>();
+      for (const row of dealsRes.rows) {
+        const u = nameToUser.get(row.agent);
+        if (!u) continue;
+        const cur = agentStats.get(u.id) || { user: u, billed: 0, pipeline: 0, activeCount: 0, recentClose: 0 };
+        const pence = Math.round((parseFloat(row.portion) || 0) * 100);
+        if (row.status === "INV" || row.status === "COM") cur.billed += pence;
+        if (["NEG", "SOL", "EXC", "COM"].includes(row.status)) {
+          cur.pipeline += pence;
+          cur.activeCount += 1;
+        }
+        if ((row.status === "COM" || row.status === "INV") && row.dt && new Date(row.dt) >= weekAgo) {
+          cur.recentClose += pence;
+        }
+        agentStats.set(u.id, cur);
+      }
+
+      // Kudos / awards this week as a "morale" leaderboard.
+      const awardsRes = await pool.query(
+        `SELECT user_id, COUNT(*)::int AS n
+         FROM staff_awards WHERE created_at >= $1 GROUP BY user_id`,
+        [weekAgo]
+      );
+      const kudosByUser = new Map<string, number>(awardsRes.rows.map((r: any) => [r.user_id, r.n]));
+
+      const list = Array.from(agentStats.values()).map(s => ({
+        userId: s.user.id,
+        name: s.user.name,
+        team: s.user.team,
+        title: s.user.title,
+        profilePicUrl: s.user.profile_pic_url,
+        billedPence: s.billed,
+        pipelinePence: s.pipeline,
+        activeDeals: s.activeCount,
+        closedThisWeekPence: s.recentClose,
+        kudosThisWeek: kudosByUser.get(s.user.id) || 0,
+      }));
+
+      // Always include people without deals so kudos board still works for them.
+      for (const u of usersRes.rows) {
+        if (!agentStats.has(u.id)) {
+          list.push({
+            userId: u.id,
+            name: u.name,
+            team: u.team,
+            title: u.title,
+            profilePicUrl: u.profile_pic_url,
+            billedPence: 0,
+            pipelinePence: 0,
+            activeDeals: 0,
+            closedThisWeekPence: 0,
+            kudosThisWeek: kudosByUser.get(u.id) || 0,
+          });
+        }
+      }
+
+      const top = (key: keyof typeof list[0]) => [...list]
+        .sort((a, b) => Number(b[key]) - Number(a[key]))
+        .filter(x => Number(x[key]) > 0)
+        .slice(0, 5);
+
+      res.json({
+        topBiller: top("billedPence"),
+        topPipeline: top("pipelinePence"),
+        topActive: top("activeDeals"),
+        topClosedThisWeek: top("closedThisWeekPence"),
+        topKudos: top("kudosThisWeek"),
+      });
+    } catch (e: any) {
+      console.error("[hr] individual-leaderboard error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Team summary roll-up for the dashboard organigram ───────────────────
   // For each team: head (highest-ranked board/mgt member by name), headcount,
   // billed YTD (Xero), pipeline £ (crm_deals share), and the team's top 2
@@ -1170,6 +1295,122 @@ export function setupHrRoutes(app: Express) {
 
       res.json({ updated, skipped, missing, failed, total: rows.length });
     } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 💳 Expenses analysis (per-person breakdown) ──────────────────────────
+  // Pulls Stripe-issued card spend for one staffer + breaks it down by
+  // category (Xero account), top merchants, and top deals/clients (via
+  // expenses.related_deal_id → crm_deals → landlord/tenant). Used by the
+  // ExpensesAnalysisCard on each profile.
+  app.get("/api/hr/staff/:userId/expenses-summary", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      // Find the user's cardholder row.
+      const ch = await pool.query("SELECT id FROM stripe_cardholders WHERE user_id = $1 LIMIT 1", [req.params.userId]);
+      if (!ch.rows[0]) {
+        return res.json({ hasCard: false, totalPence: 0, mtdPence: 0, ytdPence: 0, byCategory: [], topMerchants: [], topClients: [], recent: [] });
+      }
+      const cardholderId = ch.rows[0].id;
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const yearStart = new Date(now.getFullYear(), 0, 1);
+
+      // Aggregations in parallel.
+      const [byCat, topMerch, topClients, recent, totals] = await Promise.all([
+        pool.query(
+          `SELECT COALESCE(category, 'Uncategorised') AS category,
+                  COUNT(*)::int AS count,
+                  SUM(amount_pence)::bigint AS pence
+           FROM expenses
+           WHERE cardholder_id = $1 AND transaction_date >= $2
+             AND COALESCE(is_personal, false) = false
+           GROUP BY 1
+           ORDER BY pence DESC NULLS LAST
+           LIMIT 12`,
+          [cardholderId, yearStart]
+        ),
+        pool.query(
+          `SELECT COALESCE(NULLIF(merchant, ''), 'Unknown merchant') AS merchant,
+                  COUNT(*)::int AS count,
+                  SUM(amount_pence)::bigint AS pence
+           FROM expenses
+           WHERE cardholder_id = $1 AND transaction_date >= $2
+             AND COALESCE(is_personal, false) = false
+           GROUP BY 1
+           ORDER BY pence DESC NULLS LAST
+           LIMIT 8`,
+          [cardholderId, yearStart]
+        ),
+        // Client = the landlord on the related deal (or the deal name if no
+        // landlord). Reveals "I spent £x entertaining Landsec deals".
+        pool.query(
+          `SELECT
+             COALESCE(landlord.name, deal.name, 'Unattributed') AS client,
+             d.deal_id,
+             COUNT(*)::int AS count,
+             SUM(e.amount_pence)::bigint AS pence,
+             BOOL_OR(COALESCE(e.is_client_rechargeable, false)) AS rechargeable
+           FROM expenses e
+           LEFT JOIN crm_deals d ON d.id = e.related_deal_id
+           LEFT JOIN crm_companies landlord ON landlord.id = d.landlord_id
+           LEFT JOIN crm_deals deal ON deal.id = e.related_deal_id
+           WHERE e.cardholder_id = $1 AND e.transaction_date >= $2
+             AND COALESCE(e.is_personal, false) = false
+           GROUP BY client, d.deal_id
+           ORDER BY pence DESC NULLS LAST
+           LIMIT 8`,
+          [cardholderId, yearStart]
+        ),
+        pool.query(
+          `SELECT id, merchant, amount_pence, transaction_date, category, business_purpose, status, related_deal_id
+           FROM expenses
+           WHERE cardholder_id = $1 AND COALESCE(is_personal, false) = false
+           ORDER BY transaction_date DESC NULLS LAST LIMIT 10`,
+          [cardholderId]
+        ),
+        pool.query(
+          `SELECT
+             COALESCE(SUM(amount_pence) FILTER (WHERE transaction_date >= $2), 0)::bigint AS mtd,
+             COALESCE(SUM(amount_pence) FILTER (WHERE transaction_date >= $3), 0)::bigint AS ytd,
+             COALESCE(SUM(amount_pence), 0)::bigint AS total,
+             COUNT(*) FILTER (WHERE transaction_date >= $3)::int AS ytd_count,
+             COUNT(*) FILTER (WHERE COALESCE(is_client_rechargeable, false) = true AND transaction_date >= $3)::int AS rechargeable_count,
+             COALESCE(SUM(amount_pence) FILTER (WHERE COALESCE(is_client_rechargeable, false) = true AND transaction_date >= $3), 0)::bigint AS rechargeable_pence
+           FROM expenses
+           WHERE cardholder_id = $1 AND COALESCE(is_personal, false) = false`,
+          [cardholderId, monthStart, yearStart]
+        ),
+      ]);
+
+      res.json({
+        hasCard: true,
+        mtdPence: parseInt(totals.rows[0].mtd, 10),
+        ytdPence: parseInt(totals.rows[0].ytd, 10),
+        totalPence: parseInt(totals.rows[0].total, 10),
+        ytdCount: totals.rows[0].ytd_count,
+        rechargeableCount: totals.rows[0].rechargeable_count,
+        rechargeablePence: parseInt(totals.rows[0].rechargeable_pence, 10),
+        byCategory: byCat.rows.map((r: any) => ({ category: r.category, count: r.count, pence: parseInt(r.pence, 10) })),
+        topMerchants: topMerch.rows.map((r: any) => ({ merchant: r.merchant, count: r.count, pence: parseInt(r.pence, 10) })),
+        topClients: topClients.rows.map((r: any) => ({ client: r.client, dealId: r.deal_id, count: r.count, pence: parseInt(r.pence, 10), rechargeable: r.rechargeable })),
+        recent: recent.rows.map((r: any) => ({
+          id: r.id,
+          merchant: r.merchant,
+          amountPence: r.amount_pence,
+          transactionDate: r.transaction_date,
+          category: r.category,
+          businessPurpose: r.business_purpose,
+          status: r.status,
+          relatedDealId: r.related_deal_id,
+        })),
+      });
+    } catch (e: any) {
+      console.error("[hr] expenses-summary error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });

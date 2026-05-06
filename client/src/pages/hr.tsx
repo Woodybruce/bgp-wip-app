@@ -1126,6 +1126,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
             {isAdmin && <TabsTrigger value="commission" className="text-xs">Commission</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="holiday" className="text-xs">Holiday</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="career" className="text-xs">Career</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="expenses" className="text-xs">Expenses</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="documents" className="text-xs">Documents</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="kit" className="text-xs">Kit</TabsTrigger>}
             {(isAdmin || isOwn) && cardholder && <TabsTrigger value="card" className="text-xs">My Card</TabsTrigger>}
@@ -1210,6 +1211,10 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
             <CareerRoadmapTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} currentTitle={person.title} />
           </TabsContent>
 
+          <TabsContent value="expenses" className="mt-4">
+            <ExpensesAnalysisCard userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
+          </TabsContent>
+
           <TabsContent value="documents" className="mt-4">
             <DocumentsTab person={person} isAdmin={isAdmin} />
           </TabsContent>
@@ -1292,6 +1297,187 @@ interface PolicyDoc {
   fileName: string | null;
   mimeType: string | null;
   inlineUrl: string | null;
+}
+
+// ── 💳 Expenses analysis (inline on profile) ────────────────────────────────
+
+interface ExpensesSummary {
+  hasCard: boolean;
+  mtdPence: number;
+  ytdPence: number;
+  totalPence: number;
+  ytdCount: number;
+  rechargeableCount: number;
+  rechargeablePence: number;
+  byCategory: Array<{ category: string; count: number; pence: number }>;
+  topMerchants: Array<{ merchant: string; count: number; pence: number }>;
+  topClients: Array<{ client: string; dealId: string | null; count: number; pence: number; rechargeable: boolean }>;
+  recent: Array<{
+    id: string;
+    merchant: string | null;
+    amountPence: number;
+    transactionDate: string | null;
+    category: string | null;
+    businessPurpose: string | null;
+    status: string;
+    relatedDealId: string | null;
+  }>;
+}
+
+const CATEGORY_COLORS = ["bg-sky-500", "bg-emerald-500", "bg-amber-500", "bg-pink-500", "bg-violet-500", "bg-orange-500", "bg-cyan-500", "bg-rose-500", "bg-indigo-500", "bg-lime-500", "bg-fuchsia-500", "bg-teal-500"];
+
+function ExpensesAnalysisCard({ userId, isAdmin, isOwn }: { userId: string; isAdmin: boolean; isOwn: boolean }) {
+  const [, navigate] = useLocation();
+  const { data, isLoading } = useQuery<ExpensesSummary>({
+    queryKey: [`/api/hr/staff/${userId}/expenses-summary`],
+    enabled: isAdmin || isOwn,
+  });
+
+  if (!isAdmin && !isOwn) return null;
+  if (isLoading) return <Card><CardContent className="p-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground mx-auto" /></CardContent></Card>;
+  if (!data || !data.hasCard) {
+    return (
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><CreditCard className="w-4 h-4 text-muted-foreground" /> Expenses</CardTitle></CardHeader>
+        <CardContent className="pt-0 text-xs text-muted-foreground italic">No card issued yet.</CardContent>
+      </Card>
+    );
+  }
+
+  const totalCat = data.byCategory.reduce((s, c) => s + c.pence, 0) || 1;
+  const rechargePct = data.ytdPence > 0 ? Math.round((data.rechargeablePence / data.ytdPence) * 100) : 0;
+
+  const statusColor = (s: string) => ({
+    pending_receipt: "text-amber-600",
+    pending_approval: "text-amber-600",
+    approved: "text-green-600",
+    rejected: "text-red-500",
+    posted_to_xero: "text-blue-600",
+  }[s] || "text-muted-foreground");
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center justify-between">
+          <span className="flex items-center gap-2"><CreditCard className="w-4 h-4 text-primary" /> Expenses analysis</span>
+          <button onClick={() => navigate(isAdmin ? "/expenses" : "/my-expenses")} className="text-[11px] text-primary hover:underline">Open full ledger →</button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0 space-y-4">
+        {/* Headline numbers */}
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-lg border p-2.5 text-center">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">This month</div>
+            <div className="text-base font-semibold tabular-nums">{fmtSalary(data.mtdPence)}</div>
+          </div>
+          <div className="rounded-lg border p-2.5 text-center">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">YTD ({data.ytdCount})</div>
+            <div className="text-base font-semibold tabular-nums">{fmtSalary(data.ytdPence)}</div>
+          </div>
+          <div className="rounded-lg border p-2.5 text-center bg-emerald-50/40 dark:bg-emerald-950/20">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Rechargeable</div>
+            <div className="text-base font-semibold tabular-nums">{fmtSalary(data.rechargeablePence)}</div>
+            <div className="text-[10px] text-emerald-700 dark:text-emerald-400">{rechargePct}% of YTD</div>
+          </div>
+        </div>
+
+        {/* Category breakdown */}
+        {data.byCategory.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Where it went · YTD</div>
+            <div className="h-2.5 rounded-full bg-muted overflow-hidden flex">
+              {data.byCategory.map((c, i) => (
+                <div
+                  key={c.category}
+                  className={CATEGORY_COLORS[i % CATEGORY_COLORS.length]}
+                  style={{ width: `${(c.pence / totalCat) * 100}%` }}
+                  title={`${c.category}: ${fmtSalary(c.pence)}`}
+                />
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2">
+              {data.byCategory.slice(0, 8).map((c, i) => (
+                <div key={c.category} className="flex items-center gap-1.5 text-[11px]">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${CATEGORY_COLORS[i % CATEGORY_COLORS.length]}`} />
+                  <span className="flex-1 truncate text-muted-foreground">{c.category}</span>
+                  <span className="font-medium tabular-nums">{fmtSalary(c.pence)}</span>
+                  <span className="text-[10px] text-muted-foreground tabular-nums w-7 text-right">×{c.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Top clients */}
+        {data.topClients.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Top clients YTD</div>
+            <div className="space-y-1">
+              {data.topClients.slice(0, 5).map((c, i) => (
+                <div key={`${c.client}-${i}`} className="flex items-center gap-2 text-xs">
+                  <Building2 className="w-3 h-3 text-muted-foreground shrink-0" />
+                  <button
+                    onClick={() => c.dealId ? navigate(`/deals/${c.dealId}`) : null}
+                    disabled={!c.dealId}
+                    className="flex-1 truncate text-left hover:text-foreground disabled:hover:text-current"
+                  >
+                    {c.client}
+                  </button>
+                  {c.rechargeable && <Badge variant="outline" className="text-[9px] h-4 px-1 text-emerald-700 border-emerald-300">£→client</Badge>}
+                  <span className="text-[10px] text-muted-foreground tabular-nums">×{c.count}</span>
+                  <span className="font-medium tabular-nums">{fmtSalary(c.pence)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Top merchants */}
+        {data.topMerchants.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Top merchants YTD</div>
+            <div className="space-y-1">
+              {data.topMerchants.slice(0, 5).map(m => (
+                <div key={m.merchant} className="flex items-center gap-2 text-xs">
+                  <span className="flex-1 truncate text-muted-foreground">{m.merchant}</span>
+                  <span className="text-[10px] text-muted-foreground tabular-nums">×{m.count}</span>
+                  <span className="font-medium tabular-nums">{fmtSalary(m.pence)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Recent transactions */}
+        {data.recent.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Recent transactions</div>
+            <div className="space-y-1">
+              {data.recent.slice(0, 6).map(r => (
+                <button
+                  key={r.id}
+                  onClick={() => navigate(isAdmin ? `/expenses/${r.id}` : `/my-expenses/${r.id}`)}
+                  className="w-full flex items-center gap-2 p-1.5 rounded-md hover:bg-muted/40 text-left text-xs"
+                >
+                  <Clock className={`w-3 h-3 shrink-0 ${statusColor(r.status)}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="truncate font-medium">{r.merchant || "Unknown"}</div>
+                    {(r.businessPurpose || r.category) && (
+                      <div className="text-[10px] text-muted-foreground truncate">{r.businessPurpose || r.category}</div>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                    {r.transactionDate ? new Date(r.transactionDate).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : "—"}
+                  </span>
+                  <span className="font-semibold tabular-nums shrink-0">{fmtSalary(r.amountPence)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 // ── 🎁 Benefits hub ───────────────────────────────────────────────────────────
