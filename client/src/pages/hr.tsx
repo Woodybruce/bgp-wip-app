@@ -9,6 +9,7 @@ import {
   Shield, Heart, Briefcase, Star, DollarSign, BookOpen,
   ExternalLink, Loader2, Search, SlidersHorizontal,
   Network, Cake, UserPlus, Trash2, FolderLock, Folder,
+  LayoutGrid, GitBranch,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -904,7 +905,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
         <Button variant="ghost" size="sm" onClick={onBack} className="h-8 px-2">
           <ArrowLeft className="w-4 h-4 mr-1" /> Back
         </Button>
-        {(isAdmin || isOwn) && (
+        {isAdmin && (
           <Button variant="outline" size="sm" className="ml-auto" onClick={() => setEditOpen(true)}>
             <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit profile
           </Button>
@@ -967,14 +968,42 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
         )}
 
         {/* Tabs */}
-        <Tabs defaultValue={isAdmin ? "overview" : "holiday"} className="mt-2">
+        <Tabs defaultValue={isAdmin ? "overview" : isOwn ? "holiday" : "about"} className="mt-2">
           <TabsList className="w-full overflow-x-auto flex-nowrap justify-start h-9">
+            {!isAdmin && !isOwn && <TabsTrigger value="about" className="text-xs">About</TabsTrigger>}
             {isAdmin && <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>}
             {isAdmin && <TabsTrigger value="commission" className="text-xs">Commission</TabsTrigger>}
-            <TabsTrigger value="holiday" className="text-xs">Holiday</TabsTrigger>
-            <TabsTrigger value="documents" className="text-xs">Documents</TabsTrigger>
+            {(isAdmin || isOwn) && <TabsTrigger value="holiday" className="text-xs">Holiday</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="documents" className="text-xs">Documents</TabsTrigger>}
             {(isAdmin || isOwn) && cardholder && <TabsTrigger value="card" className="text-xs">My Card</TabsTrigger>}
           </TabsList>
+
+          {!isAdmin && !isOwn && (
+            <TabsContent value="about" className="mt-4">
+              <div className="space-y-3 text-sm">
+                {person.team && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Building2 className="w-4 h-4 shrink-0" /> {person.team}{person.hr_department && person.hr_department !== person.team ? ` · ${person.hr_department}` : ""}
+                  </div>
+                )}
+                {person.start_date && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Calendar className="w-4 h-4 shrink-0" /> Joined {new Date(person.start_date).toLocaleDateString("en-GB", { month: "short", year: "numeric" })} · {tenure(person.start_date)}
+                  </div>
+                )}
+                {person.manager_name && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <User className="w-4 h-4 shrink-0" /> Reports to {person.manager_name}
+                  </div>
+                )}
+                {person.education && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <GraduationCap className="w-4 h-4 shrink-0" /> {person.education}
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+          )}
 
           {isAdmin && (
             <TabsContent value="overview" className="mt-4">
@@ -1197,13 +1226,13 @@ function styleForTeam(team: string | null | undefined) {
   return TEAM_STYLES[team] || DEFAULT_TEAM_STYLE;
 }
 
-function OrgCard({ person, onClick }: { person: StaffMember; onClick: () => void }) {
+function OrgCard({ person, onClick, dim, highlight }: { person: StaffMember; onClick: () => void; dim?: boolean; highlight?: boolean }) {
   const style = styleForTeam(person.team);
   const initials = person.name.split(/\s+/).map(p => p[0]).join("").slice(0, 2).toUpperCase();
   return (
     <button
       onClick={onClick}
-      className={`relative w-44 rounded-lg border-2 ${style.bg} ${style.border} ${style.text} p-2 text-left shadow-sm hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer`}
+      className={`relative w-44 rounded-lg border-2 ${style.bg} ${style.border} ${style.text} p-2 text-left shadow-sm hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer ${dim ? "opacity-30" : ""} ${highlight ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : ""}`}
       data-testid={`org-card-${person.id}`}
     >
       <div className="flex items-start gap-2">
@@ -1229,16 +1258,17 @@ function OrgCard({ person, onClick }: { person: StaffMember; onClick: () => void
   );
 }
 
-function ChainNode({ person, childrenByManager, onSelect }: { person: StaffMember; childrenByManager: Map<string, StaffMember[]>; onSelect: (p: StaffMember) => void }) {
+function ChainNode({ person, childrenByManager, onSelect, matchedIds, hasFilter }: { person: StaffMember; childrenByManager: Map<string, StaffMember[]>; onSelect: (p: StaffMember) => void; matchedIds?: Set<string>; hasFilter?: boolean }) {
   const directs = childrenByManager.get(person.id) || [];
+  const isMatch = matchedIds?.has(person.id) ?? true;
   return (
     <div className="flex flex-col items-center">
-      <OrgCard person={person} onClick={() => onSelect(person)} />
+      <OrgCard person={person} onClick={() => onSelect(person)} dim={hasFilter && !isMatch} highlight={hasFilter && isMatch} />
       {directs.length > 0 && (
         <>
           <div className="w-px h-4 bg-border" />
           <div className="flex flex-col items-center gap-4">
-            {directs.map(child => <ChainNode key={child.id} person={child} childrenByManager={childrenByManager} onSelect={onSelect} />)}
+            {directs.map(child => <ChainNode key={child.id} person={child} childrenByManager={childrenByManager} onSelect={onSelect} matchedIds={matchedIds} hasFilter={hasFilter} />)}
           </div>
         </>
       )}
@@ -1246,7 +1276,7 @@ function ChainNode({ person, childrenByManager, onSelect }: { person: StaffMembe
   );
 }
 
-function OrgChartTab({ allStaff, onSelectPerson, isAdmin }: { allStaff: StaffMember[]; onSelectPerson: (p: StaffMember) => void; isAdmin: boolean }) {
+function OrgChartTab({ allStaff, onSelectPerson, isAdmin, matchedIds, hasFilter }: { allStaff: StaffMember[]; onSelectPerson: (p: StaffMember) => void; isAdmin: boolean; matchedIds?: Set<string>; hasFilter?: boolean }) {
   const { toast } = useToast();
   // Real staff = those with a staff_profiles row. Excludes shared mailboxes
   // / placeholder accounts (e.g. "Accounts") that would otherwise win the
@@ -1342,7 +1372,7 @@ function OrgChartTab({ allStaff, onSelectPerson, isAdmin }: { allStaff: StaffMem
 
       <div className="overflow-x-auto rounded-lg border bg-card p-6">
         <div className="flex flex-col items-center min-w-max">
-          <OrgCard person={root} onClick={() => onSelectPerson(root)} />
+          <OrgCard person={root} onClick={() => onSelectPerson(root)} dim={hasFilter && !(matchedIds?.has(root.id) ?? true)} highlight={hasFilter && (matchedIds?.has(root.id) ?? false)} />
           <div className="w-px h-6 bg-border" />
           <div className="flex items-start gap-6">
             {columnGroups.map(group => {
@@ -1353,7 +1383,7 @@ function OrgChartTab({ allStaff, onSelectPerson, isAdmin }: { allStaff: StaffMem
                     {group.team}
                   </div>
                   <div className="flex flex-col items-center gap-4">
-                    {group.members.map(m => <ChainNode key={m.id} person={m} childrenByManager={childrenByManager} onSelect={onSelectPerson} />)}
+                    {group.members.map(m => <ChainNode key={m.id} person={m} childrenByManager={childrenByManager} onSelect={onSelectPerson} matchedIds={matchedIds} hasFilter={hasFilter} />)}
                   </div>
                 </div>
               );
@@ -1367,7 +1397,7 @@ function OrgChartTab({ allStaff, onSelectPerson, isAdmin }: { allStaff: StaffMem
           <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Unassigned ({unassigned.length})</p>
           <p className="text-xs text-muted-foreground mb-3">Active staff with no manager link or whose manager is missing.</p>
           <div className="flex flex-wrap gap-3">
-            {unassigned.map(p => <OrgCard key={p.id} person={p} onClick={() => onSelectPerson(p)} />)}
+            {unassigned.map(p => <OrgCard key={p.id} person={p} onClick={() => onSelectPerson(p)} dim={hasFilter && !(matchedIds?.has(p.id) ?? true)} highlight={hasFilter && (matchedIds?.has(p.id) ?? false)} />)}
           </div>
         </div>
       )}
@@ -1497,6 +1527,7 @@ export default function HRPage() {
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("all");
   const [addStaffOpen, setAddStaffOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"org" | "grid">("org");
 
   const { data: currentUser } = useQuery<AuthUser | null>({
     queryKey: ["/api/auth/me"],
@@ -1526,24 +1557,12 @@ export default function HRPage() {
     return matchSearch && matchDept;
   }), [allStaff, search, deptFilter]);
 
-  // Non-admin: show own profile directly
-  if (!isAdmin) {
-    if (isLoading || !currentUser) return <div className="flex items-center justify-center h-full"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
-    if (!displayPerson) return <div className="p-6 text-sm text-muted-foreground">Profile not found. Ask an admin to set up your HR profile.</div>;
-    return (
-      <div className="h-full overflow-hidden">
-        <StaffProfile
-          person={displayPerson}
-          allStaff={allStaff}
-          isAdmin={false}
-          currentUserId={currentUser.id}
-          onBack={() => {}}
-        />
-      </div>
-    );
-  }
+  const hasFilter = search.trim().length > 0 || deptFilter !== "all";
+  const matchedIds = useMemo(() => new Set(filtered.map(s => s.id)), [filtered]);
 
-  // Admin: show directory or profile
+  // Drill-in to a single profile (admin or self viewing anyone, non-admin
+  // viewing themselves). Non-admins clicking on a colleague see the same
+  // directory profile but with sensitive fields already masked server-side.
   if (selectedPerson) {
     return (
       <div className="h-full overflow-hidden">
@@ -1589,37 +1608,50 @@ export default function HRPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="team" className="px-4">
+      <Tabs defaultValue="people" className="px-4">
         <TabsList className="mt-3 mb-3">
-          <TabsTrigger value="team">Team</TabsTrigger>
-          <TabsTrigger value="org-chart">
-            <Network className="w-3.5 h-3.5 mr-1.5" /> Org Chart
-          </TabsTrigger>
-          <TabsTrigger value="holidays">Holiday approvals</TabsTrigger>
+          <TabsTrigger value="people">People</TabsTrigger>
+          {isAdmin && <TabsTrigger value="holidays">Holiday approvals</TabsTrigger>}
           <TabsTrigger value="policies">Policies</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="team">
+        <TabsContent value="people">
           <BirthdaysWidget />
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs text-muted-foreground">
+              {hasFilter ? `${filtered.length} of ${allStaff.length} match` : `${allStaff.length} staff`}
+            </div>
+            <div className="inline-flex rounded-md border bg-muted/30 p-0.5" role="tablist" aria-label="View mode">
+              <button
+                onClick={() => setViewMode("org")}
+                className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors ${viewMode === "org" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                data-testid="view-mode-org"
+              >
+                <GitBranch className="w-3.5 h-3.5" /> Org chart
+              </button>
+              <button
+                onClick={() => setViewMode("grid")}
+                className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors ${viewMode === "grid" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                data-testid="view-mode-grid"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" /> Grid
+              </button>
+            </div>
+          </div>
+
           {isLoading ? (
             <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+          ) : viewMode === "org" ? (
+            <OrgChartTab allStaff={allStaff} onSelectPerson={(p) => setSelectedUserId(p.id)} isAdmin={isAdmin} matchedIds={matchedIds} hasFilter={hasFilter} />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pb-6">
               {filtered.map(person => (
                 <StaffCard key={person.id} person={person} onClick={() => setSelectedUserId(person.id)} />
               ))}
               {filtered.length === 0 && (
-                <div className="col-span-full text-center py-8 text-muted-foreground text-sm">No staff found</div>
+                <div className="col-span-full text-center py-8 text-muted-foreground text-sm">No staff match the current filter</div>
               )}
             </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="org-chart">
-          {isLoading ? (
-            <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-          ) : (
-            <OrgChartTab allStaff={allStaff} onSelectPerson={(p) => setSelectedUserId(p.id)} isAdmin={isAdmin} />
           )}
         </TabsContent>
 
