@@ -1486,6 +1486,7 @@ export default function HRPage() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("all");
+  const [addStaffOpen, setAddStaffOpen] = useState(false);
 
   const { data: currentUser } = useQuery<AuthUser | null>({
     queryKey: ["/api/auth/me"],
@@ -1546,8 +1547,6 @@ export default function HRPage() {
       </div>
     );
   }
-
-  const [addStaffOpen, setAddStaffOpen] = useState(false);
 
   return (
     <div className="h-full overflow-y-auto">
