@@ -9,7 +9,8 @@ import {
   Shield, Heart, Briefcase, Star, DollarSign, BookOpen,
   ExternalLink, Loader2, Search, SlidersHorizontal,
   Network, Cake, UserPlus, Trash2, FolderLock, Folder,
-  LayoutGrid, GitBranch, Camera, Eye,
+  LayoutGrid, GitBranch, Camera, Eye, Bike, Baby, PiggyBank, Smartphone,
+  Train, HeartHandshake, Mountain, Award,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1124,7 +1125,9 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
             {isAdmin && <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>}
             {isAdmin && <TabsTrigger value="commission" className="text-xs">Commission</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="holiday" className="text-xs">Holiday</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="career" className="text-xs">Career</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="documents" className="text-xs">Documents</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="kit" className="text-xs">Kit</TabsTrigger>}
             {(isAdmin || isOwn) && cardholder && <TabsTrigger value="card" className="text-xs">My Card</TabsTrigger>}
           </TabsList>
 
@@ -1203,8 +1206,16 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
             <HolidayTab person={person} isAdmin={isAdmin} currentUserId={currentUserId} />
           </TabsContent>
 
+          <TabsContent value="career" className="mt-4">
+            <CareerRoadmapTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} currentTitle={person.title} />
+          </TabsContent>
+
           <TabsContent value="documents" className="mt-4">
             <DocumentsTab person={person} isAdmin={isAdmin} />
+          </TabsContent>
+
+          <TabsContent value="kit" className="mt-4">
+            <KitCard person={person} isAdmin={isAdmin} isOwn={isOwn} />
           </TabsContent>
 
           {(isAdmin || isOwn) && cardholder && (
@@ -1281,6 +1292,448 @@ interface PolicyDoc {
   fileName: string | null;
   mimeType: string | null;
   inlineUrl: string | null;
+}
+
+// ── 🎁 Benefits hub ───────────────────────────────────────────────────────────
+
+interface Benefit {
+  id: string;
+  slug: string;
+  name: string;
+  category: string | null;
+  description: string | null;
+  eligibility: string | null;
+  enrolment_url: string | null;
+  contact: string | null;
+  icon: string | null;
+  enrolled: boolean;
+}
+
+const BENEFIT_ICONS: Record<string, any> = {
+  bike: Bike,
+  baby: Baby,
+  heart: Heart,
+  shield: Shield,
+  "piggy-bank": PiggyBank,
+  smartphone: Smartphone,
+  train: Train,
+  "heart-handshake": HeartHandshake,
+  "graduation-cap": GraduationCap,
+  mountain: Mountain,
+};
+const BENEFIT_CAT_COLORS: Record<string, string> = {
+  Wellbeing: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
+  Family:    "bg-pink-50 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300",
+  Health:    "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300",
+  Finance:   "bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300",
+  Kit:       "bg-slate-100 text-slate-700 dark:bg-slate-900 dark:text-slate-300",
+  Travel:    "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+  Career:    "bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300",
+  Social:    "bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300",
+};
+
+function BenefitsTab() {
+  const { toast } = useToast();
+  const { data: benefits = [], isLoading } = useQuery<Benefit[]>({ queryKey: ["/api/hr/benefits"] });
+
+  const enrol = useMutation({
+    mutationFn: async ({ slug, enrolled }: { slug: string; enrolled: boolean }) => {
+      if (enrolled) await apiRequest("DELETE", `/api/hr/benefits/${slug}/enrol`);
+      else await apiRequest("POST", `/api/hr/benefits/${slug}/enrol`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/hr/benefits"] }),
+    onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
+  });
+
+  if (isLoading) return <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+
+  const byCategory = benefits.reduce<Record<string, Benefit[]>>((acc, b) => {
+    const c = b.category || "Other";
+    (acc[c] ??= []).push(b);
+    return acc;
+  }, {});
+
+  return (
+    <div className="space-y-6 pb-6">
+      <div className="rounded-lg border bg-gradient-to-br from-emerald-50 to-sky-50 dark:from-emerald-950/30 dark:to-sky-950/30 p-4">
+        <div className="text-sm font-semibold mb-1">Your benefits at BGP</div>
+        <p className="text-xs text-muted-foreground">
+          Click into anything to enrol or check eligibility. Salary-sacrifice schemes are usually the best-value perks — let Wendy know if you want help working out the saving.
+        </p>
+      </div>
+
+      {Object.entries(byCategory).map(([cat, items]) => (
+        <div key={cat}>
+          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-2">
+            <span>{cat}</span>
+            <span className="h-px flex-1 bg-border" />
+            <span className="text-[10px]">{items.length}</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {items.map(b => {
+              const Icon = b.icon ? BENEFIT_ICONS[b.icon] || Star : Star;
+              const catColor = BENEFIT_CAT_COLORS[b.category || ""] || "bg-muted text-muted-foreground";
+              return (
+                <Card key={b.id} className="overflow-hidden hover:shadow-md transition-shadow">
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3">
+                      <div className={`rounded-lg p-2 shrink-0 ${catColor}`}>
+                        <Icon className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h4 className="font-semibold text-sm">{b.name}</h4>
+                          {b.enrolled && (
+                            <Badge variant="outline" className="text-[10px] text-green-700 border-green-300 dark:text-green-400 dark:border-green-700">
+                              <Check className="w-3 h-3 mr-0.5" /> Enrolled
+                            </Badge>
+                          )}
+                        </div>
+                        {b.description && <p className="text-xs text-muted-foreground leading-relaxed">{b.description}</p>}
+                        {b.eligibility && (
+                          <div className="text-[10px] text-muted-foreground mt-1.5 italic">{b.eligibility}</div>
+                        )}
+                        <div className="flex items-center gap-2 mt-3">
+                          <Button
+                            size="sm"
+                            variant={b.enrolled ? "outline" : "default"}
+                            className="h-7 text-xs"
+                            onClick={() => enrol.mutate({ slug: b.slug, enrolled: b.enrolled })}
+                            disabled={enrol.isPending}
+                            data-testid={`benefit-enrol-${b.slug}`}
+                          >
+                            {b.enrolled ? "Mark as not enrolled" : "I'm enrolled / interested"}
+                          </Button>
+                          {b.enrolment_url && (
+                            <a href={b.enrolment_url} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">
+                              <ExternalLink className="w-3 h-3" /> Sign up
+                            </a>
+                          )}
+                          {b.contact && (
+                            <span className="text-[10px] text-muted-foreground ml-auto">Ask {b.contact}</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── 📱 Kit / phone-laptop contract card on staff profile ─────────────────────
+
+interface KitItem {
+  id: string;
+  kind: string;
+  device: string | null;
+  contract_start: string | null;
+  contract_end: string | null;
+  provider: string | null;
+  monthly_cost_pence: number | null;
+  notes: string | null;
+}
+
+const KIT_ICONS: Record<string, any> = {
+  phone: Smartphone,
+  laptop: Briefcase,
+  tablet: Briefcase,
+  other: Briefcase,
+};
+const KIT_LABEL: Record<string, string> = {
+  phone: "Mobile phone",
+  laptop: "Laptop",
+  tablet: "Tablet",
+  other: "Other kit",
+};
+
+function daysUntil(date: string | null): number | null {
+  if (!date) return null;
+  const d = new Date(date); d.setHours(0, 0, 0, 0);
+  const t = new Date(); t.setHours(0, 0, 0, 0);
+  return Math.round((d.getTime() - t.getTime()) / 86400000);
+}
+
+function KitCard({ person, isAdmin, isOwn }: { person: StaffMember; isAdmin: boolean; isOwn: boolean }) {
+  const { toast } = useToast();
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ kind: "phone", device: "", contractEnd: "", provider: "", monthlyCostPence: "" });
+  const { data: kit = [] } = useQuery<KitItem[]>({ queryKey: [`/api/hr/kit/${person.id}`], enabled: isAdmin || isOwn });
+
+  const addKit = useMutation({
+    mutationFn: async () => apiRequest("POST", `/api/hr/kit/${person.id}`, {
+      kind: form.kind,
+      device: form.device || null,
+      contractEnd: form.contractEnd || null,
+      provider: form.provider || null,
+      monthlyCostPence: form.monthlyCostPence ? Math.round(parseFloat(form.monthlyCostPence) * 100) : null,
+    }).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/kit/${person.id}`] });
+      setAdding(false);
+      setForm({ kind: "phone", device: "", contractEnd: "", provider: "", monthlyCostPence: "" });
+      toast({ title: "Kit added" });
+    },
+    onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const deleteKit = useMutation({
+    mutationFn: async (id: string) => apiRequest("DELETE", `/api/hr/kit/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/kit/${person.id}`] }),
+  });
+
+  if (!isAdmin && !isOwn) return null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center justify-between">
+          <span className="flex items-center gap-2"><Smartphone className="w-4 h-4 text-muted-foreground" /> Kit & contracts</span>
+          {isAdmin && (
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setAdding(true)}>
+              <Plus className="w-3 h-3 mr-1" /> Add
+            </Button>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {kit.length === 0 ? (
+          <div className="text-xs text-muted-foreground italic py-2">No kit logged yet — admin can add phones, laptops and contract end dates.</div>
+        ) : (
+          <div className="space-y-2">
+            {kit.map(k => {
+              const Icon = KIT_ICONS[k.kind] || Briefcase;
+              const days = daysUntil(k.contract_end);
+              const isUpgradeReady = days !== null && days <= 60;
+              return (
+                <div key={k.id} className="flex items-center gap-3 p-2.5 rounded-md border">
+                  <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium">{k.device || KIT_LABEL[k.kind] || k.kind}</div>
+                    <div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap">
+                      {k.provider && <span>{k.provider}</span>}
+                      {k.monthly_cost_pence && <span>· £{(k.monthly_cost_pence / 100).toFixed(2)}/mo</span>}
+                      {k.contract_end && (
+                        <span className={isUpgradeReady ? "text-green-600 font-medium" : days !== null && days < 0 ? "text-red-500 font-medium" : ""}>
+                          · {days === null ? "—"
+                            : days < 0 ? `Upgrade overdue (${-days}d)`
+                            : days === 0 ? "Upgrade today"
+                            : days <= 60 ? `Upgrade in ${days}d 🎉`
+                            : `Ends ${new Date(k.contract_end).toLocaleDateString("en-GB", { month: "short", year: "numeric" })}`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {isAdmin && (
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-muted-foreground" onClick={() => deleteKit.mutate(k.id)}>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <Dialog open={adding} onOpenChange={setAdding}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Add kit / contract</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1.5">
+                  <Label>Kind</Label>
+                  <Select value={form.kind} onValueChange={v => setForm(f => ({ ...f, kind: v }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {["phone", "laptop", "tablet", "other"].map(k => <SelectItem key={k} value={k}>{KIT_LABEL[k]}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Device</Label>
+                  <Input value={form.device} onChange={e => setForm(f => ({ ...f, device: e.target.value }))} placeholder="iPhone 16 Pro" />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1.5">
+                  <Label>Contract ends</Label>
+                  <Input type="date" value={form.contractEnd} onChange={e => setForm(f => ({ ...f, contractEnd: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Provider</Label>
+                  <Input value={form.provider} onChange={e => setForm(f => ({ ...f, provider: e.target.value }))} placeholder="EE, O2, Vodafone…" />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Monthly cost (£)</Label>
+                <Input type="number" step="0.01" value={form.monthlyCostPence} onChange={e => setForm(f => ({ ...f, monthlyCostPence: e.target.value }))} placeholder="45" />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAdding(false)}>Cancel</Button>
+              <Button onClick={() => addKit.mutate()} disabled={addKit.isPending}>
+                {addKit.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null} Add
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── 🎓 Career roadmap tab on staff profile ───────────────────────────────────
+
+interface CompetencyEntry {
+  competency: string;
+  level: number;
+  evidence: string | null;
+  reviewedAt: string | null;
+}
+
+interface CareerRoadmap {
+  rics: { mandatory: CompetencyEntry[]; technical: CompetencyEntry[] };
+  bgpLevels: Array<{ level: string; criteria: string[] }>;
+}
+
+function CareerRoadmapTab({ userId, isAdmin, isOwn, currentTitle }: { userId: string; isAdmin: boolean; isOwn: boolean; currentTitle: string | null }) {
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery<CareerRoadmap>({ queryKey: [`/api/hr/career-roadmap/${userId}`] });
+
+  const updateLevel = useMutation({
+    mutationFn: async ({ competency, level, evidence }: { competency: string; level: number; evidence?: string }) => {
+      await apiRequest("PUT", `/api/hr/career-roadmap/${userId}/${encodeURIComponent(competency)}`, { level, evidence });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/career-roadmap/${userId}`] }),
+    onError: (e: any) => toast({ title: "Update failed", description: e?.message, variant: "destructive" }),
+  });
+
+  if (isLoading || !data) return <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+
+  const allCompetencies = [...data.rics.mandatory, ...data.rics.technical];
+  const totalLevels = allCompetencies.reduce((s, c) => s + c.level, 0);
+  const maxLevels = allCompetencies.length * 3;
+  const overallPct = maxLevels > 0 ? Math.round((totalLevels / maxLevels) * 100) : 0;
+
+  // Try to map current title onto BGP levels
+  const currentLevelIdx = currentTitle
+    ? data.bgpLevels.findIndex(l => currentTitle.toLowerCase().includes(l.level.toLowerCase()))
+    : -1;
+
+  const canEdit = isAdmin || isOwn;
+
+  const renderCompetencyList = (items: CompetencyEntry[], label: string) => (
+    <div>
+      <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">{label}</div>
+      <div className="space-y-1">
+        {items.map(c => (
+          <div key={c.competency} className="flex items-center gap-2 p-2 rounded-md border text-xs">
+            <div className="flex-1 truncate">{c.competency}</div>
+            <div className="flex gap-0.5">
+              {[0, 1, 2, 3].map(l => (
+                <button
+                  key={l}
+                  disabled={!canEdit || updateLevel.isPending}
+                  onClick={() => updateLevel.mutate({ competency: c.competency, level: l })}
+                  className={`w-6 h-6 rounded text-[10px] font-medium border transition-colors ${
+                    c.level === l
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : c.level > l
+                      ? "bg-primary/30 border-primary/40"
+                      : "bg-background hover:bg-muted border-border"
+                  } ${!canEdit ? "cursor-default" : "cursor-pointer"}`}
+                  title={["Not started", "Knowledge", "Application", "Achievement"][l]}
+                  data-testid={`competency-${c.competency.replace(/\W+/g, "-")}-${l}`}
+                >
+                  {l}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4 pb-4">
+      {/* Overall progress hero */}
+      <Card>
+        <CardContent className="p-4">
+          <div className="flex items-baseline justify-between mb-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">RICS competency progress</span>
+            <span className="text-xs text-muted-foreground">{totalLevels} of {maxLevels} levels</span>
+          </div>
+          <div className="flex items-baseline gap-3">
+            <span className="text-3xl font-bold tabular-nums">{overallPct}%</span>
+            <span className="text-sm text-muted-foreground">towards APC submission</span>
+          </div>
+          <div className="h-2 mt-2 rounded-full bg-muted overflow-hidden">
+            <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${overallPct}%` }} />
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1.5">Levels: 0 = not started · 1 = knowledge · 2 = application · 3 = achievement</div>
+        </CardContent>
+      </Card>
+
+      {/* BGP career ladder */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2"><Award className="w-4 h-4 text-primary" /> BGP career path</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <div className="space-y-1">
+            {data.bgpLevels.map((lvl, i) => {
+              const isCurrent = i === currentLevelIdx;
+              const isPast = currentLevelIdx >= 0 && i < currentLevelIdx;
+              return (
+                <details key={lvl.level} open={isCurrent} className={`rounded-md border ${isCurrent ? "border-primary bg-primary/5" : "border-border"}`}>
+                  <summary className="cursor-pointer flex items-center gap-2 p-2.5 select-none">
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                      isCurrent ? "bg-primary text-primary-foreground"
+                      : isPast ? "bg-emerald-500 text-white"
+                      : "bg-muted text-muted-foreground"
+                    }`}>
+                      {isPast ? <Check className="w-3 h-3" /> : i + 1}
+                    </span>
+                    <span className="text-sm font-medium flex-1">{lvl.level}</span>
+                    {isCurrent && <Badge className="text-[10px]">You're here</Badge>}
+                    <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                  </summary>
+                  <div className="px-3 pb-3 pt-0">
+                    <ul className="space-y-1 text-xs text-muted-foreground">
+                      {lvl.criteria.map(c => (
+                        <li key={c} className="flex items-start gap-1.5">
+                          <Check className="w-3 h-3 text-emerald-500 mt-0.5 shrink-0" />
+                          <span>{c}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </details>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* RICS competencies */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2"><GraduationCap className="w-4 h-4 text-primary" /> RICS competencies — Commercial Property Practice</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0 space-y-4">
+          {renderCompetencyList(data.rics.mandatory, "Mandatory")}
+          {renderCompetencyList(data.rics.technical, "Technical")}
+          {!canEdit && <div className="text-[10px] text-muted-foreground italic">Read-only — only the user themselves or an admin can update levels.</div>}
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
 
 function PoliciesPanel({ isAdmin }: { isAdmin: boolean }) {
@@ -1861,12 +2314,17 @@ export default function HRPage() {
         <TabsList className="mt-3 mb-3">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="people">People</TabsTrigger>
+          <TabsTrigger value="benefits">Benefits</TabsTrigger>
           {isAdmin && <TabsTrigger value="holidays">Holiday approvals</TabsTrigger>}
           <TabsTrigger value="policies">Policies</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
           <HrOverview />
+        </TabsContent>
+
+        <TabsContent value="benefits">
+          <BenefitsTab />
         </TabsContent>
 
         <TabsContent value="people">
