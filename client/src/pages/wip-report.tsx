@@ -310,7 +310,7 @@ function FilterSection({
           Clear
         </button>
       </div>
-      <ScrollArea className="max-h-[220px] px-2 py-1">
+      <div className="max-h-[220px] overflow-y-auto px-2 py-1">
         {filtered.map((item) => (
           <label
             key={item}
@@ -325,7 +325,7 @@ function FilterSection({
             <span className="break-words min-w-0">{item}</span>
           </label>
         ))}
-      </ScrollArea>
+      </div>
     </div>
   );
 }
