@@ -558,6 +558,53 @@ export function setupHrRoutes(app: Express) {
     }
   });
 
+  // ── Firm-wide summary for the dashboard hero (ski target etc.) ──────────
+  // Aggregates wip_entries (the synced Sage view) into total billed + WIP for
+  // the calendar year, plus the ski-target progress (£4m default, settable
+  // via FIRM_SKI_TARGET_PENCE env). Days-remaining drives the urgency strip.
+  app.get("/api/dashboard/firm-summary", requireAuth, async (_req, res) => {
+    try {
+      const targetPence = parseInt(process.env.FIRM_SKI_TARGET_PENCE || "400000000", 10); // £4m default
+      const now = new Date();
+      const yearEnd = new Date(now.getFullYear(), 11, 31, 23, 59, 59);
+      const daysRemaining = Math.max(0, Math.ceil((yearEnd.getTime() - now.getTime()) / 86400000));
+
+      const { rows } = await pool.query(`
+        SELECT
+          COALESCE(SUM(amt_invoice), 0)::numeric AS billed_pounds,
+          COALESCE(SUM(amt_wip), 0)::numeric AS wip_pounds,
+          COUNT(DISTINCT deal_id) FILTER (WHERE deal_id IS NOT NULL) AS deal_count
+        FROM wip_entries
+      `);
+
+      const billedPence = Math.round(parseFloat(rows[0].billed_pounds) * 100);
+      const wipPence = Math.round(parseFloat(rows[0].wip_pounds) * 100);
+      const forecastPence = billedPence + wipPence;
+
+      const { rows: headcountRows } = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM users u JOIN staff_profiles sp ON sp.user_id = u.id
+         WHERE u.is_active = true AND COALESCE(sp.status, 'active') = 'active'`
+      );
+
+      res.json({
+        target: { pence: targetPence, label: "Ski target", reward: "Everyone goes skiing" },
+        billedPence,
+        wipPence,
+        forecastPence,
+        pctBilled: Math.min((billedPence / targetPence) * 100, 100),
+        pctForecast: Math.min((forecastPence / targetPence) * 100, 100),
+        toGoPence: Math.max(targetPence - forecastPence, 0),
+        daysRemaining,
+        dealCount: rows[0].deal_count,
+        headcount: headcountRows[0].n,
+        year: now.getFullYear(),
+      });
+    } catch (e: any) {
+      console.error("[hr] firm-summary error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Team summary roll-up for the dashboard organigram ───────────────────
   // For each team: head (highest-ranked board/mgt member by name), headcount,
   // billed YTD (Xero), pipeline £ (crm_deals share), and the team's top 2
