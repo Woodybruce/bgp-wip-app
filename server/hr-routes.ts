@@ -9,6 +9,11 @@ export function setupHrRoutes(app: Express) {
 
   app.get("/api/hr/staff", requireAuth, async (req: any, res) => {
     try {
+      const isAdmin = !!req.user?.isAdmin;
+      const myId = req.user?.id;
+      // Personal-tier fields (DOB, address) are masked for everyone except
+      // the user themselves and admins. Layla's HR brief specifies these as
+      // "Visible to individual & Equity / HR".
       const { rows } = await pool.query(`
         SELECT
           u.id, u.name, u.email, u.phone, u.role, u.department, u.team,
@@ -22,6 +27,10 @@ export function setupHrRoutes(app: Express) {
           sp.holiday_entitlement, sp.pension_opt_in, sp.pension_rate,
           sp.contract_sharepoint_url, sp.passport_sharepoint_url,
           sp.linkedin_url, sp.xero_tracking_name,
+          sp.wfh_days, sp.employment_type, sp.cv_sharepoint_url,
+          sp.board_member, sp.management_team,
+          CASE WHEN $2::boolean OR u.id = $1 THEN sp.dob ELSE NULL END AS dob,
+          CASE WHEN $2::boolean OR u.id = $1 THEN sp.address ELSE NULL END AS address,
           m.name AS manager_name,
           (SELECT COALESCE(SUM(days_count), 0) FROM holiday_requests
            WHERE user_id = u.id AND status = 'approved'
@@ -31,7 +40,7 @@ export function setupHrRoutes(app: Express) {
         LEFT JOIN users m ON m.id = sp.manager_id
         WHERE u.is_active = true
         ORDER BY u.name ASC
-      `);
+      `, [myId, isAdmin]);
       res.json(rows);
     } catch (e: any) {
       console.error("[hr] GET /staff error:", e.message);
@@ -59,6 +68,8 @@ export function setupHrRoutes(app: Express) {
           sp.holiday_entitlement, sp.pension_opt_in, sp.pension_rate,
           sp.contract_sharepoint_url, sp.passport_sharepoint_url,
           sp.linkedin_url, sp.xero_tracking_name,
+          sp.dob, sp.address, sp.wfh_days, sp.employment_type, sp.cv_sharepoint_url,
+          sp.board_member, sp.management_team,
           m.name AS manager_name
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
@@ -73,15 +84,28 @@ export function setupHrRoutes(app: Express) {
   });
 
   app.post("/api/hr/staff/:userId/profile", requireAuth, async (req: any, res) => {
-    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admin only" });
     const { userId } = req.params;
+    const isAdmin = !!req.user?.isAdmin;
+    const isSelf = req.user?.id === userId;
+    if (!isAdmin && !isSelf) return res.status(403).json({ error: "Admin or self only" });
+
     const {
       title, startDate, endDate, status, salaryCurrent, managerId,
       department, ricsPathway, apcStatus, apcAssessmentDate,
       education, bio, emergencyContactName, emergencyContactPhone,
       emergencyContactRelation, holidayEntitlement, pensionOptIn, pensionRate,
       contractSharepointUrl, passportSharepointUrl, linkedinUrl, xeroTrackingName,
+      dob, address, wfhDays, employmentType, cvSharepointUrl, boardMember, managementTeam,
     } = req.body;
+
+    // Self-edit is restricted to personal-tier fields. Admins can edit anything.
+    if (!isAdmin) {
+      const adminOnly = [salaryCurrent, managerId, status, endDate, boardMember, managementTeam, employmentType];
+      if (adminOnly.some(v => v !== undefined)) {
+        return res.status(403).json({ error: "Those fields are admin-only" });
+      }
+    }
+
     try {
       await pool.query(`
         INSERT INTO staff_profiles (
@@ -89,38 +113,48 @@ export function setupHrRoutes(app: Express) {
           department, rics_pathway, apc_status, apc_assessment_date, education, bio,
           emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
           holiday_entitlement, pension_opt_in, pension_rate,
-          contract_sharepoint_url, passport_sharepoint_url, linkedin_url, xero_tracking_name
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+          contract_sharepoint_url, passport_sharepoint_url, linkedin_url, xero_tracking_name,
+          dob, address, wfh_days, employment_type, cv_sharepoint_url, board_member, management_team
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
+                  $24,$25,$26,$27,$28,$29,$30)
         ON CONFLICT (user_id) DO UPDATE SET
-          title = EXCLUDED.title,
-          start_date = EXCLUDED.start_date,
-          end_date = EXCLUDED.end_date,
-          status = EXCLUDED.status,
-          salary_current = EXCLUDED.salary_current,
-          manager_id = EXCLUDED.manager_id,
-          department = EXCLUDED.department,
-          rics_pathway = EXCLUDED.rics_pathway,
-          apc_status = EXCLUDED.apc_status,
-          apc_assessment_date = EXCLUDED.apc_assessment_date,
-          education = EXCLUDED.education,
-          bio = EXCLUDED.bio,
-          emergency_contact_name = EXCLUDED.emergency_contact_name,
-          emergency_contact_phone = EXCLUDED.emergency_contact_phone,
-          emergency_contact_relation = EXCLUDED.emergency_contact_relation,
-          holiday_entitlement = EXCLUDED.holiday_entitlement,
-          pension_opt_in = EXCLUDED.pension_opt_in,
-          pension_rate = EXCLUDED.pension_rate,
-          contract_sharepoint_url = EXCLUDED.contract_sharepoint_url,
-          passport_sharepoint_url = EXCLUDED.passport_sharepoint_url,
-          linkedin_url = EXCLUDED.linkedin_url,
-          xero_tracking_name = EXCLUDED.xero_tracking_name,
+          title = COALESCE(EXCLUDED.title, staff_profiles.title),
+          start_date = COALESCE(EXCLUDED.start_date, staff_profiles.start_date),
+          end_date = COALESCE(EXCLUDED.end_date, staff_profiles.end_date),
+          status = COALESCE(EXCLUDED.status, staff_profiles.status),
+          salary_current = COALESCE(EXCLUDED.salary_current, staff_profiles.salary_current),
+          manager_id = COALESCE(EXCLUDED.manager_id, staff_profiles.manager_id),
+          department = COALESCE(EXCLUDED.department, staff_profiles.department),
+          rics_pathway = COALESCE(EXCLUDED.rics_pathway, staff_profiles.rics_pathway),
+          apc_status = COALESCE(EXCLUDED.apc_status, staff_profiles.apc_status),
+          apc_assessment_date = COALESCE(EXCLUDED.apc_assessment_date, staff_profiles.apc_assessment_date),
+          education = COALESCE(EXCLUDED.education, staff_profiles.education),
+          bio = COALESCE(EXCLUDED.bio, staff_profiles.bio),
+          emergency_contact_name = COALESCE(EXCLUDED.emergency_contact_name, staff_profiles.emergency_contact_name),
+          emergency_contact_phone = COALESCE(EXCLUDED.emergency_contact_phone, staff_profiles.emergency_contact_phone),
+          emergency_contact_relation = COALESCE(EXCLUDED.emergency_contact_relation, staff_profiles.emergency_contact_relation),
+          holiday_entitlement = COALESCE(EXCLUDED.holiday_entitlement, staff_profiles.holiday_entitlement),
+          pension_opt_in = COALESCE(EXCLUDED.pension_opt_in, staff_profiles.pension_opt_in),
+          pension_rate = COALESCE(EXCLUDED.pension_rate, staff_profiles.pension_rate),
+          contract_sharepoint_url = COALESCE(EXCLUDED.contract_sharepoint_url, staff_profiles.contract_sharepoint_url),
+          passport_sharepoint_url = COALESCE(EXCLUDED.passport_sharepoint_url, staff_profiles.passport_sharepoint_url),
+          linkedin_url = COALESCE(EXCLUDED.linkedin_url, staff_profiles.linkedin_url),
+          xero_tracking_name = COALESCE(EXCLUDED.xero_tracking_name, staff_profiles.xero_tracking_name),
+          dob = COALESCE(EXCLUDED.dob, staff_profiles.dob),
+          address = COALESCE(EXCLUDED.address, staff_profiles.address),
+          wfh_days = COALESCE(EXCLUDED.wfh_days, staff_profiles.wfh_days),
+          employment_type = COALESCE(EXCLUDED.employment_type, staff_profiles.employment_type),
+          cv_sharepoint_url = COALESCE(EXCLUDED.cv_sharepoint_url, staff_profiles.cv_sharepoint_url),
+          board_member = COALESCE(EXCLUDED.board_member, staff_profiles.board_member),
+          management_team = COALESCE(EXCLUDED.management_team, staff_profiles.management_team),
           updated_at = now()
       `, [
-        userId, title, startDate, endDate, status || "active", salaryCurrent, managerId,
+        userId, title, startDate, endDate, status, salaryCurrent, managerId,
         department, ricsPathway, apcStatus, apcAssessmentDate, education, bio,
         emergencyContactName, emergencyContactPhone, emergencyContactRelation,
-        holidayEntitlement ?? 25, pensionOptIn ?? true, pensionRate ?? 5.0,
+        holidayEntitlement, pensionOptIn, pensionRate,
         contractSharepointUrl, passportSharepointUrl, linkedinUrl, xeroTrackingName,
+        dob, address, wfhDays, employmentType, cvSharepointUrl, boardMember, managementTeam,
       ]);
       res.json({ ok: true });
     } catch (e: any) {
@@ -474,16 +508,181 @@ export function setupHrRoutes(app: Express) {
     try {
       const { rows } = await pool.query(`
         SELECT
-          u.id, u.name, u.profile_pic_url,
-          sp.title, sp.manager_id, sp.department, sp.status AS hr_status
+          u.id, u.name, u.profile_pic_url, u.team,
+          sp.title, sp.manager_id, sp.department, sp.status AS hr_status,
+          sp.board_member, sp.management_team, sp.employment_type
         FROM users u
         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
-        WHERE u.is_active = true
+        WHERE u.is_active = true AND COALESCE(sp.status, 'active') = 'active'
         ORDER BY u.name ASC
       `);
       res.json(rows);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
+  });
+
+  // ── Upcoming birthdays (next N days) ──────────────────────────────────────
+  app.get("/api/hr/birthdays", requireAuth, async (req: any, res) => {
+    try {
+      const days = Math.max(1, Math.min(60, parseInt(String(req.query.days || "14"), 10) || 14));
+      const { rows } = await pool.query(`
+        SELECT u.id, u.name, u.profile_pic_url, u.team, sp.title, sp.dob
+        FROM users u
+        JOIN staff_profiles sp ON sp.user_id = u.id
+        WHERE u.is_active = true AND COALESCE(sp.status, 'active') = 'active' AND sp.dob IS NOT NULL
+      `);
+      const today = new Date();
+      const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      const upcoming = rows
+        .map((r: any) => {
+          const m = String(r.dob).match(/-(\d{2})-(\d{2})$/);
+          if (!m) return null;
+          const month = parseInt(m[1], 10) - 1;
+          const day = parseInt(m[2], 10);
+          let next = new Date(today.getFullYear(), month, day);
+          if (next < start) next = new Date(today.getFullYear() + 1, month, day);
+          const diffDays = Math.round((next.getTime() - start.getTime()) / 86400000);
+          return diffDays >= 0 && diffDays <= days
+            ? { id: r.id, name: r.name, title: r.title, team: r.team, profilePicUrl: r.profile_pic_url, date: next.toISOString().slice(0, 10), daysUntil: diffDays }
+            : null;
+        })
+        .filter(Boolean)
+        .sort((a: any, b: any) => a.daysUntil - b.daysUntil);
+      res.json(upcoming);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Admin: add a new staff member ─────────────────────────────────────────
+  // Creates a `users` row with a placeholder password (admin issues a real one
+  // via Settings later) and an empty `staff_profiles` row that the EditProfileDialog
+  // populates. Idempotent on username — re-runs return the existing user.
+  app.post("/api/hr/staff", requireAuth, async (req: any, res) => {
+    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admin only" });
+    const { name, email, role, team, title, managerId, employmentType } = req.body || {};
+    if (!name || typeof name !== "string") return res.status(400).json({ error: "Name is required" });
+    try {
+      const username = name.toLowerCase().replace(/['']/g, "").replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
+      const bcrypt = await import("bcrypt");
+      const placeholder = await bcrypt.default.hash(`bgp-placeholder-${Date.now()}`, 10);
+
+      const existing = await pool.query("SELECT id FROM users WHERE LOWER(name) = LOWER($1) OR username = $2 LIMIT 1", [name.trim(), username]);
+      let userId: string;
+      if (existing.rows.length > 0) {
+        userId = existing.rows[0].id;
+        await pool.query(
+          "UPDATE users SET role = COALESCE($2, role), team = COALESCE($3, team), email = COALESCE($4, email), is_active = true WHERE id = $1",
+          [userId, role || null, team || null, email || null]
+        );
+      } else {
+        const r = await pool.query(
+          "INSERT INTO users (username, password, name, email, role, team, is_admin, is_active) VALUES ($1,$2,$3,$4,$5,$6,false,true) RETURNING id",
+          [username, placeholder, name.trim(), email || null, role || null, team || null]
+        );
+        userId = r.rows[0].id;
+      }
+      await pool.query(
+        `INSERT INTO staff_profiles (user_id, title, manager_id, employment_type, status)
+         VALUES ($1, $2, $3, $4, 'active')
+         ON CONFLICT (user_id) DO UPDATE SET
+           title = COALESCE(EXCLUDED.title, staff_profiles.title),
+           manager_id = COALESCE(EXCLUDED.manager_id, staff_profiles.manager_id),
+           employment_type = COALESCE(EXCLUDED.employment_type, staff_profiles.employment_type),
+           updated_at = now()`,
+        [userId, title || null, managerId || null, employmentType || null]
+      );
+      res.json({ id: userId, name });
+    } catch (e: any) {
+      if (e?.code === "23505") return res.status(409).json({ error: "That username already exists" });
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Admin: remove (deactivate) a staff member ─────────────────────────────
+  // Soft-delete: keeps the user row + history, hides them from the org chart.
+  app.delete("/api/hr/staff/:userId", requireAuth, async (req: any, res) => {
+    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admin only" });
+    if (req.user?.id === req.params.userId) return res.status(400).json({ error: "Cannot remove yourself" });
+    try {
+      await pool.query("UPDATE users SET is_active = false WHERE id = $1", [req.params.userId]);
+      await pool.query("UPDATE staff_profiles SET status = 'leaver', end_date = COALESCE(end_date, to_char(now(), 'YYYY-MM-DD')), updated_at = now() WHERE user_id = $1", [req.params.userId]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Admin: seed the May 2026 BGP org chart (reporting lines + flags) ──────
+  // Idempotent: matches existing users by case-insensitive name and only sets
+  // org-chart fields. Skips people who aren't in the users table (admin uses
+  // POST /api/hr/staff above to add missing names first).
+  app.post("/api/hr/seed-org-chart", requireAuth, async (req: any, res) => {
+    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admin only" });
+    // [name, role, team, reportsTo, board, mgt]
+    const ROSTER: Array<[string, string, string, string | null, boolean, boolean]> = [
+      ["Woody Bruce", "Managing Director", "Office / Corporate", null, true, true],
+      ["Cara Milligan", "PA – National", "Office / Corporate", "Woody Bruce", false, false],
+      ["Harriette Walker-Clark", "PA & Office Manager – Central London Leasing", "Office / Corporate", "Woody Bruce", false, false],
+      ["Layla O'Driscoll", "PA & Office Manager – Central London & Board support", "Office / Corporate", "Woody Bruce", false, false],
+      ["Nick Goodman", "Consultant", "Office / Corporate", "Woody Bruce", false, false],
+      ["Wendy McKenzie", "Bookkeeper", "Office / Corporate", "Woody Bruce", false, false],
+      ["Jack Barratt", "ED, Head of Investment – Finance", "Investment", "Woody Bruce", true, true],
+      ["Nick Halley", "Director – Investment", "Investment", "Jack Barratt", false, false],
+      ["Ollie Wilkinson", "Associate Director – Investment", "Investment", "Nick Halley", false, false],
+      ["Jonny Palmer", "Graduate", "Investment", "Ollie Wilkinson", false, false],
+      ["Pete Wood", "Head – Lease Consultancy / Management", "Lease Advisory", "Woody Bruce", false, true],
+      ["Tom Cater", "Associate Director", "Lease Advisory", "Pete Wood", false, false],
+      ["Victoria Broadhead", "Head – National / Management", "National Leasing", "Woody Bruce", false, true],
+      ["Lucy Gardiner", "Director – National Team", "National Leasing", "Victoria Broadhead", false, false],
+      ["Rob Barnes", "Surveyor – National Team", "National Leasing", "Lucy Gardiner", false, false],
+      ["Luke Donohoe", "Graduate Surveyor – National Team", "National Leasing", "Rob Barnes", false, false],
+      ["Tracey Pollard", "Head – Development / Re-purposing", "Development", "Woody Bruce", false, true],
+      ["Emily Dumbell", "Director – Leasing", "Development", "Tracey Pollard", false, false],
+      ["Alex Todd", "Senior Surveyor – Development", "Development", "Emily Dumbell", false, false],
+      ["Libby Evans", "Graduate Surveyor – Development", "Development", "Alex Todd", false, false],
+      ["Harry Elliot", "Director – Tenant Rep", "Tenant Rep", "Woody Bruce", false, true],
+      ["Charlotte Roberts", "ED & Co-Head – London Estates / Marketing", "London Leasing", "Woody Bruce", true, true],
+      ["Rupert Bentley-Smith", "ED & Co-Head – London Estates & USA / Ops & HR", "London Leasing", "Woody Bruce", true, true],
+      ["Evie North", "Associate Director – Leasing & Tenant Rep", "London Leasing", "Charlotte Roberts", false, false],
+      ["Lizzie Knights", "Director – London Leasing", "London Leasing", "Charlotte Roberts", false, false],
+      ["Lucy Cope", "Associate Director – London Leasing", "London Leasing", "Lizzie Knights", false, false],
+      ["Will Penfold", "Graduate Surveyor – London Leasing", "London Leasing", "Rupert Bentley-Smith", false, false],
+      ["Emily Cann", "Graduate Surveyor – London Leasing", "London Leasing", "Lucy Cope", false, false],
+    ];
+
+    const nameToId = new Map<string, string>();
+    let updated = 0, skipped = 0;
+    const skippedNames: string[] = [];
+
+    // Pass 1: resolve every name to a user id (skip the ones we can't find).
+    for (const [name] of ROSTER) {
+      const r = await pool.query("SELECT id FROM users WHERE LOWER(name) = LOWER($1) LIMIT 1", [name]);
+      if (r.rows.length === 0) { skipped++; skippedNames.push(name); continue; }
+      nameToId.set(name, r.rows[0].id);
+    }
+
+    // Pass 2: write title/team/manager/board/mgt to staff_profiles + users.team.
+    for (const [name, role, team, reportsTo, board, mgt] of ROSTER) {
+      const userId = nameToId.get(name);
+      if (!userId) continue;
+      const managerId = reportsTo ? nameToId.get(reportsTo) ?? null : null;
+      await pool.query("UPDATE users SET role = $2, team = $3 WHERE id = $1", [userId, role, team]);
+      await pool.query(
+        `INSERT INTO staff_profiles (user_id, title, manager_id, board_member, management_team, status)
+         VALUES ($1, $2, $3, $4, $5, 'active')
+         ON CONFLICT (user_id) DO UPDATE SET
+           title = EXCLUDED.title,
+           manager_id = EXCLUDED.manager_id,
+           board_member = EXCLUDED.board_member,
+           management_team = EXCLUDED.management_team,
+           updated_at = now()`,
+        [userId, role, managerId, board, mgt]
+      );
+      updated++;
+    }
+
+    res.json({ updated, skipped, skippedNames });
   });
 }

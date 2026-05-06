@@ -8,6 +8,7 @@ import {
   AlertCircle, Clock, CheckCircle2, BarChart3, ArrowLeft,
   Shield, Heart, Briefcase, Star, DollarSign, BookOpen,
   ExternalLink, Loader2, Search, SlidersHorizontal,
+  Network, Cake, UserPlus, Trash2, FolderLock, Folder,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -59,6 +60,24 @@ interface StaffMember {
   passport_sharepoint_url: string | null;
   linkedin_url: string | null;
   xero_tracking_name: string | null;
+  // Org-chart additions (May 2026)
+  dob: string | null;
+  address: string | null;
+  wfh_days: string[] | null;
+  employment_type: string | null;
+  cv_sharepoint_url: string | null;
+  board_member: boolean | null;
+  management_team: boolean | null;
+}
+
+interface Birthday {
+  id: string;
+  name: string;
+  title: string | null;
+  team: string | null;
+  profilePicUrl: string | null;
+  date: string;
+  daysUntil: number;
 }
 
 interface SalaryEntry {
@@ -681,10 +700,19 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
     passportSharepointUrl: person.passport_sharepoint_url || "",
     linkedinUrl: person.linkedin_url || "",
     xeroTrackingName: person.xero_tracking_name || "",
+    // Org chart additions (May 2026)
+    dob: person.dob || "",
+    address: person.address || "",
+    wfhDays: (person.wfh_days || []).join(", "),
+    employmentType: person.employment_type || "",
+    cvSharepointUrl: person.cv_sharepoint_url || "",
+    boardMember: person.board_member ?? false,
+    managementTeam: person.management_team ?? false,
   });
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      const wfhArr = form.wfhDays ? form.wfhDays.split(",").map(s => s.trim()).filter(Boolean) : [];
       const r = await apiRequest("POST", `/api/hr/staff/${person.id}/profile`, {
         title: form.title || undefined,
         startDate: form.startDate || undefined,
@@ -705,6 +733,14 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
         passportSharepointUrl: form.passportSharepointUrl || undefined,
         linkedinUrl: form.linkedinUrl || undefined,
         xeroTrackingName: form.xeroTrackingName || undefined,
+        // Org chart additions
+        dob: form.dob || undefined,
+        address: form.address || undefined,
+        wfhDays: wfhArr.length ? wfhArr : undefined,
+        employmentType: form.employmentType || undefined,
+        cvSharepointUrl: form.cvSharepointUrl || undefined,
+        boardMember: form.boardMember,
+        managementTeam: form.managementTeam,
       });
       return r.json();
     },
@@ -791,6 +827,37 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
             <div className="space-y-2">
               <div className="space-y-1.5"><Label>Contract URL</Label><Input value={form.contractSharepointUrl} onChange={f("contractSharepointUrl")} placeholder="https://brucegillinghampollard..." /></div>
               <div className="space-y-1.5"><Label>Passport / right to work URL</Label><Input value={form.passportSharepointUrl} onChange={f("passportSharepointUrl")} placeholder="https://brucegillinghampollard..." /></div>
+              <div className="space-y-1.5"><Label>CV URL (for presentations)</Label><Input value={form.cvSharepointUrl} onChange={f("cvSharepointUrl")} placeholder="https://brucegillinghampollard..." /></div>
+            </div>
+          </div>
+
+          <div className="border-t pt-3">
+            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Personal — visible to {person.name.split(" ")[0]} & Admin</div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5"><Label>Date of birth</Label><Input type="date" value={form.dob} onChange={f("dob")} /></div>
+              <div className="space-y-1.5">
+                <Label>Employment type</Label>
+                <Select value={form.employmentType} onValueChange={v => setForm(p => ({ ...p, employmentType: v }))}>
+                  <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                  <SelectContent>{["FT", "PT", "Mat", "Contract", "Grad"].map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-1.5 mt-3"><Label>Home address</Label><Textarea value={form.address} onChange={f("address")} placeholder="Street, city, postcode" rows={2} /></div>
+            <div className="space-y-1.5 mt-3"><Label>WFH days</Label><Input value={form.wfhDays} onChange={f("wfhDays")} placeholder="Mon, Wed, Fri" /></div>
+          </div>
+
+          <div className="border-t pt-3">
+            <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Org chart flags</div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex items-center gap-2 rounded-md border p-2.5">
+                <input type="checkbox" id="board_member" checked={form.boardMember} onChange={e => setForm(p => ({ ...p, boardMember: e.target.checked }))} className="h-4 w-4" />
+                <Label htmlFor="board_member" className="text-sm cursor-pointer">Board member</Label>
+              </div>
+              <div className="flex items-center gap-2 rounded-md border p-2.5">
+                <input type="checkbox" id="management_team" checked={form.managementTeam} onChange={e => setForm(p => ({ ...p, managementTeam: e.target.checked }))} className="h-4 w-4" />
+                <Label htmlFor="management_team" className="text-sm cursor-pointer">Management team</Label>
+              </div>
             </div>
           </div>
         </div>
@@ -1110,6 +1177,309 @@ function HolidayApprovals() {
   );
 }
 
+// ── Org chart visualisation ───────────────────────────────────────────────────
+
+// Card colours mirror Layla's May 2026 organigram. Keyed off `users.team`.
+const TEAM_STYLES: Record<string, { bg: string; border: string; text: string; pip: string }> = {
+  "Office / Corporate": { bg: "bg-purple-50 dark:bg-purple-950/30", border: "border-purple-300 dark:border-purple-700", text: "text-purple-900 dark:text-purple-100", pip: "bg-purple-500" },
+  "Investment":          { bg: "bg-emerald-50 dark:bg-emerald-950/30", border: "border-emerald-300 dark:border-emerald-700", text: "text-emerald-900 dark:text-emerald-100", pip: "bg-emerald-500" },
+  "Lease Advisory":      { bg: "bg-amber-50 dark:bg-amber-950/30", border: "border-amber-300 dark:border-amber-700", text: "text-amber-900 dark:text-amber-100", pip: "bg-amber-500" },
+  "National Leasing":    { bg: "bg-orange-50 dark:bg-orange-950/30", border: "border-orange-300 dark:border-orange-700", text: "text-orange-900 dark:text-orange-100", pip: "bg-orange-500" },
+  "Development":         { bg: "bg-pink-50 dark:bg-pink-950/30", border: "border-pink-300 dark:border-pink-700", text: "text-pink-900 dark:text-pink-100", pip: "bg-pink-500" },
+  "Tenant Rep":          { bg: "bg-sky-50 dark:bg-sky-950/30", border: "border-sky-300 dark:border-sky-700", text: "text-sky-900 dark:text-sky-100", pip: "bg-sky-500" },
+  "London Leasing":      { bg: "bg-yellow-50 dark:bg-yellow-950/30", border: "border-yellow-300 dark:border-yellow-700", text: "text-yellow-900 dark:text-yellow-100", pip: "bg-yellow-500" },
+};
+const DEFAULT_TEAM_STYLE = { bg: "bg-muted", border: "border-border", text: "text-foreground", pip: "bg-gray-500" };
+const TEAM_ORDER = ["Office / Corporate", "Investment", "Lease Advisory", "National Leasing", "Development", "Tenant Rep", "London Leasing"];
+
+function styleForTeam(team: string | null | undefined) {
+  if (!team) return DEFAULT_TEAM_STYLE;
+  return TEAM_STYLES[team] || DEFAULT_TEAM_STYLE;
+}
+
+function OrgCard({ person, onClick }: { person: StaffMember; onClick: () => void }) {
+  const style = styleForTeam(person.team);
+  const initials = person.name.split(/\s+/).map(p => p[0]).join("").slice(0, 2).toUpperCase();
+  return (
+    <button
+      onClick={onClick}
+      className={`relative w-44 rounded-lg border-2 ${style.bg} ${style.border} ${style.text} p-2 text-left shadow-sm hover:shadow-md hover:scale-[1.02] transition-all cursor-pointer`}
+      data-testid={`org-card-${person.id}`}
+    >
+      <div className="flex items-start gap-2">
+        <div className="w-9 h-9 shrink-0 rounded-full bg-white border flex items-center justify-center overflow-hidden">
+          {person.profile_pic_url ? (
+            <img src={person.profile_pic_url} alt={person.name} className="w-full h-full object-cover" />
+          ) : (
+            <span className="text-xs font-medium text-muted-foreground">{initials}</span>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold leading-tight truncate">{person.name}</p>
+          <p className="text-[10px] opacity-75 leading-tight mt-0.5 line-clamp-2">{person.title || person.team || "—"}</p>
+        </div>
+      </div>
+      {(person.board_member || person.management_team) && (
+        <div className="absolute -top-1.5 -right-1.5 flex gap-0.5">
+          {person.board_member && <span className="text-[8px] font-bold bg-black text-white px-1 py-0.5 rounded shadow">BOARD</span>}
+          {person.management_team && !person.board_member && <span className="text-[8px] font-bold bg-slate-700 text-white px-1 py-0.5 rounded shadow">MGT</span>}
+        </div>
+      )}
+    </button>
+  );
+}
+
+function ChainNode({ person, childrenByManager, onSelect }: { person: StaffMember; childrenByManager: Map<string, StaffMember[]>; onSelect: (p: StaffMember) => void }) {
+  const directs = childrenByManager.get(person.id) || [];
+  return (
+    <div className="flex flex-col items-center">
+      <OrgCard person={person} onClick={() => onSelect(person)} />
+      {directs.length > 0 && (
+        <>
+          <div className="w-px h-4 bg-border" />
+          <div className="flex flex-col items-center gap-4">
+            {directs.map(child => <ChainNode key={child.id} person={child} childrenByManager={childrenByManager} onSelect={onSelect} />)}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function OrgChartTab({ allStaff, onSelectPerson, isAdmin }: { allStaff: StaffMember[]; onSelectPerson: (p: StaffMember) => void; isAdmin: boolean }) {
+  const { toast } = useToast();
+  const root = useMemo(() => allStaff.find(s => !s.manager_id) || null, [allStaff]);
+  const childrenByManager = useMemo(() => {
+    const map = new Map<string, StaffMember[]>();
+    for (const s of allStaff) {
+      if (!s.manager_id) continue;
+      const list = map.get(s.manager_id) || [];
+      list.push(s);
+      map.set(s.manager_id, list);
+    }
+    return map;
+  }, [allStaff]);
+
+  const seedMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/hr/seed-org-chart");
+      return r.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      const skipMsg = data?.skipped > 0 ? ` ${data.skipped} not yet in users (add via "Add staff").` : "";
+      toast({ title: `Seeded ${data?.updated ?? 0} from May 2026 chart.${skipMsg}` });
+    },
+    onError: (e: any) => toast({ title: "Seed failed", description: e?.message, variant: "destructive" }),
+  });
+
+  // Anyone whose manager is missing or who isn't reachable from the root
+  // surfaces below as "Unassigned" so admins can fix the chain.
+  const reachable = useMemo(() => {
+    if (!root) return new Set<string>();
+    const set = new Set<string>([root.id]);
+    const queue = [root.id];
+    while (queue.length) {
+      const id = queue.shift()!;
+      for (const child of childrenByManager.get(id) || []) {
+        if (!set.has(child.id)) { set.add(child.id); queue.push(child.id); }
+      }
+    }
+    return set;
+  }, [root, childrenByManager]);
+
+  const unassigned = useMemo(() => allStaff.filter(s => !reachable.has(s.id)), [allStaff, reachable]);
+  const noManagersSet = allStaff.length > 0 && allStaff.every(s => !s.manager_id);
+
+  if (!root || noManagersSet) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+        <Network className="w-10 h-10 text-muted-foreground" />
+        <h3 className="text-base font-semibold">No reporting lines set yet</h3>
+        <p className="text-sm text-muted-foreground max-w-md">
+          {isAdmin
+            ? "Seed the May 2026 BGP chart to wire reporting lines, BOARD and MGT flags. Idempotent — safe to re-run after edits."
+            : "An admin needs to set up the org chart."}
+        </p>
+        {isAdmin && (
+          <Button onClick={() => seedMutation.mutate()} disabled={seedMutation.isPending} size="sm">
+            <Network className="w-4 h-4 mr-2" />
+            {seedMutation.isPending ? "Seeding…" : "Seed BGP org chart"}
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  // Group root's direct reports into team columns so e.g. Office / Corporate's
+  // 5 PAs stack inside one column rather than spawning 5 sibling columns.
+  const directs = childrenByManager.get(root.id) || [];
+  const columnGroups = TEAM_ORDER
+    .map(team => ({ team, members: directs.filter(p => p.team === team) }))
+    .filter(g => g.members.length > 0);
+  const otherDirects = directs.filter(p => !TEAM_ORDER.includes(p.team || ""));
+  if (otherDirects.length > 0) columnGroups.push({ team: "Other", members: otherDirects });
+
+  return (
+    <div className="pb-8">
+      <div className="flex items-center justify-end mb-3 gap-2">
+        {isAdmin && (
+          <Button variant="ghost" size="sm" onClick={() => seedMutation.mutate()} disabled={seedMutation.isPending} className="h-7 text-xs text-muted-foreground">
+            {seedMutation.isPending ? "Re-syncing…" : "Re-sync from May 2026 chart"}
+          </Button>
+        )}
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border bg-card p-6">
+        <div className="flex flex-col items-center min-w-max">
+          <OrgCard person={root} onClick={() => onSelectPerson(root)} />
+          <div className="w-px h-6 bg-border" />
+          <div className="flex items-start gap-6">
+            {columnGroups.map(group => {
+              const style = styleForTeam(group.team);
+              return (
+                <div key={group.team} className="flex flex-col items-center">
+                  <div className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded border ${style.bg} ${style.border} ${style.text} mb-2`}>
+                    {group.team}
+                  </div>
+                  <div className="flex flex-col items-center gap-4">
+                    {group.members.map(m => <ChainNode key={m.id} person={m} childrenByManager={childrenByManager} onSelect={onSelectPerson} />)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {unassigned.length > 0 && (
+        <div className="mt-6 rounded-lg border bg-card p-4">
+          <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Unassigned ({unassigned.length})</p>
+          <p className="text-xs text-muted-foreground mb-3">Active staff with no manager link or whose manager is missing.</p>
+          <div className="flex flex-wrap gap-3">
+            {unassigned.map(p => <OrgCard key={p.id} person={p} onClick={() => onSelectPerson(p)} />)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Birthdays widget ──────────────────────────────────────────────────────────
+
+function BirthdaysWidget() {
+  const { data: birthdays = [] } = useQuery<Birthday[]>({ queryKey: ["/api/hr/birthdays"] });
+  if (birthdays.length === 0) return null;
+  return (
+    <Card className="mb-3">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Cake className="w-4 h-4 text-pink-500" /> Upcoming birthdays
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {birthdays.slice(0, 6).map(b => {
+            const initials = b.name.split(/\s+/).map(p => p[0]).join("").slice(0, 2).toUpperCase();
+            return (
+              <div key={b.id} className="flex items-center gap-2 p-2 rounded-md border text-xs" data-testid={`birthday-${b.id}`}>
+                <div className="w-7 h-7 rounded-full bg-muted overflow-hidden border flex items-center justify-center shrink-0">
+                  {b.profilePicUrl ? <img src={b.profilePicUrl} alt={b.name} className="w-full h-full object-cover" /> : <span className="text-[10px]">{initials}</span>}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium truncate">{b.name}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{b.title || b.team}</p>
+                </div>
+                <Badge variant={b.daysUntil === 0 ? "default" : "outline"} className="text-[10px] shrink-0">
+                  {b.daysUntil === 0 ? "Today!" : b.daysUntil === 1 ? "Tomorrow" : `${b.daysUntil}d`}
+                </Badge>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Add staff dialog (admin) ──────────────────────────────────────────────────
+
+function AddStaffDialog({ allStaff, open, onClose }: { allStaff: StaffMember[]; open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const [form, setForm] = useState({ name: "", email: "", title: "", role: "", team: "", managerId: "", employmentType: "" });
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/hr/staff", {
+        name: form.name.trim(),
+        email: form.email.trim() || undefined,
+        title: form.title.trim() || undefined,
+        role: form.role.trim() || undefined,
+        team: form.team || undefined,
+        managerId: form.managerId || undefined,
+        employmentType: form.employmentType || undefined,
+      });
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/birthdays"] });
+      toast({ title: `Added ${form.name}` });
+      setForm({ name: "", email: "", title: "", role: "", team: "", managerId: "", employmentType: "" });
+      onClose();
+    },
+    onError: (e: any) => toast({ title: "Add failed", description: e?.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Add staff member</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5"><Label>Full name *</Label><Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Jane Smith" /></div>
+          <div className="space-y-1.5"><Label>Work email</Label><Input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="jane@bgpcommercial.com" /></div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5"><Label>Job title</Label><Input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="Surveyor" /></div>
+            <div className="space-y-1.5">
+              <Label>Employment</Label>
+              <Select value={form.employmentType} onValueChange={v => setForm(f => ({ ...f, employmentType: v }))}>
+                <SelectTrigger><SelectValue placeholder="Type" /></SelectTrigger>
+                <SelectContent>
+                  {["FT", "PT", "Mat", "Contract", "Grad"].map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Team</Label>
+            <Select value={form.team} onValueChange={v => setForm(f => ({ ...f, team: v }))}>
+              <SelectTrigger><SelectValue placeholder="Choose team" /></SelectTrigger>
+              <SelectContent>{TEAM_ORDER.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label>Reports to</Label>
+            <Select value={form.managerId || "none"} onValueChange={v => setForm(f => ({ ...f, managerId: v === "none" ? "" : v }))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">— None (top of chart) —</SelectItem>
+                {allStaff.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => createMutation.mutate()} disabled={!form.name.trim() || createMutation.isPending}>
+            {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <UserPlus className="w-4 h-4 mr-2" />}
+            Add
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function HRPage() {
@@ -1177,13 +1547,20 @@ export default function HRPage() {
     );
   }
 
+  const [addStaffOpen, setAddStaffOpen] = useState(false);
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="p-4 border-b sticky top-0 bg-background z-10">
         <div className="flex items-center gap-2 mb-3">
           <Users className="w-5 h-5 text-primary" />
           <h1 className="text-lg font-semibold">People & HR</h1>
-          <Badge variant="secondary" className="ml-auto">{allStaff.length} staff</Badge>
+          <Badge variant="secondary" className="ml-2">{allStaff.length} staff</Badge>
+          {isAdmin && (
+            <Button size="sm" className="ml-auto h-8" onClick={() => setAddStaffOpen(true)} data-testid="button-add-staff">
+              <UserPlus className="w-3.5 h-3.5 mr-1.5" /> Add staff
+            </Button>
+          )}
         </div>
         <div className="flex gap-2">
           <div className="relative flex-1">
@@ -1206,13 +1583,15 @@ export default function HRPage() {
       <Tabs defaultValue="team" className="px-4">
         <TabsList className="mt-3 mb-3">
           <TabsTrigger value="team">Team</TabsTrigger>
-          <TabsTrigger value="holidays">
-            Holiday approvals
+          <TabsTrigger value="org-chart">
+            <Network className="w-3.5 h-3.5 mr-1.5" /> Org Chart
           </TabsTrigger>
+          <TabsTrigger value="holidays">Holiday approvals</TabsTrigger>
           <TabsTrigger value="policies">Policies</TabsTrigger>
         </TabsList>
 
         <TabsContent value="team">
+          <BirthdaysWidget />
           {isLoading ? (
             <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
           ) : (
@@ -1227,6 +1606,14 @@ export default function HRPage() {
           )}
         </TabsContent>
 
+        <TabsContent value="org-chart">
+          {isLoading ? (
+            <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+          ) : (
+            <OrgChartTab allStaff={allStaff} onSelectPerson={(p) => setSelectedUserId(p.id)} isAdmin={isAdmin} />
+          )}
+        </TabsContent>
+
         <TabsContent value="holidays">
           <div className="pb-6"><HolidayApprovals /></div>
         </TabsContent>
@@ -1235,6 +1622,8 @@ export default function HRPage() {
           <div className="pb-6"><PoliciesPanel /></div>
         </TabsContent>
       </Tabs>
+
+      {isAdmin && <AddStaffDialog allStaff={allStaff} open={addStaffOpen} onClose={() => setAddStaffOpen(false)} />}
     </div>
   );
 }

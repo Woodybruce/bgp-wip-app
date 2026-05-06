@@ -754,6 +754,14 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_analysis TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_analysis_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS concept_status TEXT`,
+    // ── Org chart enhancement (May 2026) ─────────────────────────────────────
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS dob TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS address TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS wfh_days TEXT[]`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS employment_type TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS cv_sharepoint_url TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS board_member BOOLEAN DEFAULT false`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS management_team BOOLEAN DEFAULT false`,
   ];
 
   let ok = 0, skipped = 0;

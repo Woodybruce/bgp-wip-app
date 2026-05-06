@@ -2528,6 +2528,14 @@ export const staffProfiles = pgTable("staff_profiles", {
   passportSharepointUrl: text("passport_sharepoint_url"),
   linkedinUrl: text("linkedin_url"),
   xeroTrackingName: text("xero_tracking_name"), // how they appear in Xero tracking
+  // Org-chart additions (May 2026)
+  dob: text("dob"),
+  address: text("address"),
+  wfhDays: text("wfh_days").array(),
+  employmentType: text("employment_type"),         // FT | PT | Mat | Contract | Grad
+  cvSharepointUrl: text("cv_sharepoint_url"),
+  boardMember: boolean("board_member").default(false),
+  managementTeam: boolean("management_team").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
