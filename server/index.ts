@@ -746,6 +746,14 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS idx_salary_history_user ON salary_history(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_holiday_requests_user ON holiday_requests(user_id)`,
     `CREATE INDEX IF NOT EXISTS idx_hr_documents_user ON hr_documents(user_id)`,
+
+    // ── Brand profile — ensure crm_companies has all columns the API selects ─
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS bgp_contact_crm TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS bgp_contact_user_ids TEXT[]`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_enriched_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_analysis TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_analysis_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS concept_status TEXT`,
   ];
 
   let ok = 0, skipped = 0;

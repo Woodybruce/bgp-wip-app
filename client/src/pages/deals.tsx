@@ -2398,13 +2398,10 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
                 variant="outline"
                 size="sm"
                 onClick={() => { setCreating(true); setAmount(deal.fee || 0); setReference(deal.name || ""); }}
-                disabled={amlStatus && !amlStatus.canInvoice}
-                title={amlStatus && !amlStatus.canInvoice ? `AML approval needed for ${amlStatus.missing.join(", ")}` : undefined}
                 data-testid="button-create-xero-invoice"
               >
                 <Send className="w-3.5 h-3.5 mr-1" />
                 Send to Xero
-                {amlStatus && !amlStatus.canInvoice && <span className="ml-1.5 text-[10px] uppercase opacity-70">AML pending</span>}
               </Button>
             )}
           </div>
@@ -2509,8 +2506,7 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
               <Button
                 size="sm"
                 onClick={() => createInvoiceMutation.mutate()}
-                disabled={createInvoiceMutation.isPending || (amlStatus && !amlStatus.canInvoice)}
-                title={amlStatus && !amlStatus.canInvoice ? `AML approval needed for ${amlStatus.missing.join(", ")}` : undefined}
+                disabled={createInvoiceMutation.isPending}
                 data-testid="button-confirm-xero-invoice"
               >
                 {createInvoiceMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}

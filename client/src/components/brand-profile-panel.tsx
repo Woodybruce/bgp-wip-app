@@ -785,7 +785,14 @@ export function BrandProfilePanel({ companyId }: { companyId: string }) {
     retry: false,
   });
 
-  if (isLoading || !data) return null;
+  if (isLoading) return null;
+  if (isError || !data || !data.company) return (
+    <Card data-testid="brand-profile-panel">
+      <CardContent className="py-8 text-center text-sm text-muted-foreground">
+        Unable to load brand profile — try refreshing the page.
+      </CardContent>
+    </Card>
+  );
 
   const c = data.company;
   const aiFields = c.ai_generated_fields || {};
