@@ -700,6 +700,30 @@ app.use("/api/branding/assets", express.static(
   await registerRoutes(httpServer, app);
   setupWebSocket(httpServer);
 
+  // Idempotent boot-time migration for the People & HR columns. Runs once on
+  // every startup; ADD COLUMN IF NOT EXISTS makes it a no-op once applied.
+  try {
+    const { pool } = await import("./db");
+    await pool.query(`
+      ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS manager_id varchar,
+        ADD COLUMN IF NOT EXISTS dob text,
+        ADD COLUMN IF NOT EXISTS address text,
+        ADD COLUMN IF NOT EXISTS personal_email text,
+        ADD COLUMN IF NOT EXISTS wfh_days text[],
+        ADD COLUMN IF NOT EXISTS employment_type text,
+        ADD COLUMN IF NOT EXISTS start_date text,
+        ADD COLUMN IF NOT EXISTS cv_url text,
+        ADD COLUMN IF NOT EXISTS bio text,
+        ADD COLUMN IF NOT EXISTS board_member boolean DEFAULT false,
+        ADD COLUMN IF NOT EXISTS management_team boolean DEFAULT false,
+        ADD COLUMN IF NOT EXISTS display_order integer DEFAULT 0
+    `);
+    log("HR columns ready", "migrate");
+  } catch (err: any) {
+    console.error("[migrate] HR columns:", err?.message);
+  }
+
   app.all("/api/{*path}", (_req: Request, res: Response) => {
     res.status(404).json({ message: "Not found" });
   });
