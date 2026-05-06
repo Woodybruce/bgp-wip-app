@@ -8,7 +8,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
-import { saveFile, getFile } from "./file-storage";
+import { saveFile, getFile, recordUserUpload } from "./file-storage";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
@@ -374,16 +374,17 @@ export async function registerRoutes(
       if (!files || files.length === 0) {
         return res.status(400).json({ message: "No files uploaded" });
       }
+      const userId = (req as any).user?.id || (req as any).userId;
       const uploaded = await Promise.all(files.map(async (f) => {
         const ext = path.extname(f.originalname).toLowerCase();
         const uniqueName = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
-        await saveFile(`chat-media/${uniqueName}`, f.buffer, f.mimetype, f.originalname);
-        return {
-          url: `/api/chat-media/${uniqueName}`,
-          name: f.originalname,
-          size: f.size,
-          type: f.mimetype,
-        };
+        const storageKey = `chat-media/${uniqueName}`;
+        await saveFile(storageKey, f.buffer, f.mimetype, f.originalname);
+        const url = `/api/chat-media/${uniqueName}`;
+        if (userId) {
+          recordUserUpload(userId, storageKey, f.originalname, f.mimetype, f.size, url).catch(() => {});
+        }
+        return { url, name: f.originalname, size: f.size, type: f.mimetype };
       }));
       res.json({ files: uploaded });
     } catch (err: any) {

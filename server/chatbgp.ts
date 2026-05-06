@@ -11,7 +11,7 @@ import fs from "node:fs";
 import multer from "multer";
 import mammoth from "mammoth";
 import { getValidMsToken, SHAREPOINT_HOST, SHAREPOINT_SITE_PATH } from "./microsoft";
-import { getFile, saveFile, findChatMediaByOriginalName } from "./file-storage";
+import { getFile, saveFile, findChatMediaByOriginalName, getRecentUserUploads } from "./file-storage";
 import { escapeLike } from "./utils/escape-like";
 import { askPerplexity, isPerplexityConfigured } from "./perplexity";
 
@@ -1484,6 +1484,21 @@ export async function consolidateUserMemories(userId: string): Promise<{ merged:
   return { merged, deleted };
 }
 
+async function getRecentUploadsContext(userId: string): Promise<string> {
+  try {
+    const uploads = await getRecentUserUploads(userId, 8);
+    if (uploads.length === 0) return "";
+    const lines = uploads.map(u => {
+      const when = new Date(u.uploadedAt).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+      const size = u.size > 1024 * 1024 ? `${(u.size / 1024 / 1024).toFixed(1)}MB` : `${Math.round(u.size / 1024)}KB`;
+      return `- ${u.originalName} (${size}, uploaded ${when}) → ${u.url}`;
+    });
+    return `\n\n## Your Recently Uploaded Files\nThese files are still stored and can be read without re-uploading. Use read_file with the URL to access them:\n${lines.join("\n")}\n`;
+  } catch {
+    return "";
+  }
+}
+
 export async function getEmailAndCalendarContext(req: Request): Promise<string> {
   // Cache per user for 3 minutes to avoid hammering Microsoft Graph on every message
   const userId = (req.session as any)?.userId || (req as any).tokenUserId;
@@ -1790,15 +1805,16 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "sql_write",
-      description: "Insert / update / delete rows in the BGP Postgres database. Prefer this over create_deal / update_deal / create_company / update_company / delete_record etc. — those are narrow legacy tools. Every write is validated against the Drizzle schema (typo'd columns are rejected) and recorded in ai_write_audit. Sensitive tables (users, sessions, file_storage) are blocked. UPDATE and DELETE require a where clause.",
+      description: "Insert / update / delete rows in the BGP Postgres database. Prefer this over create_deal / update_deal / create_company / update_company / delete_record etc. — those are narrow legacy tools. Every write is validated against the Drizzle schema (typo'd columns are rejected) and recorded in ai_write_audit. Sensitive tables (users, sessions, file_storage) are blocked. UPDATE and DELETE require a where clause. IMPORTANT: For bulk inserts (e.g. inserting many fee allocations, diary notes, etc.), pass `rows` as an array of objects instead of calling this tool once per row — a single call with rows:[{...},{...},...] inserts all of them in one SQL statement and is dramatically faster.",
       parameters: {
         type: "object",
         properties: {
           table: { type: "string", description: "Snake-case table name, e.g. 'crm_deals', 'crm_companies', 'chatbgp_learnings'. Call describe_schema for the full list." },
           op: { type: "string", enum: ["insert", "update", "delete"], description: "Mutation type." },
-          data: { type: "object", description: "Column → value map. Required for insert and update. Snake-case keys matching the DB columns." },
+          data: { type: "object", description: "Column → value map. Required for single-row insert and for update. Snake-case keys matching the DB columns." },
+          rows: { type: "array", description: "For bulk insert: array of row objects. Use instead of `data` when inserting multiple rows in one shot. All objects must share the same keys. Example: [{deal_id:'x',agent:'TP',amount:5000},{deal_id:'y',agent:'WP',amount:3000}]", items: { type: "object" } },
           where: { type: "object", description: "Column → value map for WHERE clause (AND-joined). Arrays become IN (...). null becomes IS NULL. Required for update and delete." },
-          returning: { type: "boolean", description: "If true (default), returns the affected rows. Set false for bulk ops where you don't need the result." },
+          returning: { type: "boolean", description: "If true (default), returns the affected rows. Set false for very large bulk inserts where you don't need all rows back." },
         },
         required: ["table", "op"],
       },
@@ -11004,6 +11020,7 @@ export function setupChatBGPRoutes(app: Express) {
       let crmCtx = "";
       let businessLearnings2 = "";
 
+      let uploadsCtx = "";
       try {
         sendProgress("Gathering intelligence...");
         const contextResults = await Promise.all([
@@ -11012,10 +11029,12 @@ export function setupChatBGPRoutes(app: Express) {
           withTimeout(getCrmContext(), 3000, ""),
           withTimeout(getKnowledgeContext(), 3000, ""),
           withTimeout(getEmailAndCalendarContext(req), 3000, ""),
+          withTimeout(getRecentUploadsContext(userId), 2000, ""),
         ]);
         memoryContext = contextResults[0];
         businessLearnings2 = contextResults[1];
         crmCtx = contextResults[2];
+        uploadsCtx = contextResults[5] as string;
         knowledgeContext2 = contextResults[3];
         emailCalContext = contextResults[4];
         // Trim to stay under 120KB total context
@@ -11110,7 +11129,7 @@ export function setupChatBGPRoutes(app: Express) {
         systemPrompt2 = SYSTEM_PROMPT_FALLBACK;
       }
       // Split system prompt: static (cacheable) vs dynamic (per-request)
-      const dynamicContext = currentUserContext + threadContext + knowledgeContext2 + businessLearnings2 + memoryContext + emailCalContext + crmCtx;
+      const dynamicContext = currentUserContext + threadContext + knowledgeContext2 + businessLearnings2 + memoryContext + emailCalContext + crmCtx + uploadsCtx;
       const systemContent2 = systemPrompt2 + dynamicContext;
 
       // Build structured system prompt array for Anthropic prompt caching

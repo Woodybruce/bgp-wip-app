@@ -167,6 +167,7 @@ interface SqlWriteArgs {
   op: "insert" | "update" | "delete";
   data?: Record<string, any>;
   where?: Record<string, any>;
+  rows?: Array<Record<string, any>>;   // bulk insert: array of row objects
   returning?: boolean;
 }
 
@@ -257,7 +258,7 @@ export async function executeSqlWrite(
   args: SqlWriteArgs,
   ctx: { userId?: string; threadId?: string } = {}
 ): Promise<{ success: boolean; affected?: number; rows?: any[]; error?: string }> {
-  const { table, op, data, where, returning = true } = args;
+  const { table, op, data, where, rows: bulkRows, returning = true } = args;
 
   if (!table || !isValidIdent(table)) {
     return { success: false, error: "Invalid or missing table name" };
@@ -283,9 +284,25 @@ export async function executeSqlWrite(
     let affected = 0;
     let rows: any[] = [];
 
-    if (op === "insert") {
+    if (op === "insert" && bulkRows && bulkRows.length > 0) {
+      // Bulk insert: all rows must share the same column set (derived from first row)
+      const firstRow = bulkRows[0];
+      const cols = Object.keys(firstRow);
+      for (const col of cols) {
+        if (!isValidIdent(col)) return { success: false, error: `Invalid column: ${col}` };
+        if (!validCols.has(col)) return { success: false, error: `Column "${col}" does not exist in ${table}` };
+      }
+      const valueGroups: string[] = [];
+      let idx = 1;
+      for (const row of bulkRows) {
+        const group = cols.map(() => `$${idx++}`).join(", ");
+        valueGroups.push(`(${group})`);
+        for (const col of cols) params.push(row[col] ?? null);
+      }
+      sql = `INSERT INTO ${table} (${cols.join(", ")}) VALUES ${valueGroups.join(", ")}${returning ? " RETURNING *" : ""}`;
+    } else if (op === "insert") {
       if (!data || typeof data !== "object" || Object.keys(data).length === 0) {
-        return { success: false, error: "insert requires `data`" };
+        return { success: false, error: "insert requires `data` or `rows`" };
       }
       const cols: string[] = [];
       const placeholders: string[] = [];

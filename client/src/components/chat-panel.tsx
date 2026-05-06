@@ -2777,23 +2777,23 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
                 <>
                   <input
                     ref={fileInputRef}
+                    id="chat-panel-file-upload"
                     type="file"
-                    className="hidden"
+                    className="sr-only"
                     accept=".docx,.pdf,.doc,.txt,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.heic,.mp3,.mp4,.m4a,.wav,.webm,.ogg,.aac,.mov,.avi,.mkv,.flac,image/*,audio/*,video/*"
                     multiple
+                    tabIndex={-1}
                     onChange={handleFileSelect}
                     data-testid="input-chat-file-upload"
                   />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0 h-10 w-10"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isSending}
+                  <label
+                    htmlFor="chat-panel-file-upload"
+                    className={`shrink-0 h-10 w-10 inline-flex items-center justify-center rounded-md hover:bg-accent hover:text-accent-foreground transition-colors cursor-pointer${isSending ? " pointer-events-none opacity-50" : ""}`}
                     data-testid="button-chat-attach-file"
+                    title="Attach files"
                   >
                     <Paperclip className="w-4 h-4" />
-                  </Button>
+                  </label>
                 </>
               )}
               {isRecording ? (
