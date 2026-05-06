@@ -11,6 +11,7 @@ import {
   BarChart3,
   Newspaper,
   Users,
+  UserCog,
   X,
 
   FileText,
@@ -93,6 +94,7 @@ const coreNavBase = [
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Users },
   { title: "People & HR", url: "/hr", icon: Users },
+  { title: "Team", url: "/team", icon: UserCog },
   { title: "Landlords", url: "/landlords", icon: Briefcase, adminOnly: true },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
@@ -436,6 +438,7 @@ const mobileOverlayItems = [
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Users },
   { title: "People & HR", url: "/hr", icon: Users },
+  { title: "Team", url: "/team", icon: UserCog },
   { title: "Landlords", url: "/landlords", icon: Briefcase, adminOnly: true },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
