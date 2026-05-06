@@ -129,6 +129,74 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS knowledge_base_category_idx ON knowledge_base (category)`,
     `CREATE INDEX IF NOT EXISTS chat_messages_content_search_idx ON chat_messages USING GIN (to_tsvector('english', coalesce(content,'')))`,
     `CREATE TABLE IF NOT EXISTS user_tasks (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), user_id VARCHAR NOT NULL, title TEXT NOT NULL, description TEXT, due_date TIMESTAMP, priority TEXT DEFAULT 'medium', status TEXT DEFAULT 'todo', category TEXT, linked_deal_id VARCHAR, linked_property_id VARCHAR, linked_contact_id VARCHAR, sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), completed_at TIMESTAMP)`,
+    // Watch House awards — admin-issued or auto-detected recognitions.
+    // emoji + reason are free-form; kind = 'coffee'|'beer'|'lunch'|'star'|'auto'
+    // surfaces on the dashboard. issued_by_user_id is null for auto awards.
+    `CREATE TABLE IF NOT EXISTS staff_awards (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      issued_by_user_id VARCHAR,
+      kind TEXT NOT NULL DEFAULT 'star',
+      emoji TEXT,
+      reason TEXT,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS staff_awards_recent_idx ON staff_awards (created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS staff_awards_user_idx ON staff_awards (user_id, created_at DESC)`,
+    // Phone / laptop contract tracker — when's my upgrade.
+    `CREATE TABLE IF NOT EXISTS staff_kit (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      kind TEXT NOT NULL,
+      device TEXT,
+      contract_start DATE,
+      contract_end DATE,
+      provider TEXT,
+      monthly_cost_pence INTEGER,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS staff_kit_user_idx ON staff_kit (user_id)`,
+    // Benefits catalogue — admin-edited cards (cycle to work, nursery, EAP…).
+    `CREATE TABLE IF NOT EXISTS benefits (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      slug TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      category TEXT,
+      description TEXT,
+      eligibility TEXT,
+      enrolment_url TEXT,
+      contact TEXT,
+      provider TEXT,
+      icon TEXT,
+      sort_order INTEGER DEFAULT 0,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    // Per-user enrolment status across benefits.
+    `CREATE TABLE IF NOT EXISTS staff_benefit_enrolments (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      benefit_slug TEXT NOT NULL,
+      status TEXT DEFAULT 'enrolled',
+      enrolled_at TIMESTAMP DEFAULT now(),
+      notes TEXT,
+      UNIQUE (user_id, benefit_slug)
+    )`,
+    // RICS competencies + BGP career levels for the career roadmap module.
+    `CREATE TABLE IF NOT EXISTS staff_competencies (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      competency TEXT NOT NULL,
+      level INTEGER NOT NULL DEFAULT 0,
+      evidence TEXT,
+      reviewed_at TIMESTAMP,
+      reviewed_by_user_id VARCHAR,
+      updated_at TIMESTAMP DEFAULT now(),
+      UNIQUE (user_id, competency)
+    )`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_onenote_page_id TEXT`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_onenote_page_url TEXT`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_evernote_note_id TEXT`,

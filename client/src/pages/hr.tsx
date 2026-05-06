@@ -24,6 +24,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { getQueryFn } from "@/lib/queryClient";
 import type { User as AuthUser } from "@shared/schema";
+import HrOverview from "./hr-overview";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1856,12 +1857,17 @@ export default function HRPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="people" className="px-4">
+      <Tabs defaultValue="overview" className="px-4">
         <TabsList className="mt-3 mb-3">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="people">People</TabsTrigger>
           {isAdmin && <TabsTrigger value="holidays">Holiday approvals</TabsTrigger>}
           <TabsTrigger value="policies">Policies</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="overview">
+          <HrOverview />
+        </TabsContent>
 
         <TabsContent value="people">
           <BirthdaysWidget />

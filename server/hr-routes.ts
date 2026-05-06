@@ -1173,4 +1173,323 @@ export function setupHrRoutes(app: Express) {
       res.status(500).json({ error: e.message });
     }
   });
+
+  // ── 🎁 Watch House awards — recognition feed ──────────────────────────────
+  // GET returns the recent timeline (everyone sees), POST is admin-only,
+  // DELETE lets admin retract a mistake. Non-admins can self-issue 'kudos'
+  // (kind = 'kudos') for peer shout-outs — those don't bestow perks but they
+  // do show up on the board and on the recipient's profile.
+
+  app.get("/api/hr/awards", requireAuth, async (req: any, res) => {
+    try {
+      const limit = Math.min(parseInt(String(req.query.limit || "20"), 10) || 20, 100);
+      const userId = req.query.userId as string | undefined;
+      const params: any[] = [];
+      let where = "1=1";
+      if (userId) { params.push(userId); where = `a.user_id = $${params.length}`; }
+      params.push(limit);
+      const { rows } = await pool.query(
+        `SELECT a.id, a.user_id, a.issued_by_user_id, a.kind, a.emoji, a.reason, a.created_at,
+                u.name AS user_name, u.profile_pic_url AS user_pic,
+                ib.name AS issued_by_name
+         FROM staff_awards a
+         LEFT JOIN users u ON u.id = a.user_id
+         LEFT JOIN users ib ON ib.id = a.issued_by_user_id
+         WHERE ${where}
+         ORDER BY a.created_at DESC
+         LIMIT $${params.length}`,
+        params
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/hr/awards", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.userId) return res.status(401).json({ error: "Not authenticated" });
+    const { userId, kind, emoji, reason } = req.body || {};
+    if (!userId || !kind) return res.status(400).json({ error: "userId and kind required" });
+    // Non-admins can only issue peer 'kudos' (no real perks).
+    if (!actor.isAdmin && kind !== "kudos") {
+      return res.status(403).json({ error: "Only admins can issue perk awards. Use kind='kudos' for peer shout-outs." });
+    }
+    if (userId === actor.userId && kind === "kudos") {
+      return res.status(400).json({ error: "Can't kudos yourself — get someone else to recognise you" });
+    }
+    try {
+      const r = await pool.query(
+        `INSERT INTO staff_awards (user_id, issued_by_user_id, kind, emoji, reason)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, created_at`,
+        [userId, actor.userId, kind, emoji || null, reason || null]
+      );
+      res.json({ id: r.rows[0].id, createdAt: r.rows[0].created_at });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/hr/awards/:id", requireAdmin, async (req: any, res) => {
+    try {
+      await pool.query("DELETE FROM staff_awards WHERE id = $1", [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 📱 Kit / contract tracker — phones, laptops, "when's my upgrade" ─────
+
+  app.get("/api/hr/kit/:userId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, kind, device, contract_start, contract_end, provider, monthly_cost_pence, notes
+         FROM staff_kit WHERE user_id = $1 ORDER BY contract_end ASC NULLS LAST`,
+        [req.params.userId]
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/hr/kit/:userId", requireAdmin, async (req: any, res) => {
+    const { kind, device, contractStart, contractEnd, provider, monthlyCostPence, notes } = req.body || {};
+    if (!kind) return res.status(400).json({ error: "kind required" });
+    try {
+      const r = await pool.query(
+        `INSERT INTO staff_kit (user_id, kind, device, contract_start, contract_end, provider, monthly_cost_pence, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [req.params.userId, kind, device || null, contractStart || null, contractEnd || null, provider || null, monthlyCostPence || null, notes || null]
+      );
+      res.json({ id: r.rows[0].id });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/hr/kit/:id", requireAdmin, async (req: any, res) => {
+    const { kind, device, contractStart, contractEnd, provider, monthlyCostPence, notes } = req.body || {};
+    try {
+      await pool.query(
+        `UPDATE staff_kit SET
+           kind = COALESCE($2, kind),
+           device = COALESCE($3, device),
+           contract_start = COALESCE($4, contract_start),
+           contract_end = COALESCE($5, contract_end),
+           provider = COALESCE($6, provider),
+           monthly_cost_pence = COALESCE($7, monthly_cost_pence),
+           notes = COALESCE($8, notes),
+           updated_at = now()
+         WHERE id = $1`,
+        [req.params.id, kind || null, device || null, contractStart || null, contractEnd || null, provider || null, monthlyCostPence || null, notes || null]
+      );
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/hr/kit/:id", requireAdmin, async (req: any, res) => {
+    try {
+      await pool.query("DELETE FROM staff_kit WHERE id = $1", [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 🎁 Benefits catalogue ────────────────────────────────────────────────
+
+  // Seed default benefit cards on first read so the page is never empty.
+  const DEFAULT_BENEFITS = [
+    { slug: "cycle-to-work", name: "Cycle to Work", category: "Wellbeing", icon: "bike", description: "Salary-sacrifice up to £3,000 for a bike + safety kit. Save 32–47% on tax/NI.", eligibility: "All permanent employees after 3 months", enrolment_url: "https://www.cyclescheme.co.uk", contact: "Wendy McKenzie" },
+    { slug: "workplace-nursery", name: "Workplace Nursery Scheme", category: "Family", icon: "baby", description: "Salary-sacrifice for nursery fees — saves up to 47% on childcare costs.", eligibility: "Parents of children under 5 in OFSTED-registered nursery", enrolment_url: "", contact: "Wendy McKenzie" },
+    { slug: "private-healthcare", name: "Private Healthcare", category: "Health", icon: "heart", description: "Private medical insurance (Bupa) — free for employee, family upgrade available.", eligibility: "All permanent employees on completion of probation", enrolment_url: "", contact: "Wendy McKenzie" },
+    { slug: "life-insurance", name: "Life Insurance", category: "Health", icon: "shield", description: "4× salary death-in-service cover, paid by BGP.", eligibility: "All permanent employees", enrolment_url: "", contact: "Wendy McKenzie" },
+    { slug: "pension", name: "Pension (Royal London)", category: "Finance", icon: "piggy-bank", description: "5% employee, 3% employer (auto-enrolment minimum), salary-sacrifice option.", eligibility: "All employees age 22+ earning over £10k", enrolment_url: "https://online.royallondon.com", contact: "Wendy McKenzie" },
+    { slug: "phone-contract", name: "Mobile Phone Contract", category: "Kit", icon: "smartphone", description: "BGP-funded mobile contract for client-facing roles. Upgrade every 24 months.", eligibility: "Surveyor and above", enrolment_url: "", contact: "Office Manager" },
+    { slug: "season-ticket-loan", name: "Season Ticket Loan", category: "Travel", icon: "train", description: "Interest-free loan up to £5,000 for an annual rail/tube season ticket.", eligibility: "All permanent employees after probation", enrolment_url: "", contact: "Wendy McKenzie" },
+    { slug: "eap", name: "Employee Assistance Programme", category: "Wellbeing", icon: "heart-handshake", description: "24/7 confidential counselling, legal & financial advice. Free for employees + family.", eligibility: "All employees", enrolment_url: "", contact: "Charlotte Roberts" },
+    { slug: "professional-fees", name: "Professional Fees", category: "Career", icon: "graduation-cap", description: "RICS, ICAEW and other professional body subscriptions paid by BGP.", eligibility: "All members on a recognised pathway", enrolment_url: "", contact: "Line manager" },
+    { slug: "ski-trip", name: "Annual Ski Trip", category: "Social", icon: "mountain", description: "Bill £4m firm-wide and we all go skiing. Tracked live on the dashboard.", eligibility: "Whole firm — collective target", enrolment_url: "", contact: "Woody" },
+  ];
+
+  app.get("/api/hr/benefits", requireAuth, async (req: any, res) => {
+    try {
+      const exists = await pool.query("SELECT COUNT(*)::int AS n FROM benefits");
+      if (exists.rows[0].n === 0) {
+        for (let i = 0; i < DEFAULT_BENEFITS.length; i++) {
+          const b = DEFAULT_BENEFITS[i];
+          await pool.query(
+            `INSERT INTO benefits (slug, name, category, description, eligibility, enrolment_url, contact, icon, sort_order)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (slug) DO NOTHING`,
+            [b.slug, b.name, b.category, b.description, b.eligibility, b.enrolment_url, b.contact, b.icon, i]
+          );
+        }
+      }
+      const me = req.session?.userId || (req as any).tokenUserId;
+      const { rows } = await pool.query(`
+        SELECT b.*,
+               EXISTS (SELECT 1 FROM staff_benefit_enrolments e WHERE e.user_id = $1 AND e.benefit_slug = b.slug) AS enrolled
+        FROM benefits b
+        WHERE b.is_active = true
+        ORDER BY b.sort_order, b.name
+      `, [me || null]);
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/hr/benefits/:slug/enrol", requireAuth, async (req: any, res) => {
+    const userId = req.session?.userId || (req as any).tokenUserId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      await pool.query(
+        `INSERT INTO staff_benefit_enrolments (user_id, benefit_slug, status)
+         VALUES ($1, $2, 'enrolled') ON CONFLICT (user_id, benefit_slug) DO NOTHING`,
+        [userId, req.params.slug]
+      );
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/hr/benefits/:slug/enrol", requireAuth, async (req: any, res) => {
+    const userId = req.session?.userId || (req as any).tokenUserId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      await pool.query(
+        `DELETE FROM staff_benefit_enrolments WHERE user_id = $1 AND benefit_slug = $2`,
+        [userId, req.params.slug]
+      );
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/hr/benefits/:slug", requireAdmin, async (req: any, res) => {
+    const { name, category, description, eligibility, enrolment_url, contact, is_active } = req.body || {};
+    try {
+      await pool.query(
+        `UPDATE benefits SET
+           name = COALESCE($2, name),
+           category = COALESCE($3, category),
+           description = COALESCE($4, description),
+           eligibility = COALESCE($5, eligibility),
+           enrolment_url = COALESCE($6, enrolment_url),
+           contact = COALESCE($7, contact),
+           is_active = COALESCE($8, is_active),
+           updated_at = now()
+         WHERE slug = $1`,
+        [req.params.slug, name || null, category || null, description || null, eligibility || null, enrolment_url || null, contact || null, is_active]
+      );
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 🎓 Career roadmap — RICS competencies + BGP levels ───────────────────
+
+  // Static RICS Commercial Property Practice competencies (Mandatory + Tech).
+  // Per-user level (0-3) lives in staff_competencies; this endpoint joins the
+  // catalogue with the user's progress. Level 0 = not started.
+  const RICS_COMPETENCIES = {
+    mandatory: [
+      "Ethics, Rules of Conduct & Professionalism",
+      "Client Care",
+      "Communication & Negotiation",
+      "Health & Safety",
+      "Accounting Principles & Procedures",
+      "Business Planning",
+      "Conflict Avoidance, Management & Dispute Resolution",
+      "Data Management",
+      "Sustainability",
+      "Teamworking",
+    ],
+    technical: [
+      "Inspection",
+      "Measurement of Land & Property",
+      "Valuation",
+      "Leasing & Letting",
+      "Landlord & Tenant",
+      "Purchase & Sale",
+      "Property Records / Information Systems",
+      "Capital Taxation",
+      "Investment",
+      "Development Appraisals",
+      "Smart Cities & Intelligent Buildings",
+    ],
+  };
+
+  // BGP-specific career levels — derived from review patterns we've seen.
+  const BGP_LEVELS = [
+    { level: "Graduate", criteria: ["RICS pathway started", "Mentor assigned", "Shadow viewings", "Assist on instructions"] },
+    { level: "Surveyor",          criteria: ["APC complete or imminent", "Lead small instructions", "1× salary billings", "Independent client meetings"] },
+    { level: "Senior Surveyor",   criteria: ["3× salary billings", "Lead major instructions", "Mentor a graduate", "Cross-team referrals"] },
+    { level: "Associate Director", criteria: ["3-4× salary billings sustained", "Win new client mandates", "Lead a sub-team", "Industry profile (PR, panels)"] },
+    { level: "Director",           criteria: ["4× salary billings sustained", "Own a key account", "Set team strategy", "Recruit & develop juniors"] },
+    { level: "Executive Director", criteria: ["Co-head a team or specialism", "Drive firm-wide strategy", "Major BD wins", "Board contribution"] },
+  ];
+
+  app.get("/api/hr/career-roadmap/:userId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `SELECT competency, level, evidence, reviewed_at FROM staff_competencies WHERE user_id = $1`,
+        [req.params.userId]
+      );
+      const progress = new Map(rows.map((r: any) => [r.competency, r]));
+      const decorate = (list: string[]) => list.map(c => ({
+        competency: c,
+        level: progress.get(c)?.level || 0,
+        evidence: progress.get(c)?.evidence || null,
+        reviewedAt: progress.get(c)?.reviewed_at || null,
+      }));
+      res.json({
+        rics: { mandatory: decorate(RICS_COMPETENCIES.mandatory), technical: decorate(RICS_COMPETENCIES.technical) },
+        bgpLevels: BGP_LEVELS,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/hr/career-roadmap/:userId/:competency", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    const isSelf = actor.userId === req.params.userId;
+    // Admin or self can update — manager-only sign-off is added later.
+    if (!actor.isAdmin && !isSelf) return res.status(403).json({ error: "Forbidden" });
+    const { level, evidence } = req.body || {};
+    const lvl = Math.max(0, Math.min(3, parseInt(String(level), 10) || 0));
+    try {
+      await pool.query(
+        `INSERT INTO staff_competencies (user_id, competency, level, evidence, reviewed_at, reviewed_by_user_id, updated_at)
+         VALUES ($1, $2, $3, $4, now(), $5, now())
+         ON CONFLICT (user_id, competency) DO UPDATE SET
+           level = EXCLUDED.level,
+           evidence = COALESCE(EXCLUDED.evidence, staff_competencies.evidence),
+           reviewed_at = now(),
+           reviewed_by_user_id = EXCLUDED.reviewed_by_user_id,
+           updated_at = now()`,
+        [req.params.userId, decodeURIComponent(req.params.competency), lvl, evidence || null, actor.userId]
+      );
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 }
