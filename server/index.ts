@@ -316,6 +316,57 @@ import { pool } from "./db";
       notes TEXT,
       created_at TIMESTAMP DEFAULT now()
     )`,
+    // Promotion pitches — what a surveyor presents to ED/board to make their case.
+    `CREATE TABLE IF NOT EXISTS staff_promotion_pitches (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      from_level TEXT,
+      to_level TEXT,
+      pitch_date DATE,
+      status TEXT DEFAULT 'draft',
+      narrative TEXT,
+      key_wins TEXT,
+      financials TEXT,
+      development TEXT,
+      ask TEXT,
+      ai_draft TEXT,
+      decision TEXT,
+      decision_notes TEXT,
+      decided_at TIMESTAMP,
+      decided_by_user_id VARCHAR,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS staff_promotion_pitches_user_idx ON staff_promotion_pitches (user_id, pitch_date DESC)`,
+    // In-app file storage — replaces external SharePoint URLs for HR documents,
+    // contracts, payslips, review attachments, headshots, etc. Binary lives in
+    // file_blobs (split out so list/select queries stay light).
+    `CREATE TABLE IF NOT EXISTS uploaded_files (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      owner_user_id VARCHAR,
+      uploaded_by_user_id VARCHAR,
+      kind TEXT NOT NULL,
+      name TEXT NOT NULL,
+      mime_type TEXT,
+      size_bytes BIGINT,
+      linked_review_id VARCHAR,
+      linked_deal_id VARCHAR,
+      visibility TEXT DEFAULT 'admin-self',
+      review_year INTEGER,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS uploaded_files_owner_idx ON uploaded_files (owner_user_id, kind, created_at DESC)`,
+    `CREATE TABLE IF NOT EXISTS file_blobs (
+      file_id VARCHAR PRIMARY KEY,
+      data BYTEA NOT NULL
+    )`,
+    // Per-team AI summaries — refreshed daily, fed to dashboard org cards.
+    `CREATE TABLE IF NOT EXISTS team_ai_summaries (
+      team TEXT PRIMARY KEY,
+      summary TEXT,
+      generated_at TIMESTAMP DEFAULT now()
+    )`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_onenote_page_id TEXT`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_onenote_page_url TEXT`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_evernote_note_id TEXT`,

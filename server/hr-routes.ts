@@ -2426,4 +2426,363 @@ Return ONLY JSON.`,
       res.status(500).json({ error: e.message });
     }
   });
+
+  // ── 🎓 Promotion pitches ─────────────────────────────────────────────────
+
+  app.get("/api/hr/promotion-pitches/:userId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `SELECT * FROM staff_promotion_pitches WHERE user_id = $1 ORDER BY pitch_date DESC NULLS LAST, created_at DESC`,
+        [req.params.userId]
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/hr/promotion-pitches", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.userId) return res.status(401).json({ error: "Not authenticated" });
+    const { userId, fromLevel, toLevel, pitchDate } = req.body || {};
+    if (!userId || !toLevel) return res.status(400).json({ error: "userId, toLevel required" });
+    if (!actor.isAdmin && actor.userId !== userId) return res.status(403).json({ error: "Forbidden" });
+    try {
+      const r = await pool.query(
+        `INSERT INTO staff_promotion_pitches (user_id, from_level, to_level, pitch_date, status)
+         VALUES ($1, $2, $3, $4, 'draft') RETURNING *`,
+        [userId, fromLevel || null, toLevel, pitchDate || null]
+      );
+      res.json(r.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/hr/promotion-pitches/:id", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    try {
+      const owner = await pool.query("SELECT user_id FROM staff_promotion_pitches WHERE id = $1", [req.params.id]);
+      if (!owner.rows[0]) return res.status(404).json({ error: "Not found" });
+      if (!actor.isAdmin && actor.userId !== owner.rows[0].user_id) return res.status(403).json({ error: "Forbidden" });
+
+      const sharedFields = ["from_level", "to_level", "pitch_date", "status", "narrative", "key_wins", "financials", "development", "ask"];
+      const adminFields = ["decision", "decision_notes"];
+      const sets: string[] = [];
+      const params: any[] = [req.params.id];
+      for (const f of sharedFields) {
+        const camel = f.replace(/_(.)/g, (_, c) => c.toUpperCase());
+        if (req.body[camel] !== undefined || req.body[f] !== undefined) {
+          params.push(req.body[camel] ?? req.body[f]);
+          sets.push(`${f} = $${params.length}`);
+        }
+      }
+      if (actor.isAdmin) {
+        for (const f of adminFields) {
+          const camel = f.replace(/_(.)/g, (_, c) => c.toUpperCase());
+          if (req.body[camel] !== undefined || req.body[f] !== undefined) {
+            params.push(req.body[camel] ?? req.body[f]);
+            sets.push(`${f} = $${params.length}`);
+          }
+        }
+        if (req.body.decision) {
+          params.push(actor.userId);
+          sets.push(`decided_by_user_id = $${params.length}`);
+          sets.push(`decided_at = now()`);
+        }
+      }
+      if (sets.length > 0) {
+        await pool.query(`UPDATE staff_promotion_pitches SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, params);
+      }
+      const updated = await pool.query("SELECT * FROM staff_promotion_pitches WHERE id = $1", [req.params.id]);
+      res.json(updated.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // AI draft for the promotion pitch — pulls deals + reviews + competencies
+  // and generates a punchy first-person narrative the user can edit.
+  app.post("/api/hr/promotion-pitches/:id/ai-draft", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    try {
+      const r = await pool.query("SELECT * FROM staff_promotion_pitches WHERE id = $1", [req.params.id]);
+      if (!r.rows[0]) return res.status(404).json({ error: "Not found" });
+      if (!actor.isAdmin && actor.userId !== r.rows[0].user_id) return res.status(403).json({ error: "Forbidden" });
+      const userId = r.rows[0].user_id;
+
+      const userRow = await pool.query("SELECT name FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id WHERE u.id = $1", [userId]);
+      const userName = userRow.rows[0]?.name || "this user";
+
+      const [dealsRes, reviewsRes, compsRes] = await Promise.all([
+        pool.query(
+          `SELECT name, status, fee FROM crm_deals
+           WHERE EXISTS (SELECT 1 FROM unnest(COALESCE(internal_agent, ARRAY[]::text[])) a WHERE LOWER(a) = LOWER($1))
+             AND COALESCE(status, '') NOT IN ('ARCH','WIT')
+           ORDER BY fee DESC NULLS LAST LIMIT 30`,
+          [userName]
+        ),
+        pool.query(
+          `SELECT period, fees_target_pence, fees_achieved_pence, achievements, goals
+           FROM staff_reviews WHERE user_id = $1 ORDER BY review_date DESC LIMIT 3`,
+          [userId]
+        ),
+        pool.query(
+          `SELECT competency, level FROM staff_competencies WHERE user_id = $1 AND level > 0`,
+          [userId]
+        ),
+      ]);
+
+      let aiDraft = "";
+      try {
+        const { default: AnthropicMod } = await import("@anthropic-ai/sdk");
+        const Anthropic: any = (AnthropicMod as any).default || AnthropicMod;
+        const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const dealsList = dealsRes.rows.map((d: any) => `- ${d.name} (${d.status}, £${(parseFloat(d.fee) || 0).toLocaleString()})`).join("\n");
+        const reviewsList = reviewsRes.rows.map((rev: any) => `${rev.period}: target £${((rev.fees_target_pence || 0) / 100).toLocaleString()}, achieved £${((rev.fees_achieved_pence || 0) / 100).toLocaleString()}`).join("\n");
+        const compsList = compsRes.rows.map((c: any) => `${c.competency} (L${c.level})`).join(", ");
+        const msg = await client.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1500,
+          messages: [{
+            role: "user",
+            content: `Draft a promotion pitch from ${userName} (currently ${r.rows[0].from_level || "[level]"}, asking for ${r.rows[0].to_level}). They're a UK commercial property surveyor at BGP.
+
+Deals (last year):
+${dealsList || "(none)"}
+
+Recent reviews:
+${reviewsList || "(none)"}
+
+RICS competencies achieved: ${compsList || "(none)"}
+
+Write four short sections:
+1. Narrative (2-3 paragraphs, first-person, confident-not-arrogant case for promotion — what they've done that proves they're already operating at the next level)
+2. Key wins (bulleted, evidence-rich)
+3. Financials (concrete £ figures, target vs achieved, multiple of salary)
+4. Development plan (what they'll focus on at the new level)
+
+Use the language and tone of BGP's review docs.`,
+          }],
+        });
+        aiDraft = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
+      } catch (e: any) {
+        aiDraft = `(AI coach unavailable — wire ANTHROPIC_API_KEY)\n\nPitch scaffold for ${userName}, ${r.rows[0].from_level} → ${r.rows[0].to_level}:\n\n**Narrative:** [Write 2-3 paragraphs making the case]\n\n**Key wins:**\n${dealsRes.rows.slice(0, 5).map((d: any) => `- ${d.name}`).join("\n") || "- (no deals on file)"}\n\n**Financials:** [target vs achieved, multiple of salary]\n\n**Development plan:** [focus areas at new level]`;
+      }
+
+      await pool.query("UPDATE staff_promotion_pitches SET ai_draft = $2, updated_at = now() WHERE id = $1", [req.params.id, aiDraft]);
+      res.json({ aiDraft });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 📁 In-app file storage (replaces SharePoint URL lists) ──────────────
+  // Upload as a single multipart/form-data POST. Binary stored in file_blobs;
+  // metadata in uploaded_files. Stream back via GET /:id/file with inline
+  // disposition so PDFs/images render in-app.
+  const multer = require("multer");
+  const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+
+  app.get("/api/hr/files/:userId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const kind = req.query.kind as string | undefined;
+      const params: any[] = [req.params.userId];
+      let where = "owner_user_id = $1";
+      if (kind) { params.push(kind); where += ` AND kind = $${params.length}`; }
+      const { rows } = await pool.query(
+        `SELECT id, kind, name, mime_type, size_bytes, review_year, notes, created_at,
+                uploaded_by_user_id, (SELECT name FROM users WHERE id = uploaded_by_user_id) AS uploaded_by_name
+         FROM uploaded_files WHERE ${where} ORDER BY created_at DESC`,
+        params
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/hr/files/:userId", requireAuth, memUpload.single("file"), async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    if (!req.file) return res.status(400).json({ error: "file required (multipart 'file')" });
+    const { kind = "other", linkedReviewId, linkedDealId, reviewYear, notes, visibility = "admin-self", name } = req.body || {};
+    try {
+      const meta = await pool.query(
+        `INSERT INTO uploaded_files (owner_user_id, uploaded_by_user_id, kind, name, mime_type, size_bytes, linked_review_id, linked_deal_id, visibility, review_year, notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+        [req.params.userId, actor.userId, kind, name || req.file.originalname, req.file.mimetype, req.file.size, linkedReviewId || null, linkedDealId || null, visibility, reviewYear ? parseInt(reviewYear, 10) : null, notes || null]
+      );
+      await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [meta.rows[0].id, req.file.buffer]);
+      res.json({ id: meta.rows[0].id });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/hr/files/:id/file", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    try {
+      const meta = await pool.query("SELECT * FROM uploaded_files WHERE id = $1", [req.params.id]);
+      if (!meta.rows[0]) return res.status(404).json({ error: "Not found" });
+      if (!actor.isAdmin && actor.userId !== meta.rows[0].owner_user_id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+      const blob = await pool.query("SELECT data FROM file_blobs WHERE file_id = $1", [req.params.id]);
+      if (!blob.rows[0]) return res.status(404).json({ error: "File missing" });
+      res.setHeader("Content-Type", meta.rows[0].mime_type || "application/octet-stream");
+      res.setHeader("Content-Disposition", `inline; filename="${meta.rows[0].name}"`);
+      res.send(blob.rows[0].data);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/hr/files/:id", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    try {
+      const meta = await pool.query("SELECT owner_user_id FROM uploaded_files WHERE id = $1", [req.params.id]);
+      if (!meta.rows[0]) return res.status(404).json({ error: "Not found" });
+      if (!actor.isAdmin && actor.userId !== meta.rows[0].owner_user_id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+      await pool.query("DELETE FROM file_blobs WHERE file_id = $1", [req.params.id]);
+      await pool.query("DELETE FROM uploaded_files WHERE id = $1", [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 🤖 AI team summaries — daily-refreshed one-liners for org cards ──────
+
+  app.get("/api/hr/team-ai-summaries", requireAuth, async (_req, res) => {
+    try {
+      const { rows } = await pool.query("SELECT team, summary, generated_at FROM team_ai_summaries");
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/hr/team-ai-summaries/refresh", requireAdmin, async (_req, res) => {
+    try {
+      const TEAMS = ["Office / Corporate", "Investment", "Lease Advisory", "National Leasing", "Development", "Tenant Rep", "London Leasing"];
+
+      const { default: AnthropicMod } = await import("@anthropic-ai/sdk");
+      const Anthropic: any = (AnthropicMod as any).default || AnthropicMod;
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+
+      const results: Array<{ team: string; summary: string }> = [];
+      for (const team of TEAMS) {
+        // Recent activity for this team (deals advanced last week + key open deals).
+        const { rows: deals } = await pool.query(
+          `SELECT d.name, d.status, d.fee
+           FROM crm_deals d
+           JOIN users u ON LOWER(u.name) = ANY (SELECT LOWER(unnest(COALESCE(d.internal_agent, ARRAY[]::text[]))))
+           LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+           WHERE u.team = $1
+             AND COALESCE(d.status, '') NOT IN ('ARCH','WIT')
+             AND COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) >= $2
+           ORDER BY d.fee DESC NULLS LAST LIMIT 15`,
+          [team, weekAgo]
+        );
+
+        let summary = "";
+        try {
+          const dealsList = deals.map((d: any) => `${d.name} (${d.status}, £${(parseFloat(d.fee) || 0).toLocaleString()})`).join("; ");
+          const msg = await client.messages.create({
+            model: "claude-haiku-4-5-20251001",
+            max_tokens: 200,
+            messages: [{
+              role: "user",
+              content: `Summarise what BGP's ${team} team has been up to in the past week, in ONE sentence (max 25 words). Use surveyor language. If there's nothing notable, say "Quiet week".\n\nRecent deal activity: ${dealsList || "(no deals advanced)"}\n\nReply with just the sentence, nothing else.`,
+            }],
+          });
+          summary = msg.content?.[0]?.type === "text" ? msg.content[0].text.trim().replace(/^["']|["']$/g, "") : "";
+        } catch (e: any) {
+          summary = deals.length > 0 ? `${deals.length} deal${deals.length === 1 ? "" : "s"} active this week.` : "Quiet week.";
+        }
+
+        await pool.query(
+          `INSERT INTO team_ai_summaries (team, summary, generated_at) VALUES ($1, $2, now())
+           ON CONFLICT (team) DO UPDATE SET summary = EXCLUDED.summary, generated_at = now()`,
+          [team, summary]
+        );
+        results.push({ team, summary });
+      }
+      res.json({ refreshed: results });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 📅 Outlook calendar — OOO + upcoming events for staff ────────────────
+  // Pulls free/busy + next events for each active staff member from MS Graph.
+  // Used by the dashboard 'What's on' widget and the WFH/OOO indicator on
+  // staff cards. Range defaults to 'today + next 7 days'.
+  app.get("/api/hr/calendar/now", requireAuth, async (req: any, res) => {
+    const token = await getValidMsToken(req as any);
+    if (!token) return res.json({ events: [], note: "Microsoft 365 not connected — connect to see live OOO and events." });
+
+    try {
+      const { rows: staff } = await pool.query(
+        `SELECT u.id, u.name, u.email FROM users u
+         JOIN staff_profiles sp ON sp.user_id = u.id
+         WHERE u.is_active = true AND u.email IS NOT NULL AND u.email <> ''`
+      );
+      const now = new Date();
+      const horizon = new Date(now.getTime() + 7 * 86400000);
+      const startStr = now.toISOString();
+      const endStr = horizon.toISOString();
+
+      const events: Array<{ userId: string; userName: string; subject: string; start: string; end: string; isAllDay: boolean; showAs: string; categories: string[] }> = [];
+
+      // Limit concurrency to avoid hammering Graph.
+      const slice = staff.slice(0, 30);
+      for (const u of slice) {
+        try {
+          const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(u.email)}/calendarView?startDateTime=${encodeURIComponent(startStr)}&endDateTime=${encodeURIComponent(endStr)}&$select=subject,start,end,isAllDay,showAs,categories&$top=20&$orderby=start/dateTime`;
+          const r = await fetch(url, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Prefer: 'outlook.timezone="Europe/London"',
+            },
+          });
+          if (!r.ok) continue;
+          const data = await r.json();
+          for (const e of (data.value || [])) {
+            // Only surface OOO/Working elsewhere/external — internal meetings are noise.
+            const ooKinds = ["oof", "workingElsewhere", "tentative"];
+            const looksOoo = ooKinds.includes(e.showAs) || /\b(holiday|annual leave|on leave|out of office|ooo|wfh)\b/i.test(e.subject || "");
+            if (!looksOoo && !e.isAllDay) continue;
+            events.push({
+              userId: u.id,
+              userName: u.name,
+              subject: e.subject || "",
+              start: e.start?.dateTime || e.start || "",
+              end: e.end?.dateTime || e.end || "",
+              isAllDay: !!e.isAllDay,
+              showAs: e.showAs || "",
+              categories: e.categories || [],
+            });
+          }
+        } catch { /* ignore one user's failure */ }
+      }
+      res.json({ events, scope: { start: startStr, end: endStr, count: slice.length } });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 }
