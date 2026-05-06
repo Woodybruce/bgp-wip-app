@@ -95,7 +95,7 @@ export async function getSharedMailboxMessages(
     ? `/users/${SHARED_MAILBOX}/mailFolders/${folderId}/messages`
     : `/users/${SHARED_MAILBOX}/messages`;
   const data = await graphRequest(
-    `${folderPath}?$top=${top}&$skip=${skip}&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients`
+    `${folderPath}?$top=${top}&$skip=${skip}&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
   );
   const messages = data?.value || [];
   for (const msg of messages) {
@@ -109,7 +109,7 @@ export async function getSharedMailboxMessages(
 export async function getSharedMailboxMessageById(messageId: string): Promise<any | null> {
   try {
     const data = await graphRequest(
-      `/users/${SHARED_MAILBOX}/messages/${messageId}?$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients`
+      `/users/${SHARED_MAILBOX}/messages/${messageId}?$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
     );
     return data;
   } catch {
@@ -222,7 +222,7 @@ export async function markMessageRead(messageId: string, isRead = true): Promise
 
 export async function getMessageDetail(messageId: string): Promise<any> {
   const msg = await graphRequest(
-    `/users/${SHARED_MAILBOX}/messages/${messageId}?$select=id,subject,body,bodyPreview,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients`
+    `/users/${SHARED_MAILBOX}/messages/${messageId}?$select=id,subject,body,bodyPreview,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
   );
   if (msg?.["@odata.type"] === "#microsoft.graph.eventMessage") {
     try {
@@ -262,7 +262,7 @@ export async function getUserMailMessages(
     ? `/users/${userEmail}/mailFolders/${folderId}/messages`
     : `/users/${userEmail}/messages`;
   const data = await graphRequest(
-    `${folderPath}?$top=${top}&$skip=${skip}&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients`
+    `${folderPath}?$top=${top}&$skip=${skip}&$orderby=receivedDateTime desc&$select=id,subject,bodyPreview,body,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
   );
   const messages = data?.value || [];
   for (const msg of messages) {
@@ -289,7 +289,7 @@ export async function getUserMailFolderChildren(userEmail: string, folderId: str
 
 export async function getUserMessageDetail(userEmail: string, messageId: string): Promise<any> {
   const msg = await graphRequest(
-    `/users/${userEmail}/messages/${messageId}?$select=id,subject,body,bodyPreview,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients`
+    `/users/${userEmail}/messages/${messageId}?$select=id,subject,body,bodyPreview,from,receivedDateTime,isRead,hasAttachments,importance,toRecipients,ccRecipients,webLink`
   );
   if (msg?.["@odata.type"] === "#microsoft.graph.eventMessage") {
     try {

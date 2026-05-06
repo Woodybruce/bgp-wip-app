@@ -22,7 +22,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Search, AlertCircle, X, UserPlus, Plus, Pencil, Trash2, ArrowRightCircle, Users } from "lucide-react";
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -41,9 +41,27 @@ export default function Leads() {
   const [groupFilter, setGroupFilter] = useState("all");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createOpen, setCreateOpen] = useState(false);
+  const [createPrefill, setCreatePrefill] = useState<Partial<CrmLead> | null>(null);
   const [editItem, setEditItem] = useState<CrmLead | null>(null);
   const [deleteItem, setDeleteItem] = useState<CrmLead | null>(null);
   const { toast } = useToast();
+
+  // Deep-link: /leads?create=1&source=Email&sourceUrl=...&sourceTitle=...
+  // Mail viewer / pathway page navigates here with the source attribution
+  // pre-attached. Strip params after consumption.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("create") !== "1") return;
+    setCreatePrefill({
+      source: params.get("source") || "",
+      sourceUrl: params.get("sourceUrl") || "",
+      sourceTitle: params.get("sourceTitle") || "",
+      name: params.get("name") || "",
+    } as Partial<CrmLead>);
+    setCreateOpen(true);
+    window.history.replaceState({}, "", window.location.pathname);
+  }, []);
 
   const { data: items = [], isLoading, error } = useQuery<CrmLead[]>({
     queryKey: ["/api/crm/leads"],
@@ -463,11 +481,12 @@ export default function Leads() {
 
       <LeadFormDialog
         open={createOpen}
-        onOpenChange={setCreateOpen}
+        onOpenChange={(o) => { setCreateOpen(o); if (!o) setCreatePrefill(null); }}
         onSubmit={(data) => createMutation.mutate(data)}
         isPending={createMutation.isPending}
         title="Create Lead"
         groups={groups}
+        defaultValues={createPrefill || undefined}
       />
 
       {editItem && (

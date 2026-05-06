@@ -30,6 +30,8 @@ import {
   Users,
   Bot,
   Plus,
+  Scale,
+  UserPlus,
   X,
   MailOpen,
   Eye,
@@ -63,6 +65,7 @@ interface MailMessage {
   hasAttachments: boolean;
   importance?: string;
   meetingMessageType?: "meetingRequest" | "meetingCancelled" | "meetingAccepted" | "meetingTenativelyAccepted" | "meetingDeclined" | null;
+  webLink?: string;
 }
 
 interface MailFolder {
@@ -652,8 +655,20 @@ function MessageDetail({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const [calendarResponding, setCalendarResponding] = useState<string | null>(null);
   const [calendarResponded, setCalendarResponded] = useState<string | null>(null);
+
+  // Build a CRM deep-link that opens the relevant create dialog with the
+  // current email's webLink + subject pre-attached as the source.
+  const crmDeepLink = (kind: "comp" | "lead", msg: MailMessage) => {
+    const url = msg.webLink || "";
+    const fromName = msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || "Unknown";
+    const subject = msg.subject || "(no subject)";
+    const title = `${fromName}: ${subject}`.slice(0, 200);
+    const params = new URLSearchParams({ create: "1", source: "Email", sourceUrl: url, sourceTitle: title });
+    return `${kind === "comp" ? "/comps" : "/leads"}?${params.toString()}`;
+  };
 
   const { data: fullMessage } = useQuery<MailMessage>({
     queryKey: mailType === "personal"
@@ -787,7 +802,29 @@ function MessageDetail({
           variant="ghost"
           size="sm"
           className="text-xs gap-1.5 shrink-0"
-          onClick={() => window.open(`https://outlook.office365.com/mail/inbox`, "_blank")}
+          onClick={() => navigate(crmDeepLink("comp", message))}
+          title="Create a leasing comp pre-filled with this email as the source"
+          data-testid="button-create-comp-from-email"
+        >
+          <Scale className="w-3.5 h-3.5 shrink-0" />
+          <span className="hidden md:inline">Create comp</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-xs gap-1.5 shrink-0"
+          onClick={() => navigate(crmDeepLink("lead", message))}
+          title="Create a CRM lead pre-filled with this email as the source"
+          data-testid="button-create-lead-from-email"
+        >
+          <UserPlus className="w-3.5 h-3.5 shrink-0" />
+          <span className="hidden md:inline">Create lead</span>
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-xs gap-1.5 shrink-0"
+          onClick={() => window.open(message.webLink || `https://outlook.office365.com/mail/inbox`, "_blank")}
           data-testid="button-open-outlook"
         >
           <ExternalLink className="w-3.5 h-3.5 shrink-0" />

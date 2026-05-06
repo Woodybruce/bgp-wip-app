@@ -447,6 +447,7 @@ export default function PropertyPathway() {
 }
 
 function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, onDelete }: { run: PathwayRun; onBack: () => void; onAdvance: (stage?: number) => void; advancing: boolean; onReload: () => void; onSetTenant: (name: string) => void; onDelete: () => void }) {
+  const [, navigate] = useLocation();
   const s1 = run.stageResults?.stage1;
   const s2 = run.stageResults?.stage2;
   const s4 = run.stageResults?.stage4;
@@ -476,6 +477,25 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           {run.postcode && <p className="text-sm text-muted-foreground">{run.postcode}</p>}
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const params = new URLSearchParams({
+                create: "1",
+                source: "Pathway",
+                sourceUrl: `/property-pathway?runId=${run.id}`,
+                sourceTitle: `Pathway: ${run.address}`,
+                name: run.address,
+              });
+              navigate(`/comps?${params.toString()}`);
+            }}
+            title="Create a leasing comp pre-filled with this pathway as the source"
+            data-testid="button-create-comp-from-pathway"
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            Create comp
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => onAdvance(1)} disabled={advancing} title="Re-scan for new emails, attachments, SharePoint items, and regenerate the briefing">
             {advancing ? <Clock className="w-4 h-4 mr-1 animate-spin" /> : <Search className="w-4 h-4 mr-1" />}
             Refresh

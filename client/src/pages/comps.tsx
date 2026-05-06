@@ -2188,6 +2188,27 @@ export default function Comps() {
     setNewSourceEvidence(null); setNewSourceUrl(null); setNewSourceTitle(null);
   };
 
+  // Deep-link: /comps?create=1&source=Email&sourceUrl=...&sourceTitle=...
+  // Mail viewer / pathway page navigates here with the source already
+  // populated so the user just fills in the deal details. Params are
+  // stripped after consumption so refresh doesn't re-open the dialog.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("create") !== "1") return;
+    const src = params.get("source");
+    const url = params.get("sourceUrl");
+    const title = params.get("sourceTitle");
+    const name = params.get("name");
+    if (src) setNewSourceEvidence(src);
+    if (url) setNewSourceUrl(url);
+    if (title) setNewSourceTitle(title);
+    if (name) setNewName(name);
+    setCreateOpen(true);
+    window.history.replaceState({}, "", window.location.pathname);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const startPdfExport = useCallback(async (targetComps: CrmComp[]) => {
     if (!targetComps.length) return;
     setPdfExporting(true);
