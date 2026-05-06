@@ -1733,4 +1733,436 @@ export function setupHrRoutes(app: Express) {
       res.status(500).json({ error: e.message });
     }
   });
+
+  // ── 📋 Performance reviews ─────────────────────────────────────────────────
+
+  app.get("/api/hr/reviews/:userId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `SELECT * FROM staff_reviews WHERE user_id = $1 ORDER BY review_date DESC NULLS LAST, created_at DESC`,
+        [req.params.userId]
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/hr/reviews/:userId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    const { period, kind = "annual", reviewDate } = req.body || {};
+    if (!period) return res.status(400).json({ error: "period required (e.g. annual_2026)" });
+
+    try {
+      // Auto-prefill from commission endpoint logic — keep figures consistent.
+      const profile = await pool.query(
+        `SELECT sp.salary_current FROM staff_profiles sp WHERE sp.user_id = $1`,
+        [req.params.userId]
+      );
+      const salary = profile.rows[0]?.salary_current || null;
+
+      const r = await pool.query(
+        `INSERT INTO staff_reviews (user_id, period, kind, review_date, current_salary_pence, fees_target_pence, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'draft')
+         ON CONFLICT (user_id, period) DO UPDATE SET kind = EXCLUDED.kind, updated_at = now()
+         RETURNING *`,
+        [req.params.userId, period, kind, reviewDate || null, salary, salary ? salary * 3 : null]
+      );
+      res.json(r.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/hr/reviews/:id", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    try {
+      const owner = await pool.query("SELECT user_id, status FROM staff_reviews WHERE id = $1", [req.params.id]);
+      if (!owner.rows[0]) return res.status(404).json({ error: "Not found" });
+      if (!actor.isAdmin && actor.userId !== owner.rows[0].user_id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      // Whitelist of editable fields. status / submitted_at follow rules below.
+      const fields = [
+        "review_date", "current_salary_pence", "last_increase_date", "last_bonus_note",
+        "fees_target_pence", "fees_achieved_pence",
+        "pipeline_under_offer_pence", "pipeline_negotiating_pence", "expected_invoice_next_year_pence",
+        "achievements", "development_areas", "goals", "referrals", "marketing_pr",
+        "salary_expectation_pence", "feedback", "bgp_can_help",
+      ];
+      const sets: string[] = [];
+      const params: any[] = [req.params.id];
+      for (const f of fields) {
+        const camel = f.replace(/_(.)/g, (_, c) => c.toUpperCase());
+        if (req.body[camel] !== undefined || req.body[f] !== undefined) {
+          params.push(req.body[camel] ?? req.body[f]);
+          sets.push(`${f} = $${params.length}`);
+        }
+      }
+      if (sets.length > 0) {
+        await pool.query(`UPDATE staff_reviews SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, params);
+      }
+
+      // Status transitions: draft → submitted (self), submitted → completed (admin).
+      if (req.body.status === "submitted" && owner.rows[0].status === "draft") {
+        await pool.query(
+          `UPDATE staff_reviews SET status = 'submitted', submitted_at = now(), updated_at = now() WHERE id = $1`,
+          [req.params.id]
+        );
+      } else if (req.body.status === "completed" && actor.isAdmin) {
+        await pool.query(
+          `UPDATE staff_reviews SET status = 'completed', reviewed_at = now(), reviewed_by_user_id = $2, updated_at = now() WHERE id = $1`,
+          [req.params.id, actor.userId]
+        );
+      }
+
+      const updated = await pool.query("SELECT * FROM staff_reviews WHERE id = $1", [req.params.id]);
+      res.json(updated.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // AI coach — uses the user's commission/deals data to draft a review starter.
+  // Marked as hint, not authoritative — user edits before submitting.
+  app.post("/api/hr/reviews/:id/ai-draft", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    try {
+      const r = await pool.query("SELECT user_id, period FROM staff_reviews WHERE id = $1", [req.params.id]);
+      if (!r.rows[0]) return res.status(404).json({ error: "Not found" });
+      if (!actor.isAdmin && actor.userId !== r.rows[0].user_id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      const userId = r.rows[0].user_id;
+      // Pull deals for commentary
+      const userRow = await pool.query("SELECT name FROM users WHERE id = $1", [userId]);
+      const userName = userRow.rows[0]?.name || "this user";
+
+      const dealsRes = await pool.query(
+        `SELECT name, status, fee FROM crm_deals
+         WHERE EXISTS (SELECT 1 FROM unnest(COALESCE(internal_agent, ARRAY[]::text[])) a WHERE LOWER(a) = LOWER($1))
+           AND COALESCE(status, '') NOT IN ('ARCH','WIT')
+         ORDER BY fee DESC NULLS LAST LIMIT 25`,
+        [userName]
+      );
+
+      // Try the existing ChatBGP / Claude pipeline — if not wired up here we
+      // return a deterministic skeleton so the UI still demos.
+      let aiSummary = "";
+      try {
+        const { default: Anthropic } = await import("@anthropic-ai/sdk");
+        const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const dealsList = dealsRes.rows.slice(0, 20).map((d: any) => `- ${d.name} (${d.status}, £${(parseFloat(d.fee) || 0).toLocaleString()})`).join("\n");
+        const msg = await client.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: 800,
+          messages: [{
+            role: "user",
+            content: `You are a coach helping ${userName}, a UK commercial property surveyor at BGP, prepare their annual performance review. Their deals over the past year were:\n\n${dealsList || "(no deals on file yet)"}\n\nWrite three short bullet-point sections:\n1. Achievements — concrete wins from the deals data\n2. Development areas — what to work on, evidence-based\n3. Goals for next year — SMART, tied to BGP's commission tiers (3× salary target)\n\nKeep it tight, honest, and specific. Use surveyor language ('instructions', 'pitches', 'completions').`,
+          }],
+        });
+        aiSummary = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
+      } catch (e: any) {
+        aiSummary = `(AI coach unavailable — wire ANTHROPIC_API_KEY)\n\nReview draft scaffold:\n\n**Achievements:**\n${dealsRes.rows.slice(0, 5).map((d: any) => `- ${d.name}`).join("\n") || "- (no deals to summarise)"}\n\n**Development areas:**\n- (Add areas to focus on next year)\n\n**Goals for next year:**\n- Hit 3× salary target\n- Win N new instructions\n- Develop one new client relationship`;
+      }
+
+      await pool.query("UPDATE staff_reviews SET ai_summary = $2, updated_at = now() WHERE id = $1", [req.params.id, aiSummary]);
+      res.json({ aiSummary });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Goals (linked to reviews and to user_tasks for follow-through)
+  app.get("/api/hr/goals/:userId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `SELECT g.*, t.title AS task_title FROM staff_review_goals g
+         LEFT JOIN user_tasks t ON t.id = g.linked_task_id
+         WHERE g.user_id = $1 ORDER BY g.created_at DESC`,
+        [req.params.userId]
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/hr/goals", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.userId) return res.status(401).json({ error: "Not authenticated" });
+    const { userId, title, description, metricType, targetValue, dueDate, reviewId, createTask } = req.body || {};
+    if (!actor.isAdmin && actor.userId !== userId) return res.status(403).json({ error: "Forbidden" });
+    if (!userId || !title) return res.status(400).json({ error: "userId and title required" });
+
+    try {
+      let linkedTaskId: string | null = null;
+      if (createTask) {
+        const t = await pool.query(
+          `INSERT INTO user_tasks (user_id, title, description, due_date, priority, status, category)
+           VALUES ($1, $2, $3, $4, 'medium', 'todo', 'review-goal') RETURNING id`,
+          [userId, title, description || null, dueDate || null]
+        );
+        linkedTaskId = t.rows[0].id;
+      }
+      const r = await pool.query(
+        `INSERT INTO staff_review_goals (review_id, user_id, title, description, metric_type, target_value, due_date, linked_task_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [reviewId || null, userId, title, description || null, metricType || null, targetValue || null, dueDate || null, linkedTaskId]
+      );
+      res.json(r.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/hr/goals/:id", requireAuth, async (req: any, res) => {
+    try {
+      const allowed = ["title", "description", "current_value", "target_value", "status", "due_date"];
+      const sets: string[] = [];
+      const params: any[] = [req.params.id];
+      for (const f of allowed) {
+        const camel = f.replace(/_(.)/g, (_, c) => c.toUpperCase());
+        if (req.body[camel] !== undefined || req.body[f] !== undefined) {
+          params.push(req.body[camel] ?? req.body[f]);
+          sets.push(`${f} = $${params.length}`);
+        }
+      }
+      if (sets.length === 0) return res.json({ ok: true });
+      await pool.query(`UPDATE staff_review_goals SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, params);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/hr/goals/:id", requireAuth, async (req: any, res) => {
+    try {
+      await pool.query("DELETE FROM staff_review_goals WHERE id = $1", [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 💰 Pension dashboard (Royal London CSV import) ────────────────────────
+
+  app.get("/api/hr/pension/:userId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `SELECT pay_period, pay_date, employee_pence, employer_pence, pensionable_pay_pence, source_file
+         FROM pension_contributions
+         WHERE user_id = $1 OR LOWER(employee_match_name) = LOWER((SELECT name FROM users WHERE id = $1))
+         ORDER BY pay_date DESC NULLS LAST LIMIT 60`,
+        [req.params.userId]
+      );
+      const totals = {
+        employeeYtdPence: 0,
+        employerYtdPence: 0,
+        currentYear: new Date().getFullYear(),
+        contributionCount: rows.length,
+      };
+      for (const r of rows) {
+        const dt = r.pay_date ? new Date(r.pay_date) : null;
+        if (dt && dt.getFullYear() === totals.currentYear) {
+          totals.employeeYtdPence += parseInt(r.employee_pence, 10) || 0;
+          totals.employerYtdPence += parseInt(r.employer_pence, 10) || 0;
+        }
+      }
+      res.json({ contributions: rows, totals });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Royal London CSV import — admin uploads the export from Online Service for
+  // Employers. Expected columns (case-insensitive): Member Name, Pay Period,
+  // Pay Date, Employee Contribution, Employer Contribution, Pensionable Pay.
+  app.post("/api/hr/pension/import", requireAdmin, async (req: any, res) => {
+    const { csv, sourceFile = "royal-london.csv" } = req.body || {};
+    if (!csv || typeof csv !== "string") return res.status(400).json({ error: "csv string required" });
+
+    const lines = csv.split(/\r?\n/).filter((l: string) => l.trim());
+    if (lines.length < 2) return res.status(400).json({ error: "CSV has no rows" });
+    const header = lines[0].split(",").map((h: string) => h.trim().toLowerCase());
+
+    const idxName = header.findIndex((h: string) => h.includes("member") || h.includes("name") || h.includes("employee"));
+    const idxPeriod = header.findIndex((h: string) => h.includes("pay period") || h === "period");
+    const idxPayDate = header.findIndex((h: string) => h.includes("pay date") || h === "date");
+    const idxEmp = header.findIndex((h: string) => h.includes("employee") && h.includes("contrib"));
+    const idxEmployer = header.findIndex((h: string) => h.includes("employer") && h.includes("contrib"));
+    const idxPensionable = header.findIndex((h: string) => h.includes("pensionable"));
+
+    if (idxName < 0 || idxEmp < 0 || idxEmployer < 0) {
+      return res.status(400).json({ error: "CSV missing required columns (member name, employee contribution, employer contribution)" });
+    }
+
+    const usersRes = await pool.query("SELECT id, name FROM users WHERE is_active = true");
+    const nameToId = new Map<string, string>();
+    for (const u of usersRes.rows) nameToId.set(u.name.toLowerCase().trim(), u.id);
+
+    const pence = (s: string) => Math.round((parseFloat(String(s).replace(/[£,]/g, "")) || 0) * 100);
+
+    let imported = 0, unmatched = 0;
+    const unmatchedNames: string[] = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(",").map((c: string) => c.trim().replace(/^"|"$/g, ""));
+      const name = cols[idxName] || "";
+      const userId = nameToId.get(name.toLowerCase()) || null;
+      if (!userId) { unmatched++; if (!unmatchedNames.includes(name)) unmatchedNames.push(name); }
+      const payDateRaw = idxPayDate >= 0 ? cols[idxPayDate] : "";
+      const payDate = payDateRaw && /^\d{4}-\d{2}-\d{2}/.test(payDateRaw) ? payDateRaw
+        : payDateRaw && /^\d{2}\/\d{2}\/\d{4}/.test(payDateRaw)
+          ? payDateRaw.split("/").reverse().join("-")
+          : null;
+
+      await pool.query(
+        `INSERT INTO pension_contributions (user_id, employee_match_name, pay_period, pay_date, employee_pence, employer_pence, pensionable_pay_pence, source_file)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [userId, name, idxPeriod >= 0 ? cols[idxPeriod] : null, payDate, pence(cols[idxEmp]), pence(cols[idxEmployer]), idxPensionable >= 0 ? pence(cols[idxPensionable]) : null, sourceFile]
+      );
+      imported++;
+    }
+    res.json({ imported, unmatched, unmatchedNames });
+  });
+
+  // ── 📣 Marketing — events / campaigns / press contacts ───────────────────
+
+  app.get("/api/marketing/events", requireAuth, async (req: any, res) => {
+    try {
+      const upcomingOnly = req.query.upcoming === "1";
+      const where = upcomingOnly ? "WHERE starts_at >= now() OR starts_at IS NULL" : "";
+      const { rows } = await pool.query(
+        `SELECT e.*, u.name AS lead_name, u.profile_pic_url AS lead_pic
+         FROM marketing_events e
+         LEFT JOIN users u ON u.id = e.lead_user_id
+         ${where}
+         ORDER BY e.starts_at ASC NULLS LAST LIMIT 100`
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/marketing/events", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.userId) return res.status(401).json({ error: "Not authenticated" });
+    const { title, kind, category, startsAt, endsAt, location, description, leadUserId, externalUrl, attendeeUserIds, attendeeContactIds } = req.body || {};
+    if (!title) return res.status(400).json({ error: "title required" });
+    try {
+      const r = await pool.query(
+        `INSERT INTO marketing_events (title, kind, category, starts_at, ends_at, location, description, lead_user_id, external_url, attendee_user_ids, attendee_contact_ids, created_by_user_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        [title, kind || null, category || null, startsAt || null, endsAt || null, location || null, description || null, leadUserId || null, externalUrl || null, attendeeUserIds || null, attendeeContactIds || null, actor.userId]
+      );
+      res.json(r.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/marketing/events/:id", requireAuth, async (req: any, res) => {
+    const allowed = ["title", "kind", "category", "starts_at", "ends_at", "location", "description", "lead_user_id", "external_url", "attendee_user_ids", "attendee_contact_ids", "status"];
+    const sets: string[] = [];
+    const params: any[] = [req.params.id];
+    for (const f of allowed) {
+      const camel = f.replace(/_(.)/g, (_, c) => c.toUpperCase());
+      if (req.body[camel] !== undefined || req.body[f] !== undefined) {
+        params.push(req.body[camel] ?? req.body[f]);
+        sets.push(`${f} = $${params.length}`);
+      }
+    }
+    if (sets.length === 0) return res.json({ ok: true });
+    try {
+      await pool.query(`UPDATE marketing_events SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, params);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/marketing/events/:id", requireAuth, async (req: any, res) => {
+    try {
+      await pool.query("DELETE FROM marketing_events WHERE id = $1", [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Seed Emmy's strategy doc events on first read so the calendar isn't empty.
+  const SEED_MARKETING_EVENTS = [
+    { title: "International Women's Day", kind: "industry", category: "Awareness", month: 2, day: 8 },
+    { title: "GRO speaker opportunities (Spring)", kind: "industry", category: "Speaking", month: 3, day: 25 },
+    { title: "Property Week Awards judging pitch", kind: "pitch", category: "Awards", month: 3, day: 1 },
+    { title: "MIPIM 2027", kind: "industry", category: "Conference", month: 2, day: 10, year: 2027 },
+    { title: "GRO speaker opportunities (Autumn)", kind: "industry", category: "Speaking", month: 8, day: 25 },
+    { title: "MAPIC 2026 — panel discussion", kind: "speaking", category: "Conference", month: 10, day: 18 },
+    { title: "EG Awards judging opportunity", kind: "industry", category: "Awards", month: 10, day: 5 },
+    { title: "Revo Awards judging opportunity", kind: "industry", category: "Awards", month: 11, day: 1 },
+    { title: "Property Week Leisure Parks Focus — VB pitch", kind: "pitch", category: "Press", month: 9, day: 1 },
+    { title: "Property Week Shopping Centre Focus — ME pitch", kind: "pitch", category: "Press", month: 1, day: 1 },
+  ];
+
+  app.post("/api/marketing/seed", requireAdmin, async (_req, res) => {
+    try {
+      for (const e of SEED_MARKETING_EVENTS) {
+        const year = (e as any).year || new Date().getFullYear();
+        const startsAt = new Date(year, e.month - 1, e.day);
+        await pool.query(
+          `INSERT INTO marketing_events (title, kind, category, starts_at, status)
+           VALUES ($1, $2, $3, $4, 'planned')
+           ON CONFLICT DO NOTHING`,
+          [e.title, e.kind, e.category, startsAt.toISOString()]
+        );
+      }
+      const { rows: pressDefaults } = await pool.query("SELECT COUNT(*)::int AS n FROM marketing_press_contacts");
+      if (pressDefaults[0].n === 0) {
+        const PRESS = [
+          { name: "Andy Hillier", title: "Features Editor", publication: "Property Week" },
+          { name: "Chris Borland", title: "Reporter", publication: "Green Street News" },
+          { name: "Tim Burke", title: "Reporter", publication: "Estates Gazette" },
+          { name: "Shifali Gorka", title: "Reporter", publication: "Estates Gazette" },
+          { name: "Liz Samson", title: "Editor", publication: "BE News" },
+        ];
+        for (const p of PRESS) {
+          await pool.query(
+            `INSERT INTO marketing_press_contacts (name, title, publication) VALUES ($1, $2, $3)`,
+            [p.name, p.title, p.publication]
+          );
+        }
+      }
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/marketing/press", requireAuth, async (_req, res) => {
+    try {
+      const { rows } = await pool.query("SELECT * FROM marketing_press_contacts ORDER BY publication, name");
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
 }

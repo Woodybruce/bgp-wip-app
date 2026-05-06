@@ -10,7 +10,7 @@ import {
   ExternalLink, Loader2, Search, SlidersHorizontal,
   Network, Cake, UserPlus, Trash2, FolderLock, Folder,
   LayoutGrid, GitBranch, Camera, Eye, Bike, Baby, PiggyBank, Smartphone,
-  Train, HeartHandshake, Mountain, Award,
+  Train, HeartHandshake, Mountain, Award, Megaphone, Sparkles, Target,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1125,7 +1125,9 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
             {isAdmin && <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>}
             {isAdmin && <TabsTrigger value="commission" className="text-xs">Commission</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="holiday" className="text-xs">Holiday</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="reviews" className="text-xs">Reviews</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="career" className="text-xs">Career</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="pension" className="text-xs">Pension</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="expenses" className="text-xs">Expenses</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="documents" className="text-xs">Documents</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="kit" className="text-xs">Kit</TabsTrigger>}
@@ -1207,8 +1209,16 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
             <HolidayTab person={person} isAdmin={isAdmin} currentUserId={currentUserId} />
           </TabsContent>
 
+          <TabsContent value="reviews" className="mt-4">
+            <ReviewsTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} person={person} />
+          </TabsContent>
+
           <TabsContent value="career" className="mt-4">
             <CareerRoadmapTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} currentTitle={person.title} />
+          </TabsContent>
+
+          <TabsContent value="pension" className="mt-4">
+            <PensionTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
           </TabsContent>
 
           <TabsContent value="expenses" className="mt-4">
@@ -1297,6 +1307,583 @@ interface PolicyDoc {
   fileName: string | null;
   mimeType: string | null;
   inlineUrl: string | null;
+}
+
+// ── 📋 Performance reviews tab ───────────────────────────────────────────────
+
+interface StaffReview {
+  id: string;
+  user_id: string;
+  period: string;
+  kind: string;
+  review_date: string | null;
+  current_salary_pence: number | null;
+  fees_target_pence: number | null;
+  fees_achieved_pence: number | null;
+  pipeline_under_offer_pence: number | null;
+  pipeline_negotiating_pence: number | null;
+  expected_invoice_next_year_pence: number | null;
+  achievements: string | null;
+  development_areas: string | null;
+  goals: string | null;
+  referrals: string | null;
+  marketing_pr: string | null;
+  salary_expectation_pence: number | null;
+  feedback: string | null;
+  bgp_can_help: string | null;
+  status: string;
+  submitted_at: string | null;
+  reviewed_at: string | null;
+  ai_summary: string | null;
+}
+
+interface ReviewGoal {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string | null;
+  metric_type: string | null;
+  target_value: number | null;
+  current_value: number | null;
+  due_date: string | null;
+  status: string;
+  linked_task_id: string | null;
+  task_title: string | null;
+}
+
+function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmin: boolean; isOwn: boolean; person: StaffMember }) {
+  const { toast } = useToast();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [newGoal, setNewGoal] = useState("");
+  const { data: reviews = [], isLoading } = useQuery<StaffReview[]>({ queryKey: [`/api/hr/reviews/${userId}`] });
+  const { data: goals = [] } = useQuery<ReviewGoal[]>({ queryKey: [`/api/hr/goals/${userId}`] });
+
+  const startReview = useMutation({
+    mutationFn: async ({ kind }: { kind: string }) => {
+      const period = kind === "annual" ? `annual_${new Date().getFullYear()}`
+        : kind === "midyear" ? `midyear_${new Date().getFullYear()}`
+        : `monthly_${new Date().getFullYear()}_${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+      return apiRequest("POST", `/api/hr/reviews/${userId}`, { period, kind, reviewDate: new Date().toISOString().slice(0, 10) }).then(r => r.json());
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] });
+      setEditingId(data.id);
+    },
+  });
+
+  const updateReview = useMutation({
+    mutationFn: async ({ id, body }: { id: string; body: any }) => apiRequest("PATCH", `/api/hr/reviews/${id}`, body).then(r => r.json()),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] }),
+  });
+
+  const aiDraft = useMutation({
+    mutationFn: async (id: string) => apiRequest("POST", `/api/hr/reviews/${id}/ai-draft`).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] });
+      toast({ title: "AI draft ready — see the summary panel" });
+    },
+    onError: (e: any) => toast({ title: "AI draft failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const addGoal = useMutation({
+    mutationFn: async (title: string) => apiRequest("POST", `/api/hr/goals`, { userId, title, createTask: true }).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/goals/${userId}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks", "todo"] });
+      setNewGoal("");
+    },
+  });
+
+  const updateGoal = useMutation({
+    mutationFn: async ({ id, status }: { id: string; status: string }) => apiRequest("PATCH", `/api/hr/goals/${id}`, { status }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/goals/${userId}`] }),
+  });
+
+  if (!isAdmin && !isOwn) return null;
+
+  const editing = reviews.find(r => r.id === editingId);
+
+  return (
+    <div className="space-y-4 pb-4">
+      {/* Goals — appears even before any review exists */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Target className="w-4 h-4 text-primary" /> Active goals
+            <span className="text-[10px] font-normal text-muted-foreground ml-auto">linked to your tasks</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0 space-y-2">
+          {goals.filter(g => g.status === "active").length === 0 && (
+            <div className="text-xs text-muted-foreground italic">No active goals — add one below to drive your year.</div>
+          )}
+          {goals.filter(g => g.status === "active").map(g => (
+            <div key={g.id} className="flex items-center gap-2 p-2 rounded-md border">
+              <button
+                onClick={() => updateGoal.mutate({ id: g.id, status: "achieved" })}
+                className="w-4 h-4 rounded border border-muted-foreground/40 hover:border-primary hover:bg-primary/10 flex items-center justify-center shrink-0"
+              >
+                <Check className="w-3 h-3 text-primary opacity-0 hover:opacity-100" />
+              </button>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium">{g.title}</div>
+                {g.task_title && <div className="text-[10px] text-muted-foreground">Task: {g.task_title}</div>}
+              </div>
+              {g.due_date && <span className="text-[10px] text-muted-foreground">{new Date(g.due_date).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>}
+            </div>
+          ))}
+          {goals.filter(g => g.status === "achieved").length > 0 && (
+            <details className="rounded-md border bg-muted/20">
+              <summary className="text-xs p-2 cursor-pointer text-muted-foreground">Achieved ({goals.filter(g => g.status === "achieved").length})</summary>
+              <div className="space-y-1 px-2 pb-2">
+                {goals.filter(g => g.status === "achieved").map(g => (
+                  <div key={g.id} className="flex items-center gap-2 text-xs">
+                    <Check className="w-3 h-3 text-emerald-500" /> <span className="line-through text-muted-foreground">{g.title}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+          <form onSubmit={(e) => { e.preventDefault(); if (newGoal.trim()) addGoal.mutate(newGoal.trim()); }} className="flex gap-1.5 mt-2">
+            <Input value={newGoal} onChange={(e) => setNewGoal(e.target.value)} placeholder="New goal — auto-creates a task" className="h-8 text-sm" />
+            <Button size="sm" type="submit" variant="outline" className="h-8 px-2.5" disabled={!newGoal.trim() || addGoal.isPending}>
+              <Plus className="w-3.5 h-3.5" />
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Reviews list */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center justify-between">
+            <span className="flex items-center gap-2"><Star className="w-4 h-4 text-amber-500" /> Reviews</span>
+            <div className="flex gap-1">
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => startReview.mutate({ kind: "monthly" })} disabled={startReview.isPending}>1:1</Button>
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => startReview.mutate({ kind: "midyear" })} disabled={startReview.isPending}>Mid-year</Button>
+              <Button size="sm" className="h-7 text-xs" onClick={() => startReview.mutate({ kind: "annual" })} disabled={startReview.isPending}>+ Annual</Button>
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {isLoading ? (
+            <div className="flex items-center justify-center p-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+          ) : reviews.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic py-2">No reviews yet — start one above.</div>
+          ) : (
+            <div className="space-y-1.5">
+              {reviews.map(r => (
+                <button
+                  key={r.id}
+                  onClick={() => setEditingId(editingId === r.id ? null : r.id)}
+                  className={`w-full flex items-center gap-3 p-2.5 rounded-md border text-left transition-colors hover:bg-accent/40 ${editingId === r.id ? "border-primary bg-primary/5" : ""}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium capitalize">{r.kind} review · {r.period}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {r.review_date ? new Date(r.review_date).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "Not dated"}
+                      {r.fees_achieved_pence != null && r.fees_target_pence ? ` · achieved ${fmtSalary(r.fees_achieved_pence)} of ${fmtSalary(r.fees_target_pence)}` : ""}
+                    </div>
+                  </div>
+                  <Badge variant={r.status === "completed" ? "default" : r.status === "submitted" ? "secondary" : "outline"} className="text-[10px] capitalize">{r.status.replace(/_/g, " ")}</Badge>
+                </button>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Editor */}
+      {editing && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="capitalize">{editing.kind} review — {editing.period}</span>
+              <div className="flex gap-1">
+                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => aiDraft.mutate(editing.id)} disabled={aiDraft.isPending}>
+                  {aiDraft.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />} AI draft
+                </Button>
+                {editing.status === "draft" && isOwn && (
+                  <Button size="sm" className="h-7 text-xs" onClick={() => updateReview.mutate({ id: editing.id, body: { status: "submitted" } })}>
+                    Submit to manager
+                  </Button>
+                )}
+                {editing.status === "submitted" && isAdmin && (
+                  <Button size="sm" className="h-7 text-xs" onClick={() => updateReview.mutate({ id: editing.id, body: { status: "completed" } })}>
+                    Mark complete
+                  </Button>
+                )}
+              </div>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 space-y-3">
+            {editing.ai_summary && (
+              <div className="rounded-md border bg-violet-50 dark:bg-violet-950/20 p-3">
+                <div className="text-[10px] uppercase tracking-wider text-violet-700 dark:text-violet-300 mb-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> AI coach</div>
+                <pre className="text-xs whitespace-pre-wrap font-sans text-muted-foreground">{editing.ai_summary}</pre>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Target (£)</Label>
+                <Input type="number" defaultValue={editing.fees_target_pence ? Math.round(editing.fees_target_pence / 100) : ""} onBlur={e => updateReview.mutate({ id: editing.id, body: { fees_target_pence: Math.round(parseFloat(e.target.value || "0") * 100) } })} className="h-8" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Achieved (£)</Label>
+                <Input type="number" defaultValue={editing.fees_achieved_pence ? Math.round(editing.fees_achieved_pence / 100) : ""} onBlur={e => updateReview.mutate({ id: editing.id, body: { fees_achieved_pence: Math.round(parseFloat(e.target.value || "0") * 100) } })} className="h-8" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Pipeline — under offer (£)</Label>
+                <Input type="number" defaultValue={editing.pipeline_under_offer_pence ? Math.round(editing.pipeline_under_offer_pence / 100) : ""} onBlur={e => updateReview.mutate({ id: editing.id, body: { pipeline_under_offer_pence: Math.round(parseFloat(e.target.value || "0") * 100) } })} className="h-8" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Pipeline — negotiating (£)</Label>
+                <Input type="number" defaultValue={editing.pipeline_negotiating_pence ? Math.round(editing.pipeline_negotiating_pence / 100) : ""} onBlur={e => updateReview.mutate({ id: editing.id, body: { pipeline_negotiating_pence: Math.round(parseFloat(e.target.value || "0") * 100) } })} className="h-8" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Expected invoice next year (£)</Label>
+                <Input type="number" defaultValue={editing.expected_invoice_next_year_pence ? Math.round(editing.expected_invoice_next_year_pence / 100) : ""} onBlur={e => updateReview.mutate({ id: editing.id, body: { expected_invoice_next_year_pence: Math.round(parseFloat(e.target.value || "0") * 100) } })} className="h-8" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Salary expectation (£)</Label>
+                <Input type="number" defaultValue={editing.salary_expectation_pence ? Math.round(editing.salary_expectation_pence / 100) : ""} onBlur={e => updateReview.mutate({ id: editing.id, body: { salary_expectation_pence: Math.round(parseFloat(e.target.value || "0") * 100) } })} className="h-8" />
+              </div>
+            </div>
+
+            {[
+              { key: "achievements", label: "Achievements", placeholder: "Numbered list of wins this year" },
+              { key: "development_areas", label: "Development areas", placeholder: "What to work on" },
+              { key: "goals", label: "Goals for next year", placeholder: "SMART goals — turn into tasks above" },
+              { key: "referrals", label: "Referrals (cross-team)", placeholder: "Who you've passed work to internally" },
+              { key: "marketing_pr", label: "Marketing / PR", placeholder: "LinkedIn posts, press, panels" },
+              { key: "feedback", label: "Feedback for line manager", placeholder: "" },
+              { key: "bgp_can_help", label: "Anything BGP can do to help you?", placeholder: "Hire a grad, more kit, training..." },
+            ].map(f => (
+              <div key={f.key} className="space-y-1.5">
+                <Label className="text-xs">{f.label}</Label>
+                <Textarea
+                  rows={3}
+                  defaultValue={(editing as any)[f.key] || ""}
+                  placeholder={f.placeholder}
+                  onBlur={e => updateReview.mutate({ id: editing.id, body: { [f.key]: e.target.value } })}
+                  className="text-sm"
+                />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── 💰 Pension dashboard tab ─────────────────────────────────────────────────
+
+interface PensionData {
+  contributions: Array<{
+    pay_period: string | null;
+    pay_date: string | null;
+    employee_pence: number;
+    employer_pence: number;
+    pensionable_pay_pence: number | null;
+    source_file: string | null;
+  }>;
+  totals: {
+    employeeYtdPence: number;
+    employerYtdPence: number;
+    currentYear: number;
+    contributionCount: number;
+  };
+}
+
+function PensionTab({ userId, isAdmin, isOwn }: { userId: string; isAdmin: boolean; isOwn: boolean }) {
+  const { toast } = useToast();
+  const [csvText, setCsvText] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+  const { data, isLoading } = useQuery<PensionData>({ queryKey: [`/api/hr/pension/${userId}`], enabled: isAdmin || isOwn });
+
+  const importCsv = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/hr/pension/import", { csv: csvText, sourceFile: `royal-london-${new Date().toISOString().slice(0, 10)}.csv` }).then(r => r.json()),
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/pension/${userId}`] });
+      const unmatchedMsg = data.unmatched > 0 ? ` (${data.unmatched} unmatched: ${(data.unmatchedNames || []).slice(0, 3).join(", ")}…)` : "";
+      toast({ title: `Imported ${data.imported} contributions${unmatchedMsg}` });
+      setImportOpen(false);
+      setCsvText("");
+    },
+    onError: (e: any) => toast({ title: "Import failed", description: e?.message, variant: "destructive" }),
+  });
+
+  if (!isAdmin && !isOwn) return null;
+  if (isLoading) return <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  if (!data) return null;
+
+  return (
+    <div className="space-y-4 pb-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center justify-between">
+            <span className="flex items-center gap-2"><PiggyBank className="w-4 h-4 text-primary" /> Pension — Royal London</span>
+            {isAdmin && (
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setImportOpen(true)}>
+                Import CSV
+              </Button>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0 space-y-3">
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-lg border p-3 text-center">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Your YTD</div>
+              <div className="text-base font-semibold tabular-nums">{fmtSalary(data.totals.employeeYtdPence)}</div>
+            </div>
+            <div className="rounded-lg border p-3 text-center">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Employer YTD</div>
+              <div className="text-base font-semibold tabular-nums">{fmtSalary(data.totals.employerYtdPence)}</div>
+            </div>
+            <div className="rounded-lg border p-3 text-center bg-emerald-50/40 dark:bg-emerald-950/20">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Total YTD {data.totals.currentYear}</div>
+              <div className="text-base font-semibold tabular-nums text-emerald-700 dark:text-emerald-400">{fmtSalary(data.totals.employeeYtdPence + data.totals.employerYtdPence)}</div>
+            </div>
+          </div>
+
+          {data.contributions.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic text-center py-3">
+              No contributions imported yet. {isAdmin ? "Click Import CSV to upload Royal London's contribution report." : "Ask an admin to import the latest payroll CSV."}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Recent contributions</div>
+              {data.contributions.slice(0, 12).map((c, i) => (
+                <div key={i} className="flex items-center gap-2 p-1.5 rounded-md border text-xs">
+                  <Calendar className="w-3 h-3 text-muted-foreground" />
+                  <div className="flex-1">
+                    <div className="font-medium">{c.pay_period || (c.pay_date ? new Date(c.pay_date).toLocaleDateString("en-GB", { month: "long", year: "numeric" }) : "Unknown period")}</div>
+                  </div>
+                  <span className="text-muted-foreground tabular-nums">You {fmtSalary(c.employee_pence)}</span>
+                  <span className="text-muted-foreground tabular-nums">+ Emp {fmtSalary(c.employer_pence)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle>Import Royal London CSV</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Paste the CSV from Royal London's <em>Online Service for Employers</em> contribution report. Expected columns: Member Name, Pay Period, Pay Date, Employee Contribution, Employer Contribution, Pensionable Pay.
+            </p>
+            <Textarea rows={10} value={csvText} onChange={e => setCsvText(e.target.value)} className="font-mono text-xs" placeholder="Member Name,Pay Period,Pay Date,Employee Contribution,Employer Contribution,Pensionable Pay&#10;Woody Bruce,May 2026,2026-05-31,250.00,150.00,5000.00" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
+            <Button onClick={() => importCsv.mutate()} disabled={!csvText.trim() || importCsv.isPending}>
+              {importCsv.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null} Import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ── 📣 Marketing hub tab ──────────────────────────────────────────────────────
+
+interface MarketingEvent {
+  id: string;
+  title: string;
+  kind: string | null;
+  category: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  location: string | null;
+  description: string | null;
+  lead_user_id: string | null;
+  lead_name: string | null;
+  lead_pic: string | null;
+  external_url: string | null;
+  status: string;
+}
+
+interface PressContact {
+  id: string;
+  name: string;
+  title: string | null;
+  publication: string | null;
+  email: string | null;
+  notes: string | null;
+}
+
+function MarketingHub({ isAdmin }: { isAdmin: boolean }) {
+  const { toast } = useToast();
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ title: "", kind: "industry", category: "", startsAt: "", location: "", description: "" });
+  const { data: events = [] } = useQuery<MarketingEvent[]>({ queryKey: ["/api/marketing/events"] });
+  const { data: press = [] } = useQuery<PressContact[]>({ queryKey: ["/api/marketing/press"] });
+
+  const seedMutation = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/marketing/seed").then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/marketing/events"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/marketing/press"] });
+      toast({ title: "Seeded calendar from Emmy's strategy" });
+    },
+  });
+
+  const addEvent = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/marketing/events", form).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/marketing/events"] });
+      setAdding(false);
+      setForm({ title: "", kind: "industry", category: "", startsAt: "", location: "", description: "" });
+    },
+  });
+
+  const upcoming = events.filter(e => !e.starts_at || new Date(e.starts_at) >= new Date());
+  const past = events.filter(e => e.starts_at && new Date(e.starts_at) < new Date());
+
+  const kindBadge = (k: string | null) => ({
+    industry: "bg-sky-100 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300",
+    pitch: "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+    speaking: "bg-violet-100 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300",
+    bgp: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
+    press: "bg-pink-100 text-pink-700 dark:bg-pink-950/40 dark:text-pink-300",
+  }[k || ""] || "bg-muted text-muted-foreground");
+
+  return (
+    <div className="space-y-4 pb-6">
+      <div className="rounded-lg border bg-gradient-to-r from-pink-50 to-violet-50 dark:from-pink-950/30 dark:to-violet-950/30 p-4 flex items-start gap-3">
+        <Megaphone className="w-5 h-5 text-pink-600 dark:text-pink-300 shrink-0 mt-0.5" />
+        <div className="flex-1">
+          <div className="text-sm font-semibold mb-0.5">Marketing hub</div>
+          <p className="text-xs text-muted-foreground">Editorial calendar, BGP events, press contacts and campaign pipeline. Charlotte heads up, Emmy drives the day-to-day. AI-powered trend extraction & LinkedIn deal-watcher coming next.</p>
+        </div>
+        {isAdmin && events.length === 0 && (
+          <Button size="sm" variant="outline" onClick={() => seedMutation.mutate()} disabled={seedMutation.isPending}>
+            Seed from Emmy's strategy
+          </Button>
+        )}
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center justify-between">
+            <span className="flex items-center gap-2"><Calendar className="w-4 h-4 text-primary" /> Upcoming events &amp; pitches</span>
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setAdding(true)}>
+              <Plus className="w-3 h-3 mr-1" /> Add
+            </Button>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0 space-y-1.5">
+          {upcoming.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic py-2">Nothing scheduled.</div>
+          ) : (
+            upcoming.map(e => (
+              <div key={e.id} className="flex items-center gap-3 p-2.5 rounded-md border">
+                <div className="w-12 text-center shrink-0">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{e.starts_at ? new Date(e.starts_at).toLocaleDateString("en-GB", { month: "short" }) : "TBC"}</div>
+                  <div className="text-lg font-bold leading-none">{e.starts_at ? new Date(e.starts_at).getDate() : "—"}</div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{e.title}</div>
+                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                    {e.kind && <span className={`text-[10px] px-1.5 py-0.5 rounded ${kindBadge(e.kind)}`}>{e.kind}</span>}
+                    {e.category && <span className="text-[10px] text-muted-foreground">{e.category}</span>}
+                    {e.location && <span className="text-[10px] text-muted-foreground">· {e.location}</span>}
+                  </div>
+                </div>
+                {e.lead_name && (
+                  <div className="text-[10px] text-muted-foreground shrink-0">{e.lead_name}</div>
+                )}
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center gap-2"><FileText className="w-4 h-4 text-primary" /> Press contacts</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {press.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic">No press contacts yet.</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+              {press.map(p => (
+                <div key={p.id} className="p-2 rounded-md border text-xs">
+                  <div className="font-medium">{p.name}</div>
+                  <div className="text-muted-foreground">{p.title}{p.publication ? ` · ${p.publication}` : ""}</div>
+                  {p.email && <a href={`mailto:${p.email}`} className="text-primary hover:underline">{p.email}</a>}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {past.length > 0 && (
+        <details className="rounded-md border bg-muted/10">
+          <summary className="text-xs cursor-pointer p-3 text-muted-foreground">Past events ({past.length})</summary>
+          <div className="px-3 pb-3 space-y-1">
+            {past.slice(0, 20).map(e => (
+              <div key={e.id} className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground tabular-nums w-20 shrink-0">{e.starts_at ? new Date(e.starts_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" }) : ""}</span>
+                <span className="flex-1 truncate">{e.title}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      <Dialog open={adding} onOpenChange={setAdding}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add marketing event</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Title</Label>
+              <Input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="MAPIC panel discussion" />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1.5">
+                <Label>Kind</Label>
+                <Select value={form.kind} onValueChange={v => setForm(f => ({ ...f, kind: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="industry">Industry event</SelectItem>
+                    <SelectItem value="pitch">Press pitch</SelectItem>
+                    <SelectItem value="speaking">Speaking opportunity</SelectItem>
+                    <SelectItem value="bgp">BGP event</SelectItem>
+                    <SelectItem value="press">Media bonding</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Date</Label>
+                <Input type="datetime-local" value={form.startsAt} onChange={e => setForm(f => ({ ...f, startsAt: e.target.value }))} />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Location (optional)</Label>
+              <Input value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))} placeholder="Cannes, Estates Gazette HQ…" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Description (optional)</Label>
+              <Textarea rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAdding(false)}>Cancel</Button>
+            <Button onClick={() => addEvent.mutate()} disabled={!form.title.trim() || addEvent.isPending}>Add event</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
 }
 
 // ── 💳 Expenses analysis (inline on profile) ────────────────────────────────
@@ -2501,6 +3088,7 @@ export default function HRPage() {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="people">People</TabsTrigger>
           <TabsTrigger value="benefits">Benefits</TabsTrigger>
+          <TabsTrigger value="marketing">Marketing</TabsTrigger>
           {isAdmin && <TabsTrigger value="holidays">Holiday approvals</TabsTrigger>}
           <TabsTrigger value="policies">Policies</TabsTrigger>
         </TabsList>
@@ -2511,6 +3099,10 @@ export default function HRPage() {
 
         <TabsContent value="benefits">
           <BenefitsTab />
+        </TabsContent>
+
+        <TabsContent value="marketing">
+          <MarketingHub isAdmin={isAdmin} />
         </TabsContent>
 
         <TabsContent value="people">
