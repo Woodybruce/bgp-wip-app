@@ -2,6 +2,7 @@ import type { Express } from "express";
 import { pool } from "./db";
 import { requireAuth, requireAdmin } from "./auth";
 import { xeroApi } from "./xero";
+import { getValidMsToken } from "./microsoft";
 
 // requireAuth doesn't populate req.user, so look up admin status from the DB
 // using the session/token user id. Used by hybrid (admin-or-self) endpoints
@@ -720,8 +721,11 @@ export function setupHrRoutes(app: Express) {
       ["Evie North", "Associate Director – Leasing & Tenant Rep", "London Leasing", "Charlotte Roberts", false, false],
       ["Lizzie Knights", "Director – London Leasing", "London Leasing", "Charlotte Roberts", false, false],
       ["Lucy Cope", "Associate Director – London Leasing", "London Leasing", "Lizzie Knights", false, false],
-      ["Will Penfold", "Graduate Surveyor – London Leasing", "London Leasing", "Rupert Bentley-Smith", false, false],
+      ["Will Penfold", "Surveyor – London Leasing", "London Leasing", "Rupert Bentley-Smith", false, false],
       ["Emily Cann", "Graduate Surveyor – London Leasing", "London Leasing", "Lucy Cope", false, false],
+      ["Carly Cunliffe", "Graduate Surveyor – London Leasing & Tenant Rep", "London Leasing", "Rupert Bentley-Smith", false, false],
+      ["Emily Mitchell", "Marketing Lead", "Office / Corporate", "Charlotte Roberts", false, false],
+      ["Daisy Driscoll", "Surveyor", "London Leasing", "Charlotte Roberts", false, false],
     ];
 
     // Known short ↔ long pairs so DB rows like "Peter Wood" or "Harry Elliott"
@@ -810,5 +814,47 @@ export function setupHrRoutes(app: Express) {
     }
 
     res.json({ updated, matched, created, createdNames });
+  });
+
+  // ── Admin: pull profile photos from Microsoft 365 ──────────────────────────
+  // Iterates active staff, fetches each one's photo from Graph using the
+  // caller's MS session (or org fallback in getValidMsToken), and stores
+  // the JPEG as a data URL on users.profile_pic_url. Cheap, ~5-10KB per face.
+  // Skips users with no email or with photo already set unless ?force=1.
+  app.post("/api/hr/sync-photos", requireAdmin, async (req: any, res) => {
+    const force = req.query.force === "1";
+    const token = await getValidMsToken(req as any);
+    if (!token) return res.status(401).json({ error: "Connect Microsoft 365 first" });
+
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, name, email, profile_pic_url FROM users
+         WHERE is_active = true AND email IS NOT NULL AND email <> ''`
+      );
+
+      let updated = 0, skipped = 0, missing = 0;
+      const failed: string[] = [];
+
+      for (const u of rows) {
+        if (!force && u.profile_pic_url) { skipped++; continue; }
+        try {
+          const r = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(u.email)}/photo/$value`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (r.status === 404) { missing++; continue; }
+          if (!r.ok) { failed.push(`${u.name} (${r.status})`); continue; }
+          const buf = Buffer.from(await r.arrayBuffer());
+          const dataUrl = `data:image/jpeg;base64,${buf.toString("base64")}`;
+          await pool.query("UPDATE users SET profile_pic_url = $2 WHERE id = $1", [u.id, dataUrl]);
+          updated++;
+        } catch (e: any) {
+          failed.push(`${u.name} (${e.message})`);
+        }
+      }
+
+      res.json({ updated, skipped, missing, failed, total: rows.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 }
