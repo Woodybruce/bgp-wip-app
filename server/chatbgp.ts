@@ -1109,8 +1109,9 @@ Legacy specialised tools still work as fallbacks, but prefer the primitives abov
 - **Web research**: web_search → read_file(url) → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
 - **Chat file uploads** (CRITICAL): When the user's message contains a \`/api/chat-media/\` URL — e.g. \`[Live WIP 5th May.xlsx](/api/chat-media/xxx-filename.xlsx)\` — they have dragged or attached that file into the chat. You MUST call \`read_file\` with that URL immediately to read and process the file. Do NOT just acknowledge the link or say "I can see you've shared a file" without actually reading it. Pass the full \`/api/chat-media/...\` path as the \`url\` argument. For Excel/CSV use startRow/maxRows to page; for PDF/Word/text use startChar/maxChars.
 - **SharePoint / any file**: \`read_file\` handles all file sources — SharePoint links, OneDrive links, Dropbox paths, public URLs, and chat-media uploads. For subfolder navigation still use browse_sharepoint_folder (driveId+itemId); then pass the driveId+itemId to read_file. For large files, read_file returns totalRows (Excel/CSV) or totalChars (text/PDF) — call again with startRow or startChar incremented. Default Excel page is 300 rows; default text page is 100,000 chars.
-- **Leasing schedule / any data file**: query_leasing_schedule for read. For IMPORTS — any Excel, CSV, PDF, or pasted text — always use **ingest_file** (not import_leasing_schedule which no longer exists). ingest_file auto-classifies the file, parses it with AI, and returns a preview. Show the preview to the user, then call commit_ingest to write.
-- **Sage WIP reconciliation**: When the user uploads a Sage TransactionsExpo export or asks why the WIP total differs from Sage, call **reconcile_sage_wip** with the file URL. Accepts: /api/chat-media/... (user upload), SharePoint/OneDrive links, public HTTPS URLs, or "sage-wip/latest" to re-use the most recently uploaded Sage file (no re-upload needed). Every reconcile automatically pins the file as "sage-wip/latest" for future sessions. It runs server-side in one pass: aggregates by HEADER_NUMBER, diffs against all CRM deals, and returns mismatched, sage-only, and orphan allocation counts. Pass fixDiscrepancies=true to patch CRM fees to match Sage. Never try to reconcile line-by-line in chat — use this tool.
+- **Leasing schedule / any data file**: query_leasing_schedule for read. For IMPORTS — any Excel, CSV, PDF, or pasted text — always use **ingest_file** (not import_leasing_schedule which no longer exists). ingest_file auto-classifies the file, parses it with AI, and returns a preview. Show the preview to the user, then call commit_ingest to write. EXCEPTION: for Sage WIP Excel files use **import_sage_wip_excel** instead (see below).
+- **Sage WIP IMPORT (loading deals into CRM)**: Use **import_sage_wip_excel** — NOT ingest_file. This is the ONLY tool that correctly reads the per-agent fee-split columns (Agent + NetAmount) and creates deal_fee_allocations rows. ingest_file does not create fee allocations and will lose all agent splits — that is the "ghost bug". Accepts: /api/chat-media/... (file dragged into chat), "sage-wip/latest" to reuse the last uploaded file, or a SharePoint share link.
+- **Sage WIP reconciliation** (comparing CRM vs Sage totals): call **reconcile_sage_wip** with the file URL. Accepts: /api/chat-media/... (user upload), SharePoint/OneDrive links, public HTTPS URLs, or "sage-wip/latest". Every reconcile automatically pins the file as "sage-wip/latest" for future sessions. It runs server-side in one pass: aggregates by HEADER_NUMBER, diffs against all CRM deals, and returns mismatched, sage-only, and orphan allocation counts. Pass fixDiscrepancies=true to patch CRM fees to match Sage. Never try to reconcile line-by-line in chat — use this tool.
 - **Documents (plain text)**: \`write_file(type:"pdf")\` (TEXT ONLY — no imagery), \`write_file(type:"word")\`, \`write_file(type:"pptx")\`, \`write_file(type:"excel")\`. Use for internal text reports.
 - **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use \`write_file(type:"deck")\` (Gamma — full visual design with imagery). NEVER use pdf for these. Don't apologise about the PDF being "just text" — pick the right type upfront.
 - **Bespoke brochures from existing BGP pages**: \`write_file(type:"brochure")\` — stitches specific pages from source PDFs into a new PDF preserving all original design. Ask browse_sharepoint_folder / browse_dropbox for source PDF IDs/paths first, then pass as sources array.
@@ -2980,6 +2981,29 @@ export async function getAvailableTools(): Promise<{
           confirm: { type: "boolean", description: "Must be true to proceed. Ask the user to confirm before setting this." },
         },
         required: ["confirm"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "import_sage_wip_excel",
+      description: "Import a Sage WIP / TransactionsExpo Excel file into the CRM. THIS IS THE CORRECT TOOL FOR SAGE WIP IMPORTS — use this instead of ingest_file whenever the user wants to load their WIP spreadsheet. It runs the full server-side pipeline: parses every row, creates/updates crm_deals, sets fees, and — crucially — creates deal_fee_allocations rows for every agent split (Agent column + NetAmount) so the per-agent breakdown sums to the correct total. Also sets billing entity, deal status, and tenant-rep entries. Accepts: a /api/chat-media/... URL (file dragged into chat), 'sage-wip/latest' to reuse the most recently uploaded file, or a SharePoint/OneDrive share link.",
+      parameters: {
+        type: "object",
+        properties: {
+          fileUrl: {
+            type: "string",
+            description: "Where to read the file from. Accepts: (1) /api/chat-media/filename.xlsx — the URL shown when the user drags a file into chat; (2) 'sage-wip/latest' — reuse the last file uploaded in any previous session; (3) a SharePoint/OneDrive share link (https://...sharepoint.com/...).",
+          },
+          mode: {
+            type: "string",
+            enum: ["replace", "append"],
+            description: "replace = wipe existing wip_entries and re-import (default, safest for a full reload). append = add without deleting.",
+          },
+        },
+        required: ["fileUrl"],
       },
     },
   });
@@ -6921,6 +6945,37 @@ Be thorough — include every unit row you can classify, across all properties i
     } catch (err: any) {
       return { data: { error: `Leasing schedule import failed: ${err?.message}` } };
     }
+  }
+
+  if (fnName === "import_sage_wip_excel") {
+    // Resolve fileUrl (same flexible logic as reconcile_sage_wip) then delegate
+    // to __import_wip_excel_legacy which calls importWipFromBuffer + enrichWipDealsFromSage.
+    const rawUrl: string = String(fnArgs.fileUrl || "").trim();
+    if (!rawUrl) {
+      return { data: { error: "fileUrl is required. Pass a /api/chat-media/... URL, 'sage-wip/latest', or a SharePoint share link." } };
+    }
+    // Translate to legacy args
+    if (rawUrl === "sage-wip/latest" || rawUrl.startsWith("sage-wip/")) {
+      // Read pinned file from file_storage and convert to chatMediaFilename via temp save
+      const { getFile } = await import("./file-storage");
+      const pinKey = rawUrl.endsWith(".xlsx") ? rawUrl : rawUrl + ".xlsx";
+      const pinFile = await getFile(pinKey);
+      if (!pinFile?.data) {
+        return { data: { error: "No pinned Sage WIP file found ('sage-wip/latest'). Ask the user to re-upload the file." } };
+      }
+      const tmpName = `sage-wip-latest-${Date.now()}.xlsx`;
+      const tmpPath = path.join(process.cwd(), "ChatBGP", "chat-media", tmpName);
+      fs.writeFileSync(tmpPath, pinFile.data);
+      fnArgs = { chatMediaFilename: tmpName, mode: fnArgs.mode };
+    } else if (rawUrl.startsWith("/api/chat-media/")) {
+      const chatMediaFilename = rawUrl.replace("/api/chat-media/", "");
+      fnArgs = { chatMediaFilename, mode: fnArgs.mode };
+    } else if (rawUrl.includes("sharepoint.com") || rawUrl.includes("1drv.ms") || rawUrl.includes("onedrive.live")) {
+      fnArgs = { sharepointUrl: rawUrl, mode: fnArgs.mode };
+    } else {
+      return { data: { error: `Unrecognised fileUrl format: ${rawUrl}. Provide a /api/chat-media/... path, 'sage-wip/latest', or a SharePoint link.` } };
+    }
+    fnName = "__import_wip_excel_legacy";
   }
 
   if (fnName === "__import_wip_excel_legacy") {
