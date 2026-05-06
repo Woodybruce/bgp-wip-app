@@ -1248,17 +1248,27 @@ function ChainNode({ person, childrenByManager, onSelect }: { person: StaffMembe
 
 function OrgChartTab({ allStaff, onSelectPerson, isAdmin }: { allStaff: StaffMember[]; onSelectPerson: (p: StaffMember) => void; isAdmin: boolean }) {
   const { toast } = useToast();
-  const root = useMemo(() => allStaff.find(s => !s.manager_id) || null, [allStaff]);
+  // Real staff = those with a staff_profiles row. Excludes shared mailboxes
+  // / placeholder accounts (e.g. "Accounts") that would otherwise win the
+  // "no manager" race purely on alphabetical ordering.
+  const realStaff = useMemo(() => allStaff.filter(s => s.profile_id), [allStaff]);
+  const root = useMemo(() => {
+    const md = realStaff.find(s => (s.title || "").toLowerCase().includes("managing director"));
+    if (md) return md;
+    const boardRoot = realStaff.find(s => s.board_member && !s.manager_id);
+    if (boardRoot) return boardRoot;
+    return realStaff.find(s => !s.manager_id) || null;
+  }, [realStaff]);
   const childrenByManager = useMemo(() => {
     const map = new Map<string, StaffMember[]>();
-    for (const s of allStaff) {
+    for (const s of realStaff) {
       if (!s.manager_id) continue;
       const list = map.get(s.manager_id) || [];
       list.push(s);
       map.set(s.manager_id, list);
     }
     return map;
-  }, [allStaff]);
+  }, [realStaff]);
 
   const seedMutation = useMutation({
     mutationFn: async () => {
@@ -1288,8 +1298,8 @@ function OrgChartTab({ allStaff, onSelectPerson, isAdmin }: { allStaff: StaffMem
     return set;
   }, [root, childrenByManager]);
 
-  const unassigned = useMemo(() => allStaff.filter(s => !reachable.has(s.id)), [allStaff, reachable]);
-  const noManagersSet = allStaff.length > 0 && allStaff.every(s => !s.manager_id);
+  const unassigned = useMemo(() => realStaff.filter(s => !reachable.has(s.id)), [realStaff, reachable]);
+  const noManagersSet = realStaff.length > 0 && realStaff.every(s => !s.manager_id);
 
   if (!root || noManagersSet) {
     return (

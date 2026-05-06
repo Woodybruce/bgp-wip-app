@@ -625,9 +625,9 @@ export function setupHrRoutes(app: Express) {
   });
 
   // ── Admin: seed the May 2026 BGP org chart (reporting lines + flags) ──────
-  // Idempotent: matches existing users by case-insensitive name and only sets
-  // org-chart fields. Skips people who aren't in the users table (admin uses
-  // POST /api/hr/staff above to add missing names first).
+  // Idempotent. Matches existing users by normalised name (lowercase, apostrophes
+  // and whitespace stripped) plus a small alias table for known short forms.
+  // Auto-creates users we don't recognise so the chart is whole on first run.
   app.post("/api/hr/seed-org-chart", requireAdmin, async (req: any, res) => {
     // [name, role, team, reportsTo, board, mgt]
     const ROSTER: Array<[string, string, string, string | null, boolean, boolean]> = [
@@ -661,18 +661,72 @@ export function setupHrRoutes(app: Express) {
       ["Emily Cann", "Graduate Surveyor – London Leasing", "London Leasing", "Lucy Cope", false, false],
     ];
 
-    const nameToId = new Map<string, string>();
-    let updated = 0, skipped = 0;
-    const skippedNames: string[] = [];
+    // Known short ↔ long pairs so DB rows like "Peter Wood" or "Harry Elliott"
+    // line up with roster entries "Pete Wood" / "Harry Elliot".
+    const ALIASES: Array<[string, string]> = [
+      ["pete wood", "peter wood"],
+      ["harry elliot", "harry elliott"],
+      ["jonny palmer", "johnny palmer"],
+      ["emily dumbell", "emily dumbbell"],
+      ["will penfold", "william penfold"],
+    ];
 
-    // Pass 1: resolve every name to a user id (skip the ones we can't find).
-    for (const [name] of ROSTER) {
-      const r = await pool.query("SELECT id FROM users WHERE LOWER(name) = LOWER($1) LIMIT 1", [name]);
-      if (r.rows.length === 0) { skipped++; skippedNames.push(name); continue; }
-      nameToId.set(name, r.rows[0].id);
+    const norm = (s: string) =>
+      s.toLowerCase().replace(/['']/g, "").replace(/\s+/g, " ").trim();
+
+    // Build an index of every existing user under each of its possible keys
+    // (canonical name + any alias forms) so a single lookup catches both.
+    const existing = await pool.query("SELECT id, name FROM users WHERE is_active = true");
+    const userIndex = new Map<string, string>();
+    for (const row of existing.rows) {
+      const key = norm(row.name);
+      userIndex.set(key, row.id);
+      for (const [a, b] of ALIASES) {
+        if (key === a) userIndex.set(b, row.id);
+        if (key === b) userIndex.set(a, row.id);
+      }
     }
 
-    // Pass 2: write title/team/manager/board/mgt to staff_profiles + users.team.
+    const bcrypt = await import("bcrypt");
+    const placeholder = await bcrypt.default.hash(`bgp-placeholder-${Date.now()}`, 10);
+
+    const nameToId = new Map<string, string>();
+    let matched = 0, created = 0;
+    const createdNames: string[] = [];
+
+    // Pass 1: resolve every roster name. Auto-create when missing so the chart
+    // is complete on first run; admin can edit emails / titles later.
+    for (const [name, role, team] of ROSTER) {
+      const key = norm(name);
+      let userId = userIndex.get(key);
+      if (!userId) {
+        for (const [a, b] of ALIASES) {
+          if (key === a && userIndex.has(b)) { userId = userIndex.get(b); break; }
+          if (key === b && userIndex.has(a)) { userId = userIndex.get(a); break; }
+        }
+      }
+      if (userId) {
+        nameToId.set(name, userId);
+        matched++;
+      } else {
+        const username = norm(name).replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
+        const r = await pool.query(
+          `INSERT INTO users (username, password, name, role, team, is_admin, is_active)
+           VALUES ($1, $2, $3, $4, $5, false, true)
+           ON CONFLICT (username) DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role, team = EXCLUDED.team, is_active = true
+           RETURNING id`,
+          [username, placeholder, name, role, team]
+        );
+        const newId = r.rows[0].id;
+        nameToId.set(name, newId);
+        userIndex.set(key, newId);
+        created++;
+        createdNames.push(name);
+      }
+    }
+
+    // Pass 2: write title/team/manager/board/mgt to staff_profiles + users.
+    let updated = 0;
     for (const [name, role, team, reportsTo, board, mgt] of ROSTER) {
       const userId = nameToId.get(name);
       if (!userId) continue;
@@ -692,6 +746,6 @@ export function setupHrRoutes(app: Express) {
       updated++;
     }
 
-    res.json({ updated, skipped, skippedNames });
+    res.json({ updated, matched, created, createdNames });
   });
 }
