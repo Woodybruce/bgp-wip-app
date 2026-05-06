@@ -233,6 +233,10 @@ import { pool } from "./db";
       UNIQUE (user_id, period)
     )`,
     `CREATE INDEX IF NOT EXISTS staff_reviews_user_idx ON staff_reviews (user_id, review_date DESC)`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS manager_comments TEXT`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS employee_acknowledgement TEXT`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS reactions JSONB DEFAULT '[]'::jsonb`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS source_file_url TEXT`,
     `CREATE TABLE IF NOT EXISTS staff_review_goals (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       review_id VARCHAR,

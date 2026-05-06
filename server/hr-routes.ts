@@ -1790,8 +1790,10 @@ export function setupHrRoutes(app: Express) {
         return res.status(403).json({ error: "Forbidden" });
       }
 
-      // Whitelist of editable fields. status / submitted_at follow rules below.
-      const fields = [
+      // Field whitelist split by who's allowed to edit. Self+admin can edit
+      // the form fields; only admin can write manager_comments; only the
+      // employee themselves can write employee_acknowledgement.
+      const sharedFields = [
         "review_date", "current_salary_pence", "last_increase_date", "last_bonus_note",
         "fees_target_pence", "fees_achieved_pence",
         "pipeline_under_offer_pence", "pipeline_negotiating_pence", "expected_invoice_next_year_pence",
@@ -1800,12 +1802,22 @@ export function setupHrRoutes(app: Express) {
       ];
       const sets: string[] = [];
       const params: any[] = [req.params.id];
-      for (const f of fields) {
+      for (const f of sharedFields) {
         const camel = f.replace(/_(.)/g, (_, c) => c.toUpperCase());
         if (req.body[camel] !== undefined || req.body[f] !== undefined) {
           params.push(req.body[camel] ?? req.body[f]);
           sets.push(`${f} = $${params.length}`);
         }
+      }
+      // Admin-only fields
+      if (actor.isAdmin && (req.body.managerComments !== undefined || req.body.manager_comments !== undefined)) {
+        params.push(req.body.managerComments ?? req.body.manager_comments);
+        sets.push(`manager_comments = $${params.length}`);
+      }
+      // Self-only fields (employee acknowledgement of manager comments)
+      if (actor.userId === owner.rows[0].user_id && (req.body.employeeAcknowledgement !== undefined || req.body.employee_acknowledgement !== undefined)) {
+        params.push(req.body.employeeAcknowledgement ?? req.body.employee_acknowledgement);
+        sets.push(`employee_acknowledgement = $${params.length}`);
       }
       if (sets.length > 0) {
         await pool.query(`UPDATE staff_reviews SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, params);
@@ -1827,6 +1839,225 @@ export function setupHrRoutes(app: Express) {
       const updated = await pool.query("SELECT * FROM staff_reviews WHERE id = $1", [req.params.id]);
       res.json(updated.rows[0]);
     } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Import a pasted review (e.g. from a SharePoint Word doc) and let Claude
+  // extract the structured fields into a staff_reviews row. Lets BGP retire
+  // the SharePoint copies and keep everything searchable in-app.
+  app.post("/api/hr/reviews/import-from-text", requireAdmin, async (req: any, res) => {
+    const { userId, period, kind = "annual", text } = req.body || {};
+    if (!userId || !period || !text) return res.status(400).json({ error: "userId, period, text required" });
+
+    try {
+      const { default: AnthropicMod } = await import("@anthropic-ai/sdk");
+      const Anthropic: any = (AnthropicMod as any).default || AnthropicMod;
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+      const msg = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 2000,
+        messages: [{
+          role: "user",
+          content: `Parse this BGP performance review and return ONLY a JSON object with these fields. Use null for any not present. Money fields should be in pence (multiply £ by 100). Long-form sections should preserve the original bullet structure as plain text.
+
+Review text:
+"""
+${text.slice(0, 12000)}
+"""
+
+Return JSON with these keys:
+{
+  "review_date": "YYYY-MM-DD or null",
+  "current_salary_pence": number or null,
+  "last_increase_date": "YYYY-MM-DD or null",
+  "last_bonus_note": "string or null",
+  "fees_target_pence": number or null,
+  "fees_achieved_pence": number or null,
+  "pipeline_under_offer_pence": number or null,
+  "pipeline_negotiating_pence": number or null,
+  "expected_invoice_next_year_pence": number or null,
+  "achievements": "preserved bullet list or null",
+  "development_areas": "preserved bullet list or null",
+  "goals": "preserved bullet list or null",
+  "referrals": "string or null",
+  "marketing_pr": "string or null",
+  "salary_expectation_pence": number or null,
+  "feedback": "string or null",
+  "bgp_can_help": "string or null"
+}
+
+Return ONLY valid JSON, nothing else.`,
+        }],
+      });
+
+      const txt = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
+      // Strip code fences if present.
+      const jsonStr = txt.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+      let parsed: any;
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (parseErr: any) {
+        return res.status(422).json({ error: "AI response wasn't valid JSON", raw: txt });
+      }
+
+      const fields = [
+        "review_date", "current_salary_pence", "last_increase_date", "last_bonus_note",
+        "fees_target_pence", "fees_achieved_pence",
+        "pipeline_under_offer_pence", "pipeline_negotiating_pence", "expected_invoice_next_year_pence",
+        "achievements", "development_areas", "goals", "referrals", "marketing_pr",
+        "salary_expectation_pence", "feedback", "bgp_can_help",
+      ];
+      const cols = ["user_id", "period", "kind", "status"].concat(fields);
+      const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+      const values = [userId, period, kind, "completed"].concat(fields.map(f => parsed[f] ?? null));
+      const updateSets = fields.map(f => `${f} = EXCLUDED.${f}`).join(", ");
+
+      const r = await pool.query(
+        `INSERT INTO staff_reviews (${cols.join(", ")}) VALUES (${placeholders})
+         ON CONFLICT (user_id, period) DO UPDATE SET ${updateSets}, updated_at = now()
+         RETURNING *`,
+        values
+      );
+      res.json({ imported: true, review: r.rows[0], extracted: parsed });
+    } catch (e: any) {
+      console.error("[hr] review import error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // List all DOCX review forms in the SharePoint Reviews folder. Returns
+  // metadata so admin can one-click import each one.
+  app.get("/api/hr/reviews/sharepoint-list", requireAdmin, async (req: any, res) => {
+    const token = await getValidMsToken(req as any);
+    if (!token) return res.status(401).json({ error: "Connect Microsoft 365 first" });
+    try {
+      const SITE = "brucegillinghampollardlimited.sharepoint.com:/sites/BGP:";
+      const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SITE}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!siteRes.ok) return res.status(502).json({ error: "Couldn't reach SharePoint site" });
+      const site = await siteRes.json();
+      const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, { headers: { Authorization: `Bearer ${token}` } });
+      const drives = (await drivesRes.json()).value || [];
+      const docDrive = drives.find((d: any) => d.name === "Documents") || drives[0];
+      if (!docDrive) return res.status(404).json({ error: "Documents drive not found" });
+
+      // Enumerate review years/folders.
+      const path = encodeURIComponent("HR/Reviews/2026 Reviews/Review Forms");
+      const listRes = await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${docDrive.id}/root:/${path}:/children?$select=id,name,file,lastModifiedDateTime,size`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!listRes.ok) return res.json({ files: [], note: "Folder not found at HR/Reviews/2026 Reviews/Review Forms" });
+      const items = (await listRes.json()).value || [];
+      const files = items
+        .filter((i: any) => i.file && /\.docx$/i.test(i.name))
+        .map((i: any) => ({
+          driveId: docDrive.id,
+          itemId: i.id,
+          name: i.name,
+          size: i.size,
+          lastModified: i.lastModifiedDateTime,
+        }));
+      res.json({ files });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Import one SharePoint review .docx straight into the app. Uses Graph's
+  // /preview endpoint to pull the file, hands the binary to Claude (which
+  // reads .docx natively as a document input), then stores the parsed fields.
+  app.post("/api/hr/reviews/import-from-sharepoint", requireAdmin, async (req: any, res) => {
+    const { driveId, itemId, userId, period, kind = "annual" } = req.body || {};
+    if (!driveId || !itemId || !userId || !period) return res.status(400).json({ error: "driveId, itemId, userId, period required" });
+
+    const token = await getValidMsToken(req as any);
+    if (!token) return res.status(401).json({ error: "Connect Microsoft 365 first" });
+
+    try {
+      // Fetch the file as base64.
+      const fileRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/content`, {
+        headers: { Authorization: `Bearer ${token}` },
+        redirect: "follow",
+      });
+      if (!fileRes.ok) return res.status(502).json({ error: `Graph returned ${fileRes.status}` });
+      const buf = Buffer.from(await fileRes.arrayBuffer());
+
+      // Claude can read .docx natively via the document input type.
+      const { default: AnthropicMod } = await import("@anthropic-ai/sdk");
+      const Anthropic: any = (AnthropicMod as any).default || AnthropicMod;
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+      const msg = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 2000,
+        messages: [{
+          role: "user",
+          content: [
+            {
+              type: "document",
+              source: {
+                type: "base64",
+                media_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                data: buf.toString("base64"),
+              },
+            },
+            {
+              type: "text",
+              text: `Parse this BGP performance review .docx and return ONLY a JSON object. Money fields in pence. Long-form sections preserve bullet structure.
+
+{
+  "review_date": "YYYY-MM-DD or null",
+  "current_salary_pence": number or null,
+  "last_increase_date": "YYYY-MM-DD or null",
+  "last_bonus_note": "string or null",
+  "fees_target_pence": number or null,
+  "fees_achieved_pence": number or null,
+  "pipeline_under_offer_pence": number or null,
+  "pipeline_negotiating_pence": number or null,
+  "expected_invoice_next_year_pence": number or null,
+  "achievements": "string or null",
+  "development_areas": "string or null",
+  "goals": "string or null",
+  "referrals": "string or null",
+  "marketing_pr": "string or null",
+  "salary_expectation_pence": number or null,
+  "feedback": "string or null",
+  "bgp_can_help": "string or null"
+}
+
+Return ONLY JSON.`,
+            },
+          ],
+        }],
+      });
+
+      const txt = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
+      const jsonStr = txt.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+      const parsed = JSON.parse(jsonStr);
+
+      const fields = [
+        "review_date", "current_salary_pence", "last_increase_date", "last_bonus_note",
+        "fees_target_pence", "fees_achieved_pence",
+        "pipeline_under_offer_pence", "pipeline_negotiating_pence", "expected_invoice_next_year_pence",
+        "achievements", "development_areas", "goals", "referrals", "marketing_pr",
+        "salary_expectation_pence", "feedback", "bgp_can_help",
+      ];
+      const cols = ["user_id", "period", "kind", "status"].concat(fields);
+      const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+      const values = [userId, period, kind, "completed"].concat(fields.map(f => parsed[f] ?? null));
+      const updateSets = fields.map(f => `${f} = EXCLUDED.${f}`).join(", ");
+
+      const r = await pool.query(
+        `INSERT INTO staff_reviews (${cols.join(", ")}) VALUES (${placeholders})
+         ON CONFLICT (user_id, period) DO UPDATE SET ${updateSets}, updated_at = now()
+         RETURNING id`,
+        values
+      );
+      res.json({ imported: true, reviewId: r.rows[0].id, extracted: parsed });
+    } catch (e: any) {
+      console.error("[hr] sharepoint review import error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });
@@ -1877,6 +2108,36 @@ export function setupHrRoutes(app: Express) {
 
       await pool.query("UPDATE staff_reviews SET ai_summary = $2, updated_at = now() WHERE id = $1", [req.params.id, aiSummary]);
       res.json({ aiSummary });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Reactions (emoji acknowledgements on a review). Anyone with view rights
+  // can react; one reaction per emoji per user (toggle).
+  app.post("/api/hr/reviews/:id/react", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.userId) return res.status(401).json({ error: "Not authenticated" });
+    const { emoji } = req.body || {};
+    if (!emoji) return res.status(400).json({ error: "emoji required" });
+    try {
+      const r = await pool.query("SELECT user_id, reactions FROM staff_reviews WHERE id = $1", [req.params.id]);
+      if (!r.rows[0]) return res.status(404).json({ error: "Not found" });
+      // Visibility: admin or the reviewee can react.
+      if (!actor.isAdmin && actor.userId !== r.rows[0].user_id) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+      const current: any[] = Array.isArray(r.rows[0].reactions) ? r.rows[0].reactions : [];
+      const existing = current.findIndex((x: any) => x.byUserId === actor.userId && x.emoji === emoji);
+      let next: any[];
+      if (existing >= 0) {
+        next = current.filter((_, i) => i !== existing);
+      } else {
+        const me = await pool.query("SELECT name FROM users WHERE id = $1", [actor.userId]);
+        next = [...current, { emoji, byUserId: actor.userId, byName: me.rows[0]?.name || "Someone", at: new Date().toISOString() }];
+      }
+      await pool.query("UPDATE staff_reviews SET reactions = $2::jsonb, updated_at = now() WHERE id = $1", [req.params.id, JSON.stringify(next)]);
+      res.json({ reactions: next });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

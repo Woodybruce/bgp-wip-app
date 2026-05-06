@@ -11,6 +11,7 @@ import {
   Network, Cake, UserPlus, Trash2, FolderLock, Folder,
   LayoutGrid, GitBranch, Camera, Eye, Bike, Baby, PiggyBank, Smartphone,
   Train, HeartHandshake, Mountain, Award, Megaphone, Sparkles, Target,
+  MessageSquare,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1385,6 +1386,27 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
     onError: (e: any) => toast({ title: "AI draft failed", description: e?.message, variant: "destructive" }),
   });
 
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importPeriod, setImportPeriod] = useState(`annual_${new Date().getFullYear()}`);
+  const importReview = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/hr/reviews/import-from-text", {
+      userId, period: importPeriod, kind: "annual", text: importText,
+    }).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] });
+      setImportOpen(false);
+      setImportText("");
+      toast({ title: "Review imported and parsed" });
+    },
+    onError: (e: any) => toast({ title: "Import failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const reactMutation = useMutation({
+    mutationFn: async ({ id, emoji }: { id: string; emoji: string }) => apiRequest("POST", `/api/hr/reviews/${id}/react`, { emoji }).then(r => r.json()),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] }),
+  });
+
   const addGoal = useMutation({
     mutationFn: async (title: string) => apiRequest("POST", `/api/hr/goals`, { userId, title, createTask: true }).then(r => r.json()),
     onSuccess: () => {
@@ -1458,7 +1480,12 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center justify-between">
             <span className="flex items-center gap-2"><Star className="w-4 h-4 text-amber-500" /> Reviews</span>
-            <div className="flex gap-1">
+            <div className="flex gap-1 flex-wrap">
+              {isAdmin && (
+                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setImportOpen(true)}>
+                  Import existing
+                </Button>
+              )}
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => startReview.mutate({ kind: "monthly" })} disabled={startReview.isPending}>1:1</Button>
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => startReview.mutate({ kind: "midyear" })} disabled={startReview.isPending}>Mid-year</Button>
               <Button size="sm" className="h-7 text-xs" onClick={() => startReview.mutate({ kind: "annual" })} disabled={startReview.isPending}>+ Annual</Button>
@@ -1571,9 +1598,98 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
                 />
               </div>
             ))}
+
+            {/* ── Manager feedback section ─────────────────────────────── */}
+            <div className="rounded-lg border-2 border-dashed border-blue-200 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-950/10 p-3 space-y-3">
+              <div className="text-xs font-semibold text-blue-900 dark:text-blue-200 uppercase tracking-wider flex items-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5" /> Manager feedback
+              </div>
+
+              <div className="space-y-1.5">
+                <Label className="text-xs">Manager comments {!isAdmin && <span className="text-[10px] text-muted-foreground">(admin-only)</span>}</Label>
+                {isAdmin ? (
+                  <Textarea
+                    rows={4}
+                    defaultValue={(editing as any).manager_comments || ""}
+                    placeholder="Your reaction, agreement, areas to challenge, salary recommendation, next steps..."
+                    onBlur={e => updateReview.mutate({ id: editing.id, body: { managerComments: e.target.value } })}
+                    className="text-sm bg-background"
+                  />
+                ) : (
+                  <div className="text-sm whitespace-pre-wrap p-2.5 rounded-md bg-background min-h-[60px]">
+                    {(editing as any).manager_comments || <span className="italic text-muted-foreground text-xs">Manager hasn't added comments yet.</span>}
+                  </div>
+                )}
+              </div>
+
+              {(editing as any).manager_comments && isOwn && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Your acknowledgement / response</Label>
+                  <Textarea
+                    rows={2}
+                    defaultValue={(editing as any).employee_acknowledgement || ""}
+                    placeholder="Anything you'd like to say in reply"
+                    onBlur={e => updateReview.mutate({ id: editing.id, body: { employeeAcknowledgement: e.target.value } })}
+                    className="text-sm bg-background"
+                  />
+                </div>
+              )}
+
+              {/* Reactions */}
+              <div className="flex items-center gap-1 flex-wrap pt-1 border-t border-blue-200/50 dark:border-blue-800/50">
+                <span className="text-[10px] text-muted-foreground mr-1">React:</span>
+                {(["👍", "🎉", "🔥", "💪", "🙌", "💯"]).map(em => {
+                  const reactions: any[] = Array.isArray((editing as any).reactions) ? (editing as any).reactions : [];
+                  const count = reactions.filter(r => r.emoji === em).length;
+                  return (
+                    <button
+                      key={em}
+                      onClick={() => reactMutation.mutate({ id: editing.id, emoji: em })}
+                      className={`text-xs rounded-full px-2 py-0.5 border transition-colors ${count > 0 ? "bg-primary/10 border-primary/30" : "bg-background hover:bg-muted"}`}
+                    >
+                      {em} {count > 0 && <span className="ml-0.5 text-[10px] font-medium">{count}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+              {Array.isArray((editing as any).reactions) && (editing as any).reactions.length > 0 && (
+                <div className="text-[10px] text-muted-foreground">
+                  {(editing as any).reactions.map((r: any) => `${r.byName} ${r.emoji}`).join(" · ")}
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}
+
+      {/* Import existing review dialog */}
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Import existing review</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Paste a review (e.g. from a SharePoint Word doc). Claude will parse the fields automatically into a new review record so the SharePoint copy can be archived.
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Period</Label>
+              <Input value={importPeriod} onChange={e => setImportPeriod(e.target.value)} placeholder="annual_2026" className="h-8" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Review text</Label>
+              <Textarea rows={14} value={importText} onChange={e => setImportText(e.target.value)} className="text-xs font-mono" placeholder="Performance review – May 2026&#10;&#10;Name: ...&#10;Position: ...&#10;Date: ...&#10;Current Salary: £...&#10;..." />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
+            <Button onClick={() => importReview.mutate()} disabled={!importText.trim() || importReview.isPending}>
+              {importReview.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+              Parse &amp; import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
