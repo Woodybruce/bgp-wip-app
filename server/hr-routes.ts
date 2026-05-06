@@ -1,7 +1,17 @@
 import type { Express } from "express";
 import { pool } from "./db";
-import { requireAuth } from "./auth";
+import { requireAuth, requireAdmin } from "./auth";
 import { xeroApi } from "./xero";
+
+// requireAuth doesn't populate req.user, so look up admin status from the DB
+// using the session/token user id. Used by hybrid (admin-or-self) endpoints
+// where the simple `requireAdmin` middleware isn't enough.
+async function getActor(req: any): Promise<{ userId: string | null; isAdmin: boolean }> {
+  const userId = req.session?.userId || req.tokenUserId || null;
+  if (!userId) return { userId: null, isAdmin: false };
+  const r = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+  return { userId, isAdmin: r.rows[0]?.is_admin === true };
+}
 
 export function setupHrRoutes(app: Express) {
 
@@ -9,8 +19,7 @@ export function setupHrRoutes(app: Express) {
 
   app.get("/api/hr/staff", requireAuth, async (req: any, res) => {
     try {
-      const isAdmin = !!req.user?.isAdmin;
-      const myId = req.user?.id;
+      const { userId: myId, isAdmin } = await getActor(req);
       // Personal-tier fields (DOB, address) are masked for everyone except
       // the user themselves and admins. Layla's HR brief specifies these as
       // "Visible to individual & Equity / HR".
@@ -50,8 +59,9 @@ export function setupHrRoutes(app: Express) {
 
   app.get("/api/hr/staff/:userId", requireAuth, async (req: any, res) => {
     const { userId } = req.params;
+    const actor = await getActor(req);
     // Non-admins can only view their own profile
-    if (!req.user?.isAdmin && req.user?.id !== userId) {
+    if (!actor.isAdmin && actor.userId !== userId) {
       return res.status(403).json({ error: "Forbidden" });
     }
     try {
@@ -85,8 +95,9 @@ export function setupHrRoutes(app: Express) {
 
   app.post("/api/hr/staff/:userId/profile", requireAuth, async (req: any, res) => {
     const { userId } = req.params;
-    const isAdmin = !!req.user?.isAdmin;
-    const isSelf = req.user?.id === userId;
+    const actor = await getActor(req);
+    const isAdmin = actor.isAdmin;
+    const isSelf = actor.userId === userId;
     if (!isAdmin && !isSelf) return res.status(403).json({ error: "Admin or self only" });
 
     const {
@@ -559,8 +570,7 @@ export function setupHrRoutes(app: Express) {
   // Creates a `users` row with a placeholder password (admin issues a real one
   // via Settings later) and an empty `staff_profiles` row that the EditProfileDialog
   // populates. Idempotent on username — re-runs return the existing user.
-  app.post("/api/hr/staff", requireAuth, async (req: any, res) => {
-    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admin only" });
+  app.post("/api/hr/staff", requireAdmin, async (req: any, res) => {
     const { name, email, role, team, title, managerId, employmentType } = req.body || {};
     if (!name || typeof name !== "string") return res.status(400).json({ error: "Name is required" });
     try {
@@ -602,9 +612,9 @@ export function setupHrRoutes(app: Express) {
 
   // ── Admin: remove (deactivate) a staff member ─────────────────────────────
   // Soft-delete: keeps the user row + history, hides them from the org chart.
-  app.delete("/api/hr/staff/:userId", requireAuth, async (req: any, res) => {
-    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admin only" });
-    if (req.user?.id === req.params.userId) return res.status(400).json({ error: "Cannot remove yourself" });
+  app.delete("/api/hr/staff/:userId", requireAdmin, async (req: any, res) => {
+    const actorId = req.session?.userId || req.tokenUserId;
+    if (actorId === req.params.userId) return res.status(400).json({ error: "Cannot remove yourself" });
     try {
       await pool.query("UPDATE users SET is_active = false WHERE id = $1", [req.params.userId]);
       await pool.query("UPDATE staff_profiles SET status = 'leaver', end_date = COALESCE(end_date, to_char(now(), 'YYYY-MM-DD')), updated_at = now() WHERE user_id = $1", [req.params.userId]);
@@ -618,8 +628,7 @@ export function setupHrRoutes(app: Express) {
   // Idempotent: matches existing users by case-insensitive name and only sets
   // org-chart fields. Skips people who aren't in the users table (admin uses
   // POST /api/hr/staff above to add missing names first).
-  app.post("/api/hr/seed-org-chart", requireAuth, async (req: any, res) => {
-    if (!req.user?.isAdmin) return res.status(403).json({ error: "Admin only" });
+  app.post("/api/hr/seed-org-chart", requireAdmin, async (req: any, res) => {
     // [name, role, team, reportsTo, board, mgt]
     const ROSTER: Array<[string, string, string, string | null, boolean, boolean]> = [
       ["Woody Bruce", "Managing Director", "Office / Corporate", null, true, true],
