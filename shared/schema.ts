@@ -117,6 +117,19 @@ export const users = pgTable("users", {
   dashboardLayout: jsonb("dashboard_layout").$type<Record<string, any>>(),
   profilePicUrl: text("profile_pic_url"),
   clientViewMode: boolean("client_view_mode").default(false),
+  // HR / org-chart fields
+  managerId: varchar("manager_id"),
+  dob: text("dob"),
+  address: text("address"),
+  personalEmail: text("personal_email"),
+  wfhDays: text("wfh_days").array(),
+  employmentType: text("employment_type"),
+  startDate: text("start_date"),
+  cvUrl: text("cv_url"),
+  bio: text("bio"),
+  boardMember: boolean("board_member").default(false),
+  managementTeam: boolean("management_team").default(false),
+  displayOrder: integer("display_order").default(0),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });

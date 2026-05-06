@@ -725,6 +725,186 @@ export async function registerRoutes(
     }
   });
 
+  // ============================================================
+  // People & HR — org chart, profiles, birthdays
+  // ============================================================
+  // Public-tier fields visible to the whole team (everyone authenticated).
+  // Sensitive fields (address, dob, personal_email, employment_type, salary
+  // history, etc.) are restricted to the user themselves + admins.
+  const HR_PUBLIC_COLUMNS = `
+    id, username, name, email, phone, role, department, team, additional_teams,
+    profile_pic_url, manager_id, board_member, management_team, display_order,
+    wfh_days, bio, cv_url, is_active
+  `;
+  const HR_PRIVATE_COLUMNS = `
+    dob, address, personal_email, employment_type, start_date
+  `;
+
+  app.get("/api/hr/team", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      const isAdmin = adminCheck.rows[0]?.is_admin === true;
+
+      // Admins get the full HR record for everyone; non-admins get the public
+      // tier for everyone plus the private tier for themselves only.
+      const sql = isAdmin
+        ? `SELECT ${HR_PUBLIC_COLUMNS}, ${HR_PRIVATE_COLUMNS} FROM users WHERE is_active = true ORDER BY display_order, name`
+        : `SELECT ${HR_PUBLIC_COLUMNS},
+              CASE WHEN id = $1 THEN dob ELSE NULL END AS dob,
+              CASE WHEN id = $1 THEN address ELSE NULL END AS address,
+              CASE WHEN id = $1 THEN personal_email ELSE NULL END AS personal_email,
+              CASE WHEN id = $1 THEN employment_type ELSE NULL END AS employment_type,
+              CASE WHEN id = $1 THEN start_date ELSE NULL END AS start_date
+            FROM users WHERE is_active = true ORDER BY display_order, name`;
+      const params = isAdmin ? [] : [userId];
+      const { rows } = await pool.query(sql, params);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch team" });
+    }
+  });
+
+  app.get("/api/hr/birthdays", requireAuth, async (req, res) => {
+    try {
+      const days = Math.max(1, Math.min(60, parseInt(String(req.query.days || "14"), 10) || 14));
+      // Birthdays are stored as ISO YYYY-MM-DD strings. Match on month/day so
+      // age is irrelevant; window crosses the year boundary if needed.
+      const { rows } = await pool.query(
+        `SELECT id, name, role, team, profile_pic_url, dob FROM users
+         WHERE is_active = true AND dob IS NOT NULL`
+      );
+      const today = new Date();
+      const upcoming = rows
+        .map((r: any) => {
+          const dob = String(r.dob);
+          const m = dob.match(/-(\d{2})-(\d{2})$/);
+          if (!m) return null;
+          const month = parseInt(m[1], 10) - 1;
+          const day = parseInt(m[2], 10);
+          const next = new Date(today.getFullYear(), month, day);
+          if (next < new Date(today.getFullYear(), today.getMonth(), today.getDate())) {
+            next.setFullYear(today.getFullYear() + 1);
+          }
+          const diffDays = Math.round((next.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          return diffDays >= 0 && diffDays <= days
+            ? { id: r.id, name: r.name, role: r.role, team: r.team, profilePicUrl: r.profile_pic_url, date: next.toISOString().slice(0, 10), daysUntil: diffDays }
+            : null;
+        })
+        .filter(Boolean)
+        .sort((a: any, b: any) => a.daysUntil - b.daysUntil);
+      res.json(upcoming);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to fetch birthdays" });
+    }
+  });
+
+  // Updates: admins can edit anyone's full record; non-admins can edit only
+  // their own personal-tier fields (no role, team, manager, admin flags).
+  app.patch("/api/hr/team/:id", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const targetId = req.params.id;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      const isAdmin = adminCheck.rows[0]?.is_admin === true;
+      const isSelf = String(userId) === String(targetId);
+      if (!isAdmin && !isSelf) return res.status(403).json({ message: "You can only edit your own profile" });
+
+      const allowed = isAdmin
+        ? new Set([
+            "name", "email", "phone", "role", "department", "team", "additionalTeams",
+            "managerId", "boardMember", "managementTeam", "displayOrder",
+            "dob", "address", "personalEmail", "wfhDays", "employmentType",
+            "startDate", "cvUrl", "bio", "isActive",
+          ])
+        : new Set([
+            "phone", "dob", "address", "personalEmail", "wfhDays",
+            "cvUrl", "bio",
+          ]);
+
+      const camelToSnake = (s: string) => s.replace(/[A-Z]/g, c => "_" + c.toLowerCase());
+      const sets: string[] = [];
+      const params: any[] = [];
+      let p = 1;
+      for (const [key, value] of Object.entries(req.body || {})) {
+        if (!allowed.has(key)) continue;
+        sets.push(`${camelToSnake(key)} = $${p++}`);
+        params.push(value);
+      }
+      if (sets.length === 0) return res.status(400).json({ message: "No editable fields supplied" });
+      params.push(targetId);
+      await pool.query(`UPDATE users SET ${sets.join(", ")} WHERE id = $${p}`, params);
+
+      const { rows } = await pool.query(`SELECT ${HR_PUBLIC_COLUMNS}, ${HR_PRIVATE_COLUMNS} FROM users WHERE id = $1`, [targetId]);
+      res.json(rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to update profile" });
+    }
+  });
+
+  // Admin: create a new person on the org chart.
+  app.post("/api/hr/team", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      if (adminCheck.rows[0]?.is_admin !== true) return res.status(403).json({ message: "Admin access required" });
+
+      const { name, role, team, managerId, email, additionalTeams, boardMember, managementTeam } = req.body || {};
+      if (!name || typeof name !== "string") return res.status(400).json({ message: "Name is required" });
+
+      const username = name.toLowerCase().replace(/['']/g, "").replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "");
+      const bcrypt = await import("bcrypt");
+      const placeholderHash = await bcrypt.default.hash(`bgp-placeholder-${Date.now()}`, 10);
+
+      const { rows } = await pool.query(
+        `INSERT INTO users (
+          username, password, name, role, team, additional_teams, manager_id,
+          board_member, management_team, email, is_admin, is_active
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,true)
+         RETURNING ${HR_PUBLIC_COLUMNS}`,
+        [
+          username, placeholderHash, name.trim(), role || null, team || null,
+          additionalTeams || [], managerId || null,
+          boardMember === true, managementTeam === true, email || null,
+        ]
+      );
+      res.json(rows[0]);
+    } catch (err: any) {
+      if (err?.code === "23505") return res.status(409).json({ message: "Username already exists — try a different name" });
+      res.status(500).json({ message: err?.message || "Failed to create person" });
+    }
+  });
+
+  // Admin: deactivate (soft-delete) a person from the org chart. Their direct
+  // reports become orphaned; the page surfaces these for re-assignment.
+  app.delete("/api/hr/team/:id", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      if (adminCheck.rows[0]?.is_admin !== true) return res.status(403).json({ message: "Admin access required" });
+      if (String(userId) === String(req.params.id)) return res.status(400).json({ message: "You cannot remove yourself" });
+      await pool.query(`UPDATE users SET is_active = false WHERE id = $1`, [req.params.id]);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to remove person" });
+    }
+  });
+
+  // Admin: one-shot seed of the BGP org chart (idempotent — safe to re-run).
+  app.post("/api/admin/seed-team", requireAuth, async (req: any, res) => {
+    try {
+      const userId = req.session?.userId || req.tokenUserId;
+      const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      if (adminCheck.rows[0]?.is_admin !== true) return res.status(403).json({ message: "Admin access required" });
+      const { seedBgpOrgChart } = await import("./seed-team");
+      const result = await seedBgpOrgChart();
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      console.error("[seed-team]", err);
+      res.status(500).json({ message: err?.message || "Failed to seed team" });
+    }
+  });
+
   app.post("/api/heartbeat", requireAuth, async (req, res) => {
     const userId = req.session.userId || (req as any).tokenUserId;
     if (!userId) return res.status(401).json({ ok: false });

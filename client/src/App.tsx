@@ -86,6 +86,7 @@ const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
 const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
+const TeamPage = lazy(() => import("@/pages/team"));
 
 
 function PageLoader() {
@@ -172,6 +173,7 @@ function Router() {
       <Route path="/aml-training/:id" component={AmlTraining} />
       <Route path="/brands" component={BrandsHub} />
       <Route path="/property-pathway" component={PropertyPathway} />
+      <Route path="/team" component={TeamPage} />
       <Route path="/turnover" component={TurnoverBoard} />
       <Route path="/wip-report" component={DealsHub} />
       <Route path="/upload" component={UploadPage} />

@@ -10,6 +10,7 @@ import {
   BarChart3,
   Newspaper,
   Users,
+  UserCog,
   X,
 
   FileText,
@@ -83,6 +84,7 @@ const coreNavBase = [
   { title: "Requirements", url: "/requirements", icon: FileText },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "People Hub", url: "/contacts", icon: Users },
+  { title: "People & HR", url: "/team", icon: UserCog },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
   { title: "Comps", url: "/comps", icon: Scale },
   { title: "Lease Events", url: "/lease-events", icon: Calendar },
@@ -378,6 +380,7 @@ const mobileOverlayItems = [
   { title: "Requirements", url: "/requirements", icon: FileText },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "People Hub", url: "/contacts", icon: Users },
+  { title: "People & HR", url: "/team", icon: UserCog },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
   { title: "Comps", url: "/comps", icon: Scale },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
