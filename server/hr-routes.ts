@@ -558,6 +558,95 @@ export function setupHrRoutes(app: Express) {
     }
   });
 
+  // ── Team summary roll-up for the dashboard organigram ───────────────────
+  // For each team: head (highest-ranked board/mgt member by name), headcount,
+  // billed YTD (Xero), pipeline £ (crm_deals share), and the team's top 2
+  // active deals. Used as the rich card content on the new dashboard landing.
+  app.get("/api/hr/team-summary", requireAuth, async (_req, res) => {
+    try {
+      const TEAM_ORDER = ["Office / Corporate", "Investment", "Lease Advisory", "National Leasing", "Development", "Tenant Rep", "London Leasing"];
+
+      const { rows: staff } = await pool.query(`
+        SELECT u.id, u.name, u.email, u.team, u.profile_pic_url,
+               sp.title, sp.board_member, sp.management_team, sp.manager_id
+        FROM users u
+        LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+        WHERE u.is_active = true AND sp.id IS NOT NULL
+      `);
+
+      // Aggregate WIP / pipeline from crm_deals per team. Open = not invoiced/
+      // archived/withdrawn. Status COM (completed) is also WIP — not yet billed.
+      const { rows: dealRows } = await pool.query(`
+        SELECT d.id, d.name, d.status, d.fee, d.internal_agent,
+               COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) AS dt
+        FROM crm_deals d
+        WHERE COALESCE(d.status, '') NOT IN ('INV','ARCH','WIT')
+          AND d.fee IS NOT NULL AND d.fee > 0
+      `);
+
+      // Build a name → team map so we can attribute deals via internal_agent
+      // even when crm_deals.team[] is null/stale.
+      const personTeam = new Map<string, string>();
+      for (const s of staff) {
+        if (s.name && s.team) personTeam.set(s.name.toLowerCase(), s.team);
+      }
+
+      // Group deals by inferred team. A deal counts toward a team if any of
+      // its internal_agents are on that team. To avoid double-counting, divide
+      // the fee by (#agents) and attribute that share to each agent's team.
+      const teamWip: Record<string, number> = {};
+      const teamDeals: Record<string, Array<{ id: string; name: string; fee: number; status: string; date: string | null }>> = {};
+      for (const d of dealRows) {
+        const agents: string[] = Array.isArray(d.internal_agent) ? d.internal_agent : [];
+        if (agents.length === 0) continue;
+        const sharePence = Math.round((parseFloat(d.fee) || 0) * 100 / agents.length);
+        const teamsTouched = new Set<string>();
+        for (const ag of agents) {
+          const t = personTeam.get(String(ag).toLowerCase());
+          if (!t) continue;
+          teamWip[t] = (teamWip[t] || 0) + sharePence;
+          teamsTouched.add(t);
+        }
+        // Track the deal under each team it touches (for top-deal display)
+        for (const t of teamsTouched) {
+          (teamDeals[t] ??= []).push({
+            id: d.id,
+            name: d.name,
+            fee: Math.round((parseFloat(d.fee) || 0) * 100),
+            status: d.status,
+            date: d.dt ? new Date(d.dt).toISOString().slice(0, 10) : null,
+          });
+        }
+      }
+
+      // Build per-team summaries
+      const summaries = TEAM_ORDER.map(team => {
+        const members = staff.filter((s: any) => s.team === team);
+        if (members.length === 0) return null;
+        // Head = first board member, else management_team, else first member.
+        const head = members.find((m: any) => m.board_member)
+                  || members.find((m: any) => m.management_team)
+                  || members[0];
+        const topDeals = (teamDeals[team] || [])
+          .sort((a, b) => b.fee - a.fee)
+          .slice(0, 2);
+        return {
+          team,
+          headcount: members.length,
+          head: head ? { id: head.id, name: head.name, title: head.title, profilePicUrl: head.profile_pic_url } : null,
+          memberIds: members.map((m: any) => m.id),
+          pipelinePence: teamWip[team] || 0,
+          topDeals,
+        };
+      }).filter(Boolean);
+
+      res.json({ teams: summaries });
+    } catch (e: any) {
+      console.error("[hr] team-summary error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Policy documents (SharePoint-backed) ─────────────────────────────────
 
   app.get("/api/hr/policies", requireAuth, async (_req, res) => {
