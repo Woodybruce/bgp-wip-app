@@ -28,7 +28,8 @@ import { ScrollableTable } from "@/components/scrollable-table";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineSelect, InlineLabelSelect } from "@/components/inline-edit";
-import { SOURCE_TYPES, SOURCE_LIST, normaliseSource } from "@shared/source-types";
+import { SOURCE_TYPES, SOURCE_LIST, normaliseSource, type SourceType } from "@shared/source-types";
+import { SourcePicker } from "@/components/source-cell";
 import { ExternalLink } from "lucide-react";
 import { ColumnFilterPopover } from "@/components/column-filter-popover";
 import { CRM_OPTIONS } from "@/lib/crm-options";
@@ -530,6 +531,8 @@ function LeadFormDialog({
     leadType: defaultValues?.leadType || "",
     assignedTo: defaultValues?.assignedTo || "",
     source: defaultValues?.source || "",
+    sourceUrl: (defaultValues as any)?.sourceUrl || "",
+    sourceTitle: (defaultValues as any)?.sourceTitle || "",
     email: defaultValues?.email || "",
     phone: defaultValues?.phone || "",
     notes: defaultValues?.notes || "",
@@ -594,14 +597,6 @@ function LeadFormDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-2">
-              <Label>Source</Label>
-              <Input
-                value={form.source}
-                onChange={(e) => setForm({ ...form, source: e.target.value })}
-                data-testid="input-lead-source"
-              />
-            </div>
-            <div className="space-y-2">
               <Label>Email</Label>
               <Input
                 type="email"
@@ -610,13 +605,21 @@ function LeadFormDialog({
                 data-testid="input-lead-email"
               />
             </div>
+            <div className="space-y-2">
+              <Label>Phone</Label>
+              <Input
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                data-testid="input-lead-phone"
+              />
+            </div>
           </div>
-          <div className="space-y-2">
-            <Label>Phone</Label>
-            <Input
-              value={form.phone}
-              onChange={(e) => setForm({ ...form, phone: e.target.value })}
-              data-testid="input-lead-phone"
+          <div className="rounded-md border p-3 bg-muted/30">
+            <SourcePicker
+              evidence={form.source}
+              url={form.sourceUrl}
+              title={form.sourceTitle}
+              onChange={(s) => setForm({ ...form, source: s.evidence || "", sourceUrl: s.url || "", sourceTitle: s.title || "" })}
             />
           </div>
           <div className="space-y-2">

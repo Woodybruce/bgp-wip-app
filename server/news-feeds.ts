@@ -479,20 +479,30 @@ async function extractCompsFromEmails(): Promise<{ extracted: number; created: n
     const compSearchQuery = encodeURIComponent('"zone a" OR "net effective" OR "ITZA" OR "new letting" OR "rent free" OR "headline rent" OR "comparable" OR "sq ft" OR "psf" OR "lease renewal"');
 
     const emailTexts: string[] = [];
+    // Per-message webLink + label so each extracted comp can deep-link back to
+    // the email it came from. Index aligns with the order pushed into emailTexts;
+    // the AI returns sourceArticleIndex (1-based) for each comp.
+    const emailArticles: { url: string; title: string }[] = [];
 
     for (const email of teamEmails.slice(0, 15)) {
       try {
-        const searchPath = `/users/${email}/messages?$search=${compSearchQuery}&$top=50&$select=subject,bodyPreview,from,receivedDateTime&$orderby=receivedDateTime desc`;
+        const searchPath = `/users/${email}/messages?$search=${compSearchQuery}&$top=50&$select=subject,bodyPreview,from,receivedDateTime,webLink&$orderby=receivedDateTime desc`;
         const data = await graphRequest(searchPath);
         const messages = data?.value || [];
 
         for (const msg of messages) {
           const preview = msg.bodyPreview || "";
           const subject = msg.subject || "";
-          // Graph $search already filtered by comp keywords — push all results
+          const fromName = msg.from?.emailAddress?.name || "Unknown";
+          const fromAddr = msg.from?.emailAddress?.address || "";
+          const idx = emailTexts.length + 1;
           emailTexts.push(
-            `Email from ${msg.from?.emailAddress?.name || "Unknown"} (${msg.from?.emailAddress?.address || ""}):\nSubject: ${subject}\nDate: ${msg.receivedDateTime?.split("T")[0] || "unknown"}\nPreview: ${preview.slice(0, 500)}`
+            `Source #${idx} — Email from ${fromName} (${fromAddr}):\nSubject: ${subject}\nDate: ${msg.receivedDateTime?.split("T")[0] || "unknown"}\nPreview: ${preview.slice(0, 500)}`
           );
+          emailArticles.push({
+            url: msg.webLink || "",
+            title: `${fromName}: ${subject}`.slice(0, 200),
+          });
         }
       } catch (err: any) {
         console.error(`[Comp Extract] Error reading ${email}:`, err?.message?.slice(0, 100));
@@ -502,12 +512,13 @@ async function extractCompsFromEmails(): Promise<{ extracted: number; created: n
     if (emailTexts.length === 0) return { extracted: 0, created: 0 };
 
     const batchText = emailTexts.slice(0, 50).join("\n\n---\n\n");
+    const articleSlice = emailArticles.slice(0, 50);
 
     const response = await callClaude({
       model: CHATBGP_HELPER_MODEL,
       messages: [
         { role: "system", content: COMP_EXTRACTION_PROMPT },
-        { role: "user", content: `Extract leasing comps from these team emails:\n\n${batchText}` },
+        { role: "user", content: `Extract leasing comps from these team emails. Each one is labelled "Source #N — ..."; set sourceArticleIndex to that N so the comp deep-links back to its email.\n\n${batchText}` },
       ],
       max_completion_tokens: 4096,
       response_format: { type: "json_object" },
@@ -519,7 +530,7 @@ async function extractCompsFromEmails(): Promise<{ extracted: number; created: n
     const parsed = safeParseJSON(content);
     const comps = parsed?.comps || [];
     extracted = comps.length;
-    created = await saveExtractedComps(comps, "Email");
+    created = await saveExtractedComps(comps, "Email", articleSlice);
   } catch (err: any) {
     console.error("[Comp Extract] Email extraction error:", err?.message?.slice(0, 200));
   }
@@ -545,7 +556,9 @@ async function extractCompsFromSharePoint(): Promise<{ extracted: number; create
     for (const folderName of compsFolderPaths) {
       try {
         const encoded = encodeURIComponent(folderName);
-        const resp = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encoded}:/children?$select=id,name,size,lastModifiedDateTime,file&$top=20&$orderby=lastModifiedDateTime desc`, {
+        // Include webUrl so each extracted comp can deep-link back to the SP
+        // file it came from rather than just being labelled "File".
+        const resp = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encoded}:/children?$select=id,name,size,lastModifiedDateTime,file,webUrl&$top=20&$orderby=lastModifiedDateTime desc`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (resp.ok) {
@@ -605,8 +618,18 @@ async function extractCompsFromSharePoint(): Promise<{ extracted: number; create
           if (content) {
             const parsed = safeParseJSON(content);
             const comps = parsed?.comps || [];
+            // Single-file batch — every comp from this iteration links back to
+            // this same SP file. Tag sourceArticleIndex=1 from the AI for safety.
+            const fileArticle = file.webUrl
+              ? [{ url: file.webUrl as string, title: file.name as string }]
+              : [];
+            // Default sourceArticleIndex to 1 so saveExtractedComps picks up the
+            // article URL even if the AI omitted it for a single-file batch.
+            for (const c of comps) {
+              if (typeof c.sourceArticleIndex !== "number") c.sourceArticleIndex = 1;
+            }
             extracted += comps.length;
-            created += await saveExtractedComps(comps, "File");
+            created += await saveExtractedComps(comps, "File", fileArticle);
           }
         } finally {
           try { fs.unlinkSync(tmpFile); } catch { }

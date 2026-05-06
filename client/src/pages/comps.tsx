@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { InlineText, InlineLabelSelect, InlineLinkSelect } from "@/components/inline-edit";
 import { SOURCE_TYPES, SOURCE_LIST, normaliseSource, type SourceType } from "@shared/source-types";
+import { SourceCell, SourcePicker } from "@/components/source-cell";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
@@ -2176,11 +2177,15 @@ export default function Comps() {
   const [newHeadlineRent, setNewHeadlineRent] = useState("");
   const [newZoneA, setNewZoneA] = useState("");
   const [newDate, setNewDate] = useState("");
+  const [newSourceEvidence, setNewSourceEvidence] = useState<string | null>(null);
+  const [newSourceUrl, setNewSourceUrl] = useState<string | null>(null);
+  const [newSourceTitle, setNewSourceTitle] = useState<string | null>(null);
 
   const resetCreateForm = () => {
     setNewName(""); setNewPropertyId(null); setNewAddress(null);
     setNewTenant(""); setNewArea(""); setNewPostcode(""); setNewUseClass("");
     setNewTxnType(""); setNewHeadlineRent(""); setNewZoneA(""); setNewDate("");
+    setNewSourceEvidence(null); setNewSourceUrl(null); setNewSourceTitle(null);
   };
 
   const startPdfExport = useCallback(async (targetComps: CrmComp[]) => {
@@ -3497,6 +3502,15 @@ export default function Comps() {
               <label className="text-xs font-medium mb-1 block">Date</label>
               <Input value={newDate} onChange={e => setNewDate(e.target.value)} placeholder="Jun 2024" className="h-9" data-testid="create-comp-date" />
             </div>
+            <div className="border-t pt-3">
+              <SourcePicker
+                evidence={newSourceEvidence}
+                url={newSourceUrl}
+                title={newSourceTitle}
+                onChange={(s) => { setNewSourceEvidence(s.evidence); setNewSourceUrl(s.url); setNewSourceTitle(s.title); }}
+              />
+              <p className="text-[10px] text-muted-foreground mt-1.5">Defaults to "BGP Direct" if not set. Pick a source type and paste a link to deep-link from the comps schedule back to the email / pathway / file.</p>
+            </div>
           </div>
           <DialogFooter className="mt-4">
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
@@ -3514,7 +3528,9 @@ export default function Comps() {
                 headlineRent: newHeadlineRent || null,
                 zoneARate: newZoneA || null,
                 completionDate: newDate || null,
-                sourceEvidence: "BGP Direct",
+                sourceEvidence: newSourceEvidence || "BGP Direct",
+                sourceUrl: newSourceUrl,
+                sourceTitle: newSourceTitle,
               })}
               data-testid="button-save-comp"
             >
