@@ -72,9 +72,8 @@ function buildSchemaDigest(): TableInfo[] {
   const tables: TableInfo[] = [];
   for (const [exportName, value] of Object.entries(schema)) {
     if (!value || typeof value !== "object") continue;
-    // Drizzle tables expose a Symbol-keyed name and a `_` introspection slot.
-    const sym = Object.getOwnPropertySymbols(value).find(s => s.description?.includes("Name"));
-    const tableName = sym ? (value as any)[sym] : null;
+    // Drizzle exposes the physical table name via Symbol.for("drizzle:Name")
+    const tableName = (value as any)[Symbol.for("drizzle:Name")] ?? null;
     if (!tableName || typeof tableName !== "string") continue;
     const columns = (value as any)[Symbol.for("drizzle:Columns")] as Record<string, any> | undefined;
     if (!columns) continue;

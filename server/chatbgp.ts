@@ -1448,14 +1448,14 @@ export async function consolidateUserMemories(userId: string): Promise<{ merged:
   for (let i = 0; i < memories.length; i++) {
     if (toDelete.has(memories[i].id)) continue;
     const a = memories[i];
-    const aWords = a.content.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    const aWords = a.content.toLowerCase().split(/\s+/).filter(w => w.length >= 2);
 
     for (let j = i + 1; j < memories.length; j++) {
       if (toDelete.has(memories[j].id)) continue;
       const b = memories[j];
       if (a.category !== b.category) continue;
 
-      const bWords = new Set(b.content.toLowerCase().split(/\s+/).filter(w => w.length > 3));
+      const bWords = new Set(b.content.toLowerCase().split(/\s+/).filter(w => w.length >= 2));
       const intersection = aWords.filter(w => bWords.has(w));
       const overlap = intersection.length / Math.max(aWords.length, bWords.size);
 
@@ -5112,6 +5112,10 @@ export async function executeCrmToolRaw(
     const { driveId, itemId, attachmentId, messageId, mailboxEmail,
             startRow, maxRows, sheetName, startChar, maxChars } = fnArgs as any;
 
+    if (!url && !driveId && !attachmentId) {
+      return { data: { error: "read_file requires at least one of: url, driveId+itemId, or attachmentId+messageId" } };
+    }
+
     // Email attachment read — delegate to download_email_attachment
     if (attachmentId && messageId) {
       return executeCrmToolRaw(
@@ -5180,7 +5184,7 @@ export async function executeCrmToolRaw(
       const XLSX = await import("xlsx");
       const pathMod = await import("path");
       const fsMod = await import("fs");
-      const { getFile } = await import("./storage");
+      const { getFile } = await import("./file-storage");
 
       // ── 1. Resolve and read the file ──────────────────────────────────────
       const rawUrl: string = fnArgs.fileUrl || "";
