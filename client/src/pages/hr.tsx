@@ -9,7 +9,7 @@ import {
   Shield, Heart, Briefcase, Star, DollarSign, BookOpen,
   ExternalLink, Loader2, Search, SlidersHorizontal,
   Network, Cake, UserPlus, Trash2, FolderLock, Folder,
-  LayoutGrid, GitBranch, Camera,
+  LayoutGrid, GitBranch, Camera, Eye,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1273,36 +1273,111 @@ function CardTab({ cardholder, isAdmin, person }: { cardholder: any; isAdmin: bo
 
 // ── Policies panel ────────────────────────────────────────────────────────────
 
-function PoliciesPanel() {
-  const { data: policies = [] } = useQuery<Array<{ name: string; category: string; url: string }>>({
+interface PolicyDoc {
+  id: string;
+  name: string;
+  category: string;
+  fileName: string | null;
+  mimeType: string | null;
+  inlineUrl: string | null;
+}
+
+function PoliciesPanel({ isAdmin }: { isAdmin: boolean }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState<PolicyDoc | null>(null);
+  const { data: policies = [], isLoading } = useQuery<PolicyDoc[]>({
     queryKey: ["/api/hr/policies"],
   });
 
+  const refreshMutation = useMutation({
+    mutationFn: async () => apiRequest("GET", "/api/hr/policies?refresh=1").then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/policies"] });
+      toast({ title: "Policies re-synced from SharePoint" });
+    },
+    onError: (e: any) => toast({ title: "Refresh failed", description: e?.message, variant: "destructive" }),
+  });
+
   const byCategory = useMemo(() => {
-    const map: Record<string, typeof policies> = {};
+    const map: Record<string, PolicyDoc[]> = {};
     for (const p of policies) {
       (map[p.category] ??= []).push(p);
     }
     return map;
   }, [policies]);
 
+  const isPdf = (p: PolicyDoc) => (p.mimeType || "").toLowerCase().includes("pdf") || (p.fileName || "").toLowerCase().endsWith(".pdf");
+
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-muted-foreground">Read in-app — no SharePoint detour</div>
+        {isAdmin && (
+          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => refreshMutation.mutate()} disabled={refreshMutation.isPending}>
+            {refreshMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : null}
+            Re-sync from SharePoint
+          </Button>
+        )}
+      </div>
+
+      {isLoading && <div className="flex items-center justify-center p-8"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>}
+
       {Object.entries(byCategory).map(([cat, items]) => (
         <div key={cat}>
           <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">{cat}</div>
           <div className="space-y-1.5">
             {items.map(p => (
-              <a key={p.name} href={p.url} target="_blank" rel="noreferrer"
-                className="flex items-center gap-3 p-3 rounded-lg border hover:bg-accent/40 transition-colors no-underline text-foreground">
+              <button
+                key={p.id}
+                onClick={() => p.inlineUrl ? setOpen(p) : null}
+                disabled={!p.inlineUrl}
+                className="w-full flex items-center gap-3 p-3 rounded-lg border hover:bg-accent/40 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                data-testid={`policy-${p.id}`}
+              >
                 <BookOpen className="w-4 h-4 text-muted-foreground shrink-0" />
-                <span className="text-sm">{p.name}</span>
-                <ExternalLink className="w-3.5 h-3.5 text-muted-foreground ml-auto shrink-0" />
-              </a>
+                <span className="text-sm font-medium flex-1">{p.name}</span>
+                {p.fileName && <span className="text-[10px] text-muted-foreground truncate max-w-[180px]">{p.fileName}</span>}
+                {p.inlineUrl ? <Eye className="w-3.5 h-3.5 text-muted-foreground shrink-0" /> : <span className="text-[10px] italic text-muted-foreground">not synced</span>}
+              </button>
             ))}
           </div>
         </div>
       ))}
+
+      {/* Inline reader */}
+      <Dialog open={!!open} onOpenChange={(o) => !o && setOpen(null)}>
+        <DialogContent className="max-w-5xl w-[95vw] h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-4 border-b">
+            <DialogTitle className="flex items-center gap-2 text-sm">
+              <BookOpen className="w-4 h-4 text-primary" />
+              {open?.name}
+              {open?.fileName && <span className="text-[10px] text-muted-foreground font-normal">{open.fileName}</span>}
+              {open?.inlineUrl && (
+                <a href={open.inlineUrl} target="_blank" rel="noreferrer" className="ml-auto text-xs text-primary flex items-center gap-1 hover:underline">
+                  <ExternalLink className="w-3 h-3" /> Open in new tab
+                </a>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 bg-muted/20 overflow-hidden">
+            {open?.inlineUrl && (
+              isPdf(open)
+                ? <iframe src={open.inlineUrl} className="w-full h-full border-0" title={open.name} />
+                : (
+                  <div className="flex flex-col items-center justify-center h-full p-8 text-center gap-3">
+                    <FileText className="w-10 h-10 text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground max-w-md">
+                      This is a {open.fileName?.split(".").pop()?.toUpperCase()} document — click below to download or open.
+                    </p>
+                    <a href={open.inlineUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm">
+                      <ExternalLink className="w-3.5 h-3.5" /> Open / download
+                    </a>
+                  </div>
+                )
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1833,7 +1908,7 @@ export default function HRPage() {
         </TabsContent>
 
         <TabsContent value="policies">
-          <div className="pb-6"><PoliciesPanel /></div>
+          <div className="pb-6"><PoliciesPanel isAdmin={isAdmin} /></div>
         </TabsContent>
       </Tabs>
 

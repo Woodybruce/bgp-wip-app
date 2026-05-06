@@ -694,23 +694,145 @@ export function setupHrRoutes(app: Express) {
     }
   });
 
-  // ── Policy documents (SharePoint-backed) ─────────────────────────────────
+  // ── Policy documents (proxied from SharePoint, viewable in-app) ───────────
+  // Each policy maps to a folder under HR/Policies & Procedures. On first
+  // request we enumerate the folder via Graph and pick the newest PDF/DOCX,
+  // caching driveId/itemId in policy_files. The /file endpoint streams the
+  // actual bytes so PDFs render inline in the app and DOCX downloads, never
+  // bouncing the user out to SharePoint.
 
-  app.get("/api/hr/policies", requireAuth, async (_req, res) => {
-    const base = "https://brucegillinghampollardlimited.sharepoint.com/sites/BGP/Shared%20Documents/HR/Policies%20%26%20Procedures";
-    const policies = [
-      { name: "AML Policy",                     category: "Compliance",      url: `${base}/AML` },
-      { name: "Anti-Bribery Policy",             category: "Compliance",      url: `${base}/Anti%20bribery` },
-      { name: "Commission Scheme",               category: "Compensation",    url: `${base}/Commission%20scheme` },
-      { name: "Complaints Handling Procedure",   category: "Operations",      url: `${base}/Complaints%20handling%20procedure` },
-      { name: "Equality Policy",                 category: "HR",              url: `${base}/Equality` },
-      { name: "Expenses Policy",                 category: "Finance",         url: `${base}/Expenses` },
-      { name: "Fire Safety Policy",              category: "Health & Safety", url: `${base}/Fire%20safety` },
-      { name: "Living Wage Policy",              category: "HR",              url: `${base}/Living%20Wage` },
-      { name: "Maternity Policy",                category: "HR",              url: `${base}/Maternity%20Policy` },
-      { name: "Safety at Work",                  category: "Health & Safety", url: `${base}/Safety%20at%20work` },
-    ];
-    res.json(policies);
+  const POLICY_DEFS: Array<{ id: string; name: string; category: string; folder: string }> = [
+    { id: "aml",           name: "AML Policy",                    category: "Compliance",      folder: "AML" },
+    { id: "anti-bribery",  name: "Anti-Bribery Policy",            category: "Compliance",      folder: "Anti bribery" },
+    { id: "commission",    name: "Commission Scheme",              category: "Compensation",    folder: "Commission scheme" },
+    { id: "complaints",    name: "Complaints Handling Procedure",  category: "Operations",      folder: "Complaints handling procedure" },
+    { id: "equality",      name: "Equality Policy",                category: "HR",              folder: "Equality" },
+    { id: "expenses",      name: "Expenses Policy",                category: "Finance",         folder: "Expenses" },
+    { id: "fire-safety",   name: "Fire Safety Policy",             category: "Health & Safety", folder: "Fire safety" },
+    { id: "living-wage",   name: "Living Wage Policy",             category: "HR",              folder: "Living Wage" },
+    { id: "maternity",     name: "Maternity Policy",               category: "HR",              folder: "Maternity Policy" },
+    { id: "safety",        name: "Safety at Work",                 category: "Health & Safety", folder: "Safety at work" },
+  ];
+
+  // Resolve a policy folder to its newest doc. Uses the same MS token machinery
+  // as the photo sync. Cached in `policy_files` so we don't enumerate on every
+  // request — admins can hit ?refresh=1 to re-resolve.
+  async function resolvePolicyFile(
+    token: string,
+    folder: string
+  ): Promise<{ driveId: string; itemId: string; name: string; mimeType: string } | null> {
+    // Search the SharePoint drive for files inside the policy folder.
+    const SITE = "brucegillinghampollardlimited.sharepoint.com:/sites/BGP:";
+    const siteRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${SITE}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!siteRes.ok) return null;
+    const site = await siteRes.json();
+    const drivesRes = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drives`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!drivesRes.ok) return null;
+    const drives = (await drivesRes.json()).value || [];
+    const docDrive = drives.find((d: any) => d.name === "Documents") || drives[0];
+    if (!docDrive) return null;
+
+    const path = `HR/Policies %26 Procedures/${encodeURIComponent(folder)}`;
+    const listRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${docDrive.id}/root:/${path}:/children?$select=id,name,file,lastModifiedDateTime`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (!listRes.ok) return null;
+    const items = (await listRes.json()).value || [];
+    const docs = items.filter((i: any) => i.file && /\.(pdf|docx?|xlsx?)$/i.test(i.name));
+    if (docs.length === 0) return null;
+    docs.sort((a: any, b: any) => (b.lastModifiedDateTime || "").localeCompare(a.lastModifiedDateTime || ""));
+    return {
+      driveId: docDrive.id,
+      itemId: docs[0].id,
+      name: docs[0].name,
+      mimeType: docs[0].file?.mimeType || "application/octet-stream",
+    };
+  }
+
+  app.get("/api/hr/policies", requireAuth, async (req: any, res) => {
+    try {
+      // Ensure cache table
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS policy_files (
+          id TEXT PRIMARY KEY,
+          drive_id TEXT NOT NULL,
+          item_id TEXT NOT NULL,
+          file_name TEXT,
+          mime_type TEXT,
+          updated_at TIMESTAMP DEFAULT now()
+        )
+      `);
+
+      const refresh = req.query.refresh === "1";
+      const cacheRows = await pool.query("SELECT id, drive_id, item_id, file_name, mime_type FROM policy_files");
+      const cache = new Map<string, any>(cacheRows.rows.map((r: any) => [r.id, r]));
+
+      // Resolve missing entries (or refresh all). Token is optional — without
+      // it we still return the policy list with no inline preview.
+      const token = await getValidMsToken(req);
+      if (token && (refresh || cacheRows.rows.length < POLICY_DEFS.length)) {
+        for (const p of POLICY_DEFS) {
+          if (!refresh && cache.has(p.id)) continue;
+          const resolved = await resolvePolicyFile(token, p.folder);
+          if (!resolved) continue;
+          await pool.query(
+            `INSERT INTO policy_files (id, drive_id, item_id, file_name, mime_type, updated_at)
+             VALUES ($1, $2, $3, $4, $5, now())
+             ON CONFLICT (id) DO UPDATE SET drive_id = EXCLUDED.drive_id, item_id = EXCLUDED.item_id,
+               file_name = EXCLUDED.file_name, mime_type = EXCLUDED.mime_type, updated_at = now()`,
+            [p.id, resolved.driveId, resolved.itemId, resolved.name, resolved.mimeType]
+          );
+          cache.set(p.id, { id: p.id, drive_id: resolved.driveId, item_id: resolved.itemId, file_name: resolved.name, mime_type: resolved.mimeType });
+        }
+      }
+
+      res.json(POLICY_DEFS.map(p => {
+        const c = cache.get(p.id);
+        return {
+          id: p.id,
+          name: p.name,
+          category: p.category,
+          fileName: c?.file_name || null,
+          mimeType: c?.mime_type || null,
+          inlineUrl: c ? `/api/hr/policies/${p.id}/file` : null,
+        };
+      }));
+    } catch (e: any) {
+      console.error("[hr] policies error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Stream the policy file from SharePoint with the requesting user's MS token
+  // (or org fallback). Sets Content-Disposition: inline so PDFs render in an
+  // <iframe> straight from the app rather than redirecting out.
+  app.get("/api/hr/policies/:id/file", requireAuth, async (req: any, res) => {
+    try {
+      const r = await pool.query("SELECT drive_id, item_id, file_name, mime_type FROM policy_files WHERE id = $1", [req.params.id]);
+      if (!r.rows[0]) return res.status(404).json({ error: "Policy not found — admin needs to refresh" });
+      const { drive_id, item_id, file_name, mime_type } = r.rows[0];
+
+      const token = await getValidMsToken(req);
+      if (!token) return res.status(401).json({ error: "Connect Microsoft 365 first" });
+
+      const fileRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${drive_id}/items/${item_id}/content`, {
+        headers: { Authorization: `Bearer ${token}` },
+        redirect: "follow",
+      });
+      if (!fileRes.ok) return res.status(502).json({ error: `Graph returned ${fileRes.status}` });
+
+      res.setHeader("Content-Type", mime_type || fileRes.headers.get("content-type") || "application/octet-stream");
+      res.setHeader("Content-Disposition", `inline; filename="${file_name || "policy"}"`);
+      const buf = Buffer.from(await fileRes.arrayBuffer());
+      res.send(buf);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // ── Org chart data ────────────────────────────────────────────────────────
@@ -853,8 +975,8 @@ export function setupHrRoutes(app: Express) {
       ["Libby Evans", "Graduate Surveyor – Development", "Development", "Alex Todd", false, false],
       ["Harry Elliot", "Director – Tenant Rep", "Tenant Rep", "Woody Bruce", false, true],
       ["Charlotte Roberts", "ED & Co-Head – London Estates / Marketing", "London Leasing", "Woody Bruce", true, true],
-      ["Rupert Bentley-Smith", "ED & Co-Head – London Estates & USA / Ops & HR", "London Leasing", "Woody Bruce", true, true],
-      ["Evie North", "Associate Director – Leasing & Tenant Rep", "London Leasing", "Charlotte Roberts", false, false],
+      ["Rupert Bentley-Smith", "Head – London F&B", "London Leasing", "Woody Bruce", true, true],
+      ["Evie North", "Associate Director – Leasing & Tenant Rep", "London Leasing", "Rupert Bentley-Smith", false, false],
       ["Lizzie Knights", "Director – London Leasing", "London Leasing", "Charlotte Roberts", false, false],
       ["Lucy Cope", "Associate Director – London Leasing", "London Leasing", "Lizzie Knights", false, false],
       ["Will Penfold", "Surveyor – London Leasing", "London Leasing", "Rupert Bentley-Smith", false, false],
