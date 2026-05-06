@@ -1226,6 +1226,8 @@ export default function WipReport() {
     setFn(next);
   };
 
+  const uniqueDealCount = new Set(filteredEntries.map(e => e.dealId).filter(Boolean)).size;
+
   const handlePrint = () => window.print();
 
   const handleExportExcel = async () => {
@@ -1330,7 +1332,7 @@ export default function WipReport() {
               })()}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {filteredEntries.length} transaction{filteredEntries.length !== 1 ? "s" : ""} · Total net fees: {formatFullCurrency(totalNetFees)}
+              {uniqueDealCount} deal{uniqueDealCount !== 1 ? "s" : ""} · Total net fees: {formatFullCurrency(totalNetFees)}
               <span className="ml-2 opacity-60">· Live data from CRM deals</span>
             </p>
           </div>
@@ -1398,12 +1400,11 @@ export default function WipReport() {
           <ScrollArea className="w-full shrink-0">
             <div className="flex items-center gap-3 pb-1">
               {[
-                { label: "Total Entries", value: filteredEntries.length.toString(), color: "bg-primary/60" },
+                { label: "Total Deals", value: uniqueDealCount.toString(), color: "bg-primary/60" },
                 { label: "Pipeline", value: filteredEntries.filter(e => e.stage === "pipeline").length.toString(), color: "bg-amber-500" },
                 { label: "WIP", value: formatFullCurrency(totalWip), color: "bg-blue-500" },
                 { label: "Invoiced", value: formatFullCurrency(totalInvoiced), color: "bg-green-500" },
                 { label: "Net Fees", value: formatFullCurrency(totalNetFees), color: "bg-emerald-600" },
-                { label: "Unique Deals", value: new Set(filteredEntries.map(e => e.dealId).filter(Boolean)).size.toString(), color: "bg-violet-500" },
                 { label: "Teams", value: new Set(filteredEntries.map(e => e.team).filter(Boolean)).size.toString(), color: "bg-sky-500" },
               ].map(stat => (
                 <Card key={stat.label} className="flex-shrink-0 min-w-[120px]" data-testid={`stat-${stat.label.toLowerCase().replace(/\s/g, "-")}`}>
