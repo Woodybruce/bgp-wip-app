@@ -740,7 +740,8 @@ async function enrichWipDealsFromSage(
       // the team filter the kanban gets flooded with investment / leasing /
       // lease-advisory rows that don't belong on it.
       const isNeg = (enrich.status || "").toUpperCase() === "NEG";
-      const isTenantRep = (deal.team || "").trim().toLowerCase() === "tenant rep";
+      const isTenantRep = (Array.isArray(deal.team) ? deal.team : [deal.team ?? ""])
+        .some((t: any) => String(t ?? "").trim().toLowerCase() === "tenant rep");
       if (isNeg && isTenantRep) {
         const { rows: existing } = await client.query(
           `SELECT id FROM tenant_rep_searches WHERE deal_id = $1 LIMIT 1`,
