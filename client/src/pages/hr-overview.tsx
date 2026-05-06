@@ -674,18 +674,35 @@ function IssueAwardDialog({ open, onClose, isAdmin, allStaff }: { open: boolean;
 }
 
 function WatchHouseBoard({ isAdmin, allStaff }: { isAdmin: boolean; allStaff: StaffMember[] }) {
+  const { toast } = useToast();
   const [, navigate] = useLocation();
   const [issueOpen, setIssueOpen] = useState(false);
   const { data: awards = [], isLoading } = useQuery<Award[]>({ queryKey: ["/api/hr/awards"] });
+
+  const autoDetect = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/hr/awards/auto-detect").then(r => r.json()),
+    onSuccess: (d: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/awards"] });
+      const n = d.created?.length || 0;
+      toast({ title: n > 0 ? `${n} auto-award${n === 1 ? "" : "s"} added` : "Nothing to auto-award today" });
+    },
+  });
 
   return (
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center justify-between">
           <span className="flex items-center gap-2"><Coffee className="w-4 h-4 text-amber-700" /> Watch House board</span>
-          <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => setIssueOpen(true)} data-testid="award-issue">
-            <Plus className="w-3 h-3 mr-1" /> {isAdmin ? "Issue award" : "Send kudos"}
-          </Button>
+          <div className="flex gap-1">
+            {isAdmin && (
+              <Button size="sm" variant="ghost" className="h-7 text-[11px] text-muted-foreground" onClick={() => autoDetect.mutate()} disabled={autoDetect.isPending}>
+                {autoDetect.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />} Auto-detect
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => setIssueOpen(true)} data-testid="award-issue">
+              <Plus className="w-3 h-3 mr-1" /> {isAdmin ? "Issue award" : "Send kudos"}
+            </Button>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">

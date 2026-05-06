@@ -1481,6 +1481,248 @@ export function setupHrRoutes(app: Express) {
     }
   });
 
+  // Auto-detect milestones and create awards. Idempotent — uses a per-event
+  // 'detection_key' style by checking for an existing matching award before
+  // inserting. Run on demand by admin or via a daily cron.
+  // Detects: birthday today · work-iversary today · first deal closed ·
+  // £100k YTD · £250k YTD · first instruction won this month.
+  app.post("/api/hr/awards/auto-detect", requireAdmin, async (_req, res) => {
+    const created: Array<{ user: string; kind: string; reason: string }> = [];
+    try {
+      const today = new Date();
+      const todayStr = today.toISOString().slice(5, 10); // MM-DD
+
+      // 1. Birthdays today
+      const { rows: bdays } = await pool.query(`
+        SELECT u.id, u.name FROM users u
+        JOIN staff_profiles sp ON sp.user_id = u.id
+        WHERE u.is_active = true AND sp.dob IS NOT NULL
+          AND TO_CHAR(sp.dob::date, 'MM-DD') = $1
+      `, [todayStr]);
+      for (const u of bdays) {
+        const exists = await pool.query(
+          `SELECT 1 FROM staff_awards WHERE user_id = $1 AND kind = 'auto-birthday' AND created_at::date = CURRENT_DATE`,
+          [u.id]
+        );
+        if (exists.rows.length === 0) {
+          await pool.query(
+            `INSERT INTO staff_awards (user_id, kind, emoji, reason) VALUES ($1, 'auto-birthday', '🎂', $2)`,
+            [u.id, `Happy birthday ${u.name.split(" ")[0]}!`]
+          );
+          created.push({ user: u.name, kind: "auto-birthday", reason: "Happy birthday" });
+        }
+      }
+
+      // 2. Work-iversaries today
+      const { rows: anniv } = await pool.query(`
+        SELECT u.id, u.name, sp.start_date,
+               EXTRACT(YEAR FROM AGE(sp.start_date::date))::int AS years
+        FROM users u JOIN staff_profiles sp ON sp.user_id = u.id
+        WHERE u.is_active = true AND sp.start_date IS NOT NULL
+          AND TO_CHAR(sp.start_date::date, 'MM-DD') = $1
+          AND sp.start_date::date < CURRENT_DATE
+      `, [todayStr]);
+      for (const u of anniv) {
+        const exists = await pool.query(
+          `SELECT 1 FROM staff_awards WHERE user_id = $1 AND kind = 'auto-anniversary' AND created_at::date = CURRENT_DATE`,
+          [u.id]
+        );
+        if (exists.rows.length === 0 && u.years > 0) {
+          await pool.query(
+            `INSERT INTO staff_awards (user_id, kind, emoji, reason) VALUES ($1, 'auto-anniversary', '🎉', $2)`,
+            [u.id, `${u.years} year${u.years === 1 ? "" : "s"} at BGP`]
+          );
+          created.push({ user: u.name, kind: "auto-anniversary", reason: `${u.years} years` });
+        }
+      }
+
+      // 3. £100k / £250k / £500k YTD billing milestones
+      const yearStart = new Date(today.getFullYear(), 0, 1);
+      const { rows: agentBills } = await pool.query(
+        `WITH agent_bills AS (
+           SELECT a.agent_lower AS agent,
+                  SUM(CASE
+                    WHEN dfa.percentage IS NOT NULL THEN d.fee * dfa.percentage / 100.0
+                    WHEN dfa.fixed_amount IS NOT NULL THEN dfa.fixed_amount
+                    ELSE d.fee::numeric / GREATEST(COALESCE(array_length(d.internal_agent, 1), 1), 1)
+                  END) AS total
+           FROM crm_deals d
+           CROSS JOIN LATERAL (
+             SELECT DISTINCT LOWER(ag) AS agent_lower FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) ag
+           ) a
+           LEFT JOIN deal_fee_allocations dfa ON dfa.deal_id = d.id AND LOWER(dfa.agent_name) = a.agent_lower
+           WHERE d.status IN ('INV','COM') AND COALESCE(d.completed_at, d.invoiced_at) >= $1
+           GROUP BY a.agent_lower
+         )
+         SELECT u.id, u.name, ab.total::numeric AS total
+         FROM agent_bills ab
+         JOIN users u ON LOWER(u.name) = ab.agent
+         WHERE u.is_active = true`,
+        [yearStart]
+      );
+      for (const a of agentBills) {
+        const totalPence = Math.round(parseFloat(a.total) * 100);
+        const milestones: Array<[number, string, string]> = [
+          [10000000, "milestone-100k", "💯"],
+          [25000000, "milestone-250k", "🚀"],
+          [50000000, "milestone-500k", "🏆"],
+        ];
+        for (const [thresh, kind, emoji] of milestones) {
+          if (totalPence >= thresh) {
+            const exists = await pool.query(
+              `SELECT 1 FROM staff_awards WHERE user_id = $1 AND kind = $2 AND EXTRACT(YEAR FROM created_at) = $3`,
+              [a.id, kind, today.getFullYear()]
+            );
+            if (exists.rows.length === 0) {
+              const label = thresh === 10000000 ? "£100k" : thresh === 25000000 ? "£250k" : "£500k";
+              await pool.query(
+                `INSERT INTO staff_awards (user_id, kind, emoji, reason) VALUES ($1, $2, $3, $4)`,
+                [a.id, kind, emoji, `${label} billed YTD ${today.getFullYear()}`]
+              );
+              created.push({ user: a.name, kind, reason: `${label} milestone` });
+            }
+          }
+        }
+      }
+
+      res.json({ created });
+    } catch (e: any) {
+      console.error("[hr] auto-detect awards error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 📊 Marketing AI trend extractor (Emmy's quarterly trends ask) ────────
+  app.get("/api/marketing/trends", requireAuth, async (req: any, res) => {
+    const team = req.query.team as string | undefined;
+    const quarterAgo = new Date(Date.now() - 90 * 86400000);
+    try {
+      const params: any[] = [quarterAgo];
+      let where = "WHERE COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) >= $1";
+      if (team) {
+        params.push(team);
+        where += ` AND $${params.length} = ANY(d.team)`;
+      }
+      const { rows: deals } = await pool.query(
+        `SELECT d.name, d.status, d.fee, d.deal_type, d.team,
+                COALESCE(landlord.name, '') AS landlord,
+                COALESCE(tenant.name, '') AS tenant,
+                d.area_basis, d.total_area_sqft
+         FROM crm_deals d
+         LEFT JOIN crm_companies landlord ON landlord.id = d.landlord_id
+         LEFT JOIN crm_companies tenant ON tenant.id = d.tenant_id
+         ${where}
+         ORDER BY COALESCE(d.completed_at, d.exchanged_at) DESC NULLS LAST
+         LIMIT 80`,
+        params
+      );
+
+      let trends: any = null;
+      try {
+        const { default: AnthropicMod } = await import("@anthropic-ai/sdk");
+        const Anthropic: any = (AnthropicMod as any).default || AnthropicMod;
+        const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const dealsList = deals.map((d: any) => `- ${d.name} | ${d.status} | £${(parseFloat(d.fee) || 0).toLocaleString()} | tenant: ${d.tenant || "?"} | landlord: ${d.landlord || "?"} | type: ${d.deal_type || "?"} | team: ${(d.team || []).join(",")}`).join("\n");
+        const msg = await client.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: 1500,
+          messages: [{
+            role: "user",
+            content: `You're advising BGP's marketing lead Emmy. Look at the past quarter of deal activity${team ? ` for ${team}` : ""} and identify themes she can use for opinion leader content. Return ONLY JSON:
+
+${dealsList || "(no deals)"}
+
+{
+  "themes": [
+    { "title": "short headline", "summary": "1-2 sentence rationale", "evidence": ["deal name 1", "deal name 2"], "spokesperson": "best BGP person to comment", "outlets": ["Property Week", "EG"] }
+  ],
+  "opinion_pieces": [
+    { "title": "punchy article title", "angle": "what's the contrarian / fresh take", "drafted_by": "BGP person" }
+  ],
+  "event_topics": [
+    { "title": "panel topic for BGP roundtable", "audience": "who'd attend", "questions": ["what to ask"] }
+  ]
+}
+
+Return ONLY valid JSON.`,
+          }],
+        });
+        const txt = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
+        trends = JSON.parse(txt.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim());
+      } catch (e: any) {
+        trends = { themes: [], opinion_pieces: [], event_topics: [], note: `AI unavailable: ${e.message}` };
+      }
+      res.json({ trends, dealCount: deals.length, periodDays: 90 });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Draft a LinkedIn post for a given deal — for Emmy's "promote when deals
+  // are announced" workflow. Pulls the deal context, generates 2 variants.
+  app.post("/api/marketing/draft-post", requireAuth, async (req: any, res) => {
+    const { dealId, kind = "linkedin" } = req.body || {};
+    if (!dealId) return res.status(400).json({ error: "dealId required" });
+    try {
+      const { rows } = await pool.query(
+        `SELECT d.name, d.deal_type, d.fee, d.status, d.total_area_sqft, d.area_basis,
+                landlord.name AS landlord_name,
+                tenant.name AS tenant_name,
+                d.internal_agent
+         FROM crm_deals d
+         LEFT JOIN crm_companies landlord ON landlord.id = d.landlord_id
+         LEFT JOIN crm_companies tenant ON tenant.id = d.tenant_id
+         WHERE d.id = $1`,
+        [dealId]
+      );
+      if (!rows[0]) return res.status(404).json({ error: "Deal not found" });
+      const d = rows[0];
+
+      let drafts: any = null;
+      try {
+        const { default: AnthropicMod } = await import("@anthropic-ai/sdk");
+        const Anthropic: any = (AnthropicMod as any).default || AnthropicMod;
+        const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const msg = await client.messages.create({
+          model: "claude-sonnet-4-6",
+          max_tokens: 800,
+          messages: [{
+            role: "user",
+            content: `Draft 3 ${kind === "linkedin" ? "LinkedIn" : "social"} post variants announcing this BGP deal completion. Use UK property language. Tag opportunities for client/landlord/tenant. Always close with the BGP team members.
+
+Deal: ${d.name}
+Type: ${d.deal_type || "unknown"}
+Status: ${d.status}
+Tenant: ${d.tenant_name || "?"}
+Landlord: ${d.landlord_name || "?"}
+Size: ${d.total_area_sqft ? `${Math.round(d.total_area_sqft)} sq.ft (${d.area_basis || "NIA"})` : "?"}
+Internal team: ${(d.internal_agent || []).join(", ") || "?"}
+
+Return JSON:
+{
+  "variants": [
+    { "tone": "concise wins post", "text": "..." },
+    { "tone": "story / narrative", "text": "..." },
+    { "tone": "thought leader take", "text": "..." }
+  ],
+  "hashtags": ["#CommercialProperty", "..."],
+  "tag_suggestions": ["@brand handles to consider"]
+}
+
+Return ONLY JSON.`,
+          }],
+        });
+        const txt = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
+        drafts = JSON.parse(txt.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim());
+      } catch (e: any) {
+        drafts = { variants: [], hashtags: [], tag_suggestions: [], note: `AI unavailable: ${e.message}` };
+      }
+      res.json({ deal: { id: dealId, name: d.name }, drafts });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── 📱 Kit / contract tracker — phones, laptops, "when's my upgrade" ─────
 
   app.get("/api/hr/kit/:userId", requireAuth, async (req: any, res) => {

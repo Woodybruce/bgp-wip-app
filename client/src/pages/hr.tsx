@@ -2111,6 +2111,121 @@ function PensionTab({ userId, isAdmin, isOwn }: { userId: string; isAdmin: boole
   );
 }
 
+// ── 📊 Marketing trends extractor ────────────────────────────────────────────
+
+interface TrendsResponse {
+  trends: {
+    themes?: Array<{ title: string; summary: string; evidence: string[]; spokesperson?: string; outlets?: string[] }>;
+    opinion_pieces?: Array<{ title: string; angle: string; drafted_by?: string }>;
+    event_topics?: Array<{ title: string; audience?: string; questions?: string[] }>;
+    note?: string;
+  };
+  dealCount: number;
+  periodDays: number;
+}
+
+function MarketingTrendsPanel({ isAdmin }: { isAdmin: boolean }) {
+  const [team, setTeam] = useState<string>("");
+  const { data, isLoading, refetch, isFetching } = useQuery<TrendsResponse>({
+    queryKey: ["/api/marketing/trends", team],
+    queryFn: () => apiRequest("GET", `/api/marketing/trends${team ? `?team=${encodeURIComponent(team)}` : ""}`).then(r => r.json()),
+    enabled: false,
+  });
+
+  const TEAMS = ["", "Lease Advisory", "London Leasing", "National Leasing", "Investment", "Tenant Rep", "Development"];
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2"><Sparkles className="w-4 h-4 text-violet-500" /> Quarterly trends — opinion-leader fuel</span>
+          <div className="flex items-center gap-2">
+            <Select value={team || "all"} onValueChange={v => setTeam(v === "all" ? "" : v)}>
+              <SelectTrigger className="h-7 text-xs w-32"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All teams</SelectItem>
+                {TEAMS.filter(Boolean).map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Button size="sm" className="h-7 text-xs" onClick={() => refetch()} disabled={isFetching}>
+              {isFetching ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+              {data ? "Refresh" : "Generate"}
+            </Button>
+          </div>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {!data && !isLoading && (
+          <div className="text-xs text-muted-foreground italic py-3 text-center">
+            Click <strong>Generate</strong> — Claude will scan the past 90 days of deals and surface opinion-leader themes, article angles and panel topics for Emmy.
+          </div>
+        )}
+        {data?.trends?.note && (
+          <div className="text-xs text-amber-600 italic mb-2">{data.trends.note}</div>
+        )}
+        {data?.trends?.themes && data.trends.themes.length > 0 && (
+          <div className="space-y-3">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Themes ({data.dealCount} deals · {data.periodDays}d)</div>
+              <div className="space-y-2">
+                {data.trends.themes.map((t, i) => (
+                  <div key={i} className="rounded-md border p-2.5 bg-violet-50/30 dark:bg-violet-950/10">
+                    <div className="text-sm font-semibold">{t.title}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{t.summary}</div>
+                    {t.evidence?.length > 0 && (
+                      <div className="text-[10px] text-muted-foreground mt-1.5">
+                        <span className="font-medium">Evidence:</span> {t.evidence.join(" · ")}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      {t.spokesperson && <Badge variant="outline" className="text-[10px]">🗣 {t.spokesperson}</Badge>}
+                      {t.outlets?.map(o => <Badge key={o} variant="outline" className="text-[10px]">📰 {o}</Badge>)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {data.trends.opinion_pieces && data.trends.opinion_pieces.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Opinion pieces to pitch</div>
+                <div className="space-y-1.5">
+                  {data.trends.opinion_pieces.map((p, i) => (
+                    <div key={i} className="rounded-md border p-2 text-xs">
+                      <div className="font-medium">{p.title}</div>
+                      <div className="text-muted-foreground">{p.angle}</div>
+                      {p.drafted_by && <div className="text-[10px] text-muted-foreground mt-0.5">Best author: {p.drafted_by}</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {data.trends.event_topics && data.trends.event_topics.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">BGP event / panel topics</div>
+                <div className="space-y-1.5">
+                  {data.trends.event_topics.map((e, i) => (
+                    <div key={i} className="rounded-md border p-2 text-xs">
+                      <div className="font-medium">{e.title}</div>
+                      {e.audience && <div className="text-muted-foreground">Audience: {e.audience}</div>}
+                      {e.questions?.length > 0 && (
+                        <ul className="mt-1 space-y-0.5">
+                          {e.questions.map((q, j) => <li key={j} className="text-muted-foreground">· {q}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── 📣 Marketing hub tab ──────────────────────────────────────────────────────
 
 interface MarketingEvent {
@@ -2245,6 +2360,8 @@ function MarketingHub({ isAdmin }: { isAdmin: boolean }) {
           )}
         </CardContent>
       </Card>
+
+      <MarketingTrendsPanel isAdmin={isAdmin} />
 
       {past.length > 0 && (
         <details className="rounded-md border bg-muted/10">
