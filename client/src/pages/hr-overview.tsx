@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import type { User as AuthUser } from "@shared/schema";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -309,10 +310,13 @@ function YouPanel({ user }: { user: AuthUser }) {
 
 // ── 🏛️ Organigram team cards ────────────────────────────────────────────────
 
+interface TeamAiSummary { team: string; summary: string; generated_at: string }
+
 // Member-first team card. No per-team billing/pipeline/top-deals — those live
 // on the firm-wide ski target hero. Each card shows the team head pinned at
-// the top with their direct reports listed underneath, organigram-style.
-function TeamCard({ team, allStaff }: { team: TeamSummary; allStaff: StaffMember[] }) {
+// the top with their direct reports listed underneath, organigram-style,
+// plus a one-line AI summary of what they've been up to lately.
+function TeamCard({ team, allStaff, aiSummary, oooByUser }: { team: TeamSummary; allStaff: StaffMember[]; aiSummary?: string; oooByUser?: Map<string, { subject: string; isAllDay: boolean }> }) {
   const [, navigate] = useLocation();
   const style = teamStyle(team.team);
   const members = useMemo(() => allStaff.filter(s => team.memberIds.includes(s.id)), [allStaff, team.memberIds]);
@@ -322,23 +326,31 @@ function TeamCard({ team, allStaff }: { team: TeamSummary; allStaff: StaffMember
   const MemberRow = ({ m, isHead }: { m: StaffMember | TeamSummary["head"]; isHead?: boolean }) => {
     if (!m) return null;
     const profilePic = (m as any).profile_pic_url ?? (m as any).profilePicUrl ?? null;
+    const ooo = oooByUser?.get(m.id);
     return (
       <button
         onClick={() => navigate(`/hr?person=${m.id}`)}
-        className={`w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-white/70 dark:hover:bg-white/5 ${isHead ? "bg-white/60 dark:bg-white/10" : ""}`}
+        className={`w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-white/70 dark:hover:bg-white/5 ${isHead ? "bg-white/60 dark:bg-white/10" : ""} ${ooo ? "opacity-70" : ""}`}
+        title={ooo ? `OOO: ${ooo.subject}` : undefined}
       >
-        {profilePic ? (
-          <img src={profilePic} alt={m.name} className={`rounded-full object-cover shrink-0 ${isHead ? "w-9 h-9 ring-2 ring-white dark:ring-black/20" : "w-7 h-7"}`} />
-        ) : (
-          <div className={`rounded-full bg-white/80 dark:bg-white/10 flex items-center justify-center font-medium shrink-0 ${isHead ? "w-9 h-9 text-xs ring-2 ring-white dark:ring-black/20" : "w-7 h-7 text-[10px]"}`}>
-            {m.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
-          </div>
-        )}
+        <div className="relative shrink-0">
+          {profilePic ? (
+            <img src={profilePic} alt={m.name} className={`rounded-full object-cover ${isHead ? "w-9 h-9 ring-2 ring-white dark:ring-black/20" : "w-7 h-7"}`} />
+          ) : (
+            <div className={`rounded-full bg-white/80 dark:bg-white/10 flex items-center justify-center font-medium ${isHead ? "w-9 h-9 text-xs ring-2 ring-white dark:ring-black/20" : "w-7 h-7 text-[10px]"}`}>
+              {m.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+            </div>
+          )}
+          {ooo && (
+            <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-orange-500 border-2 border-white dark:border-black/20" title={ooo.subject} />
+          )}
+        </div>
         <div className="flex-1 min-w-0">
           <div className={`truncate ${isHead ? "text-sm font-semibold" : "text-xs font-medium"}`}>{m.name}</div>
           {m.title && <div className="text-[10px] text-muted-foreground truncate">{m.title}</div>}
         </div>
-        {isHead && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-white/70 dark:bg-white/10 border-white/40 shrink-0">Head</Badge>}
+        {ooo && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-orange-100 dark:bg-orange-950/40 text-orange-700 dark:text-orange-300 border-orange-300 shrink-0">OOO</Badge>}
+        {isHead && !ooo && <Badge variant="outline" className="text-[9px] h-4 px-1 bg-white/70 dark:bg-white/10 border-white/40 shrink-0">Head</Badge>}
       </button>
     );
   };
@@ -349,6 +361,12 @@ function TeamCard({ team, allStaff }: { team: TeamSummary; allStaff: StaffMember
         <h3 className={`font-semibold text-sm ${style.accent}`}>{team.team}</h3>
         <Badge variant="outline" className="text-[10px] h-5 bg-white/60 dark:bg-white/10 border-white/40">{team.headcount}</Badge>
       </div>
+      {aiSummary && (
+        <div className="px-3 py-1.5 text-[11px] text-muted-foreground italic flex items-start gap-1.5 bg-white/30 dark:bg-black/5 border-b border-white/40 dark:border-black/20">
+          <Sparkles className="w-3 h-3 text-violet-500 shrink-0 mt-0.5" />
+          <span>{aiSummary}</span>
+        </div>
+      )}
       <div className="p-2 space-y-1">
         {head && <MemberRow m={head} isHead />}
         {others.length > 0 && (
@@ -361,8 +379,28 @@ function TeamCard({ team, allStaff }: { team: TeamSummary; allStaff: StaffMember
   );
 }
 
-function OrganigramSection({ allStaff }: { allStaff: StaffMember[] }) {
+function OrganigramSection({ allStaff, isAdmin }: { allStaff: StaffMember[]; isAdmin: boolean }) {
+  const { toast } = useToast();
   const { data, isLoading } = useQuery<{ teams: TeamSummary[] }>({ queryKey: ["/api/hr/team-summary"] });
+  const { data: aiSummaries = [] } = useQuery<TeamAiSummary[]>({ queryKey: ["/api/hr/team-ai-summaries"] });
+  const { data: oooData } = useQuery<{ events: Array<{ userId: string; subject: string; isAllDay: boolean }> }>({ queryKey: ["/api/hr/calendar/now"] });
+
+  const refreshAi = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/hr/team-ai-summaries/refresh").then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/team-ai-summaries"] });
+      toast({ title: "Team summaries refreshed" });
+    },
+  });
+
+  const aiByTeam = useMemo(() => new Map(aiSummaries.map(s => [s.team, s.summary])), [aiSummaries]);
+  const oooByUser = useMemo(() => {
+    const m = new Map<string, { subject: string; isAllDay: boolean }>();
+    for (const e of oooData?.events || []) {
+      if (!m.has(e.userId)) m.set(e.userId, { subject: e.subject, isAllDay: e.isAllDay });
+    }
+    return m;
+  }, [oooData]);
 
   if (isLoading) return <Skeleton className="h-64 w-full rounded-xl" />;
   if (!data?.teams?.length) return null;
@@ -372,12 +410,20 @@ function OrganigramSection({ allStaff }: { allStaff: StaffMember[] }) {
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center justify-between">
           <span className="flex items-center gap-2"><GitBranch className="w-4 h-4 text-primary" /> Teams</span>
-          <span className="text-[11px] font-normal text-muted-foreground">click anyone to open their profile</span>
+          <div className="flex items-center gap-2">
+            {isAdmin && (
+              <Button size="sm" variant="ghost" className="h-6 text-[10px] px-1.5" onClick={() => refreshAi.mutate()} disabled={refreshAi.isPending}>
+                {refreshAi.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
+                Refresh AI
+              </Button>
+            )}
+            <span className="text-[11px] font-normal text-muted-foreground">click anyone to open their profile</span>
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {data.teams.map(t => <TeamCard key={t.team} team={t} allStaff={allStaff} />)}
+          {data.teams.map(t => <TeamCard key={t.team} team={t} allStaff={allStaff} aiSummary={aiByTeam.get(t.team)} oooByUser={oooByUser} />)}
         </div>
       </CardContent>
     </Card>
@@ -683,6 +729,13 @@ function WatchHouseBoard({ isAdmin, allStaff }: { isAdmin: boolean; allStaff: St
 
 function CalendarWidget() {
   const { data: birthdays = [] } = useQuery<Birthday[]>({ queryKey: ["/api/hr/birthdays"] });
+  const { data: oooData } = useQuery<{ events: Array<{ userId: string; userName: string; subject: string; start: string; end: string; isAllDay: boolean; showAs: string }>; note?: string }>({ queryKey: ["/api/hr/calendar/now"] });
+  const { data: marketing = [] } = useQuery<Array<{ id: string; title: string; starts_at: string | null; kind: string | null }>>({ queryKey: ["/api/marketing/events", "upcoming"], queryFn: () => apiRequest("GET", "/api/marketing/events?upcoming=1").then(r => r.json()) });
+
+  const oooThisWeek = (oooData?.events || []).slice(0, 6);
+  const upcomingMarketing = marketing
+    .filter(m => m.starts_at && new Date(m.starts_at) >= new Date())
+    .slice(0, 4);
 
   return (
     <Card>
@@ -691,10 +744,10 @@ function CalendarWidget() {
           <Calendar className="w-4 h-4 text-primary" /> What's on
         </CardTitle>
       </CardHeader>
-      <CardContent className="pt-0 space-y-2">
+      <CardContent className="pt-0 space-y-3">
         {birthdays.length > 0 && (
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Birthdays</div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Cake className="w-3 h-3 text-pink-500" /> Birthdays</div>
             <div className="space-y-1">
               {birthdays.slice(0, 4).map(b => (
                 <div key={b.id} className="flex items-center gap-2 text-xs">
@@ -714,9 +767,44 @@ function CalendarWidget() {
             </div>
           </div>
         )}
-        <div className="border-t pt-2 text-[10px] text-muted-foreground italic">
-          Firm events, OOO, deal milestones &amp; industry deadlines coming next.
-        </div>
+
+        {oooThisWeek.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Clock className="w-3 h-3 text-orange-500" /> Out of office (next 7d)</div>
+            <div className="space-y-1">
+              {oooThisWeek.map((e, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs">
+                  <span className="w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />
+                  <span className="flex-1 truncate">{e.userName}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">{new Date(e.start).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {upcomingMarketing.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Megaphone className="w-3 h-3 text-violet-500" /> Marketing &amp; events</div>
+            <div className="space-y-1">
+              {upcomingMarketing.map(m => (
+                <div key={m.id} className="flex items-center gap-2 text-xs">
+                  <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0" />
+                  <span className="flex-1 truncate">{m.title}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">{m.starts_at ? new Date(m.starts_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {birthdays.length === 0 && oooThisWeek.length === 0 && upcomingMarketing.length === 0 && (
+          <div className="text-xs text-muted-foreground italic text-center py-2">Quiet week ahead.</div>
+        )}
+
+        {oooData?.note && (
+          <div className="text-[10px] text-muted-foreground italic border-t pt-2">{oooData.note}</div>
+        )}
       </CardContent>
     </Card>
   );
@@ -752,7 +840,7 @@ export default function HrOverview() {
           <CalendarWidget />
         </div>
         <div className="lg:col-span-2 space-y-4">
-          <OrganigramSection allStaff={allStaff} />
+          <OrganigramSection allStaff={allStaff} isAdmin={isAdmin} />
           <HungerGamesStrip allStaff={allStaff} />
           <WatchHouseBoard isAdmin={isAdmin} allStaff={allStaff} />
         </div>

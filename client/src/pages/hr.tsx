@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
@@ -1130,7 +1130,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
             {(isAdmin || isOwn) && <TabsTrigger value="career" className="text-xs">Career</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="pension" className="text-xs">Pension</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="expenses" className="text-xs">Expenses</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="documents" className="text-xs">Documents</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="files" className="text-xs">Files</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="kit" className="text-xs">Kit</TabsTrigger>}
             {(isAdmin || isOwn) && cardholder && <TabsTrigger value="card" className="text-xs">My Card</TabsTrigger>}
           </TabsList>
@@ -1226,8 +1226,8 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
             <ExpensesAnalysisCard userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
           </TabsContent>
 
-          <TabsContent value="documents" className="mt-4">
-            <DocumentsTab person={person} isAdmin={isAdmin} />
+          <TabsContent value="files" className="mt-4">
+            <FilesTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
           </TabsContent>
 
           <TabsContent value="kit" className="mt-4">
@@ -1308,6 +1308,310 @@ interface PolicyDoc {
   fileName: string | null;
   mimeType: string | null;
   inlineUrl: string | null;
+}
+
+// ── 🎓 Promotion pitches (under the Career tab) ───────────────────────────
+
+interface PromotionPitch {
+  id: string;
+  user_id: string;
+  from_level: string | null;
+  to_level: string | null;
+  pitch_date: string | null;
+  status: string;
+  narrative: string | null;
+  key_wins: string | null;
+  financials: string | null;
+  development: string | null;
+  ask: string | null;
+  ai_draft: string | null;
+  decision: string | null;
+  decision_notes: string | null;
+  decided_at: string | null;
+}
+
+function PromotionPitchesPanel({ userId, isAdmin, isOwn, currentTitle, levels }: { userId: string; isAdmin: boolean; isOwn: boolean; currentTitle: string | null; levels: string[] }) {
+  const { toast } = useToast();
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [creatingTo, setCreatingTo] = useState<string>("");
+  const { data: pitches = [] } = useQuery<PromotionPitch[]>({ queryKey: [`/api/hr/promotion-pitches/${userId}`] });
+
+  const create = useMutation({
+    mutationFn: async () => {
+      const fromLevel = currentTitle ? (levels.find(l => currentTitle.toLowerCase().includes(l.toLowerCase())) || null) : null;
+      return apiRequest("POST", "/api/hr/promotion-pitches", { userId, fromLevel, toLevel: creatingTo, pitchDate: new Date().toISOString().slice(0, 10) }).then(r => r.json());
+    },
+    onSuccess: (d: any) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/promotion-pitches/${userId}`] });
+      setCreatingTo("");
+      setEditingId(d.id);
+    },
+  });
+
+  const update = useMutation({
+    mutationFn: async ({ id, body }: { id: string; body: any }) => apiRequest("PATCH", `/api/hr/promotion-pitches/${id}`, body).then(r => r.json()),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/promotion-pitches/${userId}`] }),
+  });
+
+  const aiDraft = useMutation({
+    mutationFn: async (id: string) => apiRequest("POST", `/api/hr/promotion-pitches/${id}/ai-draft`).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/promotion-pitches/${userId}`] });
+      toast({ title: "AI draft generated — review the text above" });
+    },
+    onError: (e: any) => toast({ title: "AI draft failed", description: e?.message, variant: "destructive" }),
+  });
+
+  if (!isAdmin && !isOwn) return null;
+  const editing = pitches.find(p => p.id === editingId);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center justify-between">
+          <span className="flex items-center gap-2"><Award className="w-4 h-4 text-violet-600" /> Promotion pitches</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0 space-y-3">
+        <div className="flex items-center gap-2">
+          <Select value={creatingTo} onValueChange={setCreatingTo}>
+            <SelectTrigger className="h-8 text-xs flex-1"><SelectValue placeholder="Pitch for promotion to…" /></SelectTrigger>
+            <SelectContent>{levels.map(l => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent>
+          </Select>
+          <Button size="sm" disabled={!creatingTo || create.isPending} onClick={() => create.mutate()}>
+            {create.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />}
+            Start
+          </Button>
+        </div>
+
+        {pitches.length === 0 ? (
+          <div className="text-xs text-muted-foreground italic py-2">No pitches yet — when you're ready to make your case, draft one above. AI will pull your deals + reviews into a starter narrative.</div>
+        ) : (
+          <div className="space-y-1.5">
+            {pitches.map(p => (
+              <button
+                key={p.id}
+                onClick={() => setEditingId(editingId === p.id ? null : p.id)}
+                className={`w-full flex items-center gap-3 p-2.5 rounded-md border text-left transition-colors hover:bg-accent/40 ${editingId === p.id ? "border-primary bg-primary/5" : ""}`}
+              >
+                <Award className="w-4 h-4 text-violet-500 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium">{p.from_level || "?"} → {p.to_level}</div>
+                  <div className="text-[11px] text-muted-foreground">{p.pitch_date ? new Date(p.pitch_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "Undated"}</div>
+                </div>
+                <Badge variant={p.decision === "approved" ? "default" : p.decision === "deferred" ? "secondary" : "outline"} className="text-[10px] capitalize">
+                  {p.decision || p.status}
+                </Badge>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {editing && (
+          <div className="rounded-lg border bg-muted/10 p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-semibold">{editing.from_level || "?"} → {editing.to_level}</div>
+              <div className="flex gap-1">
+                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => aiDraft.mutate(editing.id)} disabled={aiDraft.isPending}>
+                  {aiDraft.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />} AI draft
+                </Button>
+                {editing.status === "draft" && isOwn && (
+                  <Button size="sm" className="h-7 text-xs" onClick={() => update.mutate({ id: editing.id, body: { status: "submitted" } })}>Submit</Button>
+                )}
+              </div>
+            </div>
+            {editing.ai_draft && (
+              <div className="rounded-md border bg-violet-50 dark:bg-violet-950/20 p-2.5">
+                <div className="text-[10px] uppercase tracking-wider text-violet-700 dark:text-violet-300 mb-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> AI starter</div>
+                <pre className="text-xs whitespace-pre-wrap font-sans text-muted-foreground">{editing.ai_draft}</pre>
+              </div>
+            )}
+            {[
+              { key: "narrative", label: "Narrative" },
+              { key: "key_wins", label: "Key wins" },
+              { key: "financials", label: "Financials" },
+              { key: "development", label: "Development plan" },
+              { key: "ask", label: "Ask (salary / title / scope)" },
+            ].map(f => (
+              <div key={f.key} className="space-y-1.5">
+                <Label className="text-xs">{f.label}</Label>
+                <Textarea rows={3} defaultValue={(editing as any)[f.key] || ""} onBlur={e => update.mutate({ id: editing.id, body: { [f.key]: e.target.value } })} className="text-sm" />
+              </div>
+            ))}
+            {isAdmin && (
+              <div className="rounded-md border-2 border-dashed border-violet-200 dark:border-violet-800 p-3 space-y-2">
+                <div className="text-xs font-semibold text-violet-900 dark:text-violet-200 uppercase tracking-wider">Decision (admin)</div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {(["approved", "deferred", "declined"] as const).map(d => (
+                    <Button key={d} size="sm" variant={editing.decision === d ? "default" : "outline"} className="h-8 capitalize" onClick={() => update.mutate({ id: editing.id, body: { decision: d } })}>{d}</Button>
+                  ))}
+                </div>
+                <Textarea rows={2} defaultValue={editing.decision_notes || ""} placeholder="Decision notes" onBlur={e => update.mutate({ id: editing.id, body: { decision_notes: e.target.value } })} className="text-sm" />
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── 📁 Files tab — uploaded documents replace SharePoint URLs ──────────────
+
+interface UploadedFile {
+  id: string;
+  kind: string;
+  name: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  review_year: number | null;
+  notes: string | null;
+  created_at: string;
+  uploaded_by_name: string | null;
+}
+
+function FilesTab({ userId, isAdmin, isOwn }: { userId: string; isAdmin: boolean; isOwn: boolean }) {
+  const { toast } = useToast();
+  const [previewing, setPreviewing] = useState<UploadedFile | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadKind, setUploadKind] = useState("other");
+  const { data: files = [], isLoading } = useQuery<UploadedFile[]>({ queryKey: [`/api/hr/files/${userId}`], enabled: isAdmin || isOwn });
+
+  const deleteFile = useMutation({
+    mutationFn: async (id: string) => apiRequest("DELETE", `/api/hr/files/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/files/${userId}`] }),
+  });
+
+  if (!isAdmin && !isOwn) return null;
+
+  const onUpload = async (file: File) => {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("kind", uploadKind);
+      fd.append("name", file.name);
+      const resp = await fetch(`/api/hr/files/${userId}`, { method: "POST", body: fd, credentials: "include" });
+      if (!resp.ok) throw new Error(`Upload failed (${resp.status})`);
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/files/${userId}`] });
+      toast({ title: `Uploaded ${file.name}` });
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e?.message, variant: "destructive" });
+    } finally {
+      setUploading(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+
+  const fileIcon = (mime: string | null, name: string) => {
+    if ((mime || "").startsWith("image/")) return <Camera className="w-4 h-4 text-pink-500" />;
+    if ((mime || "").includes("pdf") || /\.pdf$/i.test(name)) return <FileText className="w-4 h-4 text-red-500" />;
+    if (/\.(doc|docx)$/i.test(name)) return <FileText className="w-4 h-4 text-blue-500" />;
+    if (/\.(xls|xlsx|csv)$/i.test(name)) return <FileText className="w-4 h-4 text-green-500" />;
+    return <FileText className="w-4 h-4 text-muted-foreground" />;
+  };
+
+  const KIND_LABEL: Record<string, string> = {
+    contract: "Contract",
+    payslip: "Payslip",
+    review: "Review",
+    headshot: "Headshot / photo",
+    passport: "Passport / right to work",
+    cv: "CV",
+    other: "Other",
+  };
+
+  const isPdf = (f: UploadedFile) => (f.mime_type || "").includes("pdf") || /\.pdf$/i.test(f.name);
+  const isImg = (f: UploadedFile) => (f.mime_type || "").startsWith("image/");
+
+  return (
+    <div className="space-y-4 pb-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center justify-between">
+            <span className="flex items-center gap-2"><Folder className="w-4 h-4 text-primary" /> Documents</span>
+            <div className="flex items-center gap-2">
+              <Select value={uploadKind} onValueChange={setUploadKind}>
+                <SelectTrigger className="h-7 text-xs w-32"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(KIND_LABEL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+              </Select>
+              <input
+                ref={fileInput}
+                type="file"
+                className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) onUpload(f); }}
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.png,.jpg,.jpeg,.heic,.txt"
+              />
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => fileInput.current?.click()} disabled={uploading}>
+                {uploading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />} Upload
+              </Button>
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {isLoading ? (
+            <div className="flex items-center justify-center p-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+          ) : files.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic py-3 text-center">No files uploaded yet. Click Upload to add a contract, payslip, headshot, etc. — kept in-app, no SharePoint detour.</div>
+          ) : (
+            <div className="space-y-1">
+              {files.map(f => (
+                <div key={f.id} className="flex items-center gap-3 p-2 rounded-md border hover:bg-accent/40 transition-colors">
+                  {fileIcon(f.mime_type, f.name)}
+                  <button onClick={() => setPreviewing(f)} className="flex-1 min-w-0 text-left">
+                    <div className="text-sm font-medium truncate">{f.name}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {KIND_LABEL[f.kind] || f.kind} · {f.size_bytes ? `${Math.round(f.size_bytes / 1024)} KB · ` : ""}
+                      {new Date(f.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+                      {f.uploaded_by_name && ` · by ${f.uploaded_by_name}`}
+                    </div>
+                  </button>
+                  <a href={`/api/hr/files/${f.id}/file`} download={f.name} className="text-xs text-muted-foreground hover:text-foreground p-1.5">
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                  {(isAdmin || isOwn) && (
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-red-500" onClick={() => { if (confirm(`Delete ${f.name}?`)) deleteFile.mutate(f.id); }}>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Dialog open={!!previewing} onOpenChange={o => !o && setPreviewing(null)}>
+        <DialogContent className="max-w-5xl w-[95vw] h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="p-4 border-b">
+            <DialogTitle className="text-sm flex items-center gap-2">
+              {previewing && fileIcon(previewing.mime_type, previewing.name)} {previewing?.name}
+              {previewing && (
+                <a href={`/api/hr/files/${previewing.id}/file`} download={previewing.name} className="ml-auto text-xs text-primary hover:underline flex items-center gap-1">
+                  <ExternalLink className="w-3 h-3" /> Download
+                </a>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 bg-muted/20 overflow-auto">
+            {previewing && isPdf(previewing) ? (
+              <iframe src={`/api/hr/files/${previewing.id}/file`} className="w-full h-full border-0" title={previewing.name} />
+            ) : previewing && isImg(previewing) ? (
+              <div className="flex items-center justify-center p-4 h-full">
+                <img src={`/api/hr/files/${previewing.id}/file`} alt={previewing.name} className="max-w-full max-h-full object-contain" />
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full p-8 text-center gap-3">
+                <FileText className="w-10 h-10 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">In-app preview isn't available for this file type — download to view.</p>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
 }
 
 // ── 📋 Performance reviews tab ───────────────────────────────────────────────
@@ -2621,6 +2925,14 @@ function CareerRoadmapTab({ userId, isAdmin, isOwn, currentTitle }: { userId: st
           {!canEdit && <div className="text-[10px] text-muted-foreground italic">Read-only — only the user themselves or an admin can update levels.</div>}
         </CardContent>
       </Card>
+
+      <PromotionPitchesPanel
+        userId={userId}
+        isAdmin={isAdmin}
+        isOwn={isOwn}
+        currentTitle={currentTitle}
+        levels={data.bgpLevels.map(l => l.level)}
+      />
     </div>
   );
 }
