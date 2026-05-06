@@ -323,18 +323,76 @@ export function setupHrRoutes(app: Express) {
       const t2 = effectiveSalary * 3;  // 40% above this
       const t3 = effectiveSalary * 4;  // 50% above this
 
-      let commissionEarned = 0;
-      if (billedPence > t1) {
-        const above1 = Math.min(billedPence, t2) - t1;
-        commissionEarned += above1 * 0.30;
+      const tierCommission = (pence: number) => {
+        let c = 0;
+        if (pence > t1) c += (Math.min(pence, t2) - t1) * 0.30;
+        if (pence > t2) c += (Math.min(pence, t3) - t2) * 0.40;
+        if (pence > t3) c += (pence - t3) * 0.50;
+        return Math.round(c);
+      };
+
+      // ── WIP / pipeline from crm_deals ───────────────────────────────────────
+      // Per-deal share: prefer explicit deal_fee_allocations row for this agent,
+      // else split fee equally across internal_agent[]. Status buckets:
+      //   NEG/SOL = under-offer / in-solicitors      (early WIP)
+      //   EXC     = exchanged                         (committed, fee close)
+      //   COM     = completed but not yet invoiced    (almost-billed)
+      // Date filter on the scheme year uses completed_at → exchanged_at →
+      // target_date → instructed_at, whichever is set.
+      let wipByStage: { neg: number; exc: number; com: number } = { neg: 0, exc: 0, com: 0 };
+      let topDeals: Array<{ id: string; name: string; fee: number; status: string; date: string | null }> = [];
+      try {
+        const { rows: dealRows } = await pool.query(
+          `WITH my_deals AS (
+             SELECT d.id, d.name, d.status, d.fee,
+                    COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) AS dt,
+                    CASE
+                      WHEN dfa.percentage    IS NOT NULL THEN d.fee * dfa.percentage / 100.0
+                      WHEN dfa.fixed_amount  IS NOT NULL THEN dfa.fixed_amount
+                      ELSE d.fee::numeric / GREATEST(COALESCE(array_length(d.internal_agent, 1), 1), 1)
+                    END AS my_portion
+             FROM crm_deals d
+             LEFT JOIN deal_fee_allocations dfa
+               ON dfa.deal_id = d.id AND LOWER(dfa.agent_name) = LOWER($1)
+             WHERE EXISTS (
+                     SELECT 1 FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) a
+                     WHERE LOWER(a) = LOWER($1)
+                   )
+                OR EXISTS (
+                     SELECT 1 FROM deal_fee_allocations a2
+                     WHERE a2.deal_id = d.id AND LOWER(a2.agent_name) = LOWER($1)
+                   )
+           )
+           SELECT id, name, status, fee, dt, my_portion
+           FROM my_deals
+           WHERE dt BETWEEN $2 AND $3 AND status IS NOT NULL`,
+          [trackingName, schemeYearStart.toISOString(), schemeYearEnd.toISOString()]
+        );
+        for (const r of dealRows) {
+          const pence = Math.round((parseFloat(r.my_portion) || 0) * 100);
+          if (r.status === "NEG" || r.status === "SOL") wipByStage.neg += pence;
+          else if (r.status === "EXC") wipByStage.exc += pence;
+          else if (r.status === "COM") wipByStage.com += pence;
+        }
+        topDeals = dealRows
+          .map((r: any) => ({
+            id: r.id,
+            name: r.name,
+            fee: Math.round((parseFloat(r.my_portion) || 0) * 100),
+            status: r.status,
+            date: r.dt ? new Date(r.dt).toISOString().slice(0, 10) : null,
+          }))
+          .sort((a: any, b: any) => b.fee - a.fee)
+          .slice(0, 10);
+      } catch (wErr: any) {
+        // Non-fatal — show billings even if deals query fails (e.g. schema drift).
+        console.error("[hr] commission WIP query failed:", wErr.message);
       }
-      if (billedPence > t2) {
-        const above2 = Math.min(billedPence, t3) - t2;
-        commissionEarned += above2 * 0.40;
-      }
-      if (billedPence > t3) {
-        commissionEarned += (billedPence - t3) * 0.50;
-      }
+
+      const wipTotal = wipByStage.neg + wipByStage.exc + wipByStage.com;
+      const forecastPence = billedPence + wipTotal;
+      const commissionEarned = tierCommission(billedPence);
+      const commissionForecast = tierCommission(forecastPence);
 
       res.json({
         salary,
@@ -343,9 +401,14 @@ export function setupHrRoutes(app: Express) {
         schemeYearStart: schemeYearStart.toISOString().split("T")[0],
         schemeYearEnd: schemeYearEnd.toISOString().split("T")[0],
         billedPence,
+        wipByStage,
+        wipTotal,
+        forecastPence,
         t1, t2, t3,
-        commissionEarned: Math.round(commissionEarned),
+        commissionEarned,
+        commissionForecast,
         billingsByYear: billingsByYear.reverse(),
+        topDeals,
         xeroError,
         trackingName,
       });
