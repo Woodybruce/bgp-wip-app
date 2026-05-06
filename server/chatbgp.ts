@@ -609,21 +609,12 @@ setInterval(() => {
 
 function getToolProgressLabel(toolName: string): string {
   const labels: Record<string, string> = {
-    search_crm: "Searching CRM...",
     web_search: "Searching the web...",
-    ingest_url: "Reading page...",
     property_lookup: "Looking up property data...",
     property_data_lookup: "Querying PropertyData...",
     deep_investigate: "Running deep investigation...",
     run_kyc_check: "Running KYC check...",
-    create_deal: "Creating deal...",
-    update_deal: "Updating deal...",
-    create_contact: "Creating contact...",
-    update_contact: "Updating contact...",
-    create_company: "Creating company...",
-    update_company: "Updating company...",
     create_property: "Creating property...",
-    create_requirement: "Logging requirement...",
     create_available_unit: "Creating unit...",
     update_available_unit: "Updating unit...",
     create_investment_tracker: "Adding to tracker...",
@@ -634,50 +625,25 @@ function getToolProgressLabel(toolName: string): string {
     search_calendar: "Searching calendars...",
     ingest_file: "Parsing file...",
     commit_ingest: "Writing to CRM...",
-    read_record: "Reading record...",
-    update_record: "Updating record...",
-    bulk_update_records: "Bulk updating...",
-    list_records: "Listing records...",
     query_calendar: "Checking calendar...",
-    query_wip: "Querying pipeline...",
-    query_xero: "Looking up invoices...",
-    export_to_excel: "Generating Excel file...",
     sql_query: "Querying database...",
     sql_write: "Updating database...",
     describe_schema: "Inspecting schema...",
-    generate_pdf: "Generating PDF...",
-    generate_word: "Generating Word document...",
-    generate_pptx: "Generating PowerPoint...",
-    generate_document: "Generating document...",
-    generate_image: "Generating image...",
     browse_sharepoint_folder: "Browsing SharePoint...",
-    read_sharepoint_file: "Reading file...",
-    search_news: "Searching news...",
     search_green_street: "Searching Green Street...",
-    query_leasing_schedule: "Querying leasing schedule...",
-    import_leasing_schedule: "Parsing file...",
-    query_turnover: "Querying turnover data...",
     tfl_nearby: "Finding nearby stations...",
-    scan_duplicates: "Scanning for duplicates...",
     navigate_to: "Navigating...",
     transcribe_audio: "Transcribing audio...",
-    save_learning: "Saving to memory...",
     edit_source_file: "Editing source code...",
     read_source_file: "Reading source code...",
     run_shell_command: "Running command...",
-    bulk_update_crm: "Bulk updating CRM...",
-    delete_record: "Deleting record...",
-    log_viewing: "Logging viewing...",
-    log_offer: "Logging offer...",
     create_diary_entry: "Creating diary entry...",
     create_comp: "Creating comp...",
     run_model: "Running financial model...",
     restart_application: "Restarting app...",
     send_whatsapp: "Sending WhatsApp...",
     trigger_archivist_crawl: "Triggering document crawl...",
-    manage_tasks: "Managing tasks...",
     search_knowledge_base: "Searching the memory bank...",
-    search_chat_history: "Searching past chats...",
     create_document_template: "Creating template...",
     create_sharepoint_folder: "Creating folder...",
     move_sharepoint_item: "Moving file...",
@@ -686,13 +652,13 @@ function getToolProgressLabel(toolName: string): string {
     list_project_files: "Browsing project files...",
     add_database_column: "Adding database column...",
     log_app_feedback: "Logging feedback...",
-    link_records: "Linking records...",
     request_app_change: "Requesting app change...",
     browse_dropbox: "Browsing Dropbox...",
     log_expense: "Logging expense...",
     claim_mileage: "Calculating mileage...",
     read_file: "Reading file...",
     write_file: "Generating document...",
+    capture_pdf_pages: "Capturing PDF pages...",
   };
   return labels[toolName] || `Running ${toolName.replace(/_/g, " ")}...`;
 }
@@ -1129,7 +1095,7 @@ Legacy specialised tools still work as fallbacks, but prefer the primitives abov
 
 ## HONESTY — never fabricate outcomes
 - Never say "Done", "Fixed", "Updated", "Rebuilt", or similar UNLESS you actually invoked a tool that performed the change and the tool result confirms success.
-- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`write_file\`, \`generate_pdf\`, \`generate_word\`, \`generate_pptx\`, \`export_to_excel\`, \`generate_designed_deck\`, or \`compile_brochure_from_pdfs\`. A made-up URL will 404 for the user.
+- Never generate a markdown download link (e.g. \`[Download foo.pdf](/api/chat-media/...)\`) from scratch. The URL must come verbatim from the \`downloadMarkdown\` field returned by \`write_file\` (or any legacy generator tool). A made-up URL will 404 for the user.
 - If the user asks you to modify something and no suitable tool exists, SAY SO plainly ("I can't edit the PDF renderer from here — that needs a code change"). Offer the closest alternative rather than inventing fake fixes.
 - For template edits, always call \`update_document_template\` with the existing templateId (from the docTemplates list). Don't just describe what you would change — actually change it. After the tool returns, report what the tool confirmed.
 - For template deletions, call \`delete_document_template\` — never just say "removed it".
@@ -2089,7 +2055,7 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "upload_to_sharepoint",
-      description: "Upload a file ALREADY IN CHAT-MEDIA STORAGE to a SharePoint folder. Only use for files generated by another tool (export_to_excel, generate_pdf, generate_word, etc.) or files the user has uploaded into the chat. The chatMediaFilename must follow the chat-media pattern (e.g. '1774348793476-f3ddbf080ba7fd73-Travelodge_Comps.xlsx'). DO NOT USE for email attachments — use `download_email_attachment` with `action: 'save_to_sharepoint'` instead, which handles the Graph download → SharePoint upload in one step. DO NOT USE for SharePoint-to-SharePoint moves — use `copy_dropbox_to_sharepoint` for that.",
+      description: "Upload a file ALREADY IN CHAT-MEDIA STORAGE to a SharePoint folder. Use for files generated by write_file (pdf, word, pptx, excel, etc.) or files the user has dragged into the chat. The chatMediaFilename must follow the chat-media pattern (e.g. '1774348793476-f3ddbf080ba7fd73-Travelodge_Comps.xlsx'). DO NOT USE for email attachments — use `download_email_attachment` with `action: 'save_to_sharepoint'` instead. DO NOT USE for SharePoint-to-SharePoint moves — use `copy_dropbox_to_sharepoint` for that.",
       parameters: {
         type: "object",
         properties: {
