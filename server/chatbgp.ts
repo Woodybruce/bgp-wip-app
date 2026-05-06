@@ -1110,7 +1110,7 @@ Legacy specialised tools still work as fallbacks, but prefer the primitives abov
 - **Chat file uploads** (CRITICAL): When the user's message contains a \`/api/chat-media/\` URL — e.g. \`[Live WIP 5th May.xlsx](/api/chat-media/xxx-filename.xlsx)\` — they have dragged or attached that file into the chat. You MUST call \`read_file\` with that URL immediately to read and process the file. Do NOT just acknowledge the link or say "I can see you've shared a file" without actually reading it. Pass the full \`/api/chat-media/...\` path as the \`url\` argument. For Excel/CSV use startRow/maxRows to page; for PDF/Word/text use startChar/maxChars.
 - **SharePoint / any file**: \`read_file\` handles all file sources — SharePoint links, OneDrive links, Dropbox paths, public URLs, and chat-media uploads. For subfolder navigation still use browse_sharepoint_folder (driveId+itemId); then pass the driveId+itemId to read_file. For large files, read_file returns totalRows (Excel/CSV) or totalChars (text/PDF) — call again with startRow or startChar incremented. Default Excel page is 300 rows; default text page is 100,000 chars.
 - **Leasing schedule / any data file**: query_leasing_schedule for read. For IMPORTS — any Excel, CSV, PDF, or pasted text — always use **ingest_file** (not import_leasing_schedule which no longer exists). ingest_file auto-classifies the file, parses it with AI, and returns a preview. Show the preview to the user, then call commit_ingest to write.
-- **Sage WIP reconciliation**: When the user uploads a Sage TransactionsExpo export or asks why the WIP total differs from Sage, call **reconcile_sage_wip** with the file URL. It runs server-side in one pass: aggregates by HEADER_NUMBER, diffs against all CRM deals, and returns mismatched, sage-only, and orphan allocation counts. Pass fixDiscrepancies=true to patch CRM fees to match Sage. Never try to reconcile line-by-line in chat — use this tool.
+- **Sage WIP reconciliation**: When the user uploads a Sage TransactionsExpo export or asks why the WIP total differs from Sage, call **reconcile_sage_wip** with the file URL. Accepts: /api/chat-media/... (user upload), SharePoint/OneDrive links, public HTTPS URLs, or "sage-wip/latest" to re-use the most recently uploaded Sage file (no re-upload needed). Every reconcile automatically pins the file as "sage-wip/latest" for future sessions. It runs server-side in one pass: aggregates by HEADER_NUMBER, diffs against all CRM deals, and returns mismatched, sage-only, and orphan allocation counts. Pass fixDiscrepancies=true to patch CRM fees to match Sage. Never try to reconcile line-by-line in chat — use this tool.
 - **Documents (plain text)**: \`write_file(type:"pdf")\` (TEXT ONLY — no imagery), \`write_file(type:"word")\`, \`write_file(type:"pptx")\`, \`write_file(type:"excel")\`. Use for internal text reports.
 - **Designed decks & brochures**: For anything client-facing, visually polished, or described as a "brochure", "deck", "pitch", "playbook", or "placemaking document" → use \`write_file(type:"deck")\` (Gamma — full visual design with imagery). NEVER use pdf for these. Don't apologise about the PDF being "just text" — pick the right type upfront.
 - **Bespoke brochures from existing BGP pages**: \`write_file(type:"brochure")\` — stitches specific pages from source PDFs into a new PDF preserving all original design. Ask browse_sharepoint_folder / browse_dropbox for source PDF IDs/paths first, then pass as sources array.
@@ -2787,11 +2787,11 @@ export async function getAvailableTools(): Promise<{
     type: "function",
     function: {
       name: "reconcile_sage_wip",
-      description: "Server-side reconciliation of a Sage WIP export Excel file against CRM deals. Reads the file, aggregates NetAmount by HEADER_NUMBER, and compares against all CRM deals (matched by deal_ref / WIP Ref) in a single DB pass. Returns a precise diff: matched (exact), mismatched (sage ≠ crm fee), sage_only (no CRM deal found), and orphan allocations (fee splits with no parent deal). Also checks that every deal has correct fee = sum of its allocations. Use when the user uploads a Sage export and wants to know why the totals differ, or wants to patch CRM fees to match Sage. If fixDiscrepancies=true, updates crm_deals.fee to match the Sage total for every mismatched deal.",
+      description: "Server-side reconciliation of a Sage WIP export Excel file against CRM deals. Reads the file, aggregates NetAmount by HEADER_NUMBER, and compares against all CRM deals (matched by deal_ref / WIP Ref) in a single DB pass. Returns a precise diff: matched (exact), mismatched (sage ≠ crm fee), sage_only (no CRM deal found), and orphan allocations (fee splits with no parent deal). Also checks that every deal has correct fee = sum of its allocations. Use when the user uploads a Sage export and wants to know why the totals differ, or wants to patch CRM fees to match Sage. If fixDiscrepancies=true, updates crm_deals.fee to match the Sage total for every mismatched deal. Every file read is auto-saved as 'sage-wip/latest.xlsx' in file-storage so subsequent chats can pass fileUrl='sage-wip/latest' without re-uploading.",
       parameters: {
         type: "object",
         properties: {
-          fileUrl: { type: "string", description: "URL of the Sage export — either /api/chat-media/... (uploaded file) or a SharePoint share link" },
+          fileUrl: { type: "string", description: "URL or key of the Sage export. Accepted: '/api/chat-media/...' (user upload), 'https://...sharepoint.com/...' (SharePoint link), any public HTTPS URL, or 'sage-wip/latest' to re-use the most recently uploaded file." },
           fixDiscrepancies: { type: "boolean", description: "If true, patch crm_deals.fee to match Sage for each mismatch. Default false (preview only)." },
           fixAllocations: { type: "boolean", description: "If true, also fix crm_deals.fee = SUM(deal_fee_allocations.fixed_amount) for deals where the total is wrong. Default false." },
         },
@@ -5200,15 +5200,26 @@ export async function executeCrmToolRaw(
       const XLSX = await import("xlsx");
       const pathMod = await import("path");
       const fsMod = await import("fs");
-      const { getFile } = await import("./file-storage");
+      const { getFile, saveFile } = await import("./file-storage");
 
       // ── 1. Resolve and read the file ──────────────────────────────────────
       const rawUrl: string = fnArgs.fileUrl || "";
       let fileBuffer: Buffer | null = null;
       let originalName = "sage-export.xlsx";
 
-      const chatMediaMatch = rawUrl.match(/\/api\/chat-media\/([^?\s]+)/);
+      // "sage-wip/latest" shorthand — look up the pinned file from a previous session
+      if (rawUrl === "sage-wip/latest" || rawUrl.startsWith("sage-wip/")) {
+        const pinKey = rawUrl.endsWith(".xlsx") ? rawUrl : rawUrl + ".xlsx";
+        const pinFile = await getFile(pinKey);
+        if (pinFile?.data) {
+          fileBuffer = Buffer.from(pinFile.data);
+          originalName = pinFile.originalName || "sage-export.xlsx";
+        }
+      }
+
+      const chatMediaMatch = !fileBuffer && rawUrl.match(/\/api\/chat-media\/([^?\s]+)/);
       if (chatMediaMatch) {
+        // Chat-media upload (most common path)
         const mediaFilename = chatMediaMatch[1];
         originalName = mediaFilename.replace(/^\d+-[a-f0-9]+-/, "");
         const localPath = pathMod.join(process.cwd(), "ChatBGP", "chat-media", mediaFilename);
@@ -5218,13 +5229,61 @@ export async function executeCrmToolRaw(
           const dbFile = await getFile(`chat-media/${mediaFilename}`);
           if (dbFile?.data) fileBuffer = Buffer.from(dbFile.data);
         }
-      } else {
-        return { data: { error: "Please provide a /api/chat-media/ URL. Upload the Sage export via the chat attachment button first." } };
+      } else if (!fileBuffer && (rawUrl.includes("sharepoint.com") || rawUrl.includes("1drv.ms") || rawUrl.includes("onedrive.live"))) {
+        // SharePoint / OneDrive — download via MS Graph
+        try {
+          const msToken = await getValidMsToken(req);
+          if (!msToken) return { data: { error: "Microsoft account not connected. Please sign in to access SharePoint files." } };
+          // Try Graph share link resolution first, then direct URL
+          let downloadUrl: string | null = null;
+          if (rawUrl.includes("sharepoint.com") && rawUrl.includes("/_layouts/") || rawUrl.includes("?id=") || rawUrl.includes("?e=")) {
+            // Share link — resolve via Graph shares API
+            const encoded = Buffer.from(rawUrl).toString("base64").replace(/=+$/, "").replace(/\//g, "_").replace(/\+/g, "-");
+            const shareRes = await fetch(`https://graph.microsoft.com/v1.0/shares/u!${encoded}/driveItem`, {
+              headers: { Authorization: `Bearer ${msToken}` },
+            });
+            if (shareRes.ok) {
+              const item = await shareRes.json();
+              originalName = item.name || originalName;
+              downloadUrl = item["@microsoft.graph.downloadUrl"] || null;
+            }
+          }
+          if (!downloadUrl) {
+            // Try as a direct Graph API path — fetch item metadata to get downloadUrl
+            const metaRes = await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${encodeURIComponent(rawUrl.replace(/^.*\.sharepoint\.com\/sites\/[^/]+/, ""))}`, {
+              headers: { Authorization: `Bearer ${msToken}` },
+            });
+            if (metaRes.ok) {
+              const item = await metaRes.json();
+              originalName = item.name || originalName;
+              downloadUrl = item["@microsoft.graph.downloadUrl"] || null;
+            }
+          }
+          if (downloadUrl) {
+            const resp = await fetch(downloadUrl);
+            if (resp.ok) fileBuffer = Buffer.from(await resp.arrayBuffer());
+          }
+        } catch (spErr: any) {
+          console.warn("[reconcile_sage_wip] SharePoint fetch failed:", spErr?.message);
+        }
+      } else if (!fileBuffer && (rawUrl.startsWith("https://") || rawUrl.startsWith("http://"))) {
+        // Public HTTPS URL — fetch directly
+        try {
+          const resp = await fetch(rawUrl);
+          if (resp.ok) {
+            fileBuffer = Buffer.from(await resp.arrayBuffer());
+            originalName = rawUrl.split("/").pop()?.split("?")[0] || originalName;
+          }
+        } catch {}
       }
 
-      if (!fileBuffer) return { data: { error: "Could not read the file. Please re-upload it." } };
+      if (!fileBuffer) return { data: { error: `Could not read the file from: ${rawUrl || "(no URL provided)"}. Please re-upload it via the chat attachment button.` } };
 
-      // ── 2. Parse Excel → aggregate NetAmount by HEADER_NUMBER ─────────────
+      // Auto-pin: save/overwrite the file in file-storage as the "latest Sage WIP" so future chats can use it
+      const pinKey = `sage-wip/latest${pathMod.extname(originalName) || ".xlsx"}`;
+      saveFile(pinKey, fileBuffer, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", originalName).catch(() => {});
+
+
       const wb = XLSX.read(fileBuffer, { type: "buffer" });
       const sheetName = wb.SheetNames[0];
       const ws = wb.Sheets[sheetName];
