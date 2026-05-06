@@ -3833,6 +3833,22 @@ const NEGOTIATION_STATUSES = ["Under Negotiation", "HOTs", "NEG"];
 const COMPLETED_STATUSES = ["Invoiced", "Billed", "Exchanged", "Completed"];
 const INTERNAL_BGP_TEAMS = new Set(CRM_OPTIONS.dealTeam.filter((t: string) => t !== "Landsec"));
 
+const TEAM_ABBR: Record<string, string> = {
+  "nl": "National Leasing", "nationalleasing": "National Leasing",
+  "tr": "Tenant Rep", "tenantrep": "Tenant Rep",
+  "inv": "Investment", "invest": "Investment", "investment": "Investment",
+  "la": "Lease Advisory", "leaseadvisory": "Lease Advisory",
+  "dev": "Development", "development": "Development",
+  "oc": "Office / Corporate", "office": "Office / Corporate", "officecorporate": "Office / Corporate",
+  "landsec": "Landsec", "ls": "Landsec",
+  "lfb": "London F&B", "fb": "London F&B",
+  "lr": "London Retail", "londonretail": "London Retail",
+};
+function normalizeTeam(t: string): string {
+  const k = t.toLowerCase().replace(/[\s/&]+/g, "");
+  return TEAM_ABBR[k] || t;
+}
+
 export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "negotiations" } = {}) {
   const isCompsMode = mode === "comps";
   const isNegotiationsMode = mode === "negotiations";
@@ -4240,9 +4256,10 @@ export default function Deals({ mode = "wip" }: { mode?: "wip" | "comps" | "nego
       }
       if (columnFilters["type"]?.length && (!deal.dealType || !columnFilters["type"].includes(deal.dealType))) return false;
       if (columnFilters["team"]?.length) {
-        const dealTeams: string[] = Array.isArray(deal.team) ? deal.team : deal.team ? [deal.team] : [];
+        const dealTeams: string[] = (Array.isArray(deal.team) ? deal.team : deal.team ? [deal.team] : []).map(normalizeTeam);
         if (dealTeams.length === 0) return false;
-        const matchesTeam = dealTeams.some(t => columnFilters["team"].some(filter => t === filter || t.startsWith(filter + " ") || (filter.startsWith(t) && filter.includes(" "))));
+        const normFilters = columnFilters["team"].map(normalizeTeam);
+        const matchesTeam = dealTeams.some(t => normFilters.some(filter => t === filter || t.startsWith(filter + " ") || (filter.startsWith(t) && filter.includes(" "))));
         if (!matchesTeam) {
           const matchesClientGroup = columnFilters["team"].some(filter =>
             !INTERNAL_BGP_TEAMS.has(filter) &&

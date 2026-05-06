@@ -834,9 +834,41 @@ export function normalizeTeamName(raw: string | null | undefined): string | null
   if (!raw) return null;
   const trimmed = String(raw).trim();
   if (!trimmed) return null;
-  const lower = trimmed.toLowerCase();
-  if (lower.includes("hospitality")) return "London F&B";
-  if (lower.includes("london") && lower.includes("retail")) return "London Retail";
+  const lower = trimmed.toLowerCase().replace(/[\s/&]+/g, "");
+  // Exact abbreviation matches first
+  const ABBR: Record<string, string> = {
+    "nl": "National Leasing",
+    "nationalleasing": "National Leasing",
+    "tr": "Tenant Rep",
+    "tenantrep": "Tenant Rep",
+    "inv": "Investment",
+    "invest": "Investment",
+    "investment": "Investment",
+    "la": "Lease Advisory",
+    "leaseadvisory": "Lease Advisory",
+    "dev": "Development",
+    "development": "Development",
+    "oc": "Office / Corporate",
+    "office": "Office / Corporate",
+    "officecorporate": "Office / Corporate",
+    "corporate": "Office / Corporate",
+    "landsec": "Landsec",
+    "ls": "Landsec",
+    "lfb": "London F&B",
+    "fb": "London F&B",
+    "foodbeverage": "London F&B",
+    "lr": "London Retail",
+    "londonretail": "London Retail",
+    "bgp": "BGP",
+  };
+  if (ABBR[lower]) return ABBR[lower];
+  // Substring matches
+  if (lower.includes("hospitality") || lower.includes("fb") || lower.includes("f&b")) return "London F&B";
+  if (lower.includes("londonretail") || (lower.includes("london") && lower.includes("retail"))) return "London Retail";
+  if (lower.includes("nationalleasing") || lower.includes("natleas")) return "National Leasing";
+  if (lower.includes("tenantrep")) return "Tenant Rep";
+  if (lower.includes("leaseadvis")) return "Lease Advisory";
+  if (lower.includes("officecorp") || lower.includes("office")) return "Office / Corporate";
   return trimmed;
 }
 
@@ -5361,10 +5393,10 @@ Only suggest matches where there's a genuine connection. Skip deals with no plau
         if (!userTeam) {
           entries = [];
         } else {
-          const ut = userTeam.toLowerCase();
+          const ut = (normalizeTeamName(userTeam) || userTeam).toLowerCase();
           entries = entries.filter(e => {
             if (!e.team) return false;
-            const teams = (e.team as string).split(",").map((t: string) => t.trim().toLowerCase());
+            const teams = (e.team as string).split(",").map((t: string) => (normalizeTeamName(t.trim()) || t.trim()).toLowerCase());
             return teams.some((t: string) => t === ut);
           });
         }
