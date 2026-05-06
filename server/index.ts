@@ -491,6 +491,16 @@ import { pool } from "./db";
       created_at TIMESTAMP DEFAULT now(),
       updated_at TIMESTAMP DEFAULT now()
     )`,
+    // Earlier WIP imports stamped every NEG deal (across all teams) into this
+    // table with status 'In Progress' — a column the kanban doesn't render,
+    // so the board read "112 active searches" but every column was empty.
+    // Drop the rows that don't belong to a Tenant Rep deal, then relabel the
+    // genuine ones so they appear in the Brief Received column.
+    `DELETE FROM tenant_rep_searches s
+       USING crm_deals d
+      WHERE s.deal_id = d.id
+        AND LOWER(COALESCE(d.team, '')) <> 'tenant rep'`,
+    `UPDATE tenant_rep_searches SET status = 'Brief Received' WHERE status = 'In Progress'`,
 
     // Document Studio run history — created lazily here because it's not in
     // the Drizzle schema/migrations (storage.ts uses raw SQL for this table).

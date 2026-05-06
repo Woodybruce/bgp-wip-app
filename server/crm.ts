@@ -651,12 +651,12 @@ async function enrichWipDealsFromSage(
 
     // Map deals by their WIP Ref (stamped into `comments` by syncWipToCrmDeals).
     const { rows: deals } = await client.query(
-      `SELECT id, comments, tenant_id FROM crm_deals WHERE comments LIKE '%WIP Ref:%'`,
+      `SELECT id, comments, tenant_id, team FROM crm_deals WHERE comments LIKE '%WIP Ref:%'`,
     );
-    const refToDeal = new Map<string, { id: string; tenantId: string | null }>();
+    const refToDeal = new Map<string, { id: string; tenantId: string | null; team: string | null }>();
     for (const d of deals) {
       const m = d.comments?.match(/WIP Ref:\s*(\d+)/);
-      if (m) refToDeal.set(m[1], { id: d.id, tenantId: d.tenant_id });
+      if (m) refToDeal.set(m[1], { id: d.id, tenantId: d.tenant_id, team: d.team });
     }
 
     // Cache existing companies for billing-entity dedup.
@@ -735,10 +735,13 @@ async function enrichWipDealsFromSage(
       }
 
       // 3) Tenant rep searches for NEG status --------------------------------
-      // Only seed once per deal; deal lead can edit downstream without us
-      // overwriting on the next import.
+      // Only seed once per deal AND only when the deal sits with the Tenant Rep
+      // team. NEG status alone isn't enough — every team uses NEG, so without
+      // the team filter the kanban gets flooded with investment / leasing /
+      // lease-advisory rows that don't belong on it.
       const isNeg = (enrich.status || "").toUpperCase() === "NEG";
-      if (isNeg) {
+      const isTenantRep = (deal.team || "").trim().toLowerCase() === "tenant rep";
+      if (isNeg && isTenantRep) {
         const { rows: existing } = await client.query(
           `SELECT id FROM tenant_rep_searches WHERE deal_id = $1 LIMIT 1`,
           [deal.id],
@@ -747,7 +750,7 @@ async function enrichWipDealsFromSage(
           const clientName = (enrich.tenant || enrich.client || enrich.project || "Unknown").trim();
           await client.query(
             `INSERT INTO tenant_rep_searches (id, client_name, company_id, deal_id, status, created_at, updated_at)
-             VALUES (gen_random_uuid(), $1, $2, $3, 'In Progress', NOW(), NOW())`,
+             VALUES (gen_random_uuid(), $1, $2, $3, 'Brief Received', NOW(), NOW())`,
             [clientName, deal.tenantId || null, deal.id],
           );
           result.tenantRepSearchesCreated++;
