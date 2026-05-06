@@ -322,7 +322,7 @@ function FilterSection({
               className="h-3 w-3"
               data-testid={`wip-filter-checkbox-${title.toLowerCase()}-${item}`}
             />
-            <span className="truncate">{item}</span>
+            <span className="break-words min-w-0">{item}</span>
           </label>
         ))}
       </ScrollArea>
