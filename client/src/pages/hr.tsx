@@ -958,6 +958,67 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
   );
 }
 
+// ── Active deals ("what I'm working on") ──────────────────────────────────────
+
+interface ActiveDeal {
+  id: string;
+  name: string;
+  status: string;
+  dealType: string | null;
+  fee: number;
+  date: string | null;
+}
+
+function ActiveDealsCard({ userId }: { userId: string }) {
+  const [, navigate] = useLocation();
+  const { data: deals = [], isLoading } = useQuery<ActiveDeal[]>({
+    queryKey: [`/api/hr/staff/${userId}/active-deals`],
+  });
+  if (isLoading || deals.length === 0) return null;
+
+  const stageLabel = (s: string) => ({ NEG: "In negotiation", SOL: "In solicitors", EXC: "Exchanged", COM: "Completed", LIVE: "Live", SPEC: "Spec", AVA: "Available", REP: "Reported" }[s] || s);
+  const stageColor = (s: string) => ({ NEG: "bg-amber-500", SOL: "bg-amber-500", EXC: "bg-blue-500", COM: "bg-emerald-500" }[s] || "bg-muted-foreground/30");
+  const totalFee = deals.reduce((sum, d) => sum + d.fee, 0);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center justify-between">
+          <span className="flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /> Working on right now</span>
+          <span className="text-xs font-normal text-muted-foreground">{deals.length} active · {fmtSalary(totalFee)} share</span>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        <div className="space-y-1">
+          {deals.slice(0, 8).map(d => (
+            <button
+              key={d.id}
+              onClick={() => navigate(`/deals/${d.id}`)}
+              className="w-full flex items-center gap-3 p-2 rounded-md border bg-card hover:bg-accent/40 transition-colors text-left"
+              data-testid={`active-deal-${d.id}`}
+            >
+              <span className={`w-1.5 h-6 rounded-full shrink-0 ${stageColor(d.status)}`} />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">{d.name}</div>
+                <div className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                  <span>{stageLabel(d.status)}</span>
+                  {d.dealType && <><span>·</span><span>{d.dealType}</span></>}
+                  {d.date && <><span>·</span><span>{d.date}</span></>}
+                </div>
+              </div>
+              {d.fee > 0 && <span className="text-xs font-semibold shrink-0">{fmtSalary(d.fee)}</span>}
+              <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+            </button>
+          ))}
+          {deals.length > 8 && (
+            <div className="text-xs text-muted-foreground text-center pt-1">+{deals.length - 8} more</div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Staff profile detail view ─────────────────────────────────────────────────
 
 function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
@@ -1038,6 +1099,9 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
             <GraduationCap className="w-4 h-4 shrink-0" /> {person.education}
           </div>
         )}
+
+        {/* What I'm working on — admin or self only */}
+        {(isAdmin || isOwn) && <ActiveDealsCard userId={person.id} />}
 
         {/* APC for grads */}
         {person.apc_status && person.apc_status !== "not_started" && (

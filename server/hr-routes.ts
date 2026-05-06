@@ -816,6 +816,64 @@ export function setupHrRoutes(app: Express) {
     res.json({ updated, matched, created, createdNames });
   });
 
+  // ── Active deals for a person — "what I'm working on" feed ───────────────
+  // Self-or-admin view of a staffer's open CRM deals: anything not invoiced,
+  // archived, or withdrawn. Returns the same per-agent fee share calculation
+  // as /commission so figures reconcile. Capped at 20.
+  app.get("/api/hr/staff/:userId/active-deals", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const profileRes = await pool.query(
+        `SELECT u.name, sp.xero_tracking_name FROM users u
+         LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+         WHERE u.id = $1`,
+        [req.params.userId]
+      );
+      if (!profileRes.rows[0]) return res.status(404).json({ error: "User not found" });
+      const trackingName = profileRes.rows[0].xero_tracking_name || profileRes.rows[0].name;
+
+      const { rows } = await pool.query(
+        `SELECT d.id, d.name, d.status, d.fee, d.deal_type,
+                COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) AS dt,
+                CASE
+                  WHEN dfa.percentage   IS NOT NULL THEN d.fee * dfa.percentage / 100.0
+                  WHEN dfa.fixed_amount IS NOT NULL THEN dfa.fixed_amount
+                  ELSE d.fee::numeric / GREATEST(COALESCE(array_length(d.internal_agent, 1), 1), 1)
+                END AS my_portion
+         FROM crm_deals d
+         LEFT JOIN deal_fee_allocations dfa
+           ON dfa.deal_id = d.id AND LOWER(dfa.agent_name) = LOWER($1)
+         WHERE (
+                 EXISTS (SELECT 1 FROM unnest(COALESCE(d.internal_agent, ARRAY[]::text[])) a
+                         WHERE LOWER(a) = LOWER($1))
+              OR EXISTS (SELECT 1 FROM deal_fee_allocations a2
+                         WHERE a2.deal_id = d.id AND LOWER(a2.agent_name) = LOWER($1))
+             )
+           AND COALESCE(d.status, '') NOT IN ('INV','ARCH','WIT')
+         ORDER BY
+           CASE d.status WHEN 'COM' THEN 0 WHEN 'EXC' THEN 1 WHEN 'NEG' THEN 2 WHEN 'SOL' THEN 2 ELSE 3 END,
+           d.fee DESC NULLS LAST
+         LIMIT 20`,
+        [trackingName]
+      );
+
+      res.json(rows.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        status: r.status,
+        dealType: r.deal_type,
+        fee: Math.round((parseFloat(r.my_portion) || 0) * 100),
+        date: r.dt ? new Date(r.dt).toISOString().slice(0, 10) : null,
+      })));
+    } catch (e: any) {
+      console.error("[hr] active-deals error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Admin: pull profile photos from Microsoft 365 ──────────────────────────
   // Iterates active staff, fetches each one's photo from Graph using the
   // caller's MS session (or org fallback in getValidMsToken), and stores
