@@ -95,9 +95,14 @@ interface CommissionData {
   effectiveSalary: number;
   schemeYear: string;
   billedPence: number;
+  wipByStage: { neg: number; exc: number; com: number };
+  wipTotal: number;
+  forecastPence: number;
   t1: number; t2: number; t3: number;
   commissionEarned: number;
+  commissionForecast: number;
   billingsByYear: Array<{ year: string; pence: number }>;
+  topDeals: Array<{ id: string; name: string; fee: number; status: string; date: string | null }>;
   xeroError: string | null;
 }
 
@@ -204,66 +209,149 @@ function CommissionTab({ userId }: { userId: string }) {
   if (isLoading) return <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   if (error || !data) return <div className="p-6 text-sm text-muted-foreground">Commission data unavailable</div>;
 
-  const pct1 = fmtProgress(data.billedPence, data.t1);
-  const pct2 = fmtProgress(data.billedPence, data.t2);
-  const pct3 = fmtProgress(data.billedPence, data.t3);
+  // Headline target = 3× salary (the "real" stretch number people quote in
+  // reviews). Billed = paid Xero invoices YTD; WIP = signed-but-unbilled
+  // crm_deals share. Forecast bar is Billed + WIP layered on the same track.
+  const target = data.t2;
+  const pctBilled = Math.min((data.billedPence / target) * 100, 100);
+  const pctForecast = Math.min((data.forecastPence / target) * 100, 100);
+  const toTarget = Math.max(target - data.forecastPence, 0);
+  const overTarget = data.forecastPence > target;
   const maxBar = Math.max(data.billingsByYear.map(b => b.pence).reduce((a, b) => Math.max(a, b), 0), 1);
 
+  const stageLabel = (s: string) => ({ NEG: "In negotiation", SOL: "In solicitors", EXC: "Exchanged", COM: "Completed", INV: "Invoiced" }[s] || s);
+  const stageColor = (s: string) => ({ NEG: "bg-amber-500", SOL: "bg-amber-500", EXC: "bg-blue-500", COM: "bg-emerald-500", INV: "bg-primary" }[s] || "bg-muted");
+
   return (
-    <div className="space-y-6 p-1">
+    <div className="space-y-4 p-1">
       {data.xeroError && (
         <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-xs border border-amber-200 dark:border-amber-800">
           <AlertCircle className="w-4 h-4 shrink-0" />
-          Xero billings unavailable — enter manually or check Xero connection. {data.xeroError}
+          Xero billings unavailable — figures may be incomplete. {data.xeroError}
         </div>
       )}
 
+      {/* ── Hero: target progress with billed + WIP ──────────────────── */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center justify-between">
-            <span>Commission Tracker — {data.schemeYear} (1 May → 30 Apr)</span>
-            <span className="text-xs font-normal text-muted-foreground">Salary {fmtSalary(data.salary)}</span>
+            <span>Commission tracker — {data.schemeYear}</span>
+            <span className="text-xs font-normal text-muted-foreground">Salary {fmtSalary(data.salary)} · Scheme yr 1 May → 30 Apr</span>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-medium">Billed YTD</span>
-            <span className="font-bold text-lg">{fmtSalary(data.billedPence)}</span>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-lg border p-3">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Billed YTD</div>
+              <div className="text-lg font-bold mt-0.5">{fmtSalary(data.billedPence)}</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">WIP / pipeline</div>
+              <div className="text-lg font-bold mt-0.5">{fmtSalary(data.wipTotal)}</div>
+            </div>
+            <div className="rounded-lg border p-3 bg-primary/5 border-primary/20">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Forecast</div>
+              <div className="text-lg font-bold text-primary mt-0.5">{fmtSalary(data.forecastPence)}</div>
+            </div>
           </div>
 
-          {/* Threshold bars */}
-          {[
-            { label: "Tier 1 threshold (2× salary)", target: data.t1, pct: pct1, rate: "30%" },
-            { label: "Tier 2 threshold (3× salary)", target: data.t2, pct: pct2, rate: "40%" },
-            { label: "Tier 3 threshold (4× salary)", target: data.t3, pct: pct3, rate: "50%" },
-          ].map(({ label, target, pct, rate }) => (
-            <div key={label} className="space-y-1">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>{label}</span>
-                <span>{fmtSalary(target)} → <span className="font-semibold text-foreground">{rate}</span></span>
-              </div>
-              <div className="h-2 rounded-full bg-muted overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all ${pct >= 100 ? "bg-green-500" : "bg-primary"}`}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-              {data.billedPence < target && (
-                <div className="text-xs text-muted-foreground">{fmtSalary(target - data.billedPence)} to go</div>
-              )}
-              {data.billedPence >= target && (
-                <div className="text-xs text-green-600 flex items-center gap-1"><Check className="w-3 h-3" /> Threshold reached</div>
+          {/* 3× target bar with billed (solid) + WIP (lighter) layered */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-medium">Target ({fmtSalary(target)} · 3× salary)</span>
+              {overTarget ? (
+                <span className="text-green-600 font-medium flex items-center gap-1"><Check className="w-3 h-3" /> Beating target by {fmtSalary(data.forecastPence - target)}</span>
+              ) : (
+                <span className="text-muted-foreground">{fmtSalary(toTarget)} to go (incl. WIP)</span>
               )}
             </div>
-          ))}
-
-          <div className="flex items-center justify-between p-3 rounded-lg bg-primary/5 border">
-            <span className="text-sm font-medium">Commission earned YTD</span>
-            <span className="text-lg font-bold text-primary">{fmtSalary(data.commissionEarned)}</span>
+            <div className="relative h-3 rounded-full bg-muted overflow-hidden">
+              <div className="absolute inset-y-0 left-0 bg-primary/30 rounded-full transition-all" style={{ width: `${pctForecast}%` }} />
+              <div className="absolute inset-y-0 left-0 bg-primary rounded-full transition-all" style={{ width: `${pctBilled}%` }} />
+            </div>
+            <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-primary inline-block" /> Billed</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-primary/30 inline-block" /> WIP</span>
+            </div>
           </div>
+
+          {/* WIP breakdown by stage */}
+          {data.wipTotal > 0 && (
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-md border p-2.5 text-center">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Negotiating</div>
+                <div className="text-sm font-semibold mt-0.5">{fmtSalary(data.wipByStage.neg)}</div>
+              </div>
+              <div className="rounded-md border p-2.5 text-center">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Exchanged</div>
+                <div className="text-sm font-semibold mt-0.5 text-blue-600">{fmtSalary(data.wipByStage.exc)}</div>
+              </div>
+              <div className="rounded-md border p-2.5 text-center">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Completed</div>
+                <div className="text-sm font-semibold mt-0.5 text-emerald-600">{fmtSalary(data.wipByStage.com)}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Tier breakdown — kept for context, secondary now */}
+          <details className="rounded-md border bg-muted/20">
+            <summary className="cursor-pointer text-xs font-medium text-muted-foreground p-2.5 select-none">Tier breakdown (2× / 3× / 4× salary)</summary>
+            <div className="px-2.5 pb-2.5 space-y-2">
+              {[
+                { label: "Tier 1 (2× salary)", target: data.t1, rate: "30%" },
+                { label: "Tier 2 (3× salary)", target: data.t2, rate: "40%" },
+                { label: "Tier 3 (4× salary)", target: data.t3, rate: "50%" },
+              ].map(({ label, target, rate }) => {
+                const pct = fmtProgress(data.billedPence, target);
+                return (
+                  <div key={label} className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                      <span>{label} · {rate}</span>
+                      <span>{fmtSalary(target)}</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                      <div className={`h-full rounded-full ${pct >= 100 ? "bg-green-500" : "bg-primary"}`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="flex items-center justify-between text-xs pt-1.5 border-t">
+                <span className="text-muted-foreground">Commission earned YTD</span>
+                <span className="font-semibold">{fmtSalary(data.commissionEarned)}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Forecast commission (billed + WIP)</span>
+                <span className="font-semibold text-primary">{fmtSalary(data.commissionForecast)}</span>
+              </div>
+            </div>
+          </details>
         </CardContent>
       </Card>
 
+      {/* ── Top deals YTD ─────────────────────────────────────────────── */}
+      {data.topDeals.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Top deals this scheme year</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1.5">
+              {data.topDeals.map(d => (
+                <div key={d.id} className="flex items-center gap-3 p-2 rounded-md border text-sm">
+                  <span className={`w-1.5 h-6 rounded-full shrink-0 ${stageColor(d.status)}`} />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{d.name}</div>
+                    <div className="text-[11px] text-muted-foreground">{stageLabel(d.status)}{d.date ? ` · ${d.date}` : ""}</div>
+                  </div>
+                  <span className="font-semibold text-sm shrink-0">{fmtSalary(d.fee)}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Billings by year (history) ───────────────────────────────── */}
       {data.billingsByYear.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
@@ -275,10 +363,7 @@ function CommissionTab({ userId }: { userId: string }) {
                 <div key={y.year} className="flex items-center gap-3">
                   <span className="text-xs text-muted-foreground w-16 shrink-0">{y.year}</span>
                   <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-primary/70"
-                      style={{ width: `${(y.pence / maxBar) * 100}%` }}
-                    />
+                    <div className="h-full rounded-full bg-primary/70" style={{ width: `${(y.pence / maxBar) * 100}%` }} />
                   </div>
                   <span className="text-xs font-medium w-20 text-right shrink-0">{fmtSalary(y.pence)}</span>
                 </div>
