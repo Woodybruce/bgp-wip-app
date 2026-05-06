@@ -2226,6 +2226,96 @@ function MarketingTrendsPanel({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
+// ── 📣 LinkedIn post drafter (pick a recent deal → AI generates variants) ────
+
+interface DraftPostResponse {
+  deal: { id: string; name: string };
+  drafts: {
+    variants?: Array<{ tone: string; text: string }>;
+    hashtags?: string[];
+    tag_suggestions?: string[];
+    note?: string;
+  };
+}
+
+function LinkedInDraftPanel() {
+  const { toast } = useToast();
+  const [search, setSearch] = useState("");
+  const [selectedDealId, setSelectedDealId] = useState<string>("");
+  const { data: deals = [] } = useQuery<Array<{ id: string; name: string; status: string }>>({
+    queryKey: ["/api/crm/deals", "marketing-pickable"],
+    queryFn: () => apiRequest("GET", "/api/crm/deals?limit=80").then(r => r.json()).catch(() => []),
+  });
+  const [result, setResult] = useState<DraftPostResponse | null>(null);
+
+  const draftPost = useMutation({
+    mutationFn: async (dealId: string) => apiRequest("POST", "/api/marketing/draft-post", { dealId, kind: "linkedin" }).then(r => r.json()),
+    onSuccess: (data: any) => {
+      setResult(data);
+      if (data.drafts?.note) toast({ title: data.drafts.note, variant: "destructive" });
+    },
+    onError: (e: any) => toast({ title: "Draft failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const filteredDeals = useMemo(() => {
+    const q = search.toLowerCase();
+    return (Array.isArray(deals) ? deals : []).filter((d: any) => !q || d.name?.toLowerCase().includes(q)).slice(0, 30);
+  }, [deals, search]);
+
+  const copyText = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast({ title: "Copied" });
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2"><Linkedin className="w-4 h-4 text-sky-600" /> Draft a LinkedIn post</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0 space-y-3">
+        <div className="flex gap-2">
+          <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search deals..." className="h-8 text-sm flex-1" />
+          <Select value={selectedDealId} onValueChange={setSelectedDealId}>
+            <SelectTrigger className="h-8 text-xs w-64"><SelectValue placeholder="Pick a deal…" /></SelectTrigger>
+            <SelectContent>{filteredDeals.map((d: any) => <SelectItem key={d.id} value={d.id}>{d.name} ({d.status})</SelectItem>)}</SelectContent>
+          </Select>
+          <Button size="sm" disabled={!selectedDealId || draftPost.isPending} onClick={() => draftPost.mutate(selectedDealId)}>
+            {draftPost.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+            Draft
+          </Button>
+        </div>
+
+        {result && result.drafts?.variants && result.drafts.variants.length > 0 && (
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">3 variants for {result.deal.name}</div>
+            {result.drafts.variants.map((v, i) => (
+              <div key={i} className="rounded-md border p-2.5 bg-sky-50/30 dark:bg-sky-950/10">
+                <div className="flex items-center justify-between mb-1.5">
+                  <Badge variant="outline" className="text-[10px] capitalize">{v.tone}</Badge>
+                  <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => copyText(v.text)}>Copy</Button>
+                </div>
+                <pre className="text-xs whitespace-pre-wrap font-sans">{v.text}</pre>
+              </div>
+            ))}
+            {result.drafts.hashtags && result.drafts.hashtags.length > 0 && (
+              <div className="text-xs">
+                <span className="text-muted-foreground">Hashtags: </span>
+                {result.drafts.hashtags.join(" ")}
+              </div>
+            )}
+            {result.drafts.tag_suggestions && result.drafts.tag_suggestions.length > 0 && (
+              <div className="text-xs">
+                <span className="text-muted-foreground">Tag suggestions: </span>
+                {result.drafts.tag_suggestions.join(" ")}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── 📣 Marketing hub tab ──────────────────────────────────────────────────────
 
 interface MarketingEvent {
@@ -2362,6 +2452,7 @@ function MarketingHub({ isAdmin }: { isAdmin: boolean }) {
       </Card>
 
       <MarketingTrendsPanel isAdmin={isAdmin} />
+      <LinkedInDraftPanel />
 
       {past.length > 0 && (
         <details className="rounded-md border bg-muted/10">
