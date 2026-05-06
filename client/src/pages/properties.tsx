@@ -4069,7 +4069,6 @@ export default function Properties() {
   const [activeGroup, setActiveGroup] = useState("Properties");
   const [columnFilters, setColumnFilters] = useState<Record<string, string[]>>({});
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [showImport, setShowImport] = useState(false);
 
   const urlParams = new URLSearchParams(window.location.search);
   const teamParam = urlParams.get("team");
@@ -4117,6 +4116,7 @@ function PropertiesList({
   const { toast } = useToast();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [activeView, setActiveView] = useState<"list" | "landlordHealth">("list");
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
     typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
