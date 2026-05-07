@@ -10,7 +10,7 @@ import {
   AlertCircle, Clock, CheckCircle2, BarChart3, ArrowLeft,
   Shield, Heart, Briefcase, Star, DollarSign, BookOpen,
   ExternalLink, Loader2, Search, SlidersHorizontal,
-  Network, Cake, UserPlus, Trash2, FolderLock, Folder,
+  Network, Cake, UserPlus, Trash2, FolderLock, Folder, Upload,
   LayoutGrid, GitBranch, Camera, Eye, Bike, Baby, PiggyBank, Smartphone,
   Train, HeartHandshake, Mountain, Award, Megaphone, Sparkles, Target,
   MessageSquare,
@@ -3853,6 +3853,137 @@ function BirthdaysWidget() {
   );
 }
 
+// ── Import salaries from a SharePoint spreadsheet (admin) ────────────────────
+
+function ImportSalariesDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const [shareUrl, setShareUrl] = useState("");
+  const [report, setReport] = useState<any>(null);
+
+  const previewMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/hr/import-salaries", { shareUrl: shareUrl.trim(), dryRun: true });
+      return r.json();
+    },
+    onSuccess: (data) => { setReport(data); },
+    onError: (e: any) => toast({ title: "Preview failed", description: e?.message || String(e), variant: "destructive" }),
+  });
+
+  const applyMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/hr/import-salaries", { shareUrl: shareUrl.trim(), dryRun: false });
+      return r.json();
+    },
+    onSuccess: (data) => {
+      setReport(data);
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      toast({
+        title: "Salary import complete",
+        description: `${data.salaryHistoryInserted} history rows inserted, ${data.salaryCurrentUpdated} salaries updated.`,
+      });
+    },
+    onError: (e: any) => toast({ title: "Import failed", description: e?.message || String(e), variant: "destructive" }),
+  });
+
+  const close = () => { setShareUrl(""); setReport(null); onClose(); };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) close(); }}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>Import salaries from SharePoint</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>SharePoint share link</Label>
+            <Input
+              value={shareUrl}
+              onChange={(e) => setShareUrl(e.target.value)}
+              placeholder="https://brucegillinghampollardlimited.sharepoint.com/..."
+              data-testid="input-import-share-url"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Paste a link to the salary tracker spreadsheet. The app reads it via your Microsoft 365 Graph integration —
+              column headers are auto-detected (Name / Salary / Effective Date / Bonus / Commission).
+              Preview first to see what will land before committing.
+            </p>
+          </div>
+
+          {report && (
+            <div className="space-y-2 rounded-md border p-3 bg-muted/30">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">{report.filename}</div>
+                <Badge variant={report.dryRun ? "outline" : "default"}>{report.dryRun ? "Preview" : "Applied"}</Badge>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div className="rounded border p-2"><div className="text-muted-foreground">Rows parsed</div><div className="text-base font-semibold">{report.rowsParsed}</div></div>
+                <div className="rounded border p-2"><div className="text-muted-foreground">Matched to staff</div><div className="text-base font-semibold">{report.rowsMatched}</div></div>
+                <div className="rounded border p-2"><div className="text-muted-foreground">With salary</div><div className="text-base font-semibold">{report.rowsWithSalary}</div></div>
+              </div>
+              {!report.dryRun && (
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="rounded border p-2"><div className="text-muted-foreground">History rows inserted</div><div className="text-base font-semibold text-green-600">{report.salaryHistoryInserted}</div></div>
+                  <div className="rounded border p-2"><div className="text-muted-foreground">Current salaries set</div><div className="text-base font-semibold text-green-600">{report.salaryCurrentUpdated}</div></div>
+                  <div className="rounded border p-2"><div className="text-muted-foreground">Skipped duplicates</div><div className="text-base font-semibold text-amber-600">{report.skippedDuplicates?.length ?? 0}</div></div>
+                </div>
+              )}
+
+              {report.unmatchedNames?.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground mb-1">Unmatched names ({report.unmatchedNames.length}):</div>
+                  <div className="text-[11px] flex flex-wrap gap-1">
+                    {report.unmatchedNames.map((n: string) => (
+                      <span key={n} className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">{n}</span>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground mt-1">Add them via "Add staff" first, then re-run.</p>
+                </div>
+              )}
+
+              {report.sheets?.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground mb-1">Sheets scanned</div>
+                  <div className="space-y-1">
+                    {report.sheets.map((s: any) => (
+                      <div key={s.sheet} className="text-[11px] rounded border p-2">
+                        <div className="font-medium">{s.sheet} <span className="text-muted-foreground font-normal">· {s.rowsParsed} rows</span></div>
+                        <div className="text-muted-foreground">Columns: {Object.entries(s.columnMap).map(([role, idx]: any) => `${role}=${s.headers[idx] || `#${idx}`}`).join(", ") || "none recognised"}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {report.sample?.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground mb-1">Sample of mapped rows</div>
+                  <table className="w-full text-[11px] border">
+                    <thead className="bg-muted/50"><tr><th className="text-left p-1">Name</th><th className="text-left p-1">Salary</th><th className="text-left p-1">Date</th><th className="text-left p-1">Bonus</th><th className="text-left p-1">Comm</th></tr></thead>
+                    <tbody>
+                      {report.sample.map((s: any, i: number) => (
+                        <tr key={i} className="border-t"><td className="p-1">{s.staffName}</td><td className="p-1">{s.salary || "—"}</td><td className="p-1">{s.effectiveDate || "—"}</td><td className="p-1">{s.bonus || "—"}</td><td className="p-1">{s.commission || "—"}</td></tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={close}>Close</Button>
+          <Button variant="outline" onClick={() => previewMutation.mutate()} disabled={!shareUrl.trim() || previewMutation.isPending} data-testid="button-import-preview">
+            {previewMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+            Preview
+          </Button>
+          <Button onClick={() => applyMutation.mutate()} disabled={!shareUrl.trim() || applyMutation.isPending || !report?.rowsMatched} data-testid="button-import-apply">
+            {applyMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+            Import for real
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Add staff dialog (admin) ──────────────────────────────────────────────────
 
 function AddStaffDialog({ allStaff, open, onClose }: { allStaff: StaffMember[]; open: boolean; onClose: () => void }) {
@@ -3941,6 +4072,7 @@ export default function HRPage() {
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("all");
   const [addStaffOpen, setAddStaffOpen] = useState(false);
+  const [importSalariesOpen, setImportSalariesOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"org" | "grid">("org");
 
   // Honour ?person=:id (and optional &tab=:name) from the URL — links from
@@ -4028,6 +4160,9 @@ export default function HRPage() {
           <Badge variant="secondary" className="ml-2">{allStaff.length} staff</Badge>
           {isAdmin && (
             <div className="ml-auto flex items-center gap-2">
+              <Button size="sm" variant="outline" className="h-8" onClick={() => setImportSalariesOpen(true)} data-testid="button-import-salaries">
+                <Upload className="w-3.5 h-3.5 mr-1.5" /> Import salaries
+              </Button>
               <Button size="sm" variant="outline" className="h-8" onClick={() => syncPhotosMutation.mutate()} disabled={syncPhotosMutation.isPending} data-testid="button-sync-photos">
                 {syncPhotosMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Camera className="w-3.5 h-3.5 mr-1.5" />}
                 Sync photos
@@ -4094,6 +4229,7 @@ export default function HRPage() {
       </Tabs>
 
       {isAdmin && <AddStaffDialog allStaff={allStaff} open={addStaffOpen} onClose={() => setAddStaffOpen(false)} />}
+      {isAdmin && <ImportSalariesDialog open={importSalariesOpen} onClose={() => setImportSalariesOpen(false)} />}
     </div>
   );
 }

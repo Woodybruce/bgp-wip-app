@@ -3,6 +3,8 @@ import { pool } from "./db";
 import { requireAuth, requireAdmin } from "./auth";
 import { xeroApi, xeroPayrollApi } from "./xero";
 import { getValidMsToken } from "./microsoft";
+import { resolveSharePointShareLink } from "./sharepoint-resolver";
+import * as XLSX from "xlsx";
 import multer from "multer";
 
 // requireAuth doesn't populate req.user, so look up admin status from the DB
@@ -3526,6 +3528,245 @@ Use the language and tone of BGP's review docs.`,
       res.json({ events, scope: { start: startStr, end: endStr, count: slice.length } });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Salary spreadsheet importer ──────────────────────────────────────────
+  // Lets admins paste a SharePoint / OneDrive share link to a salary sheet
+  // and pull every row into staff_profiles.salary_current + salary_history.
+  // Pass dryRun=true to preview without writing.
+  //
+  // Header detection is fuzzy — we look for common variations (Name / Employee,
+  // Salary / Current Salary, Effective Date / Date of Uplift, etc.). Whatever
+  // we don't recognise comes back in the report's `unmappedColumns` so the
+  // admin can see what was skipped and we iterate.
+  app.post("/api/hr/import-salaries", requireAdmin, async (req: any, res) => {
+    const userId = req.session?.userId || req.tokenUserId;
+    const { shareUrl, dryRun } = req.body || {};
+    if (!shareUrl || typeof shareUrl !== "string") {
+      return res.status(400).json({ error: "shareUrl required" });
+    }
+
+    try {
+      // 1. Pull the file out of SharePoint via the existing Graph helper.
+      const file = await resolveSharePointShareLink(shareUrl);
+      if (file.isFolder) {
+        return res.status(400).json({ error: "Share link points at a folder — link the spreadsheet directly." });
+      }
+      const wb = XLSX.read(file.bytes, { type: "buffer", cellDates: true });
+
+      // 2. Match all active staff once for name lookups.
+      const staffRows = await pool.query(
+        `SELECT u.id, u.name, sp.id AS profile_id, sp.salary_current
+         FROM users u LEFT JOIN staff_profiles sp ON sp.user_id = u.id
+         WHERE u.is_active = true`
+      );
+      const norm = (s: string) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+      const staffByName = new Map<string, any>();
+      for (const s of staffRows.rows) staffByName.set(norm(s.name), s);
+
+      // 3. Header pattern matching. First match wins per role.
+      const HEADERS = {
+        name:    [/^name$/i, /^employee$/i, /^staff/i, /full\s*name/i],
+        salary:  [/^salary$/i, /current\s*salary/i, /annual\s*salary/i, /base\s*salary/i, /basic\s*salary/i, /salary\s*£/i, /salary\s*\(£\)/i],
+        date:    [/^date$/i, /effective\s*date/i, /^from$/i, /start\s*date/i, /uplift\s*date/i, /date\s*of\s*uplift/i, /^month$/i],
+        bonus:   [/^bonus$/i, /annual\s*bonus/i, /bonus\s*£/i],
+        commRate:[/commission\s*rate/i, /commission\s*%/i, /comm\s*%/i, /comm\s*rate/i],
+        commTier:[/commission\s*tier/i, /tier$/i],
+        reason:  [/^reason$/i, /^notes?$/i, /^comments?$/i, /^reason\s*for/i],
+      } as const;
+
+      type ColMap = Partial<Record<keyof typeof HEADERS, number>>;
+      const detectColumns = (headerRow: any[]): ColMap => {
+        const map: ColMap = {};
+        headerRow.forEach((cell, idx) => {
+          const text = String(cell || "").trim();
+          if (!text) return;
+          for (const [role, patterns] of Object.entries(HEADERS) as Array<[keyof typeof HEADERS, readonly RegExp[]]>) {
+            if (map[role] !== undefined) continue;
+            if (patterns.some((p) => p.test(text))) { map[role] = idx; break; }
+          }
+        });
+        return map;
+      };
+
+      // Money parser — strips £, commas, handles "65k" and decimals. Returns
+      // pence (integer) so it slots straight into the existing schema.
+      const parsePence = (raw: any): number | null => {
+        if (raw == null) return null;
+        if (typeof raw === "number") return Math.round(raw * 100);
+        const s = String(raw).replace(/[,£\s]/g, "").trim();
+        if (!s) return null;
+        const kMatch = s.match(/^([\d.]+)k$/i);
+        if (kMatch) return Math.round(parseFloat(kMatch[1]) * 1000 * 100);
+        const n = parseFloat(s);
+        return isNaN(n) ? null : Math.round(n * 100);
+      };
+
+      // Date parser — accepts ISO, UK dd/mm/yyyy, Excel serial (cellDates:true
+      // gives us Date objects already, but bare strings still need parsing).
+      const parseDate = (raw: any): string | null => {
+        if (raw == null) return null;
+        if (raw instanceof Date && !isNaN(raw.getTime())) return raw.toISOString().slice(0, 10);
+        const s = String(raw).trim();
+        if (!s) return null;
+        const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+        const uk = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+        if (uk) {
+          let yr = parseInt(uk[3], 10);
+          if (yr < 100) yr += yr >= 70 ? 1900 : 2000;
+          return `${yr}-${String(uk[2]).padStart(2, "0")}-${String(uk[1]).padStart(2, "0")}`;
+        }
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+      };
+
+      // 4. Walk every sheet, find a header row, parse the rows below it.
+      type ParsedRow = { sheet: string; staffName: string; matchedUserId: string | null; salaryPence: number | null; effectiveDate: string | null; bonusPence: number | null; commRate: string | null; commTier: string | null; reason: string | null; rowIndex: number };
+      const parsed: ParsedRow[] = [];
+      const sheetReports: { sheet: string; headers: string[]; columnMap: ColMap; sampleRows: any[][]; rowsParsed: number }[] = [];
+
+      for (const sheetName of wb.SheetNames) {
+        const sheet = wb.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json<any[]>(sheet, { header: 1, blankrows: false, defval: null });
+        if (rows.length < 2) continue;
+
+        // Pick the row with the most "name-like" header signals. Some salary
+        // sheets have a title row at the top before the real header.
+        let headerIdx = 0;
+        let headerScore = 0;
+        for (let i = 0; i < Math.min(5, rows.length); i++) {
+          const map = detectColumns(rows[i] as any[]);
+          const score = Object.keys(map).length;
+          if (score > headerScore) { headerScore = score; headerIdx = i; }
+        }
+        const header = (rows[headerIdx] as any[]) || [];
+        const colMap = detectColumns(header);
+
+        sheetReports.push({
+          sheet: sheetName,
+          headers: header.map((h) => String(h || "")),
+          columnMap: colMap,
+          sampleRows: rows.slice(headerIdx + 1, headerIdx + 4) as any[][],
+          rowsParsed: 0,
+        });
+
+        if (colMap.name === undefined) continue; // can't import without a name column
+
+        for (let i = headerIdx + 1; i < rows.length; i++) {
+          const row = rows[i] as any[];
+          const nameRaw = row[colMap.name!];
+          if (!nameRaw) continue;
+          const staffName = String(nameRaw).trim();
+          if (!staffName) continue;
+          const matched = staffByName.get(norm(staffName));
+
+          parsed.push({
+            sheet: sheetName,
+            staffName,
+            matchedUserId: matched?.id || null,
+            salaryPence: colMap.salary !== undefined ? parsePence(row[colMap.salary]) : null,
+            effectiveDate: colMap.date !== undefined ? parseDate(row[colMap.date]) : null,
+            bonusPence: colMap.bonus !== undefined ? parsePence(row[colMap.bonus]) : null,
+            commRate: colMap.commRate !== undefined && row[colMap.commRate] != null ? String(row[colMap.commRate]).trim() : null,
+            commTier: colMap.commTier !== undefined && row[colMap.commTier] != null ? String(row[colMap.commTier]).trim() : null,
+            reason: colMap.reason !== undefined && row[colMap.reason] != null ? String(row[colMap.reason]).trim() : null,
+            rowIndex: i + 1, // 1-based for human readability in the report
+          });
+          sheetReports[sheetReports.length - 1].rowsParsed++;
+        }
+      }
+
+      // 5. Build the report and (if not dryRun) apply the writes.
+      const matched = parsed.filter((r) => r.matchedUserId);
+      const unmatchedNames = Array.from(new Set(parsed.filter((r) => !r.matchedUserId).map((r) => r.staffName)));
+      const withSalary = matched.filter((r) => r.salaryPence != null);
+
+      let salaryHistoryInserted = 0;
+      let salaryCurrentUpdated = 0;
+      const skippedDuplicates: string[] = [];
+
+      if (!dryRun && withSalary.length > 0) {
+        // Existing history rows so we don't double-insert. Match on
+        // (user_id, effective_date, salary_pence) — same triple = same record.
+        const existingHistory = await pool.query(
+          `SELECT user_id, effective_date, salary_pence FROM salary_history`
+        );
+        const existingKey = new Set<string>(
+          existingHistory.rows.map((r: any) => `${r.user_id}::${r.effective_date}::${r.salary_pence}`)
+        );
+
+        // Latest-per-user so we can also update staff_profiles.salary_current.
+        const latestByUser = new Map<string, ParsedRow>();
+        for (const r of withSalary) {
+          const cur = latestByUser.get(r.matchedUserId!);
+          if (!cur) { latestByUser.set(r.matchedUserId!, r); continue; }
+          const a = r.effectiveDate || "0000-00-00";
+          const b = cur.effectiveDate || "0000-00-00";
+          if (a > b) latestByUser.set(r.matchedUserId!, r);
+        }
+
+        for (const r of withSalary) {
+          const eff = r.effectiveDate || new Date().toISOString().slice(0, 10);
+          const key = `${r.matchedUserId}::${eff}::${r.salaryPence}`;
+          if (existingKey.has(key)) {
+            skippedDuplicates.push(`${r.staffName} @ ${eff}`);
+            continue;
+          }
+          const reason = r.reason || (r.bonusPence ? `salary uplift (bonus £${(r.bonusPence/100).toFixed(0)} on file)` : "imported from spreadsheet");
+          const notes = [
+            r.commRate ? `commission rate: ${r.commRate}` : null,
+            r.commTier ? `tier: ${r.commTier}` : null,
+          ].filter(Boolean).join(" · ") || null;
+          await pool.query(
+            `INSERT INTO salary_history (user_id, salary_pence, effective_date, reason, notes, recorded_by)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [r.matchedUserId, r.salaryPence, eff, reason, notes, userId]
+          );
+          existingKey.add(key);
+          salaryHistoryInserted++;
+        }
+
+        for (const [uid, latest] of latestByUser.entries()) {
+          await pool.query(
+            `INSERT INTO staff_profiles (user_id, salary_current, status)
+             VALUES ($1, $2, 'active')
+             ON CONFLICT (user_id) DO UPDATE SET
+               salary_current = EXCLUDED.salary_current,
+               updated_at = now()`,
+            [uid, latest.salaryPence]
+          );
+          salaryCurrentUpdated++;
+        }
+      }
+
+      res.json({
+        ok: true,
+        dryRun: !!dryRun,
+        filename: file.filename,
+        sheetsScanned: sheetReports.length,
+        sheets: sheetReports,
+        rowsParsed: parsed.length,
+        rowsMatched: matched.length,
+        rowsWithSalary: withSalary.length,
+        unmatchedNames,
+        salaryHistoryInserted,
+        salaryCurrentUpdated,
+        skippedDuplicates,
+        // Sample of what we'd write — first 5 mapped rows so admins can sanity-check.
+        sample: matched.slice(0, 5).map((r) => ({
+          staffName: r.staffName,
+          salary: r.salaryPence != null ? `£${(r.salaryPence/100).toLocaleString()}` : null,
+          effectiveDate: r.effectiveDate,
+          bonus: r.bonusPence != null ? `£${(r.bonusPence/100).toLocaleString()}` : null,
+          commission: r.commRate || r.commTier || null,
+          reason: r.reason,
+        })),
+      });
+    } catch (e: any) {
+      console.error("[hr] import-salaries error:", e);
+      res.status(500).json({ error: e?.message || "Import failed" });
     }
   });
 }
