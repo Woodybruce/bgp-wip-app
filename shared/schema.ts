@@ -1503,6 +1503,12 @@ export const xeroInvoices = pgTable("xero_invoices", {
   xeroUrl: text("xero_url"),
   errorMessage: text("error_message"),
   syncedAt: timestamp("synced_at"),
+  // Cached so the BGP edit form pre-fills without an extra Graph round-trip
+  // and so edits made in Xero round-trip back via /sync.
+  lineDescription: text("line_description"),
+  lineAmount: real("line_amount"),
+  contactName: text("contact_name"),
+  poNumber: text("po_number"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
