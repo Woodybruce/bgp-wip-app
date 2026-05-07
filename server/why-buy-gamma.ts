@@ -41,7 +41,7 @@ function kv(label: string, value: string | number | null | undefined): string | 
   return `- **${label}:** ${value}`;
 }
 
-async function buildBrief(runId: string): Promise<{ brief: string; title: string; address: string }> {
+export async function buildBrief(runId: string): Promise<{ brief: string; title: string; address: string }> {
   const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
   if (!run) throw new Error("Pathway run not found");
 

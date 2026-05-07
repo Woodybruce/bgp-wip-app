@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { useLocation, Link } from "wouter";
 import DOMPurify from "dompurify";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -2462,8 +2462,134 @@ function WhyBuyCard({ runId, stage9, onReload }: { runId: string; stage9: any; o
             )}
           </div>
         )}
+
+        <ClaudeDesignPane runId={runId} />
       </CardContent>
     </Card>
+  );
+}
+
+// ── Claude Design — in-app deck designer for Why Buy ─────────────────────────
+function ClaudeDesignPane({ runId }: { runId: string }) {
+  const { toast } = useToast();
+  const [versions, setVersions] = useState<Array<{ id: string; version: number; prompt: string | null; created_at: string }>>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [iteratePrompt, setIteratePrompt] = useState("");
+  const [busy, setBusy] = useState<"generate" | "iterate" | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/why-buy-design`);
+      if (!r.ok) return;
+      const data = await r.json();
+      setVersions(data);
+      if (!activeId && data.length > 0) setActiveId(data[0].id);
+    } catch { /* ignore */ }
+  }, [runId, activeId]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const generate = async () => {
+    setBusy("generate");
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/why-buy-design/generate`, { method: "POST", headers: { "Content-Type": "application/json" } });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      await reload();
+      setActiveId(d.id);
+      toast({ title: "Deck generated", description: `Version ${d.version} ready` });
+    } catch (e: any) {
+      toast({ title: "Generation failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  const iterate = async () => {
+    if (!iteratePrompt.trim()) return;
+    setBusy("iterate");
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/why-buy-design/iterate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: iteratePrompt, baseVersionId: activeId }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      await reload();
+      setActiveId(d.id);
+      setIteratePrompt("");
+      toast({ title: "Updated", description: `Version ${d.version}` });
+    } catch (e: any) {
+      toast({ title: "Iteration failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  return (
+    <div className="mt-4 rounded-lg border bg-gradient-to-br from-violet-50/40 to-amber-50/40 dark:from-violet-950/20 dark:to-amber-950/20 p-3 space-y-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-violet-600" />
+          <span className="text-sm font-semibold">Claude design — in-app deck</span>
+          <span className="text-[10px] text-muted-foreground">live HTML preview · iterate by prompt · print to PDF</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {versions.length > 1 && (
+            <select
+              value={activeId || ""}
+              onChange={(e) => setActiveId(e.target.value)}
+              className="h-7 text-xs rounded-md border bg-background px-2"
+            >
+              {versions.map(v => (
+                <option key={v.id} value={v.id}>v{v.version} · {v.prompt ? v.prompt.slice(0, 30) : "initial"}</option>
+              ))}
+            </select>
+          )}
+          <Button size="sm" variant="outline" onClick={generate} disabled={busy !== null} className="h-7 text-xs">
+            {busy === "generate" ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+            {versions.length === 0 ? "Generate" : "Re-generate"}
+          </Button>
+          {activeId && (
+            <a href={`/api/property-pathway/${runId}/why-buy-design/${activeId}/render`} target="_blank" rel="noreferrer">
+              <Button size="sm" variant="ghost" className="h-7 text-xs">
+                <ExternalLink className="w-3.5 h-3.5 mr-1" /> Open / print
+              </Button>
+            </a>
+          )}
+        </div>
+      </div>
+
+      {versions.length === 0 ? (
+        <div className="text-xs text-muted-foreground italic text-center py-6">
+          Click <strong>Generate</strong> — Claude builds a Why Buy deck from this pathway run's brief (property, tenant, model outputs, comps). You can then iterate by typing things like "make slide 2 punchier" or "swap the colour scheme".
+        </div>
+      ) : (
+        <div className="rounded-md overflow-hidden border bg-white" style={{ height: 600 }}>
+          {activeId && (
+            <iframe
+              src={`/api/property-pathway/${runId}/why-buy-design/${activeId}/render`}
+              className="w-full h-full border-0"
+              title="Why Buy preview"
+              sandbox="allow-same-origin"
+            />
+          )}
+        </div>
+      )}
+
+      {versions.length > 0 && (
+        <form onSubmit={(e) => { e.preventDefault(); iterate(); }} className="flex gap-2">
+          <input
+            value={iteratePrompt}
+            onChange={(e) => setIteratePrompt(e.target.value)}
+            placeholder="Iterate — e.g. 'add a comp slide', 'use BGP teal', 'shorten the risks section'"
+            className="flex-1 h-8 rounded-md border bg-background px-2.5 text-sm"
+            disabled={busy !== null}
+          />
+          <Button size="sm" type="submit" disabled={busy !== null || !iteratePrompt.trim()} className="h-8">
+            {busy === "iterate" ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+            Iterate
+          </Button>
+        </form>
+      )}
+    </div>
   );
 }
 

@@ -273,6 +273,20 @@ import { pool } from "./db";
     )`,
     `CREATE INDEX IF NOT EXISTS staff_parental_leave_user_idx ON staff_parental_leave (user_id, start_date DESC)`,
     `CREATE INDEX IF NOT EXISTS staff_parental_leave_active_idx ON staff_parental_leave (status, start_date)`,
+    // Why Buy — Claude Design variant. Each row is an iteration of the deck.
+    // Stored as self-contained HTML (inline CSS, no external assets) so we
+    // can preview in a sandboxed iframe and print/export later.
+    `CREATE TABLE IF NOT EXISTS why_buy_designs (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      run_id VARCHAR NOT NULL,
+      version INTEGER NOT NULL,
+      prompt TEXT,
+      html TEXT NOT NULL,
+      brief_snapshot JSONB,
+      created_by_user_id VARCHAR,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS why_buy_designs_run_idx ON why_buy_designs (run_id, version DESC)`,
     // Pension contributions — Royal London CSV import per pay run.
     `CREATE TABLE IF NOT EXISTS pension_contributions (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
