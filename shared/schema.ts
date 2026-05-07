@@ -856,6 +856,20 @@ export const crmDeals = pgTable("crm_deals", {
   amlSarFiledAt: timestamp("aml_sar_filed_at"),
   amlComplianceNotes: text("aml_compliance_notes"),
   amlChecklist: jsonb("aml_checklist"), // structured JSON checklist of all compliance steps
+  // AI-driven AML augments. Keep as JSONB so we can iterate on shape without
+  // schema churn. aml_sof_analysis = output of /api/aml/deal/:id/sof,
+  // aml_ai_triage = Claude's "clear / review / escalate" verdict at end of
+  // runAllAmlChecks.
+  amlSofAnalysis: jsonb("aml_sof_analysis"),
+  amlAiTriage: jsonb("aml_ai_triage"),
+  // MLR 2017 scope determination — drives whether CDD is legally mandatory
+  // for this deal. Lettings under €10,000/month (~£100k pa) fall out of scope
+  // of the regulations entirely, so unresponsive small-tenant deals can
+  // proceed without a SAR. Set per-deal so the MLRO can override.
+  mlrScope: text("mlr_scope"), // in_scope | out_of_scope_below_threshold | simplified_dd
+  mlrScopeReason: text("mlr_scope_reason"),
+  mlrScopeAssessedAt: timestamp("mlr_scope_assessed_at"),
+  mlrScopeAssessedBy: text("mlr_scope_assessed_by"),
   // ── Structured deal stage (drives transitions, reports, events) ──────
   stage: text("stage"), // instruction | marketing | viewings | offers | hots | sols | agreed | completed | invoiced
   stageEnteredAt: timestamp("stage_entered_at"),

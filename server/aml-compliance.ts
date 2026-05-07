@@ -1244,4 +1244,215 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
   }
 });
 
+// ── AI Source-of-Funds analyser ──────────────────────────────────────────────
+// Drag-drop a bank statement / payslip / tax return on a deal. Server pulls
+// text out (extractTextFromFile already handles PDFs + Excel + Word + images
+// via OCR) and hands it to Claude for structured analysis. Result lands on
+// crm_deals.aml_sof_analysis as JSONB — multiple docs accumulate.
+router.post("/api/aml/deal/:id/sof", requireAuth, kycUpload.single("file"), async (req: Request, res: Response) => {
+  const dealId = req.params.id;
+  if (!req.file) return res.status(400).json({ error: "file required" });
+  try {
+    const dealRow = await pool.query(`SELECT name, aml_source_of_funds FROM crm_deals WHERE id = $1`, [dealId]);
+    if (!dealRow.rows[0]) return res.status(404).json({ error: "deal not found" });
+    const { extractTextFromFile } = await import("./utils/file-extractor");
+    const fileText = await extractTextFromFile(req.file.path, req.file.originalname);
+    if (!fileText || fileText.length < 30) {
+      return res.status(400).json({ error: "Could not extract readable text from the file." });
+    }
+    const { analyseSourceOfFundsDoc, saveSofAnalysis } = await import("./aml-ai");
+    const declaredSource = (req.body?.declaredSource as string | undefined) || dealRow.rows[0].aml_source_of_funds;
+    const analysis = await analyseSourceOfFundsDoc({
+      dealName: dealRow.rows[0].name || "",
+      declaredSource,
+      documentText: fileText,
+      filename: req.file.originalname,
+      documentType: req.body?.documentType,
+    });
+    await saveSofAnalysis(dealId, analysis, declaredSource);
+    try { fs.unlinkSync(req.file.path); } catch {}
+    res.json(analysis);
+  } catch (err: any) {
+    console.error("[aml/sof] failed:", err?.message);
+    try { if (req.file?.path) fs.unlinkSync(req.file.path); } catch {}
+    res.status(500).json({ error: err?.message || "SoF analysis failed" });
+  }
+});
+
+router.delete("/api/aml/deal/:id/sof/:index", requireAuth, async (req: Request, res: Response) => {
+  const dealId = req.params.id;
+  const idx = parseInt(req.params.index, 10);
+  try {
+    const r = await pool.query(`SELECT aml_sof_analysis FROM crm_deals WHERE id = $1`, [dealId]);
+    const items = (r.rows[0]?.aml_sof_analysis?.items || []) as any[];
+    if (idx < 0 || idx >= items.length) return res.status(404).json({ error: "out of range" });
+    items.splice(idx, 1);
+    await pool.query(`UPDATE crm_deals SET aml_sof_analysis = $1 WHERE id = $2`, [{ items, lastRunAt: new Date().toISOString() }, dealId]);
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// ── MLR scope determination ─────────────────────────────────────────────────
+// Lettings under €10,000/month sit outside MLR 2017's letting-agent
+// definition entirely, so the MLRO can record "out of scope, proceed" with
+// a one-line legal justification. This GET returns the auto-suggested scope
+// based on deal type + value; POST persists the chosen scope + reason.
+
+router.get("/api/aml/deal/:id/mlr-scope", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const r = await pool.query(
+      `SELECT id, name, deal_type, fee, monthly_rent, annual_rent, mlr_scope, mlr_scope_reason, mlr_scope_assessed_at, mlr_scope_assessed_by FROM crm_deals WHERE id = $1`,
+      [req.params.id],
+    );
+    const d = r.rows[0];
+    if (!d) return res.status(404).json({ error: "deal not found" });
+    const { assessMlrScope } = await import("./aml-ai");
+    const suggestion = assessMlrScope({
+      dealType: d.deal_type,
+      fee: d.fee,
+      monthlyRent: d.monthly_rent,
+      annualRent: d.annual_rent,
+    });
+    res.json({
+      current: d.mlr_scope ? { scope: d.mlr_scope, reason: d.mlr_scope_reason, assessedAt: d.mlr_scope_assessed_at, assessedBy: d.mlr_scope_assessed_by } : null,
+      suggestion,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+router.post("/api/aml/deal/:id/mlr-scope", requireAuth, async (req: Request, res: Response) => {
+  const userId = (req as any).session?.userId || (req as any).tokenUserId;
+  const { scope, reason } = req.body || {};
+  if (!scope) return res.status(400).json({ error: "scope required" });
+  try {
+    await pool.query(
+      `UPDATE crm_deals SET mlr_scope = $1, mlr_scope_reason = $2, mlr_scope_assessed_at = NOW(), mlr_scope_assessed_by = $3 WHERE id = $4`,
+      [scope, reason || null, userId, req.params.id],
+    );
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// ── MLRO Report PDF ─────────────────────────────────────────────────────────
+// One-click audit-ready PDF combining everything: deal summary, MLR scope,
+// AI triage verdict, Companies House + UBO chain, sanctions/PEP, adverse
+// media, Veriff session results, SoF analysis, checklist status. The MLRO
+// drops this in the deal's SharePoint folder for the file.
+
+router.get("/api/aml/deal/:id/mlro-report", requireAuth, async (req: Request, res: Response) => {
+  const dealId = req.params.id;
+  try {
+    const PDFDocument = (await import("pdfkit")).default;
+    const dealRow = await pool.query(
+      `SELECT d.*, c.name AS company_name, c.companies_house_number, c.aml_risk_level, c.aml_checklist
+       FROM crm_deals d
+       LEFT JOIN crm_companies c ON c.id = d.crm_company_id
+       WHERE d.id = $1`,
+      [dealId],
+    );
+    const d = dealRow.rows[0];
+    if (!d) return res.status(404).json({ error: "deal not found" });
+
+    const doc = new PDFDocument({ size: "A4", margins: { top: 60, bottom: 60, left: 50, right: 50 }, info: { Title: `MLRO Report — ${d.name}` }, bufferPages: true });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="MLRO Report - ${String(d.name).replace(/[^a-zA-Z0-9 -]/g, "")}.pdf"`);
+    doc.pipe(res);
+
+    const heading = (text: string, size = 14) => { doc.moveDown(0.6); doc.fontSize(size).font("Helvetica-Bold").text(text); doc.fontSize(10).font("Helvetica"); doc.moveDown(0.2); };
+    const line = (label: string, value: any) => { doc.font("Helvetica-Bold").text(`${label}: `, { continued: true }).font("Helvetica").text(String(value ?? "—")); };
+    const para = (text: string) => doc.font("Helvetica").fontSize(10).text(text, { paragraphGap: 4 });
+
+    doc.fontSize(20).font("Helvetica-Bold").text("MLRO AML Report");
+    doc.fontSize(10).font("Helvetica").fillColor("#666").text(`Generated ${new Date().toLocaleString("en-GB")}`).fillColor("black");
+
+    heading("Deal");
+    line("Name", d.name);
+    line("Company", d.company_name);
+    line("Type", d.deal_type);
+    line("Fee", d.fee != null ? `£${Number(d.fee).toLocaleString()}` : "—");
+    line("Status", d.status);
+
+    heading("MLR 2017 scope");
+    if (d.mlr_scope) {
+      line("Scope", String(d.mlr_scope).replace(/_/g, " "));
+      line("Reason", d.mlr_scope_reason || "—");
+      if (d.mlr_scope_assessed_at) line("Assessed", new Date(d.mlr_scope_assessed_at).toLocaleString("en-GB"));
+    } else {
+      para("Scope not yet assessed — assumed in-scope under MLR 2017 standard CDD requirements.");
+    }
+
+    heading("AI triage verdict");
+    if (d.aml_ai_triage) {
+      const t = d.aml_ai_triage as any;
+      line("Verdict", String(t.verdict || "").toUpperCase());
+      para(t.recommendation || "");
+      if (Array.isArray(t.rationale) && t.rationale.length > 0) {
+        doc.font("Helvetica-Bold").text("Key signals:");
+        doc.font("Helvetica").list(t.rationale, { bulletRadius: 2, textIndent: 12 });
+      }
+      if (t.mlroAction) {
+        doc.font("Helvetica-Bold").text("MLRO action: ", { continued: true }).font("Helvetica").text(t.mlroAction);
+      }
+    } else {
+      para("AI triage not yet run.");
+    }
+
+    heading("Risk assessment");
+    line("Overall risk level", d.aml_risk_level || "Not assessed");
+    line("Companies House #", d.companies_house_number || "—");
+    line("Sanctions match", d.aml_sanctions_match ? "YES — review required" : "Clear");
+    line("PEP status", d.aml_pep_status || "—");
+
+    heading("Enhanced Due Diligence");
+    line("EDD required", d.aml_edd_required ? "YES" : "No");
+    if (d.aml_edd_required) {
+      line("Reason", d.aml_edd_reason || "—");
+      line("EDD completed", d.aml_edd_completed_at ? new Date(d.aml_edd_completed_at).toLocaleDateString("en-GB") : "Outstanding");
+      if (d.aml_edd_notes) para(d.aml_edd_notes);
+    }
+
+    heading("Source of funds");
+    line("Declared source", d.aml_source_of_funds || "—");
+    if (d.aml_sof_analysis?.items?.length > 0) {
+      d.aml_sof_analysis.items.forEach((sof: any, i: number) => {
+        doc.moveDown(0.3);
+        doc.font("Helvetica-Bold").text(`Document ${i + 1} — ${sof.documentType || "uncategorised"}`);
+        if (sof.summary) para(sof.summary);
+        if (sof.inferredAnnualIncomePence != null) line("Inferred annual income", `£${(sof.inferredAnnualIncomePence/100).toLocaleString()}`);
+        if (typeof sof.declaredSourceMatchesDocument === "boolean") line("Matches declared source", sof.declaredSourceMatchesDocument ? "Yes" : "No");
+        if (Array.isArray(sof.redFlags) && sof.redFlags.length > 0) {
+          doc.font("Helvetica-Bold").fillColor("#b91c1c").text("Red flags:");
+          doc.font("Helvetica").fillColor("black").list(sof.redFlags, { bulletRadius: 2, textIndent: 12 });
+        }
+      });
+    } else {
+      para("No source-of-funds documents analysed yet.");
+    }
+
+    heading("12-step CDD checklist");
+    const checklist = (d.aml_checklist || {}) as Record<string, any>;
+    const CHECKLIST_KEYS = ["id_verified","address_verified","ubo_identified","company_cert","sof_evidenced","sow_evidenced","sanctions_clear","pep_checked","adverse_media","edd_complete","risk_assessed","mlro_review"];
+    CHECKLIST_KEYS.forEach((k) => {
+      const item = checklist[k];
+      const tick = item?.tickedAt ? "✓" : " ";
+      doc.font("Courier").text(`[${tick}] ${k.replace(/_/g, " ")}${item?.notes ? ` — ${item.notes}` : ""}`);
+    });
+
+    doc.moveDown(1);
+    doc.font("Helvetica-Oblique").fontSize(8).fillColor("#666")
+       .text("This report compiles the AML evidence held by BGP at the time of generation. Retain in the deal file for FCA / HMRC inspection. Generated by the BGP app — not a substitute for MLRO judgement.");
+
+    doc.end();
+  } catch (err: any) {
+    console.error("[aml/mlro-report] failed:", err?.message);
+    if (!res.headersSent) res.status(500).json({ error: err?.message || "MLRO report failed" });
+  }
+});
+
 export default router;

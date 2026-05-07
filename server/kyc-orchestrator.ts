@@ -598,7 +598,63 @@ export async function runAllAmlChecks(
     }
   }
 
-  // 5. Deal event trail — so the audit log carries the whole sweep
+  // 5. Auto-EDD trigger evaluation. Sets aml_edd_required = true with a
+  //    documented reason when the gathered signals meet a high-risk rule
+  //    (sanctions match, PEP, high-risk jurisdiction, large deal, complex
+  //    structure). Saves the MLRO from having to remember to flip it.
+  let autoEdd: { required: boolean; reason: string } = { required: false, reason: "" };
+  try {
+    const { evaluateAutoEdd } = await import("./aml-ai");
+    const dealRow = dealId ? await pool.query(`SELECT fee FROM crm_deals WHERE id = $1`, [dealId]) : null;
+    autoEdd = evaluateAutoEdd({
+      sanctionsMatch,
+      pepStatus: complyAdvantageResult.some((r: any) => r.is_pep) ? "pep" : "none",
+      riskLevel: risk?.level || null,
+      riskScore: risk?.score ?? null,
+      jurisdictions: investigationResult?.companyData?.profile?.registered_office_address?.country
+        ? [String(investigationResult.companyData.profile.registered_office_address.country)]
+        : [],
+      dealValuePence: dealRow?.rows[0]?.fee ? Math.round(Number(dealRow.rows[0].fee) * 100) : null,
+      uboChainDepth: investigationResult?.ownershipChain?.length ?? null,
+      adverseMediaVerdict: adverseMedia.verdict,
+    });
+    if (dealId && autoEdd.required) {
+      await pool.query(
+        `UPDATE crm_deals SET aml_edd_required = true, aml_edd_reason = COALESCE(aml_edd_reason, $1) WHERE id = $2`,
+        [autoEdd.reason, dealId],
+      );
+    }
+  } catch (e: any) {
+    warnings.push(`Auto-EDD evaluation failed: ${e?.message}`);
+  }
+
+  // 6. AI triage — Claude looks at every signal and returns a verdict
+  //    (clear / review / escalate) with a plain-English MLRO recommendation.
+  //    Persisted to crm_deals.aml_ai_triage so the deal AML panel can show it.
+  let aiTriage: any = null;
+  try {
+    const { runAiTriage, saveAiTriage } = await import("./aml-ai");
+    aiTriage = await runAiTriage({
+      dealName: dealId ? (await pool.query(`SELECT name FROM crm_deals WHERE id = $1`, [dealId])).rows[0]?.name || "" : "",
+      companyName: company.name || "",
+      signals: {
+        sanctionsMatch,
+        pepStatus: complyAdvantageResult.some((r: any) => r.is_pep) ? "pep" : "none",
+        riskLevel: risk?.level || null,
+        riskScore: risk?.score ?? null,
+        adverseMediaVerdict: adverseMedia.verdict,
+        investigationId,
+        veriffSessions: veriffLaunched.length,
+        checklistTicked,
+        uboChainDepth: investigationResult?.ownershipChain?.length ?? null,
+      },
+    });
+    if (dealId && aiTriage) await saveAiTriage(dealId, aiTriage);
+  } catch (e: any) {
+    warnings.push(`AI triage failed: ${e?.message}`);
+  }
+
+  // 7. Deal event trail — so the audit log carries the whole sweep
   if (dealId) {
     await pool.query(
       `INSERT INTO deal_events (deal_id, event_type, payload, actor_id)
@@ -614,6 +670,8 @@ export async function runAllAmlChecks(
           veriffSkipped,
           adverseMedia,
           checklistTicked,
+          autoEdd,
+          aiTriage,
           warnings,
         }),
         userId,
@@ -632,7 +690,9 @@ export async function runAllAmlChecks(
     adverseMedia,
     checklistTicked,
     warnings,
-  };
+    autoEdd,
+    aiTriage,
+  } as any;
 }
 
 /**

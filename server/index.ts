@@ -1073,6 +1073,13 @@ import { pool } from "./db";
     // Dedupe key for the salary importer — one bonus per (user, date, amount, kind)
     // means re-running the spreadsheet import is idempotent.
     `CREATE UNIQUE INDEX IF NOT EXISTS bonus_history_dedup_idx ON bonus_history(user_id, effective_date, amount_pence, kind)`,
+    // AML AI augments + MLR scope determination
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sof_analysis JSONB`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_ai_triage JSONB`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_reason TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_assessed_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_assessed_by TEXT`,
   ];
 
   let ok = 0, skipped = 0;
