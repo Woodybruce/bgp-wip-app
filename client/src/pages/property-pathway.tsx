@@ -216,10 +216,12 @@ export default function PropertyPathway() {
     try {
       const currentRun = selectedRun?.id === runId ? selectedRun : null;
       const targetStage = stage ?? (currentRun?.currentStage ?? 1);
-      // Auto-chain through stages 1-5; stop at Stage 6 (Business Plan) since
-      // that's where the user's commercial input is needed. Re-runs of
-      // stages 6+ stay single-stage.
-      const autoChainTo = targetStage < 6 ? 6 : undefined;
+      // Auto-chain end-to-end through to Excel Model. Stage 6 (Business Plan)
+      // auto-drafts; Stage 7 (Excel Model) now uses that draft if no agreed
+      // version exists, marking the model as autoPiloted so the user can
+      // review and lock before exporting Why Buy. Stops before Stage 8
+      // (Image Studio) so the user sees the model and can decide.
+      const autoChainTo = targetStage < 8 ? 8 : undefined;
       const res = await fetch(`/api/property-pathway/${runId}/advance`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -252,7 +254,7 @@ export default function PropertyPathway() {
         const stageKey = `stage${targetStageResp}`;
 
         if (chainEnd) {
-          toast({ title: `Running stages ${targetStageResp}–${chainEnd - 1}`, description: "Each stage flips to completed as it finishes. Stops before Business Plan." });
+          toast({ title: `Running stages ${targetStageResp}–${chainEnd - 1}`, description: "End-to-end through to Excel Model. Stage 6 auto-drafts the business plan; the model is generated from that draft (review + agree to lock before Why Buy)." });
         } else {
           toast({ title: `Stage ${targetStageResp} running in background`, description: "Usually 30–90 seconds. Watching for completion…" });
         }
