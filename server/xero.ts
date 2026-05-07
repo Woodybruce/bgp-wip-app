@@ -429,11 +429,9 @@ export function setupXeroRoutes(app: Express) {
       const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId));
       if (!deal) return res.status(404).json({ message: "Deal not found" });
 
-      const KYC_GATE_DATE = new Date("2025-05-01");
-      if (new Date() >= KYC_GATE_DATE && !deal.kycApproved) {
-        return res.status(400).json({ message: "KYC must be approved before creating an invoice. Please approve KYC on the deal first." });
-      }
-
+      // KYC approval is no longer a hard pre-condition for drafting an invoice —
+      // surveyors need to be able to draft early. AML status is still tracked
+      // on the deal and visible on the KYC board for follow-up.
       let invoicingEntityName: string | undefined;
       const entityId = invoicingEntityId !== undefined ? (invoicingEntityId || null) : (deal.invoicingEntityId || null);
       if (entityId) {

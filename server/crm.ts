@@ -2821,13 +2821,10 @@ Only return the JSON object. If uncertain, return {"role": null}.`
             const existingInvoices = await db.select().from(xeroInvoices)
               .where(eq(xeroInvoices.dealId, deal.id)).limit(1);
 
-            const KYC_GATE_DATE = new Date("2025-05-01");
-            const kycBlocked = new Date() >= KYC_GATE_DATE && !deal.kycApproved;
-            if (kycBlocked) {
-              console.log(`Skipped auto-invoice for deal ${deal.id}: KYC not yet approved`);
-            }
-
-            if (existingInvoices.length === 0 && (deal.fee || 0) > 0 && !kycBlocked) {
+            // KYC approval is no longer a pre-condition for auto-drafting an
+            // invoice when a deal flips to COM. The KYC board still flags
+            // anything outstanding for follow-up before the invoice is sent.
+            if (existingInvoices.length === 0 && (deal.fee || 0) > 0) {
               let contactName = "";
               let contactEmail = "";
 

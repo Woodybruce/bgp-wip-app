@@ -2420,7 +2420,7 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
         {creating && !deal.kycApproved && (
           <div className="flex items-center gap-2 mb-3 p-2 rounded-md bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-xs" data-testid="kyc-warning-banner">
             <ShieldAlert className="w-4 h-4 flex-shrink-0" />
-            <span>KYC has not been approved for this deal. From 1st May 2025, invoices cannot be created without KYC approval.</span>
+            <span>Heads up: KYC isn't approved on this deal yet — please clear it on the KYC board before sending the invoice.</span>
           </div>
         )}
 
