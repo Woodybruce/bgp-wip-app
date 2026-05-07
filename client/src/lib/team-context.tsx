@@ -47,16 +47,26 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     if (!userId || !userTeam) return;
 
     const key = `bgp_active_team_${userId}`;
+    const migratedKey = `bgp_team_oc_migrated_${userId}`;
     const stored = localStorage.getItem(key);
+    const migrated = localStorage.getItem(migratedKey) === "1";
+
+    // One-time migration: Office / Corporate users (PAs, Office Managers,
+    // Bookkeepers) had their team filter defaulted to their own team, which
+    // wiped the WIP report. Force them to 'all' once, then leave their
+    // choice alone going forward.
+    if (!migrated && userTeam === "Office / Corporate") {
+      localStorage.setItem(migratedKey, "1");
+      localStorage.setItem(key, "all");
+      setActiveTeamState("all");
+      return;
+    }
 
     if (stored === "all") {
       setActiveTeamState("all");
     } else if (stored && TEAMS.includes(stored as TeamName)) {
       setActiveTeamState(stored as TeamName);
     } else {
-      // Office / Corporate has no deal pipeline of its own — PAs, Office
-      // Managers and Bookkeepers need cross-team visibility, not a filter
-      // that wipes the WIP report. Default them to "all" instead.
       const initial: TeamName | "all" = userTeam === "Office / Corporate" ? "all" : userTeam;
       setActiveTeamState(initial);
       localStorage.setItem(key, initial);
