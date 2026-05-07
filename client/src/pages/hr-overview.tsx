@@ -325,7 +325,7 @@ interface TeamAiSummary { team: string; summary: string; generated_at: string }
 // on the firm-wide ski target hero. Each card shows the team head pinned at
 // the top with their direct reports listed underneath, organigram-style,
 // plus a one-line AI summary of what they've been up to lately.
-function TeamCard({ team, allStaff, aiSummary, oooByUser }: { team: TeamSummary; allStaff: StaffMember[]; aiSummary?: string; oooByUser?: Map<string, { subject: string; isAllDay: boolean }> }) {
+function TeamCard({ team, allStaff, aiSummary, oooByUser, onSelectPerson }: { team: TeamSummary; allStaff: StaffMember[]; aiSummary?: string; oooByUser?: Map<string, { subject: string; isAllDay: boolean }>; onSelectPerson?: (id: string) => void }) {
   const [, navigate] = useLocation();
   const style = teamStyle(team.team);
   const members = useMemo(() => allStaff.filter(s => team.memberIds.includes(s.id)), [allStaff, team.memberIds]);
@@ -338,7 +338,7 @@ function TeamCard({ team, allStaff, aiSummary, oooByUser }: { team: TeamSummary;
     const ooo = oooByUser?.get(m.id);
     return (
       <button
-        onClick={() => navigate(`/hr?person=${m.id}`)}
+        onClick={() => onSelectPerson ? onSelectPerson(m.id) : navigate(`/hr?person=${m.id}`)}
         className={`w-full flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-white/70 dark:hover:bg-white/5 ${isHead ? "bg-white/60 dark:bg-white/10" : ""} ${ooo ? "opacity-70" : ""}`}
         title={ooo ? `OOO: ${ooo.subject}` : undefined}
       >
@@ -388,7 +388,7 @@ function TeamCard({ team, allStaff, aiSummary, oooByUser }: { team: TeamSummary;
   );
 }
 
-function OrganigramSection({ allStaff, isAdmin }: { allStaff: StaffMember[]; isAdmin: boolean }) {
+function OrganigramSection({ allStaff, isAdmin, onSelectPerson }: { allStaff: StaffMember[]; isAdmin: boolean; onSelectPerson?: (id: string) => void }) {
   const { toast } = useToast();
   const { data, isLoading } = useQuery<{ teams: TeamSummary[] }>({ queryKey: ["/api/hr/team-summary"] });
   const { data: aiSummaries = [] } = useQuery<TeamAiSummary[]>({ queryKey: ["/api/hr/team-ai-summaries"] });
@@ -432,7 +432,7 @@ function OrganigramSection({ allStaff, isAdmin }: { allStaff: StaffMember[]; isA
       </CardHeader>
       <CardContent className="pt-0">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {data.teams.map(t => <TeamCard key={t.team} team={t} allStaff={allStaff} aiSummary={aiByTeam.get(t.team)} oooByUser={oooByUser} />)}
+          {data.teams.map(t => <TeamCard key={t.team} team={t} allStaff={allStaff} aiSummary={aiByTeam.get(t.team)} oooByUser={oooByUser} onSelectPerson={onSelectPerson} />)}
         </div>
       </CardContent>
     </Card>
@@ -457,7 +457,7 @@ interface BruceyLeaderboard {
   winnerUserId: string | null;
 }
 
-function BruceyBonusesCard({ isAdmin }: { isAdmin: boolean }) {
+function BruceyBonusesCard({ isAdmin, onSelectPerson }: { isAdmin: boolean; onSelectPerson?: (id: string) => void }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const { data, isLoading } = useQuery<BruceyLeaderboard>({ queryKey: ["/api/hr/brucey-points/leaderboard"] });
@@ -501,7 +501,7 @@ function BruceyBonusesCard({ isAdmin }: { isAdmin: boolean }) {
             {/* Winner banner */}
             {winner && (
               <button
-                onClick={() => navigate(`/hr?person=${winner.userId}`)}
+                onClick={() => onSelectPerson ? onSelectPerson(winner.userId) : navigate(`/hr?person=${winner.userId}`)}
                 className="w-full mb-2 rounded-lg bg-gradient-to-br from-amber-100 to-yellow-100 dark:from-amber-950/60 dark:to-yellow-950/60 border border-amber-300 dark:border-amber-700 p-2.5 flex items-center gap-2.5 hover:shadow-sm transition-shadow text-left"
               >
                 <span className="text-xl">🥇</span>
@@ -528,7 +528,7 @@ function BruceyBonusesCard({ isAdmin }: { isAdmin: boolean }) {
               {leaders.slice(1, 5).map((l, i) => (
                 <button
                   key={l.userId}
-                  onClick={() => navigate(`/hr?person=${l.userId}`)}
+                  onClick={() => onSelectPerson ? onSelectPerson(l.userId) : navigate(`/hr?person=${l.userId}`)}
                   className="w-full flex items-center gap-2 p-1.5 rounded-md hover:bg-amber-50/50 dark:hover:bg-amber-950/20 transition-colors text-left"
                 >
                   <span className="w-5 text-center text-[11px] text-muted-foreground shrink-0">{medals[i + 1] || `#${i + 2}`}</span>
@@ -578,7 +578,7 @@ interface LeaderboardData {
   topKudos: IndividualLeader[];
 }
 
-function HungerGamesStrip({ allStaff: _allStaff }: { allStaff: StaffMember[] }) {
+function HungerGamesStrip({ allStaff: _allStaff, onSelectPerson }: { allStaff: StaffMember[]; onSelectPerson?: (id: string) => void }) {
   const [, navigate] = useLocation();
   const { data: teamData } = useQuery<{ teams: TeamSummary[] }>({ queryKey: ["/api/hr/team-summary"] });
   const { data: indiv } = useQuery<LeaderboardData>({ queryKey: ["/api/dashboard/individual-leaderboard"] });
@@ -660,7 +660,7 @@ function HungerGamesStrip({ allStaff: _allStaff }: { allStaff: StaffMember[] }) 
             {list.map((l, i) => (
               <button
                 key={l.userId}
-                onClick={() => navigate(`/hr?person=${l.userId}`)}
+                onClick={() => onSelectPerson ? onSelectPerson(l.userId) : navigate(`/hr?person=${l.userId}`)}
                 className={`w-full flex items-center gap-3 p-2 rounded-lg border text-left transition-colors hover:bg-accent/40 ${i === 0 ? "bg-amber-50/50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800" : ""}`}
                 data-testid={`leaderboard-${tab}-${i}`}
               >
@@ -798,7 +798,7 @@ function IssueAwardDialog({ open, onClose, isAdmin, allStaff }: { open: boolean;
   );
 }
 
-function WatchHouseBoard({ isAdmin, allStaff }: { isAdmin: boolean; allStaff: StaffMember[] }) {
+function WatchHouseBoard({ isAdmin, allStaff, onSelectPerson }: { isAdmin: boolean; allStaff: StaffMember[]; onSelectPerson?: (id: string) => void }) {
   const { toast } = useToast();
   const [, navigate] = useLocation();
   const [issueOpen, setIssueOpen] = useState(false);
@@ -842,7 +842,7 @@ function WatchHouseBoard({ isAdmin, allStaff }: { isAdmin: boolean; allStaff: St
             {awards.slice(0, 6).map(a => (
               <button
                 key={a.id}
-                onClick={() => navigate(`/hr?person=${a.user_id}`)}
+                onClick={() => onSelectPerson ? onSelectPerson(a.user_id) : navigate(`/hr?person=${a.user_id}`)}
                 className="w-full flex items-center gap-2.5 p-2 rounded-md border bg-card hover:bg-accent/40 transition-colors text-left"
               >
                 <span className="text-xl shrink-0">{a.emoji || "⭐"}</span>
@@ -954,7 +954,7 @@ function CalendarWidget() {
 
 // ── 🚀 People & HR overview — embedded in /hr as a tab ─────────────────────
 
-export default function HrOverview() {
+export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: string) => void } = {}) {
   const { data: currentUser, isLoading: userLoading } = useQuery<AuthUser | null>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -979,13 +979,13 @@ export default function HrOverview() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-1 space-y-4">
           {currentUser && <YouPanel user={currentUser} />}
-          <BruceyBonusesCard isAdmin={isAdmin} />
-          <HungerGamesStrip allStaff={allStaff} />
-          <WatchHouseBoard isAdmin={isAdmin} allStaff={allStaff} />
-          <CalendarWidget />
+          <BruceyBonusesCard isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
+          <HungerGamesStrip allStaff={allStaff} onSelectPerson={onSelectPerson} />
+          <WatchHouseBoard isAdmin={isAdmin} allStaff={allStaff} onSelectPerson={onSelectPerson} />
         </div>
         <div className="lg:col-span-2 space-y-4">
-          <OrganigramSection allStaff={allStaff} isAdmin={isAdmin} />
+          <OrganigramSection allStaff={allStaff} isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
+          <CalendarWidget />
         </div>
       </div>
     </div>

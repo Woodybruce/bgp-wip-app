@@ -3740,7 +3740,7 @@ export default function HRPage() {
         </TabsList>
 
         <TabsContent value="overview">
-          <HrOverview />
+          <HrOverview onSelectPerson={(id) => setSelectedUserId(id)} />
         </TabsContent>
 
         <TabsContent value="benefits">
