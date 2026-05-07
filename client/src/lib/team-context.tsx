@@ -54,8 +54,12 @@ export function TeamProvider({ children }: { children: ReactNode }) {
     } else if (stored && TEAMS.includes(stored as TeamName)) {
       setActiveTeamState(stored as TeamName);
     } else {
-      setActiveTeamState(userTeam);
-      localStorage.setItem(key, userTeam);
+      // Office / Corporate has no deal pipeline of its own — PAs, Office
+      // Managers and Bookkeepers need cross-team visibility, not a filter
+      // that wipes the WIP report. Default them to "all" instead.
+      const initial: TeamName | "all" = userTeam === "Office / Corporate" ? "all" : userTeam;
+      setActiveTeamState(initial);
+      localStorage.setItem(key, initial);
     }
   }, [userId, userTeam]);
 
