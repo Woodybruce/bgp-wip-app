@@ -151,7 +151,12 @@ function SkiTargetHero() {
 
 // ── 👤 You panel ─────────────────────────────────────────────────────────────
 
-function YouPanel({ user }: { user: AuthUser }) {
+function YouPanel({ user, onSelectPerson }: { user: AuthUser; onSelectPerson?: (id: string, tab?: string) => void }) {
+  // When the parent provided a select handler we use that — same-page state
+  // updates are reliable. Falling back to URL navigation only matters when
+  // YouPanel is rendered standalone (e.g. on the dashboard) where there's
+  // no parent to listen to.
+  const open = (tab: string) => onSelectPerson ? onSelectPerson(user.id, tab) : navigate(`/hr?person=${user.id}&tab=${tab}`);
   const [, navigate] = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [newTask, setNewTask] = useState("");
@@ -299,7 +304,7 @@ function YouPanel({ user }: { user: AuthUser }) {
 
           {/* Quick stats strip */}
           <div className="grid grid-cols-3 gap-2 text-center pt-1">
-            <button onClick={() => navigate("/hr")} className="rounded-md border p-2 hover:bg-accent/40 transition-colors">
+            <button onClick={() => open("commission")} className="rounded-md border p-2 hover:bg-accent/40 transition-colors">
               <div className="text-lg font-semibold">{commission ? fmtMoney(commission.wipTotal) : "—"}</div>
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Pipeline</div>
             </button>
@@ -307,18 +312,20 @@ function YouPanel({ user }: { user: AuthUser }) {
               <div className="text-lg font-semibold">{tasks.length}</div>
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Open tasks</div>
             </button>
-            <button onClick={() => navigate("/hr")} className="rounded-md border p-2 hover:bg-accent/40 transition-colors">
+            <button onClick={() => open("commission")} className="rounded-md border p-2 hover:bg-accent/40 transition-colors">
               <div className="text-lg font-semibold">{commission ? fmtMoney(commission.commissionForecast) : "—"}</div>
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Comm. forecast</div>
             </button>
           </div>
 
-          {/* Direct shortcut to the user's own profile tabs */}
+          {/* Direct shortcut to the user's own profile tabs. "Files" was
+              consolidated into the "My stuff" tab in the May 2026 cleanup —
+              we route there. */}
           <div className="grid grid-cols-2 gap-2 pt-1">
-            <button onClick={() => navigate(`/hr?person=${user.id}&tab=expenses`)} className="rounded-md border p-2 text-xs flex items-center gap-1.5 justify-center hover:bg-accent/40 transition-colors">
+            <button onClick={() => open("expenses")} className="rounded-md border p-2 text-xs flex items-center gap-1.5 justify-center hover:bg-accent/40 transition-colors" data-testid="my-card-and-expenses">
               <CreditCard className="w-3.5 h-3.5 text-muted-foreground" /> My card &amp; expenses
             </button>
-            <button onClick={() => navigate(`/hr?person=${user.id}&tab=files`)} className="rounded-md border p-2 text-xs flex items-center gap-1.5 justify-center hover:bg-accent/40 transition-colors">
+            <button onClick={() => open("mystuff")} className="rounded-md border p-2 text-xs flex items-center gap-1.5 justify-center hover:bg-accent/40 transition-colors" data-testid="my-documents">
               <FileText className="w-3.5 h-3.5 text-muted-foreground" /> My documents
             </button>
           </div>
@@ -1066,7 +1073,7 @@ function CalendarWidget() {
 
 // ── 🚀 People & HR overview — embedded in /hr as a tab ─────────────────────
 
-export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: string) => void } = {}) {
+export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: string, tab?: string) => void } = {}) {
   const { data: currentUser, isLoading: userLoading } = useQuery<AuthUser | null>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -1090,7 +1097,7 @@ export default function HrOverview({ onSelectPerson }: { onSelectPerson?: (id: s
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-1 space-y-4">
-          {currentUser && <YouPanel user={currentUser} />}
+          {currentUser && <YouPanel user={currentUser} onSelectPerson={onSelectPerson} />}
           <BruceyBonusesCard isAdmin={isAdmin} onSelectPerson={onSelectPerson} />
           <HungerGamesStrip allStaff={allStaff} onSelectPerson={onSelectPerson} />
           <WatchHouseBoard isAdmin={isAdmin} allStaff={allStaff} onSelectPerson={onSelectPerson} />

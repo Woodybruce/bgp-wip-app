@@ -4756,7 +4756,7 @@ export default function HRPage() {
         </TabsList>
 
         <TabsContent value="overview">
-          <HrOverview onSelectPerson={(id) => setSelectedUserId(id)} />
+          <HrOverview onSelectPerson={(id, tab) => { setSelectedUserId(id); if (tab) setInitialTab(tab); }} />
         </TabsContent>
 
         <TabsContent value="my-tasks">
