@@ -179,9 +179,15 @@ function YouPanel({ user }: { user: AuthUser }) {
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const endOfWeek = new Date(today); endOfWeek.setDate(today.getDate() + 7);
 
-  const todayTasks = tasks.filter(t => t.due_date && new Date(t.due_date) <= today);
-  const weekTasks = tasks.filter(t => t.due_date && new Date(t.due_date) > today && new Date(t.due_date) <= endOfWeek);
-  const visibleTasks = [...todayTasks, ...weekTasks].slice(0, 6);
+  // Pinned first, then due today/overdue, then due this week, then no-due-date.
+  // Don't hide tasks just because they're undated — that's why "Inbox zero"
+  // was showing on accounts that genuinely had open work.
+  const pinnedTasks = tasks.filter(t => t.is_pinned);
+  const todayTasks = tasks.filter(t => !t.is_pinned && t.due_date && new Date(t.due_date) <= today);
+  const weekTasks = tasks.filter(t => !t.is_pinned && t.due_date && new Date(t.due_date) > today && new Date(t.due_date) <= endOfWeek);
+  const undatedTasks = tasks.filter(t => !t.is_pinned && !t.due_date);
+  const visibleTasks = [...pinnedTasks, ...todayTasks, ...weekTasks, ...undatedTasks].slice(0, 6);
+  const totalOpen = tasks.length;
 
   const target = commission?.t2 ?? 0;
   const pct = target > 0 ? Math.min((commission!.forecastPence / target) * 100, 100) : 0;
@@ -229,8 +235,10 @@ function YouPanel({ user }: { user: AuthUser }) {
           {/* Tasks */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Today &amp; this week</span>
-              <button onClick={() => navigate("/my-tasks")} className="text-[11px] text-primary hover:underline">See all</button>
+              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                Open tasks {totalOpen > 0 && <span className="text-foreground font-semibold ml-1">{totalOpen}</span>}
+              </span>
+              <button onClick={() => navigate("/tasks")} className="text-[11px] text-primary hover:underline">See all</button>
             </div>
             <form
               onSubmit={(e) => { e.preventDefault(); if (newTask.trim()) addTask.mutate(newTask.trim()); }}
@@ -248,7 +256,7 @@ function YouPanel({ user }: { user: AuthUser }) {
               </Button>
             </form>
             <div className="space-y-1">
-              {visibleTasks.length === 0 ? (
+              {totalOpen === 0 ? (
                 <div className="text-xs text-muted-foreground italic py-2">Inbox zero. Nice. 🌴</div>
               ) : visibleTasks.map(t => {
                 const due = t.due_date ? new Date(t.due_date) : null;
@@ -264,7 +272,7 @@ function YouPanel({ user }: { user: AuthUser }) {
                       <Check className="w-3 h-3 text-primary opacity-0 group-hover:opacity-100" />
                     </button>
                     <button
-                      onClick={() => t.linked_deal_id ? navigate(`/deals/${t.linked_deal_id}`) : navigate("/my-tasks")}
+                      onClick={() => t.linked_deal_id ? navigate(`/deals/${t.linked_deal_id}`) : navigate("/tasks")}
                       className="flex-1 min-w-0 text-left"
                     >
                       <div className="text-sm truncate">{t.title}</div>
@@ -293,7 +301,7 @@ function YouPanel({ user }: { user: AuthUser }) {
               <div className="text-lg font-semibold">{commission ? fmtMoney(commission.wipTotal) : "—"}</div>
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Pipeline</div>
             </button>
-            <button onClick={() => navigate("/my-tasks")} className="rounded-md border p-2 hover:bg-accent/40 transition-colors">
+            <button onClick={() => navigate("/tasks")} className="rounded-md border p-2 hover:bg-accent/40 transition-colors">
               <div className="text-lg font-semibold">{tasks.length}</div>
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Open tasks</div>
             </button>
