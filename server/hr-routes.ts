@@ -3,6 +3,7 @@ import { pool } from "./db";
 import { requireAuth, requireAdmin } from "./auth";
 import { xeroApi } from "./xero";
 import { getValidMsToken } from "./microsoft";
+import multer from "multer";
 
 // requireAuth doesn't populate req.user, so look up admin status from the DB
 // using the session/token user id. Used by hybrid (admin-or-self) endpoints
@@ -1619,8 +1620,8 @@ export function setupHrRoutes(app: Express) {
 
       let trends: any = null;
       try {
-        const { default: AnthropicMod } = await import("@anthropic-ai/sdk");
-        const Anthropic: any = (AnthropicMod as any).default || AnthropicMod;
+        const Anthropic = (await import("@anthropic-ai/sdk")).default;
+        
         const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
         const dealsList = deals.map((d: any) => `- ${d.name} | ${d.status} | £${(parseFloat(d.fee) || 0).toLocaleString()} | tenant: ${d.tenant || "?"} | landlord: ${d.landlord || "?"} | type: ${d.deal_type || "?"} | team: ${(d.team || []).join(",")}`).join("\n");
         const msg = await client.messages.create({
@@ -1680,8 +1681,8 @@ Return ONLY valid JSON.`,
 
       let drafts: any = null;
       try {
-        const { default: AnthropicMod } = await import("@anthropic-ai/sdk");
-        const Anthropic: any = (AnthropicMod as any).default || AnthropicMod;
+        const Anthropic = (await import("@anthropic-ai/sdk")).default;
+        
         const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
         const msg = await client.messages.create({
           model: "claude-sonnet-4-6",
@@ -2093,8 +2094,8 @@ Return ONLY JSON.`,
     if (!userId || !period || !text) return res.status(400).json({ error: "userId, period, text required" });
 
     try {
-      const { default: AnthropicMod } = await import("@anthropic-ai/sdk");
-      const Anthropic: any = (AnthropicMod as any).default || AnthropicMod;
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
       const msg = await client.messages.create({
@@ -2227,8 +2228,8 @@ Return ONLY valid JSON, nothing else.`,
       const buf = Buffer.from(await fileRes.arrayBuffer());
 
       // Claude can read .docx natively via the document input type.
-      const { default: AnthropicMod } = await import("@anthropic-ai/sdk");
-      const Anthropic: any = (AnthropicMod as any).default || AnthropicMod;
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
       const msg = await client.messages.create({
@@ -2332,8 +2333,8 @@ Return ONLY JSON.`,
       // return a deterministic skeleton so the UI still demos.
       let aiSummary = "";
       try {
-        const { default: Anthropic } = await import("@anthropic-ai/sdk");
-        const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const Anthropic = (await import("@anthropic-ai/sdk")).default;
+        const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
         const dealsList = dealsRes.rows.slice(0, 20).map((d: any) => `- ${d.name} (${d.status}, £${(parseFloat(d.fee) || 0).toLocaleString()})`).join("\n");
         const msg = await client.messages.create({
           model: "claude-sonnet-4-6",
@@ -2781,8 +2782,8 @@ Return ONLY JSON.`,
 
       let aiDraft = "";
       try {
-        const { default: AnthropicMod } = await import("@anthropic-ai/sdk");
-        const Anthropic: any = (AnthropicMod as any).default || AnthropicMod;
+        const Anthropic = (await import("@anthropic-ai/sdk")).default;
+        
         const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
         const dealsList = dealsRes.rows.map((d: any) => `- ${d.name} (${d.status}, £${(parseFloat(d.fee) || 0).toLocaleString()})`).join("\n");
         const reviewsList = reviewsRes.rows.map((rev: any) => `${rev.period}: target £${((rev.fees_target_pence || 0) / 100).toLocaleString()}, achieved £${((rev.fees_achieved_pence || 0) / 100).toLocaleString()}`).join("\n");
@@ -2827,7 +2828,6 @@ Use the language and tone of BGP's review docs.`,
   // Upload as a single multipart/form-data POST. Binary stored in file_blobs;
   // metadata in uploaded_files. Stream back via GET /:id/file with inline
   // disposition so PDFs/images render in-app.
-  const multer = require("multer");
   const memUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
   app.get("/api/hr/files/:userId", requireAuth, async (req: any, res) => {
@@ -2921,8 +2921,8 @@ Use the language and tone of BGP's review docs.`,
     try {
       const TEAMS = ["Office / Corporate", "Investment", "Lease Advisory", "National Leasing", "Development", "Tenant Rep", "London Leasing"];
 
-      const { default: AnthropicMod } = await import("@anthropic-ai/sdk");
-      const Anthropic: any = (AnthropicMod as any).default || AnthropicMod;
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
       const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
 
