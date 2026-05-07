@@ -2970,6 +2970,52 @@ Use the language and tone of BGP's review docs.`,
     }
   });
 
+  // ── 🛠 Admin diagnostics — find duplicate users (defensive, post-seed) ───
+  // Lists every active user grouped by normalised name so admin can spot
+  // duplicates the seed might have created (e.g. two "Layla O'Driscoll"
+  // rows with different usernames). Read-only — doesn't merge automatically.
+  app.get("/api/hr/diagnostics/duplicate-users", requireAdmin, async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, name, username, email, is_admin, is_active,
+                (SELECT id FROM staff_profiles sp WHERE sp.user_id = u.id LIMIT 1) AS profile_id,
+                (SELECT id FROM msal_token_cache m WHERE m.user_id = u.id::text LIMIT 1) IS NOT NULL AS has_ms_token,
+                u.created_at, u.updated_at
+         FROM users u
+         WHERE is_active = true
+         ORDER BY LOWER(REGEXP_REPLACE(name, '[^a-zA-Z0-9]', '', 'g')), created_at`
+      );
+      const groups = new Map<string, any[]>();
+      for (const r of rows) {
+        const key = String(r.name).toLowerCase().replace(/[''\s]/g, "");
+        const list = groups.get(key) || [];
+        list.push(r);
+        groups.set(key, list);
+      }
+      const duplicates: any[] = [];
+      for (const [key, members] of groups) {
+        if (members.length > 1) duplicates.push({ key, members });
+      }
+      res.json({ totalUsers: rows.length, duplicateGroups: duplicates });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Deactivate a specific user — admin uses this after reviewing the
+  // duplicate diagnostic. Soft-delete: sets is_active = false.
+  app.post("/api/hr/diagnostics/deactivate-user/:id", requireAdmin, async (req: any, res) => {
+    const actorId = req.session?.userId || req.tokenUserId;
+    if (actorId === req.params.id) return res.status(400).json({ error: "Cannot deactivate yourself" });
+    try {
+      await pool.query("UPDATE users SET is_active = false, updated_at = now() WHERE id = $1", [req.params.id]);
+      await pool.query("UPDATE staff_profiles SET status = 'leaver', end_date = COALESCE(end_date, to_char(now(), 'YYYY-MM-DD')), updated_at = now() WHERE user_id = $1", [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── 🏅 Brucey Bonuses — AI-awarded points + weekly leaderboard ───────────
   // Points are issued by Claude scanning recent activity and weighted to
   // reward useful behaviours: deals advanced, completions, reviews submitted,
