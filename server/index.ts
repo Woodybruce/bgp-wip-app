@@ -253,6 +253,26 @@ import { pool } from "./db";
       updated_at TIMESTAMP DEFAULT now()
     )`,
     `CREATE INDEX IF NOT EXISTS staff_review_goals_user_idx ON staff_review_goals (user_id, status)`,
+    // Parental leave — maternity / paternity / shared parental / adoption.
+    // Distinct from holiday_requests because it's a pre-planned multi-month
+    // absence with KIT days, statutory pay milestones and a return date that
+    // may shift. Status: planned → on_leave → returned (or extended/cancelled).
+    `CREATE TABLE IF NOT EXISTS staff_parental_leave (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      kind TEXT NOT NULL,
+      start_date DATE NOT NULL,
+      planned_end_date DATE,
+      actual_return_date DATE,
+      kit_days_used INTEGER DEFAULT 0,
+      kit_days_allowance INTEGER DEFAULT 10,
+      status TEXT DEFAULT 'planned',
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS staff_parental_leave_user_idx ON staff_parental_leave (user_id, start_date DESC)`,
+    `CREATE INDEX IF NOT EXISTS staff_parental_leave_active_idx ON staff_parental_leave (status, start_date)`,
     // Pension contributions — Royal London CSV import per pay run.
     `CREATE TABLE IF NOT EXISTS pension_contributions (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),

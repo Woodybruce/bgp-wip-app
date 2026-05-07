@@ -1394,6 +1394,95 @@ export function setupHrRoutes(app: Express) {
     }
   });
 
+  // ── 👶 Parental leave (maternity / paternity / shared / adoption) ────────
+  // Self can read own; admin can read all. Admin creates / updates the
+  // record (HR responsibility); user can log KIT days against their own.
+
+  app.get("/api/hr/parental-leave/:userId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) return res.status(403).json({ error: "Forbidden" });
+    try {
+      const { rows } = await pool.query(
+        `SELECT * FROM staff_parental_leave WHERE user_id = $1 ORDER BY start_date DESC`,
+        [req.params.userId]
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Firm-wide upcoming/active for the dashboard "What's on" + admin scheduling
+  app.get("/api/hr/parental-leave", requireAuth, async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT pl.*, u.name AS user_name, u.profile_pic_url, u.team
+         FROM staff_parental_leave pl
+         JOIN users u ON u.id = pl.user_id
+         WHERE pl.status IN ('planned', 'on_leave', 'extended')
+            OR pl.actual_return_date IS NULL
+            OR pl.actual_return_date >= CURRENT_DATE - INTERVAL '90 days'
+         ORDER BY pl.start_date ASC`
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/hr/parental-leave", requireAdmin, async (req: any, res) => {
+    const { userId, kind, startDate, plannedEndDate, kitDaysAllowance, notes } = req.body || {};
+    if (!userId || !kind || !startDate) return res.status(400).json({ error: "userId, kind, startDate required" });
+    try {
+      const r = await pool.query(
+        `INSERT INTO staff_parental_leave (user_id, kind, start_date, planned_end_date, kit_days_allowance, status, notes)
+         VALUES ($1, $2, $3, $4, $5, 'planned', $6) RETURNING *`,
+        [userId, kind, startDate, plannedEndDate || null, kitDaysAllowance ?? 10, notes || null]
+      );
+      res.json(r.rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.patch("/api/hr/parental-leave/:id", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    try {
+      const owner = await pool.query("SELECT user_id FROM staff_parental_leave WHERE id = $1", [req.params.id]);
+      if (!owner.rows[0]) return res.status(404).json({ error: "Not found" });
+      const isOwn = actor.userId === owner.rows[0].user_id;
+      // Self can update KIT days + notes; admin can update everything.
+      const adminFields = ["kind", "start_date", "planned_end_date", "actual_return_date", "kit_days_allowance", "status"];
+      const selfFields = ["kit_days_used", "notes"];
+      const fields = actor.isAdmin ? [...adminFields, ...selfFields] : (isOwn ? selfFields : []);
+      if (fields.length === 0) return res.status(403).json({ error: "Forbidden" });
+
+      const sets: string[] = [];
+      const params: any[] = [req.params.id];
+      for (const f of fields) {
+        const camel = f.replace(/_(.)/g, (_, c) => c.toUpperCase());
+        if (req.body[camel] !== undefined || req.body[f] !== undefined) {
+          params.push(req.body[camel] ?? req.body[f]);
+          sets.push(`${f} = $${params.length}`);
+        }
+      }
+      if (sets.length === 0) return res.json({ ok: true });
+      await pool.query(`UPDATE staff_parental_leave SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, params);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/hr/parental-leave/:id", requireAdmin, async (req: any, res) => {
+    try {
+      await pool.query("DELETE FROM staff_parental_leave WHERE id = $1", [req.params.id]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Admin: pull profile photos from Microsoft 365 ──────────────────────────
   // Iterates active staff, fetches each one's photo from Graph using the
   // caller's MS session (or org fallback in getValidMsToken), and stores

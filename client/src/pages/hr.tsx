@@ -502,6 +502,211 @@ function CommissionTab({ userId }: { userId: string }) {
 
 // ── Holiday tab ───────────────────────────────────────────────────────────────
 
+// ── 👶 Parental leave card ────────────────────────────────────────────────
+
+interface ParentalLeave {
+  id: string;
+  user_id: string;
+  kind: string;
+  start_date: string;
+  planned_end_date: string | null;
+  actual_return_date: string | null;
+  kit_days_used: number;
+  kit_days_allowance: number;
+  status: string;
+  notes: string | null;
+}
+
+const PARENTAL_KINDS: Record<string, { label: string; emoji: string; defaultMonths: number }> = {
+  maternity: { label: "Maternity", emoji: "👶", defaultMonths: 12 },
+  paternity: { label: "Paternity", emoji: "👨‍👶", defaultMonths: 0.5 },
+  shared:    { label: "Shared parental", emoji: "👪", defaultMonths: 12 },
+  adoption:  { label: "Adoption", emoji: "🧡", defaultMonths: 12 },
+};
+
+function ParentalLeaveCard({ person, isAdmin, isOwn }: { person: StaffMember; isAdmin: boolean; isOwn: boolean }) {
+  const { toast } = useToast();
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ kind: "maternity", startDate: "", plannedEndDate: "", kitDaysAllowance: 10, notes: "" });
+
+  const { data: entries = [] } = useQuery<ParentalLeave[]>({
+    queryKey: [`/api/hr/parental-leave/${person.id}`],
+    enabled: isAdmin || isOwn,
+  });
+
+  const create = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/hr/parental-leave", { ...form, userId: person.id }).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/parental-leave/${person.id}`] });
+      setAdding(false);
+      setForm({ kind: "maternity", startDate: "", plannedEndDate: "", kitDaysAllowance: 10, notes: "" });
+      toast({ title: "Parental leave logged" });
+    },
+    onError: (e: any) => toast({ title: "Failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const update = useMutation({
+    mutationFn: async ({ id, body }: { id: string; body: any }) => apiRequest("PATCH", `/api/hr/parental-leave/${id}`, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/parental-leave/${person.id}`] }),
+  });
+
+  const remove = useMutation({
+    mutationFn: async (id: string) => apiRequest("DELETE", `/api/hr/parental-leave/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/parental-leave/${person.id}`] }),
+  });
+
+  if (!isAdmin && !isOwn) return null;
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+
+  const statusOf = (e: ParentalLeave): string => {
+    if (e.status && e.status !== "planned") return e.status;
+    const start = new Date(e.start_date);
+    const end = e.actual_return_date ? new Date(e.actual_return_date) : (e.planned_end_date ? new Date(e.planned_end_date) : null);
+    if (today < start) return "planned";
+    if (end && today >= end) return "returned";
+    return "on_leave";
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center justify-between">
+          <span className="flex items-center gap-2">👶 Parental leave</span>
+          {isAdmin && (
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setAdding(true)}>
+              <Plus className="w-3 h-3 mr-1" /> Add
+            </Button>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {entries.length === 0 ? (
+          <div className="text-xs text-muted-foreground italic py-2">
+            No parental leave on file. {isAdmin ? "Use Add to log a planned mat / pat / shared / adoption leave." : ""}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {entries.map(e => {
+              const meta = PARENTAL_KINDS[e.kind] || PARENTAL_KINDS.maternity;
+              const status = statusOf(e);
+              const start = new Date(e.start_date);
+              const plannedEnd = e.planned_end_date ? new Date(e.planned_end_date) : null;
+              const daysToStart = Math.round((start.getTime() - today.getTime()) / 86400000);
+              const daysToEnd = plannedEnd ? Math.round((plannedEnd.getTime() - today.getTime()) / 86400000) : null;
+              return (
+                <div key={e.id} className="rounded-md border bg-card p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">{meta.emoji}</span>
+                    <span className="text-sm font-semibold flex-1">{meta.label} leave</span>
+                    <Badge variant="outline" className={`text-[10px] capitalize ${status === "on_leave" ? "border-orange-300 text-orange-700" : status === "returned" ? "border-emerald-300 text-emerald-700" : ""}`}>
+                      {status === "on_leave" ? "On leave" : status === "returned" ? "Returned" : status === "planned" ? "Planned" : status.replace("_", " ")}
+                    </Badge>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {start.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}
+                    {plannedEnd && (
+                      <> → planned return {plannedEnd.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</>
+                    )}
+                    {e.actual_return_date && (
+                      <> · actual return {new Date(e.actual_return_date).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {status === "planned" && daysToStart >= 0 && `${daysToStart} day${daysToStart === 1 ? "" : "s"} until start`}
+                    {status === "on_leave" && daysToEnd != null && daysToEnd > 0 && `${daysToEnd} day${daysToEnd === 1 ? "" : "s"} until planned return`}
+                    {status === "on_leave" && daysToEnd != null && daysToEnd <= 0 && "Return overdue"}
+                  </div>
+
+                  {/* KIT days bar */}
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <span className="text-muted-foreground w-16 shrink-0">KIT days</span>
+                    <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                      <div className="h-full bg-primary rounded-full" style={{ width: `${Math.min((e.kit_days_used / Math.max(e.kit_days_allowance, 1)) * 100, 100)}%` }} />
+                    </div>
+                    <span className="tabular-nums">{e.kit_days_used} / {e.kit_days_allowance}</span>
+                    {(isAdmin || isOwn) && (
+                      <div className="flex gap-0.5">
+                        <Button size="sm" variant="ghost" className="h-5 w-5 p-0" disabled={e.kit_days_used >= e.kit_days_allowance} onClick={() => update.mutate({ id: e.id, body: { kitDaysUsed: e.kit_days_used + 1 } })}>+</Button>
+                        <Button size="sm" variant="ghost" className="h-5 w-5 p-0" disabled={e.kit_days_used <= 0} onClick={() => update.mutate({ id: e.id, body: { kitDaysUsed: e.kit_days_used - 1 } })}>−</Button>
+                      </div>
+                    )}
+                  </div>
+
+                  {e.notes && <div className="text-[11px] text-muted-foreground italic">{e.notes}</div>}
+
+                  {isAdmin && status !== "returned" && (
+                    <div className="flex gap-1 pt-1">
+                      {status !== "on_leave" && (
+                        <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={() => update.mutate({ id: e.id, body: { status: "on_leave" } })}>
+                          Mark on leave
+                        </Button>
+                      )}
+                      <Button size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={() => {
+                        const d = prompt("Actual return date (YYYY-MM-DD)?", new Date().toISOString().slice(0, 10));
+                        if (d) update.mutate({ id: e.id, body: { actualReturnDate: d, status: "returned" } });
+                      }}>
+                        Mark returned
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-6 px-2 text-red-500 ml-auto" onClick={() => { if (confirm("Delete this leave record?")) remove.mutate(e.id); }}>
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <Dialog open={adding} onOpenChange={setAdding}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Log parental leave</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label>Type</Label>
+                <Select value={form.kind} onValueChange={v => setForm(f => ({ ...f, kind: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(PARENTAL_KINDS).map(([k, v]) => (
+                      <SelectItem key={k} value={k}>{v.emoji} {v.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1.5">
+                  <Label>Start date</Label>
+                  <Input type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Planned return</Label>
+                  <Input type="date" value={form.plannedEndDate} onChange={e => setForm(f => ({ ...f, plannedEndDate: e.target.value }))} />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>KIT days allowance</Label>
+                <Input type="number" value={form.kitDaysAllowance} onChange={e => setForm(f => ({ ...f, kitDaysAllowance: parseInt(e.target.value) || 10 }))} />
+                <div className="text-[10px] text-muted-foreground">Statutory: up to 10 paid Keeping In Touch days while on mat leave.</div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Notes</Label>
+                <Textarea rows={2} value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="e.g. covering arrangements, salary continuation" />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAdding(false)}>Cancel</Button>
+              <Button onClick={() => create.mutate()} disabled={!form.startDate || create.isPending}>
+                {create.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Log leave
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </CardContent>
+    </Card>
+  );
+}
+
 function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; isAdmin: boolean; currentUserId: string }) {
   const { toast } = useToast();
   const [showNew, setShowNew] = useState(false);
@@ -645,6 +850,8 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ParentalLeaveCard person={person} isAdmin={isAdmin} isOwn={isOwn} />
     </div>
   );
 }
