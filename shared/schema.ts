@@ -2560,6 +2560,26 @@ export const insertSalaryHistorySchema = createInsertSchema(salaryHistory).omit(
 export type InsertSalaryHistory = z.infer<typeof insertSalaryHistorySchema>;
 export type SalaryHistory = typeof salaryHistory.$inferSelect;
 
+// One row per bonus / commission payout / other extra. Drives the orange
+// bars on the salary timeline chart. Kept separate from salary_history so
+// salary uplifts (a state change) and bonuses (one-off events) don't collide
+// when ordering the timeline.
+export const bonusHistory = pgTable("bonus_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  amountPence: integer("amount_pence").notNull(),
+  effectiveDate: text("effective_date").notNull(), // ISO date string
+  kind: text("kind").notNull().default("bonus"),  // bonus | commission_payout | spot | retention | other
+  reason: text("reason"),
+  notes: text("notes"),
+  recordedBy: varchar("recorded_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertBonusHistorySchema = createInsertSchema(bonusHistory).omit({ id: true, createdAt: true });
+export type InsertBonusHistory = z.infer<typeof insertBonusHistorySchema>;
+export type BonusHistory = typeof bonusHistory.$inferSelect;
+
 export const holidayRequests = pgTable("holiday_requests", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull(),

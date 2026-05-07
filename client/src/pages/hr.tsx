@@ -1018,17 +1018,21 @@ function DocumentsTab({ person, isAdmin }: { person: StaffMember; isAdmin: boole
 // "commission rate: 10% · tier: T2"). Yearly Xero billings come in via the
 // commission endpoint and are layered on as context bars.
 
+interface BonusEntry { id: string; amount_pence: number; effective_date: string; kind: string; reason: string | null; notes: string | null; }
+
 function SalaryTimelineChart({ person, history }: { person: StaffMember; history: SalaryEntry[] }) {
   const { data: commissionData } = useQuery<{ billingsByYear?: Array<{ year: string; pence: number }> }>({
     queryKey: [`/api/hr/staff/${person.id}/commission`],
     retry: false,
   });
+  const { data: bonuses = [] } = useQuery<BonusEntry[]>({
+    queryKey: [`/api/hr/staff/${person.id}/bonuses`],
+  });
 
-  // Combine: one row per event date. Salary points step-line. Bonus values
-  // (parsed out of notes) layer as a second series. Yearly billings get
-  // pinned to Jan-1 of each year so they appear as context bars.
+  // Three sources merged on date: salary uplifts (step line), bonuses
+  // (orange bars from bonus_history) and yearly Xero billings (cyan context
+  // bars pinned to Jan-1). Each date slot accumulates a tooltip blurb.
   const points = useMemo(() => {
-    const rows: Array<{ date: string; salary?: number; bonus?: number; billings?: number; tooltip: string }> = [];
     const byDate = new Map<string, { salary?: number; bonus?: number; billings?: number; tooltip: string[] }>();
     const ensure = (d: string) => {
       if (!byDate.has(d)) byDate.set(d, { tooltip: [] });
@@ -1039,26 +1043,22 @@ function SalaryTimelineChart({ person, history }: { person: StaffMember; history
       if (!h.effective_date) continue;
       const slot = ensure(h.effective_date);
       slot.salary = h.salary_pence / 100;
-      const reason = h.reason?.replace(/_/g, " ") || "salary";
-      slot.tooltip.push(`Salary £${(h.salary_pence / 100).toLocaleString()} (${reason})`);
-      // Try to pull a bonus figure out of the notes — works with the format
-      // the importer uses ("£12,500 bonus", "bonus: £12500" etc.).
-      const bonusMatch = (h.notes || "").match(/bonus[^£\d]*£?\s?([\d,]+(?:\.\d+)?)/i)
-                      || (h.notes || "").match(/£\s?([\d,]+(?:\.\d+)?)\s*bonus/i);
-      if (bonusMatch) {
-        const n = parseFloat(bonusMatch[1].replace(/,/g, ""));
-        if (!isNaN(n)) {
-          slot.bonus = (slot.bonus || 0) + n;
-          slot.tooltip.push(`Bonus £${n.toLocaleString()}`);
-        }
-      }
+      slot.tooltip.push(`Salary £${(h.salary_pence / 100).toLocaleString()} (${h.reason?.replace(/_/g, " ") || "salary"})`);
     }
-    for (const b of commissionData?.billingsByYear || []) {
-      if (!b.year) continue;
-      const slot = ensure(`${b.year}-01-01`);
-      slot.billings = b.pence / 100;
-      slot.tooltip.push(`Billings ${b.year}: £${Math.round(b.pence / 100).toLocaleString()}`);
+    for (const b of bonuses) {
+      if (!b.effective_date) continue;
+      const slot = ensure(b.effective_date);
+      slot.bonus = (slot.bonus || 0) + b.amount_pence / 100;
+      const k = b.kind === "bonus" ? "Bonus" : b.kind.replace(/_/g, " ");
+      slot.tooltip.push(`${k} £${(b.amount_pence / 100).toLocaleString()}${b.reason ? ` (${b.reason})` : ""}`);
     }
+    for (const cb of commissionData?.billingsByYear || []) {
+      if (!cb.year) continue;
+      const slot = ensure(`${cb.year}-01-01`);
+      slot.billings = cb.pence / 100;
+      slot.tooltip.push(`Billings ${cb.year}: £${Math.round(cb.pence / 100).toLocaleString()}`);
+    }
+    const rows: Array<{ date: string; salary?: number; bonus?: number; billings?: number; tooltip: string }> = [];
     for (const [date, v] of Array.from(byDate.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
       rows.push({ date, salary: v.salary, bonus: v.bonus, billings: v.billings, tooltip: v.tooltip.join("\n") });
     }
@@ -1069,7 +1069,7 @@ function SalaryTimelineChart({ person, history }: { person: StaffMember; history
       else if (lastSalary != null) r.salary = lastSalary;
     }
     return rows;
-  }, [history, commissionData]);
+  }, [history, bonuses, commissionData]);
 
   if (points.length === 0) return null;
 
@@ -1095,6 +1095,118 @@ function SalaryTimelineChart({ person, history }: { person: StaffMember; history
           </ComposedChart>
         </ResponsiveContainer>
       </div>
+    </div>
+  );
+}
+
+// ── Bonus history panel ────────────────────────────────────────────────────────
+// Sits between the timeline chart and the salary list. Admins can record
+// one-off bonuses (annual, retention, spot, etc.) — they show up as orange
+// bars on the chart above and as a list here.
+
+function BonusHistoryPanel({ person }: { person: StaffMember }) {
+  const { toast } = useToast();
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ amount: "", effectiveDate: "", kind: "bonus", reason: "" });
+
+  const { data: bonuses = [] } = useQuery<BonusEntry[]>({
+    queryKey: [`/api/hr/staff/${person.id}/bonuses`],
+  });
+
+  const addMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/hr/staff/${person.id}/bonuses`, {
+        amountPence: Math.round(parseFloat(form.amount) * 100),
+        effectiveDate: form.effectiveDate,
+        kind: form.kind,
+        reason: form.reason || undefined,
+      });
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/staff/${person.id}/bonuses`] });
+      setShowAdd(false);
+      setForm({ amount: "", effectiveDate: "", kind: "bonus", reason: "" });
+      toast({ title: "Bonus recorded" });
+    },
+    onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await apiRequest("DELETE", `/api/hr/staff/${person.id}/bonuses/${id}`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/staff/${person.id}/bonuses`] }),
+  });
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Bonuses & one-offs</div>
+        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAdd(true)} data-testid="record-bonus">
+          <Plus className="w-3 h-3 mr-1" /> Record bonus
+        </Button>
+      </div>
+      {bonuses.length === 0 ? (
+        <div className="text-[11px] text-muted-foreground italic">No bonuses recorded yet.</div>
+      ) : (
+        <div className="space-y-1">
+          {bonuses.map((b) => (
+            <div key={b.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-xs">
+              <span className="font-medium tabular-nums">£{(b.amount_pence / 100).toLocaleString()}</span>
+              <Badge variant="outline" className="text-[9px] py-0 capitalize">{b.kind.replace(/_/g, " ")}</Badge>
+              <span className="text-muted-foreground">{b.effective_date}</span>
+              {b.reason && <span className="text-muted-foreground italic truncate">{b.reason}</span>}
+              <div className="ml-auto">
+                <Button size="sm" variant="ghost" className="h-6 px-1.5 text-muted-foreground hover:text-destructive" onClick={() => deleteMutation.mutate(b.id)}>
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Record bonus</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Amount (£)</Label>
+                <Input type="number" placeholder="5000" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Effective date</Label>
+                <Input type="date" value={form.effectiveDate} onChange={(e) => setForm((f) => ({ ...f, effectiveDate: e.target.value }))} />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Kind</Label>
+              <Select value={form.kind} onValueChange={(v) => setForm((f) => ({ ...f, kind: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="bonus">Annual bonus</SelectItem>
+                  <SelectItem value="commission_payout">Commission payout</SelectItem>
+                  <SelectItem value="spot">Spot bonus</SelectItem>
+                  <SelectItem value="retention">Retention</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Reason / note (optional)</Label>
+              <Input placeholder="2025 annual review" value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
+            <Button onClick={() => addMutation.mutate()} disabled={!form.amount || !form.effectiveDate || addMutation.isPending}>
+              {addMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1133,6 +1245,8 @@ function SalaryHistoryPanel({ person }: { person: StaffMember }) {
   return (
     <div className="space-y-3">
       <SalaryTimelineChart person={person} history={history} />
+
+      <BonusHistoryPanel person={person} />
 
       <div className="flex items-center justify-between">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Salary history</div>

@@ -233,6 +233,57 @@ export function setupHrRoutes(app: Express) {
     }
   });
 
+  // ── Bonus history ─────────────────────────────────────────────────────────
+  // Drives the orange bars on the salary timeline chart. Self can read their
+  // own bonuses; admin can read everyone's and write/delete.
+  app.get("/api/hr/staff/:userId/bonuses", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const { rows } = await pool.query(
+        `SELECT * FROM bonus_history WHERE user_id = $1 ORDER BY effective_date DESC, created_at DESC`,
+        [req.params.userId]
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/hr/staff/:userId/bonuses", requireAdmin, async (req: any, res) => {
+    const { userId } = req.params;
+    const { amountPence, effectiveDate, kind, reason, notes } = req.body || {};
+    if (!amountPence || !effectiveDate) {
+      return res.status(400).json({ error: "amountPence and effectiveDate required" });
+    }
+    try {
+      const recordedBy = req.session?.userId || req.tokenUserId || null;
+      const { rows } = await pool.query(
+        `INSERT INTO bonus_history (user_id, amount_pence, effective_date, kind, reason, notes, recorded_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (user_id, effective_date, amount_pence, kind) DO UPDATE SET
+           reason = COALESCE(EXCLUDED.reason, bonus_history.reason),
+           notes = COALESCE(EXCLUDED.notes, bonus_history.notes)
+         RETURNING *`,
+        [userId, amountPence, effectiveDate, kind || "bonus", reason || null, notes || null, recordedBy]
+      );
+      res.json(rows[0]);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/hr/staff/:userId/bonuses/:bonusId", requireAdmin, async (req: any, res) => {
+    try {
+      await pool.query("DELETE FROM bonus_history WHERE id = $1 AND user_id = $2", [req.params.bonusId, req.params.userId]);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Commission tracker ────────────────────────────────────────────────────
   // Commission scheme year: 1 May → 30 April
   // Tiers: 2x salary → 30%, 3x → 40%, 4x → 50% (of fees above each threshold)
@@ -3688,6 +3739,7 @@ Use the language and tone of BGP's review docs.`,
 
       let salaryHistoryInserted = 0;
       let salaryCurrentUpdated = 0;
+      let bonusHistoryInserted = 0;
       const skippedDuplicates: string[] = [];
 
       if (!dryRun && withSalary.length > 0) {
@@ -3715,20 +3767,34 @@ Use the language and tone of BGP's review docs.`,
           const key = `${r.matchedUserId}::${eff}::${r.salaryPence}`;
           if (existingKey.has(key)) {
             skippedDuplicates.push(`${r.staffName} @ ${eff}`);
-            continue;
+          } else {
+            const reason = r.reason || "imported from spreadsheet";
+            const notes = [
+              r.commRate ? `commission rate: ${r.commRate}` : null,
+              r.commTier ? `tier: ${r.commTier}` : null,
+            ].filter(Boolean).join(" · ") || null;
+            await pool.query(
+              `INSERT INTO salary_history (user_id, salary_pence, effective_date, reason, notes, recorded_by)
+               VALUES ($1, $2, $3, $4, $5, $6)`,
+              [r.matchedUserId, r.salaryPence, eff, reason, notes, userId]
+            );
+            existingKey.add(key);
+            salaryHistoryInserted++;
           }
-          const reason = r.reason || (r.bonusPence ? `salary uplift (bonus £${(r.bonusPence/100).toFixed(0)} on file)` : "imported from spreadsheet");
-          const notes = [
-            r.commRate ? `commission rate: ${r.commRate}` : null,
-            r.commTier ? `tier: ${r.commTier}` : null,
-          ].filter(Boolean).join(" · ") || null;
-          await pool.query(
-            `INSERT INTO salary_history (user_id, salary_pence, effective_date, reason, notes, recorded_by)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [r.matchedUserId, r.salaryPence, eff, reason, notes, userId]
-          );
-          existingKey.add(key);
-          salaryHistoryInserted++;
+
+          // Bonuses get their own row in bonus_history. Dedup is on
+          // (user_id, effective_date, amount_pence, kind) so re-running the
+          // import never double-inserts. Done in the same loop so the bonus
+          // shares the row's effective date with the salary uplift.
+          if (r.bonusPence && r.bonusPence > 0) {
+            await pool.query(
+              `INSERT INTO bonus_history (user_id, amount_pence, effective_date, kind, reason, recorded_by)
+               VALUES ($1, $2, $3, 'bonus', $4, $5)
+               ON CONFLICT (user_id, effective_date, amount_pence, kind) DO NOTHING`,
+              [r.matchedUserId, r.bonusPence, eff, "imported from spreadsheet", userId]
+            );
+            bonusHistoryInserted++;
+          }
         }
 
         for (const [uid, latest] of latestByUser.entries()) {
@@ -3755,6 +3821,7 @@ Use the language and tone of BGP's review docs.`,
         rowsWithSalary: withSalary.length,
         unmatchedNames,
         salaryHistoryInserted,
+        bonusHistoryInserted,
         salaryCurrentUpdated,
         skippedDuplicates,
         // Sample of what we'd write — first 5 mapped rows so admins can sanity-check.
