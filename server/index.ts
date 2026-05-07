@@ -433,6 +433,13 @@ import { pool } from "./db";
     `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_approved_by TEXT`,
     `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_next_review_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT`,
+    // Cache the line-level invoice content so we can round-trip with Xero —
+    // edits on either side stay in sync. Stored on the xero_invoices row
+    // alongside the existing status/total/number.
+    `ALTER TABLE xero_invoices ADD COLUMN IF NOT EXISTS line_description TEXT`,
+    `ALTER TABLE xero_invoices ADD COLUMN IF NOT EXISTS line_amount REAL`,
+    `ALTER TABLE xero_invoices ADD COLUMN IF NOT EXISTS contact_name TEXT`,
+    `ALTER TABLE xero_invoices ADD COLUMN IF NOT EXISTS po_number TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_expires_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_checklist JSONB`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_risk_level TEXT`,

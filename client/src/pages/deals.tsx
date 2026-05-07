@@ -2363,6 +2363,55 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
     },
   });
 
+  // ── Edit existing draft invoice (round-trip with Xero) ──────────────────
+  const [editingInvId, setEditingInvId] = useState<string | null>(null);
+  const [eDesc, setEDesc] = useState("");
+  const [eBody, setEBody] = useState("");
+  const [eAmount, setEAmount] = useState<number>(0);
+  const [eReference, setERef] = useState("");
+  const [eDueDate, setEDueDate] = useState("");
+  const [eContact, setEContact] = useState("");
+  const [ePo, setEPo] = useState("");
+
+  const openEdit = (inv: any) => {
+    // Split cached lineDescription back into headline + body for editing.
+    const ld = (inv.lineDescription || "") as string;
+    const idx = ld.indexOf("\n\n");
+    const headline = idx > -1 ? ld.slice(0, idx) : ld;
+    const restBody = idx > -1 ? ld.slice(idx + 2) : "";
+    setEditingInvId(inv.id);
+    setEDesc(headline);
+    setEBody(restBody);
+    setEAmount(inv.lineAmount ?? inv.totalAmount ?? 0);
+    setERef(inv.reference || "");
+    setEDueDate(inv.dueDate || "");
+    setEContact(inv.contactName || inv.invoicingEntityName || "");
+    setEPo(inv.poNumber || "");
+  };
+
+  const editMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PUT", `/api/xero/invoices/${editingInvId}`, {
+        description: eDesc,
+        body: eBody,
+        amount: eAmount,
+        reference: eReference,
+        dueDate: eDueDate || undefined,
+        contactName: eContact || undefined,
+        poNumber: ePo || undefined,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Invoice updated in Xero" });
+      setEditingInvId(null);
+      refetchInvoices();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Edit failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   const XERO_STATUS_COLORS: Record<string, string> = {
     DRAFT: "bg-zinc-500",
     SUBMITTED: "bg-blue-500",
@@ -2566,45 +2615,121 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
 
         {invoices.length > 0 && (
           <div className="space-y-2">
-            {invoices.map((inv: any) => (
-              <div key={inv.id} className="flex items-center justify-between p-2 rounded-md border text-sm">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Badge className={`text-[10px] text-white ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
-                    {inv.status}
-                  </Badge>
-                  <span className="truncate">
-                    {inv.invoicingEntityName && <span className="text-muted-foreground">{inv.invoicingEntityName} — </span>}
-                    {inv.invoiceNumber || inv.reference || "Draft"}
-                  </span>
-                  {inv.totalAmount != null && (
-                    <span className="text-muted-foreground font-mono text-xs">
-                      £{inv.totalAmount.toLocaleString("en-GB", { minimumFractionDigits: 2 })}
-                    </span>
+            {invoices.map((inv: any) => {
+              const editable = inv.sentToXero && (inv.status === "DRAFT" || inv.status === "SUBMITTED");
+              const isEditing = editingInvId === inv.id;
+              return (
+                <div key={inv.id} className="rounded-md border">
+                  <div className="flex items-center justify-between p-2 text-sm">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Badge className={`text-[10px] text-white ${XERO_STATUS_COLORS[inv.status] || "bg-zinc-500"}`}>
+                        {inv.status}
+                      </Badge>
+                      <span className="truncate">
+                        {inv.invoicingEntityName && <span className="text-muted-foreground">{inv.invoicingEntityName} — </span>}
+                        {inv.invoiceNumber || inv.reference || "Draft"}
+                      </span>
+                      {inv.totalAmount != null && (
+                        <span className="text-muted-foreground font-mono text-xs">
+                          £{inv.totalAmount.toLocaleString("en-GB", { minimumFractionDigits: 2 })}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {editable && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => isEditing ? setEditingInvId(null) : openEdit(inv)}
+                          title={isEditing ? "Close editor" : "Edit invoice"}
+                          data-testid={`button-xero-edit-${inv.id}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
+                      {inv.xeroUrl && (
+                        <a href={inv.xeroUrl} target="_blank" rel="noopener noreferrer">
+                          <Button variant="ghost" size="icon" className="h-7 w-7" data-testid={`button-xero-link-${inv.id}`}>
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </Button>
+                        </a>
+                      )}
+                      {inv.sentToXero && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => syncMutation.mutate(inv.id)}
+                          disabled={syncMutation.isPending}
+                          title="Sync from Xero"
+                          data-testid={`button-xero-sync-${inv.id}`}
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${syncMutation.isPending ? "animate-spin" : ""}`} />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {isEditing && (
+                    <div className="border-t p-3 space-y-3 bg-muted/20">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <Label className="text-xs mb-1 block">Contact</Label>
+                          <Input value={eContact} onChange={(e) => setEContact(e.target.value)} className="h-8" />
+                        </div>
+                        <div>
+                          <Label className="text-xs mb-1 block">Reference</Label>
+                          <Input value={eReference} onChange={(e) => setERef(e.target.value)} className="h-8" />
+                        </div>
+                        <div>
+                          <Label className="text-xs mb-1 block">Amount (excl. VAT)</Label>
+                          <Input type="number" value={eAmount || ""} onChange={(e) => setEAmount(parseFloat(e.target.value) || 0)} className="h-8" />
+                        </div>
+                        <div>
+                          <Label className="text-xs mb-1 block">PO Number</Label>
+                          <Input value={ePo} onChange={(e) => setEPo(e.target.value)} className="h-8" />
+                        </div>
+                        <div>
+                          <Label className="text-xs mb-1 block">Description</Label>
+                          <Input value={eDesc} onChange={(e) => setEDesc(e.target.value)} className="h-8" />
+                        </div>
+                        <div>
+                          <Label className="text-xs mb-1 block">Due date</Label>
+                          <Input type="date" value={eDueDate} onChange={(e) => setEDueDate(e.target.value)} className="h-8" />
+                        </div>
+                      </div>
+                      <div>
+                        <Label className="text-xs mb-1 block">Main body / narrative</Label>
+                        <Textarea
+                          value={eBody}
+                          onChange={(e) => setEBody(e.target.value)}
+                          rows={5}
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => editMutation.mutate()}
+                          disabled={editMutation.isPending}
+                          data-testid={`button-xero-save-${inv.id}`}
+                        >
+                          {editMutation.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
+                          Save &amp; push to Xero
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => setEditingInvId(null)}>
+                          Cancel
+                        </Button>
+                        <span className="text-[10px] text-muted-foreground ml-auto">
+                          Only DRAFT &amp; SUBMITTED invoices are editable. Use the sync button to pull changes made directly in Xero.
+                        </span>
+                      </div>
+                    </div>
                   )}
                 </div>
-                <div className="flex items-center gap-1">
-                  {inv.xeroUrl && (
-                    <a href={inv.xeroUrl} target="_blank" rel="noopener noreferrer">
-                      <Button variant="ghost" size="icon" className="h-7 w-7" data-testid={`button-xero-link-${inv.id}`}>
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </Button>
-                    </a>
-                  )}
-                  {inv.sentToXero && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => syncMutation.mutate(inv.id)}
-                      disabled={syncMutation.isPending}
-                      data-testid={`button-xero-sync-${inv.id}`}
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${syncMutation.isPending ? "animate-spin" : ""}`} />
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
