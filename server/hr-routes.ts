@@ -343,10 +343,11 @@ export function setupHrRoutes(app: Express) {
       // target_date → instructed_at, whichever is set.
       let wipByStage: { neg: number; exc: number; com: number } = { neg: 0, exc: 0, com: 0 };
       let topDeals: Array<{ id: string; name: string; fee: number; status: string; date: string | null }> = [];
+      let awaitingPayment: Array<{ id: string; name: string; fee: number; status: string; date: string | null; invoicedAt: string | null }> = [];
       try {
         const { rows: dealRows } = await pool.query(
           `WITH my_deals AS (
-             SELECT d.id, d.name, d.status, d.fee,
+             SELECT d.id, d.name, d.status, d.fee, d.invoiced_at,
                     COALESCE(d.completed_at, d.exchanged_at, d.target_date, d.instructed_at) AS dt,
                     CASE
                       WHEN dfa.percentage    IS NOT NULL THEN d.fee * dfa.percentage / 100.0
@@ -365,7 +366,7 @@ export function setupHrRoutes(app: Express) {
                      WHERE a2.deal_id = d.id AND LOWER(a2.agent_name) = LOWER($1)
                    )
            )
-           SELECT id, name, status, fee, dt, my_portion
+           SELECT id, name, status, fee, dt, invoiced_at, my_portion
            FROM my_deals
            WHERE dt BETWEEN $2 AND $3 AND status IS NOT NULL`,
           [trackingName, schemeYearStart.toISOString(), schemeYearEnd.toISOString()]
@@ -386,6 +387,21 @@ export function setupHrRoutes(app: Express) {
           }))
           .sort((a: any, b: any) => b.fee - a.fee)
           .slice(0, 10);
+
+        // Awaiting payment: COM (delivered, not invoiced) or INV (invoiced
+        // but Xero hasn't seen it as paid yet — admin marks paid in Xero,
+        // commission flips from "expected" to "earned").
+        awaitingPayment = dealRows
+          .filter((r: any) => r.status === "COM" || r.status === "INV")
+          .map((r: any) => ({
+            id: r.id,
+            name: r.name,
+            fee: Math.round((parseFloat(r.my_portion) || 0) * 100),
+            status: r.status,
+            date: r.dt ? new Date(r.dt).toISOString().slice(0, 10) : null,
+            invoicedAt: r.invoiced_at ? new Date(r.invoiced_at).toISOString().slice(0, 10) : null,
+          }))
+          .sort((a: any, b: any) => b.fee - a.fee);
       } catch (wErr: any) {
         // Non-fatal — show billings even if deals query fails (e.g. schema drift).
         console.error("[hr] commission WIP query failed:", wErr.message);
@@ -395,6 +411,41 @@ export function setupHrRoutes(app: Express) {
       const forecastPence = billedPence + wipTotal;
       const commissionEarned = tierCommission(billedPence);
       const commissionForecast = tierCommission(forecastPence);
+
+      // "If you collect…" scenarios. Commission only paid when BGP gets paid,
+      // so we layer the WIP stages cumulatively and recompute the tier waterfall
+      // at each step. Delta = the *extra* commission unlocked by closing that
+      // tier of the pipeline. Helps surveyors see exactly what's at stake.
+      const scenarios = [
+        {
+          key: "earned",
+          label: "Earned (Xero paid)",
+          totalPence: billedPence,
+          commission: commissionEarned,
+          deltaCommission: commissionEarned,
+        },
+        {
+          key: "com",
+          label: "+ Completed deals collected",
+          totalPence: billedPence + wipByStage.com,
+          commission: tierCommission(billedPence + wipByStage.com),
+          deltaCommission: tierCommission(billedPence + wipByStage.com) - commissionEarned,
+        },
+        {
+          key: "exc",
+          label: "+ Exchanged closes",
+          totalPence: billedPence + wipByStage.com + wipByStage.exc,
+          commission: tierCommission(billedPence + wipByStage.com + wipByStage.exc),
+          deltaCommission: tierCommission(billedPence + wipByStage.com + wipByStage.exc) - tierCommission(billedPence + wipByStage.com),
+        },
+        {
+          key: "neg",
+          label: "+ NEG / SOL converts",
+          totalPence: forecastPence,
+          commission: commissionForecast,
+          deltaCommission: commissionForecast - tierCommission(billedPence + wipByStage.com + wipByStage.exc),
+        },
+      ];
 
       res.json({
         salary,
@@ -409,6 +460,8 @@ export function setupHrRoutes(app: Express) {
         t1, t2, t3,
         commissionEarned,
         commissionForecast,
+        scenarios,
+        awaitingPayment,
         billingsByYear: billingsByYear.reverse(),
         topDeals,
         xeroError,

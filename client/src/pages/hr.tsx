@@ -106,6 +106,8 @@ interface CommissionData {
   t1: number; t2: number; t3: number;
   commissionEarned: number;
   commissionForecast: number;
+  scenarios: Array<{ key: string; label: string; totalPence: number; commission: number; deltaCommission: number }>;
+  awaitingPayment: Array<{ id: string; name: string; fee: number; status: string; date: string | null; invoicedAt: string | null }>;
   billingsByYear: Array<{ year: string; pence: number }>;
   topDeals: Array<{ id: string; name: string; fee: number; status: string; date: string | null }>;
   xeroError: string | null;
@@ -207,8 +209,13 @@ function StaffCard({ person, onClick }: { person: StaffMember; onClick: () => vo
 // ── Commission tracker ────────────────────────────────────────────────────────
 
 function CommissionTab({ userId }: { userId: string }) {
+  const [, navigate] = useLocation();
   const { data, isLoading, error } = useQuery<CommissionData>({
     queryKey: [`/api/hr/staff/${userId}/commission`],
+  });
+  const { data: payslips = [] } = useQuery<UploadedFile[]>({
+    queryKey: [`/api/hr/files/${userId}`, "payslip"],
+    queryFn: () => apiRequest("GET", `/api/hr/files/${userId}?kind=payslip`).then(r => r.json()),
   });
 
   if (isLoading) return <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
@@ -330,6 +337,103 @@ function CommissionTab({ userId }: { userId: string }) {
               </div>
             </div>
           </details>
+        </CardContent>
+      </Card>
+
+      {/* ── 'If you collect…' scenario calculator ───────────────────────── */}
+      {data.scenarios && data.scenarios.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2"><Sparkles className="w-4 h-4 text-violet-500" /> If you collect…</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 space-y-1.5">
+            <div className="text-[11px] text-muted-foreground italic mb-1">
+              Commission only pays when BGP gets paid. Stages are cumulative — each row is the extra you'd earn if that bucket converts.
+            </div>
+            {data.scenarios.map((s, i) => (
+              <div key={s.key} className={`flex items-center gap-3 p-2 rounded-md border ${i === 0 ? "bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900" : "bg-card"}`}>
+                <div className={`w-1.5 h-8 rounded-full shrink-0 ${i === 0 ? "bg-emerald-500" : i === 1 ? "bg-blue-500" : i === 2 ? "bg-amber-500" : "bg-muted-foreground/40"}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium">{s.label}</div>
+                  <div className="text-[11px] text-muted-foreground">Total billed: {fmtSalary(s.totalPence)}</div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-sm font-bold tabular-nums">{fmtSalary(s.commission)}</div>
+                  {i > 0 && s.deltaCommission > 0 && (
+                    <div className="text-[10px] text-emerald-600 tabular-nums">+ {fmtSalary(s.deltaCommission)} extra</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Awaiting payment — admin chase list ─────────────────────────── */}
+      {data.awaitingPayment && data.awaitingPayment.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center justify-between">
+              <span className="flex items-center gap-2"><Clock className="w-4 h-4 text-amber-600" /> Awaiting payment</span>
+              <span className="text-[11px] font-normal text-muted-foreground">{data.awaitingPayment.length} deal{data.awaitingPayment.length === 1 ? "" : "s"} · {fmtSalary(data.awaitingPayment.reduce((s, d) => s + d.fee, 0))} unlocks commission</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <div className="text-[10px] text-muted-foreground italic mb-2">
+              Completed or invoiced but Xero hasn't seen the payment yet. Commission flips from "expected" to "earned" when paid.
+            </div>
+            <div className="space-y-1">
+              {data.awaitingPayment.slice(0, 10).map(d => (
+                <button key={d.id} onClick={() => navigate(`/deals/${d.id}`)} className="w-full flex items-center gap-3 p-2 rounded-md border bg-card hover:bg-accent/40 transition-colors text-left">
+                  <Badge variant="outline" className={`text-[10px] shrink-0 ${d.status === "INV" ? "border-blue-300 text-blue-700" : "border-emerald-300 text-emerald-700"}`}>
+                    {d.status === "INV" ? "Invoiced" : "Completed"}
+                  </Badge>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{d.name}</div>
+                    <div className="text-[10px] text-muted-foreground">{d.invoicedAt ? `Invoiced ${d.invoicedAt}` : d.date ? `Completed ${d.date}` : ""}</div>
+                  </div>
+                  <span className="text-sm font-semibold tabular-nums shrink-0">{fmtSalary(d.fee)}</span>
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Payslips — uploaded by admin via the Files tab ─────────────── */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm flex items-center justify-between">
+            <span className="flex items-center gap-2"><FileText className="w-4 h-4 text-muted-foreground" /> Payslips</span>
+            <button onClick={() => {
+              // Open Files tab on this profile by triggering the wouter URL with ?tab=files.
+              const u = new URLSearchParams(window.location.search);
+              u.set("person", userId);
+              u.set("tab", "files");
+              window.history.replaceState(null, "", `${window.location.pathname}?${u.toString()}`);
+              window.dispatchEvent(new PopStateEvent("popstate"));
+            }} className="text-[11px] text-primary hover:underline">Upload &rarr;</button>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {payslips.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic py-2">
+              No payslips uploaded yet. Admin can upload via the Files tab with kind = "payslip".
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {payslips.slice(0, 12).map(p => (
+                <a key={p.id} href={`/api/hr/files/${p.id}/file`} download={p.name} className="flex items-center gap-2 p-2 rounded-md border hover:bg-accent/40 transition-colors text-xs">
+                  <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{p.name}</div>
+                    <div className="text-[10px] text-muted-foreground">{new Date(p.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</div>
+                  </div>
+                  <ExternalLink className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                </a>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
 
