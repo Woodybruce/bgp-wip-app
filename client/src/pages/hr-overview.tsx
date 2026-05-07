@@ -979,12 +979,12 @@ export default function HrOverview() {
         <div className="lg:col-span-1 space-y-4">
           {currentUser && <YouPanel user={currentUser} />}
           <BruceyBonusesCard isAdmin={isAdmin} />
+          <HungerGamesStrip allStaff={allStaff} />
+          <WatchHouseBoard isAdmin={isAdmin} allStaff={allStaff} />
           <CalendarWidget />
         </div>
         <div className="lg:col-span-2 space-y-4">
           <OrganigramSection allStaff={allStaff} isAdmin={isAdmin} />
-          <HungerGamesStrip allStaff={allStaff} />
-          <WatchHouseBoard isAdmin={isAdmin} allStaff={allStaff} />
         </div>
       </div>
     </div>

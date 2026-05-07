@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import {
@@ -3611,11 +3611,21 @@ function AddStaffDialog({ allStaff, open, onClose }: { allStaff: StaffMember[]; 
 
 export default function HRPage() {
   const { toast } = useToast();
+  const [location] = useLocation();
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("all");
   const [addStaffOpen, setAddStaffOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"org" | "grid">("org");
+
+  // Honour ?person=:id from the URL — clicks on team members from the
+  // dashboard land here with that query string, which should auto-open
+  // the profile drawer rather than dumping the user on the directory.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const personId = params.get("person");
+    if (personId) setSelectedUserId(personId);
+  }, [location]);
 
   const syncPhotosMutation = useMutation({
     mutationFn: async () => {
@@ -3722,7 +3732,6 @@ export default function HRPage() {
       <Tabs defaultValue="overview" className="px-4">
         <TabsList className="mt-3 mb-3">
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="people">People</TabsTrigger>
           <TabsTrigger value="benefits">Benefits</TabsTrigger>
           <TabsTrigger value="marketing">Marketing</TabsTrigger>
           {isAdmin && <TabsTrigger value="holidays">Holiday approvals</TabsTrigger>}
@@ -3739,46 +3748,6 @@ export default function HRPage() {
 
         <TabsContent value="marketing">
           <MarketingHub isAdmin={isAdmin} />
-        </TabsContent>
-
-        <TabsContent value="people">
-          <BirthdaysWidget />
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-xs text-muted-foreground">
-              {hasFilter ? `${filtered.length} of ${allStaff.length} match` : `${allStaff.length} staff`}
-            </div>
-            <div className="inline-flex rounded-md border bg-muted/30 p-0.5" role="tablist" aria-label="View mode">
-              <button
-                onClick={() => setViewMode("org")}
-                className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors ${viewMode === "org" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                data-testid="view-mode-org"
-              >
-                <GitBranch className="w-3.5 h-3.5" /> Org chart
-              </button>
-              <button
-                onClick={() => setViewMode("grid")}
-                className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors ${viewMode === "grid" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-                data-testid="view-mode-grid"
-              >
-                <LayoutGrid className="w-3.5 h-3.5" /> Grid
-              </button>
-            </div>
-          </div>
-
-          {isLoading ? (
-            <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-          ) : viewMode === "org" ? (
-            <OrgChartTab allStaff={allStaff} onSelectPerson={(p) => setSelectedUserId(p.id)} isAdmin={isAdmin} matchedIds={matchedIds} hasFilter={hasFilter} />
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 pb-6">
-              {filtered.map(person => (
-                <StaffCard key={person.id} person={person} onClick={() => setSelectedUserId(person.id)} />
-              ))}
-              {filtered.length === 0 && (
-                <div className="col-span-full text-center py-8 text-muted-foreground text-sm">No staff match the current filter</div>
-              )}
-            </div>
-          )}
         </TabsContent>
 
         <TabsContent value="holidays">
