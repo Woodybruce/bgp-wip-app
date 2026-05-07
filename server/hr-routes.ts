@@ -27,6 +27,117 @@ async function hydrateReqUser(req: any): Promise<{ id: string | null; isAdmin: b
   return req.user;
 }
 
+// Brucey Bonuses scan — extracted so both the admin endpoint and the daily
+// cron in server/index.ts can call it. Idempotent via the (event_kind,
+// event_ref) partial unique index — re-running on an overlapping window
+// silently skips events already awarded.
+export async function runBruceyPointsScan(): Promise<{ scannedEvents: number; newAwards: number; weekAgo: string }> {
+  const now = new Date();
+  const weekAgo = new Date(now.getTime() - 7 * 86400000);
+
+  const usersRes = await pool.query(
+    `SELECT u.id, u.name, sp.xero_tracking_name FROM users u
+     JOIN staff_profiles sp ON sp.user_id = u.id
+     WHERE u.is_active = true`
+  );
+  const nameToId = new Map<string, string>();
+  for (const u of usersRes.rows) {
+    nameToId.set(u.name.toLowerCase(), u.id);
+    if (u.xero_tracking_name) nameToId.set(u.xero_tracking_name.toLowerCase(), u.id);
+  }
+
+  const POINTS = {
+    dealCompleted: 100,
+    dealExchanged: 60,
+    dealAdvanced: 25,
+    reviewSubmitted: 50,
+    reviewCompleted: 75,
+    kudosGiven: 5,
+    kudosReceived: 10,
+    taskCompleted: 5,
+    cpdHourLogged: 10,
+    amlChecked: 15,
+  };
+
+  const awarded: Array<{ userId: string; points: number; reason: string; eventKind: string; eventRef: string }> = [];
+
+  const { rows: deals } = await pool.query(
+    `SELECT id, name, status, internal_agent,
+            COALESCE(completed_at, exchanged_at, target_date, instructed_at) AS dt
+     FROM crm_deals
+     WHERE COALESCE(completed_at, exchanged_at, target_date, instructed_at) BETWEEN $1 AND $2
+       AND COALESCE(status, '') NOT IN ('ARCH','WIT')
+       AND fee IS NOT NULL AND fee > 0`,
+    [weekAgo, now]
+  );
+  for (const d of deals) {
+    const agents: string[] = Array.isArray(d.internal_agent) ? d.internal_agent : [];
+    if (agents.length === 0) continue;
+    let pts = POINTS.dealAdvanced;
+    let label = "advanced";
+    if (d.status === "COM" || d.status === "INV") { pts = POINTS.dealCompleted; label = "closed"; }
+    else if (d.status === "EXC") { pts = POINTS.dealExchanged; label = "exchanged"; }
+    for (const ag of agents) {
+      const uid = nameToId.get(ag.toLowerCase());
+      if (!uid) continue;
+      awarded.push({
+        userId: uid, points: pts, reason: `Deal ${label}: ${d.name}`,
+        eventKind: `deal-${label}`, eventRef: `${d.id}|${uid}`,
+      });
+    }
+  }
+
+  const { rows: reviews } = await pool.query(
+    `SELECT id, user_id, status, submitted_at, reviewed_at
+     FROM staff_reviews
+     WHERE submitted_at BETWEEN $1 AND $2 OR reviewed_at BETWEEN $1 AND $2`,
+    [weekAgo, now]
+  );
+  for (const r of reviews) {
+    if (r.submitted_at && new Date(r.submitted_at) >= weekAgo) {
+      awarded.push({ userId: r.user_id, points: POINTS.reviewSubmitted, reason: "Submitted review", eventKind: "review-submitted", eventRef: r.id });
+    }
+    if (r.status === "completed" && r.reviewed_at && new Date(r.reviewed_at) >= weekAgo) {
+      awarded.push({ userId: r.user_id, points: POINTS.reviewCompleted, reason: "Review completed", eventKind: "review-completed", eventRef: r.id });
+    }
+  }
+
+  const { rows: kudos } = await pool.query(
+    `SELECT id, user_id, issued_by_user_id, kind FROM staff_awards
+     WHERE created_at BETWEEN $1 AND $2 AND kind = 'kudos'`,
+    [weekAgo, now]
+  );
+  for (const k of kudos) {
+    awarded.push({ userId: k.user_id, points: POINTS.kudosReceived, reason: "Kudos received from a colleague", eventKind: "kudos-received", eventRef: k.id });
+    if (k.issued_by_user_id) {
+      awarded.push({ userId: k.issued_by_user_id, points: POINTS.kudosGiven, reason: "Recognised a colleague", eventKind: "kudos-given", eventRef: k.id });
+    }
+  }
+
+  const { rows: tasks } = await pool.query(
+    `SELECT id, user_id FROM user_tasks
+     WHERE completed_at BETWEEN $1 AND $2 AND status = 'done'`,
+    [weekAgo, now]
+  );
+  for (const t of tasks) {
+    awarded.push({ userId: t.user_id, points: POINTS.taskCompleted, reason: "Task done", eventKind: "task-done", eventRef: t.id });
+  }
+
+  let inserted = 0;
+  for (const a of awarded) {
+    const r = await pool.query(
+      `INSERT INTO brucey_points (user_id, points, reason, event_kind, event_ref, awarded_by)
+       VALUES ($1, $2, $3, $4, $5, 'ai')
+       ON CONFLICT (event_kind, event_ref) WHERE event_ref IS NOT NULL DO NOTHING
+       RETURNING id`,
+      [a.userId, a.points, a.reason, a.eventKind, a.eventRef]
+    );
+    if (r.rowCount && r.rowCount > 0) inserted++;
+  }
+
+  return { scannedEvents: awarded.length, newAwards: inserted, weekAgo: weekAgo.toISOString() };
+}
+
 export function setupHrRoutes(app: Express) {
 
   // ── Staff profiles ────────────────────────────────────────────────────────
@@ -3488,120 +3599,8 @@ Use the language and tone of BGP's review docs.`,
   // on the same window just no-ops on previously-awarded events.
   app.post("/api/hr/brucey-points/scan", requireAdmin, async (_req, res) => {
     try {
-      const now = new Date();
-      const weekAgo = new Date(now.getTime() - 7 * 86400000);
-
-      // Build name → user_id map for attribution.
-      const usersRes = await pool.query(
-        `SELECT u.id, u.name, sp.xero_tracking_name FROM users u
-         JOIN staff_profiles sp ON sp.user_id = u.id
-         WHERE u.is_active = true`
-      );
-      const nameToId = new Map<string, string>();
-      for (const u of usersRes.rows) {
-        nameToId.set(u.name.toLowerCase(), u.id);
-        if (u.xero_tracking_name) nameToId.set(u.xero_tracking_name.toLowerCase(), u.id);
-      }
-
-      // Scoring rubric — tweakable centrally.
-      const POINTS = {
-        dealCompleted: 100,    // status flipped to COM/INV in window
-        dealExchanged: 60,     // EXC
-        dealAdvanced: 25,      // any non-final status change in window (proxy: completed/exchanged/target_date in window with status NEG/SOL)
-        reviewSubmitted: 50,
-        reviewCompleted: 75,
-        kudosGiven: 5,         // generosity is rewarded
-        kudosReceived: 10,
-        taskCompleted: 5,
-        cpdHourLogged: 10,     // future hook
-        amlChecked: 15,        // future hook
-      };
-
-      const awarded: Array<{ userId: string; points: number; reason: string; eventKind: string; eventRef: string }> = [];
-
-      // 1. Deals advanced/closed in the window — attribute to internal_agent.
-      const { rows: deals } = await pool.query(
-        `SELECT id, name, status, internal_agent,
-                COALESCE(completed_at, exchanged_at, target_date, instructed_at) AS dt
-         FROM crm_deals
-         WHERE COALESCE(completed_at, exchanged_at, target_date, instructed_at) BETWEEN $1 AND $2
-           AND COALESCE(status, '') NOT IN ('ARCH','WIT')
-           AND fee IS NOT NULL AND fee > 0`,
-        [weekAgo, now]
-      );
-      for (const d of deals) {
-        const agents: string[] = Array.isArray(d.internal_agent) ? d.internal_agent : [];
-        if (agents.length === 0) continue;
-        let pts = POINTS.dealAdvanced;
-        let label = "advanced";
-        if (d.status === "COM" || d.status === "INV") { pts = POINTS.dealCompleted; label = "closed"; }
-        else if (d.status === "EXC") { pts = POINTS.dealExchanged; label = "exchanged"; }
-        for (const ag of agents) {
-          const uid = nameToId.get(ag.toLowerCase());
-          if (!uid) continue;
-          awarded.push({
-            userId: uid,
-            points: pts,
-            reason: `Deal ${label}: ${d.name}`,
-            eventKind: `deal-${label}`,
-            eventRef: `${d.id}|${uid}`,
-          });
-        }
-      }
-
-      // 2. Reviews submitted / completed in the window
-      const { rows: reviews } = await pool.query(
-        `SELECT id, user_id, status, submitted_at, reviewed_at
-         FROM staff_reviews
-         WHERE submitted_at BETWEEN $1 AND $2 OR reviewed_at BETWEEN $1 AND $2`,
-        [weekAgo, now]
-      );
-      for (const r of reviews) {
-        if (r.submitted_at && new Date(r.submitted_at) >= weekAgo) {
-          awarded.push({ userId: r.user_id, points: POINTS.reviewSubmitted, reason: "Submitted review", eventKind: "review-submitted", eventRef: r.id });
-        }
-        if (r.status === "completed" && r.reviewed_at && new Date(r.reviewed_at) >= weekAgo) {
-          awarded.push({ userId: r.user_id, points: POINTS.reviewCompleted, reason: "Review completed", eventKind: "review-completed", eventRef: r.id });
-        }
-      }
-
-      // 3. Kudos / awards in the window — reward giver (5pt) and receiver (10pt).
-      const { rows: kudos } = await pool.query(
-        `SELECT id, user_id, issued_by_user_id, kind FROM staff_awards
-         WHERE created_at BETWEEN $1 AND $2 AND kind = 'kudos'`,
-        [weekAgo, now]
-      );
-      for (const k of kudos) {
-        awarded.push({ userId: k.user_id, points: POINTS.kudosReceived, reason: "Kudos received from a colleague", eventKind: "kudos-received", eventRef: k.id });
-        if (k.issued_by_user_id) {
-          awarded.push({ userId: k.issued_by_user_id, points: POINTS.kudosGiven, reason: "Recognised a colleague", eventKind: "kudos-given", eventRef: k.id });
-        }
-      }
-
-      // 4. Tasks completed in the window
-      const { rows: tasks } = await pool.query(
-        `SELECT id, user_id FROM user_tasks
-         WHERE completed_at BETWEEN $1 AND $2 AND status = 'done'`,
-        [weekAgo, now]
-      );
-      for (const t of tasks) {
-        awarded.push({ userId: t.user_id, points: POINTS.taskCompleted, reason: "Task done", eventKind: "task-done", eventRef: t.id });
-      }
-
-      // Insert all, on-conflict-do-nothing on (event_kind, event_ref).
-      let inserted = 0;
-      for (const a of awarded) {
-        const r = await pool.query(
-          `INSERT INTO brucey_points (user_id, points, reason, event_kind, event_ref, awarded_by)
-           VALUES ($1, $2, $3, $4, $5, 'ai')
-           ON CONFLICT (event_kind, event_ref) WHERE event_ref IS NOT NULL DO NOTHING
-           RETURNING id`,
-          [a.userId, a.points, a.reason, a.eventKind, a.eventRef]
-        );
-        if (r.rowCount && r.rowCount > 0) inserted++;
-      }
-
-      res.json({ scannedEvents: awarded.length, newAwards: inserted, weekAgo: weekAgo.toISOString() });
+      const result = await runBruceyPointsScan();
+      res.json(result);
     } catch (e: any) {
       console.error("[hr] brucey-points scan error:", e.message);
       res.status(500).json({ error: e.message });

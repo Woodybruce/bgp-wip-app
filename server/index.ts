@@ -2014,6 +2014,22 @@ app.use("/api/branding/assets", express.static(
         }, 60 * 60 * 1000);
       }
 
+      // Daily Brucey Bonuses scan — 06:00 every day. Idempotent via the
+      // (event_kind, event_ref) partial unique index, so the rolling 7-day
+      // window catches new events without re-awarding old ones. Production
+      // only — dev would clobber test data on every restart.
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 6 && now.getMinutes() < 60) {
+            import("./hr-routes")
+              .then(m => m.runBruceyPointsScan())
+              .then(r => console.log(`[brucey-cron] daily scan: ${r.newAwards} new awards from ${r.scannedEvents} events`))
+              .catch(err => console.error("[brucey-cron] daily run failed:", err?.message));
+          }
+        }, 60 * 60 * 1000);
+      }
+
       // Weekly client report cron — Monday 09:00 (production only, sends email)
       if (process.env.NODE_ENV === "production") {
         setInterval(() => {
