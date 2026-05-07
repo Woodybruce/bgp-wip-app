@@ -737,7 +737,7 @@ export function setupHrRoutes(app: Express) {
   // active deals. Used as the rich card content on the new dashboard landing.
   app.get("/api/hr/team-summary", requireAuth, async (_req, res) => {
     try {
-      const TEAM_ORDER = ["Office / Corporate", "Investment", "Lease Advisory", "National Leasing", "Development", "Tenant Rep", "London Leasing"];
+      const TEAM_ORDER = ["Office / Corporate", "Investment", "Lease Advisory", "National Leasing", "Development", "Tenant Rep", "London Retail", "London F&B"];
 
       const { rows: staff } = await pool.query(`
         SELECT u.id, u.name, u.email, u.team, u.profile_pic_url,
@@ -1106,16 +1106,16 @@ export function setupHrRoutes(app: Express) {
       ["Alex Todd", "Senior Surveyor – Development", "Development", "Emily Dumbell", false, false],
       ["Libby Evans", "Graduate Surveyor – Development", "Development", "Alex Todd", false, false],
       ["Harry Elliot", "Director – Tenant Rep", "Tenant Rep", "Woody Bruce", false, true],
-      ["Charlotte Roberts", "ED & Co-Head – London Estates / Marketing", "London Leasing", "Woody Bruce", true, true],
-      ["Rupert Bentley-Smith", "Head – London F&B", "London Leasing", "Woody Bruce", true, true],
-      ["Evie North", "Associate Director – Leasing & Tenant Rep", "London Leasing", "Rupert Bentley-Smith", false, false],
-      ["Lizzie Knights", "Director – London Leasing", "London Leasing", "Charlotte Roberts", false, false],
-      ["Lucy Cope", "Associate Director – London Leasing", "London Leasing", "Lizzie Knights", false, false],
-      ["Will Penfold", "Surveyor – London Leasing", "London Leasing", "Rupert Bentley-Smith", false, false],
-      ["Emily Cann", "Graduate Surveyor – London Leasing", "London Leasing", "Lucy Cope", false, false],
-      ["Carly Cunliffe", "Graduate Surveyor – London Leasing & Tenant Rep", "London Leasing", "Rupert Bentley-Smith", false, false],
+      ["Charlotte Roberts", "Head – London Retail", "London Retail", "Woody Bruce", true, true],
+      ["Lizzie Knights", "Director – London Retail", "London Retail", "Charlotte Roberts", false, false],
+      ["Lucy Cope", "Associate Director – London Retail", "London Retail", "Lizzie Knights", false, false],
+      ["Emily Cann", "Graduate Surveyor – London Retail", "London Retail", "Lucy Cope", false, false],
+      ["Daisy Driscoll", "Surveyor – London Retail", "London Retail", "Charlotte Roberts", false, false],
+      ["Rupert Bentley-Smith", "Head – London F&B", "London F&B", "Woody Bruce", true, true],
+      ["Evie North", "Associate Director – London F&B / Tenant Rep", "London F&B", "Rupert Bentley-Smith", false, false],
+      ["Will Penfold", "Surveyor – London F&B", "London F&B", "Rupert Bentley-Smith", false, false],
+      ["Carly Cunliffe", "Graduate Surveyor – London F&B / Tenant Rep", "London F&B", "Rupert Bentley-Smith", false, false],
       ["Emily Mitchell", "Marketing Lead", "Office / Corporate", "Charlotte Roberts", false, false],
-      ["Daisy Driscoll", "Surveyor", "London Leasing", "Charlotte Roberts", false, false],
     ];
 
     // Known short ↔ long pairs so DB rows like "Peter Wood" or "Harry Elliott"
@@ -2925,7 +2925,7 @@ Use the language and tone of BGP's review docs.`,
 
   app.post("/api/hr/team-ai-summaries/refresh", requireAdmin, async (_req, res) => {
     try {
-      const TEAMS = ["Office / Corporate", "Investment", "Lease Advisory", "National Leasing", "Development", "Tenant Rep", "London Leasing"];
+      const TEAMS = ["Office / Corporate", "Investment", "Lease Advisory", "National Leasing", "Development", "Tenant Rep", "London Retail", "London F&B"];
 
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
       
