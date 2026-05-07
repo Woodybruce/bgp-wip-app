@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { pool } from "./db";
 import { requireAuth, requireAdmin } from "./auth";
-import { xeroApi } from "./xero";
+import { xeroApi, xeroPayrollApi } from "./xero";
 import { getValidMsToken } from "./microsoft";
 import multer from "multer";
 
@@ -1313,6 +1313,83 @@ export function setupHrRoutes(app: Express) {
       })));
     } catch (e: any) {
       console.error("[hr] active-deals error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Admin: sync payslips from Xero Payroll ─────────────────────────────────
+  // Pulls every PayslipID from the most recent N pay runs, downloads the PDF
+  // for each, matches the employee email to a BGP user, and stores the PDF as
+  // an uploaded_files row with kind='payslip'. The Commission tab's Payslips
+  // card already reads from there so they appear automatically.
+  // Requires payroll.payslip + payroll.employees scopes — admin needs to
+  // disconnect/reconnect Xero once after this lands.
+  app.post("/api/hr/payslips/sync-from-xero", requireAdmin, async (_req, res) => {
+    try {
+      const { getXeroSystemSession } = await import("./xero-system-session");
+      const session = await getXeroSystemSession();
+      if (!session) return res.status(401).json({ error: "Connect Xero first" });
+
+      // Build email/name → user_id map.
+      const usersRes = await pool.query("SELECT id, name, email FROM users WHERE is_active = true");
+      const emailToId = new Map<string, string>();
+      const nameToId = new Map<string, string>();
+      for (const u of usersRes.rows) {
+        if (u.email) emailToId.set(u.email.toLowerCase(), u.id);
+        if (u.name) nameToId.set(u.name.toLowerCase().replace(/[^a-z0-9]/g, ""), u.id);
+      }
+
+      // Fetch the 6 most-recent pay runs and their payslips.
+      const runs = await xeroPayrollApi(session, "/PayRuns?order=PayRunPeriodEndDate%20DESC");
+      const recentRuns = (runs.PayRuns || []).slice(0, 6);
+
+      let imported = 0, unmatched = 0, skipped = 0;
+      const unmatchedNames: string[] = [];
+
+      for (const run of recentRuns) {
+        const detail = await xeroPayrollApi(session, `/PayRuns/${run.PayRunID}`);
+        const slips = detail.PayRuns?.[0]?.Payslips || [];
+        for (const slip of slips) {
+          const emp = `${slip.FirstName || ""} ${slip.LastName || ""}`.trim();
+          const empKey = emp.toLowerCase().replace(/[^a-z0-9]/g, "");
+          let userId = nameToId.get(empKey) || null;
+
+          // Try email if name didn't match — needs employee detail
+          if (!userId && slip.EmployeeID) {
+            try {
+              const empDetail = await xeroPayrollApi(session, `/Employees/${slip.EmployeeID}`);
+              const email = empDetail.Employees?.[0]?.Email;
+              if (email) userId = emailToId.get(email.toLowerCase()) || null;
+            } catch { /* ignore single employee failure */ }
+          }
+
+          if (!userId) { unmatched++; if (!unmatchedNames.includes(emp)) unmatchedNames.push(emp); continue; }
+
+          const periodEnd = run.PayRunPeriodEndDate ? new Date(run.PayRunPeriodEndDate).toISOString().slice(0, 10) : "unknown";
+          const filename = `Payslip ${periodEnd} ${emp}.pdf`;
+
+          // Skip if we already have this exact payslip for this user
+          const existing = await pool.query(
+            `SELECT id FROM uploaded_files WHERE owner_user_id = $1 AND kind = 'payslip' AND name = $2`,
+            [userId, filename]
+          );
+          if (existing.rows.length > 0) { skipped++; continue; }
+
+          // Pull the PDF
+          const pdf = await xeroPayrollApi(session, `/Payslips/${slip.PayslipID}`, { binary: true });
+          const meta = await pool.query(
+            `INSERT INTO uploaded_files (owner_user_id, kind, name, mime_type, size_bytes, notes, visibility)
+             VALUES ($1, 'payslip', $2, 'application/pdf', $3, $4, 'admin-self') RETURNING id`,
+            [userId, filename, pdf.length, `Imported from Xero pay run ${run.PayRunID}`]
+          );
+          await pool.query("INSERT INTO file_blobs (file_id, data) VALUES ($1, $2)", [meta.rows[0].id, pdf]);
+          imported++;
+        }
+      }
+
+      res.json({ imported, skipped, unmatched, unmatchedNames, runsScanned: recentRuns.length });
+    } catch (e: any) {
+      console.error("[hr] xero payslip sync error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });

@@ -209,6 +209,7 @@ function StaffCard({ person, onClick }: { person: StaffMember; onClick: () => vo
 // ── Commission tracker ────────────────────────────────────────────────────────
 
 function CommissionTab({ userId }: { userId: string }) {
+  const { toast } = useToast();
   const [, navigate] = useLocation();
   const { data, isLoading, error } = useQuery<CommissionData>({
     queryKey: [`/api/hr/staff/${userId}/commission`],
@@ -216,6 +217,15 @@ function CommissionTab({ userId }: { userId: string }) {
   const { data: payslips = [] } = useQuery<UploadedFile[]>({
     queryKey: [`/api/hr/files/${userId}`, "payslip"],
     queryFn: () => apiRequest("GET", `/api/hr/files/${userId}?kind=payslip`).then(r => r.json()),
+  });
+  const syncXeroPayslips = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/hr/payslips/sync-from-xero").then(r => r.json()),
+    onSuccess: (d: any) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/files/${userId}`, "payslip"] });
+      const msg = `Imported ${d.imported || 0}${d.skipped ? ` · skipped ${d.skipped}` : ""}${d.unmatched ? ` · ${d.unmatched} unmatched` : ""}`;
+      toast({ title: "Xero payslip sync done", description: msg });
+    },
+    onError: (e: any) => toast({ title: "Xero sync failed", description: e?.message, variant: "destructive" }),
   });
 
   if (isLoading) return <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
@@ -405,14 +415,19 @@ function CommissionTab({ userId }: { userId: string }) {
         <CardHeader className="pb-2">
           <CardTitle className="text-sm flex items-center justify-between">
             <span className="flex items-center gap-2"><FileText className="w-4 h-4 text-muted-foreground" /> Payslips</span>
-            <button onClick={() => {
-              // Open Files tab on this profile by triggering the wouter URL with ?tab=files.
-              const u = new URLSearchParams(window.location.search);
-              u.set("person", userId);
-              u.set("tab", "files");
-              window.history.replaceState(null, "", `${window.location.pathname}?${u.toString()}`);
-              window.dispatchEvent(new PopStateEvent("popstate"));
-            }} className="text-[11px] text-primary hover:underline">Upload &rarr;</button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="ghost" className="h-6 text-[11px] px-1.5" onClick={() => syncXeroPayslips.mutate()} disabled={syncXeroPayslips.isPending}>
+                {syncXeroPayslips.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
+                Sync Xero
+              </Button>
+              <button onClick={() => {
+                const u = new URLSearchParams(window.location.search);
+                u.set("person", userId);
+                u.set("tab", "files");
+                window.history.replaceState(null, "", `${window.location.pathname}?${u.toString()}`);
+                window.dispatchEvent(new PopStateEvent("popstate"));
+              }} className="text-[11px] text-primary hover:underline">Upload &rarr;</button>
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent className="pt-0">

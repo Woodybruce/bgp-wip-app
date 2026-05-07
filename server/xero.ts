@@ -175,6 +175,35 @@ export async function xeroApi(session: any, path: string, options: RequestInit =
   return res.json();
 }
 
+// Xero Payroll UK API — separate base URL from accounting. Uses the same
+// session token but the OAuth scope must include payroll.payslip and
+// payroll.employees. PDF endpoints return binary, hence the optional
+// `binary` flag that returns a Buffer instead of JSON.
+const XERO_PAYROLL_API_BASE = "https://api.xero.com/payroll.xro/2.0";
+export async function xeroPayrollApi(session: any, path: string, opts: { binary?: boolean } = {}): Promise<any> {
+  const token = await refreshXeroToken(session);
+  if (!token) throw new Error("Not connected to Xero");
+
+  let tenantId = session.xeroTokens?.tenantId;
+  if (!tenantId) throw new Error("No Xero tenant — reconnect to Xero with payroll scopes");
+
+  const res = await fetch(`${XERO_PAYROLL_API_BASE}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Xero-Tenant-Id": tenantId,
+      Accept: opts.binary ? "application/pdf" : "application/json",
+    },
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    if (res.status === 403) {
+      throw new Error(`Xero Payroll scope not granted (403). Reconnect to Xero — admin → /api/xero/connect — to authorise payroll.payslip + payroll.employees.`);
+    }
+    throw new Error(`Xero Payroll error ${res.status}: ${txt}`);
+  }
+  return opts.binary ? Buffer.from(await res.arrayBuffer()) : res.json();
+}
+
 export function setupXeroRoutes(app: Express) {
   app.get("/api/xero/status", requireAuth, async (req: Request, res: Response) => {
     const clientId = process.env.XERO_CLIENT_ID;
@@ -205,7 +234,7 @@ export function setupXeroRoutes(app: Express) {
       response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
-      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings",
+      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings payroll.payslip payroll.employees",
       state,
     });
 
@@ -231,7 +260,7 @@ export function setupXeroRoutes(app: Express) {
       response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
-      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings",
+      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings payroll.payslip payroll.employees",
       state,
     });
 
