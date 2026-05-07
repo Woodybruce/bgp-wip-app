@@ -15,6 +15,15 @@ async function getActor(req: any): Promise<{ userId: string | null; isAdmin: boo
   return { userId, isAdmin: r.rows[0]?.is_admin === true };
 }
 
+// Hydrate req.user for handlers that still read req.user.id / req.user.isAdmin.
+// Cheap (one indexed lookup) and fixes a swathe of bugs where requireAuth
+// was followed by checks against an unpopulated req.user.
+async function hydrateReqUser(req: any): Promise<{ id: string | null; isAdmin: boolean }> {
+  const actor = await getActor(req);
+  req.user = { id: actor.userId, isAdmin: actor.isAdmin };
+  return req.user;
+}
+
 export function setupHrRoutes(app: Express) {
 
   // ── Staff profiles ────────────────────────────────────────────────────────
@@ -178,6 +187,7 @@ export function setupHrRoutes(app: Express) {
   // ── Salary history ────────────────────────────────────────────────────────
 
   app.get("/api/hr/staff/:userId/salary", requireAuth, async (req: any, res) => {
+    await hydrateReqUser(req);
     if (!req.user?.isAdmin) return res.status(403).json({ error: "Admin only" });
     const { userId } = req.params;
     try {
@@ -192,6 +202,7 @@ export function setupHrRoutes(app: Express) {
   });
 
   app.post("/api/hr/staff/:userId/salary", requireAuth, async (req: any, res) => {
+    await hydrateReqUser(req);
     if (!req.user?.isAdmin) return res.status(403).json({ error: "Admin only" });
     const { userId } = req.params;
     const { salaryPence, effectiveDate, reason, notes } = req.body;
@@ -222,7 +233,8 @@ export function setupHrRoutes(app: Express) {
   // Tiers: 2x salary → 30%, 3x → 40%, 4x → 50% (of fees above each threshold)
 
   app.get("/api/hr/staff/:userId/commission", requireAuth, async (req: any, res) => {
-    if (!req.user?.isAdmin && req.user?.id !== req.params.userId) {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) {
       return res.status(403).json({ error: "Forbidden" });
     }
     const { userId } = req.params;
@@ -475,6 +487,7 @@ export function setupHrRoutes(app: Express) {
   // ── Holiday requests ──────────────────────────────────────────────────────
 
   app.get("/api/hr/holidays", requireAuth, async (req: any, res) => {
+    await hydrateReqUser(req);
     const { userId } = req.query;
     try {
       let query: string;
@@ -513,6 +526,7 @@ export function setupHrRoutes(app: Express) {
   });
 
   app.post("/api/hr/holidays", requireAuth, async (req: any, res) => {
+    await hydrateReqUser(req);
     const { startDate, endDate, daysCount, notes } = req.body;
     if (!startDate || !endDate || !daysCount) {
       return res.status(400).json({ error: "startDate, endDate, daysCount required" });
@@ -530,6 +544,7 @@ export function setupHrRoutes(app: Express) {
   });
 
   app.patch("/api/hr/holidays/:id", requireAuth, async (req: any, res) => {
+    await hydrateReqUser(req);
     const { id } = req.params;
     const { status, notes } = req.body;
     // Admins approve/reject; users can cancel their own
@@ -587,6 +602,7 @@ export function setupHrRoutes(app: Express) {
   });
 
   app.post("/api/hr/documents", requireAuth, async (req: any, res) => {
+    await hydrateReqUser(req);
     if (!req.user?.isAdmin) return res.status(403).json({ error: "Admin only" });
     const { userId, docType, name, sharepointUrl, sharepointDriveId, sharepointItemId, reviewYear } = req.body;
     if (!docType || !name) return res.status(400).json({ error: "docType and name required" });
@@ -603,6 +619,7 @@ export function setupHrRoutes(app: Express) {
   });
 
   app.delete("/api/hr/documents/:id", requireAuth, async (req: any, res) => {
+    await hydrateReqUser(req);
     if (!req.user?.isAdmin) return res.status(403).json({ error: "Admin only" });
     try {
       await pool.query(`DELETE FROM hr_documents WHERE id = $1`, [req.params.id]);
