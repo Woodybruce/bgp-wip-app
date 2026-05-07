@@ -1176,6 +1176,14 @@ import { pool } from "./db";
     )`,
     `CREATE INDEX IF NOT EXISTS idx_kyc_upload_files_deal ON kyc_upload_files(deal_id)`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_mlro_report_url TEXT`,
+    // Promote the three other board members to admin alongside Woody +
+    // Layla. Idempotent: re-runs are no-ops once is_admin is already true.
+    // Match by name with ILIKE so minor spelling variants in the users
+    // table still pick up.
+    `UPDATE users SET is_admin = true WHERE
+       LOWER(name) ILIKE 'jack%barratt%'
+       OR LOWER(name) ILIKE 'charlotte%roberts%'
+       OR LOWER(name) ILIKE 'rupert%bentley%smith%'`,
   ];
 
   let ok = 0, skipped = 0;
