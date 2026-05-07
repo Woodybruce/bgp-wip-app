@@ -3336,6 +3336,14 @@ interface Benefit {
   contact: string | null;
   icon: string | null;
   enrolled: boolean;
+  policy_number?: string | null;
+  policy_holder?: string | null;
+  renewal_date?: string | null;
+  annual_premium_pence?: number | null;
+  group_size?: number | null;
+  provider_portal_url?: string | null;
+  member_login_instructions?: string | null;
+  broker_contact?: string | null;
 }
 
 const BENEFIT_ICONS: Record<string, any> = {
@@ -3363,7 +3371,21 @@ const BENEFIT_CAT_COLORS: Record<string, string> = {
 
 function BenefitsTab() {
   const { toast } = useToast();
+  const { data: currentUser } = useQuery<AuthUser | null>({ queryKey: ["/api/auth/me"], queryFn: getQueryFn({ on401: "returnNull" }) });
+  const isAdmin = !!currentUser?.isAdmin;
+  const myUserId = currentUser?.id || "";
   const { data: benefits = [], isLoading } = useQuery<Benefit[]>({ queryKey: ["/api/hr/benefits"] });
+  const { data: credentials = [] } = useQuery<Array<{ benefit_slug: string; member_number: string | null; member_email: string | null; notes: string | null }>>({
+    queryKey: [`/api/hr/benefit-credentials/${myUserId}`],
+    enabled: !!myUserId,
+  });
+  const credBySlug = useMemo(() => {
+    const m = new Map<string, { member_number: string | null; member_email: string | null }>();
+    for (const c of credentials) m.set(c.benefit_slug, c);
+    return m;
+  }, [credentials]);
+  const [editing, setEditing] = useState<Benefit | null>(null);
+  const [credEdit, setCredEdit] = useState<{ slug: string; memberNumber: string; memberEmail: string } | null>(null);
 
   const enrol = useMutation({
     mutationFn: async ({ slug, enrolled }: { slug: string; enrolled: boolean }) => {
@@ -3422,7 +3444,7 @@ function BenefitsTab() {
                         {b.eligibility && (
                           <div className="text-[10px] text-muted-foreground mt-1.5 italic">{b.eligibility}</div>
                         )}
-                        <div className="flex items-center gap-2 mt-3">
+                        <div className="flex items-center gap-2 mt-3 flex-wrap">
                           <Button
                             size="sm"
                             variant={b.enrolled ? "outline" : "default"}
@@ -3433,15 +3455,66 @@ function BenefitsTab() {
                           >
                             {b.enrolled ? "Mark as not enrolled" : "I'm enrolled / interested"}
                           </Button>
-                          {b.enrolment_url && (
-                            <a href={b.enrolment_url} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">
-                              <ExternalLink className="w-3 h-3" /> Sign up
+                          {(b.provider_portal_url || b.enrolment_url) && (
+                            <a href={b.provider_portal_url || b.enrolment_url || "#"} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline flex items-center gap-1">
+                              <ExternalLink className="w-3 h-3" /> {b.provider_portal_url ? "Member portal" : "Sign up"}
                             </a>
                           )}
-                          {b.contact && (
+                          {isAdmin && (
+                            <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto" onClick={() => setEditing(b)}>
+                              <Pencil className="w-3 h-3 mr-1" /> Edit
+                            </Button>
+                          )}
+                          {b.contact && !isAdmin && (
                             <span className="text-[10px] text-muted-foreground ml-auto">Ask {b.contact}</span>
                           )}
                         </div>
+
+                        {/* Member-services panel — what staff need to log in */}
+                        {(b.provider_portal_url || b.member_login_instructions || credBySlug.has(b.slug)) && (
+                          <div className="mt-3 rounded-md border bg-muted/20 p-2.5 space-y-1.5">
+                            <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Your member access</div>
+                            {credBySlug.get(b.slug)?.member_number && (
+                              <div className="text-xs flex items-center gap-1.5">
+                                <span className="text-muted-foreground">Member #:</span>
+                                <code className="text-foreground font-mono">{credBySlug.get(b.slug)?.member_number}</code>
+                              </div>
+                            )}
+                            {credBySlug.get(b.slug)?.member_email && (
+                              <div className="text-xs">
+                                <span className="text-muted-foreground">Login email: </span>
+                                <span className="text-foreground">{credBySlug.get(b.slug)?.member_email}</span>
+                              </div>
+                            )}
+                            {b.member_login_instructions && (
+                              <div className="text-[11px] text-muted-foreground whitespace-pre-line">{b.member_login_instructions}</div>
+                            )}
+                            <div className="flex items-center gap-2 pt-1">
+                              {b.provider_portal_url && (
+                                <a href={b.provider_portal_url} target="_blank" rel="noreferrer" className="text-[11px] text-primary hover:underline">Open portal →</a>
+                              )}
+                              <Button size="sm" variant="ghost" className="h-6 text-[10px] ml-auto" onClick={() => setCredEdit({
+                                slug: b.slug,
+                                memberNumber: credBySlug.get(b.slug)?.member_number || "",
+                                memberEmail: credBySlug.get(b.slug)?.member_email || "",
+                              })}>
+                                {credBySlug.has(b.slug) ? "Edit my details" : "Add my details"}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Admin-only renewal/policy footer */}
+                        {isAdmin && (b.policy_number || b.renewal_date || b.annual_premium_pence) && (
+                          <div className="mt-2 text-[10px] text-muted-foreground flex items-center gap-3 flex-wrap">
+                            {b.policy_number && <span>Policy {b.policy_number}</span>}
+                            {b.renewal_date && (
+                              <span>Renews {new Date(b.renewal_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}</span>
+                            )}
+                            {b.annual_premium_pence != null && <span>£{(b.annual_premium_pence / 100).toLocaleString("en-GB")} / yr</span>}
+                            {b.group_size != null && <span>{b.group_size} members</span>}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -3451,6 +3524,119 @@ function BenefitsTab() {
           </div>
         </div>
       ))}
+
+      {/* Admin: edit a benefit's policy / renewal block */}
+      <Dialog open={!!editing} onOpenChange={(o) => !o && setEditing(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader><DialogTitle>Edit {editing?.name}</DialogTitle></DialogHeader>
+          {editing && <BenefitEditForm benefit={editing} onSaved={() => setEditing(null)} />}
+        </DialogContent>
+      </Dialog>
+
+      {/* Self: log my member number / login details */}
+      <Dialog open={!!credEdit} onOpenChange={(o) => !o && setCredEdit(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>My details for this benefit</DialogTitle></DialogHeader>
+          {credEdit && (
+            <CredentialsEditForm
+              slug={credEdit.slug}
+              userId={myUserId}
+              initialMemberNumber={credEdit.memberNumber}
+              initialMemberEmail={credEdit.memberEmail}
+              onSaved={() => setCredEdit(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function BenefitEditForm({ benefit, onSaved }: { benefit: Benefit; onSaved: () => void }) {
+  const { toast } = useToast();
+  const [form, setForm] = useState({
+    description: benefit.description || "",
+    eligibility: benefit.eligibility || "",
+    contact: benefit.contact || "",
+    policy_number: benefit.policy_number || "",
+    policy_holder: benefit.policy_holder || "",
+    renewal_date: benefit.renewal_date ? benefit.renewal_date.slice(0, 10) : "",
+    annual_premium_pounds: benefit.annual_premium_pence != null ? String(benefit.annual_premium_pence / 100) : "",
+    group_size: benefit.group_size != null ? String(benefit.group_size) : "",
+    provider_portal_url: benefit.provider_portal_url || "",
+    member_login_instructions: benefit.member_login_instructions || "",
+    broker_contact: benefit.broker_contact || "",
+  });
+  const save = useMutation({
+    mutationFn: async () => apiRequest("PATCH", `/api/hr/benefits/${benefit.slug}`, {
+      description: form.description,
+      eligibility: form.eligibility,
+      contact: form.contact,
+      policyNumber: form.policy_number || null,
+      policyHolder: form.policy_holder || null,
+      renewalDate: form.renewal_date || null,
+      annualPremiumPence: form.annual_premium_pounds ? Math.round(parseFloat(form.annual_premium_pounds) * 100) : null,
+      groupSize: form.group_size ? parseInt(form.group_size, 10) : null,
+      providerPortalUrl: form.provider_portal_url || null,
+      memberLoginInstructions: form.member_login_instructions || null,
+      brokerContact: form.broker_contact || null,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/benefits"] });
+      toast({ title: "Benefit updated" });
+      onSaved();
+    },
+    onError: (e: any) => toast({ title: "Save failed", description: e?.message, variant: "destructive" }),
+  });
+  return (
+    <div className="space-y-3 max-h-[70vh] overflow-y-auto">
+      <div className="space-y-1.5"><Label>Description</Label><Textarea rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></div>
+      <div className="space-y-1.5"><Label>Eligibility</Label><Input value={form.eligibility} onChange={e => setForm(f => ({ ...f, eligibility: e.target.value }))} /></div>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1.5"><Label>Internal contact</Label><Input value={form.contact} onChange={e => setForm(f => ({ ...f, contact: e.target.value }))} placeholder="e.g. Wendy McKenzie" /></div>
+        <div className="space-y-1.5"><Label>Broker contact</Label><Input value={form.broker_contact} onChange={e => setForm(f => ({ ...f, broker_contact: e.target.value }))} placeholder="for renewal task" /></div>
+      </div>
+      <div className="rounded-md border-2 border-dashed border-blue-200 dark:border-blue-800 p-3 space-y-3 bg-blue-50/30 dark:bg-blue-950/10">
+        <div className="text-xs font-semibold uppercase tracking-wider text-blue-900 dark:text-blue-300">Policy &amp; renewal</div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1.5"><Label>Policy number</Label><Input value={form.policy_number} onChange={e => setForm(f => ({ ...f, policy_number: e.target.value }))} /></div>
+          <div className="space-y-1.5"><Label>Policy holder</Label><Input value={form.policy_holder} onChange={e => setForm(f => ({ ...f, policy_holder: e.target.value }))} placeholder="Bruce Gillingham Pollard Ltd" /></div>
+          <div className="space-y-1.5"><Label>Renewal date</Label><Input type="date" value={form.renewal_date} onChange={e => setForm(f => ({ ...f, renewal_date: e.target.value }))} /></div>
+          <div className="space-y-1.5"><Label>Annual premium (£)</Label><Input type="number" value={form.annual_premium_pounds} onChange={e => setForm(f => ({ ...f, annual_premium_pounds: e.target.value }))} /></div>
+          <div className="space-y-1.5"><Label>Group size</Label><Input type="number" value={form.group_size} onChange={e => setForm(f => ({ ...f, group_size: e.target.value }))} /></div>
+        </div>
+      </div>
+      <div className="space-y-1.5"><Label>Member portal URL</Label><Input value={form.provider_portal_url} onChange={e => setForm(f => ({ ...f, provider_portal_url: e.target.value }))} placeholder="https://online.royallondon.com" /></div>
+      <div className="space-y-1.5"><Label>Member login instructions</Label><Textarea rows={3} value={form.member_login_instructions} onChange={e => setForm(f => ({ ...f, member_login_instructions: e.target.value }))} placeholder={"e.g.\nFirst time? Use the activation email Royal London sent.\nReset password at /forgot-password\nApp Store: search 'Royal London'"} /></div>
+      <DialogFooter>
+        <Button variant="outline" onClick={onSaved}>Cancel</Button>
+        <Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Save</Button>
+      </DialogFooter>
+    </div>
+  );
+}
+
+function CredentialsEditForm({ slug, userId, initialMemberNumber, initialMemberEmail, onSaved }: { slug: string; userId: string; initialMemberNumber: string; initialMemberEmail: string; onSaved: () => void }) {
+  const { toast } = useToast();
+  const [memberNumber, setMemberNumber] = useState(initialMemberNumber);
+  const [memberEmail, setMemberEmail] = useState(initialMemberEmail);
+  const save = useMutation({
+    mutationFn: async () => apiRequest("PUT", `/api/hr/benefit-credentials/${userId}/${slug}`, { memberNumber, memberEmail }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/hr/benefit-credentials/${userId}`] });
+      toast({ title: "Saved" });
+      onSaved();
+    },
+  });
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1.5"><Label>Member / policy number</Label><Input value={memberNumber} onChange={e => setMemberNumber(e.target.value)} placeholder="e.g. RL-12345678" /></div>
+      <div className="space-y-1.5"><Label>Login email (if different from work)</Label><Input type="email" value={memberEmail} onChange={e => setMemberEmail(e.target.value)} /></div>
+      <p className="text-[10px] text-muted-foreground">Stored privately on your profile. Admin can also view.</p>
+      <DialogFooter>
+        <Button variant="outline" onClick={onSaved}>Cancel</Button>
+        <Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Save</Button>
+      </DialogFooter>
     </div>
   );
 }

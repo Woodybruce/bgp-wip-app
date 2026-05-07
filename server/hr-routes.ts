@@ -27,6 +27,62 @@ async function hydrateReqUser(req: any): Promise<{ id: string | null; isAdmin: b
   return req.user;
 }
 
+// Benefit renewal sweep — for each benefit with a renewal_date in the next
+// 60 days that hasn't already had a task generated this calendar year, create
+// a high-priority task for the broker_contact (or first admin) so HR has 8
+// weeks' notice to re-quote. Idempotent via renewal_task_created_for_year.
+export async function runBenefitRenewalSweep(): Promise<Array<{ slug: string; userId: string; renewalDate: string }>> {
+  const created: Array<{ slug: string; userId: string; renewalDate: string }> = [];
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const horizon = new Date(today.getTime() + 60 * 86400000);
+
+  const { rows: benefits } = await pool.query(
+    `SELECT slug, name, renewal_date, broker_contact, contact, renewal_task_created_for_year
+     FROM benefits
+     WHERE is_active = true
+       AND renewal_date IS NOT NULL
+       AND renewal_date::date BETWEEN $1::date AND $2::date`,
+    [today.toISOString().slice(0, 10), horizon.toISOString().slice(0, 10)]
+  );
+
+  for (const b of benefits) {
+    const renewalYear = new Date(b.renewal_date).getFullYear();
+    if (b.renewal_task_created_for_year === renewalYear) continue;
+
+    // Resolve broker_contact / contact (free text "Wendy McKenzie") to a user.
+    const target = b.broker_contact || b.contact || "";
+    if (!target) continue;
+    const userRes = await pool.query(
+      `SELECT id FROM users WHERE LOWER(name) = LOWER($1) AND is_active = true LIMIT 1`,
+      [target.trim()]
+    );
+    let userId = userRes.rows[0]?.id;
+    if (!userId) {
+      // Fall back to the first active admin so the task lands somewhere
+      const adminRes = await pool.query(`SELECT id FROM users WHERE is_admin = true AND is_active = true ORDER BY created_at LIMIT 1`);
+      userId = adminRes.rows[0]?.id;
+    }
+    if (!userId) continue;
+
+    const due = new Date(b.renewal_date);
+    due.setDate(due.getDate() - 30); // task due 30 days before renewal
+    await pool.query(
+      `INSERT INTO user_tasks (user_id, title, description, due_date, priority, status, category)
+       VALUES ($1, $2, $3, $4, 'high', 'todo', 'benefit-renewal')`,
+      [
+        userId,
+        `Renew ${b.name}`,
+        `Policy renews ${new Date(b.renewal_date).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}. Re-quote with at least 2 alternatives, get sign-off before locking.`,
+        due.toISOString(),
+      ]
+    );
+    await pool.query(`UPDATE benefits SET renewal_task_created_for_year = $2 WHERE slug = $1`, [b.slug, renewalYear]);
+    created.push({ slug: b.slug, userId, renewalDate: b.renewal_date });
+  }
+
+  return created;
+}
+
 // Brucey Bonuses scan — extracted so both the admin endpoint and the daily
 // cron in server/index.ts can call it. Idempotent via the (event_kind,
 // event_ref) partial unique index — re-running on an overlapping window
@@ -2352,22 +2408,78 @@ Return ONLY JSON.`,
   });
 
   app.patch("/api/hr/benefits/:slug", requireAdmin, async (req: any, res) => {
-    const { name, category, description, eligibility, enrolment_url, contact, is_active } = req.body || {};
+    // Whitelist of editable benefit fields including the policy/renewal block
+    // — admin uses these to track Aviva Health, life insurance, dental etc.
+    const fields = [
+      "name", "category", "description", "eligibility", "enrolment_url", "contact", "is_active",
+      "policy_number", "policy_holder", "renewal_date", "annual_premium_pence", "group_size",
+      "provider_portal_url", "member_login_instructions", "broker_contact",
+    ];
+    const sets: string[] = [];
+    const params: any[] = [req.params.slug];
+    for (const f of fields) {
+      const camel = f.replace(/_(.)/g, (_, c) => c.toUpperCase());
+      if (req.body[camel] !== undefined || req.body[f] !== undefined) {
+        params.push(req.body[camel] ?? req.body[f]);
+        sets.push(`${f} = $${params.length}`);
+      }
+    }
+    if (sets.length === 0) return res.json({ ok: true });
+    try {
+      await pool.query(`UPDATE benefits SET ${sets.join(", ")}, updated_at = now() WHERE slug = $1`, params);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── 🔑 Member credentials — what each staffer needs to log into a benefit
+  // provider's portal (Royal London pension number, Aviva DigiCare member ID,
+  // EAP code, etc). Stored per (user, benefit_slug); admin or self can edit.
+  app.get("/api/hr/benefit-credentials/:userId", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) return res.status(403).json({ error: "Forbidden" });
+    try {
+      const { rows } = await pool.query(
+        `SELECT benefit_slug, member_number, member_email, notes, updated_at
+         FROM staff_benefit_credentials WHERE user_id = $1`,
+        [req.params.userId]
+      );
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.put("/api/hr/benefit-credentials/:userId/:slug", requireAuth, async (req: any, res) => {
+    const actor = await getActor(req);
+    if (!actor.isAdmin && actor.userId !== req.params.userId) return res.status(403).json({ error: "Forbidden" });
+    const { memberNumber, memberEmail, notes } = req.body || {};
     try {
       await pool.query(
-        `UPDATE benefits SET
-           name = COALESCE($2, name),
-           category = COALESCE($3, category),
-           description = COALESCE($4, description),
-           eligibility = COALESCE($5, eligibility),
-           enrolment_url = COALESCE($6, enrolment_url),
-           contact = COALESCE($7, contact),
-           is_active = COALESCE($8, is_active),
-           updated_at = now()
-         WHERE slug = $1`,
-        [req.params.slug, name || null, category || null, description || null, eligibility || null, enrolment_url || null, contact || null, is_active]
+        `INSERT INTO staff_benefit_credentials (user_id, benefit_slug, member_number, member_email, notes)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (user_id, benefit_slug) DO UPDATE SET
+           member_number = EXCLUDED.member_number,
+           member_email = EXCLUDED.member_email,
+           notes = EXCLUDED.notes,
+           updated_at = now()`,
+        [req.params.userId, req.params.slug, memberNumber || null, memberEmail || null, notes || null]
       );
       res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Generate a one-off renewal task for whoever's the broker contact, 60 days
+  // before each benefit's renewal_date. Idempotent via the
+  // renewal_task_created_for_year column so a refresh doesn't spam tasks.
+  // Called from the daily cron alongside Brucey Bonuses.
+  app.post("/api/hr/benefits/sync-renewal-tasks", requireAdmin, async (_req, res) => {
+    try {
+      const created = await runBenefitRenewalSweep();
+      res.json({ created });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

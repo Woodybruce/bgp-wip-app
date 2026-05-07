@@ -185,6 +185,32 @@ import { pool } from "./db";
       notes TEXT,
       UNIQUE (user_id, benefit_slug)
     )`,
+    // Policy-level fields per benefit so HR can track renewals, premiums and
+    // member-service URLs (Aviva Health, life insurance, dental etc).
+    // No API integration with these providers — these are the practical fields
+    // BGP needs to know when to re-quote and where to send staff to log in.
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS policy_number TEXT`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS policy_holder TEXT`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS renewal_date DATE`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS annual_premium_pence BIGINT`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS group_size INTEGER`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS provider_portal_url TEXT`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS member_login_instructions TEXT`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS broker_contact TEXT`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS renewal_task_created_for_year INTEGER`,
+    // Per-staff member numbers for member-services portals (Royal London
+    // pension number, Aviva DigiCare member ID, etc).
+    `CREATE TABLE IF NOT EXISTS staff_benefit_credentials (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      benefit_slug TEXT NOT NULL,
+      member_number TEXT,
+      member_email TEXT,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now(),
+      UNIQUE (user_id, benefit_slug)
+    )`,
     // RICS competencies + BGP career levels for the career roadmap module.
     `CREATE TABLE IF NOT EXISTS staff_competencies (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -2026,6 +2052,19 @@ app.use("/api/branding/assets", express.static(
               .then(m => m.runBruceyPointsScan())
               .then(r => console.log(`[brucey-cron] daily scan: ${r.newAwards} new awards from ${r.scannedEvents} events`))
               .catch(err => console.error("[brucey-cron] daily run failed:", err?.message));
+          }
+        }, 60 * 60 * 1000);
+
+        // Daily benefit renewal sweep — 06:30. Creates a 'Renew {benefit}'
+        // task 60 days before each policy's renewal_date so HR has time to
+        // re-quote. Idempotent per (benefit, calendar year).
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 6 && now.getMinutes() >= 30) {
+            import("./hr-routes")
+              .then(m => m.runBenefitRenewalSweep())
+              .then(r => console.log(`[benefit-renewal-cron] created ${r.length} renewal task(s)`))
+              .catch(err => console.error("[benefit-renewal-cron] failed:", err?.message));
           }
         }, 60 * 60 * 1000);
       }
