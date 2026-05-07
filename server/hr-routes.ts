@@ -796,9 +796,15 @@ export function setupHrRoutes(app: Express) {
       const summaries = TEAM_ORDER.map(team => {
         const members = staff.filter((s: any) => s.team === team);
         if (members.length === 0) return null;
-        // Head = first board member, else management_team, else first member.
-        const head = members.find((m: any) => m.board_member)
+        // Head selection (in priority order): explicit "Head ..." title,
+        // management_team flag, board_member flag, "Director" in title,
+        // then first member alphabetically. The title check makes the
+        // pick stable even when flags drift (e.g. Pete heads Lease
+        // Advisory by virtue of his "Head – Lease Consultancy" title).
+        const head = members.find((m: any) => /^head\b|\bhead\s/i.test(m.title || ""))
                   || members.find((m: any) => m.management_team)
+                  || members.find((m: any) => m.board_member)
+                  || members.find((m: any) => /director/i.test(m.title || ""))
                   || members[0];
         const topDeals = (teamDeals[team] || [])
           .sort((a, b) => b.fee - a.fee)
