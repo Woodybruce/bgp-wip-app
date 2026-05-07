@@ -1129,10 +1129,9 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
             {(isAdmin || isOwn) && <TabsTrigger value="reviews" className="text-xs">Reviews</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="career" className="text-xs">Career</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="pension" className="text-xs">Pension</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="expenses" className="text-xs">Expenses</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="expenses" className="text-xs">Card &amp; Expenses</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="files" className="text-xs">Files</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="kit" className="text-xs">Kit</TabsTrigger>}
-            {(isAdmin || isOwn) && cardholder && <TabsTrigger value="card" className="text-xs">My Card</TabsTrigger>}
           </TabsList>
 
           {!isAdmin && !isOwn && (
@@ -1222,7 +1221,8 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
             <PensionTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
           </TabsContent>
 
-          <TabsContent value="expenses" className="mt-4">
+          <TabsContent value="expenses" className="mt-4 space-y-4">
+            {cardholder && <CardTab cardholder={cardholder} isAdmin={isAdmin} person={person} />}
             <ExpensesAnalysisCard userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
           </TabsContent>
 
@@ -1233,12 +1233,6 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
           <TabsContent value="kit" className="mt-4">
             <KitCard person={person} isAdmin={isAdmin} isOwn={isOwn} />
           </TabsContent>
-
-          {(isAdmin || isOwn) && cardholder && (
-            <TabsContent value="card" className="mt-4">
-              <CardTab cardholder={cardholder} isAdmin={isAdmin} person={person} />
-            </TabsContent>
-          )}
         </Tabs>
       </div>
 
