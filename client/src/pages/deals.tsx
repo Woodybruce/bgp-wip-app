@@ -2230,6 +2230,9 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
   const [contactName, setContactName] = useState("");
   const [reference, setReference] = useState("");
   const [amount, setAmount] = useState<number>(0);
+  const [description, setDescription] = useState("");
+  const [body, setBody] = useState("");
+  const [dueDate, setDueDate] = useState("");
   const [invoicingEntityId, setInvoicingEntityId] = useState(deal.invoicingEntityId || "");
   const [entitySearch, setEntitySearch] = useState("");
   const [poNumber, setPoNumber] = useState(deal.poNumber || "");
@@ -2305,19 +2308,24 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
   const createInvoiceMutation = useMutation({
     mutationFn: async () => {
       const finalContact = contactName || invoicingEntity?.name || deal.name;
+      // Body / narrative is appended to the line item description so it
+      // renders as the visible body text on the Xero invoice PDF.
+      const headline = description.trim() || deal.name || "Professional fees";
+      const lineDescription = body.trim() ? `${headline}\n\n${body.trim()}` : headline;
       const res = await apiRequest("POST", "/api/xero/invoices", {
         dealId,
         contactName: finalContact,
         invoicingEntityId: invoicingEntityId || null,
         poNumber: poNumber || deal.poNumber || null,
         lineItems: [{
-          Description: deal.name || "Professional fees",
+          Description: lineDescription,
           Quantity: 1,
           UnitAmount: amount || deal.fee || 0,
           AccountCode: "200",
           TaxType: "OUTPUT2",
         }],
         reference: reference || deal.name,
+        dueDate: dueDate || undefined,
       });
       return res.json();
     },
@@ -2327,6 +2335,9 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
       setContactName("");
       setReference("");
       setAmount(0);
+      setDescription("");
+      setBody("");
+      setDueDate("");
       refetchInvoices();
       invalidateDealCaches();
       queryClient.invalidateQueries({ queryKey: ["/api/crm/stats"] });
@@ -2500,6 +2511,40 @@ export function XeroInvoiceSection({ dealId, deal, companies = [] }: { dealId: s
                   placeholder={deal.poNumber || "Purchase order number"}
                   data-testid="input-xero-po-number"
                 />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs mb-1 block">Description (line item header)</Label>
+                <Input
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder={deal.name || "Professional fees"}
+                  data-testid="input-xero-description"
+                />
+              </div>
+              <div>
+                <Label className="text-xs mb-1 block">Due date</Label>
+                <Input
+                  type="date"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  data-testid="input-xero-due-date"
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs mb-1 block">Main body / narrative (optional)</Label>
+              <Textarea
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder={"e.g.\nProfessional fees re. Sushidog Bullring lease completion\nLandlord: Hammerson plc\nFee per Heads of Terms dated 12 March 2026\n\nPayment terms: 30 days from invoice date"}
+                rows={6}
+                className="font-mono text-xs"
+                data-testid="textarea-xero-body"
+              />
+              <div className="text-[10px] text-muted-foreground mt-1">
+                Appended below the description on the line item — appears as the body text on the Xero PDF.
               </div>
             </div>
             <div className="flex items-center gap-2">
