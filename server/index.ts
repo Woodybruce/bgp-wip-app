@@ -467,6 +467,11 @@ import { pool } from "./db";
     `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_approved_by TEXT`,
     `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_next_review_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT`,
+    // Cached HTML render of each policy doc — DOCX files get converted via
+    // mammoth on first access so the policy list shows them inline with BGP
+    // styling instead of a "click to download" prompt.
+    `ALTER TABLE policy_files ADD COLUMN IF NOT EXISTS rendered_html TEXT`,
+    `ALTER TABLE policy_files ADD COLUMN IF NOT EXISTS rendered_at TIMESTAMP`,
     // Cache the line-level invoice content so we can round-trip with Xero —
     // edits on either side stay in sync. Stored on the xero_invoices row
     // alongside the existing status/total/number.

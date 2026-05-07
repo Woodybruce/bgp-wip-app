@@ -6,6 +6,7 @@ import { getValidMsToken } from "./microsoft";
 import { resolveSharePointShareLink } from "./sharepoint-resolver";
 import * as XLSX from "xlsx";
 import multer from "multer";
+import mammoth from "mammoth";
 
 // requireAuth doesn't populate req.user, so look up admin status from the DB
 // using the session/token user id. Used by hybrid (admin-or-self) endpoints
@@ -1109,6 +1110,66 @@ export function setupHrRoutes(app: Express) {
       const buf = Buffer.from(await fileRes.arrayBuffer());
       res.send(buf);
     } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Render a policy as styled HTML for inline reading. PDF policies route the
+  // user to /file (browsers render natively). DOCX/DOC/RTF run through mammoth
+  // and the resulting HTML is wrapped in BGP styling and cached on policy_files
+  // so the second hit is instant. Cache busts on ?refresh=1 or after the
+  // SharePoint copy is re-resolved (lastmod check).
+  app.get("/api/hr/policies/:id/inline", requireAuth, async (req: any, res) => {
+    try {
+      const refresh = req.query.refresh === "1";
+      const r = await pool.query(
+        "SELECT id, drive_id, item_id, file_name, mime_type, rendered_html, rendered_at FROM policy_files WHERE id = $1",
+        [req.params.id]
+      );
+      if (!r.rows[0]) return res.status(404).json({ error: "Policy not found" });
+      const { drive_id, item_id, file_name, mime_type, rendered_html } = r.rows[0];
+
+      // PDFs already render in the iframe directly — no need to convert.
+      if (/pdf/i.test(mime_type || "") || /\.pdf$/i.test(file_name || "")) {
+        return res.status(415).json({ error: "PDF — use /file with iframe" });
+      }
+
+      // Use cached HTML if present
+      if (!refresh && rendered_html) {
+        return res.json({ html: rendered_html, fileName: file_name, cached: true });
+      }
+
+      const token = await getValidMsToken(req);
+      if (!token) return res.status(401).json({ error: "Connect Microsoft 365 first" });
+      const fileRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${drive_id}/items/${item_id}/content`, {
+        headers: { Authorization: `Bearer ${token}` },
+        redirect: "follow",
+      });
+      if (!fileRes.ok) return res.status(502).json({ error: `Graph returned ${fileRes.status}` });
+      const buf = Buffer.from(await fileRes.arrayBuffer());
+
+      // Convert via mammoth — Word's XML structure → semantic HTML
+      const result = await mammoth.convertToHtml({ buffer: buf }, {
+        styleMap: [
+          "p[style-name='Title'] => h1.policy-title",
+          "p[style-name='Subtitle'] => p.policy-subtitle",
+          "p[style-name='Heading 1'] => h2",
+          "p[style-name='Heading 2'] => h3",
+          "p[style-name='Heading 3'] => h4",
+          "p[style-name='Quote'] => blockquote",
+          "p[style-name='Intense Quote'] => blockquote.intense",
+        ],
+      });
+      const html = result.value || "";
+
+      await pool.query(
+        "UPDATE policy_files SET rendered_html = $2, rendered_at = now() WHERE id = $1",
+        [req.params.id, html]
+      );
+
+      res.json({ html, fileName: file_name, cached: false, warnings: result.messages });
+    } catch (e: any) {
+      console.error("[hr] policy inline error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });

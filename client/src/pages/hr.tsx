@@ -3773,6 +3773,80 @@ function CareerRoadmapTab({ userId, isAdmin, isOwn, currentTitle }: { userId: st
   );
 }
 
+// In-app DOCX reader for policies. Fetches the mammoth-converted HTML from
+// /api/hr/policies/:id/inline and renders it inside a BGP-styled article so
+// staff don't get bounced to a 'click to download' fallback.
+function PolicyDocReader({ policyId, fileName, downloadUrl }: { policyId: string; fileName: string; downloadUrl: string }) {
+  const { data, isLoading, error } = useQuery<{ html: string; fileName?: string }>({
+    queryKey: [`/api/hr/policies/${policyId}/inline`],
+    queryFn: () => apiRequest("GET", `/api/hr/policies/${policyId}/inline`).then(r => r.json()),
+  });
+  if (isLoading) {
+    return <div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  }
+  if (error || !data?.html) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8 text-center gap-3">
+        <FileText className="w-10 h-10 text-muted-foreground" />
+        <p className="text-sm text-muted-foreground max-w-md">Couldn't render this document inline. You can still download it.</p>
+        <a href={downloadUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm">
+          <ExternalLink className="w-3.5 h-3.5" /> Download {fileName}
+        </a>
+      </div>
+    );
+  }
+  // Inline brand styles so the DOCX content reads like a designed BGP page —
+  // generous typography, headings in serif, spacing that doesn't feel like Word.
+  return (
+    <div className="max-w-3xl mx-auto py-8 px-6 sm:px-10">
+      <style>{`
+        .policy-content { color: hsl(var(--foreground)); line-height: 1.7; font-size: 15px; }
+        .policy-content h1, .policy-content h2, .policy-content h3, .policy-content h4 {
+          font-family: ui-serif, Georgia, "Times New Roman", serif;
+          color: hsl(var(--foreground));
+          letter-spacing: -0.01em;
+          margin-top: 1.6em;
+          margin-bottom: 0.5em;
+          line-height: 1.25;
+        }
+        .policy-content h1 { font-size: 2rem; margin-top: 0; }
+        .policy-content h2 { font-size: 1.4rem; padding-bottom: 0.3rem; border-bottom: 1px solid hsl(var(--border)); }
+        .policy-content h3 { font-size: 1.15rem; }
+        .policy-content h4 { font-size: 1rem; font-weight: 600; }
+        .policy-content p { margin: 0.75em 0; }
+        .policy-content ul, .policy-content ol { margin: 0.5em 0 0.5em 1.5em; padding-left: 1em; }
+        .policy-content ul li { list-style-type: disc; margin: 0.25em 0; }
+        .policy-content ol li { list-style-type: decimal; margin: 0.25em 0; }
+        .policy-content blockquote {
+          border-left: 3px solid hsl(var(--primary));
+          padding: 0.5em 1em;
+          margin: 1em 0;
+          font-style: italic;
+          color: hsl(var(--muted-foreground));
+          background: hsl(var(--muted) / 0.3);
+        }
+        .policy-content table { border-collapse: collapse; margin: 1em 0; width: 100%; font-size: 0.92em; }
+        .policy-content th, .policy-content td { border: 1px solid hsl(var(--border)); padding: 0.5em 0.7em; text-align: left; }
+        .policy-content th { background: hsl(var(--muted) / 0.4); font-weight: 600; }
+        .policy-content a { color: hsl(var(--primary)); text-decoration: underline; text-underline-offset: 2px; }
+        .policy-content img { max-width: 100%; height: auto; border-radius: 6px; margin: 1em 0; }
+        .policy-content .policy-title { font-size: 2.25rem; margin-top: 0; }
+        .policy-content .policy-subtitle { color: hsl(var(--muted-foreground)); font-size: 1.05rem; margin-top: -0.25em; }
+        @media (prefers-color-scheme: dark) {
+          .policy-content blockquote { background: hsl(var(--muted) / 0.15); }
+        }
+      `}</style>
+      <div className="policy-content" dangerouslySetInnerHTML={{ __html: data.html }} />
+      <div className="mt-10 pt-6 border-t flex items-center justify-between text-xs text-muted-foreground">
+        <span>{data.fileName || fileName}</span>
+        <a href={downloadUrl} download={data.fileName || fileName} className="text-primary hover:underline inline-flex items-center gap-1">
+          <ExternalLink className="w-3 h-3" /> Download original
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function PoliciesPanel({ isAdmin }: { isAdmin: boolean }) {
   const { toast } = useToast();
   const [open, setOpen] = useState<PolicyDoc | null>(null);
@@ -3850,21 +3924,10 @@ function PoliciesPanel({ isAdmin }: { isAdmin: boolean }) {
               )}
             </DialogTitle>
           </DialogHeader>
-          <div className="flex-1 bg-muted/20 overflow-hidden">
-            {open?.inlineUrl && (
-              isPdf(open)
-                ? <iframe src={open.inlineUrl} className="w-full h-full border-0" title={open.name} />
-                : (
-                  <div className="flex flex-col items-center justify-center h-full p-8 text-center gap-3">
-                    <FileText className="w-10 h-10 text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground max-w-md">
-                      This is a {open.fileName?.split(".").pop()?.toUpperCase()} document — click below to download or open.
-                    </p>
-                    <a href={open.inlineUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-sm">
-                      <ExternalLink className="w-3.5 h-3.5" /> Open / download
-                    </a>
-                  </div>
-                )
+          <div className="flex-1 bg-muted/10 overflow-auto">
+            {open?.inlineUrl && (isPdf(open)
+              ? <iframe src={open.inlineUrl} className="w-full h-full border-0" title={open.name} />
+              : <PolicyDocReader policyId={open.id} fileName={open.fileName || ""} downloadUrl={open.inlineUrl} />
             )}
           </div>
         </DialogContent>
