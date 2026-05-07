@@ -3906,6 +3906,20 @@ Use the language and tone of BGP's review docs.`,
     res.json({ events, scope: { start: startStr, end: endStr, days: horizonDays }, msConnected: !!token });
   });
 
+  // Admin: nuke all salary data — salary_history rows, bonus_history rows,
+  // and staff_profiles.salary_current. Used to recover from a bad spreadsheet
+  // import (mis-scaled values etc.) before re-running the importer cleanly.
+  app.post("/api/hr/admin/reset-salaries", requireAdmin, async (_req: any, res) => {
+    try {
+      const sh = await pool.query(`DELETE FROM salary_history`);
+      const bh = await pool.query(`DELETE FROM bonus_history`);
+      const sp = await pool.query(`UPDATE staff_profiles SET salary_current = NULL WHERE salary_current IS NOT NULL`);
+      res.json({ ok: true, salaryHistoryDeleted: sh.rowCount, bonusHistoryDeleted: bh.rowCount, salariesCleared: sp.rowCount });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message });
+    }
+  });
+
   // ── Salary spreadsheet importer ──────────────────────────────────────────
   // Lets admins paste a SharePoint / OneDrive share link to a salary sheet
   // and pull every row into staff_profiles.salary_current + salary_history.

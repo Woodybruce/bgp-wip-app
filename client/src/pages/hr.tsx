@@ -213,7 +213,10 @@ function StaffCard({ person, onClick }: { person: StaffMember; onClick: () => vo
         <div className="text-xs text-muted-foreground mt-1">{person.hr_department || person.team || ""}</div>
         <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
           {person.start_date && <span title="Tenure">{tenure(person.start_date)}</span>}
-          {person.salary_current && <span className="font-medium text-foreground">{fmtSalary(person.salary_current)}</span>}
+          {/* Salary intentionally not shown in the card-summary line — it
+              lives in the Personal tab with proper context (timeline chart,
+              history, bonuses). Showing a bare number next to tenure /
+              "Reports to" had no context and was being misread. */}
           {person.apc_status && person.apc_status !== "not_started" && <ApcBadge status={person.apc_status} />}
         </div>
       </div>
@@ -1679,9 +1682,11 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                   <User className="w-3 h-3" /> Reports to {person.manager_name}
                 </span>
               )}
-              {person.salary_current && isAdmin && (
-                <span className="text-xs font-medium">{fmtSalary(person.salary_current)}</span>
-              )}
+              {/* Salary deliberately omitted from the profile header — it
+                  lives inside the Personal tab with the timeline chart and
+                  history. A bare number next to "Reports to" was getting
+                  misread (and would mislead non-admins if they hit a
+                  cached page). */}
             </div>
             <div className="flex items-center gap-3 mt-2 flex-wrap">
               {person.email && <a href={`mailto:${person.email}`} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"><Mail className="w-3 h-3" />{person.email}</a>}
@@ -4413,6 +4418,7 @@ function ImportSalariesDialog({ open, onClose }: { open: boolean; onClose: () =>
   const { toast } = useToast();
   const [shareUrl, setShareUrl] = useState("");
   const [report, setReport] = useState<any>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const previewMutation = useMutation({
     mutationFn: async () => {
@@ -4421,6 +4427,20 @@ function ImportSalariesDialog({ open, onClose }: { open: boolean; onClose: () =>
     },
     onSuccess: (data) => { setReport(data); },
     onError: (e: any) => toast({ title: "Preview failed", description: e?.message || String(e), variant: "destructive" }),
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/hr/admin/reset-salaries");
+      return r.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/staff"] });
+      toast({ title: "Salary data cleared", description: `${data.salariesCleared ?? 0} current salaries cleared, ${data.salaryHistoryDeleted ?? 0} history rows + ${data.bonusHistoryDeleted ?? 0} bonus rows deleted. You can now re-import.` });
+      setConfirmReset(false);
+      setReport(null);
+    },
+    onError: (e: any) => toast({ title: "Reset failed", description: e?.message || String(e), variant: "destructive" }),
   });
 
   const applyMutation = useMutation({
@@ -4522,7 +4542,19 @@ function ImportSalariesDialog({ open, onClose }: { open: boolean; onClose: () =>
             </div>
           )}
         </div>
-        <DialogFooter>
+        <DialogFooter className="gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            className="text-red-600 hover:text-red-700"
+            onClick={() => confirmReset ? resetMutation.mutate() : setConfirmReset(true)}
+            disabled={resetMutation.isPending}
+            data-testid="button-import-reset"
+            title="Wipe salary_current + salary_history + bonus_history for everyone, then re-import cleanly"
+          >
+            {resetMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Trash2 className="w-4 h-4 mr-1.5" />}
+            {confirmReset ? "Click again to confirm — this wipes ALL salary data" : "Reset all salary data"}
+          </Button>
+          <div className="flex-1" />
           <Button variant="outline" onClick={close}>Close</Button>
           <Button variant="outline" onClick={() => previewMutation.mutate()} disabled={!shareUrl.trim() || previewMutation.isPending} data-testid="button-import-preview">
             {previewMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
