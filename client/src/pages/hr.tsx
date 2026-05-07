@@ -1585,6 +1585,13 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const isOwn = person.id === currentUserId;
+  // Office / Corporate staff (PAs, bookkeeper, consultant) aren't on the
+  // commission scheme and aren't RICS surveyors, so we hide those tabs/cards
+  // for them. Once a surveyor qualifies (APC completed), we still show their
+  // RICS member number but drop the in-progress APC fields.
+  const isOfficeStaff = (person.team || "").toLowerCase().includes("office") || (person.team || "").toLowerCase().includes("corporate");
+  const isQualifiedSurveyor = person.apc_status === "completed";
+  const showRicsCard = !isOfficeStaff && (person.rics_number || person.rics_pathway || (person.apc_status && person.apc_status !== "not_started"));
 
   // Card from expenses system (admin-only endpoint)
   const { data: cardholder } = useQuery<any>({
@@ -1672,19 +1679,23 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
         )}
 
         {/* Tabs */}
-        <Tabs defaultValue={initialTab || (isAdmin ? "overview" : isOwn ? "holiday" : "about")} className="mt-2">
+        <Tabs defaultValue={(() => {
+            // Map legacy tab names from old links / bookmarks to where they
+            // live now after the May 2026 consolidation.
+            const t = initialTab;
+            if (!t) return (isAdmin || isOwn) ? "personal" : "about";
+            if (t === "overview") return "personal";
+            if (["holiday", "pension", "kit", "files"].includes(t)) return "mystuff";
+            return t;
+          })()} className="mt-2">
           <TabsList className="w-full overflow-x-auto flex-nowrap justify-start h-9">
             {!isAdmin && !isOwn && <TabsTrigger value="about" className="text-xs">About</TabsTrigger>}
-            {isAdmin && <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="personal" className="text-xs">Personal</TabsTrigger>}
-            {isAdmin && <TabsTrigger value="commission" className="text-xs">Commission</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="holiday" className="text-xs">Holiday</TabsTrigger>}
+            {isAdmin && !isOfficeStaff && <TabsTrigger value="commission" className="text-xs">Commission</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="mystuff" className="text-xs">My stuff</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="reviews" className="text-xs">Reviews</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="career" className="text-xs">Career</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="pension" className="text-xs">Pension</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="expenses" className="text-xs">Card &amp; Expenses</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="files" className="text-xs">Files</TabsTrigger>}
-            {(isAdmin || isOwn) && <TabsTrigger value="kit" className="text-xs">Kit</TabsTrigger>}
           </TabsList>
 
           {!isAdmin && !isOwn && (
@@ -1714,44 +1725,6 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             </TabsContent>
           )}
 
-          {isAdmin && (
-            <TabsContent value="overview" className="mt-4">
-              <div className="space-y-4">
-                {/* Emergency contact */}
-                {person.emergency_contact_name && (
-                  <Card>
-                    <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Heart className="w-4 h-4 text-red-500" />Emergency contact</CardTitle></CardHeader>
-                    <CardContent className="text-sm space-y-1">
-                      <div className="font-medium">{person.emergency_contact_name} {person.emergency_contact_relation && <span className="text-muted-foreground font-normal">({person.emergency_contact_relation})</span>}</div>
-                      {person.emergency_contact_phone && <div className="text-muted-foreground">{person.emergency_contact_phone}</div>}
-                    </CardContent>
-                  </Card>
-                )}
-                {/* Pension */}
-                <Card>
-                  <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Briefcase className="w-4 h-4 text-blue-500" />Benefits</CardTitle></CardHeader>
-                  <CardContent className="text-sm space-y-2">
-                    <div className="flex justify-between"><span className="text-muted-foreground">Pension</span><span>{person.pension_opt_in ? `Opted in · ${person.pension_rate ?? 5}% employee` : "Opted out"}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Holiday entitlement</span><span>{person.holiday_entitlement ?? 25} days/year</span></div>
-                  </CardContent>
-                </Card>
-                {/* Salary history */}
-                <SalaryHistoryPanel person={person} />
-                {/* Expenses summary */}
-                {expenseSummary && (
-                  <Card>
-                    <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><CreditCard className="w-4 h-4" />Expenses this month</CardTitle></CardHeader>
-                    <CardContent className="text-sm">
-                      <div className="flex justify-between"><span className="text-muted-foreground">Spent</span><span className="font-medium">£{(expenseSummary.spentPence / 100).toFixed(2)}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Transactions</span><span>{expenseSummary.txCount}</span></div>
-                      <div className="flex justify-between"><span className="text-muted-foreground">Card limit utilisation</span><span>{expenseSummary.utilisation?.toFixed(0)}%</span></div>
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-            </TabsContent>
-          )}
-
           {(isAdmin || isOwn) && (
             <TabsContent value="personal" className="mt-4">
               <div className="space-y-4">
@@ -1774,14 +1747,17 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                   </CardContent>
                 </Card>
 
-                {(person.rics_number || person.rics_pathway || person.apc_status) && (
+                {showRicsCard && (
                   <Card>
                     <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><GraduationCap className="w-4 h-4 text-blue-500" />RICS &amp; qualifications</CardTitle></CardHeader>
                     <CardContent className="text-sm space-y-1.5">
                       <Row label="RICS member number">{person.rics_number}</Row>
-                      <Row label="Pathway">{person.rics_pathway}</Row>
-                      <Row label="APC status">{person.apc_status?.replace(/_/g, " ")}</Row>
-                      {person.apc_assessment_date && <Row label="Assessment date">{new Date(person.apc_assessment_date).toLocaleDateString("en-GB")}</Row>}
+                      {/* APC fields are only shown while the surveyor is still
+                          on the pathway. Once they've qualified the member
+                          number is the only ongoing-relevant detail. */}
+                      {!isQualifiedSurveyor && <Row label="Pathway">{person.rics_pathway}</Row>}
+                      {!isQualifiedSurveyor && <Row label="APC status">{person.apc_status?.replace(/_/g, " ")}</Row>}
+                      {!isQualifiedSurveyor && person.apc_assessment_date && <Row label="Assessment date">{new Date(person.apc_assessment_date).toLocaleDateString("en-GB")}</Row>}
                       <Row label="Education">{person.education}</Row>
                     </CardContent>
                   </Card>
@@ -1796,19 +1772,52 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                     </CardContent>
                   </Card>
                 )}
+
+                {isAdmin && (
+                  <SalaryHistoryPanel person={person} />
+                )}
+
+                {isAdmin && expenseSummary && (
+                  <Card>
+                    <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><CreditCard className="w-4 h-4" />Expenses this month</CardTitle></CardHeader>
+                    <CardContent className="text-sm">
+                      <div className="flex justify-between"><span className="text-muted-foreground">Spent</span><span className="font-medium">£{(expenseSummary.spentPence / 100).toFixed(2)}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Transactions</span><span>{expenseSummary.txCount}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Card limit utilisation</span><span>{expenseSummary.utilisation?.toFixed(0)}%</span></div>
+                    </CardContent>
+                  </Card>
+                )}
               </div>
             </TabsContent>
           )}
 
-          {isAdmin && (
+          {isAdmin && !isOfficeStaff && (
             <TabsContent value="commission" className="mt-4">
               <CommissionTab userId={person.id} />
             </TabsContent>
           )}
 
-          <TabsContent value="holiday" className="mt-4">
-            <HolidayTab person={person} isAdmin={isAdmin} currentUserId={currentUserId} />
-          </TabsContent>
+          {/* "My stuff" — pension, holiday, kit, files all in one place. */}
+          {(isAdmin || isOwn) && (
+            <TabsContent value="mystuff" className="mt-4 space-y-6">
+              <section>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><Calendar className="w-3.5 h-3.5" /> Holiday</h3>
+                <HolidayTab person={person} isAdmin={isAdmin} currentUserId={currentUserId} />
+              </section>
+              <section>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><Briefcase className="w-3.5 h-3.5" /> Pension</h3>
+                <PensionTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
+              </section>
+              <section>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Files</h3>
+                <FilesTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
+              </section>
+              <section>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5"><Briefcase className="w-3.5 h-3.5" /> Kit</h3>
+                <KitCard person={person} isAdmin={isAdmin} isOwn={isOwn} />
+              </section>
+            </TabsContent>
+          )}
 
           <TabsContent value="reviews" className="mt-4">
             <ReviewsTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} person={person} />
@@ -1818,21 +1827,9 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
             <CareerRoadmapTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} currentTitle={person.title} />
           </TabsContent>
 
-          <TabsContent value="pension" className="mt-4">
-            <PensionTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
-          </TabsContent>
-
           <TabsContent value="expenses" className="mt-4 space-y-4">
             {cardholder && <CardTab cardholder={cardholder} isAdmin={isAdmin} person={person} />}
             <ExpensesAnalysisCard userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
-          </TabsContent>
-
-          <TabsContent value="files" className="mt-4">
-            <FilesTab userId={person.id} isAdmin={isAdmin} isOwn={isOwn} />
-          </TabsContent>
-
-          <TabsContent value="kit" className="mt-4">
-            <KitCard person={person} isAdmin={isAdmin} isOwn={isOwn} />
           </TabsContent>
         </Tabs>
       </div>
