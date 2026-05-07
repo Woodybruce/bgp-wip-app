@@ -3777,6 +3777,135 @@ Use the language and tone of BGP's review docs.`,
     }
   });
 
+  // ── 🎉 Company-wide team events ──────────────────────────────────────────
+  // Layla's HR diary widget should surface large company events (Daisy's
+  // birthday party, away days, leaving drinks) — not "Pete out of office".
+  // Heuristic: an event appearing in ≥ 3 BGP staff calendars at the same
+  // time-slot is treated as a team event. Plus anything in our curated
+  // team_events table. Pulls subject, start, end, location, attendee count
+  // and body preview so the widget can show useful detail.
+  app.get("/api/hr/calendar/team-events", requireAuth, async (req: any, res) => {
+    const token = await getValidMsToken(req as any);
+    const horizonDays = Math.max(1, Math.min(60, parseInt(String(req.query.days || "14"), 10) || 14));
+    const now = new Date();
+    const horizon = new Date(now.getTime() + horizonDays * 86400000);
+    const startStr = now.toISOString();
+    const endStr = horizon.toISOString();
+
+    type TeamEvent = {
+      key: string;
+      subject: string;
+      start: string;
+      end: string;
+      isAllDay: boolean;
+      location: string;
+      bodyPreview: string;
+      internalAttendees: string[];
+      attendeeCount: number;
+      source: "outlook" | "team_events_table";
+      teamEventId?: string;
+    };
+    const byKey = new Map<string, TeamEvent>();
+
+    if (token) {
+      try {
+        const { rows: staff } = await pool.query(
+          `SELECT u.id, u.name, u.email FROM users u
+           JOIN staff_profiles sp ON sp.user_id = u.id
+           WHERE u.is_active = true AND u.email IS NOT NULL AND u.email <> ''`,
+        );
+        const slice = staff.slice(0, 30);
+        // Normalise an event to a stable key — subject (lowercased, trimmed) +
+        // start hour. This collapses the same event across everyone's calendars.
+        const keyOf = (subject: string, start: string) =>
+          `${(subject || "").toLowerCase().replace(/\s+/g, " ").trim()}@${start.slice(0, 13)}`;
+        for (const u of slice) {
+          try {
+            const url = `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(u.email)}/calendarView?startDateTime=${encodeURIComponent(startStr)}&endDateTime=${encodeURIComponent(endStr)}&$select=subject,start,end,isAllDay,showAs,location,bodyPreview,attendees&$top=40&$orderby=start/dateTime`;
+            const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Prefer: 'outlook.timezone="Europe/London"' } });
+            if (!r.ok) continue;
+            const data = await r.json();
+            for (const e of (data.value || [])) {
+              const subject = e.subject || "";
+              // Skip OOO / leave / WFH — Layla doesn't want those here.
+              const showAs = String(e.showAs || "").toLowerCase();
+              if (["oof", "workingelsewhere"].includes(showAs)) continue;
+              if (/\b(holiday|annual leave|on leave|out of office|\booo\b|wfh|working from home|sick)\b/i.test(subject)) continue;
+              const start = e.start?.dateTime || e.start || "";
+              if (!start) continue;
+              const k = keyOf(subject, start);
+              const existing = byKey.get(k);
+              if (existing) {
+                if (!existing.internalAttendees.includes(u.name)) existing.internalAttendees.push(u.name);
+              } else {
+                const loc = (typeof e.location === "object" ? e.location?.displayName : e.location) || "";
+                byKey.set(k, {
+                  key: k,
+                  subject,
+                  start,
+                  end: e.end?.dateTime || e.end || "",
+                  isAllDay: !!e.isAllDay,
+                  location: loc,
+                  bodyPreview: (e.bodyPreview || "").slice(0, 280),
+                  internalAttendees: [u.name],
+                  attendeeCount: Array.isArray(e.attendees) ? e.attendees.length : 0,
+                  source: "outlook",
+                });
+              }
+            }
+          } catch { /* ignore one user's failure */ }
+        }
+      } catch (e: any) {
+        console.warn("[hr/calendar/team-events] graph sweep failed:", e?.message);
+      }
+    }
+
+    // Pull from the curated team_events table — these are explicitly tagged
+    // as company events and always belong on the diary.
+    try {
+      const { rows: tableEvents } = await pool.query(
+        `SELECT id, title, event_type, start_time, end_time, location, notes, attendees, property_name, company_name
+         FROM team_events WHERE start_time >= $1 AND start_time <= $2 ORDER BY start_time ASC`,
+        [now.toISOString(), horizon.toISOString()],
+      );
+      for (const t of tableEvents) {
+        const k = `tabletbl:${t.id}`;
+        byKey.set(k, {
+          key: k,
+          subject: t.title,
+          start: t.start_time,
+          end: t.end_time,
+          isAllDay: false,
+          location: t.location || "",
+          bodyPreview: t.notes || "",
+          internalAttendees: Array.isArray(t.attendees) ? t.attendees : [],
+          attendeeCount: Array.isArray(t.attendees) ? t.attendees.length : 0,
+          source: "team_events_table",
+          teamEventId: t.id,
+        });
+      }
+    } catch (e: any) {
+      console.warn("[hr/calendar/team-events] team_events query failed:", e?.message);
+    }
+
+    const COMPANY_KEYWORDS = /\b(party|drinks|leaving|farewell|birthday|anniversary|away day|christmas|summer party|social|team lunch|team dinner|all[- ]hands|townhall|town hall|conference|awards|bgp|firm[- ]wide|new joiner|induction|retirement)\b/i;
+
+    // A "team event" is one of:
+    //   - From the team_events table (always)
+    //   - In ≥ 3 BGP calendars (high confidence)
+    //   - Has a company keyword in subject AND in ≥ 2 calendars
+    const events = Array.from(byKey.values())
+      .filter(e => {
+        if (e.source === "team_events_table") return true;
+        if (e.internalAttendees.length >= 3) return true;
+        if (e.internalAttendees.length >= 2 && COMPANY_KEYWORDS.test(e.subject)) return true;
+        return false;
+      })
+      .sort((a, b) => a.start.localeCompare(b.start));
+
+    res.json({ events, scope: { start: startStr, end: endStr, days: horizonDays }, msConnected: !!token });
+  });
+
   // ── Salary spreadsheet importer ──────────────────────────────────────────
   // Lets admins paste a SharePoint / OneDrive share link to a salary sheet
   // and pull every row into staff_profiles.salary_current + salary_history.

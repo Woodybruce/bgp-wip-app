@@ -924,12 +924,42 @@ function WatchHouseBoard({ isAdmin, allStaff, onSelectPerson }: { isAdmin: boole
 
 // ── 📅 Calendar widget ───────────────────────────────────────────────────────
 
+interface TeamEvent {
+  key: string;
+  subject: string;
+  start: string;
+  end: string;
+  isAllDay: boolean;
+  location: string;
+  bodyPreview: string;
+  internalAttendees: string[];
+  attendeeCount: number;
+  source: "outlook" | "team_events_table";
+  teamEventId?: string;
+}
+
+function fmtEventWindow(start: string, end: string, isAllDay: boolean) {
+  if (!start) return "";
+  const s = new Date(start);
+  if (isAllDay) return s.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  const e = end ? new Date(end) : null;
+  const sameDay = e && s.toDateString() === e.toDateString();
+  const date = s.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+  const sTime = s.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  const eTime = e ? e.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
+  return e && sameDay ? `${date}, ${sTime}–${eTime}` : `${date}, ${sTime}`;
+}
+
 function CalendarWidget() {
   const { data: birthdays = [] } = useQuery<Birthday[]>({ queryKey: ["/api/hr/birthdays"] });
-  const { data: oooData } = useQuery<{ events: Array<{ userId: string; userName: string; subject: string; start: string; end: string; isAllDay: boolean; showAs: string }>; note?: string }>({ queryKey: ["/api/hr/calendar/now"] });
+  // Was /api/hr/calendar/now (one-line OOO list, dropped per Layla's brief).
+  // Now consumes /api/hr/calendar/team-events which surfaces firm-wide events
+  // (Daisy's birthday party, away days, leaving drinks) with full details:
+  // location, time window, attendee count, body preview.
+  const { data: teamEventsData } = useQuery<{ events: TeamEvent[]; msConnected: boolean }>({ queryKey: ["/api/hr/calendar/team-events"] });
   const { data: marketing = [] } = useQuery<Array<{ id: string; title: string; starts_at: string | null; kind: string | null }>>({ queryKey: ["/api/marketing/events", "upcoming"], queryFn: () => apiRequest("GET", "/api/marketing/events?upcoming=1").then(r => r.json()) });
 
-  const oooThisWeek = (oooData?.events || []).slice(0, 6);
+  const teamEvents = (teamEventsData?.events || []).slice(0, 8);
   const upcomingMarketing = marketing
     .filter(m => m.starts_at && new Date(m.starts_at) >= new Date())
     .slice(0, 4);
@@ -965,16 +995,43 @@ function CalendarWidget() {
           </div>
         )}
 
-        {oooThisWeek.length > 0 && (
+        {teamEvents.length > 0 && (
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Clock className="w-3 h-3 text-orange-500" /> Out of office (next 7d)</div>
-            <div className="space-y-1">
-              {oooThisWeek.map((e, i) => (
-                <div key={i} className="flex items-center gap-2 text-xs">
-                  <span className="w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />
-                  <span className="flex-1 truncate">{e.userName}</span>
-                  <span className="text-[10px] text-muted-foreground shrink-0">{new Date(e.start).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>
-                </div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Users className="w-3 h-3 text-violet-500" /> Team events (next 14d)</div>
+            <div className="space-y-1.5">
+              {teamEvents.map((e) => (
+                <details key={e.key} className="rounded-md border bg-card text-xs group">
+                  <summary className="flex items-start gap-2 px-2 py-1.5 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                    <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0 mt-1.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-2">
+                        <span className="font-medium truncate">{e.subject || "(no subject)"}</span>
+                        {e.source === "team_events_table" && <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">BGP</Badge>}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground truncate">
+                        {fmtEventWindow(e.start, e.end, e.isAllDay)}
+                        {e.location ? ` · ${e.location}` : ""}
+                        {e.internalAttendees.length > 0 ? ` · ${e.internalAttendees.length} BGP` : ""}
+                      </div>
+                    </div>
+                    <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0 mt-1 group-open:rotate-180 transition-transform" />
+                  </summary>
+                  {(e.bodyPreview || e.internalAttendees.length > 0) && (
+                    <div className="px-2 pb-2 pt-1 space-y-1.5 border-t bg-muted/20">
+                      {e.bodyPreview && (
+                        <p className="text-[11px] text-muted-foreground leading-snug whitespace-pre-wrap">{e.bodyPreview}</p>
+                      )}
+                      {e.internalAttendees.length > 0 && (
+                        <div className="flex items-start gap-1 flex-wrap">
+                          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Going:</span>
+                          {e.internalAttendees.map((n) => (
+                            <span key={n} className="text-[10px] bg-violet-100 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 rounded-full px-1.5 py-0.5">{n}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </details>
               ))}
             </div>
           </div>
