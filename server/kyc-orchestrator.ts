@@ -606,7 +606,7 @@ export async function runAllAmlChecks(
   try {
     const { evaluateAutoEdd } = await import("./aml-ai");
     const dealRow = dealId ? await pool.query(`SELECT fee FROM crm_deals WHERE id = $1`, [dealId]) : null;
-    autoEdd = evaluateAutoEdd({
+    autoEdd = await evaluateAutoEdd({
       sanctionsMatch,
       pepStatus: complyAdvantageResult.some((r: any) => r.is_pep) ? "pep" : "none",
       riskLevel: risk?.level || null,

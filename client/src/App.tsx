@@ -94,6 +94,19 @@ const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
 const TenantRep = lazy(() => import("@/pages/tenant-rep"));
 const HRPage = lazy(() => import("@/pages/hr"));
+const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
+
+function PublicKycUploadRoute() {
+  return (
+    <ErrorBoundary>
+      <Suspense fallback={<PageLoader />}>
+        <Switch>
+          <Route path="/kyc-upload/:token" component={KycUploadPage} />
+        </Switch>
+      </Suspense>
+    </ErrorBoundary>
+  );
+}
 
 
 function PageLoader() {
@@ -439,11 +452,16 @@ function AppContent() {
   // the initial pathname in iframe contexts (Office task panes).
   const isAddin = location.startsWith("/addin/") ||
     (typeof window !== "undefined" && window.location.pathname.startsWith("/addin/"));
+  // Public KYC upload portal — no BGP login required, the URL token is the
+  // auth. Skip the /api/auth/me probe so external customers don't get bounced
+  // to the login page.
+  const isPublicKycUpload = location.startsWith("/kyc-upload/") ||
+    (typeof window !== "undefined" && window.location.pathname.startsWith("/kyc-upload/"));
   const { data: user, isLoading } = useQuery<User | null>({
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     retry: false,
-    enabled: !isAddin,
+    enabled: !isAddin && !isPublicKycUpload,
   });
 
   useEffect(() => {
@@ -461,6 +479,10 @@ function AppContent() {
 
   if (isAddin) {
     return <AddinRouter />;
+  }
+
+  if (isPublicKycUpload) {
+    return <PublicKycUploadRoute />;
   }
 
   if (isLoading) {

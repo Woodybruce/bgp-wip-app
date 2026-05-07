@@ -77,11 +77,40 @@ export interface AutoEddSignals {
   adverseMediaVerdict?: string | null;// clear | review | adverse
 }
 
-// Conservative high-risk list (FATF + EU + UK Treasury). Hardcoded for v1;
-// could be moved to a config table if it needs frequent updates.
-const HIGH_RISK_JURISDICTIONS = new Set(["IR", "KP", "MM", "BY", "RU", "AF", "SY", "CU", "VE", "YE"]);
+// In-memory cache of the country risk table to avoid hitting Postgres on
+// every AML sweep. Refreshed every 10 minutes; admin POSTs to update an
+// entry call `invalidateCountryRiskCache()` to force re-read.
+let countryRiskCache: { high: Set<string>; medium: Set<string>; loadedAt: number } | null = null;
+const COUNTRY_CACHE_TTL_MS = 10 * 60 * 1000;
 
-export function evaluateAutoEdd(signals: AutoEddSignals): { required: boolean; reason: string } {
+export function invalidateCountryRiskCache() {
+  countryRiskCache = null;
+}
+
+async function loadCountryRisk(): Promise<{ high: Set<string>; medium: Set<string> }> {
+  if (countryRiskCache && Date.now() - countryRiskCache.loadedAt < COUNTRY_CACHE_TTL_MS) {
+    return { high: countryRiskCache.high, medium: countryRiskCache.medium };
+  }
+  try {
+    const r = await pool.query(`SELECT country_code, risk_level FROM aml_country_risks`);
+    const high = new Set<string>();
+    const medium = new Set<string>();
+    for (const row of r.rows) {
+      const code = String(row.country_code || "").toUpperCase();
+      if (row.risk_level === "high") high.add(code);
+      else if (row.risk_level === "medium") medium.add(code);
+    }
+    countryRiskCache = { high, medium, loadedAt: Date.now() };
+    return { high, medium };
+  } catch {
+    // Table missing in dev — fall back to a hardcoded conservative list so
+    // EDD still triggers on the obvious bad actors.
+    const fallback = new Set(["IR", "KP", "MM", "BY", "RU", "AF", "SY", "CU", "VE", "YE"]);
+    return { high: fallback, medium: new Set() };
+  }
+}
+
+export async function evaluateAutoEdd(signals: AutoEddSignals): Promise<{ required: boolean; reason: string }> {
   if (signals.sanctionsMatch) {
     return { required: true, reason: "Sanctions screening returned a match — EDD mandatory." };
   }
@@ -91,9 +120,15 @@ export function evaluateAutoEdd(signals: AutoEddSignals): { required: boolean; r
   if (signals.adverseMediaVerdict === "adverse") {
     return { required: true, reason: "Adverse media identified during AI sweep — EDD recommended." };
   }
-  const flaggedJur = (signals.jurisdictions || []).find(j => HIGH_RISK_JURISDICTIONS.has(j.toUpperCase()));
-  if (flaggedJur) {
-    return { required: true, reason: `UBO chain touches a high-risk jurisdiction (${flaggedJur}) — EDD mandatory under Reg 33.` };
+  const { high, medium } = await loadCountryRisk();
+  const codes = (signals.jurisdictions || []).map(j => String(j).toUpperCase());
+  const highHit = codes.find(c => high.has(c));
+  if (highHit) {
+    return { required: true, reason: `UBO chain touches high-risk jurisdiction ${highHit} — EDD mandatory under MLR 2017 Reg 33 (FATF/HMT high-risk country).` };
+  }
+  const medHit = codes.find(c => medium.has(c));
+  if (medHit && (signals.dealValuePence ?? 0) >= 50_000_000) {
+    return { required: true, reason: `UBO chain touches medium-risk jurisdiction ${medHit} on a deal over £500k — EDD recommended.` };
   }
   if (signals.dealValuePence && signals.dealValuePence >= 100_000_000) {
     return { required: true, reason: `Deal value over £1m (£${(signals.dealValuePence / 100).toLocaleString()}) — EDD recommended for high-value transactions.` };

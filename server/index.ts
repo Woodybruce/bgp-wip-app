@@ -1080,6 +1080,71 @@ import { pool } from "./db";
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_reason TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_assessed_at TIMESTAMP`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_assessed_by TEXT`,
+    // Country risk lookup. Drives the auto-EDD trigger when a UBO chain
+    // touches a high-risk jurisdiction. Seeded with the FATF + UK Treasury
+    // lists at boot; admin can edit via /api/aml/country-risk.
+    `CREATE TABLE IF NOT EXISTS aml_country_risks (
+      country_code VARCHAR(2) PRIMARY KEY,
+      country_name TEXT NOT NULL,
+      risk_level TEXT NOT NULL CHECK (risk_level IN ('low','medium','high')),
+      source TEXT,
+      notes TEXT,
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    // Seed (idempotent — only inserts if missing). Sources: FATF "high-risk
+    // jurisdictions subject to a call for action" + UK HMT consolidated list
+    // + EU AMLD list, conservative as of May 2026. Admin can override.
+    `INSERT INTO aml_country_risks (country_code, country_name, risk_level, source, notes) VALUES
+      ('IR', 'Iran', 'high', 'FATF', 'Call for action — FATF black list'),
+      ('KP', 'North Korea', 'high', 'FATF', 'Call for action — FATF black list'),
+      ('MM', 'Myanmar', 'high', 'FATF', 'FATF grey list'),
+      ('AF', 'Afghanistan', 'high', 'UK HMT', 'Sanctions in force'),
+      ('BY', 'Belarus', 'high', 'UK HMT', 'Sanctions in force'),
+      ('RU', 'Russia', 'high', 'UK HMT', 'Sanctions in force'),
+      ('SY', 'Syria', 'high', 'UK HMT', 'Sanctions in force'),
+      ('YE', 'Yemen', 'high', 'UK HMT', 'Conflict-related sanctions'),
+      ('CU', 'Cuba', 'high', 'UK HMT', 'Sanctions in force'),
+      ('VE', 'Venezuela', 'high', 'UK HMT', 'Targeted sanctions'),
+      ('LY', 'Libya', 'high', 'UK HMT', 'Sanctions in force'),
+      ('SO', 'Somalia', 'high', 'UK HMT', 'Sanctions in force'),
+      ('SD', 'Sudan', 'high', 'UK HMT', 'Sanctions in force'),
+      ('SS', 'South Sudan', 'high', 'UK HMT', 'Sanctions in force'),
+      ('IQ', 'Iraq', 'high', 'UK HMT', 'Sanctions in force'),
+      ('LB', 'Lebanon', 'high', 'EU AMLD', 'EU AMLD high-risk third country'),
+      ('ML', 'Mali', 'high', 'EU AMLD', 'EU AMLD high-risk third country'),
+      ('VU', 'Vanuatu', 'medium', 'FATF', 'FATF grey list'),
+      ('PK', 'Pakistan', 'medium', 'FATF', 'FATF grey list'),
+      ('BG', 'Bulgaria', 'medium', 'FATF', 'FATF grey list'),
+      ('PA', 'Panama', 'medium', 'FATF', 'FATF grey list'),
+      ('PH', 'Philippines', 'medium', 'FATF', 'FATF grey list')
+    ON CONFLICT (country_code) DO NOTHING`,
+    // Tokenised KYC upload portal — tenant/customer self-service.
+    `CREATE TABLE IF NOT EXISTS kyc_upload_tokens (
+      token VARCHAR(64) PRIMARY KEY,
+      deal_id VARCHAR NOT NULL,
+      contact_email TEXT,
+      contact_name TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      created_by VARCHAR,
+      expires_at TIMESTAMP NOT NULL,
+      revoked_at TIMESTAMP,
+      last_used_at TIMESTAMP,
+      use_count INTEGER DEFAULT 0
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_upload_tokens_deal ON kyc_upload_tokens(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS kyc_upload_files (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      token VARCHAR(64) NOT NULL,
+      deal_id VARCHAR NOT NULL,
+      original_filename TEXT NOT NULL,
+      content_type TEXT,
+      size_bytes INTEGER,
+      sharepoint_url TEXT,
+      ai_classification JSONB,
+      uploaded_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_upload_files_deal ON kyc_upload_files(deal_id)`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_mlro_report_url TEXT`,
   ];
 
   let ok = 0, skipped = 0;

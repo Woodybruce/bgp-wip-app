@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText } from "lucide-react";
+import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud } from "lucide-react";
 import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
@@ -11,6 +11,8 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 
 export interface DealAmlStatus {
@@ -383,15 +385,150 @@ function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: string }) 
         )}
       </div>
 
-      {/* MLRO Report PDF */}
-      <div className="flex justify-end">
-        <Button size="sm" variant="outline" asChild data-testid="button-mlro-report">
-          <a href={`/api/aml/deal/${dealId}/mlro-report`} target="_blank" rel="noreferrer">
-            <FileDown className="w-3.5 h-3.5 mr-1.5" />
-            Generate MLRO Report PDF
-          </a>
+      {/* Tokenised upload links — admin issues, customer uses, polled */}
+      <UploadLinksPanel dealId={dealId} dealName={dealName} />
+
+      {/* MLRO Report PDF — download or save to SharePoint */}
+      <MlroReportButtons dealId={dealId} />
+    </div>
+  );
+}
+
+function UploadLinksPanel({ dealId, dealName }: { dealId: string; dealName: string }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ contactEmail: "", contactName: "", customNote: "", sendEmail: true });
+
+  const { data: links = [] } = useQuery<any[]>({
+    queryKey: ["/api/aml/deal", dealId, "upload-links"],
+    queryFn: () => fetch(`/api/aml/deal/${dealId}/upload-links`, { credentials: "include", headers: getAuthHeaders() }).then(r => r.ok ? r.json() : []),
+  });
+
+  const issue = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/aml/deal/${dealId}/upload-link`, form);
+      return r.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/aml/deal", dealId, "upload-links"] });
+      setOpen(false);
+      setForm({ contactEmail: "", contactName: "", customNote: "", sendEmail: true });
+      const note = data?.emailResult?.ok ? "Email sent." : data?.emailResult?.error ? `Email failed: ${data.emailResult.error}` : "Link created (no email sent).";
+      toast({ title: "KYC link issued", description: note });
+    },
+    onError: (e: any) => toast({ title: "Failed", description: e?.message?.slice(0, 200), variant: "destructive" }),
+  });
+
+  const revoke = useMutation({
+    mutationFn: async (token: string) => apiRequest("DELETE", `/api/aml/upload-link/${token}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/aml/deal", dealId, "upload-links"] }),
+  });
+
+  return (
+    <div className="rounded-md border p-2.5">
+      <div className="flex items-center justify-between mb-1.5">
+        <div className="flex items-center gap-2">
+          <Send className="w-4 h-4 text-blue-500" />
+          <span className="text-xs font-semibold uppercase tracking-wide">Client upload links</span>
+          <Badge variant="outline" className="text-[10px]">{links.length}</Badge>
+        </div>
+        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setOpen(true)} data-testid="button-request-kyc">
+          <Mail className="w-3 h-3 mr-1" /> Request docs from client
         </Button>
       </div>
+      {links.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground italic">No links issued yet. Click above to email a customer a self-service upload page.</p>
+      ) : (
+        <div className="space-y-1">
+          {links.map((l) => {
+            const expired = new Date(l.expires_at) < new Date();
+            const status = l.revoked_at ? "revoked" : expired ? "expired" : l.last_used_at ? "used" : "pending";
+            return (
+              <div key={l.token} className="flex items-center gap-2 rounded border p-2 text-xs">
+                <Badge variant="outline" className={`text-[10px] capitalize ${status === "used" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : status === "expired" ? "bg-red-50 text-red-700 border-red-200" : status === "revoked" ? "bg-muted" : "bg-amber-50 text-amber-700 border-amber-200"}`}>{status}</Badge>
+                <span className="font-medium truncate max-w-[160px]">{l.contact_email || "—"}</span>
+                <span className="text-muted-foreground">expires {new Date(l.expires_at).toLocaleDateString("en-GB")}</span>
+                {l.use_count > 0 && <span className="text-muted-foreground">· {l.use_count} upload{l.use_count === 1 ? "" : "s"}</span>}
+                <div className="ml-auto flex items-center gap-1">
+                  <Button size="sm" variant="ghost" className="h-6 px-1.5" onClick={() => { navigator.clipboard.writeText(l.url); toast({ title: "Link copied" }); }} title="Copy link">
+                    <Copy className="w-3 h-3" />
+                  </Button>
+                  {!l.revoked_at && !expired && (
+                    <Button size="sm" variant="ghost" className="h-6 px-1.5 text-muted-foreground hover:text-destructive" onClick={() => revoke.mutate(l.token)} title="Revoke">
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Request KYC documents</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5"><Label>Contact name</Label><Input value={form.contactName} onChange={e => setForm(f => ({ ...f, contactName: e.target.value }))} placeholder="Jane Smith" /></div>
+              <div className="space-y-1.5"><Label>Contact email</Label><Input type="email" value={form.contactEmail} onChange={e => setForm(f => ({ ...f, contactEmail: e.target.value }))} placeholder="jane@example.com" /></div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Custom note (optional)</Label>
+              <Textarea rows={3} value={form.customNote} onChange={e => setForm(f => ({ ...f, customNote: e.target.value }))} placeholder="Any specific docs you want to call out…" />
+            </div>
+            <div className="flex items-center gap-2 text-sm">
+              <input id="send-email-cb" type="checkbox" checked={form.sendEmail} onChange={e => setForm(f => ({ ...f, sendEmail: e.target.checked }))} className="h-4 w-4" />
+              <Label htmlFor="send-email-cb" className="cursor-pointer">Email the link to {form.contactEmail || "the contact"} now</Label>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Email goes from the BGP AML mailbox with a 14-day link to the secure upload page.
+              Replies with attachments are auto-ingested and analysed.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button onClick={() => issue.mutate()} disabled={issue.isPending}>
+              {issue.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Send className="w-4 h-4 mr-1.5" />}
+              Issue & {form.sendEmail ? "send" : "copy link"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function MlroReportButtons({ dealId }: { dealId: string }) {
+  const { toast } = useToast();
+  const [savedUrl, setSavedUrl] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/aml/deal/${dealId}/mlro-report/save`);
+      return r.json();
+    },
+    onSuccess: (data) => {
+      setSavedUrl(data.webUrl);
+      toast({ title: "Saved to SharePoint", description: `${data.filename} (${data.sizeMB?.toFixed?.(2) ?? "?"} MB)` });
+    },
+    onError: (e: any) => toast({ title: "Save failed", description: e?.message?.slice(0, 200), variant: "destructive" }),
+  });
+
+  return (
+    <div className="flex items-center justify-end gap-2 flex-wrap">
+      {savedUrl && (
+        <a href={savedUrl} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 hover:underline">SP file ↗</a>
+      )}
+      <Button size="sm" variant="outline" onClick={() => save.mutate()} disabled={save.isPending} data-testid="button-mlro-save-sp">
+        {save.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Cloud className="w-3.5 h-3.5 mr-1.5" />}
+        Save to SharePoint
+      </Button>
+      <Button size="sm" variant="outline" asChild data-testid="button-mlro-report">
+        <a href={`/api/aml/deal/${dealId}/mlro-report`} target="_blank" rel="noreferrer">
+          <FileDown className="w-3.5 h-3.5 mr-1.5" />
+          Download MLRO Report PDF
+        </a>
+      </Button>
     </div>
   );
 }
