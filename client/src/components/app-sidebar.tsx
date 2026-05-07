@@ -85,13 +85,14 @@ const coreNavBase = [
   { title: "Deals", url: "/deals", icon: BarChart3 },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
   { title: "Requirements", url: "/requirements", icon: FileText },
-  { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
-  { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
-  { title: "Investment Hunter", url: "/hunters/investment", icon: Target },
+  // Items below are still being polished — admin-only until ready for the firm
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
+  { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
+  { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Users },
-  { title: "Landlords", url: "/landlords", icon: Briefcase },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
+  { title: "Landlords", url: "/landlords", icon: Briefcase, adminOnly: true },
+  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
 ];
 
@@ -254,9 +255,14 @@ export function AppSidebar() {
   const { brand, isLandsec } = useBrand();
 
   // Reporting lives in Core for Landsec tenants, otherwise it's hidden in Admin.
+  // Items flagged adminOnly are hidden from non-admins until polished — they
+  // hand-rolled their way into the sidebar before being ready for the firm.
+  const coreNavFiltered = user?.isAdmin
+    ? coreNavBase
+    : coreNavBase.filter((i: any) => !i.adminOnly);
   const coreNav = isLandsec
-    ? [...coreNavBase, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
-    : coreNavBase;
+    ? [...coreNavFiltered, { title: "Reporting", url: "/reporting", icon: TrendingUp }]
+    : coreNavFiltered;
   const adminNav = isLandsec
     ? adminNavBase.filter(i => i.url !== "/reporting")
     : adminNavBase;
@@ -419,13 +425,13 @@ const mobileOverlayItems = [
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Requirements", url: "/requirements", icon: FileText },
-  { title: "Tenant Rep", url: "/tenant-rep", icon: Target },
-  { title: "Letting Hunter", url: "/hunters/letting", icon: Target },
-  { title: "Investment Hunter", url: "/hunters/investment", icon: Target },
+  { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
+  { title: "Letting Hunter", url: "/hunters/letting", icon: Target, adminOnly: true },
+  { title: "Investment Hunter", url: "/hunters/investment", icon: Target, adminOnly: true },
   { title: "Brand Intelligence", url: "/brands", icon: Store },
   { title: "CRM", url: "/contacts", icon: Users },
-  { title: "Landlords", url: "/landlords", icon: Briefcase },
-  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar },
+  { title: "Landlords", url: "/landlords", icon: Briefcase, adminOnly: true },
+  { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
   { title: "Document Studio", url: "/templates", icon: FileTextIcon },
@@ -449,9 +455,11 @@ const mobileOverlayItems = [
 export function MobileSidebarOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [location] = useLocation();
   const { isLandsec } = useBrand();
+  const { data: user } = useQuery<any>({ queryKey: ["/api/auth/me"] });
 
   // Hide Reporting in mobile overlay for non-Landsec tenants (parity with desktop).
-  const items = isLandsec ? mobileOverlayItems : mobileOverlayItems.filter(i => i.url !== "/reporting");
+  const filteredByAdmin = user?.isAdmin ? mobileOverlayItems : mobileOverlayItems.filter((i: any) => !i.adminOnly);
+  const items = isLandsec ? filteredByAdmin : filteredByAdmin.filter(i => i.url !== "/reporting");
 
   const isActive = (url: string) => {
     if (url === "/") return location === "/";

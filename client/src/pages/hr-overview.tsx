@@ -5,7 +5,7 @@ import {
   Trophy, Mountain, TrendingUp, Users, Calendar, Cake, Sparkles,
   Coffee, Beer, Pizza, Star, Flame, Target, ChevronRight, ChevronDown,
   Loader2, Plus, Check, Briefcase, BarChart3, GitBranch, Eye,
-  Megaphone, Heart, ArrowRight, Clock,
+  Megaphone, Heart, ArrowRight, Clock, CreditCard, FileText,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -309,6 +309,16 @@ function YouPanel({ user }: { user: AuthUser }) {
             <button onClick={() => navigate("/hr")} className="rounded-md border p-2 hover:bg-accent/40 transition-colors">
               <div className="text-lg font-semibold">{commission ? fmtMoney(commission.commissionForecast) : "—"}</div>
               <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Comm. forecast</div>
+            </button>
+          </div>
+
+          {/* Direct shortcut to the user's own profile tabs */}
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <button onClick={() => navigate(`/hr?person=${user.id}&tab=expenses`)} className="rounded-md border p-2 text-xs flex items-center gap-1.5 justify-center hover:bg-accent/40 transition-colors">
+              <CreditCard className="w-3.5 h-3.5 text-muted-foreground" /> My card &amp; expenses
+            </button>
+            <button onClick={() => navigate(`/hr?person=${user.id}&tab=files`)} className="rounded-md border p-2 text-xs flex items-center gap-1.5 justify-center hover:bg-accent/40 transition-colors">
+              <FileText className="w-3.5 h-3.5 text-muted-foreground" /> My documents
             </button>
           </div>
         </CardContent>

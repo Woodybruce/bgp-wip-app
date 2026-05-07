@@ -1,6 +1,8 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, lazy, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
+
+const TasksPage = lazy(() => import("./tasks"));
 import {
   Users, User, TrendingUp, Calendar, FileText, CreditCard,
   Building2, GraduationCap, Phone, Mail, MapPin, Linkedin,
@@ -1024,12 +1026,13 @@ function ActiveDealsCard({ userId }: { userId: string }) {
 
 // ── Staff profile detail view ─────────────────────────────────────────────────
 
-function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
+function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initialTab }: {
   person: StaffMember;
   allStaff: StaffMember[];
   isAdmin: boolean;
   currentUserId: string;
   onBack: () => void;
+  initialTab?: string;
 }) {
   const [editOpen, setEditOpen] = useState(false);
   const isOwn = person.id === currentUserId;
@@ -1120,7 +1123,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack }: {
         )}
 
         {/* Tabs */}
-        <Tabs defaultValue={isAdmin ? "overview" : isOwn ? "holiday" : "about"} className="mt-2">
+        <Tabs defaultValue={initialTab || (isAdmin ? "overview" : isOwn ? "holiday" : "about")} className="mt-2">
           <TabsList className="w-full overflow-x-auto flex-nowrap justify-start h-9">
             {!isAdmin && !isOwn && <TabsTrigger value="about" className="text-xs">About</TabsTrigger>}
             {isAdmin && <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>}
@@ -3608,18 +3611,20 @@ export default function HRPage() {
   const { toast } = useToast();
   const [location] = useLocation();
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [initialTab, setInitialTab] = useState<string | undefined>(undefined);
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("all");
   const [addStaffOpen, setAddStaffOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"org" | "grid">("org");
 
-  // Honour ?person=:id from the URL — clicks on team members from the
-  // dashboard land here with that query string, which should auto-open
-  // the profile drawer rather than dumping the user on the directory.
+  // Honour ?person=:id (and optional &tab=:name) from the URL — links from
+  // the You panel set both so 'My Card & Expenses' lands on the right tab.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const personId = params.get("person");
+    const tab = params.get("tab") || undefined;
     if (personId) setSelectedUserId(personId);
+    setInitialTab(tab);
   }, [location]);
 
   const syncPhotosMutation = useMutation({
@@ -3681,7 +3686,8 @@ export default function HRPage() {
           allStaff={allStaff}
           isAdmin={isAdmin}
           currentUserId={currentUser?.id || ""}
-          onBack={() => setSelectedUserId(null)}
+          onBack={() => { setSelectedUserId(null); setInitialTab(undefined); }}
+          initialTab={initialTab}
         />
       </div>
     );
@@ -3727,6 +3733,7 @@ export default function HRPage() {
       <Tabs defaultValue="overview" className="px-4">
         <TabsList className="mt-3 mb-3">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="my-tasks">My Tasks</TabsTrigger>
           <TabsTrigger value="benefits">Benefits</TabsTrigger>
           <TabsTrigger value="marketing">Marketing</TabsTrigger>
           {isAdmin && <TabsTrigger value="holidays">Holiday approvals</TabsTrigger>}
@@ -3735,6 +3742,12 @@ export default function HRPage() {
 
         <TabsContent value="overview">
           <HrOverview onSelectPerson={(id) => setSelectedUserId(id)} />
+        </TabsContent>
+
+        <TabsContent value="my-tasks">
+          <Suspense fallback={<div className="flex items-center justify-center p-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}>
+            <TasksPage />
+          </Suspense>
         </TabsContent>
 
         <TabsContent value="benefits">
