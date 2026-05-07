@@ -367,6 +367,22 @@ import { pool } from "./db";
       summary TEXT,
       generated_at TIMESTAMP DEFAULT now()
     )`,
+    // Brucey Bonuses — points awarded by AI (or admin) for good work, with a
+    // weekly winner. event_kind is the action that earned them so we can de-dup.
+    `CREATE TABLE IF NOT EXISTS brucey_points (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      points INTEGER NOT NULL,
+      reason TEXT,
+      event_kind TEXT,
+      event_ref TEXT,
+      awarded_by TEXT NOT NULL DEFAULT 'ai',
+      awarded_by_user_id VARCHAR,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS brucey_points_user_idx ON brucey_points (user_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS brucey_points_recent_idx ON brucey_points (created_at DESC)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS brucey_points_dedup_idx ON brucey_points (event_kind, event_ref) WHERE event_ref IS NOT NULL`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_onenote_page_id TEXT`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_onenote_page_url TEXT`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_evernote_note_id TEXT`,

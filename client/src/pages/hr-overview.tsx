@@ -430,6 +430,122 @@ function OrganigramSection({ allStaff, isAdmin }: { allStaff: StaffMember[]; isA
   );
 }
 
+// ── 🏅 Brucey Bonuses — AI-awarded points + weekly winner ────────────────────
+
+interface BruceyLeader {
+  userId: string;
+  name: string;
+  title: string | null;
+  profilePicUrl: string | null;
+  weekPoints: number;
+  weekEvents: number;
+  ytdPoints: number;
+}
+
+interface BruceyLeaderboard {
+  weekStart: string;
+  leaderboard: BruceyLeader[];
+  winnerUserId: string | null;
+}
+
+function BruceyBonusesCard({ isAdmin }: { isAdmin: boolean }) {
+  const { toast } = useToast();
+  const [, navigate] = useLocation();
+  const { data, isLoading } = useQuery<BruceyLeaderboard>({ queryKey: ["/api/hr/brucey-points/leaderboard"] });
+
+  const scan = useMutation({
+    mutationFn: async () => apiRequest("POST", "/api/hr/brucey-points/scan").then(r => r.json()),
+    onSuccess: (d: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/hr/brucey-points/leaderboard"] });
+      toast({ title: `Scanned ${d.scannedEvents || 0} events · ${d.newAwards || 0} new Brucey Bonuses` });
+    },
+    onError: (e: any) => toast({ title: "Scan failed", description: e?.message, variant: "destructive" }),
+  });
+
+  const leaders = data?.leaderboard || [];
+  const winner = leaders[0];
+  const medals = ["🥇", "🥈", "🥉"];
+
+  return (
+    <Card className="overflow-hidden border-amber-200 dark:border-amber-900/50">
+      <div className="bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 dark:from-amber-950/40 dark:via-yellow-950/40 dark:to-orange-950/40 px-3 py-2 border-b border-amber-200/50 dark:border-amber-900/50 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-base">🏅</span>
+          <span className="text-sm font-bold tracking-tight">Brucey Bonuses</span>
+        </div>
+        {isAdmin && (
+          <Button size="sm" variant="ghost" className="h-6 text-[10px] px-1.5" onClick={() => scan.mutate()} disabled={scan.isPending}>
+            {scan.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 mr-0.5" />}
+            Scan
+          </Button>
+        )}
+      </div>
+      <CardContent className="pt-3 pb-3">
+        {isLoading ? (
+          <div className="space-y-1.5">{[0, 1, 2].map(i => <Skeleton key={i} className="h-10 w-full rounded-md" />)}</div>
+        ) : leaders.length === 0 ? (
+          <div className="text-xs text-muted-foreground italic text-center py-3">
+            No Brucey Bonuses awarded yet this week.{isAdmin ? " Click Scan to let AI find them." : ""}
+          </div>
+        ) : (
+          <>
+            {/* Winner banner */}
+            {winner && (
+              <button
+                onClick={() => navigate(`/hr?person=${winner.userId}`)}
+                className="w-full mb-2 rounded-lg bg-gradient-to-br from-amber-100 to-yellow-100 dark:from-amber-950/60 dark:to-yellow-950/60 border border-amber-300 dark:border-amber-700 p-2.5 flex items-center gap-2.5 hover:shadow-sm transition-shadow text-left"
+              >
+                <span className="text-xl">🥇</span>
+                {winner.profilePicUrl ? (
+                  <img src={winner.profilePicUrl} alt={winner.name} className="w-9 h-9 rounded-full object-cover ring-2 ring-amber-400" />
+                ) : (
+                  <div className="w-9 h-9 rounded-full bg-amber-200 dark:bg-amber-900/40 flex items-center justify-center text-xs font-bold ring-2 ring-amber-400">
+                    {winner.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[9px] uppercase tracking-wider text-amber-800 dark:text-amber-300 font-semibold">This week's leader</div>
+                  <div className="text-sm font-bold truncate">{winner.name}</div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-base font-bold tabular-nums text-amber-700 dark:text-amber-300">{winner.weekPoints}</div>
+                  <div className="text-[9px] uppercase tracking-wider text-amber-700/70">pts</div>
+                </div>
+              </button>
+            )}
+
+            {/* Rest of leaderboard */}
+            <div className="space-y-1">
+              {leaders.slice(1, 5).map((l, i) => (
+                <button
+                  key={l.userId}
+                  onClick={() => navigate(`/hr?person=${l.userId}`)}
+                  className="w-full flex items-center gap-2 p-1.5 rounded-md hover:bg-amber-50/50 dark:hover:bg-amber-950/20 transition-colors text-left"
+                >
+                  <span className="w-5 text-center text-[11px] text-muted-foreground shrink-0">{medals[i + 1] || `#${i + 2}`}</span>
+                  {l.profilePicUrl ? (
+                    <img src={l.profilePicUrl} alt={l.name} className="w-6 h-6 rounded-full object-cover" />
+                  ) : (
+                    <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center text-[9px] font-medium">
+                      {l.name.split(" ").map(p => p[0]).join("").slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
+                  <span className="flex-1 truncate text-xs">{l.name}</span>
+                  <span className="text-xs font-semibold tabular-nums">{l.weekPoints}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-2 pt-2 border-t border-amber-200/50 dark:border-amber-900/50 text-[10px] text-muted-foreground italic text-center">
+              Earn points for closing deals, kudos, completing tasks, submitting reviews. Weekly winner gets a prize.
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── 🏆 Hunger Games strip ────────────────────────────────────────────────────
 
 interface IndividualLeader {
@@ -854,6 +970,7 @@ export default function HrOverview() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-1 space-y-4">
           {currentUser && <YouPanel user={currentUser} />}
+          <BruceyBonusesCard isAdmin={isAdmin} />
           <CalendarWidget />
         </div>
         <div className="lg:col-span-2 space-y-4">
