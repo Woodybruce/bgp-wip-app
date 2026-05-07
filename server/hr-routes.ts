@@ -43,7 +43,7 @@ export function setupHrRoutes(app: Express) {
           sp.id AS profile_id,
           sp.title, sp.start_date, sp.end_date, sp.status AS hr_status,
           sp.salary_current, sp.manager_id, sp.department AS hr_department,
-          sp.rics_pathway, sp.apc_status, sp.apc_assessment_date,
+          sp.rics_pathway, sp.rics_number, sp.apc_status, sp.apc_assessment_date,
           sp.education, sp.bio,
           sp.emergency_contact_name, sp.emergency_contact_phone, sp.emergency_contact_relation,
           sp.holiday_entitlement, sp.pension_opt_in, sp.pension_rate,
@@ -85,7 +85,7 @@ export function setupHrRoutes(app: Express) {
           sp.id AS profile_id,
           sp.title, sp.start_date, sp.end_date, sp.status AS hr_status,
           sp.salary_current, sp.manager_id, sp.department AS hr_department,
-          sp.rics_pathway, sp.apc_status, sp.apc_assessment_date,
+          sp.rics_pathway, sp.rics_number, sp.apc_status, sp.apc_assessment_date,
           sp.education, sp.bio,
           sp.emergency_contact_name, sp.emergency_contact_phone, sp.emergency_contact_relation,
           sp.holiday_entitlement, sp.pension_opt_in, sp.pension_rate,
@@ -115,7 +115,7 @@ export function setupHrRoutes(app: Express) {
 
     const {
       title, startDate, endDate, status, salaryCurrent, managerId,
-      department, ricsPathway, apcStatus, apcAssessmentDate,
+      department, ricsPathway, ricsNumber, apcStatus, apcAssessmentDate,
       education, bio, emergencyContactName, emergencyContactPhone,
       emergencyContactRelation, holidayEntitlement, pensionOptIn, pensionRate,
       contractSharepointUrl, passportSharepointUrl, linkedinUrl, xeroTrackingName,
@@ -138,9 +138,10 @@ export function setupHrRoutes(app: Express) {
           emergency_contact_name, emergency_contact_phone, emergency_contact_relation,
           holiday_entitlement, pension_opt_in, pension_rate,
           contract_sharepoint_url, passport_sharepoint_url, linkedin_url, xero_tracking_name,
-          dob, address, wfh_days, employment_type, cv_sharepoint_url, board_member, management_team
+          dob, address, wfh_days, employment_type, cv_sharepoint_url, board_member, management_team,
+          rics_number
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
-                  $24,$25,$26,$27,$28,$29,$30)
+                  $24,$25,$26,$27,$28,$29,$30,$31)
         ON CONFLICT (user_id) DO UPDATE SET
           title = COALESCE(EXCLUDED.title, staff_profiles.title),
           start_date = COALESCE(EXCLUDED.start_date, staff_profiles.start_date),
@@ -171,6 +172,7 @@ export function setupHrRoutes(app: Express) {
           cv_sharepoint_url = COALESCE(EXCLUDED.cv_sharepoint_url, staff_profiles.cv_sharepoint_url),
           board_member = COALESCE(EXCLUDED.board_member, staff_profiles.board_member),
           management_team = COALESCE(EXCLUDED.management_team, staff_profiles.management_team),
+          rics_number = COALESCE(EXCLUDED.rics_number, staff_profiles.rics_number),
           updated_at = now()
       `, [
         userId, title, startDate, endDate, status, salaryCurrent, managerId,
@@ -179,6 +181,7 @@ export function setupHrRoutes(app: Express) {
         holidayEntitlement, pensionOptIn, pensionRate,
         contractSharepointUrl, passportSharepointUrl, linkedinUrl, xeroTrackingName,
         dob, address, wfhDays, employmentType, cvSharepointUrl, boardMember, managementTeam,
+        ricsNumber,
       ]);
       res.json({ ok: true });
     } catch (e: any) {

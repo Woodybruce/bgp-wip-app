@@ -2514,6 +2514,7 @@ export const staffProfiles = pgTable("staff_profiles", {
   managerId: varchar("manager_id"),
   department: text("department"),
   ricsPathway: text("rics_pathway"),
+  ricsNumber: text("rics_number"),    // RICS member number (e.g. 1234567)
   apcStatus: text("apc_status"),      // not_started | in_progress | completed
   apcAssessmentDate: text("apc_assessment_date"),
   education: text("education"),

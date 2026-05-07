@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ResponsiveContainer, ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from "recharts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -69,11 +70,26 @@ interface StaffMember {
   // Org-chart additions (May 2026)
   dob: string | null;
   address: string | null;
+  personal_email?: string | null;
   wfh_days: string[] | null;
   employment_type: string | null;
   cv_sharepoint_url: string | null;
   board_member: boolean | null;
   management_team: boolean | null;
+  rics_number?: string | null;
+}
+
+// Small label/value row for the read-only Personal tab. Hides itself when
+// the value is empty so we don't show "Address —" lines for staff who
+// haven't filled anything in.
+function Row({ label, children, preserveWhitespace }: { label: string; children: React.ReactNode; preserveWhitespace?: boolean }) {
+  if (children == null || children === "") return null;
+  return (
+    <div className="flex justify-between gap-3">
+      <span className="text-muted-foreground shrink-0">{label}</span>
+      <span className={`text-right ${preserveWhitespace ? "whitespace-pre-wrap" : ""}`}>{children}</span>
+    </div>
+  );
 }
 
 interface Birthday {
@@ -995,6 +1011,94 @@ function DocumentsTab({ person, isAdmin }: { person: StaffMember; isAdmin: boole
   );
 }
 
+// ── Salary timeline chart ──────────────────────────────────────────────────────
+//
+// Stepped line of salary over time with bonus + commission markers extracted
+// from each row's `notes` (the spreadsheet importer stuffs them in there as
+// "commission rate: 10% · tier: T2"). Yearly Xero billings come in via the
+// commission endpoint and are layered on as context bars.
+
+function SalaryTimelineChart({ person, history }: { person: StaffMember; history: SalaryEntry[] }) {
+  const { data: commissionData } = useQuery<{ billingsByYear?: Array<{ year: string; pence: number }> }>({
+    queryKey: [`/api/hr/staff/${person.id}/commission`],
+    retry: false,
+  });
+
+  // Combine: one row per event date. Salary points step-line. Bonus values
+  // (parsed out of notes) layer as a second series. Yearly billings get
+  // pinned to Jan-1 of each year so they appear as context bars.
+  const points = useMemo(() => {
+    const rows: Array<{ date: string; salary?: number; bonus?: number; billings?: number; tooltip: string }> = [];
+    const byDate = new Map<string, { salary?: number; bonus?: number; billings?: number; tooltip: string[] }>();
+    const ensure = (d: string) => {
+      if (!byDate.has(d)) byDate.set(d, { tooltip: [] });
+      return byDate.get(d)!;
+    };
+
+    for (const h of history) {
+      if (!h.effective_date) continue;
+      const slot = ensure(h.effective_date);
+      slot.salary = h.salary_pence / 100;
+      const reason = h.reason?.replace(/_/g, " ") || "salary";
+      slot.tooltip.push(`Salary £${(h.salary_pence / 100).toLocaleString()} (${reason})`);
+      // Try to pull a bonus figure out of the notes — works with the format
+      // the importer uses ("£12,500 bonus", "bonus: £12500" etc.).
+      const bonusMatch = (h.notes || "").match(/bonus[^£\d]*£?\s?([\d,]+(?:\.\d+)?)/i)
+                      || (h.notes || "").match(/£\s?([\d,]+(?:\.\d+)?)\s*bonus/i);
+      if (bonusMatch) {
+        const n = parseFloat(bonusMatch[1].replace(/,/g, ""));
+        if (!isNaN(n)) {
+          slot.bonus = (slot.bonus || 0) + n;
+          slot.tooltip.push(`Bonus £${n.toLocaleString()}`);
+        }
+      }
+    }
+    for (const b of commissionData?.billingsByYear || []) {
+      if (!b.year) continue;
+      const slot = ensure(`${b.year}-01-01`);
+      slot.billings = b.pence / 100;
+      slot.tooltip.push(`Billings ${b.year}: £${Math.round(b.pence / 100).toLocaleString()}`);
+    }
+    for (const [date, v] of Array.from(byDate.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+      rows.push({ date, salary: v.salary, bonus: v.bonus, billings: v.billings, tooltip: v.tooltip.join("\n") });
+    }
+    // Forward-fill salary so the step line continues across bonus-only points.
+    let lastSalary: number | undefined;
+    for (const r of rows) {
+      if (r.salary != null) lastSalary = r.salary;
+      else if (lastSalary != null) r.salary = lastSalary;
+    }
+    return rows;
+  }, [history, commissionData]);
+
+  if (points.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border p-3 bg-card">
+      <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Pay timeline</div>
+      <p className="text-[10px] text-muted-foreground mb-2">Stepped line = base salary changes. Orange bars = bonuses. Faint cyan bars = annual Xero billings (if commission tier applies).</p>
+      <div className="h-56 w-full">
+        <ResponsiveContainer>
+          <ComposedChart data={points} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+            <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(d) => String(d).slice(0, 7)} />
+            <YAxis tickFormatter={(v) => v >= 1000 ? `£${(v/1000).toFixed(0)}k` : `£${v}`} tick={{ fontSize: 10 }} />
+            <Tooltip
+              formatter={(v: any, name: string) => v == null ? null : [`£${Number(v).toLocaleString()}`, name]}
+              labelFormatter={(d: any) => `Effective ${d}`}
+              contentStyle={{ fontSize: 11, borderRadius: 6 }}
+            />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            <Bar dataKey="billings" name="Annual billings" fill="#06b6d4" fillOpacity={0.25} />
+            <Bar dataKey="bonus" name="Bonus" fill="#f97316" fillOpacity={0.85} />
+            <Line type="stepAfter" dataKey="salary" name="Salary" stroke="#10b981" strokeWidth={2} dot={{ r: 4, fill: "#10b981" }} activeDot={{ r: 6 }} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 // ── Salary history panel ───────────────────────────────────────────────────────
 
 function SalaryHistoryPanel({ person }: { person: StaffMember }) {
@@ -1028,6 +1132,8 @@ function SalaryHistoryPanel({ person }: { person: StaffMember }) {
 
   return (
     <div className="space-y-3">
+      <SalaryTimelineChart person={person} history={history} />
+
       <div className="flex items-center justify-between">
         <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Salary history</div>
         <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAdd(true)}>
@@ -1103,6 +1209,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
     department: person.hr_department || person.team || "",
     managerId: person.manager_id || "",
     ricsPathway: person.rics_pathway || "",
+    ricsNumber: (person as any).rics_number || "",
     apcStatus: person.apc_status || "not_started",
     apcAssessmentDate: person.apc_assessment_date || "",
     education: person.education || "",
@@ -1136,6 +1243,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
         department: form.department || undefined,
         managerId: form.managerId || undefined,
         ricsPathway: form.ricsPathway || undefined,
+        ricsNumber: form.ricsNumber || undefined,
         apcStatus: form.apcStatus || undefined,
         apcAssessmentDate: form.apcAssessmentDate || undefined,
         education: form.education || undefined,
@@ -1205,6 +1313,7 @@ function EditProfileDialog({ person, allStaff, open, onClose }: {
             <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">APC / RICS</div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5"><Label>RICS pathway</Label><Input value={form.ricsPathway} onChange={f("ricsPathway")} placeholder="e.g. Commercial Real Estate" /></div>
+              <div className="space-y-1.5"><Label>RICS member number</Label><Input value={form.ricsNumber} onChange={f("ricsNumber")} placeholder="e.g. 1234567" /></div>
               <div className="space-y-1.5">
                 <Label>APC status</Label>
                 <Select value={form.apcStatus} onValueChange={v => setForm(p => ({ ...p, apcStatus: v }))}>
@@ -1453,6 +1562,7 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
           <TabsList className="w-full overflow-x-auto flex-nowrap justify-start h-9">
             {!isAdmin && !isOwn && <TabsTrigger value="about" className="text-xs">About</TabsTrigger>}
             {isAdmin && <TabsTrigger value="overview" className="text-xs">Overview</TabsTrigger>}
+            {(isAdmin || isOwn) && <TabsTrigger value="personal" className="text-xs">Personal</TabsTrigger>}
             {isAdmin && <TabsTrigger value="commission" className="text-xs">Commission</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="holiday" className="text-xs">Holiday</TabsTrigger>}
             {(isAdmin || isOwn) && <TabsTrigger value="reviews" className="text-xs">Reviews</TabsTrigger>}
@@ -1521,6 +1631,54 @@ function StaffProfile({ person, allStaff, isAdmin, currentUserId, onBack, initia
                       <div className="flex justify-between"><span className="text-muted-foreground">Spent</span><span className="font-medium">£{(expenseSummary.spentPence / 100).toFixed(2)}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Transactions</span><span>{expenseSummary.txCount}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Card limit utilisation</span><span>{expenseSummary.utilisation?.toFixed(0)}%</span></div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </TabsContent>
+          )}
+
+          {(isAdmin || isOwn) && (
+            <TabsContent value="personal" className="mt-4">
+              <div className="space-y-4">
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <User className="w-4 h-4 text-violet-500" />
+                      Personal details
+                      <Badge variant="outline" className="text-[9px] py-0 ml-auto">
+                        {isOwn ? "Visible to you & Admins" : "Visible to this person & Admins"}
+                      </Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="text-sm space-y-1.5">
+                    <Row label="Date of birth">{person.dob ? new Date(person.dob).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : null}</Row>
+                    <Row label="Address" preserveWhitespace>{person.address}</Row>
+                    <Row label="Employment">{person.employment_type}</Row>
+                    <Row label="WFH days">{person.wfh_days?.length ? person.wfh_days.join(", ") : null}</Row>
+                    <Row label="Personal email">{person.personal_email}</Row>
+                  </CardContent>
+                </Card>
+
+                {(person.rics_number || person.rics_pathway || person.apc_status) && (
+                  <Card>
+                    <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><GraduationCap className="w-4 h-4 text-blue-500" />RICS &amp; qualifications</CardTitle></CardHeader>
+                    <CardContent className="text-sm space-y-1.5">
+                      <Row label="RICS member number">{person.rics_number}</Row>
+                      <Row label="Pathway">{person.rics_pathway}</Row>
+                      <Row label="APC status">{person.apc_status?.replace(/_/g, " ")}</Row>
+                      {person.apc_assessment_date && <Row label="Assessment date">{new Date(person.apc_assessment_date).toLocaleDateString("en-GB")}</Row>}
+                      <Row label="Education">{person.education}</Row>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {person.emergency_contact_name && (
+                  <Card>
+                    <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><Heart className="w-4 h-4 text-red-500" />Emergency contact</CardTitle></CardHeader>
+                    <CardContent className="text-sm space-y-1">
+                      <div className="font-medium">{person.emergency_contact_name} {person.emergency_contact_relation && <span className="text-muted-foreground font-normal">({person.emergency_contact_relation})</span>}</div>
+                      {person.emergency_contact_phone && <div className="text-muted-foreground">{person.emergency_contact_phone}</div>}
                     </CardContent>
                   </Card>
                 )}

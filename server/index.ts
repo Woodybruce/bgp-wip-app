@@ -1057,6 +1057,7 @@ import { pool } from "./db";
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS cv_sharepoint_url TEXT`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS board_member BOOLEAN DEFAULT false`,
     `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS management_team BOOLEAN DEFAULT false`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS rics_number TEXT`,
   ];
 
   let ok = 0, skipped = 0;
