@@ -494,6 +494,8 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
       try {
         // UPRN-accurate title resolution: Google address → PropertyData
         // address-match-uprn → uprn-title. Wider postcode data follows.
+        // Tagging source as 'direct' so the LR board distinguishes manual
+        // searches from Clouseau/Pathway-driven ones.
         const resolvePromise = fetch("/api/land-registry/resolve", {
           method: "POST",
           credentials: "include",
@@ -503,6 +505,7 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
             postcode: cleanPc,
             lat: addr.lat,
             lng: addr.lng,
+            source: "direct",
           }),
         }).then(r => r.ok ? r.json() : null).catch(() => null);
 
@@ -577,6 +580,16 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
           }
         }
         setIntelligence(intel);
+
+        // The /api/land-registry/resolve call already persisted this search
+        // server-side, so re-pull the saved-searches list now to surface it
+        // on the board immediately. Previously we only refreshed the list
+        // after fetchAiSummary succeeded, which meant searches went missing
+        // from the board when the AI summary failed or was skipped.
+        fetch("/api/land-registry/searches", { credentials: "include", headers: getAuthHeaders() })
+          .then(r => r.ok ? r.json() : null)
+          .then(data => { if (Array.isArray(data)) setSavedSearches(data); })
+          .catch(() => {});
 
         if (fetchedFreeholds.length > 0 || fetchedLeaseholds.length > 0) {
           setNoTitleData(false);

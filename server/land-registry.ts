@@ -495,10 +495,16 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
     fallbackLeaseholds = [];
   }
 
-  // Persist this resolve to the unified Land Registry history.
+  // Persist this resolve to the unified Land Registry history. The board on
+  // /land-registry reads from this table and expects every search across the
+  // app (direct, Pathway, Clouseau) to land here.
   if (!skipPersist) {
-    try {
-      if (userId && resolvedAddress) {
+    if (!userId) {
+      console.warn("[land-registry/resolve] skipping persist — no userId on request (caller passed token without session?)");
+    } else if (!resolvedAddress) {
+      console.warn("[land-registry/resolve] skipping persist — resolver returned no address for input", { inputAddress, inputPostcode });
+    } else {
+      try {
         const persistFh = matchedFreeholds.length > 0 ? matchedFreeholds : fallbackFreeholds;
         const persistLh = matchedLeaseholds.length > 0 ? matchedLeaseholds : fallbackLeaseholds;
         await persistLandRegistrySearch({
@@ -507,12 +513,12 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
           postcode: resolvedPostcode,
           freeholds: persistFh,
           leaseholds: persistLh,
-          source: callerSource || "clouseau",
+          source: callerSource || "direct",
           pathwayRunId: callerRunId || null,
         });
+      } catch (persistErr: any) {
+        console.error("[land-registry/resolve] persist FAILED:", persistErr?.message, persistErr?.stack);
       }
-    } catch (persistErr: any) {
-      console.warn("[land-registry/resolve] persist failed:", persistErr?.message);
     }
   }
 
