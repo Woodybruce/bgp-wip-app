@@ -5,13 +5,14 @@ import {
   Trophy, Mountain, TrendingUp, Users, Calendar, Cake, Sparkles,
   Coffee, Beer, Pizza, Star, Flame, Target, ChevronRight, ChevronDown,
   Loader2, Plus, Check, Briefcase, BarChart3, GitBranch, Eye,
-  Megaphone, Heart, ArrowRight, Clock, CreditCard, FileText,
+  Megaphone, Heart, ArrowRight, Clock, CreditCard, FileText, Info,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { apiRequest, queryClient, getQueryFn } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { User as AuthUser } from "@shared/schema";
@@ -491,6 +492,32 @@ function BruceyBonusesCard({ isAdmin, onSelectPerson }: { isAdmin: boolean; onSe
         <div className="flex items-center gap-2">
           <span className="text-base">🏅</span>
           <span className="text-sm font-bold tracking-tight">Brucey Bonuses</span>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button className="text-amber-700/70 hover:text-amber-700 transition-colors" data-testid="brucey-info">
+                <Info className="w-3.5 h-3.5" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 text-xs" align="start">
+              <div className="font-semibold mb-1.5">How Brucey Bonuses are scored</div>
+              <p className="text-muted-foreground mb-2 leading-relaxed">
+                AI scans the last 7 days of activity and awards points. Weekly winner takes the prize.
+              </p>
+              <div className="space-y-0.5 font-mono">
+                <div className="flex justify-between"><span>Deal closed</span><span className="font-bold">100</span></div>
+                <div className="flex justify-between"><span>Deal exchanged</span><span className="font-bold">60</span></div>
+                <div className="flex justify-between"><span>Deal advanced</span><span className="font-bold">25</span></div>
+                <div className="flex justify-between"><span>Annual review completed</span><span className="font-bold">75</span></div>
+                <div className="flex justify-between"><span>Annual review submitted</span><span className="font-bold">50</span></div>
+                <div className="flex justify-between"><span>Kudos received</span><span className="font-bold">10</span></div>
+                <div className="flex justify-between"><span>Kudos given</span><span className="font-bold">5</span></div>
+                <div className="flex justify-between"><span>Task done</span><span className="font-bold">5</span></div>
+              </div>
+              <p className="text-[10px] text-muted-foreground italic mt-2 leading-relaxed">
+                Admins can also award points manually. Each event is deduped so re-scans don't double-pay.
+              </p>
+            </PopoverContent>
+          </Popover>
         </div>
         {isAdmin && (
           <Button size="sm" variant="ghost" className="h-6 text-[10px] px-1.5" onClick={() => scan.mutate()} disabled={scan.isPending}>
@@ -629,7 +656,25 @@ function HungerGamesStrip({ allStaff: _allStaff, onSelectPerson }: { allStaff: S
     <Card>
       <CardHeader className="pb-3">
         <CardTitle className="text-sm flex items-center justify-between gap-2 flex-wrap">
-          <span className="flex items-center gap-2"><Trophy className="w-4 h-4 text-amber-500" /> Hunger Games</span>
+          <span className="flex items-center gap-2">
+            <Trophy className="w-4 h-4 text-amber-500" /> Hunger Games
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="text-muted-foreground hover:text-foreground transition-colors" data-testid="hunger-games-info">
+                  <Info className="w-3.5 h-3.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 text-xs" align="start">
+                <div className="font-semibold mb-1.5">How each leaderboard is ranked</div>
+                <div className="space-y-1.5 leading-relaxed">
+                  <div><span className="font-semibold">Top biller:</span> sum of fees on deals invoiced this scheme year, pulled from Xero per person.</div>
+                  <div><span className="font-semibold">Pipeline:</span> sum of expected fees on deals not yet closed, weighted by stage.</div>
+                  <div><span className="font-semibold">Most active:</span> count of deals you're internal_agent on with status not in (ARCH, WIT).</div>
+                  <div><span className="font-semibold">Most kudos:</span> peer shout-outs received in the last 7 days. Anyone can issue a kudos to anyone (not yourself); the receiver gets +10 Brucey points and the giver gets +5.</div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </span>
           <div className="inline-flex rounded-md border bg-muted/30 p-0.5 text-[11px]">
             {tabs.map(t => (
               <button
