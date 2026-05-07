@@ -583,19 +583,39 @@ export function setupHrRoutes(app: Express) {
 
   app.post("/api/hr/holidays", requireAuth, async (req: any, res) => {
     await hydrateReqUser(req);
-    const { startDate, endDate, daysCount, notes } = req.body;
-    if (!startDate || !endDate || !daysCount) {
-      return res.status(400).json({ error: "startDate, endDate, daysCount required" });
+    const { startDate, endDate, notes } = req.body;
+    let { daysCount } = req.body;
+    if (!startDate || !endDate) {
+      return res.status(400).json({ error: "startDate and endDate required" });
     }
+    // Compute weekday count if the client didn't send one. Lets the form
+    // submit with just two dates and have the server backfill.
+    if (daysCount == null || daysCount === "" || isNaN(Number(daysCount)) || Number(daysCount) <= 0) {
+      const s = new Date(startDate);
+      const e = new Date(endDate);
+      if (isNaN(s.getTime()) || isNaN(e.getTime()) || e < s) {
+        return res.status(400).json({ error: "Invalid date range" });
+      }
+      let n = 0;
+      const cur = new Date(s);
+      while (cur <= e) {
+        const day = cur.getDay();
+        if (day !== 0 && day !== 6) n++;
+        cur.setDate(cur.getDate() + 1);
+      }
+      daysCount = n;
+    }
+    if (!req.user?.id) return res.status(401).json({ error: "Not authenticated" });
     try {
       const { rows } = await pool.query(
         `INSERT INTO holiday_requests (user_id, start_date, end_date, days_count, notes)
          VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-        [req.user.id, startDate, endDate, daysCount, notes]
+        [req.user.id, startDate, endDate, Number(daysCount), notes]
       );
       res.json(rows[0]);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      console.error("[hr] holiday submit failed:", e?.message);
+      res.status(500).json({ error: e?.message || "Failed to save holiday request" });
     }
   });
 

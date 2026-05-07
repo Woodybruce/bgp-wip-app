@@ -723,10 +723,42 @@ function ParentalLeaveCard({ person, isAdmin, isOwn }: { person: StaffMember; is
   );
 }
 
+// Count weekdays inclusive of both endpoints. Public holidays aren't excluded
+// — fine for our purposes since the submitter can override the figure if a
+// bank holiday falls in their range.
+function countWorkingDays(start: string, end: string): number {
+  if (!start || !end) return 0;
+  const s = new Date(start);
+  const e = new Date(end);
+  if (isNaN(s.getTime()) || isNaN(e.getTime()) || e < s) return 0;
+  let n = 0;
+  const cur = new Date(s);
+  while (cur <= e) {
+    const day = cur.getDay();
+    if (day !== 0 && day !== 6) n++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return n;
+}
+
 function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; isAdmin: boolean; currentUserId: string }) {
   const { toast } = useToast();
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ startDate: "", endDate: "", daysCount: "", notes: "" });
+  // Track whether the user has manually edited daysCount so we don't clobber
+  // their override (e.g. half-days, bank holidays in range) when they tweak
+  // the dates afterwards.
+  const [daysOverridden, setDaysOverridden] = useState(false);
+
+  // Auto-fill daysCount as soon as both dates are set. Excludes weekends.
+  useEffect(() => {
+    if (daysOverridden) return;
+    if (!form.startDate || !form.endDate) return;
+    const computed = countWorkingDays(form.startDate, form.endDate);
+    if (computed > 0 && String(computed) !== form.daysCount) {
+      setForm(f => ({ ...f, daysCount: String(computed) }));
+    }
+  }, [form.startDate, form.endDate, daysOverridden]);
 
   const isOwn = person.id === currentUserId;
 
@@ -749,6 +781,7 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
       queryClient.invalidateQueries({ queryKey: [`/api/hr/holidays`, person.id] });
       setShowNew(false);
       setForm({ startDate: "", endDate: "", daysCount: "", notes: "" });
+      setDaysOverridden(false);
       toast({ title: "Holiday request submitted" });
     },
     onError: (e: any) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
@@ -850,8 +883,11 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label>Days count</Label>
-              <Input type="number" step="0.5" placeholder="5" value={form.daysCount} onChange={e => setForm(f => ({ ...f, daysCount: e.target.value }))} />
+              <Label>
+                Days count
+                <span className="text-[10px] text-muted-foreground font-normal ml-1.5">(weekdays — auto-filled, override for half-days)</span>
+              </Label>
+              <Input type="number" step="0.5" placeholder="5" value={form.daysCount} onChange={e => { setForm(f => ({ ...f, daysCount: e.target.value })); setDaysOverridden(true); }} />
             </div>
             <div className="space-y-1.5">
               <Label>Notes (optional)</Label>
@@ -859,8 +895,8 @@ function HolidayTab({ person, isAdmin, currentUserId }: { person: StaffMember; i
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNew(false)}>Cancel</Button>
-            <Button onClick={() => createMutation.mutate()} disabled={!form.startDate || !form.endDate || !form.daysCount || createMutation.isPending}>
+            <Button variant="outline" onClick={() => { setShowNew(false); setDaysOverridden(false); }}>Cancel</Button>
+            <Button onClick={() => createMutation.mutate()} disabled={!form.startDate || !form.endDate || createMutation.isPending} data-testid="submit-holiday">
               {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}Submit
             </Button>
           </DialogFooter>
