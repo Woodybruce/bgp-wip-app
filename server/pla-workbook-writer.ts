@@ -237,3 +237,150 @@ export async function fireNetEffectiveXlsxAsync(args: {
     console.warn(`[pla-workbook-writer] async xlsx failed for matter ${args.matterId}:`, err?.message),
   );
 }
+
+// ─── Comparables Schedule ────────────────────────────────────────────────────
+
+export interface ComparablesScheduleRow {
+  date: string | null;
+  district: string | null;
+  buildingName: string;
+  unit: string | null;
+  tenant: string | null;
+  areaSqft: string | null;
+  leaseType: string | null;
+  fitOut: string | null;
+  leaseLength: string | null;
+  breaks: string | null;
+  rentPa: string | null;
+  rentPsf: string | null;
+  rentFreeMonths: string | null;
+  zoneARatePsf: string | null;
+  netEffectivePsf: string | null;
+  source: string | null;
+  weight: number;
+  comments: string | null;
+}
+
+export async function buildAndUploadComparablesScheduleXlsx(args: {
+  matterId: string;
+  workbookId: string;
+  propertyName: string;
+  matterType: string;
+  rows: ComparablesScheduleRow[];
+  generatedByName?: string;
+}): Promise<{ ok: boolean; webUrl?: string; error?: string }> {
+  try {
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "Bruce Gillingham Pollard";
+    wb.lastModifiedBy = "BGP Lease Advisory";
+    wb.created = new Date();
+    wb.modified = new Date();
+    wb.company = "Bruce Gillingham Pollard";
+
+    const ws = wb.addWorksheet("Comparables", {
+      properties: { defaultColWidth: 14, tabColor: { argb: "FF0E5BA8" } },
+      views: [{ state: "frozen", ySplit: 4 }],
+    });
+
+    // Header
+    ws.mergeCells("A1:P1");
+    ws.getCell("A1").value = `Schedule of Comparables — ${args.propertyName}`;
+    ws.getCell("A1").font = { bold: true, size: 14, color: { argb: "FF0E5BA8" } };
+    ws.getCell("A1").alignment = { vertical: "middle", horizontal: "left" };
+    ws.getRow(1).height = 24;
+
+    ws.mergeCells("A2:P2");
+    ws.getCell("A2").value = `Matter: ${humanise(args.matterType)} · Generated ${formatDateForFile(new Date())} ${args.generatedByName ? `by ${args.generatedByName}` : ""}`;
+    ws.getCell("A2").font = { italic: true, color: { argb: "FF666666" }, size: 10 };
+
+    // Column header row at row 4
+    const headers = [
+      "Date", "District", "Building", "Unit", "Tenant",
+      "Area sq ft", "Lease type", "Fit-out", "Lease length", "Breaks",
+      "Rent £ p.a.", "Rent psf", "Rent-free (mths)", "Zone A psf", "Net effective psf",
+      "Source",
+    ];
+    headers.forEach((h, i) => {
+      const cell = ws.getCell(4, i + 1);
+      cell.value = h;
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF0E5BA8" },
+      };
+      cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+      cell.border = { bottom: { style: "thin", color: { argb: "FFFFFFFF" } } };
+    });
+    ws.getRow(4).height = 32;
+
+    // Data rows from row 5 onwards. Sort by weight descending (most relevant first).
+    const sorted = [...args.rows].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+    sorted.forEach((row, i) => {
+      const r = i + 5;
+      ws.getCell(r, 1).value = row.date;
+      ws.getCell(r, 2).value = row.district;
+      ws.getCell(r, 3).value = row.buildingName;
+      ws.getCell(r, 4).value = row.unit;
+      ws.getCell(r, 5).value = row.tenant;
+      ws.getCell(r, 6).value = numOrNull(row.areaSqft);
+      ws.getCell(r, 7).value = row.leaseType;
+      ws.getCell(r, 8).value = row.fitOut;
+      ws.getCell(r, 9).value = row.leaseLength;
+      ws.getCell(r, 10).value = row.breaks;
+      ws.getCell(r, 11).value = numOrNull(row.rentPa);
+      ws.getCell(r, 12).value = numOrNull(row.rentPsf);
+      ws.getCell(r, 13).value = numOrNull(row.rentFreeMonths);
+      ws.getCell(r, 14).value = numOrNull(row.zoneARatePsf);
+      ws.getCell(r, 15).value = numOrNull(row.netEffectivePsf);
+      ws.getCell(r, 16).value = row.source;
+      // Highlight high-weight comps
+      if (row.weight && row.weight >= 1.0) {
+        for (let c = 1; c <= 16; c++) {
+          const cell = ws.getCell(r, c);
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8F0FA" } };
+        }
+      }
+      // Number formats
+      ws.getCell(r, 6).numFmt = "#,##0";
+      ws.getCell(r, 11).numFmt = `"£"#,##0`;
+      ws.getCell(r, 12).numFmt = `"£"#,##0.00`;
+      ws.getCell(r, 13).numFmt = "0";
+      ws.getCell(r, 14).numFmt = `"£"#,##0.00`;
+      ws.getCell(r, 15).numFmt = `"£"#,##0.00`;
+    });
+
+    // Column widths
+    const colWidths = [12, 14, 24, 10, 22, 11, 14, 10, 14, 10, 13, 11, 14, 13, 16, 18];
+    colWidths.forEach((w, i) => (ws.getColumn(i + 1).width = w));
+
+    const buf = await wb.xlsx.writeBuffer();
+    const buffer = Buffer.from(buf as ArrayBuffer);
+
+    const folder = `${SHAREPOINT_ROOT_FOLDER}/Lease Advisory/${cleanFolderName(args.propertyName)}/Rent Review/Comparable Evidence`;
+    const filename = `Comparables Schedule — ${cleanFilename(args.propertyName)} — ${formatDateForFile(new Date())}.xlsx`;
+
+    const upload = await uploadFileToSharePoint(
+      buffer,
+      filename,
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      folder,
+    );
+
+    await db
+      .update(plaMatterWorkbooks)
+      .set({ sharepointUrl: upload.webUrl })
+      .where(eq(plaMatterWorkbooks.id, args.workbookId));
+
+    return { ok: true, webUrl: upload.webUrl };
+  } catch (err: any) {
+    console.error(`[pla-workbook-writer] comparables xlsx for matter ${args.matterId} failed:`, err?.message || err);
+    return { ok: false, error: err?.message || "xlsx generation failed" };
+  }
+}
+
+function numOrNull(v: any): number | string | null {
+  if (v == null || v === "") return null;
+  const n = Number(String(v).replace(/[£,]/g, ""));
+  return isFinite(n) ? n : v;
+}

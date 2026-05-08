@@ -25,9 +25,9 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { db } from "./db";
-import { plaMatters, plaMatterWorkbooks, users } from "@shared/schema";
-import { eq } from "drizzle-orm";
-import { fireNetEffectiveXlsxAsync } from "./pla-workbook-writer";
+import { plaMatters, plaMatterWorkbooks, plaMatterComps, crmComps, crmProperties, users } from "@shared/schema";
+import { eq, sql } from "drizzle-orm";
+import { fireNetEffectiveXlsxAsync, buildAndUploadComparablesScheduleXlsx, type ComparablesScheduleRow } from "./pla-workbook-writer";
 
 // ─── Net Effective ───────────────────────────────────────────────────────────
 
@@ -334,4 +334,98 @@ function itzaInputFromBody(body: any): ItzaInput {
     ancillaryFactor: num(body?.ancillaryFactor),
     a3SalesApportionment: num(body?.a3SalesApportionment) || undefined,
   };
+}
+
+/**
+ * Comparables Schedule generator — pulls every linked comp from a matter,
+ * normalises them into the BGP schedule shape, persists a workbook snapshot
+ * and fires an xlsx build to land in Rent Review/Comparable Evidence/.
+ *
+ * Registered separately so it can be reused outside the main route block.
+ */
+export function registerComparablesScheduleRoute(app: Express): void {
+  app.post("/api/pla/matters/:id/valuation/comparables-schedule", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const matterId = req.params.id;
+      const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, matterId));
+      if (!matter) return res.status(404).json({ error: "matter not found" });
+
+      // Pull linked comp ids + their full crm_comps rows
+      const linked = await db.select().from(plaMatterComps).where(eq(plaMatterComps.matterId, matterId));
+      if (linked.length === 0) {
+        return res.status(400).json({ error: "no comps linked — link comps first" });
+      }
+      const compIds = linked.map((l) => l.compId);
+      const compRows = await db
+        .select()
+        .from(crmComps)
+        .where(sql`${crmComps.id} = ANY(${compIds})`);
+      const weightById = new Map(linked.map((l) => [l.compId, l.weight ?? 1.0]));
+
+      // Normalise to schedule rows
+      const rows: ComparablesScheduleRow[] = compRows.map((c) => {
+        const addr = typeof c.address === "string"
+          ? c.address
+          : (c.address as any)?.formatted || (c.address as any)?.line1 || c.name;
+        return {
+          date: c.completionDate ?? null,
+          district: (c.address as any)?.district ?? c.areaLocation ?? null,
+          buildingName: c.name || addr || "—",
+          unit: (c.address as any)?.unit ?? null,
+          tenant: c.tenant ?? null,
+          areaSqft: c.areaSqft ?? c.niaSqft ?? c.giaSqft ?? null,
+          leaseType: c.transactionType ?? c.transaction ?? null,
+          fitOut: c.fitoutContribution ? `£${c.fitoutContribution}` : null,
+          leaseLength: c.term ?? null,
+          breaks: c.breakClause ?? null,
+          rentPa: c.headlineRent ?? c.passingRentPa ?? null,
+          rentPsf: c.rentPsfNia ?? c.rentPsfOverall ?? c.overallRatePsf ?? null,
+          rentFreeMonths: c.rentFreeMonths ?? c.rentFree ?? null,
+          zoneARatePsf: c.zoneARatePsf ?? c.zoneARate ?? null,
+          netEffectivePsf: c.effectiveRatePsf ?? c.netEffectiveRent ?? null,
+          source: c.sourceEvidence ?? c.evidenceSource ?? null,
+          weight: weightById.get(c.id) ?? 1.0,
+          comments: c.comments ?? null,
+        };
+      });
+
+      const userId = (req as any).user?.id;
+      const [workbook] = await db
+        .insert(plaMatterWorkbooks)
+        .values({
+          matterId,
+          kind: "comparables_schedule",
+          generatedBy: userId,
+          inputsSnapshot: { compIds, weightById: Array.from(weightById.entries()) } as any,
+          outputSummary: { rowCount: rows.length } as any,
+        })
+        .returning();
+
+      // Fire-and-forget xlsx build
+      let generatedByName: string | undefined;
+      if (userId) {
+        const [u] = await db.select({ name: users.name }).from(users).where(eq(users.id, userId));
+        generatedByName = u?.name;
+      }
+      const [property] = await db
+        .select({ name: crmProperties.name })
+        .from(crmProperties)
+        .where(eq(crmProperties.id, matter.propertyId));
+      buildAndUploadComparablesScheduleXlsx({
+        matterId,
+        workbookId: workbook.id,
+        propertyName: property?.name || "Unknown",
+        matterType: matter.matterType,
+        rows,
+        generatedByName,
+      }).catch((err) =>
+        console.warn(`[pla-valuation] comparables xlsx async failed for matter ${matterId}:`, err?.message),
+      );
+
+      return res.json({ rowCount: rows.length, rows, workbook });
+    } catch (err: any) {
+      console.error("[pla-valuation] comparables-schedule error:", err);
+      return res.status(500).json({ error: err?.message || "comparables schedule failed" });
+    }
+  });
 }

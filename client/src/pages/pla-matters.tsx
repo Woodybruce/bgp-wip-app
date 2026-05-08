@@ -556,6 +556,27 @@ function MatterDetailView({ id }: { id: string }) {
               <Button variant="outline" size="sm" onClick={() => setDevaluationOpen(true)}>
                 <Plus className="h-3.5 w-3.5 mr-1" /> Devaluation
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={comps.length === 0}
+                title={comps.length === 0 ? "Link at least one comp first" : ""}
+                onClick={async () => {
+                  const res = await fetch(`/api/pla/matters/${id}/valuation/comparables-schedule`, {
+                    method: "POST", credentials: "include", headers: getAuthHeaders(),
+                  });
+                  if (res.ok) {
+                    const data = await res.json();
+                    toast({ title: "Schedule generated", description: `${data.rowCount} comps · uploading to SharePoint` });
+                    refetch();
+                  } else {
+                    const e = await res.json().catch(() => null);
+                    toast({ title: "Couldn't generate schedule", description: e?.error || `${res.status}`, variant: "destructive" });
+                  }
+                }}
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" /> Schedule of Comps
+              </Button>
             </div>
           </div>
           {workbooks.length === 0 ? (
@@ -636,6 +657,7 @@ function WorkbookRow({ workbook }: { workbook: { id: string; kind: string; share
     if (workbook.kind === "net_effective" && summary.netEffectivePsf != null) return `£${summary.netEffectivePsf} psf NE`;
     if (workbook.kind === "itza" && summary.itzaSqft != null) return `${summary.itzaSqft} sq ft ITZA`;
     if (workbook.kind === "devaluation" && summary.zoneARatePsfItza != null) return `£${summary.zoneARatePsfItza} psf Zone A`;
+    if (workbook.kind === "comparables_schedule" && summary.rowCount != null) return `${summary.rowCount} comps`;
     return null;
   })();
   return (
