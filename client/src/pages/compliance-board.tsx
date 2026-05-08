@@ -37,6 +37,7 @@ function extractSources(checklist: any): string[] {
   return order.filter(s => seen.has(s));
 }
 import { KycPanel } from "@/components/kyc-panel";
+import { AmlAiPanel } from "@/components/deal-aml-status";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 interface BoardRow {
@@ -627,6 +628,11 @@ const DealCard = memo(function DealCard({ row }: { row: DealRow }) {
               </div>
             );
           })}
+          {/* Deal-level AML AI augments below the per-counterparty KYC pack:
+              MLR scope, AI triage, SoF analyser, MLRO PDF, client upload links. */}
+          <div className="mt-3 pt-3 border-t">
+            <AmlAiPanel dealId={row.id} dealName={row.name} />
+          </div>
         </div>
       )}
     </div>

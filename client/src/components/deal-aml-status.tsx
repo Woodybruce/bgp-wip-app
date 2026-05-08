@@ -190,7 +190,9 @@ interface DealAmlAi {
   }> } | null;
 }
 
-function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: string }) {
+// Exported so the Compliance Board (and other KYC review surfaces) can drop
+// the AI augments alongside their existing per-counterparty KycPanel.
+export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: string }) {
   const { toast } = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
