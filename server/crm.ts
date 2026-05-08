@@ -2862,11 +2862,13 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         }
       }
 
+      // Auto-fire of AML sweep on counterparty change is handled client-side
+      // via POST /api/kyc/run-all-checks { dealId, bothSides: true } from
+      // deals.tsx inline-edit handler — see commit ee7f9e5. No server-side
+      // trigger here to avoid double-running the orchestrator on every save.
       res.json(deal);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
-
-  // Deal audit log endpoint
   app.get("/api/crm/deals/:id/audit-log", async (req, res) => {
     try {
       const logs = await db.select().from(dealAuditLog)

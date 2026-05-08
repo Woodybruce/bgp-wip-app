@@ -355,7 +355,21 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
 
           {/* Source of wealth */}
           <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">Source of wealth</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block flex items-center gap-1.5">
+              <span>Source of wealth</span>
+              <span
+                className="text-[10px] text-muted-foreground/70 cursor-help"
+                title={
+                  "Source of WEALTH = how the customer accumulated their overall wealth over time " +
+                  "(e.g. 20+ years salary, inheritance, sold business 2018, property portfolio).\n\n" +
+                  "Different from Source of FUNDS (where the money for THIS specific transaction came from — " +
+                  "salary into a Lloyds account, retained earnings, loan from X Bank).\n\n" +
+                  "MLR 2017 standard CDD only requires SoF; high-risk EDD (Reg 35) requires both."
+                }
+              >
+                — what's this?
+              </span>
+            </label>
             <Select
               value={company.aml_source_of_wealth || ""}
               onValueChange={(v) => checklistMutation.mutate({ sourceOfWealth: v })}
