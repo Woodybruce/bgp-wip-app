@@ -29,10 +29,13 @@ import {
   plaMatterComps,
   plaMatterEvents,
   plaMatterWorkbooks,
+  crmProperties,
   type InsertPlaMatter,
 } from "@shared/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { resolveProperty, type PropertyInput } from "./property-resolver";
+import { getValidMsToken } from "./microsoft";
+import { applyLeaseAdvisoryFolderTemplate } from "./pla-folder-template";
 
 const VALID_TYPES = new Set([
   "rent_review",
@@ -146,10 +149,53 @@ export function registerPlaMattersRoutes(app: Express): void {
       };
 
       const [created] = await db.insert(plaMatters).values(insert).returning();
+
+      // Fire-and-forget: apply Tom + Pete's canonical Lease Advisory folder
+      // template in SharePoint. We don't block the create response on this —
+      // the UI refetches and picks up sharepointFolderUrl when it lands.
+      const token = await getValidMsToken(req).catch(() => null);
+      if (token) {
+        const [property] = await db
+          .select({ name: crmProperties.name })
+          .from(crmProperties)
+          .where(eq(crmProperties.id, propertyId));
+        if (property?.name) {
+          // intentionally not awaited — best-effort background work
+          applyLeaseAdvisoryFolderTemplate(created.id, property.name, token).catch((err) =>
+            console.warn("[pla-matters] folder template fire-and-forget failed:", err?.message),
+          );
+        }
+      } else {
+        console.log(`[pla-matters] no MS token for matter ${created.id} — folder template skipped`);
+      }
+
       return res.json(created);
     } catch (err: any) {
       console.error("[pla-matters] create error:", err);
       return res.status(500).json({ error: err?.message || "create failed" });
+    }
+  });
+
+  // Re-apply the folder template — useful if the original creation failed
+  // (no MS token, network blip) or if Tom wants to re-create the structure
+  // after manually deleting it.
+  app.post("/api/pla/matters/:id/apply-folder-template", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id;
+      const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, id));
+      if (!matter) return res.status(404).json({ error: "matter not found" });
+      const [property] = await db
+        .select({ name: crmProperties.name })
+        .from(crmProperties)
+        .where(eq(crmProperties.id, matter.propertyId));
+      if (!property?.name) return res.status(400).json({ error: "matter property has no name" });
+      const token = await getValidMsToken(req);
+      if (!token) return res.status(401).json({ error: "Microsoft 365 not connected for this user" });
+      const result = await applyLeaseAdvisoryFolderTemplate(id, property.name, token);
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[pla-matters] apply-folder-template error:", err);
+      return res.status(500).json({ error: err?.message || "apply failed" });
     }
   });
 

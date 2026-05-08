@@ -26,12 +26,12 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Plus, Scale, Calendar as CalendarIcon, MapPin, AlertCircle, Loader2 } from "lucide-react";
+import { Plus, Scale, Calendar as CalendarIcon, MapPin, AlertCircle, Loader2, X } from "lucide-react";
 import { getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { InlineNumber, InlineDate, InlineText } from "@/components/inline-edit";
-import type { PlaMatter } from "@shared/schema";
+import type { PlaMatter, CrmComp } from "@shared/schema";
 
 const MATTER_TYPES: Array<{ value: string; label: string }> = [
   { value: "rent_review", label: "Rent Review" },
@@ -361,6 +361,8 @@ function MatterDetailView({ id }: { id: string }) {
   const { toast } = useToast();
   const [addEventOpen, setAddEventOpen] = useState(false);
 
+  const [linkCompOpen, setLinkCompOpen] = useState(false);
+
   const { data, isLoading, refetch } = useQuery<MatterDetailResponse>({
     queryKey: ["/api/pla/matters", id],
     queryFn: async () => {
@@ -432,9 +434,28 @@ function MatterDetailView({ id }: { id: string }) {
             </SelectContent>
           </Select>
           <div className="ml-auto flex items-center gap-2">
-            {matter.sharepointFolderUrl && (
+            {matter.sharepointFolderUrl ? (
               <Button variant="outline" size="sm" asChild>
                 <a href={matter.sharepointFolderUrl} target="_blank" rel="noreferrer">SharePoint folder</a>
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  const r = await fetch(`/api/pla/matters/${id}/apply-folder-template`, {
+                    method: "POST", credentials: "include", headers: getAuthHeaders(),
+                  });
+                  if (r.ok) {
+                    toast({ title: "Folder template applied" });
+                    refetch();
+                  } else {
+                    const e = await r.json().catch(() => null);
+                    toast({ title: "Couldn't apply folder template", description: e?.error || `${r.status}`, variant: "destructive" });
+                  }
+                }}
+              >
+                Apply folder template
               </Button>
             )}
             {matter.status !== "closed" && (
@@ -484,19 +505,18 @@ function MatterDetailView({ id }: { id: string }) {
         <Card><CardContent className="p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="text-sm font-medium">Linked comparables · {comps.length}</div>
-            <Button variant="outline" size="sm" disabled>Add comp (coming)</Button>
+            <Button variant="outline" size="sm" onClick={() => setLinkCompOpen(true)}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> Link comp
+            </Button>
           </div>
           {comps.length === 0 ? (
             <div className="text-sm text-muted-foreground">None linked yet — comps drive the valuation engine when it lands.</div>
           ) : (
-            <div className="space-y-1">
-              {comps.map((c) => (
-                <div key={c.compId} className="flex items-center justify-between text-sm py-1">
-                  <span className="font-mono text-xs">{c.compId.slice(0, 8)}…</span>
-                  <span className="text-muted-foreground">weight {c.weight.toFixed(2)}</span>
-                </div>
-              ))}
-            </div>
+            <CompLinkRows
+              compIds={comps.map((c) => ({ compId: c.compId, weight: c.weight }))}
+              matterId={id}
+              onChange={() => refetch()}
+            />
           )}
         </CardContent></Card>
 
@@ -559,6 +579,13 @@ function MatterDetailView({ id }: { id: string }) {
         onClose={() => setAddEventOpen(false)}
         matterId={id}
         onCreated={() => { setAddEventOpen(false); refetch(); }}
+      />
+      <CompLinkerDialog
+        open={linkCompOpen}
+        onClose={() => setLinkCompOpen(false)}
+        matterId={id}
+        existingCompIds={new Set(comps.map((c) => c.compId))}
+        onLinked={() => { setLinkCompOpen(false); refetch(); }}
       />
     </div>
   );
@@ -633,6 +660,178 @@ function EventRow({
       </span>
       <span className="ml-auto text-xs text-muted-foreground">{formatDate(event.eventDate)}</span>
     </div>
+  );
+}
+
+// ─── Comp linker ─────────────────────────────────────────────────────────────
+
+function compAddress(c: CrmComp): string {
+  if (typeof c.address === "string") return c.address;
+  if (c.address && typeof c.address === "object") {
+    const a = c.address as any;
+    return a.formatted || a.line1 || a.address || a.text || c.name || "";
+  }
+  return c.name || "—";
+}
+
+function compRentLabel(c: CrmComp): string {
+  // Show net effective if set, otherwise headline
+  const ne = c.netEffectiveRent || c.effectiveRentPa;
+  const hl = c.headlineRent || c.passingRentPa;
+  const psf = c.zoneARatePsf || c.zoneARate || c.rentPsfOverall || c.overallRatePsf;
+  const parts: string[] = [];
+  if (ne) parts.push(`NE ${ne}`);
+  else if (hl) parts.push(`HL ${hl}`);
+  if (psf) parts.push(`${psf} psf`);
+  return parts.join(" · ") || "—";
+}
+
+function CompLinkRows({
+  compIds, matterId, onChange,
+}: { compIds: Array<{ compId: string; weight: number }>; matterId: string; onChange: () => void }) {
+  // Fetch the linked comps' details so we can show address/rent/etc instead of bare IDs
+  const ids = compIds.map((c) => c.compId).join(",");
+  const { data: comps = [] } = useQuery<CrmComp[]>({
+    queryKey: ["/api/crm/comps", "for-pla", ids],
+    enabled: compIds.length > 0,
+    queryFn: async () => {
+      const res = await fetch(`/api/crm/comps`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return [];
+      const all = (await res.json()) as CrmComp[];
+      const idSet = new Set(compIds.map((c) => c.compId));
+      return all.filter((c) => idSet.has(c.id));
+    },
+  });
+  const byId = new Map(comps.map((c) => [c.id, c]));
+
+  const unlink = async (compId: string) => {
+    await fetch(`/api/pla/matters/${matterId}/comps/${compId}`, {
+      method: "DELETE", credentials: "include", headers: getAuthHeaders(),
+    });
+    onChange();
+  };
+
+  return (
+    <div className="space-y-1">
+      {compIds.map((row) => {
+        const c = byId.get(row.compId);
+        return (
+          <div key={row.compId} className="flex items-center gap-3 text-sm py-1.5 border-b border-border last:border-0">
+            <div className="flex-1 min-w-0">
+              <div className="font-medium truncate">{c ? (c.name || compAddress(c)) : row.compId.slice(0, 8) + "…"}</div>
+              {c && (
+                <div className="text-xs text-muted-foreground flex gap-3">
+                  {c.tenant && <span>{c.tenant}</span>}
+                  {c.areaSqft && <span>{c.areaSqft} sq ft</span>}
+                  <span>{compRentLabel(c)}</span>
+                  {c.completionDate && <span>{c.completionDate}</span>}
+                </div>
+              )}
+            </div>
+            <Badge variant="outline" className="text-xs">weight {row.weight.toFixed(2)}</Badge>
+            <Button variant="ghost" size="sm" onClick={() => unlink(row.compId)}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function CompLinkerDialog({
+  open, onClose, matterId, existingCompIds, onLinked,
+}: { open: boolean; onClose: () => void; matterId: string; existingCompIds: Set<string>; onLinked: () => void }) {
+  const { toast } = useToast();
+  const [search, setSearch] = useState("");
+
+  const { data: allComps = [], isLoading } = useQuery<CrmComp[]>({
+    queryKey: ["/api/crm/comps"],
+    enabled: open,
+    queryFn: async () => {
+      const res = await fetch(`/api/crm/comps`, { credentials: "include", headers: getAuthHeaders() });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const filtered = useMemo(() => {
+    const candidates = allComps.filter((c) => !existingCompIds.has(c.id));
+    if (!search.trim()) return candidates.slice(0, 50);
+    const q = search.toLowerCase();
+    return candidates
+      .filter((c) =>
+        (c.name || "").toLowerCase().includes(q) ||
+        compAddress(c).toLowerCase().includes(q) ||
+        (c.tenant || "").toLowerCase().includes(q) ||
+        (c.postcode || "").toLowerCase().includes(q),
+      )
+      .slice(0, 50);
+  }, [allComps, search, existingCompIds]);
+
+  const link = async (compId: string, weight: number) => {
+    const res = await fetch(`/api/pla/matters/${matterId}/comps`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ compId, weight }),
+    });
+    if (!res.ok) {
+      toast({ title: "Couldn't link comp", variant: "destructive" });
+      return;
+    }
+    toast({ title: "Comp linked" });
+    onLinked();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Link a comparable</DialogTitle>
+          <DialogDescription>
+            Pick from the comps schedule. Comp weighting (0–1) influences the valuation engine when it lands.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="py-2">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name, address, tenant or postcode…"
+            className="mb-3"
+          />
+          <div className="max-h-96 overflow-y-auto border rounded">
+            {isLoading ? (
+              <div className="p-6 text-center text-sm text-muted-foreground">Loading comps…</div>
+            ) : filtered.length === 0 ? (
+              <div className="p-6 text-center text-sm text-muted-foreground">
+                {search ? "No comps match." : "No comps available."}
+              </div>
+            ) : (
+              filtered.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => link(c.id, 1.0)}
+                  className="w-full text-left p-3 border-b border-border last:border-0 hover:bg-accent transition flex items-start gap-3"
+                >
+                  <Scale className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{c.name || compAddress(c)}</div>
+                    <div className="text-xs text-muted-foreground flex gap-3 mt-0.5 flex-wrap">
+                      {c.tenant && <span>{c.tenant}</span>}
+                      {c.areaSqft && <span>{c.areaSqft} sq ft</span>}
+                      <span>{compRentLabel(c)}</span>
+                      {c.completionDate && <span>{c.completionDate}</span>}
+                      {c.postcode && <span>{c.postcode}</span>}
+                    </div>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
