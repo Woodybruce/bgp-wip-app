@@ -85,7 +85,7 @@ import {
 } from "@/pages/deals";
 import { areaBasisFromAssetClass, isRetailAssetClass } from "@/lib/crm-options";
 import { AIActivityCard } from "@/components/ai-activity-card";
-// DealAmlStatusCard removed — KYC pack now consolidated on Compliance Board
+import { DealAmlStatusCard } from "@/components/deal-aml-status";
 
 // Collapsible card pattern reused across the deal page for heavy panels.
 function CollapsibleCard({
@@ -694,7 +694,13 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
       </CollapsibleCard>
 
       <CollapsibleCard open={mainSections.kyc} onToggle={() => toggleMain("kyc")} icon={ShieldCheck} title="KYC" testId="toggle-deal-kyc">
-        <DealKYCPanel deal={deal} companies={companies} />
+        <div className="space-y-3">
+          <DealKYCPanel deal={deal} companies={companies} />
+          {/* AML AI augments — MLR scope, AI triage, SoF analyser, MLRO PDF.
+              Sits below the existing per-counterparty KYC pack so MLRO has the
+              full toolset on one screen. Renders even with <2 counterparties. */}
+          <DealAmlStatusCard dealId={id} />
+        </div>
       </CollapsibleCard>
 
       {[
