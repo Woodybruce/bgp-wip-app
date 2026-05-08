@@ -772,6 +772,94 @@ router.post("/api/kyc/run-all-checks", requireAuth, async (req: Request, res: Re
 });
 
 /**
+ * POST /api/kyc/backfill-deals
+ * One-click backfill: walks every active deal that has at least one
+ * counterparty linked, and fires runAllAmlChecks for each landlord/tenant/
+ * vendor/purchaser whose company hasn't been screened in the last 30 days.
+ * Idempotent (the orchestrator already preserves existing checklist items)
+ * and budget-aware (cooldown skip).
+ *
+ * Returns a streaming-style summary so the admin can see what got picked up.
+ */
+router.post("/api/kyc/backfill-deals", requireAuth, async (req: any, res: Response) => {
+  try {
+    const userId = req.session?.userId || req.tokenUserId || null;
+    const adminCheck = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+    if (adminCheck.rows[0]?.is_admin !== true) {
+      return res.status(403).json({ error: "Admin only" });
+    }
+
+    // Pull every active deal that's got at least one counterparty company.
+    const { rows: deals } = await pool.query(
+      `SELECT id, name, landlord_id, tenant_id, vendor_id, purchaser_id
+       FROM crm_deals
+       WHERE COALESCE(status, '') NOT IN ('ARCH','WIT','LOST','DEAD')
+         AND (landlord_id IS NOT NULL OR tenant_id IS NOT NULL OR vendor_id IS NOT NULL OR purchaser_id IS NOT NULL)`,
+    );
+
+    // Build a unique set of (companyId, anyDealId) tuples — sweep each
+    // company once even if it sits across multiple deals.
+    const companyToDeal = new Map<string, string>();
+    for (const d of deals) {
+      for (const cid of [d.landlord_id, d.tenant_id, d.vendor_id, d.purchaser_id]) {
+        if (cid && !companyToDeal.has(cid)) companyToDeal.set(cid, d.id);
+      }
+    }
+
+    // 30-day cooldown — pull last update timestamps so we skip anything
+    // recently swept.
+    const recentlySwept = new Set<string>();
+    if (companyToDeal.size > 0) {
+      const ids = Array.from(companyToDeal.keys());
+      const { rows: recent } = await pool.query(
+        `SELECT id FROM crm_companies
+         WHERE id = ANY($1::varchar[])
+           AND aml_checklist IS NOT NULL
+           AND updated_at > NOW() - INTERVAL '30 days'`,
+        [ids],
+      );
+      for (const r of recent) recentlySwept.add(r.id);
+    }
+
+    const toSweep = Array.from(companyToDeal.entries()).filter(([cid]) => !recentlySwept.has(cid));
+    const swept: Array<{ companyId: string; dealId: string; risk?: string; warnings?: number }> = [];
+    const failed: Array<{ companyId: string; reason: string }> = [];
+
+    // Concurrency cap of 3 — don't blast Companies House / Comply Advantage
+    // / Perplexity all at once.
+    const concurrency = 3;
+    const queue = [...toSweep];
+    async function worker() {
+      while (queue.length) {
+        const next = queue.shift();
+        if (!next) break;
+        const [cid, did] = next;
+        try {
+          const r = await runAllAmlChecks(cid, did, userId);
+          swept.push({ companyId: cid, dealId: did, risk: r.risk?.level, warnings: r.warnings?.length || 0 });
+        } catch (e: any) {
+          failed.push({ companyId: cid, reason: e?.message?.slice(0, 200) || "unknown" });
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+    res.json({
+      dealsScanned: deals.length,
+      companiesFound: companyToDeal.size,
+      skippedRecent: recentlySwept.size,
+      swept: swept.length,
+      failed: failed.length,
+      sweptDetail: swept.slice(0, 50),
+      failures: failed.slice(0, 10),
+    });
+  } catch (err: any) {
+    console.error("[kyc-orch] backfill-deals error:", err?.message);
+    res.status(500).json({ error: err?.message || "Backfill failed" });
+  }
+});
+
+/**
  * POST /api/kyc/run-periodic-rescreen
  * Admin-triggered run of the same sweep the nightly cron does.
  * Body: { maxCompanies?: number }
