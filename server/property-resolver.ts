@@ -252,3 +252,86 @@ export async function resolveAddressToUprn(text: string): Promise<string | null>
   if (r.kind === "candidates" && r.candidates[0]?.uprn) return r.candidates[0].uprn;
   return null;
 }
+
+// ─── HTTP routes ─────────────────────────────────────────────────────────────
+
+import type { Express, Request, Response } from "express";
+import { requireAuth } from "./auth";
+
+export function registerPropertyResolverRoutes(app: Express): void {
+  /**
+   * One endpoint handles every input kind. UI sends a PropertyInput and
+   * receives either a resolved CanonicalProperty, a candidate list (when
+   * the input is ambiguous — postcode-only, vague address, multi-UPRN
+   * point), or not_found. The candidate-list response is what powers the
+   * "force a pick" picker on the Property Intelligence page.
+   */
+  app.post("/api/property-resolver/resolve", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const input = parseInput(req.body);
+      if (!input) {
+        return res.status(400).json({ error: "invalid input — expected PropertyInput discriminated union" });
+      }
+      const result = await resolveProperty(input);
+      // Stamp the resolver — useful for audit and to know who picked when
+      // a candidate was confirmed.
+      if (result.kind === "resolved" && (req as any).user?.id) {
+        // Fire-and-forget: don't block the response on the audit write.
+        db.update(crmProperties)
+          .set({ resolvedBy: (req as any).user.id, resolvedAt: new Date() })
+          .where(eq(crmProperties.id, result.property.id))
+          .catch((err) => console.warn("[property-resolver] resolvedBy update failed:", err));
+      }
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[property-resolver] resolve error:", err);
+      return res.status(500).json({ error: err?.message || "resolve failed" });
+    }
+  });
+
+  /**
+   * Confirm a candidate pick — the UI calls this after the user clicks
+   * one of the candidates returned above. Server creates/links the row
+   * and returns the canonical property. Idempotent.
+   */
+  app.post("/api/property-resolver/confirm", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const uprn = String(req.body?.uprn || "").trim();
+      if (!uprn) return res.status(400).json({ error: "uprn required" });
+      const result = await resolveProperty({ kind: "uprn", uprn });
+      if (result.kind === "resolved" && (req as any).user?.id) {
+        db.update(crmProperties)
+          .set({ resolvedBy: (req as any).user.id, resolvedAt: new Date(), resolutionStatus: "manual" })
+          .where(eq(crmProperties.id, result.property.id))
+          .catch((err) => console.warn("[property-resolver] confirm update failed:", err));
+      }
+      return res.json(result);
+    } catch (err: any) {
+      console.error("[property-resolver] confirm error:", err);
+      return res.status(500).json({ error: err?.message || "confirm failed" });
+    }
+  });
+}
+
+function parseInput(body: any): PropertyInput | null {
+  if (!body || typeof body !== "object") return null;
+  const kind = body.kind;
+  switch (kind) {
+    case "uprn":           return typeof body.uprn === "string" ? { kind, uprn: body.uprn } : null;
+    case "toid":           return typeof body.toid === "string" ? { kind, toid: body.toid } : null;
+    case "titleNumber":    return typeof body.titleNumber === "string" ? { kind, titleNumber: body.titleNumber } : null;
+    case "voaBaReference": return typeof body.reference === "string" ? { kind, reference: body.reference } : null;
+    case "internalId":     return typeof body.id === "string" ? { kind, id: body.id } : null;
+    case "postcode":       return typeof body.postcode === "string" ? { kind, postcode: body.postcode } : null;
+    case "latLng":
+      return typeof body.lat === "number" && typeof body.lng === "number"
+        ? { kind, lat: body.lat, lng: body.lng }
+        : null;
+    case "address":
+      return typeof body.text === "string"
+        ? { kind, text: body.text, postcode: typeof body.postcode === "string" ? body.postcode : undefined }
+        : null;
+    default:
+      return null;
+  }
+}
