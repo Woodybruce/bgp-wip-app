@@ -318,6 +318,17 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
+          {/* Auto-fill banner — explains that risk/PEP/sanctions are AI-assessed
+              once "Run all AML checks" is clicked (further down). Manual entry
+              should be a last-resort override, not the default workflow. */}
+          <div className="rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-900 p-2.5 text-[11px] flex items-start gap-2">
+            <span className="text-blue-600 dark:text-blue-400 shrink-0">ℹ️</span>
+            <div>
+              <span className="font-medium text-blue-900 dark:text-blue-100">Risk &amp; PEP auto-fill from the AML sweep.</span>{" "}
+              Click <span className="font-medium">Run all AML checks</span> below — Comply Advantage screens PEP, Companies House + sanctions feed the risk score per FCA guidance. The dropdowns below show whatever the sweep set; only override manually with a documented reason.
+            </div>
+          </div>
+
           {/* Risk + PEP */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -355,7 +366,21 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
 
           {/* Source of wealth */}
           <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">Source of wealth</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block flex items-center gap-1.5">
+              <span>Source of wealth</span>
+              <span
+                className="text-[10px] text-muted-foreground/70 cursor-help"
+                title={
+                  "Source of WEALTH = how the customer accumulated their overall wealth over time " +
+                  "(e.g. 20+ years salary, inheritance, sold business 2018, property portfolio).\n\n" +
+                  "Different from Source of FUNDS (where the money for THIS specific transaction came from — " +
+                  "salary into a Lloyds account, retained earnings, loan from X Bank).\n\n" +
+                  "MLR 2017 standard CDD only requires SoF; high-risk EDD (Reg 35) requires both."
+                }
+              >
+                — what's this?
+              </span>
+            </label>
             <Select
               value={company.aml_source_of_wealth || ""}
               onValueChange={(v) => checklistMutation.mutate({ sourceOfWealth: v })}
