@@ -1,9 +1,12 @@
 import { useMemo, useState, useCallback, memo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -11,7 +14,7 @@ import { ViewToggle } from "@/components/mobile-card-view";
 import {
   ShieldCheck, ShieldAlert, Clock, AlertCircle, CheckCircle2,
   Loader2, FileText, Search, Building2, Sun, Handshake, ChevronRight,
-  ChevronDown, ChevronUp, ExternalLink, Building, Database,
+  ChevronDown, ChevronUp, ExternalLink, Building, Database, Sparkles,
 } from "lucide-react";
 
 // Friendly labels + tones for automated check sources that populate aml_checklist.
@@ -214,6 +217,7 @@ interface DealBoardData {
 }
 
 export default function ComplianceBoard() {
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [riskFilter, setRiskFilter] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">("board");
@@ -224,6 +228,28 @@ export default function ComplianceBoard() {
 
   const { data: dealsData, isLoading: dealsLoading } = useQuery<DealBoardData>({
     queryKey: ["/api/kyc/board/deals"],
+  });
+
+  const backfill = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/kyc/backfill-deals", {});
+      return (await res.json()) as {
+        dealsScanned: number;
+        companiesFound: number;
+        skippedRecent: number;
+        swept: number;
+        failed: number;
+      };
+    },
+    onSuccess: (r) => {
+      toast({
+        title: "AML backfill complete",
+        description: `${r.dealsScanned} deals · ${r.swept} swept · ${r.skippedRecent} fresh · ${r.failed} errors`,
+      });
+    },
+    onError: (e: any) => {
+      toast({ title: "Backfill failed", description: e?.message || "Unknown error", variant: "destructive" });
+    },
   });
 
   const filtered = useMemo(() => {
@@ -256,6 +282,20 @@ export default function ComplianceBoard() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => backfill.mutate()}
+            disabled={backfill.isPending}
+            className="h-9 gap-1.5"
+            data-testid="button-aml-backfill"
+            title="Run AML sweeps across every active deal counterparty (skips ones swept in the last 30 days)"
+          >
+            {backfill.isPending
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <Sparkles className="w-3.5 h-3.5" />}
+            {backfill.isPending ? "Running..." : "Run AML on all deals"}
+          </Button>
           <ViewToggle view={viewMode} onToggle={setViewMode} showBoard />
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
