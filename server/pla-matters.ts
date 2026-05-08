@@ -1,0 +1,304 @@
+/**
+ * PLA Matters — Lease Advisory platform server module.
+ *
+ * Routes:
+ *   GET    /api/pla/matters                    — list (filterable by status, lead, property)
+ *   GET    /api/pla/matters/:id                — single matter + linked comps + events + workbooks
+ *   POST   /api/pla/matters                    — create (auto-applies SharePoint folder template)
+ *   PATCH  /api/pla/matters/:id                — update fields
+ *   DELETE /api/pla/matters/:id                — soft close (sets status='closed', closedAt=now)
+ *   POST   /api/pla/matters/:id/comps          — link a comp to the matter
+ *   DELETE /api/pla/matters/:id/comps/:compId  — unlink
+ *   POST   /api/pla/matters/:id/events         — add a key date / event
+ *   PATCH  /api/pla/matters/:id/events/:eventId — mark done / edit
+ *
+ * Property identity goes through resolveProperty() — callers may pass an
+ * existing property_id OR an address/postcode/uprn and the matter is anchored
+ * to whatever the resolver returns.
+ *
+ * SharePoint folder template (Tom + Pete's canonical Lease Advisory layout)
+ * is wired in a follow-up — for now we leave folderTemplateApplied=false and
+ * a worker process picks them up.
+ */
+
+import type { Express, Request, Response } from "express";
+import { requireAuth } from "./auth";
+import { db } from "./db";
+import {
+  plaMatters,
+  plaMatterComps,
+  plaMatterEvents,
+  plaMatterWorkbooks,
+  type InsertPlaMatter,
+} from "@shared/schema";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { resolveProperty, type PropertyInput } from "./property-resolver";
+
+const VALID_TYPES = new Set([
+  "rent_review",
+  "lease_renewal",
+  "dilapidations",
+  "service_charge",
+  "general",
+]);
+
+const VALID_STATUSES = new Set([
+  "open",
+  "in_negotiation",
+  "agreed",
+  "settled",
+  "closed",
+  "on_hold",
+]);
+
+export function registerPlaMattersRoutes(app: Express): void {
+  // ── List ───────────────────────────────────────────────────────────────────
+  app.get("/api/pla/matters", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const status = typeof req.query.status === "string" ? req.query.status : undefined;
+      const leadUserId = typeof req.query.lead === "string" ? req.query.lead : undefined;
+      const propertyId = typeof req.query.propertyId === "string" ? req.query.propertyId : undefined;
+      const includeClosed = req.query.includeClosed === "true";
+
+      const conds: any[] = [];
+      if (status) conds.push(eq(plaMatters.status, status));
+      if (leadUserId) conds.push(eq(plaMatters.leadUserId, leadUserId));
+      if (propertyId) conds.push(eq(plaMatters.propertyId, propertyId));
+      if (!includeClosed && !status) {
+        conds.push(sql`${plaMatters.status} NOT IN ('closed','settled')`);
+      }
+      const where = conds.length ? and(...conds) : undefined;
+
+      const rows = await db
+        .select()
+        .from(plaMatters)
+        .where(where as any)
+        .orderBy(desc(plaMatters.updatedAt))
+        .limit(500);
+      return res.json(rows);
+    } catch (err: any) {
+      console.error("[pla-matters] list error:", err);
+      return res.status(500).json({ error: err?.message || "list failed" });
+    }
+  });
+
+  // ── Get one (with linked comps, events, workbooks) ────────────────────────
+  app.get("/api/pla/matters/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id;
+      const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, id));
+      if (!matter) return res.status(404).json({ error: "matter not found" });
+      const [comps, events, workbooks] = await Promise.all([
+        db.select().from(plaMatterComps).where(eq(plaMatterComps.matterId, id)),
+        db.select().from(plaMatterEvents).where(eq(plaMatterEvents.matterId, id)).orderBy(plaMatterEvents.eventDate),
+        db.select().from(plaMatterWorkbooks).where(eq(plaMatterWorkbooks.matterId, id)).orderBy(desc(plaMatterWorkbooks.generatedAt)),
+      ]);
+      return res.json({ matter, comps, events, workbooks });
+    } catch (err: any) {
+      console.error("[pla-matters] get error:", err);
+      return res.status(500).json({ error: err?.message || "get failed" });
+    }
+  });
+
+  // ── Create — accepts either an existing propertyId or a PropertyInput ─────
+  app.post("/api/pla/matters", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const body = req.body || {};
+      // Resolve property identity. Caller can pass propertyId directly OR a
+      // PropertyInput (address/uprn/etc) — every PLA matter is anchored to a
+      // canonical property.
+      let propertyId: string | undefined = typeof body.propertyId === "string" ? body.propertyId : undefined;
+      if (!propertyId && body.propertyInput) {
+        const r = await resolveProperty(body.propertyInput as PropertyInput);
+        if (r.kind === "resolved") propertyId = r.property.id;
+        else if (r.kind === "candidates")
+          return res.status(409).json({ error: "ambiguous property — pick one", candidates: r.candidates });
+        else return res.status(404).json({ error: r.reason });
+      }
+      if (!propertyId) return res.status(400).json({ error: "propertyId or propertyInput required" });
+
+      const matterType = String(body.matterType || "general");
+      if (!VALID_TYPES.has(matterType)) {
+        return res.status(400).json({ error: `invalid matterType — must be one of ${[...VALID_TYPES].join(", ")}` });
+      }
+
+      const userId = (req as any).user?.id;
+      const insert: InsertPlaMatter = {
+        propertyId,
+        matterType,
+        clientContactId: body.clientContactId || null,
+        clientCompanyId: body.clientCompanyId || null,
+        actingFor: body.actingFor || null,
+        leadUserId: body.leadUserId || userId,
+        teamUserIds: Array.isArray(body.teamUserIds) ? body.teamUserIds : null,
+        currentRent: typeof body.currentRent === "number" ? body.currentRent : null,
+        currentRentReviewDate: body.currentRentReviewDate ? new Date(body.currentRentReviewDate) : null,
+        breakDate: body.breakDate ? new Date(body.breakDate) : null,
+        expiryDate: body.expiryDate ? new Date(body.expiryDate) : null,
+        quotingRent: typeof body.quotingRent === "number" ? body.quotingRent : null,
+        counterQuotingRent: typeof body.counterQuotingRent === "number" ? body.counterQuotingRent : null,
+        noticeServedAt: body.noticeServedAt ? new Date(body.noticeServedAt) : null,
+        noticeServedBy: body.noticeServedBy || null,
+        counterNoticeDeadline: body.counterNoticeDeadline ? new Date(body.counterNoticeDeadline) : null,
+        notes: body.notes || null,
+        tags: Array.isArray(body.tags) ? body.tags : null,
+        status: VALID_STATUSES.has(body.status) ? body.status : "open",
+      };
+
+      const [created] = await db.insert(plaMatters).values(insert).returning();
+      return res.json(created);
+    } catch (err: any) {
+      console.error("[pla-matters] create error:", err);
+      return res.status(500).json({ error: err?.message || "create failed" });
+    }
+  });
+
+  // ── Update ─────────────────────────────────────────────────────────────────
+  app.patch("/api/pla/matters/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id;
+      const body = req.body || {};
+      const updates: any = {};
+      const setIfPresent = (key: string, transform?: (v: any) => any) => {
+        if (key in body) updates[key] = transform ? transform(body[key]) : body[key];
+      };
+      const dt = (v: any) => (v ? new Date(v) : null);
+
+      setIfPresent("matterType");
+      setIfPresent("clientContactId");
+      setIfPresent("clientCompanyId");
+      setIfPresent("actingFor");
+      setIfPresent("leadUserId");
+      setIfPresent("teamUserIds");
+      setIfPresent("currentRent");
+      setIfPresent("currentRentReviewDate", dt);
+      setIfPresent("breakDate", dt);
+      setIfPresent("expiryDate", dt);
+      setIfPresent("quotingRent");
+      setIfPresent("counterQuotingRent");
+      setIfPresent("agreedRent");
+      setIfPresent("noticeServedAt", dt);
+      setIfPresent("noticeServedBy");
+      setIfPresent("counterNoticeDeadline", dt);
+      setIfPresent("counterNoticeServedAt", dt);
+      setIfPresent("notes");
+      setIfPresent("tags");
+      if (body.status && VALID_STATUSES.has(body.status)) {
+        updates.status = body.status;
+        if (body.status === "settled") updates.settledAt = new Date();
+        if (body.status === "closed") updates.closedAt = new Date();
+      }
+      updates.updatedAt = new Date();
+
+      const [updated] = await db
+        .update(plaMatters)
+        .set(updates)
+        .where(eq(plaMatters.id, id))
+        .returning();
+      if (!updated) return res.status(404).json({ error: "matter not found" });
+      return res.json(updated);
+    } catch (err: any) {
+      console.error("[pla-matters] update error:", err);
+      return res.status(500).json({ error: err?.message || "update failed" });
+    }
+  });
+
+  // ── Soft close ─────────────────────────────────────────────────────────────
+  app.delete("/api/pla/matters/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id;
+      const [closed] = await db
+        .update(plaMatters)
+        .set({ status: "closed", closedAt: new Date(), updatedAt: new Date() })
+        .where(eq(plaMatters.id, id))
+        .returning();
+      if (!closed) return res.status(404).json({ error: "matter not found" });
+      return res.json(closed);
+    } catch (err: any) {
+      console.error("[pla-matters] close error:", err);
+      return res.status(500).json({ error: err?.message || "close failed" });
+    }
+  });
+
+  // ── Linked comps ───────────────────────────────────────────────────────────
+  app.post("/api/pla/matters/:id/comps", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const matterId = req.params.id;
+      const compId = String(req.body?.compId || "");
+      if (!compId) return res.status(400).json({ error: "compId required" });
+      const weight = typeof req.body?.weight === "number" ? req.body.weight : 1.0;
+      const userId = (req as any).user?.id;
+      await db
+        .insert(plaMatterComps)
+        .values({ matterId, compId, weight, notes: req.body?.notes || null, addedBy: userId })
+        .onConflictDoNothing();
+      return res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[pla-matters] link comp error:", err);
+      return res.status(500).json({ error: err?.message || "link comp failed" });
+    }
+  });
+
+  app.delete("/api/pla/matters/:id/comps/:compId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { id, compId } = req.params;
+      await db
+        .delete(plaMatterComps)
+        .where(and(eq(plaMatterComps.matterId, id), eq(plaMatterComps.compId, compId)));
+      return res.json({ ok: true });
+    } catch (err: any) {
+      console.error("[pla-matters] unlink comp error:", err);
+      return res.status(500).json({ error: err?.message || "unlink comp failed" });
+    }
+  });
+
+  // ── Events / key dates ─────────────────────────────────────────────────────
+  app.post("/api/pla/matters/:id/events", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const matterId = req.params.id;
+      const body = req.body || {};
+      const eventKind = String(body.eventKind || "note");
+      const eventDate = body.eventDate ? new Date(body.eventDate) : new Date();
+      const userId = (req as any).user?.id;
+      const [created] = await db
+        .insert(plaMatterEvents)
+        .values({
+          matterId,
+          eventKind,
+          eventDate,
+          description: body.description || null,
+          createdBy: userId,
+        })
+        .returning();
+      return res.json(created);
+    } catch (err: any) {
+      console.error("[pla-matters] event create error:", err);
+      return res.status(500).json({ error: err?.message || "event create failed" });
+    }
+  });
+
+  app.patch("/api/pla/matters/:id/events/:eventId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { eventId } = req.params;
+      const body = req.body || {};
+      const updates: any = {};
+      if ("done" in body) {
+        updates.done = !!body.done;
+        if (body.done) updates.doneAt = new Date();
+      }
+      if ("description" in body) updates.description = body.description;
+      if ("eventDate" in body) updates.eventDate = new Date(body.eventDate);
+      if ("eventKind" in body) updates.eventKind = body.eventKind;
+      const [updated] = await db
+        .update(plaMatterEvents)
+        .set(updates)
+        .where(eq(plaMatterEvents.id, eventId))
+        .returning();
+      if (!updated) return res.status(404).json({ error: "event not found" });
+      return res.json(updated);
+    } catch (err: any) {
+      console.error("[pla-matters] event update error:", err);
+      return res.status(500).json({ error: err?.message || "event update failed" });
+    }
+  });
+}
