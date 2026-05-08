@@ -25,8 +25,9 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { db } from "./db";
-import { plaMatters, plaMatterWorkbooks } from "@shared/schema";
+import { plaMatters, plaMatterWorkbooks, users } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { fireNetEffectiveXlsxAsync } from "./pla-workbook-writer";
 
 // ─── Net Effective ───────────────────────────────────────────────────────────
 
@@ -226,6 +227,23 @@ export function registerPlaValuationRoutes(app: Express): void {
           outputSummary: output as any,
         })
         .returning();
+
+      // Fire-and-forget: build the xlsx workbook and upload to the matter's
+      // Rent Review/Valuation/ folder. UI refetches and picks up the
+      // sharepointUrl on the workbook row when it lands. Failures are logged.
+      let generatedByName: string | undefined;
+      if (userId) {
+        const [u] = await db.select({ name: users.name }).from(users).where(eq(users.id, userId));
+        generatedByName = u?.name;
+      }
+      fireNetEffectiveXlsxAsync({
+        matterId,
+        workbookId: workbook.id,
+        input,
+        output,
+        generatedByName,
+      }).catch(() => {}); // never throw from the background path
+
       return res.json({ input, output, workbook });
     } catch (err: any) {
       console.error("[pla-valuation] net-effective error:", err);
