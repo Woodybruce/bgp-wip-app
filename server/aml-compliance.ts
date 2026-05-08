@@ -1244,4 +1244,404 @@ router.get("/api/kyc/deal/:id/status", requireAuth, async (req: Request, res: Re
   }
 });
 
+// ── AI Source-of-Funds analyser ──────────────────────────────────────────────
+// Drag-drop a bank statement / payslip / tax return on a deal. Server pulls
+// text out (extractTextFromFile already handles PDFs + Excel + Word + images
+// via OCR) and hands it to Claude for structured analysis. Result lands on
+// crm_deals.aml_sof_analysis as JSONB — multiple docs accumulate.
+router.post("/api/aml/deal/:id/sof", requireAuth, kycUpload.single("file"), async (req: Request, res: Response) => {
+  const dealId = req.params.id;
+  if (!req.file) return res.status(400).json({ error: "file required" });
+  try {
+    const dealRow = await pool.query(`SELECT name, aml_source_of_funds FROM crm_deals WHERE id = $1`, [dealId]);
+    if (!dealRow.rows[0]) return res.status(404).json({ error: "deal not found" });
+    const { extractTextFromFile } = await import("./utils/file-extractor");
+    const fileText = await extractTextFromFile(req.file.path, req.file.originalname);
+    if (!fileText || fileText.length < 30) {
+      return res.status(400).json({ error: "Could not extract readable text from the file." });
+    }
+    const { analyseSourceOfFundsDoc, saveSofAnalysis } = await import("./aml-ai");
+    const declaredSource = (req.body?.declaredSource as string | undefined) || dealRow.rows[0].aml_source_of_funds;
+    const analysis = await analyseSourceOfFundsDoc({
+      dealName: dealRow.rows[0].name || "",
+      declaredSource,
+      documentText: fileText,
+      filename: req.file.originalname,
+      documentType: req.body?.documentType,
+    });
+    await saveSofAnalysis(dealId, analysis, declaredSource);
+    try { fs.unlinkSync(req.file.path); } catch {}
+    res.json(analysis);
+  } catch (err: any) {
+    console.error("[aml/sof] failed:", err?.message);
+    try { if (req.file?.path) fs.unlinkSync(req.file.path); } catch {}
+    res.status(500).json({ error: err?.message || "SoF analysis failed" });
+  }
+});
+
+router.delete("/api/aml/deal/:id/sof/:index", requireAuth, async (req: Request, res: Response) => {
+  const dealId = req.params.id;
+  const idx = parseInt(req.params.index, 10);
+  try {
+    const r = await pool.query(`SELECT aml_sof_analysis FROM crm_deals WHERE id = $1`, [dealId]);
+    const items = (r.rows[0]?.aml_sof_analysis?.items || []) as any[];
+    if (idx < 0 || idx >= items.length) return res.status(404).json({ error: "out of range" });
+    items.splice(idx, 1);
+    await pool.query(`UPDATE crm_deals SET aml_sof_analysis = $1 WHERE id = $2`, [{ items, lastRunAt: new Date().toISOString() }, dealId]);
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// ── MLR scope determination ─────────────────────────────────────────────────
+// Lettings under €10,000/month sit outside MLR 2017's letting-agent
+// definition entirely, so the MLRO can record "out of scope, proceed" with
+// a one-line legal justification. This GET returns the auto-suggested scope
+// based on deal type + value; POST persists the chosen scope + reason.
+
+router.get("/api/aml/deal/:id/mlr-scope", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const r = await pool.query(
+      `SELECT id, name, deal_type, fee, monthly_rent, annual_rent, mlr_scope, mlr_scope_reason, mlr_scope_assessed_at, mlr_scope_assessed_by FROM crm_deals WHERE id = $1`,
+      [req.params.id],
+    );
+    const d = r.rows[0];
+    if (!d) return res.status(404).json({ error: "deal not found" });
+    const { assessMlrScope } = await import("./aml-ai");
+    const suggestion = assessMlrScope({
+      dealType: d.deal_type,
+      fee: d.fee,
+      monthlyRent: d.monthly_rent,
+      annualRent: d.annual_rent,
+    });
+    res.json({
+      current: d.mlr_scope ? { scope: d.mlr_scope, reason: d.mlr_scope_reason, assessedAt: d.mlr_scope_assessed_at, assessedBy: d.mlr_scope_assessed_by } : null,
+      suggestion,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+router.post("/api/aml/deal/:id/mlr-scope", requireAuth, async (req: Request, res: Response) => {
+  const userId = (req as any).session?.userId || (req as any).tokenUserId;
+  const { scope, reason } = req.body || {};
+  if (!scope) return res.status(400).json({ error: "scope required" });
+  try {
+    await pool.query(
+      `UPDATE crm_deals SET mlr_scope = $1, mlr_scope_reason = $2, mlr_scope_assessed_at = NOW(), mlr_scope_assessed_by = $3 WHERE id = $4`,
+      [scope, reason || null, userId, req.params.id],
+    );
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// ── MLRO Report PDF ─────────────────────────────────────────────────────────
+// One-click audit-ready PDF combining everything: deal summary, MLR scope,
+// AI triage verdict, Companies House + UBO chain, sanctions/PEP, adverse
+// media, Veriff session results, SoF analysis, checklist status. The MLRO
+// drops this in the deal's SharePoint folder for the file.
+//
+// Generation logic is shared between the GET (download) and the POST/save
+// endpoint (upload to SP) so we don't render twice.
+
+async function generateMlroReportBuffer(dealId: string): Promise<{ buffer: Buffer; filename: string; deal: any } | null> {
+  const PDFDocument = (await import("pdfkit")).default;
+  const dealRow = await pool.query(
+    `SELECT d.*, c.name AS company_name, c.companies_house_number, c.aml_risk_level, c.aml_checklist
+     FROM crm_deals d
+     LEFT JOIN crm_companies c ON c.id = d.crm_company_id
+     WHERE d.id = $1`,
+    [dealId],
+  );
+  const d = dealRow.rows[0];
+  if (!d) return null;
+
+  const doc = new PDFDocument({ size: "A4", margins: { top: 60, bottom: 60, left: 50, right: 50 }, info: { Title: `MLRO Report — ${d.name}` }, bufferPages: true });
+  const chunks: Buffer[] = [];
+  doc.on("data", (c: Buffer) => chunks.push(c));
+
+  const heading = (text: string, size = 14) => { doc.moveDown(0.6); doc.fontSize(size).font("Helvetica-Bold").text(text); doc.fontSize(10).font("Helvetica"); doc.moveDown(0.2); };
+  const line = (label: string, value: any) => { doc.font("Helvetica-Bold").text(`${label}: `, { continued: true }).font("Helvetica").text(String(value ?? "—")); };
+  const para = (text: string) => doc.font("Helvetica").fontSize(10).text(text, { paragraphGap: 4 });
+
+  doc.fontSize(20).font("Helvetica-Bold").text("MLRO AML Report");
+  doc.fontSize(10).font("Helvetica").fillColor("#666").text(`Generated ${new Date().toLocaleString("en-GB")}`).fillColor("black");
+
+  heading("Deal");
+  line("Name", d.name);
+  line("Company", d.company_name);
+  line("Type", d.deal_type);
+  line("Fee", d.fee != null ? `£${Number(d.fee).toLocaleString()}` : "—");
+  line("Status", d.status);
+
+  heading("MLR 2017 scope");
+  if (d.mlr_scope) {
+    line("Scope", String(d.mlr_scope).replace(/_/g, " "));
+    line("Reason", d.mlr_scope_reason || "—");
+    if (d.mlr_scope_assessed_at) line("Assessed", new Date(d.mlr_scope_assessed_at).toLocaleString("en-GB"));
+  } else {
+    para("Scope not yet assessed — assumed in-scope under MLR 2017 standard CDD requirements.");
+  }
+
+  heading("AI triage verdict");
+  if (d.aml_ai_triage) {
+    const t = d.aml_ai_triage as any;
+    line("Verdict", String(t.verdict || "").toUpperCase());
+    para(t.recommendation || "");
+    if (Array.isArray(t.rationale) && t.rationale.length > 0) {
+      doc.font("Helvetica-Bold").text("Key signals:");
+      doc.font("Helvetica").list(t.rationale, { bulletRadius: 2, textIndent: 12 });
+    }
+    if (t.mlroAction) {
+      doc.font("Helvetica-Bold").text("MLRO action: ", { continued: true }).font("Helvetica").text(t.mlroAction);
+    }
+  } else {
+    para("AI triage not yet run.");
+  }
+
+  heading("Risk assessment");
+  line("Overall risk level", d.aml_risk_level || "Not assessed");
+  line("Companies House #", d.companies_house_number || "—");
+  line("Sanctions match", d.aml_sanctions_match ? "YES — review required" : "Clear");
+  line("PEP status", d.aml_pep_status || "—");
+
+  heading("Enhanced Due Diligence");
+  line("EDD required", d.aml_edd_required ? "YES" : "No");
+  if (d.aml_edd_required) {
+    line("Reason", d.aml_edd_reason || "—");
+    line("EDD completed", d.aml_edd_completed_at ? new Date(d.aml_edd_completed_at).toLocaleDateString("en-GB") : "Outstanding");
+    if (d.aml_edd_notes) para(d.aml_edd_notes);
+  }
+
+  heading("Source of funds");
+  line("Declared source", d.aml_source_of_funds || "—");
+  if (d.aml_sof_analysis?.items?.length > 0) {
+    d.aml_sof_analysis.items.forEach((sof: any, i: number) => {
+      doc.moveDown(0.3);
+      doc.font("Helvetica-Bold").text(`Document ${i + 1} — ${sof.documentType || "uncategorised"}`);
+      if (sof.summary) para(sof.summary);
+      if (sof.inferredAnnualIncomePence != null) line("Inferred annual income", `£${(sof.inferredAnnualIncomePence/100).toLocaleString()}`);
+      if (typeof sof.declaredSourceMatchesDocument === "boolean") line("Matches declared source", sof.declaredSourceMatchesDocument ? "Yes" : "No");
+      if (Array.isArray(sof.redFlags) && sof.redFlags.length > 0) {
+        doc.font("Helvetica-Bold").fillColor("#b91c1c").text("Red flags:");
+        doc.font("Helvetica").fillColor("black").list(sof.redFlags, { bulletRadius: 2, textIndent: 12 });
+      }
+    });
+  } else {
+    para("No source-of-funds documents analysed yet.");
+  }
+
+  heading("12-step CDD checklist");
+  const checklist = (d.aml_checklist || {}) as Record<string, any>;
+  const CHECKLIST_KEYS = ["id_verified","address_verified","ubo_identified","company_cert","sof_evidenced","sow_evidenced","sanctions_clear","pep_checked","adverse_media","edd_complete","risk_assessed","mlro_review"];
+  CHECKLIST_KEYS.forEach((k) => {
+    const item = checklist[k];
+    const tick = item?.tickedAt ? "✓" : " ";
+    doc.font("Courier").text(`[${tick}] ${k.replace(/_/g, " ")}${item?.notes ? ` — ${item.notes}` : ""}`);
+  });
+
+  doc.moveDown(1);
+  doc.font("Helvetica-Oblique").fontSize(8).fillColor("#666")
+     .text("This report compiles the AML evidence held by BGP at the time of generation. Retain in the deal file for FCA / HMRC inspection. Generated by the BGP app — not a substitute for MLRO judgement.");
+
+  doc.end();
+
+  // Wait for PDFKit to finish flushing.
+  await new Promise<void>((resolve) => doc.on("end", () => resolve()));
+  const buffer = Buffer.concat(chunks);
+  const filename = `MLRO Report - ${String(d.name).replace(/[^a-zA-Z0-9 -]/g, "")} - ${new Date().toISOString().slice(0,10)}.pdf`;
+  return { buffer, filename, deal: d };
+}
+
+router.get("/api/aml/deal/:id/mlro-report", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const result = await generateMlroReportBuffer(req.params.id);
+    if (!result) return res.status(404).json({ error: "deal not found" });
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+    res.send(result.buffer);
+  } catch (err: any) {
+    console.error("[aml/mlro-report] failed:", err?.message);
+    if (!res.headersSent) res.status(500).json({ error: err?.message || "MLRO report failed" });
+  }
+});
+
+// Save the MLRO Report PDF to the deal's SharePoint folder. Path is built
+// from the deal's team so it lands in the correct team library, under
+// "AML/MLRO Reports/<Deal Name>/". Returns the SP webUrl.
+router.post("/api/aml/deal/:id/mlro-report/save", requireAuth, async (req: any, res: Response) => {
+  try {
+    const result = await generateMlroReportBuffer(req.params.id);
+    if (!result) return res.status(404).json({ error: "deal not found" });
+    const team = result.deal.team || "Office";
+    const dealNameSafe = String(result.deal.name).replace(/[^a-zA-Z0-9 -]/g, "");
+    const folderPath = `${team}/AML/MLRO Reports/${dealNameSafe}`;
+    const { executeUploadFileToSharePoint } = await import("./utils/sharepoint-operations");
+    const upload = await executeUploadFileToSharePoint(
+      { folderPath, filename: result.filename, content: result.buffer, contentType: "application/pdf" },
+      req,
+    );
+    await pool.query(`UPDATE crm_deals SET aml_mlro_report_url = $1 WHERE id = $2`, [upload.file.webUrl, req.params.id]);
+    res.json({ ok: true, webUrl: upload.file.webUrl, filename: result.filename, sizeMB: upload.file.sizeMB });
+  } catch (err: any) {
+    console.error("[aml/mlro-report/save] failed:", err?.message);
+    res.status(500).json({ error: err?.message || "MLRO report save failed" });
+  }
+});
+
+// ── Country risk admin (read + edit) ───────────────────────────────────────
+router.get("/api/aml/country-risk", requireAuth, async (_req: Request, res: Response) => {
+  try {
+    const r = await pool.query(`SELECT country_code, country_name, risk_level, source, notes, updated_at FROM aml_country_risks ORDER BY risk_level DESC, country_name ASC`);
+    res.json(r.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+router.post("/api/aml/country-risk", requireAuth, async (req: any, res: Response) => {
+  const { countryCode, countryName, riskLevel, source, notes } = req.body || {};
+  if (!countryCode || !countryName || !riskLevel) return res.status(400).json({ error: "countryCode, countryName, riskLevel required" });
+  try {
+    await pool.query(
+      `INSERT INTO aml_country_risks (country_code, country_name, risk_level, source, notes, updated_at)
+       VALUES ($1, $2, $3, $4, $5, now())
+       ON CONFLICT (country_code) DO UPDATE SET
+         country_name = EXCLUDED.country_name,
+         risk_level = EXCLUDED.risk_level,
+         source = EXCLUDED.source,
+         notes = EXCLUDED.notes,
+         updated_at = now()`,
+      [String(countryCode).toUpperCase(), countryName, riskLevel, source || null, notes || null],
+    );
+    const { invalidateCountryRiskCache } = await import("./aml-ai");
+    invalidateCountryRiskCache();
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+router.delete("/api/aml/country-risk/:code", requireAuth, async (req: any, res: Response) => {
+  try {
+    await pool.query(`DELETE FROM aml_country_risks WHERE country_code = $1`, [String(req.params.code).toUpperCase()]);
+    const { invalidateCountryRiskCache } = await import("./aml-ai");
+    invalidateCountryRiskCache();
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// ── KYC upload portal — admin-side: issue / list / revoke tokens, send email
+router.post("/api/aml/deal/:id/upload-link", requireAuth, async (req: any, res: Response) => {
+  const userId = req.session?.userId || req.tokenUserId;
+  const { contactEmail, contactName, ttlDays, sendEmail, customNote, cc } = req.body || {};
+  try {
+    const { issueUploadToken, sendKycRequestEmail } = await import("./aml-portal");
+    const dealRow = await pool.query(`SELECT id, name FROM crm_deals WHERE id = $1`, [req.params.id]);
+    if (!dealRow.rows[0]) return res.status(404).json({ error: "deal not found" });
+    const issued = await issueUploadToken({
+      dealId: req.params.id,
+      contactEmail: contactEmail || null,
+      contactName: contactName || null,
+      createdBy: userId,
+      ttlDays,
+    });
+    let emailResult: any = null;
+    if (sendEmail && contactEmail) {
+      emailResult = await sendKycRequestEmail({
+        dealId: req.params.id,
+        dealName: dealRow.rows[0].name,
+        recipientEmail: contactEmail,
+        recipientName: contactName || "",
+        uploadUrl: issued.url,
+        expiresAt: issued.expiresAt,
+        customNote,
+        cc,
+      });
+    }
+    res.json({ token: issued.token, url: issued.url, expiresAt: issued.expiresAt, emailResult });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+router.get("/api/aml/deal/:id/upload-links", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { listUploadTokensForDeal } = await import("./aml-portal");
+    res.json(await listUploadTokensForDeal(req.params.id));
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+router.delete("/api/aml/upload-link/:token", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { revokeUploadToken } = await import("./aml-portal");
+    await revokeUploadToken(req.params.token);
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// Public-side: validate token + accept file uploads. NO auth — token is the auth.
+router.get("/api/kyc-upload/:token", async (req: Request, res: Response) => {
+  try {
+    const { validateUploadToken } = await import("./aml-portal");
+    const r = await validateUploadToken(req.params.token);
+    if (!r.valid) return res.status(410).json({ error: r.reason });
+    res.json({ deal: r.deal });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+router.post("/api/kyc-upload/:token/file", kycUpload.single("file"), async (req: Request, res: Response) => {
+  try {
+    const { validateUploadToken, recordUploadTokenUse } = await import("./aml-portal");
+    const v = await validateUploadToken(req.params.token);
+    if (!v.valid) return res.status(410).json({ error: v.reason });
+    if (!req.file) return res.status(400).json({ error: "file required" });
+
+    const dealRow = await pool.query(`SELECT name, aml_source_of_funds FROM crm_deals WHERE id = $1`, [v.deal!.id]);
+    const buffer = fs.readFileSync(req.file.path);
+    const { processInboundKycFile } = await import("./aml-portal");
+    const result = await processInboundKycFile({
+      dealId: v.deal!.id,
+      dealName: dealRow.rows[0].name,
+      declaredSource: dealRow.rows[0].aml_source_of_funds,
+      filename: req.file.originalname,
+      contentType: req.file.mimetype,
+      buffer,
+      token: req.params.token,
+    });
+    try { fs.unlinkSync(req.file.path); } catch {}
+    await recordUploadTokenUse(req.params.token);
+    res.json({ ok: true, classification: result.classification?.documentType || "uncategorised" });
+  } catch (err: any) {
+    try { if (req.file?.path) fs.unlinkSync(req.file.path); } catch {}
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+// Admin trigger for the inbound mailbox poller. Runs synchronously and
+// returns a small report. A cron will call this periodically; admins can
+// also click it from the AML hub to force a sweep.
+router.post("/api/aml/poll-mailbox", requireAuth, async (_req: Request, res: Response) => {
+  try {
+    const { pollAmlMailbox } = await import("./aml-portal");
+    const report = await pollAmlMailbox();
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message });
+  }
+});
+
+
 export default router;

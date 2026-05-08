@@ -96,6 +96,9 @@ const KEYS: KeyDef[] = [
 
   // Payments
   { name: "STRIPE_SECRET_KEY", label: "Stripe", group: "Payments" },
+  { name: "STRIPE_SECRET_KEY", label: "Stripe Secret Key", group: "Payments" },
+  { name: "STRIPE_PUBLISHABLE_KEY", label: "Stripe Publishable Key", group: "Payments" },
+  { name: "STRIPE_WEBHOOK_SECRET", label: "Stripe Webhook Secret", group: "Payments" },
 
   // Storage
   { name: "DROPBOX_APP_KEY", label: "Dropbox App Key", group: "Storage" },

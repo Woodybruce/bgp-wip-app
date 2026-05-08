@@ -175,6 +175,35 @@ export async function xeroApi(session: any, path: string, options: RequestInit =
   return res.json();
 }
 
+// Xero Payroll UK API — separate base URL from accounting. Uses the same
+// session token but the OAuth scope must include payroll.payslip and
+// payroll.employees. PDF endpoints return binary, hence the optional
+// `binary` flag that returns a Buffer instead of JSON.
+const XERO_PAYROLL_API_BASE = "https://api.xero.com/payroll.xro/2.0";
+export async function xeroPayrollApi(session: any, path: string, opts: { binary?: boolean } = {}): Promise<any> {
+  const token = await refreshXeroToken(session);
+  if (!token) throw new Error("Not connected to Xero");
+
+  let tenantId = session.xeroTokens?.tenantId;
+  if (!tenantId) throw new Error("No Xero tenant — reconnect to Xero with payroll scopes");
+
+  const res = await fetch(`${XERO_PAYROLL_API_BASE}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Xero-Tenant-Id": tenantId,
+      Accept: opts.binary ? "application/pdf" : "application/json",
+    },
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    if (res.status === 403) {
+      throw new Error(`Xero Payroll scope not granted (403). Reconnect to Xero — admin → /api/xero/connect — to authorise payroll.payslip + payroll.employees.`);
+    }
+    throw new Error(`Xero Payroll error ${res.status}: ${txt}`);
+  }
+  return opts.binary ? Buffer.from(await res.arrayBuffer()) : res.json();
+}
+
 export function setupXeroRoutes(app: Express) {
   app.get("/api/xero/status", requireAuth, async (req: Request, res: Response) => {
     const clientId = process.env.XERO_CLIENT_ID;
@@ -185,6 +214,33 @@ export function setupXeroRoutes(app: Express) {
       configured,
       connected: !!token,
       tenantId: req.session.xeroTokens?.tenantId || null,
+    });
+  });
+
+  // Direct-redirect connect endpoint — use this from anchors/links rather than
+  // the JSON-returning /api/xero/auth so the browser handles the redirect chain
+  // without any client-side fetch logic that can silently fail.
+  app.get("/api/xero/connect", requireAuth, async (req: Request, res: Response) => {
+    const clientId = process.env.XERO_CLIENT_ID;
+    if (!clientId) {
+      return res.redirect("/?xero_error=" + encodeURIComponent("XERO_CLIENT_ID not set in environment"));
+    }
+
+    const state = crypto.randomBytes(32).toString("hex");
+    req.session.xeroOAuthState = state;
+    const redirectUri = getRedirectUri(req);
+
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings payroll.payslip payroll.employees",
+      state,
+    });
+
+    req.session.save((err) => {
+      if (err) console.error("[Xero] Session save error in /connect:", err);
+      res.redirect(`${XERO_AUTH_URL}?${params.toString()}`);
     });
   });
 
@@ -204,7 +260,7 @@ export function setupXeroRoutes(app: Express) {
       response_type: "code",
       client_id: clientId,
       redirect_uri: redirectUri,
-      scope: "openid profile email offline_access accounting.invoices accounting.contacts",
+      scope: "openid profile email offline_access accounting.invoices accounting.contacts accounting.settings payroll.payslip payroll.employees",
       state,
     });
 
@@ -292,6 +348,15 @@ export function setupXeroRoutes(app: Express) {
 
       delete req.session.xeroOAuthState;
 
+      // Capture system-wide Xero session so background jobs (Stripe webhooks,
+      // expense auto-post) can call Xero without an HTTP request context.
+      try {
+        const { captureSystemXeroSession } = await import("./xero-system-session");
+        await captureSystemXeroSession(req.session);
+      } catch (sysErr: any) {
+        console.warn("[Xero] System session capture failed:", sysErr?.message);
+      }
+
       req.session.save((saveErr) => {
         if (saveErr) console.error("[Xero] Session save error after callback:", saveErr);
         if (!req.session.xeroTokens?.tenantId) {
@@ -309,6 +374,17 @@ export function setupXeroRoutes(app: Express) {
   app.post("/api/xero/disconnect", requireAuth, async (req: Request, res: Response) => {
     req.session.xeroTokens = undefined;
     res.json({ success: true });
+  });
+
+  app.post("/api/xero/initialise-chart", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { initialiseXeroChart } = await import("./xero-chart-setup");
+      const result = await initialiseXeroChart(req.session);
+      res.json({ success: true, ...result });
+    } catch (e: any) {
+      console.error("[xero-chart] init failed:", e);
+      res.status(500).json({ success: false, error: e?.message || String(e) });
+    }
   });
 
   app.get("/api/xero/contacts", requireAuth, async (req: Request, res: Response) => {
@@ -353,11 +429,9 @@ export function setupXeroRoutes(app: Express) {
       const [deal] = await db.select().from(crmDeals).where(eq(crmDeals.id, dealId));
       if (!deal) return res.status(404).json({ message: "Deal not found" });
 
-      const KYC_GATE_DATE = new Date("2025-05-01");
-      if (new Date() >= KYC_GATE_DATE && !deal.kycApproved) {
-        return res.status(400).json({ message: "KYC must be approved before creating an invoice. Please approve KYC on the deal first." });
-      }
-
+      // KYC approval is no longer a hard pre-condition for drafting an invoice —
+      // surveyors need to be able to draft early. AML status is still tracked
+      // on the deal and visible on the KYC board for follow-up.
       let invoicingEntityName: string | undefined;
       const entityId = invoicingEntityId !== undefined ? (invoicingEntityId || null) : (deal.invoicingEntityId || null);
       if (entityId) {
@@ -423,6 +497,7 @@ export function setupXeroRoutes(app: Express) {
 
       const xeroInvoice = xeroRes.Invoices?.[0];
 
+      const firstLine = xeroInvoice?.LineItems?.[0];
       const [record] = await db.insert(xeroInvoices).values({
         dealId,
         xeroInvoiceId: xeroInvoice?.InvoiceID,
@@ -437,8 +512,13 @@ export function setupXeroRoutes(app: Express) {
         dueDate: dueDate || null,
         sentToXero: true,
         xeroUrl: xeroInvoice?.InvoiceID ? `https://go.xero.com/AccountsReceivable/View.aspx?InvoiceID=${xeroInvoice.InvoiceID}` : null,
+        // Cache so the edit form can pre-fill without an extra round-trip.
+        contactName: xeroInvoice?.Contact?.Name ?? resolvedContactName ?? null,
+        lineDescription: firstLine?.Description ?? lineItems?.[0]?.Description ?? null,
+        lineAmount: firstLine?.LineAmount ?? lineItems?.[0]?.UnitAmount ?? null,
+        poNumber: poNumber || null,
         syncedAt: new Date(),
-      }).returning();
+      } as any).returning();
 
       res.json({
         success: true,
@@ -493,13 +573,20 @@ export function setupXeroRoutes(app: Express) {
       const xeroInvoice = xeroRes.Invoices?.[0];
 
       if (xeroInvoice) {
+        // Pull the full content so edits made directly in Xero round-trip back.
+        const firstLine = xeroInvoice.LineItems?.[0];
         await db.update(xeroInvoices).set({
           status: xeroInvoice.Status,
           totalAmount: xeroInvoice.Total,
           invoiceNumber: xeroInvoice.InvoiceNumber,
+          reference: xeroInvoice.Reference ?? invoice.reference,
+          dueDate: xeroInvoice.DueDate ? String(xeroInvoice.DueDate).slice(0, 10) : invoice.dueDate,
+          contactName: xeroInvoice.Contact?.Name ?? invoice.contactName,
+          lineDescription: firstLine?.Description ?? invoice.lineDescription,
+          lineAmount: firstLine?.LineAmount ?? invoice.lineAmount,
           syncedAt: new Date(),
           updatedAt: new Date(),
-        }).where(eq(xeroInvoices.id, req.params.id));
+        } as any).where(eq(xeroInvoices.id, req.params.id));
 
         if (invoice.dealId) {
           await autoPromoteDealToInvoiced(invoice.dealId, xeroInvoice.Status);
@@ -509,6 +596,70 @@ export function setupXeroRoutes(app: Express) {
       res.json({ success: true, status: xeroInvoice?.Status });
     } catch (err: any) {
       console.error("[Xero] Sync invoice error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Edit an existing draft and push the changes back to Xero. Only DRAFT
+  // (or SUBMITTED) invoices are editable per Xero's rules — AUTHORISED+
+  // invoices are locked once issued.
+  app.put("/api/xero/invoices/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const [invoice] = await db.select().from(xeroInvoices).where(eq(xeroInvoices.id, req.params.id));
+      if (!invoice) return res.status(404).json({ message: "Invoice record not found" });
+      if (!invoice.xeroInvoiceId) return res.status(400).json({ message: "Invoice not yet sent to Xero" });
+      if (invoice.status && !["DRAFT", "SUBMITTED"].includes(invoice.status)) {
+        return res.status(409).json({ message: `Invoice is ${invoice.status} in Xero — only drafts can be edited` });
+      }
+
+      const { description, body, amount, reference, dueDate, contactName, poNumber } = req.body || {};
+      const headline = (description || "").trim() || "Professional fees";
+      const lineDescription = (body || "").trim() ? `${headline}\n\n${(body || "").trim()}` : headline;
+      const lineAmount = typeof amount === "number" ? amount : (invoice.lineAmount ?? invoice.totalAmount ?? 0);
+
+      const payload: any = {
+        InvoiceID: invoice.xeroInvoiceId,
+        Type: "ACCREC",
+        LineAmountTypes: "Exclusive",
+        LineItems: [{
+          Description: lineDescription,
+          Quantity: 1,
+          UnitAmount: lineAmount,
+          AccountCode: "200",
+          TaxType: "OUTPUT2",
+        }],
+      };
+      if (reference !== undefined) payload.Reference = reference;
+      if (dueDate) payload.DueDate = dueDate;
+      if (poNumber !== undefined) payload.PONumber = poNumber;
+      if (contactName) payload.Contact = { Name: contactName };
+
+      // Xero accepts updates by POSTing to /Invoices with the InvoiceID set.
+      const xeroRes = await xeroApi(req.session, "/Invoices", {
+        method: "POST",
+        body: JSON.stringify({ Invoices: [payload] }),
+      });
+      const updated = xeroRes.Invoices?.[0];
+      if (!updated) return res.status(502).json({ message: "Xero didn't return an updated invoice" });
+
+      const firstLine = updated.LineItems?.[0];
+      await db.update(xeroInvoices).set({
+        status: updated.Status,
+        totalAmount: updated.Total,
+        invoiceNumber: updated.InvoiceNumber,
+        reference: updated.Reference ?? reference ?? invoice.reference,
+        dueDate: updated.DueDate ? String(updated.DueDate).slice(0, 10) : (dueDate || invoice.dueDate),
+        contactName: updated.Contact?.Name ?? contactName ?? invoice.contactName,
+        lineDescription: firstLine?.Description ?? lineDescription,
+        lineAmount: firstLine?.LineAmount ?? lineAmount,
+        poNumber: poNumber ?? invoice.poNumber,
+        syncedAt: new Date(),
+        updatedAt: new Date(),
+      } as any).where(eq(xeroInvoices.id, req.params.id));
+
+      res.json({ success: true, status: updated.Status });
+    } catch (err: any) {
+      console.error("[Xero] Edit invoice error:", err);
       res.status(500).json({ message: err.message });
     }
   });

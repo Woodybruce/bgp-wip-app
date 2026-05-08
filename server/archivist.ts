@@ -761,11 +761,12 @@ export async function runArchivistCrawl() {
       dropbox: { indexed: 0, skipped: 0, errors: 0 },
     });
 
-    crawlProgress = "Starting Dropbox crawl...";
-    crawlStartTime = Date.now();
-    activeCrawlTimeout = DBX_TIMEOUT_MS;
-    const dbxResult = await crawlDropbox();
-    console.log(`[archivist] Dropbox: indexed=${dbxResult.indexed}, skipped=${dbxResult.skipped}, errors=${dbxResult.errors}`);
+    // Dropbox indexing disabled — SharePoint coverage is sufficient and the
+    // Dropbox archive is full of corrupted PDFs/scanned documents that burn
+    // through the Azure OCR free-tier quota. Re-enable by removing this
+    // short-circuit if needed.
+    const dbxResult = { indexed: 0, skipped: 0, errors: 0 };
+    console.log("[archivist] Dropbox crawl skipped (disabled)");
     await setSetting("archivist_last_run", {
       timestamp: new Date().toISOString(),
       durationSeconds: Math.round((Date.now() - overallStart) / 1000),

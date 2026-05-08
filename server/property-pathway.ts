@@ -4050,9 +4050,14 @@ async function runStage7(runId: string, _req: Request): Promise<void> {
   if (!run) throw new Error("Run not found");
 
   const sr = (run.stageResults as StageResults) || {};
+  // Prefer the user-agreed plan; fall back to the AI draft so auto-pilot runs
+  // can produce a model end-to-end without manual sign-off. The model is
+  // marked autoPiloted so the UI can prompt the user to agree before locking.
   const agreed = sr.stage6?.agreed;
-  if (!agreed) {
-    throw new Error("Cannot generate Excel model — business plan has not been agreed yet. Agree Stage 6 first.");
+  const plan = agreed || sr.stage6?.draft;
+  const autoPiloted = !agreed && !!plan;
+  if (!plan) {
+    throw new Error("Cannot generate Excel model — Stage 6 hasn't produced a business plan yet.");
   }
 
   await setStageStatus(runId, "stage7", "running");
@@ -4118,8 +4123,8 @@ async function runStage7(runId: string, _req: Request): Promise<void> {
             currentRentSource = "ai";
           }
         }
-        if (!currentRentPA && typeof agreed.targetPurchasePrice === "number" && typeof agreed.targetNIY === "number") {
-          currentRentPA = Math.round(agreed.targetPurchasePrice * agreed.targetNIY);
+        if (!currentRentPA && typeof plan.targetPurchasePrice === "number" && typeof plan.targetNIY === "number") {
+          currentRentPA = Math.round(plan.targetPurchasePrice * plan.targetNIY);
           currentRentSource = "plan";
         }
 
@@ -4131,12 +4136,13 @@ async function runStage7(runId: string, _req: Request): Promise<void> {
         const seed = await eb.createPathwayModelRun({
           runId,
           address: run.address,
-          plan: agreed,
+          plan,
           totalAreaSqFt,
           currentRentPA,
         });
         patch.modelRunId = seed.modelRunId;
         patch.modelVersionId = seed.modelVersionId;
+        if (autoPiloted) (patch as any).autoPiloted = true;
         patch.modelRunName = seed.modelRunName;
         patch.modelVersionLabel = seed.modelVersionLabel;
         patch.workbookUrl = seed.workbookUrl;
@@ -4271,10 +4277,12 @@ async function runStage9(runId: string, req: Request): Promise<void> {
   await setStageStatus(runId, "stage9", "running");
 
   try {
-    const wbMod = await import("./why-buy-renderer").catch(() => null as any);
+    let wbModErr: string | undefined;
+    const wbMod = await import("./why-buy-renderer").catch((e: any) => { wbModErr = e?.message; return null as any; });
     if (!wbMod?.renderWhyBuy) {
+      console.error("[pathway stage9] why-buy-renderer load failed:", wbModErr);
       await setStageStatus(runId, "stage9", "failed", {
-        stage9: { documentUrl: undefined },
+        stage9: { reason: wbModErr || "Why Buy renderer could not be loaded" } as any,
       });
       return;
     }
@@ -4288,8 +4296,10 @@ async function runStage9(runId: string, req: Request): Promise<void> {
     });
     await updateRun(runId, { whyBuyDocumentUrl: result.sharepointUrl || result.documentUrl, completedAt: new Date() });
   } catch (err: any) {
-    console.error("[pathway stage9] failed:", err?.message);
-    await setStageStatus(runId, "stage9", "failed");
+    console.error("[pathway stage9] failed:", err?.message, err?.stack?.split("\n")[1]);
+    await setStageStatus(runId, "stage9", "failed", {
+      stage9: { reason: err?.message || "Why Buy PDF generation failed" } as any,
+    });
   }
 }
 

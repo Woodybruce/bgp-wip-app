@@ -19,8 +19,15 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
+} from "@/components/ui/command";
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Plus, Building2, MapPin, User, Phone, Mail, Calendar,
   AlertTriangle, ChevronRight, Trash2, Pencil, Search, ExternalLink,
+  ChevronsUpDown, Check,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -96,7 +103,7 @@ const LOCATIONS = [
   "Paris", "Milan", "Amsterdam", "New York", "Los Angeles", "National",
 ];
 
-const BGP_TEAM = ["Harry Elliot", "Rupert", "Lucy", "Sohail", "Woody", "Tom Cater"];
+const BGP_TEAM = ["Harry Elliot", "Evie North", "Charlotte Roberts", "Carly Cunliffe"];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -299,6 +306,94 @@ function SearchCard({
   );
 }
 
+// ─── Brand combobox ───────────────────────────────────────────────────────────
+// Typeahead over CRM companies with an inline "Create new brand" option when
+// nothing matches. Brand is the anchor for every tenant rep search — without
+// a CRM company link there's no brand profile, no news feed, no deal history.
+
+function BrandCombobox({
+  companies, value, valueName, onSelect,
+}: {
+  companies: CrmCompany[];
+  value: string;
+  valueName: string;
+  onSelect: (id: string, name: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return companies.slice(0, 50);
+    return companies.filter(c => c.name.toLowerCase().includes(q)).slice(0, 50);
+  }, [companies, query]);
+
+  const exactMatch = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? companies.some(c => c.name.toLowerCase() === q) : false;
+  }, [companies, query]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="flex h-8 w-full items-center justify-between rounded-md border border-input bg-background px-3 text-sm ring-offset-background hover:bg-muted/40"
+        >
+          <span className={valueName ? "" : "text-muted-foreground"}>
+            {valueName || "Pick or create a brand…"}
+          </span>
+          <ChevronsUpDown className="h-3.5 w-3.5 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="p-0 w-[400px]" align="start">
+        <Command shouldFilter={false}>
+          <CommandInput
+            placeholder="Search brands…"
+            value={query}
+            onValueChange={setQuery}
+          />
+          <CommandList>
+            <CommandEmpty>No brands match.</CommandEmpty>
+            {query.trim() && !exactMatch && (
+              <CommandGroup heading="Create">
+                <CommandItem
+                  onSelect={() => {
+                    onSelect("", query.trim());
+                    setOpen(false);
+                    setQuery("");
+                  }}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Create new brand "{query.trim()}"
+                </CommandItem>
+              </CommandGroup>
+            )}
+            {filtered.length > 0 && (
+              <CommandGroup heading="CRM brands">
+                {filtered.map(c => (
+                  <CommandItem
+                    key={c.id}
+                    onSelect={() => {
+                      onSelect(c.id, c.name);
+                      setOpen(false);
+                      setQuery("");
+                    }}
+                  >
+                    <Check className={`mr-2 h-4 w-4 ${value === c.id ? "opacity-100" : "opacity-0"}`} />
+                    {c.name}
+                    {c.domain && <span className="ml-2 text-xs text-muted-foreground">{c.domain}</span>}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // ─── Multi-select helper ──────────────────────────────────────────────────────
 
 function MultiSelect({
@@ -348,8 +443,8 @@ export default function TenantRep() {
   const searches: TenantRepSearch[] = Array.isArray(rawSearches) ? rawSearches : [];
 
   const { data: companiesRes } = useQuery<{ data: CrmCompany[] } | CrmCompany[]>({
-    queryKey: ["/api/crm/companies"],
-    queryFn: () => fetch("/api/crm/companies?limit=500", { headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` } }).then(r => r.json()),
+    queryKey: ["/api/crm/companies", "all"],
+    queryFn: () => fetch("/api/crm/companies?limit=10000", { headers: { Authorization: `Bearer ${localStorage.getItem("bgp_token")}` } }).then(r => r.json()),
   });
   const companies: CrmCompany[] = Array.isArray(companiesRes) ? companiesRes : (companiesRes as any)?.data ?? [];
 
@@ -363,6 +458,16 @@ export default function TenantRep() {
     mutationFn: (data: Partial<FormState>) => apiRequest("POST", "/api/tenant-rep/searches", data),
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/tenant-rep/searches"] }); setDialogOpen(false); toast({ title: "Search added" }); },
     onError: () => toast({ title: "Failed to save", variant: "destructive" }),
+  });
+
+  // Used when the brand combobox creates a new CRM company on the fly.
+  // Returns the new company so the search can be linked to it before save.
+  const createCompanyMutation = useMutation<CrmCompany, Error, string>({
+    mutationFn: async (name: string) => {
+      const res = await apiRequest("POST", "/api/crm/companies", { name });
+      return (await res.json()) as CrmCompany;
+    },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/crm/companies", "all"] }); },
   });
 
   const updateMutation = useMutation({
@@ -404,10 +509,30 @@ export default function TenantRep() {
     setDialogOpen(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    let companyId = form.companyId;
+    let clientName = form.clientName.trim();
+
+    // Brand is the source of truth: every search must link to a CRM company.
+    // If the user typed a new brand, create it first and link the new id.
+    if (!companyId) {
+      if (!clientName) {
+        toast({ title: "Pick a brand or type a new one", variant: "destructive" });
+        return;
+      }
+      try {
+        const created = await createCompanyMutation.mutateAsync(clientName);
+        companyId = created.id;
+        clientName = created.name;
+      } catch (e: any) {
+        toast({ title: "Couldn't create brand", description: e?.message, variant: "destructive" });
+        return;
+      }
+    }
+
     const payload = {
-      clientName: form.clientName,
-      companyId: form.companyId || null,
+      clientName,
+      companyId,
       contactId: form.contactId || null,
       dealId: form.dealId || null,
       status: form.status,
@@ -555,34 +680,21 @@ export default function TenantRep() {
           </DialogHeader>
 
           <div className="space-y-4 py-2">
-            {/* Client / Brand */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1.5 block">Client Name *</Label>
-                <Input
-                  placeholder="e.g. Lululemon"
-                  value={form.clientName}
-                  onChange={e => setForm(f => ({ ...f, clientName: e.target.value }))}
-                  className="h-8 text-sm"
-                />
-              </div>
-              <div>
-                <Label className="text-xs mb-1.5 block">CRM Brand (optional)</Label>
-                <Select
-                  value={form.companyId || "__none__"}
-                  onValueChange={v => setForm(f => ({ ...f, companyId: v === "__none__" ? "" : v, contactId: "" }))}
-                >
-                  <SelectTrigger className="h-8 text-sm">
-                    <SelectValue placeholder="Link to CRM company..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— None —</SelectItem>
-                    {companies.slice(0, 200).map(c => (
-                      <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            {/* Brand — single source of truth: every search must link to a
+                CRM company. Type to search, or create a new brand inline. */}
+            <div>
+              <Label className="text-xs mb-1.5 block">Brand *</Label>
+              <BrandCombobox
+                companies={companies}
+                value={form.companyId}
+                valueName={form.clientName}
+                onSelect={(id, name) => setForm(f => ({ ...f, companyId: id, clientName: name, contactId: "" }))}
+              />
+              {!form.companyId && form.clientName && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Will create a new CRM brand "{form.clientName}" on save.
+                </p>
+              )}
             </div>
 
             {/* Status + Assigned */}

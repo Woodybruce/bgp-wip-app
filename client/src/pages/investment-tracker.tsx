@@ -1517,7 +1517,7 @@ export default function InvestmentTrackerPage() {
           )}
         </div>
       ) : (
-      <Card className="flex-1 min-h-0 overflow-hidden">
+      <Card className="flex-1 min-h-0 overflow-hidden flex flex-col">
         <ScrollableTable minWidth={2100}>
             <Table className="table-fixed">
               <TableHeader>

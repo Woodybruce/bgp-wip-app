@@ -57,8 +57,8 @@ export function ScrollableTable({ children, minWidth }: ScrollableTableProps) {
   }, [minWidth]);
 
   return (
-    <div className="flex flex-col">
-      <div ref={tableScrollRef} className="table-scroll-container">
+    <div className="flex flex-col flex-1 min-h-0">
+      <div ref={tableScrollRef} className="table-scroll-container flex-1 min-h-0">
         <div ref={innerRef} style={{ minWidth }}>
           {children}
         </div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { useLocation, Link } from "wouter";
 import DOMPurify from "dompurify";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -216,10 +216,12 @@ export default function PropertyPathway() {
     try {
       const currentRun = selectedRun?.id === runId ? selectedRun : null;
       const targetStage = stage ?? (currentRun?.currentStage ?? 1);
-      // Auto-chain through stages 1-5; stop at Stage 6 (Business Plan) since
-      // that's where the user's commercial input is needed. Re-runs of
-      // stages 6+ stay single-stage.
-      const autoChainTo = targetStage < 6 ? 6 : undefined;
+      // Auto-chain end-to-end through to Excel Model. Stage 6 (Business Plan)
+      // auto-drafts; Stage 7 (Excel Model) now uses that draft if no agreed
+      // version exists, marking the model as autoPiloted so the user can
+      // review and lock before exporting Why Buy. Stops before Stage 8
+      // (Image Studio) so the user sees the model and can decide.
+      const autoChainTo = targetStage < 8 ? 8 : undefined;
       const res = await fetch(`/api/property-pathway/${runId}/advance`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -252,7 +254,7 @@ export default function PropertyPathway() {
         const stageKey = `stage${targetStageResp}`;
 
         if (chainEnd) {
-          toast({ title: `Running stages ${targetStageResp}–${chainEnd - 1}`, description: "Each stage flips to completed as it finishes. Stops before Business Plan." });
+          toast({ title: `Running stages ${targetStageResp}–${chainEnd - 1}`, description: "End-to-end through to Excel Model. Stage 6 auto-drafts the business plan; the model is generated from that draft (review + agree to lock before Why Buy)." });
         } else {
           toast({ title: `Stage ${targetStageResp} running in background`, description: "Usually 30–90 seconds. Watching for completion…" });
         }
@@ -447,6 +449,7 @@ export default function PropertyPathway() {
 }
 
 function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, onDelete }: { run: PathwayRun; onBack: () => void; onAdvance: (stage?: number) => void; advancing: boolean; onReload: () => void; onSetTenant: (name: string) => void; onDelete: () => void }) {
+  const [, navigate] = useLocation();
   const s1 = run.stageResults?.stage1;
   const s2 = run.stageResults?.stage2;
   const s4 = run.stageResults?.stage4;
@@ -476,6 +479,25 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
           {run.postcode && <p className="text-sm text-muted-foreground">{run.postcode}</p>}
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const params = new URLSearchParams({
+                create: "1",
+                source: "Pathway",
+                sourceUrl: `/property-pathway?runId=${run.id}`,
+                sourceTitle: `Pathway: ${run.address}`,
+                name: run.address,
+              });
+              navigate(`/comps?${params.toString()}`);
+            }}
+            title="Create a leasing comp pre-filled with this pathway as the source"
+            data-testid="button-create-comp-from-pathway"
+          >
+            <Plus className="w-4 h-4 mr-1" />
+            Create comp
+          </Button>
           <Button variant="ghost" size="sm" onClick={() => onAdvance(1)} disabled={advancing} title="Re-scan for new emails, attachments, SharePoint items, and regenerate the briefing">
             {advancing ? <Clock className="w-4 h-4 mr-1 animate-spin" /> : <Search className="w-4 h-4 mr-1" />}
             Refresh
@@ -2442,8 +2464,134 @@ function WhyBuyCard({ runId, stage9, onReload }: { runId: string; stage9: any; o
             )}
           </div>
         )}
+
+        <ClaudeDesignPane runId={runId} />
       </CardContent>
     </Card>
+  );
+}
+
+// ── Claude Design — in-app deck designer for Why Buy ─────────────────────────
+function ClaudeDesignPane({ runId }: { runId: string }) {
+  const { toast } = useToast();
+  const [versions, setVersions] = useState<Array<{ id: string; version: number; prompt: string | null; created_at: string }>>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [iteratePrompt, setIteratePrompt] = useState("");
+  const [busy, setBusy] = useState<"generate" | "iterate" | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/why-buy-design`);
+      if (!r.ok) return;
+      const data = await r.json();
+      setVersions(data);
+      if (!activeId && data.length > 0) setActiveId(data[0].id);
+    } catch { /* ignore */ }
+  }, [runId, activeId]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const generate = async () => {
+    setBusy("generate");
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/why-buy-design/generate`, { method: "POST", headers: { "Content-Type": "application/json" } });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      await reload();
+      setActiveId(d.id);
+      toast({ title: "Deck generated", description: `Version ${d.version} ready` });
+    } catch (e: any) {
+      toast({ title: "Generation failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  const iterate = async () => {
+    if (!iteratePrompt.trim()) return;
+    setBusy("iterate");
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/why-buy-design/iterate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: iteratePrompt, baseVersionId: activeId }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      await reload();
+      setActiveId(d.id);
+      setIteratePrompt("");
+      toast({ title: "Updated", description: `Version ${d.version}` });
+    } catch (e: any) {
+      toast({ title: "Iteration failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  return (
+    <div className="mt-4 rounded-lg border bg-gradient-to-br from-violet-50/40 to-amber-50/40 dark:from-violet-950/20 dark:to-amber-950/20 p-3 space-y-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-violet-600" />
+          <span className="text-sm font-semibold">Claude design — in-app deck</span>
+          <span className="text-[10px] text-muted-foreground">live HTML preview · iterate by prompt · print to PDF</span>
+        </div>
+        <div className="flex items-center gap-1">
+          {versions.length > 1 && (
+            <select
+              value={activeId || ""}
+              onChange={(e) => setActiveId(e.target.value)}
+              className="h-7 text-xs rounded-md border bg-background px-2"
+            >
+              {versions.map(v => (
+                <option key={v.id} value={v.id}>v{v.version} · {v.prompt ? v.prompt.slice(0, 30) : "initial"}</option>
+              ))}
+            </select>
+          )}
+          <Button size="sm" variant="outline" onClick={generate} disabled={busy !== null} className="h-7 text-xs">
+            {busy === "generate" ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+            {versions.length === 0 ? "Generate" : "Re-generate"}
+          </Button>
+          {activeId && (
+            <a href={`/api/property-pathway/${runId}/why-buy-design/${activeId}/render`} target="_blank" rel="noreferrer">
+              <Button size="sm" variant="ghost" className="h-7 text-xs">
+                <ExternalLink className="w-3.5 h-3.5 mr-1" /> Open / print
+              </Button>
+            </a>
+          )}
+        </div>
+      </div>
+
+      {versions.length === 0 ? (
+        <div className="text-xs text-muted-foreground italic text-center py-6">
+          Click <strong>Generate</strong> — Claude builds a Why Buy deck from this pathway run's brief (property, tenant, model outputs, comps). You can then iterate by typing things like "make slide 2 punchier" or "swap the colour scheme".
+        </div>
+      ) : (
+        <div className="rounded-md overflow-hidden border bg-white" style={{ height: 600 }}>
+          {activeId && (
+            <iframe
+              src={`/api/property-pathway/${runId}/why-buy-design/${activeId}/render`}
+              className="w-full h-full border-0"
+              title="Why Buy preview"
+              sandbox="allow-same-origin"
+            />
+          )}
+        </div>
+      )}
+
+      {versions.length > 0 && (
+        <form onSubmit={(e) => { e.preventDefault(); iterate(); }} className="flex gap-2">
+          <input
+            value={iteratePrompt}
+            onChange={(e) => setIteratePrompt(e.target.value)}
+            placeholder="Iterate — e.g. 'add a comp slide', 'use BGP teal', 'shorten the risks section'"
+            className="flex-1 h-8 rounded-md border bg-background px-2.5 text-sm"
+            disabled={busy !== null}
+          />
+          <Button size="sm" type="submit" disabled={busy !== null || !iteratePrompt.trim()} className="h-8">
+            {busy === "iterate" ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
+            Iterate
+          </Button>
+        </form>
+      )}
+    </div>
   );
 }
 

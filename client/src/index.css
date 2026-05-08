@@ -96,7 +96,9 @@ body {
 .table-scroll-container {
   overflow-x: auto;
   overflow-y: auto;
-  max-height: calc(100vh - 280px);
+  max-height: calc(100vh - 200px);
+  flex: 1 1 0%;
+  min-height: 0;
 }
 .table-scroll-container::-webkit-scrollbar {
   width: 8px;
@@ -112,7 +114,12 @@ body {
 .table-scroll-container::-webkit-scrollbar-thumb:hover {
   background: rgba(0,0,0,0.35);
 }
-.table-scroll-container thead th {
+/* Excel-style sticky table headers across the app. Applies to every
+   <thead><th> by default — sticky uses whatever scroll context is
+   nearest (a .table-scroll-container if wrapped, otherwise the page
+   outlet). Background is set so rows scrolling underneath don't bleed
+   through. */
+thead th {
   position: sticky;
   top: 0;
   z-index: 10;

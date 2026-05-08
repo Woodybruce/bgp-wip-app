@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { PageLayout } from "@/components/page-layout";
+import { ImportAnythingDialog } from "@/components/import-anything-dialog";
 import {
   Table,
   TableBody,
@@ -89,6 +90,7 @@ import {
   Bookmark,
   BookmarkCheck,
   Link2,
+  Upload,
 } from "lucide-react";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { PropertyLeasingSchedule } from "@/pages/leasing-schedule";
@@ -4114,6 +4116,7 @@ function PropertiesList({
   const { toast } = useToast();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [activeView, setActiveView] = useState<"list" | "landlordHealth">("list");
   const [viewMode, setViewMode] = useState<"table" | "card" | "board">(
     typeof window !== "undefined" && window.innerWidth < 768 ? "card" : "table"
@@ -4443,6 +4446,7 @@ function PropertiesList({
     <PageLayout
       title="Properties"
       icon={Building2}
+      fullHeight
       subtitle={`${items.length} properties in the CRM${isLandsecView ? " · Landsec portfolio" : teamFilter ? ` · Filtered by ${teamFilter} team` : ""}`}
       actions={
         <>
@@ -4454,6 +4458,14 @@ function PropertiesList({
           >
             <ShieldAlert className="w-4 h-4 mr-2" />
             Landlord Health
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setShowImport(true)}
+            data-testid="button-import-properties"
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Import
           </Button>
           <Button
             onClick={() => setCreateDialogOpen(true)}
@@ -5000,7 +5012,12 @@ function PropertiesList({
         </AlertDialogContent>
       </AlertDialog>
       </>}
-
+      <ImportAnythingDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        defaultTarget="crm_properties"
+        onCommitted={() => queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] })}
+      />
     </PageLayout>
   );
 }

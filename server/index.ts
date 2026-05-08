@@ -129,6 +129,320 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS knowledge_base_category_idx ON knowledge_base (category)`,
     `CREATE INDEX IF NOT EXISTS chat_messages_content_search_idx ON chat_messages USING GIN (to_tsvector('english', coalesce(content,'')))`,
     `CREATE TABLE IF NOT EXISTS user_tasks (id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(), user_id VARCHAR NOT NULL, title TEXT NOT NULL, description TEXT, due_date TIMESTAMP, priority TEXT DEFAULT 'medium', status TEXT DEFAULT 'todo', category TEXT, linked_deal_id VARCHAR, linked_property_id VARCHAR, linked_contact_id VARCHAR, sort_order INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT now(), completed_at TIMESTAMP)`,
+    // Watch House awards — admin-issued or auto-detected recognitions.
+    // emoji + reason are free-form; kind = 'coffee'|'beer'|'lunch'|'star'|'auto'
+    // surfaces on the dashboard. issued_by_user_id is null for auto awards.
+    `CREATE TABLE IF NOT EXISTS staff_awards (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      issued_by_user_id VARCHAR,
+      kind TEXT NOT NULL DEFAULT 'star',
+      emoji TEXT,
+      reason TEXT,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS staff_awards_recent_idx ON staff_awards (created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS staff_awards_user_idx ON staff_awards (user_id, created_at DESC)`,
+    // Phone / laptop contract tracker — when's my upgrade.
+    `CREATE TABLE IF NOT EXISTS staff_kit (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      kind TEXT NOT NULL,
+      device TEXT,
+      contract_start DATE,
+      contract_end DATE,
+      provider TEXT,
+      monthly_cost_pence INTEGER,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS staff_kit_user_idx ON staff_kit (user_id)`,
+    // Benefits catalogue — admin-edited cards (cycle to work, nursery, EAP…).
+    `CREATE TABLE IF NOT EXISTS benefits (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      slug TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      category TEXT,
+      description TEXT,
+      eligibility TEXT,
+      enrolment_url TEXT,
+      contact TEXT,
+      provider TEXT,
+      icon TEXT,
+      sort_order INTEGER DEFAULT 0,
+      is_active BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    // Per-user enrolment status across benefits.
+    `CREATE TABLE IF NOT EXISTS staff_benefit_enrolments (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      benefit_slug TEXT NOT NULL,
+      status TEXT DEFAULT 'enrolled',
+      enrolled_at TIMESTAMP DEFAULT now(),
+      notes TEXT,
+      UNIQUE (user_id, benefit_slug)
+    )`,
+    // Policy-level fields per benefit so HR can track renewals, premiums and
+    // member-service URLs (Aviva Health, life insurance, dental etc).
+    // No API integration with these providers — these are the practical fields
+    // BGP needs to know when to re-quote and where to send staff to log in.
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS policy_number TEXT`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS policy_holder TEXT`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS renewal_date DATE`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS annual_premium_pence BIGINT`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS group_size INTEGER`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS provider_portal_url TEXT`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS member_login_instructions TEXT`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS broker_contact TEXT`,
+    `ALTER TABLE benefits ADD COLUMN IF NOT EXISTS renewal_task_created_for_year INTEGER`,
+    // Per-staff member numbers for member-services portals (Royal London
+    // pension number, Aviva DigiCare member ID, etc).
+    `CREATE TABLE IF NOT EXISTS staff_benefit_credentials (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      benefit_slug TEXT NOT NULL,
+      member_number TEXT,
+      member_email TEXT,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now(),
+      UNIQUE (user_id, benefit_slug)
+    )`,
+    // RICS competencies + BGP career levels for the career roadmap module.
+    `CREATE TABLE IF NOT EXISTS staff_competencies (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      competency TEXT NOT NULL,
+      level INTEGER NOT NULL DEFAULT 0,
+      evidence TEXT,
+      reviewed_at TIMESTAMP,
+      reviewed_by_user_id VARCHAR,
+      updated_at TIMESTAMP DEFAULT now(),
+      UNIQUE (user_id, competency)
+    )`,
+    // Performance reviews — schema mirrors the actual BGP review template
+    // shown in Tom Cater / Pete Wood / Alex Todd / Will Penfold / Lucy
+    // Gardiner / Luke Donohoe's May 2026 reviews. Goals live in a separate
+    // table so they can be linked to user_tasks for follow-through.
+    `CREATE TABLE IF NOT EXISTS staff_reviews (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      period TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'annual',
+      review_date DATE,
+      current_salary_pence BIGINT,
+      last_increase_date DATE,
+      last_bonus_note TEXT,
+      fees_target_pence BIGINT,
+      fees_achieved_pence BIGINT,
+      pipeline_under_offer_pence BIGINT,
+      pipeline_negotiating_pence BIGINT,
+      expected_invoice_next_year_pence BIGINT,
+      achievements TEXT,
+      development_areas TEXT,
+      goals TEXT,
+      referrals TEXT,
+      marketing_pr TEXT,
+      salary_expectation_pence BIGINT,
+      feedback TEXT,
+      bgp_can_help TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      submitted_at TIMESTAMP,
+      reviewed_by_user_id VARCHAR,
+      reviewed_at TIMESTAMP,
+      ai_summary TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now(),
+      UNIQUE (user_id, period)
+    )`,
+    `CREATE INDEX IF NOT EXISTS staff_reviews_user_idx ON staff_reviews (user_id, review_date DESC)`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS manager_comments TEXT`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS employee_acknowledgement TEXT`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS reactions JSONB DEFAULT '[]'::jsonb`,
+    `ALTER TABLE staff_reviews ADD COLUMN IF NOT EXISTS source_file_url TEXT`,
+    `CREATE TABLE IF NOT EXISTS staff_review_goals (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      review_id VARCHAR,
+      user_id VARCHAR NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      metric_type TEXT,
+      target_value REAL,
+      current_value REAL,
+      due_date DATE,
+      status TEXT DEFAULT 'active',
+      linked_task_id VARCHAR,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS staff_review_goals_user_idx ON staff_review_goals (user_id, status)`,
+    // Parental leave — maternity / paternity / shared parental / adoption.
+    // Distinct from holiday_requests because it's a pre-planned multi-month
+    // absence with KIT days, statutory pay milestones and a return date that
+    // may shift. Status: planned → on_leave → returned (or extended/cancelled).
+    `CREATE TABLE IF NOT EXISTS staff_parental_leave (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      kind TEXT NOT NULL,
+      start_date DATE NOT NULL,
+      planned_end_date DATE,
+      actual_return_date DATE,
+      kit_days_used INTEGER DEFAULT 0,
+      kit_days_allowance INTEGER DEFAULT 10,
+      status TEXT DEFAULT 'planned',
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS staff_parental_leave_user_idx ON staff_parental_leave (user_id, start_date DESC)`,
+    `CREATE INDEX IF NOT EXISTS staff_parental_leave_active_idx ON staff_parental_leave (status, start_date)`,
+    // Why Buy — Claude Design variant. Each row is an iteration of the deck.
+    // Stored as self-contained HTML (inline CSS, no external assets) so we
+    // can preview in a sandboxed iframe and print/export later.
+    `CREATE TABLE IF NOT EXISTS why_buy_designs (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      run_id VARCHAR NOT NULL,
+      version INTEGER NOT NULL,
+      prompt TEXT,
+      html TEXT NOT NULL,
+      brief_snapshot JSONB,
+      created_by_user_id VARCHAR,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS why_buy_designs_run_idx ON why_buy_designs (run_id, version DESC)`,
+    // Pension contributions — Royal London CSV import per pay run.
+    `CREATE TABLE IF NOT EXISTS pension_contributions (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR,
+      employee_match_name TEXT,
+      pay_period TEXT,
+      pay_date DATE,
+      employee_pence BIGINT DEFAULT 0,
+      employer_pence BIGINT DEFAULT 0,
+      pensionable_pay_pence BIGINT,
+      provider TEXT DEFAULT 'royal-london',
+      source_file TEXT,
+      imported_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS pension_contributions_user_idx ON pension_contributions (user_id, pay_date DESC)`,
+    // Marketing events / activity calendar — Emmy's strategy in structured form.
+    `CREATE TABLE IF NOT EXISTS marketing_events (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      title TEXT NOT NULL,
+      kind TEXT,
+      category TEXT,
+      starts_at TIMESTAMP,
+      ends_at TIMESTAMP,
+      location TEXT,
+      description TEXT,
+      lead_user_id VARCHAR,
+      attendee_user_ids TEXT[],
+      attendee_contact_ids TEXT[],
+      external_url TEXT,
+      outlook_event_id TEXT,
+      status TEXT DEFAULT 'planned',
+      created_by_user_id VARCHAR,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS marketing_events_starts_idx ON marketing_events (starts_at)`,
+    // Marketing campaigns — ongoing programmes from Emmy's strategy
+    `CREATE TABLE IF NOT EXISTS marketing_campaigns (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      name TEXT NOT NULL,
+      team TEXT,
+      activity_type TEXT,
+      cadence TEXT,
+      lead_user_id VARCHAR,
+      objective TEXT,
+      proof_points TEXT,
+      status TEXT DEFAULT 'active',
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    // Press / media contacts list (separate from CRM contacts so journalists
+    // don't pollute the agent/landlord tables)
+    `CREATE TABLE IF NOT EXISTS marketing_press_contacts (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      name TEXT NOT NULL,
+      title TEXT,
+      publication TEXT,
+      email TEXT,
+      phone TEXT,
+      bgp_lead_user_id VARCHAR,
+      last_contact_at TIMESTAMP,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    // Promotion pitches — what a surveyor presents to ED/board to make their case.
+    `CREATE TABLE IF NOT EXISTS staff_promotion_pitches (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      from_level TEXT,
+      to_level TEXT,
+      pitch_date DATE,
+      status TEXT DEFAULT 'draft',
+      narrative TEXT,
+      key_wins TEXT,
+      financials TEXT,
+      development TEXT,
+      ask TEXT,
+      ai_draft TEXT,
+      decision TEXT,
+      decision_notes TEXT,
+      decided_at TIMESTAMP,
+      decided_by_user_id VARCHAR,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS staff_promotion_pitches_user_idx ON staff_promotion_pitches (user_id, pitch_date DESC)`,
+    // In-app file storage — replaces external SharePoint URLs for HR documents,
+    // contracts, payslips, review attachments, headshots, etc. Binary lives in
+    // file_blobs (split out so list/select queries stay light).
+    `CREATE TABLE IF NOT EXISTS uploaded_files (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      owner_user_id VARCHAR,
+      uploaded_by_user_id VARCHAR,
+      kind TEXT NOT NULL,
+      name TEXT NOT NULL,
+      mime_type TEXT,
+      size_bytes BIGINT,
+      linked_review_id VARCHAR,
+      linked_deal_id VARCHAR,
+      visibility TEXT DEFAULT 'admin-self',
+      review_year INTEGER,
+      notes TEXT,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS uploaded_files_owner_idx ON uploaded_files (owner_user_id, kind, created_at DESC)`,
+    `CREATE TABLE IF NOT EXISTS file_blobs (
+      file_id VARCHAR PRIMARY KEY,
+      data BYTEA NOT NULL
+    )`,
+    // Per-team AI summaries — refreshed daily, fed to dashboard org cards.
+    `CREATE TABLE IF NOT EXISTS team_ai_summaries (
+      team TEXT PRIMARY KEY,
+      summary TEXT,
+      generated_at TIMESTAMP DEFAULT now()
+    )`,
+    // Brucey Bonuses — points awarded by AI (or admin) for good work, with a
+    // weekly winner. event_kind is the action that earned them so we can de-dup.
+    `CREATE TABLE IF NOT EXISTS brucey_points (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      points INTEGER NOT NULL,
+      reason TEXT,
+      event_kind TEXT,
+      event_ref TEXT,
+      awarded_by TEXT NOT NULL DEFAULT 'ai',
+      awarded_by_user_id VARCHAR,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS brucey_points_user_idx ON brucey_points (user_id, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS brucey_points_recent_idx ON brucey_points (created_at DESC)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS brucey_points_dedup_idx ON brucey_points (event_kind, event_ref) WHERE event_ref IS NOT NULL`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_onenote_page_id TEXT`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_onenote_page_url TEXT`,
     `ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS linked_evernote_note_id TEXT`,
@@ -179,6 +493,18 @@ import { pool } from "./db";
     `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_approved_by TEXT`,
     `ALTER TABLE aml_settings ADD COLUMN IF NOT EXISTS firm_risk_assessment_next_review_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_approved_by TEXT`,
+    // Cached HTML render of each policy doc — DOCX files get converted via
+    // mammoth on first access so the policy list shows them inline with BGP
+    // styling instead of a "click to download" prompt.
+    `ALTER TABLE policy_files ADD COLUMN IF NOT EXISTS rendered_html TEXT`,
+    `ALTER TABLE policy_files ADD COLUMN IF NOT EXISTS rendered_at TIMESTAMP`,
+    // Cache the line-level invoice content so we can round-trip with Xero —
+    // edits on either side stay in sync. Stored on the xero_invoices row
+    // alongside the existing status/total/number.
+    `ALTER TABLE xero_invoices ADD COLUMN IF NOT EXISTS line_description TEXT`,
+    `ALTER TABLE xero_invoices ADD COLUMN IF NOT EXISTS line_amount REAL`,
+    `ALTER TABLE xero_invoices ADD COLUMN IF NOT EXISTS contact_name TEXT`,
+    `ALTER TABLE xero_invoices ADD COLUMN IF NOT EXISTS po_number TEXT`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS kyc_expires_at TIMESTAMP`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_checklist JSONB`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS aml_risk_level TEXT`,
@@ -400,6 +726,8 @@ import { pool } from "./db";
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS preferred_asset_classes TEXT[]`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS preferred_geographies TEXT[]`,
     `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS lending_appetite_notes TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS x_handle TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_interaction TEXT`,
     `CREATE INDEX IF NOT EXISTS idx_crm_companies_lending_active ON crm_companies(lending_active) WHERE lending_active = true`,
 
     // ── Landlord debt / capital event log — distress + activity stream ──
@@ -489,6 +817,16 @@ import { pool } from "./db";
       created_at TIMESTAMP DEFAULT now(),
       updated_at TIMESTAMP DEFAULT now()
     )`,
+    // Earlier WIP imports stamped every NEG deal (across all teams) into this
+    // table with status 'In Progress' — a column the kanban doesn't render,
+    // so the board read "112 active searches" but every column was empty.
+    // Drop the rows that don't belong to a Tenant Rep deal, then relabel the
+    // genuine ones so they appear in the Brief Received column.
+    `DELETE FROM tenant_rep_searches s
+       USING crm_deals d
+      WHERE s.deal_id = d.id
+        AND LOWER(COALESCE(d.team, '')) <> 'tenant rep'`,
+    `UPDATE tenant_rep_searches SET status = 'Brief Received' WHERE status = 'In Progress'`,
 
     // Document Studio run history — created lazily here because it's not in
     // the Drizzle schema/migrations (storage.ts uses raw SQL for this table).
@@ -602,6 +940,250 @@ import { pool } from "./db";
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS unit_id VARCHAR`,
     `CREATE INDEX IF NOT EXISTS idx_available_units_unit_id ON available_units(unit_id)`,
     `CREATE INDEX IF NOT EXISTS idx_crm_deals_unit_id ON crm_deals(unit_id)`,
+
+    // ── Stripe Issuing card programme + expense tracking ──────────────────
+    `CREATE TABLE IF NOT EXISTS stripe_cardholders (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id TEXT NOT NULL UNIQUE,
+      user_name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT,
+      stripe_cardholder_id TEXT NOT NULL UNIQUE,
+      monthly_limit INTEGER NOT NULL DEFAULT 100000,
+      daily_limit INTEGER NOT NULL DEFAULT 25000,
+      single_tx_limit INTEGER NOT NULL DEFAULT 25000,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS stripe_cards (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      cardholder_id VARCHAR NOT NULL REFERENCES stripe_cardholders(id),
+      stripe_card_id TEXT NOT NULL UNIQUE,
+      last4 TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMP DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS expenses (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      cardholder_id VARCHAR REFERENCES stripe_cardholders(id),
+      stripe_transaction_id TEXT UNIQUE,
+      type TEXT NOT NULL DEFAULT 'card',
+      status TEXT NOT NULL DEFAULT 'pending_receipt',
+      merchant TEXT,
+      amount_pence INTEGER NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'gbp',
+      transaction_date TIMESTAMP,
+      category TEXT,
+      xero_account_code TEXT,
+      xero_tracking_property TEXT,
+      xero_tracking_person TEXT,
+      xero_expense_id TEXT,
+      receipt_url TEXT,
+      receipt_filename TEXT,
+      business_purpose TEXT,
+      attendees TEXT,
+      calendar_event_id TEXT,
+      is_personal BOOLEAN DEFAULT FALSE,
+      is_client_rechargeable BOOLEAN DEFAULT FALSE,
+      related_deal_id VARCHAR,
+      mileage_miles REAL,
+      notes TEXT,
+      created_by TEXT,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS expense_receipts (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      expense_id VARCHAR NOT NULL REFERENCES expenses(id),
+      storage_key TEXT NOT NULL,
+      mime_type TEXT,
+      filename TEXT,
+      uploaded_at TIMESTAMP DEFAULT NOW()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_expenses_cardholder ON expenses(cardholder_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_expenses_status ON expenses(status)`,
+    `CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(transaction_date DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_expense_receipts_expense ON expense_receipts(expense_id)`,
+
+    // ── HR Module ────────────────────────────────────────────────────────────
+    `CREATE TABLE IF NOT EXISTS staff_profiles (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL UNIQUE,
+      title TEXT,
+      start_date TEXT,
+      end_date TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      salary_current INTEGER,
+      manager_id VARCHAR,
+      department TEXT,
+      rics_pathway TEXT,
+      apc_status TEXT,
+      apc_assessment_date TEXT,
+      education TEXT,
+      bio TEXT,
+      emergency_contact_name TEXT,
+      emergency_contact_phone TEXT,
+      emergency_contact_relation TEXT,
+      holiday_entitlement INTEGER DEFAULT 25,
+      pension_opt_in BOOLEAN DEFAULT true,
+      pension_rate REAL DEFAULT 5.0,
+      contract_sharepoint_url TEXT,
+      passport_sharepoint_url TEXT,
+      linkedin_url TEXT,
+      xero_tracking_name TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE TABLE IF NOT EXISTS salary_history (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      salary_pence INTEGER NOT NULL,
+      effective_date TEXT NOT NULL,
+      reason TEXT,
+      notes TEXT,
+      recorded_by VARCHAR,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE TABLE IF NOT EXISTS holiday_requests (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      days_count REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      notes TEXT,
+      approved_by VARCHAR,
+      approved_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE TABLE IF NOT EXISTS hr_documents (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR,
+      doc_type TEXT NOT NULL,
+      name TEXT NOT NULL,
+      sharepoint_url TEXT,
+      sharepoint_drive_id TEXT,
+      sharepoint_item_id TEXT,
+      review_year INTEGER,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_staff_profiles_user ON staff_profiles(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_salary_history_user ON salary_history(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_holiday_requests_user ON holiday_requests(user_id)`,
+    `CREATE INDEX IF NOT EXISTS idx_hr_documents_user ON hr_documents(user_id)`,
+
+    // ── Brand profile — ensure crm_companies has all columns the API selects ─
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS bgp_contact_crm TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS bgp_contact_user_ids TEXT[]`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS last_enriched_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_analysis TEXT`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS brand_analysis_at TIMESTAMP`,
+    `ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS concept_status TEXT`,
+    // ── Org chart enhancement (May 2026) ─────────────────────────────────────
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS dob TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS address TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS wfh_days TEXT[]`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS employment_type TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS cv_sharepoint_url TEXT`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS board_member BOOLEAN DEFAULT false`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS management_team BOOLEAN DEFAULT false`,
+    `ALTER TABLE staff_profiles ADD COLUMN IF NOT EXISTS rics_number TEXT`,
+    `CREATE TABLE IF NOT EXISTS bonus_history (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL,
+      amount_pence INTEGER NOT NULL,
+      effective_date TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'bonus',
+      reason TEXT,
+      notes TEXT,
+      recorded_by VARCHAR,
+      created_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS bonus_history_user_idx ON bonus_history(user_id, effective_date DESC)`,
+    // Dedupe key for the salary importer — one bonus per (user, date, amount, kind)
+    // means re-running the spreadsheet import is idempotent.
+    `CREATE UNIQUE INDEX IF NOT EXISTS bonus_history_dedup_idx ON bonus_history(user_id, effective_date, amount_pence, kind)`,
+    // AML AI augments + MLR scope determination
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sof_analysis JSONB`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_ai_triage JSONB`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_reason TEXT`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_assessed_at TIMESTAMP`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_assessed_by TEXT`,
+    // Country risk lookup. Drives the auto-EDD trigger when a UBO chain
+    // touches a high-risk jurisdiction. Seeded with the FATF + UK Treasury
+    // lists at boot; admin can edit via /api/aml/country-risk.
+    `CREATE TABLE IF NOT EXISTS aml_country_risks (
+      country_code VARCHAR(2) PRIMARY KEY,
+      country_name TEXT NOT NULL,
+      risk_level TEXT NOT NULL CHECK (risk_level IN ('low','medium','high')),
+      source TEXT,
+      notes TEXT,
+      updated_at TIMESTAMP DEFAULT now()
+    )`,
+    // Seed (idempotent — only inserts if missing). Sources: FATF "high-risk
+    // jurisdictions subject to a call for action" + UK HMT consolidated list
+    // + EU AMLD list, conservative as of May 2026. Admin can override.
+    `INSERT INTO aml_country_risks (country_code, country_name, risk_level, source, notes) VALUES
+      ('IR', 'Iran', 'high', 'FATF', 'Call for action — FATF black list'),
+      ('KP', 'North Korea', 'high', 'FATF', 'Call for action — FATF black list'),
+      ('MM', 'Myanmar', 'high', 'FATF', 'FATF grey list'),
+      ('AF', 'Afghanistan', 'high', 'UK HMT', 'Sanctions in force'),
+      ('BY', 'Belarus', 'high', 'UK HMT', 'Sanctions in force'),
+      ('RU', 'Russia', 'high', 'UK HMT', 'Sanctions in force'),
+      ('SY', 'Syria', 'high', 'UK HMT', 'Sanctions in force'),
+      ('YE', 'Yemen', 'high', 'UK HMT', 'Conflict-related sanctions'),
+      ('CU', 'Cuba', 'high', 'UK HMT', 'Sanctions in force'),
+      ('VE', 'Venezuela', 'high', 'UK HMT', 'Targeted sanctions'),
+      ('LY', 'Libya', 'high', 'UK HMT', 'Sanctions in force'),
+      ('SO', 'Somalia', 'high', 'UK HMT', 'Sanctions in force'),
+      ('SD', 'Sudan', 'high', 'UK HMT', 'Sanctions in force'),
+      ('SS', 'South Sudan', 'high', 'UK HMT', 'Sanctions in force'),
+      ('IQ', 'Iraq', 'high', 'UK HMT', 'Sanctions in force'),
+      ('LB', 'Lebanon', 'high', 'EU AMLD', 'EU AMLD high-risk third country'),
+      ('ML', 'Mali', 'high', 'EU AMLD', 'EU AMLD high-risk third country'),
+      ('VU', 'Vanuatu', 'medium', 'FATF', 'FATF grey list'),
+      ('PK', 'Pakistan', 'medium', 'FATF', 'FATF grey list'),
+      ('BG', 'Bulgaria', 'medium', 'FATF', 'FATF grey list'),
+      ('PA', 'Panama', 'medium', 'FATF', 'FATF grey list'),
+      ('PH', 'Philippines', 'medium', 'FATF', 'FATF grey list')
+    ON CONFLICT (country_code) DO NOTHING`,
+    // Tokenised KYC upload portal — tenant/customer self-service.
+    `CREATE TABLE IF NOT EXISTS kyc_upload_tokens (
+      token VARCHAR(64) PRIMARY KEY,
+      deal_id VARCHAR NOT NULL,
+      contact_email TEXT,
+      contact_name TEXT,
+      created_at TIMESTAMP DEFAULT now(),
+      created_by VARCHAR,
+      expires_at TIMESTAMP NOT NULL,
+      revoked_at TIMESTAMP,
+      last_used_at TIMESTAMP,
+      use_count INTEGER DEFAULT 0
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_upload_tokens_deal ON kyc_upload_tokens(deal_id)`,
+    `CREATE TABLE IF NOT EXISTS kyc_upload_files (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      token VARCHAR(64) NOT NULL,
+      deal_id VARCHAR NOT NULL,
+      original_filename TEXT NOT NULL,
+      content_type TEXT,
+      size_bytes INTEGER,
+      sharepoint_url TEXT,
+      ai_classification JSONB,
+      uploaded_at TIMESTAMP DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_kyc_upload_files_deal ON kyc_upload_files(deal_id)`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_mlro_report_url TEXT`,
+    // Promote the three other board members to admin alongside Woody +
+    // Layla. Idempotent: re-runs are no-ops once is_admin is already true.
+    // Match by name with ILIKE so minor spelling variants in the users
+    // table still pick up.
+    `UPDATE users SET is_admin = true WHERE
+       LOWER(name) ILIKE 'jack%barratt%'
+       OR LOWER(name) ILIKE 'charlotte%roberts%'
+       OR LOWER(name) ILIKE 'rupert%bentley%smith%'`,
   ];
 
   let ok = 0, skipped = 0;
@@ -678,6 +1260,62 @@ import { pool } from "./db";
   } catch (e: any) {
     console.warn(`[backfill-units] failed: ${e.message}`);
   }
+
+  // ── Seed staff start dates from employment contracts (May 2026) ────────
+  // Idempotent — ON CONFLICT only updates start_date, never overwrites other fields.
+  // Nick Goodman is a consultant (not employee) so pension_opt_in = false.
+  try {
+    const staffSeed: Array<{ name: string; startDate: string; title: string | null; consultant?: boolean }> = [
+      { name: "Jack Barratt",            startDate: "2012-09-03", title: "Director" },
+      { name: "Victoria Broadhead",      startDate: "2013-05-07", title: "Director" },
+      { name: "Nick Halley",             startDate: "2014-09-01", title: "Associate Director" },
+      { name: "Charlotte Brunt",         startDate: "2014-12-01", title: "Associate Surveyor" },
+      { name: "Dominic Tixerant",        startDate: "2016-09-05", title: "Associate Director" },
+      { name: "Lucy Cope",               startDate: "2017-09-04", title: "Senior Surveyor" },
+      { name: "Layla",                   startDate: "2017-10-16", title: "PA / Office Manager" },
+      { name: "Pete Wood",               startDate: "2018-08-20", title: "Director" },
+      { name: "Cara Milligan",           startDate: "2019-06-10", title: "Personal Assistant" },
+      { name: "Evie North",              startDate: "2019-10-07", title: null },
+      { name: "Jamie Orme",              startDate: "2020-06-01", title: "Director" },
+      { name: "Harry Cody",              startDate: "2020-09-14", title: "Associate Director" },
+      { name: "Alex Todd",               startDate: "2021-09-01", title: null },
+      { name: "Lizzie Knights",          startDate: "2022-03-21", title: "Director" },
+      { name: "Lucy Gardiner",           startDate: "2022-08-08", title: "Associate Director" },
+      { name: "Rob Barnes",              startDate: "2022-09-05", title: "Graduate Surveyor" },
+      { name: "William Penfold",         startDate: "2023-05-01", title: null },
+      { name: "Oliver Wilkinson",        startDate: "2023-07-03", title: "Associate Director" },
+      { name: "Danny Cardosi",           startDate: "2024-01-03", title: "Senior Surveyor" },
+      { name: "Harry Elliott",           startDate: "2024-04-24", title: null },
+      { name: "Emily Cann",              startDate: "2024-09-09", title: "Graduate Surveyor" },
+      { name: "Jonny Palmer",            startDate: "2024-09-09", title: "Graduate Surveyor" },
+      { name: "Tom Cater",               startDate: "2025-01-01", title: "Associate Director" },
+      { name: "Harriette Walker",        startDate: "2025-05-19", title: "PA" },
+      { name: "Paris Fixman",            startDate: "2025-07-21", title: "Graduate Surveyor" },
+      { name: "Libby Evans",             startDate: "2025-08-11", title: "Graduate Surveyor" },
+      { name: "Tiggy Savage",            startDate: "2025-09-01", title: "Graduate Surveyor" },
+      { name: "Luke Donohoe",            startDate: "2025-09-22", title: "Graduate Surveyor" },
+      { name: "Kate Martin",             startDate: "2026-04-01", title: null },
+      { name: "Carly Cunliffe",          startDate: "2026-05-05", title: "Graduate Surveyor" },
+    ];
+    let seeded = 0;
+    for (const s of staffSeed) {
+      const r = await pool.query(
+        `INSERT INTO staff_profiles (user_id, start_date, title, status, holiday_entitlement, pension_opt_in, pension_rate)
+         SELECT u.id, $2, $3, 'active', 25, $4, $5
+         FROM users u WHERE u.name ILIKE $1 AND u.is_active = true
+         LIMIT 1
+         ON CONFLICT (user_id) DO UPDATE SET
+           start_date = CASE WHEN staff_profiles.start_date IS NULL THEN EXCLUDED.start_date ELSE staff_profiles.start_date END,
+           title = CASE WHEN staff_profiles.title IS NULL THEN EXCLUDED.title ELSE staff_profiles.title END,
+           updated_at = now()`,
+        [`%${s.name}%`, s.startDate, s.title, !s.consultant, s.consultant ? 0.0 : 5.0]
+      );
+      if (r.rowCount) seeded++;
+    }
+    console.log(`[seed-staff] ${seeded} staff profiles seeded/updated`);
+  } catch (e: any) {
+    console.warn(`[seed-staff] failed: ${e.message}`);
+  }
 })();
 import { setupAuth } from "./auth";
 import { setupMicrosoftRoutes } from "./microsoft";
@@ -748,6 +1386,123 @@ const httpServer = createServer(app);
 
 // Railway health check — unauthenticated, before all middleware
 app.get("/api/ping", (_req, res) => res.json({ status: "ok" }));
+
+// Privacy policy — public, unauthenticated. Required by Meta for app
+// publishing (WhatsApp Business API webhook).
+app.get("/privacy", (_req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Privacy Policy — Bruce Gillingham Pollard</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;max-width:760px;margin:40px auto;padding:0 20px;color:#222;line-height:1.55}
+  h1{font-size:1.8rem;margin-bottom:0.2rem}
+  h2{font-size:1.2rem;margin-top:2rem;border-bottom:1px solid #eee;padding-bottom:6px}
+  .meta{color:#888;font-size:0.9rem;margin-bottom:2rem}
+  ul{padding-left:1.2rem}
+  a{color:#0a58ca}
+  footer{margin-top:3rem;padding-top:1rem;border-top:1px solid #eee;color:#888;font-size:0.85rem}
+</style>
+</head>
+<body>
+<h1>Privacy Policy</h1>
+<p class="meta">Bruce Gillingham Pollard LLP &middot; Last updated: 3 May 2026</p>
+
+<p>This Privacy Policy describes how Bruce Gillingham Pollard LLP ("BGP", "we", "us", "our") collects, uses and shares information when you interact with the BGP property dashboard ("the Service"), including via our WhatsApp Business channel.</p>
+
+<h2>1. Who we are</h2>
+<p>Bruce Gillingham Pollard LLP is a Central London commercial property consultancy. The Service is an internal property management platform used by BGP staff and authorised contacts. For data protection enquiries, contact us at <a href="mailto:info@brucegillinghampollard.com">info@brucegillinghampollard.com</a>.</p>
+
+<h2>2. Information we collect</h2>
+<ul>
+  <li><strong>Account information</strong> &mdash; name, email, role, team membership of authorised users.</li>
+  <li><strong>CRM data</strong> &mdash; contact, company, deal, property and requirement records you create or that we receive in the course of business.</li>
+  <li><strong>Communications</strong> &mdash; emails, WhatsApp messages, and chat threads sent to or from BGP through the Service. WhatsApp messages are received via the Meta WhatsApp Business API.</li>
+  <li><strong>Usage data</strong> &mdash; logs of features used, timestamps, IP address, and device/browser metadata for security and audit purposes.</li>
+</ul>
+
+<h2>3. How we use your information</h2>
+<ul>
+  <li>To provide the Service and respond to enquiries on WhatsApp, email and other channels.</li>
+  <li>To maintain client and prospect records as part of our property advisory business.</li>
+  <li>To improve our internal tools, including AI-assisted features, diagnostics and audit logs.</li>
+  <li>To comply with legal, regulatory and contractual obligations.</li>
+</ul>
+
+<h2>4. WhatsApp Business API</h2>
+<p>When you message our WhatsApp Business number, the message and its metadata (sender phone number, profile name visible to WhatsApp, timestamps) are delivered to us via Meta's WhatsApp Business API and stored securely in our system. Replies sent from our number are also stored. We use this data only to respond to you and to maintain a record of our communications. We do not sell or share WhatsApp message content with third parties for advertising purposes.</p>
+
+<h2>5. Lawful basis</h2>
+<p>We process personal data on the basis of legitimate interests (managing client relationships and conducting our property advisory business), contract (where you instruct us), consent (where required), and legal obligation (where applicable).</p>
+
+<h2>6. Sharing</h2>
+<p>We share information only with:</p>
+<ul>
+  <li>Service providers who help us run the Service (cloud hosting, AI providers, email and messaging providers, identity verification providers) under appropriate data-protection terms.</li>
+  <li>Professional advisers and regulators where legally required.</li>
+  <li>Counterparties in property transactions to the extent necessary to progress an instruction (e.g. solicitors, surveyors).</li>
+</ul>
+
+<h2>7. Retention</h2>
+<p>We retain personal data for as long as necessary to provide the Service and meet our legal and business obligations. Communications and CRM records are typically retained for the duration of the client relationship plus seven years.</p>
+
+<h2>8. Your rights</h2>
+<p>Subject to applicable law (including UK GDPR), you have the right to access, correct, delete or restrict processing of your personal data, to object to processing, and to data portability. To exercise any of these rights, email <a href="mailto:info@brucegillinghampollard.com">info@brucegillinghampollard.com</a>. You also have the right to lodge a complaint with the UK Information Commissioner's Office (<a href="https://ico.org.uk">ico.org.uk</a>).</p>
+
+<h2>9. Security</h2>
+<p>We use industry-standard technical and organisational measures, including TLS in transit, access controls, and encrypted storage, to protect personal data. No system is perfectly secure; please use a strong password and tell us immediately if you suspect any unauthorised access.</p>
+
+<h2>10. International transfers</h2>
+<p>Our service providers may process data outside the United Kingdom and the European Economic Area. Where this happens, we rely on appropriate safeguards (such as Standard Contractual Clauses) as required by law.</p>
+
+<h2>11. Cookies</h2>
+<p>The Service uses session cookies strictly necessary to keep you signed in. We do not use advertising or third-party tracking cookies.</p>
+
+<h2>12. Changes to this policy</h2>
+<p>We may update this policy from time to time. The "Last updated" date at the top of this page indicates when it was last revised.</p>
+
+<h2>13. Contact</h2>
+<p>Bruce Gillingham Pollard LLP<br>
+24 Lowndes Street, London SW1X 9HY, United Kingdom<br>
+<a href="mailto:info@brucegillinghampollard.com">info@brucegillinghampollard.com</a></p>
+
+<footer>&copy; ${new Date().getFullYear()} Bruce Gillingham Pollard LLP. All rights reserved.</footer>
+</body>
+</html>`);
+});
+
+// Square BGP mark for Meta App icon upload (and other 1024x1024 needs).
+// Renders via the canvas module so font rendering works on Railway's Linux
+// container (sharp's SVG text rendering depends on system fonts that aren't
+// installed in the production image).
+app.get("/bgp-mark.png", async (_req, res) => {
+  try {
+    const { createCanvas } = await import("canvas");
+    const SIZE = 1024;
+    const canvas = createCanvas(SIZE, SIZE);
+    const ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = "#2E5E3F";
+    ctx.fillRect(0, 0, SIZE, SIZE);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 480px serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("BGP", SIZE / 2, SIZE / 2 + 40);
+
+    const png = canvas.toBuffer("image/png");
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.setHeader("Content-Disposition", "inline; filename=\"BGP-mark-1024.png\"");
+    res.send(png);
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to render mark", message: err?.message });
+  }
+});
 
 /**
  * ScraperAPI status check — confirms the key is set + valid, reports the
@@ -1055,6 +1810,10 @@ app.use("/api/branding/assets", express.static(
   registerPropertyPathwayRoutes(app);
   const { registerActivityRoutes } = await import("./activity-routes");
   registerActivityRoutes(app);
+  const { registerIngestRoutes } = await import("./ingest-routes");
+  registerIngestRoutes(app);
+  const { registerGenericCrmRoutes } = await import("./generic-crm-routes");
+  registerGenericCrmRoutes(app);
   registerDemeterRoutes(app);
   registerRetailContextPlanRoutes(app);
   registerMapLayerRoutes(app);
@@ -1285,6 +2044,35 @@ app.use("/api/branding/assets", express.static(
             runNightlyBrandEnrichment().catch(err =>
               console.error("[brand-enrich] nightly run failed:", err?.message)
             );
+          }
+        }, 60 * 60 * 1000);
+      }
+
+      // Daily Brucey Bonuses scan — 06:00 every day. Idempotent via the
+      // (event_kind, event_ref) partial unique index, so the rolling 7-day
+      // window catches new events without re-awarding old ones. Production
+      // only — dev would clobber test data on every restart.
+      if (process.env.NODE_ENV === "production") {
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 6 && now.getMinutes() < 60) {
+            import("./hr-routes")
+              .then(m => m.runBruceyPointsScan())
+              .then(r => console.log(`[brucey-cron] daily scan: ${r.newAwards} new awards from ${r.scannedEvents} events`))
+              .catch(err => console.error("[brucey-cron] daily run failed:", err?.message));
+          }
+        }, 60 * 60 * 1000);
+
+        // Daily benefit renewal sweep — 06:30. Creates a 'Renew {benefit}'
+        // task 60 days before each policy's renewal_date so HR has time to
+        // re-quote. Idempotent per (benefit, calendar year).
+        setInterval(() => {
+          const now = new Date();
+          if (now.getHours() === 6 && now.getMinutes() >= 30) {
+            import("./hr-routes")
+              .then(m => m.runBenefitRenewalSweep())
+              .then(r => console.log(`[benefit-renewal-cron] created ${r.length} renewal task(s)`))
+              .catch(err => console.error("[benefit-renewal-cron] failed:", err?.message));
           }
         }, 60 * 60 * 1000);
       }

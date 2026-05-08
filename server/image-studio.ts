@@ -950,13 +950,14 @@ export function registerImageStudioRoutes(app: Express) {
       const [image] = await db.select().from(imageStudioImages).where(eq(imageStudioImages.id, req.params.id));
       if (!image) return res.status(404).json({ error: "Not found" });
 
-      if (image.localPath && fs.existsSync(image.localPath)) {
-        res.setHeader("Content-Type", image.mimeType);
+      const imgBuffer = await readPersistedImage(image.localPath);
+      if (imgBuffer) {
+        res.setHeader("Content-Type", image.mimeType || "image/jpeg");
         res.setHeader("Cache-Control", "public, max-age=86400");
-        return res.sendFile(image.localPath);
+        return res.end(imgBuffer);
       }
 
-      res.status(404).json({ error: "File not found on disk" });
+      res.status(404).json({ error: "Image not found" });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1037,6 +1038,97 @@ export function registerImageStudioRoutes(app: Express) {
       await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [ids]);
       await db.delete(imageStudioImages).where(inArray(imageStudioImages.id, ids));
       res.json({ success: true, deleted: images.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Dedupe brand logos — keep oldest per brand_name (case-insensitive),
+  // delete the rest. Run this manually after a logo.dev import that left
+  // duplicate pairs in the library.
+  app.post("/api/image-studio/dedupe-brand-logos", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const { rows: dupeIds } = await pool.query<{ id: string; local_path: string | null; sharepoint_drive_id: string | null; sharepoint_item_id: string | null }>(`
+        SELECT id, local_path, sharepoint_drive_id, sharepoint_item_id
+        FROM image_studio_images
+        WHERE brand_name IS NOT NULL AND brand_name <> ''
+          AND id NOT IN (
+            SELECT DISTINCT ON (lower(trim(brand_name))) id
+            FROM image_studio_images
+            WHERE brand_name IS NOT NULL AND brand_name <> ''
+            ORDER BY lower(trim(brand_name)), created_at ASC
+          )
+      `);
+
+      if (!dupeIds.length) return res.json({ success: true, deleted: 0, kept: 0 });
+
+      for (const row of dupeIds) {
+        if (row.local_path && fs.existsSync(row.local_path)) {
+          try { fs.unlinkSync(row.local_path); } catch {}
+        }
+      }
+
+      const spPairs = dupeIds.filter(r => r.sharepoint_drive_id && r.sharepoint_item_id);
+      if (spPairs.length) {
+        const values = spPairs.map((_, i) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(", ");
+        const params = spPairs.flatMap(r => [r.sharepoint_drive_id, r.sharepoint_item_id]);
+        await pool.query(
+          `INSERT INTO deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id) VALUES ${values} ON CONFLICT (sharepoint_drive_id, sharepoint_item_id) DO NOTHING`,
+          params
+        );
+      }
+
+      const ids = dupeIds.map(r => r.id);
+      await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [ids]);
+      await db.delete(imageStudioImages).where(inArray(imageStudioImages.id, ids));
+
+      const { rows: remaining } = await pool.query<{ count: string }>(`SELECT COUNT(*) FROM image_studio_images WHERE brand_name IS NOT NULL AND brand_name <> ''`);
+      res.json({ success: true, deleted: dupeIds.length, kept: parseInt(remaining[0].count, 10) });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Public-ish brand logo lookup — used by Brand Explorer thumbnails.
+  // Returns the most recent Image Studio logo for the given brand name.
+  // 404 → frontend falls back to Clearbit. Auth required, but not admin.
+  app.get("/api/brand-logo/:name", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const name = String(req.params.name || "").trim();
+      if (!name) return res.status(400).json({ error: "name required" });
+
+      const { rows } = await pool.query<{ id: string; local_path: string | null; mime_type: string; thumbnail_data: string | null }>(
+        `SELECT id, local_path, mime_type, thumbnail_data
+         FROM image_studio_images
+         WHERE lower(trim(brand_name)) = lower(trim($1))
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [name]
+      );
+
+      const row = rows[0];
+      if (!row) return res.status(404).json({ error: "no logo" });
+
+      // Try full image from disk or DB file_storage first
+      const imgBuffer = await readPersistedImage(row.local_path);
+      if (imgBuffer) {
+        res.setHeader("Content-Type", row.mime_type || "image/jpeg");
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.end(imgBuffer);
+      }
+
+      // Fall back to the thumbnail (base64 stored in DB)
+      if (row.thumbnail_data) {
+        const b64Match = row.thumbnail_data.match(/^data:([^;]+);base64,(.+)$/);
+        if (b64Match) {
+          const buf = Buffer.from(b64Match[2], "base64");
+          res.setHeader("Content-Type", b64Match[1]);
+          res.setHeader("Cache-Control", "public, max-age=86400");
+          return res.end(buf);
+        }
+      }
+
+      return res.status(404).json({ error: "no logo" });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }

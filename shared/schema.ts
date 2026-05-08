@@ -458,6 +458,7 @@ export const crmCompanies = pgTable("crm_companies", {
   backers: text("backers"), // free-text: "Sequoia, Index Ventures" etc.
   instagramHandle: text("instagram_handle"),
   tiktokHandle: text("tiktok_handle"),
+  xHandle: text("x_handle"),
   // ── Brand Hunter expansion signals ───────────────────────────────────────
   deptStorePresence: text("dept_store_presence"), // e.g. "Selfridges (popup 2024), Harvey Nichols"
   franchiseActivity: text("franchise_activity"),  // e.g. "UAE master franchise 2023, France 2024"
@@ -768,18 +769,26 @@ export const crmDeals = pgTable("crm_deals", {
   propertyId: varchar("property_id"),
   unitId: varchar("unit_id"), // → property_units.id (one unit may have many deals over time)
   landlordId: varchar("landlord_id"),
+  landlordContactId: varchar("landlord_contact_id"),
   dealType: text("deal_type"),
   status: text("status"),
   team: text("team").array(),
   internalAgent: text("internal_agent").array(),
   tenantId: varchar("tenant_id"),
+  tenantContactId: varchar("tenant_contact_id"),
   clientContactId: varchar("client_contact_id"),
   vendorId: varchar("vendor_id"),
+  vendorContactId: varchar("vendor_contact_id"),
   purchaserId: varchar("purchaser_id"),
+  purchaserContactId: varchar("purchaser_contact_id"),
   vendorAgentId: varchar("vendor_agent_id"),
+  vendorAgentContactId: varchar("vendor_agent_contact_id"),
   acquisitionAgentId: varchar("acquisition_agent_id"),
+  acquisitionAgentContactId: varchar("acquisition_agent_contact_id"),
   purchaserAgentId: varchar("purchaser_agent_id"),
+  purchaserAgentContactId: varchar("purchaser_agent_contact_id"),
   leasingAgentId: varchar("leasing_agent_id"),
+  leasingAgentContactId: varchar("leasing_agent_contact_id"),
   // ── Deal date journey: instructed → target → exchanged → completed → invoiced ──
   // instructedAt = when BGP was formally put on the deal (set once, editable).
   // targetDate is the working forecast (editable).
@@ -808,6 +817,7 @@ export const crmDeals = pgTable("crm_deals", {
   rentFree: real("rent_free"),
   leaseLength: real("lease_length"),
   breakOption: text("break_option"),
+  breakParty: text("break_party"),  // "Tenant" | "Landlord" | "Mutual"
   rentAnalysis: real("rent_analysis"),
   comments: text("comments"),
   lastInteraction: text("last_interaction"),
@@ -846,6 +856,20 @@ export const crmDeals = pgTable("crm_deals", {
   amlSarFiledAt: timestamp("aml_sar_filed_at"),
   amlComplianceNotes: text("aml_compliance_notes"),
   amlChecklist: jsonb("aml_checklist"), // structured JSON checklist of all compliance steps
+  // AI-driven AML augments. Keep as JSONB so we can iterate on shape without
+  // schema churn. aml_sof_analysis = output of /api/aml/deal/:id/sof,
+  // aml_ai_triage = Claude's "clear / review / escalate" verdict at end of
+  // runAllAmlChecks.
+  amlSofAnalysis: jsonb("aml_sof_analysis"),
+  amlAiTriage: jsonb("aml_ai_triage"),
+  // MLR 2017 scope determination — drives whether CDD is legally mandatory
+  // for this deal. Lettings under €10,000/month (~£100k pa) fall out of scope
+  // of the regulations entirely, so unresponsive small-tenant deals can
+  // proceed without a SAR. Set per-deal so the MLRO can override.
+  mlrScope: text("mlr_scope"), // in_scope | out_of_scope_below_threshold | simplified_dd
+  mlrScopeReason: text("mlr_scope_reason"),
+  mlrScopeAssessedAt: timestamp("mlr_scope_assessed_at"),
+  mlrScopeAssessedBy: text("mlr_scope_assessed_by"),
   // ── Structured deal stage (drives transitions, reports, events) ──────
   stage: text("stage"), // instruction | marketing | viewings | offers | hots | sols | agreed | completed | invoiced
   stageEnteredAt: timestamp("stage_entered_at"),
@@ -1479,6 +1503,12 @@ export const xeroInvoices = pgTable("xero_invoices", {
   xeroUrl: text("xero_url"),
   errorMessage: text("error_message"),
   syncedAt: timestamp("synced_at"),
+  // Cached so the BGP edit form pre-fills without an extra Graph round-trip
+  // and so edits made in Xero round-trip back via /sync.
+  lineDescription: text("line_description"),
+  lineAmount: real("line_amount"),
+  contactName: text("contact_name"),
+  poNumber: text("po_number"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -2420,3 +2450,185 @@ export const demeterConfig = pgTable("demeter_config", {
 });
 
 export type DemeterConfig = typeof demeterConfig.$inferSelect;
+
+// ─── Stripe Issuing / Expenses ────────────────────────────────────────────────
+
+export const stripeCardholders = pgTable("stripe_cardholders", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: text("user_id").notNull().unique(),
+  userName: text("user_name").notNull(),
+  email: text("email").notNull(),
+  phone: text("phone"),
+  stripeCardholderId: text("stripe_cardholder_id").notNull().unique(),
+  monthlyLimit: integer("monthly_limit").notNull().default(100000),  // pence
+  dailyLimit: integer("daily_limit").notNull().default(25000),       // pence
+  singleTxLimit: integer("single_tx_limit").notNull().default(25000),// pence
+  status: text("status").notNull().default("active"),                // active | inactive | blocked
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const stripeCards = pgTable("stripe_cards", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  cardholderId: varchar("cardholder_id").notNull().references(() => stripeCardholders.id),
+  stripeCardId: text("stripe_card_id").notNull().unique(),
+  last4: text("last4"),
+  status: text("status").notNull().default("active"),  // active | inactive | canceled
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const expenses = pgTable("expenses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  cardholderId: varchar("cardholder_id").references(() => stripeCardholders.id),
+  stripeTransactionId: text("stripe_transaction_id").unique(),       // null for cash expenses
+  type: text("type").notNull().default("card"),                      // card | cash | mileage
+  status: text("status").notNull().default("pending_receipt"),       // pending_receipt | pending_approval | approved | rejected | posted_to_xero
+  merchant: text("merchant"),
+  amountPence: integer("amount_pence").notNull(),
+  currency: text("currency").notNull().default("gbp"),
+  transactionDate: timestamp("transaction_date"),
+  category: text("category"),                                        // maps to Xero account name
+  xeroAccountCode: text("xero_account_code"),
+  xeroTrackingProperty: text("xero_tracking_property"),
+  xeroTrackingPerson: text("xero_tracking_person"),
+  xeroExpenseId: text("xero_expense_id"),                            // set once posted to Xero
+  receiptUrl: text("receipt_url"),
+  receiptFilename: text("receipt_filename"),
+  businessPurpose: text("business_purpose"),                         // "Lunch with Mike Hodgson (Land Sec)"
+  attendees: text("attendees"),                                      // from calendar cross-ref
+  calendarEventId: text("calendar_event_id"),
+  isPersonal: boolean("is_personal").default(false),
+  isClientRechargeable: boolean("is_client_rechargeable").default(false),
+  relatedDealId: varchar("related_deal_id"),
+  mileageMiles: real("mileage_miles"),
+  notes: text("notes"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const expenseReceipts = pgTable("expense_receipts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  expenseId: varchar("expense_id").notNull().references(() => expenses.id),
+  storageKey: text("storage_key").notNull(),     // path in object storage / base64 ref
+  mimeType: text("mime_type"),
+  filename: text("filename"),
+  uploadedAt: timestamp("uploaded_at").defaultNow(),
+});
+
+export type StripeCardholder = typeof stripeCardholders.$inferSelect;
+export type StripeCard = typeof stripeCards.$inferSelect;
+export type Expense = typeof expenses.$inferSelect;
+export type ExpenseReceipt = typeof expenseReceipts.$inferSelect;
+
+// ─── HR Module ────────────────────────────────────────────────────────────────
+
+export const staffProfiles = pgTable("staff_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().unique(),
+  title: text("title"),
+  startDate: text("start_date"),      // ISO date string
+  endDate: text("end_date"),          // set when leaver
+  status: text("status").notNull().default("active"), // active | leaver
+  salaryCurrent: integer("salary_current"),           // pence
+  managerId: varchar("manager_id"),
+  department: text("department"),
+  ricsPathway: text("rics_pathway"),
+  ricsNumber: text("rics_number"),    // RICS member number (e.g. 1234567)
+  apcStatus: text("apc_status"),      // not_started | in_progress | completed
+  apcAssessmentDate: text("apc_assessment_date"),
+  education: text("education"),
+  bio: text("bio"),
+  emergencyContactName: text("emergency_contact_name"),
+  emergencyContactPhone: text("emergency_contact_phone"),
+  emergencyContactRelation: text("emergency_contact_relation"),
+  holidayEntitlement: integer("holiday_entitlement").default(25),
+  pensionOptIn: boolean("pension_opt_in").default(true),
+  pensionRate: real("pension_rate").default(5.0),
+  contractSharepointUrl: text("contract_sharepoint_url"),
+  passportSharepointUrl: text("passport_sharepoint_url"),
+  linkedinUrl: text("linkedin_url"),
+  xeroTrackingName: text("xero_tracking_name"), // how they appear in Xero tracking
+  // Org-chart additions (May 2026)
+  dob: text("dob"),
+  address: text("address"),
+  wfhDays: text("wfh_days").array(),
+  employmentType: text("employment_type"),         // FT | PT | Mat | Contract | Grad
+  cvSharepointUrl: text("cv_sharepoint_url"),
+  boardMember: boolean("board_member").default(false),
+  managementTeam: boolean("management_team").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertStaffProfileSchema = createInsertSchema(staffProfiles).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertStaffProfile = z.infer<typeof insertStaffProfileSchema>;
+export type StaffProfile = typeof staffProfiles.$inferSelect;
+
+export const salaryHistory = pgTable("salary_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  salaryPence: integer("salary_pence").notNull(),
+  effectiveDate: text("effective_date").notNull(), // ISO date string
+  reason: text("reason"),  // annual_review | promotion | joining | adjustment
+  notes: text("notes"),
+  recordedBy: varchar("recorded_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSalaryHistorySchema = createInsertSchema(salaryHistory).omit({ id: true, createdAt: true });
+export type InsertSalaryHistory = z.infer<typeof insertSalaryHistorySchema>;
+export type SalaryHistory = typeof salaryHistory.$inferSelect;
+
+// One row per bonus / commission payout / other extra. Drives the orange
+// bars on the salary timeline chart. Kept separate from salary_history so
+// salary uplifts (a state change) and bonuses (one-off events) don't collide
+// when ordering the timeline.
+export const bonusHistory = pgTable("bonus_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  amountPence: integer("amount_pence").notNull(),
+  effectiveDate: text("effective_date").notNull(), // ISO date string
+  kind: text("kind").notNull().default("bonus"),  // bonus | commission_payout | spot | retention | other
+  reason: text("reason"),
+  notes: text("notes"),
+  recordedBy: varchar("recorded_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertBonusHistorySchema = createInsertSchema(bonusHistory).omit({ id: true, createdAt: true });
+export type InsertBonusHistory = z.infer<typeof insertBonusHistorySchema>;
+export type BonusHistory = typeof bonusHistory.$inferSelect;
+
+export const holidayRequests = pgTable("holiday_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  startDate: text("start_date").notNull(),
+  endDate: text("end_date").notNull(),
+  daysCount: real("days_count").notNull(),
+  status: text("status").notNull().default("pending"), // pending | approved | rejected | cancelled
+  notes: text("notes"),
+  approvedBy: varchar("approved_by"),
+  approvedAt: timestamp("approved_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertHolidayRequestSchema = createInsertSchema(holidayRequests).omit({ id: true, createdAt: true, approvedAt: true });
+export type InsertHolidayRequest = z.infer<typeof insertHolidayRequestSchema>;
+export type HolidayRequest = typeof holidayRequests.$inferSelect;
+
+export const hrDocuments = pgTable("hr_documents", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id"),           // null = company-wide
+  docType: text("doc_type").notNull(),  // contract | passport | review | policy | payslip | other
+  name: text("name").notNull(),
+  sharepointUrl: text("sharepoint_url"),
+  sharepointDriveId: text("sharepoint_drive_id"),
+  sharepointItemId: text("sharepoint_item_id"),
+  reviewYear: integer("review_year"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertHrDocumentSchema = createInsertSchema(hrDocuments).omit({ id: true, createdAt: true });
+export type InsertHrDocument = z.infer<typeof insertHrDocumentSchema>;
+export type HrDocument = typeof hrDocuments.$inferSelect;

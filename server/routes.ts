@@ -9,6 +9,7 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { saveFile, getFile } from "./file-storage";
+import { saveFile, getFile, recordUserUpload } from "./file-storage";
 import { callClaude, CHATBGP_HELPER_MODEL } from "./utils/anthropic-client";
 import { escapeLike } from "./utils/escape-like";
 import { emitNewMessage, emitMessageUpdated, emitMessageDeleted, emitThreadUpdated, emitMemberAdded, emitMemberRemoved, emitNotification, getIO } from "./websocket";
@@ -36,6 +37,11 @@ import { fromError } from "zod-validation-error";
 import { db } from "./db";
 import { eq, ilike, or, sql, and, desc, inArray } from "drizzle-orm";
 import { newsArticles } from "@shared/schema";
+import { registerIngestRoutes } from "./ingest-routes";
+import { registerGenericCrmRoutes } from "./generic-crm-routes";
+import { setupStripeIssuingRoutes } from "./stripe-issuing";
+import { setupHrRoutes } from "./hr-routes";
+import { setupWhyBuyDesignRoutes } from "./why-buy-design";
 import { importTrlRequirement } from "./trl";
 import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements } from "./pipnet";
 import { executeSeedSql } from "./seed";
@@ -380,6 +386,14 @@ export async function registerRoutes(
           size: f.size,
           type: f.mimetype,
         };
+      const userId = (req as any).user?.id || (req as any).userId;
+        const storageKey = `chat-media/${uniqueName}`;
+        await saveFile(storageKey, f.buffer, f.mimetype, f.originalname);
+        const url = `/api/chat-media/${uniqueName}`;
+        if (userId) {
+          recordUserUpload(userId, storageKey, f.originalname, f.mimetype, f.size, url).catch(() => {});
+        }
+        return { url, name: f.originalname, size: f.size, type: f.mimetype };
       }));
       res.json({ files: uploaded });
     } catch (err: any) {
@@ -5398,6 +5412,12 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
       res.json({ data: INFLATION_FALLBACK, source: "fallback" });
     }
   });
+
+  registerIngestRoutes(app);
+  registerGenericCrmRoutes(app);
+  setupStripeIssuingRoutes(app);
+  setupHrRoutes(app);
+  setupWhyBuyDesignRoutes(app);
 
   return httpServer;
 }
