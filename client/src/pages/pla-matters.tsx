@@ -10,7 +10,7 @@
  */
 
 import { useMemo, useState } from "react";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useRoute } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -85,6 +85,14 @@ function toDate(v: any): Date | null {
 }
 
 export default function PlaMattersPage() {
+  const [matchDetail, params] = useRoute("/pla/matters/:id");
+  if (matchDetail && params?.id) {
+    return <MatterDetailView id={params.id} />;
+  }
+  return <MatterListView />;
+}
+
+function MatterListView() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [statusFilter, setStatusFilter] = useState<string>("active");
@@ -332,6 +340,338 @@ function NewMatterDialog({
             {create.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null}
             Create matter
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Matter detail view ──────────────────────────────────────────────────────
+
+type MatterDetailResponse = {
+  matter: PlaMatter;
+  comps: Array<{ matterId: string; compId: string; weight: number; notes: string | null; addedBy: string | null; addedAt: string }>;
+  events: Array<{ id: string; matterId: string; eventKind: string; eventDate: string; description: string | null; done: boolean; doneAt: string | null }>;
+  workbooks: Array<{ id: string; matterId: string; kind: string; sharepointUrl: string | null; generatedAt: string }>;
+};
+
+function MatterDetailView({ id }: { id: string }) {
+  const [, navigate] = useLocation();
+  const { toast } = useToast();
+  const [addEventOpen, setAddEventOpen] = useState(false);
+
+  const { data, isLoading, refetch } = useQuery<MatterDetailResponse>({
+    queryKey: ["/api/pla/matters", id],
+    queryFn: async () => {
+      const res = await fetch(`/api/pla/matters/${id}`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
+      return res.json();
+    },
+  });
+
+  const updateField = useMutation({
+    mutationFn: async (patch: Partial<PlaMatter>) => {
+      const res = await fetch(`/api/pla/matters/${id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error("update failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/pla/matters"] });
+    },
+    onError: (err: any) => toast({ title: "Update failed", description: err?.message, variant: "destructive" }),
+  });
+
+  const closeMatter = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/pla/matters/${id}`, {
+        method: "DELETE", credentials: "include", headers: getAuthHeaders(),
+      });
+      if (!res.ok) throw new Error("close failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Matter closed" });
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/pla/matters"] });
+    },
+  });
+
+  if (isLoading) {
+    return <div className="p-6 space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-20 w-full" />)}</div>;
+  }
+  if (!data) {
+    return <div className="p-6 text-center text-muted-foreground">Matter not found.</div>;
+  }
+  const { matter, comps, events, workbooks } = data;
+
+  return (
+    <div className="flex flex-col h-full min-h-screen">
+      <div className="border-b bg-background sticky top-0 z-10 px-4 lg:px-6 py-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button variant="ghost" size="sm" onClick={() => navigate("/pla/matters")}>← Back</Button>
+          <Scale className="h-5 w-5 text-primary" />
+          <h1 className="text-xl font-semibold">{typeLabel(matter.matterType)}</h1>
+          <Badge variant="outline" className="capitalize">Acting for {matter.actingFor || "—"}</Badge>
+          <Select
+            value={matter.status}
+            onValueChange={(v) => updateField.mutate({ status: v } as any)}
+          >
+            <SelectTrigger className="w-44 h-8"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {STATUSES.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <div className="ml-auto flex items-center gap-2">
+            {matter.sharepointFolderUrl && (
+              <Button variant="outline" size="sm" asChild>
+                <a href={matter.sharepointFolderUrl} target="_blank" rel="noreferrer">SharePoint folder</a>
+              </Button>
+            )}
+            {matter.status !== "closed" && (
+              <Button variant="outline" size="sm" onClick={() => closeMatter.mutate()}>Close matter</Button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto p-4 lg:p-6 space-y-6 max-w-5xl mx-auto w-full">
+        {/* Property */}
+        <Card><CardContent className="p-4">
+          <div className="text-xs text-muted-foreground mb-1">Property</div>
+          <Link to={`/properties/${matter.propertyId}`} className="font-medium hover:underline flex items-center gap-1.5">
+            <MapPin className="h-4 w-4 text-muted-foreground" />
+            {matter.propertyId.slice(0, 8)}…
+          </Link>
+        </CardContent></Card>
+
+        {/* Negotiation positions */}
+        <Card><CardContent className="p-4">
+          <div className="text-sm font-medium mb-3">Negotiation</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Field label="Current rent" value={matter.currentRent} format="money" />
+            <Field label="Our quoting" value={matter.quotingRent} format="money" />
+            <Field label="Their counter" value={matter.counterQuotingRent} format="money" />
+            <Field label="Agreed" value={matter.agreedRent} format="money" highlight />
+          </div>
+        </CardContent></Card>
+
+        {/* Key dates */}
+        <Card><CardContent className="p-4">
+          <div className="text-sm font-medium mb-3">Key dates</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Field label="Review" value={matter.currentRentReviewDate} format="date" />
+            <Field label="Break" value={matter.breakDate} format="date" />
+            <Field label="Expiry" value={matter.expiryDate} format="date" />
+            <Field label="Notice served" value={matter.noticeServedAt} format="date" />
+            <Field label="Counter deadline" value={matter.counterNoticeDeadline} format="date" highlight={isUpcoming(matter.counterNoticeDeadline)} />
+            <Field label="Counter served" value={matter.counterNoticeServedAt} format="date" />
+            <Field label="Settled" value={matter.settledAt} format="date" />
+            <Field label="Opened" value={matter.openedAt} format="date" />
+          </div>
+        </CardContent></Card>
+
+        {/* Comps */}
+        <Card><CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-medium">Linked comparables · {comps.length}</div>
+            <Button variant="outline" size="sm" disabled>Add comp (coming)</Button>
+          </div>
+          {comps.length === 0 ? (
+            <div className="text-sm text-muted-foreground">None linked yet — comps drive the valuation engine when it lands.</div>
+          ) : (
+            <div className="space-y-1">
+              {comps.map((c) => (
+                <div key={c.compId} className="flex items-center justify-between text-sm py-1">
+                  <span className="font-mono text-xs">{c.compId.slice(0, 8)}…</span>
+                  <span className="text-muted-foreground">weight {c.weight.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent></Card>
+
+        {/* Events / timeline */}
+        <Card><CardContent className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-medium">Events · {events.length}</div>
+            <Button variant="outline" size="sm" onClick={() => setAddEventOpen(true)}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> Add event
+            </Button>
+          </div>
+          {events.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No events logged.</div>
+          ) : (
+            <div className="space-y-1">
+              {events.map((e) => (
+                <EventRow key={e.id} event={e} matterId={id} onChange={() => refetch()} />
+              ))}
+            </div>
+          )}
+        </CardContent></Card>
+
+        {/* Workbooks (placeholder) */}
+        <Card><CardContent className="p-4">
+          <div className="text-sm font-medium mb-3">Valuation workbooks · {workbooks.length}</div>
+          {workbooks.length === 0 ? (
+            <div className="text-sm text-muted-foreground">
+              Net Effective / Devaluation / Comparables Schedule generation lands with the valuation engine.
+              For now, drop workbooks into the matter's SharePoint folder manually.
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {workbooks.map((w) => (
+                <div key={w.id} className="flex items-center justify-between text-sm py-1">
+                  <span>{w.kind}</span>
+                  {w.sharepointUrl && <a href={w.sharepointUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">Open</a>}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent></Card>
+
+        {/* Notes */}
+        <Card><CardContent className="p-4">
+          <div className="text-sm font-medium mb-2">Notes</div>
+          <Input
+            defaultValue={matter.notes || ""}
+            placeholder="Internal notes…"
+            onBlur={(e) => {
+              if (e.target.value !== (matter.notes || "")) {
+                updateField.mutate({ notes: e.target.value });
+              }
+            }}
+          />
+        </CardContent></Card>
+      </div>
+
+      <AddEventDialog
+        open={addEventOpen}
+        onClose={() => setAddEventOpen(false)}
+        matterId={id}
+        onCreated={() => { setAddEventOpen(false); refetch(); }}
+      />
+    </div>
+  );
+}
+
+function isUpcoming(d: any): boolean {
+  const date = toDate(d);
+  if (!date) return false;
+  const ms = date.getTime() - Date.now();
+  return ms > 0 && ms < 30 * 24 * 60 * 60 * 1000; // within 30 days
+}
+
+function Field({ label, value, format, highlight }: {
+  label: string; value: any; format: "money" | "date"; highlight?: boolean;
+}) {
+  let display = "—";
+  if (value !== null && value !== undefined) {
+    if (format === "money") {
+      const n = typeof value === "number" ? value : Number(value);
+      if (!isNaN(n)) display = `£${n.toLocaleString("en-GB")}`;
+    } else if (format === "date") {
+      display = formatDate(value);
+    }
+  }
+  return (
+    <div>
+      <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
+      <div className={`text-sm font-medium ${highlight ? "text-amber-700 dark:text-amber-400" : ""}`}>{display}</div>
+    </div>
+  );
+}
+
+function EventRow({
+  event, matterId, onChange,
+}: { event: { id: string; eventKind: string; eventDate: string; description: string | null; done: boolean }; matterId: string; onChange: () => void }) {
+  const toggle = async () => {
+    await fetch(`/api/pla/matters/${matterId}/events/${event.id}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "content-type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ done: !event.done }),
+    });
+    onChange();
+  };
+  return (
+    <div className="flex items-center gap-3 text-sm py-1.5 border-b border-border last:border-0">
+      <input type="checkbox" checked={event.done} onChange={toggle} className="cursor-pointer" />
+      <span className={event.done ? "line-through text-muted-foreground" : ""}>
+        <span className="font-medium capitalize">{event.eventKind.replace(/_/g, " ")}</span>
+        {event.description && <span className="text-muted-foreground"> — {event.description}</span>}
+      </span>
+      <span className="ml-auto text-xs text-muted-foreground">{formatDate(event.eventDate)}</span>
+    </div>
+  );
+}
+
+function AddEventDialog({
+  open, onClose, matterId, onCreated,
+}: { open: boolean; onClose: () => void; matterId: string; onCreated: () => void }) {
+  const { toast } = useToast();
+  const [eventKind, setEventKind] = useState("note");
+  const [eventDate, setEventDate] = useState(new Date().toISOString().slice(0, 10));
+  const [description, setDescription] = useState("");
+  const submit = async () => {
+    const res = await fetch(`/api/pla/matters/${matterId}/events`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ eventKind, eventDate, description: description.trim() || undefined }),
+    });
+    if (!res.ok) {
+      toast({ title: "Couldn't add event", variant: "destructive" });
+      return;
+    }
+    setDescription("");
+    onCreated();
+  };
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add event</DialogTitle>
+          <DialogDescription>Log a key date — notice, hearing, inspection, expert determination, etc.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div>
+            <label className="text-sm font-medium block mb-1.5">Kind</label>
+            <Select value={eventKind} onValueChange={setEventKind}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="notice_served">Notice served</SelectItem>
+                <SelectItem value="counter_notice_deadline">Counter notice deadline</SelectItem>
+                <SelectItem value="hearing">Hearing</SelectItem>
+                <SelectItem value="inspection">Inspection</SelectItem>
+                <SelectItem value="meeting">Meeting</SelectItem>
+                <SelectItem value="court">Court</SelectItem>
+                <SelectItem value="expert_determination">Expert determination</SelectItem>
+                <SelectItem value="agreed">Agreed</SelectItem>
+                <SelectItem value="note">Note</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-1.5">Date</label>
+            <Input type="date" value={eventDate} onChange={(e) => setEventDate(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-sm font-medium block mb-1.5">Description (optional)</label>
+            <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g. break notice served on tenant" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit}>Add</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
