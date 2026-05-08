@@ -362,6 +362,7 @@ function MatterDetailView({ id }: { id: string }) {
   const [addEventOpen, setAddEventOpen] = useState(false);
 
   const [linkCompOpen, setLinkCompOpen] = useState(false);
+  const [netEffectiveOpen, setNetEffectiveOpen] = useState(false);
 
   const { data, isLoading, refetch } = useQuery<MatterDetailResponse>({
     queryKey: ["/api/pla/matters", id],
@@ -539,21 +540,23 @@ function MatterDetailView({ id }: { id: string }) {
           )}
         </CardContent></Card>
 
-        {/* Workbooks (placeholder) */}
+        {/* Workbooks */}
         <Card><CardContent className="p-4">
-          <div className="text-sm font-medium mb-3">Valuation workbooks · {workbooks.length}</div>
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-medium">Valuation workbooks · {workbooks.length}</div>
+            <Button variant="outline" size="sm" onClick={() => setNetEffectiveOpen(true)}>
+              <Plus className="h-3.5 w-3.5 mr-1" /> Run Net Effective
+            </Button>
+          </div>
           {workbooks.length === 0 ? (
             <div className="text-sm text-muted-foreground">
-              Net Effective / Devaluation / Comparables Schedule generation lands with the valuation engine.
-              For now, drop workbooks into the matter's SharePoint folder manually.
+              No valuations run yet. Click "Run Net Effective" — straight-line amortisation
+              of rent free + capex over the assumed term, mirroring BGP's Net Effective Template.
             </div>
           ) : (
             <div className="space-y-1">
               {workbooks.map((w) => (
-                <div key={w.id} className="flex items-center justify-between text-sm py-1">
-                  <span>{w.kind}</span>
-                  {w.sharepointUrl && <a href={w.sharepointUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">Open</a>}
-                </div>
+                <WorkbookRow key={w.id} workbook={w as any} />
               ))}
             </div>
           )}
@@ -587,7 +590,163 @@ function MatterDetailView({ id }: { id: string }) {
         existingCompIds={new Set(comps.map((c) => c.compId))}
         onLinked={() => { setLinkCompOpen(false); refetch(); }}
       />
+      <NetEffectiveDialog
+        open={netEffectiveOpen}
+        onClose={() => setNetEffectiveOpen(false)}
+        matterId={id}
+        defaults={{
+          headlineRentPa: matter.quotingRent ?? matter.currentRent ?? null,
+          termYears: matter.expiryDate && matter.openedAt
+            ? Math.max(1, Math.round((new Date(matter.expiryDate).getTime() - new Date(matter.openedAt).getTime()) / (365.25 * 24 * 60 * 60 * 1000)))
+            : 10,
+        }}
+        onComputed={() => { setNetEffectiveOpen(false); refetch(); }}
+      />
     </div>
+  );
+}
+
+function WorkbookRow({ workbook }: { workbook: { id: string; kind: string; sharepointUrl: string | null; generatedAt: string; outputSummary: any; inputsSnapshot: any } }) {
+  const [open, setOpen] = useState(false);
+  const summary = workbook.outputSummary || {};
+  return (
+    <div className="border-b border-border last:border-0 py-2">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between text-left text-sm hover:bg-accent rounded px-1 py-1">
+        <div className="flex items-center gap-3">
+          <span className="font-medium capitalize">{(workbook.kind || "").replace(/_/g, " ")}</span>
+          {summary.netEffectivePsf != null && (
+            <Badge variant="secondary">£{summary.netEffectivePsf} psf NE</Badge>
+          )}
+          {summary.discountPct != null && (
+            <Badge variant="outline">{summary.discountPct}% off headline</Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>{formatDate(workbook.generatedAt)}</span>
+          {workbook.sharepointUrl && <a onClick={(e) => e.stopPropagation()} href={workbook.sharepointUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline">Open</a>}
+        </div>
+      </button>
+      {open && (
+        <div className="text-xs text-muted-foreground mt-2 grid grid-cols-3 gap-2 px-1 pb-1">
+          <Stat label="Headline psf" value={summary.headlinePsf} prefix="£" />
+          <Stat label="Net effective psf" value={summary.netEffectivePsf} prefix="£" />
+          <Stat label="Total incentive" value={summary.totalIncentive} prefix="£" thousands />
+          <Stat label="Effective annual" value={summary.effectiveAnnualPa} prefix="£" thousands />
+          <Stat label="Effective total" value={summary.effectiveTotal} prefix="£" thousands />
+          <Stat label="Discount" value={summary.discountPct} suffix="%" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, prefix, suffix, thousands }: { label: string; value: any; prefix?: string; suffix?: string; thousands?: boolean }) {
+  if (value == null) return null;
+  const n = typeof value === "number" ? value : Number(value);
+  if (!isFinite(n)) return null;
+  const display = thousands ? n.toLocaleString("en-GB") : n.toString();
+  return (
+    <div>
+      <div className="text-muted-foreground">{label}</div>
+      <div className="font-medium text-foreground">{prefix}{display}{suffix}</div>
+    </div>
+  );
+}
+
+function NetEffectiveDialog({
+  open, onClose, matterId, defaults, onComputed,
+}: {
+  open: boolean; onClose: () => void; matterId: string;
+  defaults: { headlineRentPa: number | null; termYears: number };
+  onComputed: () => void;
+}) {
+  const { toast } = useToast();
+  const [areaSqft, setAreaSqft] = useState("");
+  const [headlineRentPa, setHeadlineRentPa] = useState(defaults.headlineRentPa?.toString() || "");
+  const [termYears, setTermYears] = useState(String(defaults.termYears || 10));
+  const [rentFreeMonths, setRentFreeMonths] = useState("");
+  const [capex, setCapex] = useState("");
+  const [result, setResult] = useState<any | null>(null);
+
+  const compute = async () => {
+    setResult(null);
+    const res = await fetch(`/api/pla/matters/${matterId}/valuation/net-effective`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({
+        areaSqft: Number(areaSqft) || 0,
+        headlineRentPa: Number(headlineRentPa) || 0,
+        termYears: Number(termYears) || 10,
+        rentFreeMonths: Number(rentFreeMonths) || 0,
+        capexContribution: Number(capex) || 0,
+      }),
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => null);
+      toast({ title: "Couldn't run Net Effective", description: e?.error || `${res.status}`, variant: "destructive" });
+      return;
+    }
+    const data = await res.json();
+    setResult(data);
+    toast({ title: "Net Effective saved", description: `£${data.output.netEffectivePsf} psf` });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Run Net Effective</DialogTitle>
+          <DialogDescription>
+            Straight-line amortisation of rent free + capex over the assumed term —
+            same approach as the BGP Net Effective template.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium block mb-1.5">Area (sq ft)</label>
+              <Input type="number" value={areaSqft} onChange={(e) => setAreaSqft(e.target.value)} placeholder="e.g. 1500" />
+            </div>
+            <div>
+              <label className="text-sm font-medium block mb-1.5">Headline rent £ p.a.</label>
+              <Input type="number" value={headlineRentPa} onChange={(e) => setHeadlineRentPa(e.target.value)} placeholder="e.g. 75000" />
+            </div>
+            <div>
+              <label className="text-sm font-medium block mb-1.5">Term (years)</label>
+              <Input type="number" value={termYears} onChange={(e) => setTermYears(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-sm font-medium block mb-1.5">Rent-free (months)</label>
+              <Input type="number" value={rentFreeMonths} onChange={(e) => setRentFreeMonths(e.target.value)} placeholder="0" />
+            </div>
+            <div className="col-span-2">
+              <label className="text-sm font-medium block mb-1.5">Capex contribution (£)</label>
+              <Input type="number" value={capex} onChange={(e) => setCapex(e.target.value)} placeholder="0 — optional landlord contribution" />
+            </div>
+          </div>
+          {result && (
+            <div className="border rounded p-3 bg-muted/40 text-sm space-y-1">
+              <div className="font-medium mb-1">Result</div>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div>Net effective: <span className="font-semibold">£{result.output.netEffectivePsf} psf</span></div>
+                <div>Headline: £{result.output.headlinePsf} psf</div>
+                <div>Effective annual: £{result.output.effectiveAnnualPa.toLocaleString("en-GB")}</div>
+                <div>Total incentive: £{result.output.totalIncentive.toLocaleString("en-GB")}</div>
+                <div className="col-span-2 text-muted-foreground">{result.output.discountPct}% discount to headline · saved to workbook</div>
+              </div>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Close</Button>
+          <Button onClick={compute} disabled={!areaSqft || !headlineRentPa}>
+            {result ? "Re-run" : "Compute"}
+          </Button>
+          {result && <Button onClick={() => { onComputed(); }}>Save & close</Button>}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

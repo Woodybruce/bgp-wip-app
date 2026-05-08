@@ -1331,6 +1331,7 @@ import { setupEvernoteRoutes } from "./evernote";
 import { registerLandRegistryRoutes } from "./land-registry";
 import { registerPropertyResolverRoutes } from "./property-resolver";
 import { registerPlaMattersRoutes } from "./pla-matters";
+import { registerPlaValuationRoutes } from "./pla-valuation";
 // Simple request queue for AI endpoints
 const activeRequests = new Set<string>();
 const requestQueue: Array<{ req: Request; res: Response; next: NextFunction }> = [];
@@ -1786,6 +1787,7 @@ app.use("/api/branding/assets", express.static(
   registerLandRegistryRoutes(app);
   registerPropertyResolverRoutes(app);
   registerPlaMattersRoutes(app);
+  registerPlaValuationRoutes(app);
   registerVoaRoutes(app);
   // Probe the VOA SQLite snapshot at boot so we log where rates data is coming
   // from. No-op if the file isn't mounted — callers gracefully degrade.
