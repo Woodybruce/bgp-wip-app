@@ -384,3 +384,209 @@ function numOrNull(v: any): number | string | null {
   const n = Number(String(v).replace(/[£,]/g, ""));
   return isFinite(n) ? n : v;
 }
+
+// ─── ITZA xlsx ───────────────────────────────────────────────────────────────
+
+import type { ItzaInput, ItzaOutput, DevaluationInput, DevaluationOutput } from "./pla-valuation";
+
+export async function buildAndUploadItzaXlsx(args: {
+  matterId: string;
+  workbookId: string;
+  propertyName: string;
+  matterType: string;
+  input: ItzaInput;
+  output: ItzaOutput;
+  generatedByName?: string;
+}): Promise<{ ok: boolean; webUrl?: string; error?: string }> {
+  try {
+    const wb = baseWorkbook();
+    const ws = wb.addWorksheet("ITZA", { properties: { defaultColWidth: 18, tabColor: { argb: "FF0E5BA8" } } });
+
+    headerBlock(ws, "ITZA — Zoned Area Calculation", args.propertyName, args.matterType, args.generatedByName);
+
+    let row = 9;
+    ws.getCell(`A${row}`).value = "Zoned areas (sq ft)";
+    ws.getCell(`A${row}`).font = { bold: true, size: 12 };
+    row += 1;
+    const headers = ["Zone", "Area sq ft", "Factor", "ITZA sq ft"];
+    headers.forEach((h, i) => {
+      const c = ws.getCell(row, i + 1);
+      c.value = h;
+      c.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0E5BA8" } };
+      c.alignment = { horizontal: "center" };
+    });
+    row += 1;
+
+    const zoneNames = ["Zone A", "Zone B", "Zone C", "Zone D"];
+    args.input.zones.forEach((z, i) => {
+      const name = zoneNames[i] || `Zone ${i + 1}`;
+      ws.getCell(row, 1).value = name;
+      ws.getCell(row, 2).value = z.zoneAreaSqft;
+      ws.getCell(row, 2).numFmt = "#,##0.00";
+      ws.getCell(row, 3).value = `A/${1 / (z.factor || 1)}`;
+      ws.getCell(row, 4).value = args.output.zonesItza[i];
+      ws.getCell(row, 4).numFmt = "#,##0.00";
+      row += 1;
+    });
+
+    if (args.input.basementSqft) {
+      ws.getCell(row, 1).value = "Basement";
+      ws.getCell(row, 2).value = args.input.basementSqft;
+      ws.getCell(row, 2).numFmt = "#,##0.00";
+      ws.getCell(row, 3).value = `A/${args.input.basementFactor ? 1 / args.input.basementFactor : "—"}`;
+      ws.getCell(row, 4).value = args.output.basementItza;
+      ws.getCell(row, 4).numFmt = "#,##0.00";
+      row += 1;
+    }
+    if (args.input.ancillarySqft) {
+      ws.getCell(row, 1).value = "Ancillary";
+      ws.getCell(row, 2).value = args.input.ancillarySqft;
+      ws.getCell(row, 2).numFmt = "#,##0.00";
+      ws.getCell(row, 3).value = `A/${args.input.ancillaryFactor ? 1 / args.input.ancillaryFactor : "—"}`;
+      ws.getCell(row, 4).value = args.output.ancillaryItza;
+      ws.getCell(row, 4).numFmt = "#,##0.00";
+      row += 1;
+    }
+    row += 1;
+    if (args.input.a3SalesApportionment) {
+      ws.getCell(`A${row}`).value = "A3 sales apportionment";
+      ws.getCell(`B${row}`).value = args.input.a3SalesApportionment;
+      ws.getCell(`B${row}`).numFmt = "0.00";
+      ws.getCell(`A${row}`).font = { italic: true };
+      row += 1;
+    }
+
+    // Highlight total
+    const totalRow = row + 1;
+    ws.getCell(totalRow, 1).value = "Total ITZA";
+    ws.getCell(totalRow, 4).value = args.output.itzaSqft;
+    ws.getCell(totalRow, 4).numFmt = "#,##0.00";
+    [1, 2, 3, 4].forEach((c) => {
+      ws.getCell(totalRow, c).font = { bold: true, color: { argb: "FF0E5BA8" } };
+      ws.getCell(totalRow, c).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8F0FA" } };
+    });
+
+    ws.getColumn(1).width = 24;
+    ws.getColumn(2).width = 16;
+    ws.getColumn(3).width = 12;
+    ws.getColumn(4).width = 16;
+
+    const folder = `${SHAREPOINT_ROOT_FOLDER}/Lease Advisory/${cleanFolderName(args.propertyName)}/Rent Review/Valuation`;
+    const filename = `ITZA — ${cleanFilename(args.propertyName)} — ${formatDateForFile(new Date())}.xlsx`;
+    return await uploadAndStamp(wb, folder, filename, args.workbookId);
+  } catch (err: any) {
+    console.error(`[pla-workbook-writer] itza xlsx failed:`, err?.message || err);
+    return { ok: false, error: err?.message || "itza xlsx failed" };
+  }
+}
+
+// ─── Devaluation xlsx ────────────────────────────────────────────────────────
+
+export async function buildAndUploadDevaluationXlsx(args: {
+  matterId: string;
+  workbookId: string;
+  propertyName: string;
+  matterType: string;
+  input: DevaluationInput;
+  output: DevaluationOutput;
+  generatedByName?: string;
+}): Promise<{ ok: boolean; webUrl?: string; error?: string }> {
+  try {
+    const wb = baseWorkbook();
+    const ws = wb.addWorksheet("Devaluation", { properties: { defaultColWidth: 18, tabColor: { argb: "FF0E5BA8" } } });
+
+    headerBlock(ws, "Devaluation — Implied Zone A Rate", args.propertyName, args.matterType, args.generatedByName);
+
+    let row = 9;
+    ws.getCell(`A${row}`).value = "Inputs";
+    ws.getCell(`A${row}`).font = { bold: true, size: 12 };
+    row += 1;
+    ws.getCell(`A${row}`).value = "Annual rent £ p.a.";
+    ws.getCell(`B${row}`).value = args.input.annualRentPa;
+    ws.getCell(`B${row}`).numFmt = `"£"#,##0`;
+    row += 1;
+    ws.getCell(`A${row}`).value = "ITZA sq ft";
+    ws.getCell(`B${row}`).value = args.input.itza.itzaSqft;
+    ws.getCell(`B${row}`).numFmt = "#,##0.00";
+    row += 2;
+
+    ws.getCell(`A${row}`).value = "Result";
+    ws.getCell(`A${row}`).font = { bold: true, size: 12 };
+    row += 1;
+    ws.getCell(`A${row}`).value = "Implied Zone A psf (ITZA)";
+    ws.getCell(`B${row}`).value = args.output.zoneARatePsfItza;
+    ws.getCell(`B${row}`).numFmt = `"£"#,##0.00`;
+    ws.getCell(`A${row}`).font = { bold: true };
+    ws.getCell(`B${row}`).font = { bold: true, color: { argb: "FF0E5BA8" } };
+    ws.getCell(`B${row}`).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8F0FA" } };
+    row += 2;
+
+    ws.getCell(`A${row}`).value = "Method";
+    ws.getCell(`A${row}`).font = { bold: true };
+    row += 1;
+    ws.mergeCells(`A${row}:F${row + 2}`);
+    ws.getCell(`A${row}`).value =
+      "Annual rent ÷ ITZA = implied Zone A rate. ITZA is the zoned area with " +
+      "Zones A/B/C/D at A/1, A/2, A/4, A/8, plus weighted basement/ancillary " +
+      "(retail: A/10 basement; restaurant: A/2 basement; A3 ground: 0.65 sales apportionment).";
+    ws.getCell(`A${row}`).alignment = { wrapText: true, vertical: "top" };
+    ws.getCell(`A${row}`).font = { italic: true, color: { argb: "FF666666" } };
+
+    ws.getColumn(1).width = 28;
+    ws.getColumn(2).width = 18;
+
+    const folder = `${SHAREPOINT_ROOT_FOLDER}/Lease Advisory/${cleanFolderName(args.propertyName)}/Rent Review/Valuation`;
+    const filename = `Devaluation — ${cleanFilename(args.propertyName)} — ${formatDateForFile(new Date())}.xlsx`;
+    return await uploadAndStamp(wb, folder, filename, args.workbookId);
+  } catch (err: any) {
+    console.error(`[pla-workbook-writer] devaluation xlsx failed:`, err?.message || err);
+    return { ok: false, error: err?.message || "devaluation xlsx failed" };
+  }
+}
+
+// ─── Helpers shared across writers ───────────────────────────────────────────
+
+function baseWorkbook(): ExcelJS.Workbook {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Bruce Gillingham Pollard";
+  wb.lastModifiedBy = "BGP Lease Advisory";
+  wb.created = new Date();
+  wb.modified = new Date();
+  wb.company = "Bruce Gillingham Pollard";
+  return wb;
+}
+
+function headerBlock(ws: ExcelJS.Worksheet, title: string, propertyName: string, matterType: string, generatedByName?: string) {
+  ws.mergeCells("A1:F1");
+  ws.getCell("A1").value = title;
+  ws.getCell("A1").font = { bold: true, size: 14, color: { argb: "FF0E5BA8" } };
+  ws.getCell("A1").alignment = { vertical: "middle", horizontal: "left" };
+  ws.getRow(1).height = 24;
+
+  ws.getCell("A3").value = "Property";
+  ws.getCell("B3").value = propertyName;
+  ws.getCell("A4").value = "Matter type";
+  ws.getCell("B4").value = humanise(matterType);
+  ws.getCell("A5").value = "Generated";
+  ws.getCell("B5").value = new Date();
+  ws.getCell("B5").numFmt = "dd mmm yyyy";
+  if (generatedByName) {
+    ws.getCell("A6").value = "By";
+    ws.getCell("B6").value = generatedByName;
+  }
+  for (const r of [3, 4, 5, 6]) ws.getCell(`A${r}`).font = { bold: true };
+}
+
+async function uploadAndStamp(wb: ExcelJS.Workbook, folder: string, filename: string, workbookId: string): Promise<{ ok: boolean; webUrl?: string; error?: string }> {
+  const buf = await wb.xlsx.writeBuffer();
+  const buffer = Buffer.from(buf as ArrayBuffer);
+  const upload = await uploadFileToSharePoint(
+    buffer,
+    filename,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    folder,
+  );
+  await db.update(plaMatterWorkbooks).set({ sharepointUrl: upload.webUrl }).where(eq(plaMatterWorkbooks.id, workbookId));
+  return { ok: true, webUrl: upload.webUrl };
+}

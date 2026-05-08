@@ -1088,10 +1088,35 @@ function zoningInputs(state: ZoningInputState) {
   };
 }
 
+// BGP-canonical presets per use class — Tom + Pete's standard factors.
+const USE_CLASS_PRESETS: Record<string, Partial<ZoningInputState>> = {
+  retail:     { basementFactor: "0.1",  ancillaryFactor: "0.1",  a3SalesApportionment: "" },
+  restaurant: { basementFactor: "0.5",  ancillaryFactor: "0.25", a3SalesApportionment: "0.65" },
+  office:     { basementFactor: "0.5",  ancillaryFactor: "0.5",  a3SalesApportionment: "" },
+};
+
 function ZoningFields({ state, set }: { state: ZoningInputState; set: (s: ZoningInputState) => void }) {
   const update = (k: keyof ZoningInputState, v: string) => set({ ...state, [k]: v });
+  const applyPreset = (preset: string) => {
+    if (preset === "custom") return;
+    const p = USE_CLASS_PRESETS[preset];
+    if (!p) return;
+    set({ ...state, ...p });
+  };
   return (
     <div className="space-y-3">
+      <div>
+        <label className="text-sm font-medium block mb-1.5">Use class preset</label>
+        <Select onValueChange={applyPreset} defaultValue="custom">
+          <SelectTrigger><SelectValue placeholder="Pick a preset to auto-fill factors" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="custom">Custom (manual)</SelectItem>
+            <SelectItem value="retail">Retail — A/10 basement, no A3 apportionment</SelectItem>
+            <SelectItem value="restaurant">Restaurant (A3) — A/2 basement, 0.65 sales apportionment</SelectItem>
+            <SelectItem value="office">Office (B1) — A/2 weights</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
       <div>
         <div className="text-sm font-medium mb-2">Zoned areas (sq ft) — fronts halve through zones (A/1, B/2, C/4, D/8)</div>
         <div className="grid grid-cols-4 gap-2">

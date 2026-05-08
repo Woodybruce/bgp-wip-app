@@ -27,7 +27,7 @@ import { requireAuth } from "./auth";
 import { db } from "./db";
 import { plaMatters, plaMatterWorkbooks, plaMatterComps, crmComps, crmProperties, users } from "@shared/schema";
 import { eq, sql } from "drizzle-orm";
-import { fireNetEffectiveXlsxAsync, buildAndUploadComparablesScheduleXlsx, type ComparablesScheduleRow } from "./pla-workbook-writer";
+import { fireNetEffectiveXlsxAsync, buildAndUploadComparablesScheduleXlsx, buildAndUploadItzaXlsx, buildAndUploadDevaluationXlsx, type ComparablesScheduleRow } from "./pla-workbook-writer";
 
 // ─── Net Effective ───────────────────────────────────────────────────────────
 
@@ -279,6 +279,8 @@ export function registerPlaValuationRoutes(app: Express): void {
           outputSummary: output as any,
         })
         .returning();
+      // Fire-and-forget xlsx
+      fireXlsxForItza({ matterId, workbookId: workbook.id, input, output, userId }).catch(() => {});
       return res.json({ input, output, workbook });
     } catch (err: any) {
       console.error("[pla-valuation] itza matter error:", err);
@@ -317,12 +319,56 @@ export function registerPlaValuationRoutes(app: Express): void {
           outputSummary: output as any,
         })
         .returning();
+      // Fire-and-forget xlsx
+      fireXlsxForDevaluation({ matterId, workbookId: workbook.id, input: { annualRentPa, itza }, output, userId }).catch(() => {});
       return res.json({ input: { annualRentPa, itza }, output, workbook });
     } catch (err: any) {
       console.error("[pla-valuation] devaluation matter error:", err);
       return res.status(500).json({ error: err?.message || "devaluation calc failed" });
     }
   });
+}
+
+// ─── xlsx fire-and-forget helpers (shared property + name lookup) ──────────
+
+async function fireXlsxForItza(args: { matterId: string; workbookId: string; input: ItzaInput; output: ItzaOutput; userId?: string }): Promise<void> {
+  const { propertyName, matterType, generatedByName } = await lookupContext(args.matterId, args.userId);
+  if (!propertyName) return;
+  buildAndUploadItzaXlsx({
+    matterId: args.matterId,
+    workbookId: args.workbookId,
+    propertyName,
+    matterType,
+    input: args.input,
+    output: args.output,
+    generatedByName,
+  }).catch((err) => console.warn(`[pla-valuation] itza xlsx async failed:`, err?.message));
+}
+
+async function fireXlsxForDevaluation(args: { matterId: string; workbookId: string; input: DevaluationInput; output: DevaluationOutput; userId?: string }): Promise<void> {
+  const { propertyName, matterType, generatedByName } = await lookupContext(args.matterId, args.userId);
+  if (!propertyName) return;
+  buildAndUploadDevaluationXlsx({
+    matterId: args.matterId,
+    workbookId: args.workbookId,
+    propertyName,
+    matterType,
+    input: args.input,
+    output: args.output,
+    generatedByName,
+  }).catch((err) => console.warn(`[pla-valuation] devaluation xlsx async failed:`, err?.message));
+}
+
+async function lookupContext(matterId: string, userId?: string): Promise<{ propertyName: string | null; matterType: string; generatedByName?: string }> {
+  const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, matterId));
+  if (!matter) return { propertyName: null, matterType: "general" };
+  const [property] = await db.select({ name: crmProperties.name }).from(crmProperties).where(eq(crmProperties.id, matter.propertyId));
+  let generatedByName: string | undefined;
+  if (userId) {
+    const [u] = await db.select({ name: users.name }).from(users).where(eq(users.id, userId));
+    generatedByName = u?.name;
+  }
+  return { propertyName: property?.name ?? null, matterType: matter.matterType, generatedByName };
 }
 
 function itzaInputFromBody(body: any): ItzaInput {
