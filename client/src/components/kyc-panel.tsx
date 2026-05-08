@@ -318,17 +318,6 @@ export function KycPanel({ companyId, dealId }: { companyId: string; dealId?: st
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
-          {/* Auto-fill banner — explains that risk/PEP/sanctions are AI-assessed
-              once "Run all AML checks" is clicked (further down). Manual entry
-              should be a last-resort override, not the default workflow. */}
-          <div className="rounded-md border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-900 p-2.5 text-[11px] flex items-start gap-2">
-            <span className="text-blue-600 dark:text-blue-400 shrink-0">ℹ️</span>
-            <div>
-              <span className="font-medium text-blue-900 dark:text-blue-100">Risk &amp; PEP auto-fill from the AML sweep.</span>{" "}
-              Click <span className="font-medium">Run all AML checks</span> below — Comply Advantage screens PEP, Companies House + sanctions feed the risk score per FCA guidance. The dropdowns below show whatever the sweep set; only override manually with a documented reason.
-            </div>
-          </div>
-
           {/* Risk + PEP */}
           <div className="grid grid-cols-2 gap-3">
             <div>

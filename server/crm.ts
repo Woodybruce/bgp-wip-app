@@ -2862,11 +2862,40 @@ Only return the JSON object. If uncertain, return {"role": null}.`
         }
       }
 
+      // Auto-fire AML sweep for any counterparty newly linked to this deal,
+      // so by the time someone opens it the risk/PEP/sanctions/UBO/adverse
+      // media are already populated. Only re-run if the company's last sweep
+      // was >30 days ago — protects API credits on every save.
+      try {
+        const newLandlordId = (deal as any).landlordId || (deal as any).landlord_id;
+        const newTenantId = (deal as any).tenantId || (deal as any).tenant_id;
+        const oldLandlordId = (oldDeal as any)?.landlordId || (oldDeal as any)?.landlord_id;
+        const oldTenantId = (oldDeal as any)?.tenantId || (oldDeal as any)?.tenant_id;
+        const companiesToCheck: string[] = [];
+        if (newLandlordId && newLandlordId !== oldLandlordId) companiesToCheck.push(newLandlordId);
+        if (newTenantId && newTenantId !== oldTenantId) companiesToCheck.push(newTenantId);
+        for (const companyId of companiesToCheck) {
+          const last = await pool.query(
+            `SELECT updated_at FROM crm_companies WHERE id = $1
+              AND aml_checklist IS NOT NULL
+              AND updated_at > NOW() - INTERVAL '30 days'`,
+            [companyId],
+          );
+          if (last.rows.length > 0) continue; // recent sweep — skip
+          // Fire-and-forget: don't block the deal save on Companies House etc.
+          import("./kyc-orchestrator").then(({ runAllAmlChecks }) => {
+            runAllAmlChecks(companyId, deal.id, userId).catch((err) => {
+              console.warn("[auto-aml] sweep failed for company", companyId, err?.message);
+            });
+          }).catch(() => {});
+        }
+      } catch (autoErr: any) {
+        console.warn("[auto-aml] trigger error:", autoErr?.message);
+      }
+
       res.json(deal);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
-
-  // Deal audit log endpoint
   app.get("/api/crm/deals/:id/audit-log", async (req, res) => {
     try {
       const logs = await db.select().from(dealAuditLog)
