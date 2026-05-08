@@ -363,6 +363,8 @@ function MatterDetailView({ id }: { id: string }) {
 
   const [linkCompOpen, setLinkCompOpen] = useState(false);
   const [netEffectiveOpen, setNetEffectiveOpen] = useState(false);
+  const [itzaOpen, setItzaOpen] = useState(false);
+  const [devaluationOpen, setDevaluationOpen] = useState(false);
 
   const { data, isLoading, refetch } = useQuery<MatterDetailResponse>({
     queryKey: ["/api/pla/matters", id],
@@ -542,11 +544,19 @@ function MatterDetailView({ id }: { id: string }) {
 
         {/* Workbooks */}
         <Card><CardContent className="p-4">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <div className="text-sm font-medium">Valuation workbooks · {workbooks.length}</div>
-            <Button variant="outline" size="sm" onClick={() => setNetEffectiveOpen(true)}>
-              <Plus className="h-3.5 w-3.5 mr-1" /> Run Net Effective
-            </Button>
+            <div className="flex gap-2 flex-wrap">
+              <Button variant="outline" size="sm" onClick={() => setNetEffectiveOpen(true)}>
+                <Plus className="h-3.5 w-3.5 mr-1" /> Net Effective
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setItzaOpen(true)}>
+                <Plus className="h-3.5 w-3.5 mr-1" /> ITZA
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setDevaluationOpen(true)}>
+                <Plus className="h-3.5 w-3.5 mr-1" /> Devaluation
+              </Button>
+            </div>
           </div>
           {workbooks.length === 0 ? (
             <div className="text-sm text-muted-foreground">
@@ -602,6 +612,19 @@ function MatterDetailView({ id }: { id: string }) {
         }}
         onComputed={() => { setNetEffectiveOpen(false); refetch(); }}
       />
+      <ItzaDialog
+        open={itzaOpen}
+        onClose={() => setItzaOpen(false)}
+        matterId={id}
+        onComputed={() => { setItzaOpen(false); refetch(); }}
+      />
+      <DevaluationDialog
+        open={devaluationOpen}
+        onClose={() => setDevaluationOpen(false)}
+        matterId={id}
+        defaults={{ annualRentPa: matter.currentRent ?? null }}
+        onComputed={() => { setDevaluationOpen(false); refetch(); }}
+      />
     </div>
   );
 }
@@ -609,15 +632,19 @@ function MatterDetailView({ id }: { id: string }) {
 function WorkbookRow({ workbook }: { workbook: { id: string; kind: string; sharepointUrl: string | null; generatedAt: string; outputSummary: any; inputsSnapshot: any } }) {
   const [open, setOpen] = useState(false);
   const summary = workbook.outputSummary || {};
+  const headlineBadge = (() => {
+    if (workbook.kind === "net_effective" && summary.netEffectivePsf != null) return `£${summary.netEffectivePsf} psf NE`;
+    if (workbook.kind === "itza" && summary.itzaSqft != null) return `${summary.itzaSqft} sq ft ITZA`;
+    if (workbook.kind === "devaluation" && summary.zoneARatePsfItza != null) return `£${summary.zoneARatePsfItza} psf Zone A`;
+    return null;
+  })();
   return (
     <div className="border-b border-border last:border-0 py-2">
       <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between text-left text-sm hover:bg-accent rounded px-1 py-1">
         <div className="flex items-center gap-3">
           <span className="font-medium capitalize">{(workbook.kind || "").replace(/_/g, " ")}</span>
-          {summary.netEffectivePsf != null && (
-            <Badge variant="secondary">£{summary.netEffectivePsf} psf NE</Badge>
-          )}
-          {summary.discountPct != null && (
+          {headlineBadge && <Badge variant="secondary">{headlineBadge}</Badge>}
+          {summary.discountPct != null && workbook.kind === "net_effective" && (
             <Badge variant="outline">{summary.discountPct}% off headline</Badge>
           )}
         </div>
@@ -628,12 +655,26 @@ function WorkbookRow({ workbook }: { workbook: { id: string; kind: string; share
       </button>
       {open && (
         <div className="text-xs text-muted-foreground mt-2 grid grid-cols-3 gap-2 px-1 pb-1">
-          <Stat label="Headline psf" value={summary.headlinePsf} prefix="£" />
-          <Stat label="Net effective psf" value={summary.netEffectivePsf} prefix="£" />
-          <Stat label="Total incentive" value={summary.totalIncentive} prefix="£" thousands />
-          <Stat label="Effective annual" value={summary.effectiveAnnualPa} prefix="£" thousands />
-          <Stat label="Effective total" value={summary.effectiveTotal} prefix="£" thousands />
-          <Stat label="Discount" value={summary.discountPct} suffix="%" />
+          {workbook.kind === "net_effective" && (
+            <>
+              <Stat label="Headline psf" value={summary.headlinePsf} prefix="£" />
+              <Stat label="Net effective psf" value={summary.netEffectivePsf} prefix="£" />
+              <Stat label="Total incentive" value={summary.totalIncentive} prefix="£" thousands />
+              <Stat label="Effective annual" value={summary.effectiveAnnualPa} prefix="£" thousands />
+              <Stat label="Effective total" value={summary.effectiveTotal} prefix="£" thousands />
+              <Stat label="Discount" value={summary.discountPct} suffix="%" />
+            </>
+          )}
+          {workbook.kind === "itza" && (
+            <>
+              <Stat label="ITZA sq ft" value={summary.itzaSqft} thousands />
+              <Stat label="Basement ITZA" value={summary.basementItza} thousands />
+              <Stat label="Ancillary ITZA" value={summary.ancillaryItza} thousands />
+            </>
+          )}
+          {workbook.kind === "devaluation" && (
+            <Stat label="Zone A psf (ITZA)" value={summary.zoneARatePsfItza} prefix="£" />
+          )}
         </div>
       )}
     </div>
@@ -989,6 +1030,204 @@ function CompLinkerDialog({
             )}
           </div>
         </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── ITZA dialog ─────────────────────────────────────────────────────────────
+
+interface ZoningInputState {
+  zoneA: string; zoneB: string; zoneC: string; zoneD: string;
+  basementSqft: string; basementFactor: string;
+  ancillarySqft: string; ancillaryFactor: string;
+  a3SalesApportionment: string;
+}
+const EMPTY_ZONING: ZoningInputState = {
+  zoneA: "", zoneB: "", zoneC: "", zoneD: "",
+  basementSqft: "", basementFactor: "",
+  ancillarySqft: "", ancillaryFactor: "",
+  a3SalesApportionment: "",
+};
+
+function zoningInputs(state: ZoningInputState) {
+  return {
+    zones: [
+      { zoneAreaSqft: Number(state.zoneA) || 0, factor: 1 },
+      { zoneAreaSqft: Number(state.zoneB) || 0, factor: 0.5 },
+      { zoneAreaSqft: Number(state.zoneC) || 0, factor: 0.25 },
+      { zoneAreaSqft: Number(state.zoneD) || 0, factor: 0.125 },
+    ].filter((z) => z.zoneAreaSqft > 0),
+    basementSqft: Number(state.basementSqft) || 0,
+    basementFactor: Number(state.basementFactor) || 0,
+    ancillarySqft: Number(state.ancillarySqft) || 0,
+    ancillaryFactor: Number(state.ancillaryFactor) || 0,
+    a3SalesApportionment: Number(state.a3SalesApportionment) || 0,
+  };
+}
+
+function ZoningFields({ state, set }: { state: ZoningInputState; set: (s: ZoningInputState) => void }) {
+  const update = (k: keyof ZoningInputState, v: string) => set({ ...state, [k]: v });
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-sm font-medium mb-2">Zoned areas (sq ft) — fronts halve through zones (A/1, B/2, C/4, D/8)</div>
+        <div className="grid grid-cols-4 gap-2">
+          {[
+            { k: "zoneA" as const, label: "Zone A" },
+            { k: "zoneB" as const, label: "Zone B" },
+            { k: "zoneC" as const, label: "Zone C" },
+            { k: "zoneD" as const, label: "Zone D" },
+          ].map(({ k, label }) => (
+            <div key={k}>
+              <label className="text-xs text-muted-foreground block mb-1">{label}</label>
+              <Input type="number" value={state[k]} onChange={(e) => update(k, e.target.value)} placeholder="0" />
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-sm font-medium block mb-1.5">Basement sq ft</label>
+          <Input type="number" value={state.basementSqft} onChange={(e) => update("basementSqft", e.target.value)} placeholder="0" />
+        </div>
+        <div>
+          <label className="text-sm font-medium block mb-1.5">Basement factor</label>
+          <Input type="number" step="0.01" value={state.basementFactor} onChange={(e) => update("basementFactor", e.target.value)} placeholder="0.1 retail · 0.5 restaurant" />
+        </div>
+        <div>
+          <label className="text-sm font-medium block mb-1.5">Ancillary sq ft</label>
+          <Input type="number" value={state.ancillarySqft} onChange={(e) => update("ancillarySqft", e.target.value)} placeholder="0" />
+        </div>
+        <div>
+          <label className="text-sm font-medium block mb-1.5">Ancillary factor</label>
+          <Input type="number" step="0.01" value={state.ancillaryFactor} onChange={(e) => update("ancillaryFactor", e.target.value)} placeholder="0.1" />
+        </div>
+        <div className="col-span-2">
+          <label className="text-sm font-medium block mb-1.5">A3 sales apportionment (optional)</label>
+          <Input type="number" step="0.01" value={state.a3SalesApportionment} onChange={(e) => update("a3SalesApportionment", e.target.value)} placeholder="0.65 — restaurant ground sales (BGP A3 convention)" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ItzaDialog({
+  open, onClose, matterId, onComputed,
+}: { open: boolean; onClose: () => void; matterId: string; onComputed: () => void }) {
+  const { toast } = useToast();
+  const [state, setState] = useState<ZoningInputState>(EMPTY_ZONING);
+  const [result, setResult] = useState<any | null>(null);
+
+  const compute = async () => {
+    setResult(null);
+    const res = await fetch(`/api/pla/matters/${matterId}/valuation/itza`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify(zoningInputs(state)),
+    });
+    if (!res.ok) {
+      toast({ title: "ITZA calc failed", variant: "destructive" });
+      return;
+    }
+    const data = await res.json();
+    setResult(data);
+    toast({ title: "ITZA saved", description: `${data.output.itzaSqft} sq ft` });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Run ITZA</DialogTitle>
+          <DialogDescription>
+            Zoned area calculation — Zone A through D halve every 6.1m (20 ft) of depth.
+            Basement and ancillary are weighted by use class.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="py-2">
+          <ZoningFields state={state} set={setState} />
+          {result && (
+            <div className="mt-4 border rounded p-3 bg-muted/40 text-sm">
+              <div className="font-medium mb-1">Result</div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>ITZA total: <span className="font-semibold">{result.output.itzaSqft} sq ft</span></div>
+                <div>Basement ITZA: {result.output.basementItza} sq ft</div>
+                <div>Ancillary ITZA: {result.output.ancillaryItza} sq ft</div>
+                <div>Saved to workbook</div>
+              </div>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Close</Button>
+          <Button onClick={compute}>{result ? "Re-run" : "Compute"}</Button>
+          {result && <Button onClick={onComputed}>Save & close</Button>}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DevaluationDialog({
+  open, onClose, matterId, defaults, onComputed,
+}: { open: boolean; onClose: () => void; matterId: string; defaults: { annualRentPa: number | null }; onComputed: () => void }) {
+  const { toast } = useToast();
+  const [state, setState] = useState<ZoningInputState>(EMPTY_ZONING);
+  const [annualRent, setAnnualRent] = useState(defaults.annualRentPa?.toString() || "");
+  const [result, setResult] = useState<any | null>(null);
+
+  const compute = async () => {
+    setResult(null);
+    const res = await fetch(`/api/pla/matters/${matterId}/valuation/devaluation`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ ...zoningInputs(state), annualRentPa: Number(annualRent) || 0 }),
+    });
+    if (!res.ok) {
+      toast({ title: "Devaluation calc failed", variant: "destructive" });
+      return;
+    }
+    const data = await res.json();
+    setResult(data);
+    toast({ title: "Devaluation saved", description: `£${data.output.zoneARatePsfItza} psf` });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Run Devaluation</DialogTitle>
+          <DialogDescription>
+            Given an observed comp rent and the unit's zoning, back out the implied
+            Zone A psf — the rate Tom benchmarks against.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-2">
+          <div>
+            <label className="text-sm font-medium block mb-1.5">Annual rent £ p.a.</label>
+            <Input type="number" value={annualRent} onChange={(e) => setAnnualRent(e.target.value)} placeholder="e.g. 75000" />
+          </div>
+          <ZoningFields state={state} set={setState} />
+          {result && (
+            <div className="mt-4 border rounded p-3 bg-muted/40 text-sm">
+              <div className="font-medium mb-1">Result</div>
+              <div className="text-base">
+                Implied Zone A: <span className="font-semibold">£{result.output.zoneARatePsfItza} psf ITZA</span>
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                ITZA used: {result.input.itza.itzaSqft} sq ft · saved to workbook
+              </div>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Close</Button>
+          <Button onClick={compute} disabled={!annualRent}>{result ? "Re-run" : "Compute"}</Button>
+          {result && <Button onClick={onComputed}>Save & close</Button>}
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

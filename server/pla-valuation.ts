@@ -254,16 +254,34 @@ export function registerPlaValuationRoutes(app: Express): void {
   /** Pure ITZA — useful for the deal pages too (not just PLA matters). */
   app.post("/api/pla/valuation/itza", requireAuth, async (req: Request, res: Response) => {
     try {
-      const input: ItzaInput = {
-        zones: Array.isArray(req.body?.zones) ? req.body.zones : [],
-        basementSqft: num(req.body?.basementSqft),
-        basementFactor: num(req.body?.basementFactor),
-        ancillarySqft: num(req.body?.ancillarySqft),
-        ancillaryFactor: num(req.body?.ancillaryFactor),
-        a3SalesApportionment: num(req.body?.a3SalesApportionment) || undefined,
-      };
-      return res.json(calcItza(input));
+      return res.json(calcItza(itzaInputFromBody(req.body)));
     } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "itza calc failed" });
+    }
+  });
+
+  /** Per-matter ITZA — computes and persists a workbook snapshot. */
+  app.post("/api/pla/matters/:id/valuation/itza", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const matterId = req.params.id;
+      const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, matterId));
+      if (!matter) return res.status(404).json({ error: "matter not found" });
+      const input = itzaInputFromBody(req.body);
+      const output = calcItza(input);
+      const userId = (req as any).user?.id;
+      const [workbook] = await db
+        .insert(plaMatterWorkbooks)
+        .values({
+          matterId,
+          kind: "itza",
+          generatedBy: userId,
+          inputsSnapshot: input as any,
+          outputSummary: output as any,
+        })
+        .returning();
+      return res.json({ input, output, workbook });
+    } catch (err: any) {
+      console.error("[pla-valuation] itza matter error:", err);
       return res.status(500).json({ error: err?.message || "itza calc failed" });
     }
   });
@@ -271,21 +289,49 @@ export function registerPlaValuationRoutes(app: Express): void {
   /** Devaluation: given a comp rent + zoning, back out implied Zone A psf. */
   app.post("/api/pla/valuation/devaluation", requireAuth, async (req: Request, res: Response) => {
     try {
-      const input: DevaluationInput = {
-        annualRentPa: num(req.body?.annualRentPa),
-        itza: calcItza({
-          zones: Array.isArray(req.body?.zones) ? req.body.zones : [],
-          basementSqft: num(req.body?.basementSqft),
-          basementFactor: num(req.body?.basementFactor),
-          ancillarySqft: num(req.body?.ancillarySqft),
-          ancillaryFactor: num(req.body?.ancillaryFactor),
-          a3SalesApportionment: num(req.body?.a3SalesApportionment) || undefined,
-        }),
-      };
-      const output = calcDevaluation(input);
-      return res.json({ input, output });
+      const itza = calcItza(itzaInputFromBody(req.body));
+      const output = calcDevaluation({ annualRentPa: num(req.body?.annualRentPa), itza });
+      return res.json({ input: { annualRentPa: num(req.body?.annualRentPa), itza }, output });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || "devaluation calc failed" });
     }
   });
+
+  /** Per-matter Devaluation — computes and persists a workbook snapshot. */
+  app.post("/api/pla/matters/:id/valuation/devaluation", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const matterId = req.params.id;
+      const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, matterId));
+      if (!matter) return res.status(404).json({ error: "matter not found" });
+      const itza = calcItza(itzaInputFromBody(req.body));
+      const annualRentPa = num(req.body?.annualRentPa);
+      const output = calcDevaluation({ annualRentPa, itza });
+      const userId = (req as any).user?.id;
+      const [workbook] = await db
+        .insert(plaMatterWorkbooks)
+        .values({
+          matterId,
+          kind: "devaluation",
+          generatedBy: userId,
+          inputsSnapshot: { annualRentPa, itza } as any,
+          outputSummary: output as any,
+        })
+        .returning();
+      return res.json({ input: { annualRentPa, itza }, output, workbook });
+    } catch (err: any) {
+      console.error("[pla-valuation] devaluation matter error:", err);
+      return res.status(500).json({ error: err?.message || "devaluation calc failed" });
+    }
+  });
+}
+
+function itzaInputFromBody(body: any): ItzaInput {
+  return {
+    zones: Array.isArray(body?.zones) ? body.zones : [],
+    basementSqft: num(body?.basementSqft),
+    basementFactor: num(body?.basementFactor),
+    ancillarySqft: num(body?.ancillarySqft),
+    ancillaryFactor: num(body?.ancillaryFactor),
+    a3SalesApportionment: num(body?.a3SalesApportionment) || undefined,
+  };
 }
