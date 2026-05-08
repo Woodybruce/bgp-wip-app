@@ -301,7 +301,15 @@ export default function PropertyIntelligence() {
           <div className="px-4 lg:px-6 pt-3 pb-2">
             <PropertyResolverBar
               current={resolvedProperty}
-              onResolve={(id, prop) => setResolvedProperty({ id, name: prop.name, postcode: prop.postcode })}
+              onResolve={(id, prop) => {
+                setResolvedProperty({ id, name: prop.name, postcode: prop.postcode });
+                // Drive every tab that already accepts an initial search.
+                // The Map tab consumes pendingSearch directly; other tabs
+                // (Pathway, Investigator, Land Registry, VOA) get the
+                // canonical property via the resolved state above and will
+                // be refactored per-tab to read it.
+                setPendingSearch({ address: prop.name, postcode: prop.postcode });
+              }}
             />
           </div>
           <div className="px-4 lg:px-6 pt-3">
