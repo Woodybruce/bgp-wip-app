@@ -1562,13 +1562,16 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
   }, [messages, aiSendMutation.isPending, chatbgpMentionMutation.isPending]);
 
   useEffect(() => {
-    if (!aiSendMutation.isPending && queuedMessageRef.current && threadId) {
-      const queued = queuedMessageRef.current;
-      setQueuedMessage(null);
-      const userMessage: LocalChatMessage = { role: "user", content: queued.text || "Shared files", userName: currentUser?.name, userId: currentUser?.id };
+    // Drain one queued message when the current send finishes. Array-based
+    // so the user can stack multiple messages while a long ChatBGP response
+    // is still streaming back. Same pattern the desktop chat-panel uses.
+    if (!aiSendMutation.isPending && queuedMessagesRef.current.length > 0 && threadId) {
+      const next = queuedMessagesRef.current[0];
+      setQueuedMessages(prev => prev.slice(1));
+      const userMessage: LocalChatMessage = { role: "user", content: next.text || "Shared files", userName: currentUser?.name, userId: currentUser?.id };
       setMessages(prev => [...prev, userMessage]);
       const newMessages = [...messagesRef.current, userMessage];
-      aiSendMutation.mutate({ newMessages, files: queued.files, tid: threadId });
+      aiSendMutation.mutate({ newMessages, files: next.files, tid: threadId });
     }
   }, [aiSendMutation.isPending]);
 
@@ -1761,9 +1764,12 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
   }, []);
 
   const isSending = aiSendMutation.isPending || teamSendMutation.isPending || chatbgpMentionMutation.isPending || uploading;
-  const [queuedMessage, setQueuedMessage] = useState<{ text: string; files: File[] } | null>(null);
-  const queuedMessageRef = useRef<{ text: string; files: File[] } | null>(null);
-  queuedMessageRef.current = queuedMessage;
+  // Array-based queue so the user can stack multiple ChatBGP requests while
+  // a long response is still streaming. Drained one-at-a-time by the effect
+  // above. Mirrors the desktop chat-panel behaviour.
+  const [queuedMessages, setQueuedMessages] = useState<{ text: string; files: File[] }[]>([]);
+  const queuedMessagesRef = useRef<{ text: string; files: File[] }[]>([]);
+  queuedMessagesRef.current = queuedMessages;
 
   const handleSend = async () => {
     const text = input.trim();
@@ -1771,7 +1777,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
     if (!text && !hasFiles) return;
 
     if (isSending && isActiveThreadAi) {
-      setQueuedMessage({ text, files: hasFiles ? [...attachedFiles] : [] });
+      setQueuedMessages(prev => [...prev, { text, files: hasFiles ? [...attachedFiles] : [] }]);
       setInput("");
       setAttachedFiles([]);
       if (textareaRef.current) textareaRef.current.style.height = "auto";
@@ -2153,14 +2159,16 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
           )
         )}
 
-        {queuedMessage && (
-          <div className="flex justify-end">
-            <div className={`rounded-2xl px-4 py-3 text-[15px] leading-relaxed max-w-[80%] opacity-60 bg-[#1C1917] text-white rounded-br-md`}>
-              <div className="whitespace-pre-wrap break-words">{queuedMessage.text}</div>
-              <div className="text-[11px] mt-1 text-white/60">Queued — will send next</div>
+        {queuedMessages.map((q, i) => (
+          <div key={i} className="flex justify-end">
+            <div className="rounded-2xl px-4 py-3 text-[15px] leading-relaxed max-w-[80%] opacity-60 bg-[#1C1917] text-white rounded-br-md">
+              <div className="whitespace-pre-wrap break-words">{q.text}</div>
+              <div className="text-[11px] mt-1 text-white/60">
+                {i === 0 ? "Queued — will send next" : `Queued — position ${i + 1}`}
+              </div>
             </div>
           </div>
-        )}
+        ))}
 
         {typingUsers.length > 0 && !isSending && (
           <div className="text-sm italic px-2 text-gray-400">
@@ -2350,7 +2358,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 </button>
               )
             ) : (
-              <button onClick={handleSend} disabled={!!queuedMessage || uploading} className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} data-testid="button-mobile-send" aria-label="Send message">
+              <button onClick={handleSend} disabled={uploading} className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0" style={{ backgroundColor: "hsl(var(--primary))" }} data-testid="button-mobile-send" aria-label="Send message">
                 <Send className="w-[18px] h-[18px] text-white" />
               </button>
             )}
@@ -2442,7 +2450,7 @@ function MobileChatView({ threadId: threadIdProp, isAiChat, onBack, onNewChat, c
                 </button>
               )
             ) : (
-              <button onClick={handleSend} disabled={!!queuedMessage || uploading} className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0 bg-[#1C1917]" data-testid="button-mobile-send" aria-label="Send message">
+              <button onClick={handleSend} disabled={uploading} className="w-11 h-11 rounded-full flex items-center justify-center disabled:opacity-30 shrink-0 bg-[#1C1917]" data-testid="button-mobile-send" aria-label="Send message">
                 <Send className="w-[18px] h-[18px] text-white" />
               </button>
             )}
