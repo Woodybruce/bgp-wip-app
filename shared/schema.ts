@@ -742,6 +742,21 @@ export const crmProperties = pgTable("crm_properties", {
   longLeaseholderId: varchar("long_leaseholder_id"), // → crm_companies
   seniorLenderId: varchar("senior_lender_id"),  // → crm_companies
   juniorLenderId: varchar("junior_lender_id"),  // → crm_companies
+  // ── Resolver canonical identifiers ───────────────────────────────────────
+  uprn: text("uprn"),
+  toid: text("toid"),
+  usrn: text("usrn"),
+  osNgdFeatureId: text("os_ngd_feature_id"),
+  inspirePolygonId: text("inspire_polygon_id"),
+  voaBaReference: text("voa_ba_reference"),
+  fhrsId: text("fhrs_id"),
+  ward: text("ward"),
+  lpa: text("lpa"),
+  parlConstituency: text("parl_constituency"),
+  aliases: jsonb("aliases"),
+  resolutionStatus: text("resolution_status"),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: varchar("resolved_by"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
