@@ -30,6 +30,7 @@ import { Plus, Scale, Calendar as CalendarIcon, MapPin, AlertCircle, Loader2 } f
 import { getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
+import { InlineNumber, InlineDate, InlineText } from "@/components/inline-edit";
 import type { PlaMatter } from "@shared/schema";
 
 const MATTER_TYPES: Array<{ value: string; label: string }> = [
@@ -455,12 +456,12 @@ function MatterDetailView({ id }: { id: string }) {
 
         {/* Negotiation positions */}
         <Card><CardContent className="p-4">
-          <div className="text-sm font-medium mb-3">Negotiation</div>
+          <div className="text-sm font-medium mb-3">Negotiation <span className="text-xs text-muted-foreground font-normal">(click any value to edit)</span></div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Field label="Current rent" value={matter.currentRent} format="money" />
-            <Field label="Our quoting" value={matter.quotingRent} format="money" />
-            <Field label="Their counter" value={matter.counterQuotingRent} format="money" />
-            <Field label="Agreed" value={matter.agreedRent} format="money" highlight />
+            <MoneyField label="Current rent"   value={matter.currentRent}        onSave={(v) => updateField.mutate({ currentRent: v } as any)} />
+            <MoneyField label="Our quoting"    value={matter.quotingRent}        onSave={(v) => updateField.mutate({ quotingRent: v } as any)} />
+            <MoneyField label="Their counter"  value={matter.counterQuotingRent} onSave={(v) => updateField.mutate({ counterQuotingRent: v } as any)} />
+            <MoneyField label="Agreed"         value={matter.agreedRent}         onSave={(v) => updateField.mutate({ agreedRent: v } as any)} highlight />
           </div>
         </CardContent></Card>
 
@@ -468,14 +469,14 @@ function MatterDetailView({ id }: { id: string }) {
         <Card><CardContent className="p-4">
           <div className="text-sm font-medium mb-3">Key dates</div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Field label="Review" value={matter.currentRentReviewDate} format="date" />
-            <Field label="Break" value={matter.breakDate} format="date" />
-            <Field label="Expiry" value={matter.expiryDate} format="date" />
-            <Field label="Notice served" value={matter.noticeServedAt} format="date" />
-            <Field label="Counter deadline" value={matter.counterNoticeDeadline} format="date" highlight={isUpcoming(matter.counterNoticeDeadline)} />
-            <Field label="Counter served" value={matter.counterNoticeServedAt} format="date" />
-            <Field label="Settled" value={matter.settledAt} format="date" />
-            <Field label="Opened" value={matter.openedAt} format="date" />
+            <DateField label="Review"           value={matter.currentRentReviewDate} onSave={(v) => updateField.mutate({ currentRentReviewDate: v } as any)} />
+            <DateField label="Break"            value={matter.breakDate}             onSave={(v) => updateField.mutate({ breakDate: v } as any)} />
+            <DateField label="Expiry"           value={matter.expiryDate}            onSave={(v) => updateField.mutate({ expiryDate: v } as any)} />
+            <DateField label="Notice served"    value={matter.noticeServedAt}        onSave={(v) => updateField.mutate({ noticeServedAt: v } as any)} />
+            <DateField label="Counter deadline" value={matter.counterNoticeDeadline} onSave={(v) => updateField.mutate({ counterNoticeDeadline: v } as any)} highlight={isUpcoming(matter.counterNoticeDeadline)} />
+            <DateField label="Counter served"   value={matter.counterNoticeServedAt} onSave={(v) => updateField.mutate({ counterNoticeServedAt: v } as any)} />
+            <DateField label="Settled"          value={matter.settledAt}             readOnly />
+            <DateField label="Opened"           value={matter.openedAt}              readOnly />
           </div>
         </CardContent></Card>
 
@@ -570,22 +571,43 @@ function isUpcoming(d: any): boolean {
   return ms > 0 && ms < 30 * 24 * 60 * 60 * 1000; // within 30 days
 }
 
-function Field({ label, value, format, highlight }: {
-  label: string; value: any; format: "money" | "date"; highlight?: boolean;
+function MoneyField({ label, value, onSave, highlight }: {
+  label: string; value: number | null | undefined; onSave: (v: number | null) => void; highlight?: boolean;
 }) {
-  let display = "—";
-  if (value !== null && value !== undefined) {
-    if (format === "money") {
-      const n = typeof value === "number" ? value : Number(value);
-      if (!isNaN(n)) display = `£${n.toLocaleString("en-GB")}`;
-    } else if (format === "date") {
-      display = formatDate(value);
-    }
-  }
   return (
     <div>
       <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
-      <div className={`text-sm font-medium ${highlight ? "text-amber-700 dark:text-amber-400" : ""}`}>{display}</div>
+      <div className={`text-sm font-medium ${highlight ? "text-amber-700 dark:text-amber-400" : ""}`}>
+        <InlineNumber
+          value={value ?? null}
+          onSave={(v) => onSave(v)}
+          prefix="£"
+          format="money"
+          placeholder="—"
+        />
+      </div>
+    </div>
+  );
+}
+
+function DateField({ label, value, onSave, highlight, readOnly }: {
+  label: string;
+  value: any;
+  onSave?: (v: string | null) => void;
+  highlight?: boolean;
+  readOnly?: boolean;
+}) {
+  const iso = value ? (typeof value === "string" ? value.slice(0, 10) : new Date(value).toISOString().slice(0, 10)) : null;
+  return (
+    <div>
+      <div className="text-xs text-muted-foreground mb-0.5">{label}</div>
+      <div className={`text-sm font-medium ${highlight ? "text-amber-700 dark:text-amber-400" : ""}`}>
+        {readOnly || !onSave ? (
+          <span>{formatDate(value)}</span>
+        ) : (
+          <InlineDate value={iso} onSave={(v) => onSave(v)} placeholder="—" />
+        )}
+      </div>
     </div>
   );
 }
