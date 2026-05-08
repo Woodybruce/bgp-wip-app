@@ -1059,12 +1059,12 @@ function CalendarWidget() {
           </div>
         )}
 
-        {birthdays.length === 0 && oooThisWeek.length === 0 && upcomingMarketing.length === 0 && (
+        {birthdays.length === 0 && teamEvents.length === 0 && upcomingMarketing.length === 0 && (
           <div className="text-xs text-muted-foreground italic text-center py-2">Quiet week ahead.</div>
         )}
 
-        {oooData?.note && (
-          <div className="text-[10px] text-muted-foreground italic border-t pt-2">{oooData.note}</div>
+        {!teamEventsData?.msConnected && (
+          <div className="text-[10px] text-muted-foreground italic border-t pt-2">Microsoft 365 not connected — connect to see live company events.</div>
         )}
       </CardContent>
     </Card>
