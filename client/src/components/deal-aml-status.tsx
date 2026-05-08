@@ -1,17 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2 } from "lucide-react";
+import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp } from "lucide-react";
 import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
-import { getAuthHeaders } from "@/lib/queryClient";
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { ChevronDown, ChevronUp } from "lucide-react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud } from "lucide-react";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
 import { useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -57,14 +52,23 @@ export function DealAmlStatusCard({ dealId }: { dealId: string }) {
   );
   if (!data) return null;
 
+  // The legacy "both sides need to be linked to invoice" gate previously
+  // returned early here, hiding the AML AI augments (MLR scope, AI triage,
+  // SoF analysis, MLRO PDF) until both counterparties were set. Those
+  // augments are useful from the moment a deal exists, so we now render the
+  // warning inline above the AmlAiPanel rather than blocking the whole card.
+
   if (data.counterparties.length < 2) {
     return (
-      <Card>
-        <CardContent className="p-3 flex items-center gap-2 text-sm" data-testid="deal-aml-status-incomplete">
-          <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" />
-          <span>
-            Only {data.counterparties.length} counterparty linked to this deal — both sides need to be set on the deal record before AML can be tracked.
-          </span>
+      <Card data-testid="deal-aml-status-card">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-md text-sm" data-testid="deal-aml-status-incomplete">
+            <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+            <span>
+              Only {data.counterparties.length} counterparty linked to this deal — both sides need to be set on the deal record before AML status can clear and the invoice can unlock. AML AI tools below still work though.
+            </span>
+          </div>
+          <AmlAiPanel dealId={dealId} dealName={data.dealName} />
         </CardContent>
       </Card>
     );
@@ -186,7 +190,9 @@ interface DealAmlAi {
   }> } | null;
 }
 
-function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: string }) {
+// Exported so the Compliance Board (and other KYC review surfaces) can drop
+// the AI augments alongside their existing per-counterparty KycPanel.
+export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: string }) {
   const { toast } = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
