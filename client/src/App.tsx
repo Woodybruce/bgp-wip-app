@@ -94,6 +94,7 @@ const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
 const TenantRep = lazy(() => import("@/pages/tenant-rep"));
 const PlaMatters = lazy(() => import("@/pages/pla-matters"));
+const WestminsterRestaurants = lazy(() => import("@/pages/westminster-restaurants"));
 const HRPage = lazy(() => import("@/pages/hr"));
 const KycUploadPage = lazy(() => import("@/pages/kyc-upload"));
 
@@ -150,6 +151,7 @@ function Router() {
       <Route path="/tenant-rep" component={TenantRep} />
       <Route path="/pla/matters" component={PlaMatters} />
       <Route path="/pla/matters/:id" component={PlaMatters} />
+      <Route path="/westminster-restaurants" component={WestminsterRestaurants} />
       <Route path="/hunters/letting" component={HuntersLetting} />
       <Route path="/hunters/investment" component={HuntersInvestment} />
       <Route path="/today" component={TodayPage} />

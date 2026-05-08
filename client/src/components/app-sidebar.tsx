@@ -95,6 +95,7 @@ const coreNavBase = [
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
   { title: "Lease Advisory", url: "/pla/matters", icon: Landmark },
+  { title: "Westminster Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
 ];
 
 const aiNav = [
@@ -435,6 +436,7 @@ const mobileOverlayItems = [
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
   { title: "Lease Advisory", url: "/pla/matters", icon: Landmark },
+  { title: "Westminster Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
   { title: "Document Studio", url: "/templates", icon: FileTextIcon },
   { title: "Image Studio", url: "/image-studio", icon: ImageIcon },
