@@ -344,15 +344,21 @@ async function searchUnsplash(query: string, count: number): Promise<StockHit[]>
   } catch { return []; }
 }
 
-// Pexels stock-image fetch is disabled — the nightly cron was bloating
-// image_studio_images with low-quality, brand-mismatched generic stock
-// photos that nobody used in proposals. Unsplash continues to fire as the
-// primary source. To re-enable, restore the body below and remove this guard.
+// Pexels stock-image fetch is disabled (so is Unsplash — see fetchBrandImages
+// below). To re-enable, restore the body and re-enable fetchBrandImages too.
 async function searchPexels(_query: string, _count: number): Promise<StockHit[]> {
   return [];
 }
 
-async function fetchBrandImages(companyId: string, brandName: string, industry?: string): Promise<number> {
+async function fetchBrandImages(_companyId: string, _brandName: string, _industry?: string): Promise<number> {
+  // Disabled — auto-fetched stock photos (Unsplash + Pexels) were
+  // bloating image_studio_images with brand-mismatched dross that nobody
+  // used in proposals. AI brand enrichment (industry, store_count, etc.)
+  // continues unaffected. Email-related crons (weekly digest, brand
+  // digest, Pathway email ingest) are unaffected. To re-enable, restore
+  // the body below.
+  return 0;
+  /*
   // Skip if we already have enough images for this brand
   const existing = await pool.query(
     `SELECT COUNT(*)::int AS cnt FROM image_studio_images WHERE LOWER(brand_name) = LOWER($1)`,
@@ -418,6 +424,7 @@ async function fetchBrandImages(companyId: string, brandName: string, industry?:
   }
   if (imported > 0) console.log(`[brand-images] Imported ${imported} images for ${brandName}`);
   return imported;
+  */
 }
 
 export default router;
