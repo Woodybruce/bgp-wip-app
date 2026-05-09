@@ -217,6 +217,14 @@ export type ResolveBuildingTitlesInput = {
   postcode?: string | null;
   lat?: number | null;
   lng?: number | null;
+  /**
+   * EXACT UPRN — when supplied, skip the OS Places re-discovery step and go
+   * straight to PropertyData uprn-title for THIS specific building. This is
+   * the resolver-canonical path: the resolver has already pinpointed the
+   * exact UPRN via Google Places + OS Places nearest, so we don't need to
+   * fall back to postcode-wide title lookup.
+   */
+  uprn?: string | null;
   /** "clouseau" | "pathway" | "land-registry" — for persistence tagging */
   source?: string | null;
   pathwayRunId?: string | null;
@@ -322,15 +330,18 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
     if (tail && tail !== resolvedAddress) cleanedAddressCandidates.unshift(tail);
   }
 
-  // Step 2a: ask OS AddressBase for the UPRN. Prefer lat/lng nearest-point
-  // when we have them (e.g. from a map click) — it bypasses address-string
-  // parsing entirely and resolves commercial/mixed-use buildings accurately
-  // even when Google reverse-geocoded them under a business name like
-  // "Steak and Company - Piccadilly Circus, 18 Haymarket". Fall through to
-  // OS find-by-address if no coords.
+  // Step 2a: if the caller already passed an exact UPRN (resolver-canonical
+  // path: Google → OS Places nearest → UPRN), skip the discovery step and
+  // use it directly. PropertyData uprn-title returns titles for EXACTLY this
+  // building, no postcode-wide noise. This is the fix for "we keep showing
+  // every freehold in W1S 1JX because we're searching at postcode level".
   let osUprns: string[] = [];
+  if (input.uprn && input.uprn.trim()) {
+    osUprns = [input.uprn.trim()];
+  }
   try {
     const { osPlacesNearest, osPlacesFind } = await import("./os-data");
+    if (osUprns.length === 0) {
     if (typeof lat === "number" && typeof lng === "number") {
       for (const radius of [20, 40, 80]) {
         const nearest = await osPlacesNearest(lat, lng, radius);
@@ -355,6 +366,7 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
         }
       }
     }
+    } // end if (osUprns.length === 0) — caller-supplied UPRN bypasses both blocks
   } catch (e: any) {
     console.warn("[land-registry/resolve] OS Places lookup failed:", e?.message);
   }
@@ -1068,11 +1080,24 @@ export function registerLandRegistryRoutes(app: Express) {
 
   app.post("/api/land-registry/resolve", requireAuth, async (req: any, res) => {
     const userId = req.session?.userId || req.tokenUserId || null;
+    // Caller can pass propertyId — we look up the resolver-canonical UPRN
+    // so the title lookup hits THIS exact building, not every title in the
+    // postcode area.
+    let uprn: string | null = req.body?.uprn || null;
+    if (!uprn && typeof req.body?.propertyId === "string") {
+      try {
+        const [prop] = await db.select({ uprn: sql<string | null>`uprn` }).from(sql`crm_properties`).where(eq(sql`id`, req.body.propertyId));
+        if (prop?.uprn) uprn = prop.uprn;
+      } catch (e: any) {
+        console.warn("[land-registry] couldn't read UPRN from propertyId:", e?.message);
+      }
+    }
     const result = await resolveBuildingTitles({
       address: req.body?.address,
       postcode: req.body?.postcode,
       lat: req.body?.lat,
       lng: req.body?.lng,
+      uprn,
       source: req.body?.source,
       pathwayRunId: req.body?.pathwayRunId,
       userId,

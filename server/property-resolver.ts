@@ -321,6 +321,9 @@ export async function enrichResolvedPropertyAsync(propertyId: string): Promise<{
       postcode: prop.postcode || undefined,
       lat,
       lng,
+      // Critical: pass the resolver-canonical UPRN so PropertyData looks
+      // up THIS exact building's title — not every title in the postcode.
+      uprn: prop.uprn || undefined,
       source: "resolver",
       pathwayRunId: null,
       userId: null,
