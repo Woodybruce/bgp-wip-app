@@ -233,10 +233,13 @@ export async function ensureRetailLeasingCompsTable(): Promise<void> {
  * the comps page reads). Tags each row with source_evidence = "Pathway"
  * so they can be filtered as Pathway-extracted vs manually-entered.
  *
- * Dedupe via a deterministic key on name + tenant + completionDate stored
- * in source_url (existing column, repurposed) — if a row with that key
- * already exists we skip. Pathway re-runs over the same emails won't
- * duplicate.
+ * Dedupe by email message id (source_url): if a row with the same Pathway
+ * sourceMsgId already exists we skip. Pathway re-runs over the same emails
+ * won't duplicate. The deterministic comp key (address|tenant|month) is
+ * stored in `comments` as `[pathway-key:XYZ]` for forensic searchability.
+ *
+ * source_title preserves the original email subject so the comps page can
+ * surface the human-readable provenance.
  *
  * (Previously wrote to retail_leasing_comps which was an orphan table no
  * UI / API read from. Backfill of existing retail_leasing_comps rows
@@ -250,11 +253,14 @@ export async function upsertExtractedComps(
   let inserted = 0;
   for (const c of comps) {
     const key = makeDedupeKey(c);
-    // crm_comps has no unique constraint — check by our dedupe key stored
-    // in source_title (we use source_url for the email link).
+    // Dedupe by the Pathway key marker in comments (resilient to re-runs
+    // even when sourceMsgId varies — e.g. an email forwarded twice).
     const existing = await pool.query(
-      `SELECT id FROM crm_comps WHERE source_title = $1 LIMIT 1`,
-      [`pathway-key:${key}`],
+      `SELECT id FROM crm_comps
+       WHERE source_evidence = 'Pathway'
+         AND comments LIKE $1
+       LIMIT 1`,
+      [`%[pathway-key:${key}]%`],
     );
     if ((existing.rowCount ?? 0) > 0) continue;
     // Address as jsonb so it matches the rest of the comps in crm_comps.
@@ -303,8 +309,16 @@ export async function upsertExtractedComps(
         c.breakYears != null ? `${c.breakYears} years` : null,
         "Pathway",
         c.sourceMsgId || null,
-        `pathway-key:${key}`,
-        [c.notes, c.sector ? `Sector: ${c.sector}` : null, opts.submarket ? `Submarket: ${opts.submarket}` : null, c.confidence != null ? `Confidence: ${c.confidence}` : null].filter(Boolean).join(" · "),
+        c.sourceSubject || null,                    // preserve email subject
+        // Pathway-key marker in comments enables dedupe + forensic search.
+        // Notes / sector / submarket / confidence preserved alongside.
+        [
+          `[pathway-key:${key}]`,
+          c.notes,
+          c.sector ? `Sector: ${c.sector}` : null,
+          opts.submarket ? `Submarket: ${opts.submarket}` : null,
+          c.confidence != null ? `Confidence: ${c.confidence}` : null,
+        ].filter(Boolean).join(" · "),
         opts.createdBy || null,
       ],
     );
