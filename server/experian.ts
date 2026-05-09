@@ -250,6 +250,249 @@ export async function kybLookup(companyNumber: string): Promise<{ verified: bool
   }
 }
 
+// ─── Sandbox audit: exercise every candidate Experian product so we know
+// what to put on the order before we talk to sales ─────────────────────────
+
+export interface SandboxProbe {
+  product: string;            // sales-facing product name
+  bgpUse: string;             // why we want it
+  path: string;               // sandbox URL path
+  method: "GET" | "POST";
+  reqBody?: any;
+  status: number | null;      // HTTP status
+  ok: boolean;
+  latencyMs: number;
+  fields: string[];           // top-level fields returned (when 200)
+  preview: string;            // first 250 chars of response
+  note: string;               // human read of what this means
+}
+
+// Catalog of Experian UK B2B products we want to evaluate. Test regnum
+// 99999999 is Experian's standard UK sandbox dummy company.
+function probeCatalog(regnum: string): Array<Omit<SandboxProbe, "status" | "ok" | "latencyMs" | "fields" | "preview" | "note">> {
+  return [
+    {
+      product: "Commercial Credit (Delphi)",
+      bgpUse: "Counterparty credit score, recommended limit, CCJs, filed turnover — feeds BGP risk rating + covenant assessment",
+      path: `/risk/business/v2/registeredcompanycredit/${encodeURIComponent(regnum)}`,
+      method: "GET",
+    },
+    {
+      product: "KYB Business Targeter",
+      bgpUse: "Confirm registered name + status from Companies House number — corroborates billing/contracting entity ID",
+      path: `/risk/business/v2/businesstargeter?businessref=${encodeURIComponent(regnum)}`,
+      method: "GET",
+    },
+    {
+      product: "Director Report",
+      bgpUse: "Pull active + resigned directors, prior insolvencies, PEP signals — feeds UBO walk + adverse media",
+      path: `/risk/business/v2/directorreport/${encodeURIComponent(regnum)}`,
+      method: "GET",
+    },
+    {
+      product: "CCJ + Mortgage detail",
+      bgpUse: "Itemised CCJs/satisfactions + outstanding charges — feeds covenant strength flag",
+      path: `/risk/business/v2/ccjmortgages/${encodeURIComponent(regnum)}`,
+      method: "GET",
+    },
+    {
+      product: "Commercial Portfolio Monitoring",
+      bgpUse: "Webhook alert when a counterparty's score / limit / CCJs change — replaces our quarterly re-screen with real-time push",
+      path: `/risk/business/v2/portfoliomonitoring`,
+      method: "GET",
+    },
+    {
+      product: "Bureau Monitoring (consumer)",
+      bgpUse: "Sole-trader / LLP partner tenant deals where the bureau record sits on the individual",
+      path: `/lookupServiceUK/Application/v1/monitoring`,
+      method: "GET",
+    },
+    {
+      product: "Fraud Prevention (CIFAS / Hunter)",
+      bgpUse: "Identity-fraud markers — flags spoofed counterparties before we waste effort issuing KYC requests",
+      path: `/lookupServiceUK/Application/v1/cifas`,
+      method: "GET",
+    },
+    {
+      product: "Group Structure / Corporate Linkage",
+      bgpUse: "Walk parent → subsidiary chain — supplements Companies House PSCs with international parents we can't see in the UK filings",
+      path: `/risk/business/v2/groupstructure/${encodeURIComponent(regnum)}`,
+      method: "GET",
+    },
+    {
+      product: "Sole Trader / Unincorporated Lookup",
+      bgpUse: "Tenants trading as themselves — letting deals to individual operators where there's no Companies House record",
+      path: `/risk/business/v2/soletraderreport`,
+      method: "POST",
+      reqBody: { firstName: "Test", lastName: "Trader", postcode: "SW1A 1AA", country: "GB" },
+    },
+    {
+      product: "Adverse Media / Negative Press",
+      bgpUse: "Curated press hits — reduces noise vs Perplexity, more legally defensible audit trail",
+      path: `/risk/business/v2/adverseMedia/${encodeURIComponent(regnum)}`,
+      method: "GET",
+    },
+    {
+      product: "PEP / Sanctions Screening",
+      bgpUse: "If priced right could replace ComplyAdvantage — single Experian invoice instead of two",
+      path: `/compliance/uk/v1/pep-sanctions`,
+      method: "POST",
+      reqBody: { name: "John Smith", country: "GB" },
+    },
+    {
+      product: "Business Profile (full report)",
+      bgpUse: "Single-call rich profile (filings + officers + financials + group + risk) — collapses several of the above into one",
+      path: `/risk/business/v2/businessprofile/${encodeURIComponent(regnum)}`,
+      method: "GET",
+    },
+  ];
+}
+
+export async function sandboxAudit(regnum: string = "99999999"): Promise<{
+  env: string;
+  configured: boolean;
+  tokenOk: boolean;
+  tokenError?: string;
+  probes: SandboxProbe[];
+  recommendation: string[];
+}> {
+  const env = (process.env.EXPERIAN_ENV || "sandbox");
+  const configured = isExperianConfigured();
+  if (!configured) {
+    return {
+      env,
+      configured: false,
+      tokenOk: false,
+      tokenError: "EXPERIAN_CLIENT_ID / EXPERIAN_CLIENT_SECRET not configured",
+      probes: [],
+      recommendation: ["Set EXPERIAN_CLIENT_ID, EXPERIAN_CLIENT_SECRET, EXPERIAN_USERNAME, EXPERIAN_PASSWORD on Railway and re-run."],
+    };
+  }
+
+  let tokenOk = false;
+  let tokenError: string | undefined;
+  try {
+    await getToken();
+    tokenOk = true;
+  } catch (e: any) {
+    tokenError = e?.message || "unknown";
+  }
+
+  const cleanedReg = (regnum || "").trim().toUpperCase() || "99999999";
+  const catalog = probeCatalog(cleanedReg);
+
+  const probes = await Promise.all(catalog.map(async (c): Promise<SandboxProbe> => {
+    const start = Date.now();
+    try {
+      const r = await debugExperianRaw(cleanedReg, { path: c.path, method: c.method, reqBody: c.reqBody });
+      const ok = r.status >= 200 && r.status < 300;
+      const fields = ok && r.body && typeof r.body === "object" ? Object.keys(r.body).slice(0, 12) : [];
+      const note = explainResponse(c.product, r.status, r.body);
+      return {
+        product: c.product,
+        bgpUse: c.bgpUse,
+        path: c.path,
+        method: c.method,
+        reqBody: c.reqBody,
+        status: r.status,
+        ok,
+        latencyMs: Date.now() - start,
+        fields,
+        preview: JSON.stringify(r.body).slice(0, 250),
+        note,
+      };
+    } catch (e: any) {
+      return {
+        product: c.product,
+        bgpUse: c.bgpUse,
+        path: c.path,
+        method: c.method,
+        reqBody: c.reqBody,
+        status: null,
+        ok: false,
+        latencyMs: Date.now() - start,
+        fields: [],
+        preview: e?.message?.slice(0, 250) || "request failed",
+        note: "Network or library error — not a sales-relevant signal",
+      };
+    }
+  }));
+
+  const recommendation = buildRecommendation(probes);
+
+  return { env, configured, tokenOk, tokenError, probes, recommendation };
+}
+
+function explainResponse(product: string, status: number | null, body: any): string {
+  if (status === 200 || status === 201) {
+    return `Available on this sandbox account. Confirm production pricing with sales.`;
+  }
+  if (status === 401 || status === 403) {
+    return `Endpoint exists but the sandbox account lacks entitlement — sales must add this product to the order.`;
+  }
+  if (status === 404) {
+    const errCode = body?.errors?.[0]?.code || body?.error?.code;
+    if (errCode) return `Path not enabled (code ${errCode}). Ask sales: "Is ${product} available under the v2 commercial bundle?"`;
+    return `Endpoint path not present on sandbox. Ask sales for the canonical path + entitlement name.`;
+  }
+  if (status === 400) {
+    return `Endpoint is reachable but the test payload was rejected — likely we just need real input data, the product itself is provisioned.`;
+  }
+  if (status === 429) return `Rate-limit hit. Worth confirming sandbox call quota with sales.`;
+  if (status && status >= 500) return `Experian-side error. Re-run; if persistent, raise with their support.`;
+  return `Status ${status ?? "n/a"} — ambiguous, ask sales to confirm product availability.`;
+}
+
+function buildRecommendation(probes: SandboxProbe[]): string[] {
+  const haves = probes.filter(p => p.ok).map(p => p.product);
+  const missingNeeded = probes.filter(p =>
+    !p.ok &&
+    [
+      "Commercial Credit (Delphi)",
+      "KYB Business Targeter",
+      "Director Report",
+      "CCJ + Mortgage detail",
+      "Commercial Portfolio Monitoring",
+      "Group Structure / Corporate Linkage",
+      "Sole Trader / Unincorporated Lookup",
+      "Business Profile (full report)",
+    ].includes(p.product)
+  );
+  const optional = probes.filter(p =>
+    !p.ok &&
+    [
+      "Adverse Media / Negative Press",
+      "PEP / Sanctions Screening",
+      "Fraud Prevention (CIFAS / Hunter)",
+      "Bureau Monitoring (consumer)",
+    ].includes(p.product)
+  );
+
+  const out: string[] = [];
+  out.push(`# Experian sales requirements for BGP`);
+  out.push(``);
+  out.push(`## Already available on the sandbox`);
+  if (haves.length === 0) out.push(`(none — sandbox not provisioning anything yet)`);
+  for (const p of haves) out.push(`- ${p}`);
+  out.push(``);
+  out.push(`## REQUIRED for BGP commercial property AML — ask sales to enable`);
+  if (missingNeeded.length === 0) out.push(`(all required products available — proceed to production pricing)`);
+  for (const p of missingNeeded) out.push(`- ${p.product}\n   Reason: ${p.bgpUse}\n   Sandbox status: ${p.status ?? "—"} (${p.note})`);
+  out.push(``);
+  out.push(`## OPTIONAL — quote anyway, may replace existing vendors`);
+  for (const p of optional) out.push(`- ${p.product}\n   Reason: ${p.bgpUse}\n   Sandbox status: ${p.status ?? "—"} (${p.note})`);
+  out.push(``);
+  out.push(`## Commercials to nail down`);
+  out.push(`- Per-call price for Commercial Credit + Director Report at ~250 / month volume`);
+  out.push(`- Webhook / portfolio monitoring: per-monitored-entity / month`);
+  out.push(`- Sole Trader lookup: included in commercial bundle or separate?`);
+  out.push(`- PEP/Sanctions: bundled or add-on? (We currently pay ComplyAdvantage — sole-vendor would simplify invoicing)`);
+  out.push(`- Production-only entitlements (some products are sandbox-blocked entirely)`);
+  out.push(`- Webhook delivery — does Experian push, or do we poll?`);
+  out.push(``);
+  return out;
+}
+
 // Upsert the filed turnover from an Experian credit report into turnover_data.
 // Keyed on (company_id, source) so re-running the KYC sweep won't duplicate rows;
 // it just refreshes the latest figure. Silent no-op if turnover is missing.
