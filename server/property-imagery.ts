@@ -196,22 +196,77 @@ async function ingestExistingImageStudio(
 }
 
 /**
- * Infer the imagery kind from an Image Studio image's category/tags.
- * Heuristic — the picker UI lets users reclassify.
+ * Infer the imagery kind from an Image Studio image's metadata. Heuristics
+ * over filename + description + category + tags + dimensions. The picker
+ * UI lets users reclassify if we get it wrong.
+ *
+ * Priority order matters — floor plans are checked before "internal" because
+ * "first floor plan" contains both keywords; covenant cards before "card";
+ * etc.
  */
 function inferKindFromStudioImage(img: typeof imageStudioImages.$inferSelect): ImageryKind {
   const cat = (img.category || "").toLowerCase();
   const tags = (img.tags || []).map((t) => t.toLowerCase());
-  const all = [cat, ...tags].join(" ");
+  const fn = (img.fileName || "").toLowerCase();
+  const desc = (img.description || "").toLowerCase();
+  const all = [cat, fn, desc, ...tags].join(" ");
 
-  if (all.includes("street view") || all.includes("exterior")) return "secondary_external";
-  if (all.includes("hero") || all.includes("building front") || all.includes("front")) return "hero";
-  if (all.includes("internal") || all.includes("interior") || all.includes("inside")) return "internal";
-  if (all.includes("floor plan") || all.includes("floorplan")) return "floor_plan";
-  if (all.includes("location plan") || all.includes("map")) return "location_plan";
-  if (all.includes("logo") || all.includes("brand")) return "overlay";
-  // Default: secondary external (least invasive — the picker lets users
-  // promote it to hero or reclassify).
+  // Generated charts / cards (BGP composers create these)
+  if (all.includes("comps chart") || all.includes("comparables chart")) return "comps_chart";
+  if (all.includes("erv walk") || all.includes("rent walk")) return "erv_walk";
+  if (all.includes("covenant card") || all.includes("covenant")) return "covenant_card";
+  if (all.includes("location plan")) return "location_plan";
+
+  // Floor plans — checked early because "first floor plan" / "ground
+  // floor plan" contain both "floor plan" and floor names
+  if (all.includes("floor plan") || all.includes("floorplan") ||
+      all.includes("floorplate") || all.includes("layout") ||
+      all.includes("ground floor") || all.includes("first floor") ||
+      all.includes("upper floor") || all.includes("basement plan") ||
+      /\bplan\b.*\bfloor\b|\bfloor\b.*\bplan\b/i.test(all)) {
+    return "floor_plan";
+  }
+
+  // Aspect-ratio hint: floor plans tend to be very wide or square — but
+  // this alone isn't enough; we also need a plan-ish keyword OR the image
+  // be from a brochure (where Stage 8 extracts both photos and plans).
+  const fromBrochure = (img.source || "").toLowerCase() === "pathway" || all.includes("brochure");
+  if (fromBrochure && img.width && img.height) {
+    const ar = img.width / img.height;
+    // Very wide / very tall images from brochures are probably plans/maps
+    if ((ar > 1.6 || ar < 0.7) && all.includes("plan")) return "floor_plan";
+  }
+
+  // Map / location
+  if (all.includes("map") || all.includes("street map") || all.includes("aerial")) return "location_plan";
+
+  // Hero / front
+  if (all.includes("hero") || all.includes("building front") ||
+      all.includes("front view") || all.includes("frontage")) {
+    return "hero";
+  }
+
+  // Internal / interior — checked AFTER floor_plan to avoid mis-classifying
+  // "first floor [plan]" as internal
+  if (all.includes("internal") || all.includes("interior") ||
+      all.includes("inside") || all.includes("reception") ||
+      all.includes("office space") || all.includes("trading space") ||
+      all.includes("kitchen") || all.includes("bathroom")) {
+    return "internal";
+  }
+
+  // External / street view
+  if (all.includes("street view") || all.includes("exterior") || all.includes("rear") ||
+      all.includes("side view")) {
+    return "secondary_external";
+  }
+
+  // Brand / logo overlay
+  if (all.includes("logo") || all.includes("brand mark")) return "overlay";
+
+  // Default — secondary external (picker lets users promote to hero or
+  // reclassify). The Stage 8 sweep tags everything with "pathway" so most
+  // unclassified images here are brochure photos.
   return "secondary_external";
 }
 

@@ -439,11 +439,27 @@ function CandidateCard({
               </a>
             </Button>
           )}
+          <select
+            value={candidate.kind}
+            onChange={(e) => onPatch(candidate.id, { kind: e.target.value })}
+            className="h-7 text-[10px] bg-background border rounded px-1 ml-auto"
+            title="Reclassify as a different kind"
+          >
+            <option value="hero">Hero</option>
+            <option value="internal">Internal</option>
+            <option value="secondary_external">Secondary external</option>
+            <option value="location_plan">Location plan</option>
+            <option value="floor_plan">Floor plan</option>
+            <option value="covenant_card">Covenant</option>
+            <option value="comps_chart">Comps chart</option>
+            <option value="erv_walk">ERV walk</option>
+            <option value="overlay">Overlay</option>
+          </select>
           <Button
             size="sm"
             variant="ghost"
             onClick={() => onPatch(candidate.id, { hidden: true })}
-            className="h-7 px-2 text-xs text-muted-foreground ml-auto"
+            className="h-7 px-2 text-xs text-muted-foreground"
             title="Hide — not relevant"
           >
             <EyeOff className="h-3 w-3" />
