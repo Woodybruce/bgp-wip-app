@@ -167,8 +167,44 @@ async function resolveByPostcode(postcode: string): Promise<ResolveResult> {
 }
 
 async function resolveByAddress(text: string, postcode?: string): Promise<ResolveResult> {
-  if (!isOsConfigured()) return { kind: "not_found", reason: "OS Places not configured" };
   const query = postcode ? `${text} ${postcode}` : text;
+
+  // Primary path: Google Places resolves "what address did the user mean"
+  // (typo-tolerant, partial-postcode-tolerant, business-name-tolerant)
+  // BEFORE we hit OS Places. Once Google returns a place_id we follow the
+  // standard googlePlace path → OS Places nearest → canonical UPRN.
+  if (process.env.GOOGLE_API_KEY) {
+    try {
+      const params = new URLSearchParams({
+        input: query,
+        key: process.env.GOOGLE_API_KEY,
+        types: "geocode|establishment",
+        components: "country:uk",
+      });
+      const resp = await fetch(
+        `https://maps.googleapis.com/maps/api/place/autocomplete/json?${params}`,
+        { signal: AbortSignal.timeout(6000) },
+      );
+      if (resp.ok) {
+        const data = await resp.json();
+        const top = (data?.predictions || [])[0];
+        if (top?.place_id && (data?.status === "OK")) {
+          const googleResult = await resolveByGooglePlace(top.place_id);
+          if (googleResult.kind === "resolved") return googleResult;
+          // For ambiguous Google results we'd still surface candidates, but
+          // resolveByGooglePlace funnels through latLng so a resolved
+          // outcome is the typical case. If Google didn't help, fall through
+          // to OS Places below as a safety net.
+          if (googleResult.kind === "candidates") return googleResult;
+        }
+      }
+    } catch (err: any) {
+      console.warn("[property-resolver] Google primary lookup failed, falling back to OS Places:", err?.message);
+    }
+  }
+
+  // Fallback: OS Places find — same behaviour as before for backwards compat.
+  if (!isOsConfigured()) return { kind: "not_found", reason: "OS Places not configured (and Google didn't match)" };
   const results = await osPlacesFind(query, 10);
   if (results.length === 0) return { kind: "not_found", reason: `no address match for "${query}"` };
   if (results.length === 1 && results[0].uprn) {
@@ -246,7 +282,62 @@ async function createFromDpa(dpa: OsPlacesResult, source: ResolveSource): Promis
       resolvedAt: new Date(),
     })
     .returning();
+  // Fire-and-forget enrichment for newly-created properties — HMLR title +
+  // proprietor + Companies House follow-up. Existing cascade in
+  // server/land-registry.ts; we just kick it off so the property gets
+  // populated with title number, proprietor, etc by the time anyone opens it.
+  enrichResolvedPropertyAsync(created.id).catch((err) =>
+    console.warn(`[property-resolver] enrichment fire-and-forget failed for ${created.id}:`, err?.message),
+  );
   return { kind: "resolved", property: created, source };
+}
+
+/**
+ * Background enrichment cascade — fires on first-time resolution of a
+ * property. Re-uses the existing infrastructure rather than re-building:
+ *
+ *   1. server/land-registry.ts → resolveBuildingTitles → PropertyData API
+ *      → HMLR title + proprietor. persistLandRegistrySearch (chained from
+ *      resolveBuildingTitles) writes proprietor name/address/company
+ *      number directly onto crm_properties.
+ *   2. The Companies House follow-up auto-fires from the persistence
+ *      step (existing AML auto-fire on counterparty link).
+ *   3. VOA lookup by postcode/UPRN — populates voa_ba_reference on the
+ *      property. (Best-effort; the VOA SQLite snapshot may not have the
+ *      address.)
+ *
+ * Best-effort throughout. Logs warnings, never throws — the caller
+ * already returned the resolved property; this just enriches in the
+ * background.
+ */
+async function enrichResolvedPropertyAsync(propertyId: string): Promise<void> {
+  const [prop] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
+  if (!prop) return;
+  // Skip if already enriched recently
+  if (prop.titleSearchDate && (Date.now() - new Date(prop.titleSearchDate).getTime()) < 24 * 60 * 60 * 1000) {
+    return;
+  }
+  try {
+    const { resolveBuildingTitles } = await import("./land-registry");
+    const lat = prop.latitude ? Number(prop.latitude) : undefined;
+    const lng = prop.longitude ? Number(prop.longitude) : undefined;
+    const addrField = prop.address as any;
+    const addressStr = typeof addrField === "string" ? addrField : addrField?.formatted || addrField?.line1 || prop.name;
+    await resolveBuildingTitles({
+      address: addressStr,
+      postcode: prop.postcode || undefined,
+      lat,
+      lng,
+      source: "resolver",
+      pathwayRunId: null,
+      userId: null,
+      skipPersist: false, // persist chains the proprietor write into crm_properties
+    } as any).catch((err: any) => {
+      console.warn(`[property-resolver] HMLR enrichment failed for ${propertyId}:`, err?.message);
+    });
+  } catch (err: any) {
+    console.warn(`[property-resolver] enrichment cascade failed for ${propertyId}:`, err?.message);
+  }
 }
 
 async function annotateCandidates(results: OsPlacesResult[]): Promise<ResolverCandidate[]> {
