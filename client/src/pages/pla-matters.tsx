@@ -1394,11 +1394,17 @@ function DocumentBriefsDialog({
       .finally(() => setLoading(false));
   }, [open]);
 
-  const run = async (briefId: string) => {
+  const [renderedHtml, setRenderedHtml] = useState<string | null>(null);
+  const [rendering, setRendering] = useState(false);
+
+  const run = async (briefId: string, withRender: boolean) => {
     setRunning(briefId);
     setOutput(null);
+    setRenderedHtml(null);
     try {
-      const res = await fetch(`/api/document-briefs/${briefId}/run`, {
+      const endpoint = withRender ? "render" : "run";
+      if (withRender) setRendering(true);
+      const res = await fetch(`/api/document-briefs/${briefId}/${endpoint}`, {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
@@ -1410,16 +1416,22 @@ function DocumentBriefsDialog({
         return;
       }
       const data = await res.json();
-      setOutput(data);
+      const briefData = withRender ? data.brief : data;
+      setOutput(briefData);
+      if (withRender && data.html) setRenderedHtml(data.html);
       const provCounts: Record<string, number> = {};
-      for (const p of Object.values(data.imageryProvenance || {})) {
+      for (const p of Object.values(briefData.imageryProvenance || {})) {
         const k = String(p);
         provCounts[k] = (provCounts[k] || 0) + 1;
       }
       const summary = Object.entries(provCounts).map(([k, v]) => `${v} ${k}`).join(", ");
-      toast({ title: `${data.briefName} ready`, description: summary || "Brief built — Claude design renders next" });
+      toast({
+        title: `${briefData.briefName} ${withRender ? "rendered" : "ready"}`,
+        description: summary || "Brief built",
+      });
     } finally {
       setRunning(null);
+      setRendering(false);
     }
   };
 
@@ -1458,9 +1470,15 @@ function DocumentBriefsDialog({
                         </p>
                       )}
                     </div>
-                    <Button size="sm" onClick={() => run(b.id)} disabled={running !== null}>
-                      {running === b.id ? <Loader2 className="h-4 w-4 animate-spin" /> : "Run"}
-                    </Button>
+                    <div className="flex gap-1.5">
+                      <Button size="sm" variant="outline" onClick={() => run(b.id, false)} disabled={running !== null}>
+                        {running === b.id && !rendering ? <Loader2 className="h-4 w-4 animate-spin" /> : "Run brief"}
+                      </Button>
+                      <Button size="sm" onClick={() => run(b.id, true)} disabled={running !== null} className="gap-1">
+                        {running === b.id && rendering ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                        Render
+                      </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -1481,9 +1499,24 @@ function DocumentBriefsDialog({
                   .map(([k, p]) => `${k.replace(/_/g, " ")} (${p})`)
                   .join(" · ")}
               </div>
-              <div className="text-[10px] text-muted-foreground italic">
-                Brief built — Claude design integration to render PDF/Word lands next. Output JSON above is what Claude design will receive.
-              </div>
+              {!renderedHtml && (
+                <div className="text-[10px] text-muted-foreground italic">
+                  Brief built. Click "Render" on a brief to send to Claude design and produce a print-ready HTML document.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+        {renderedHtml && (
+          <Card>
+            <CardContent className="p-2">
+              <div className="text-xs font-medium px-2 py-1">Claude design preview</div>
+              <iframe
+                srcDoc={renderedHtml}
+                className="w-full h-[60vh] border rounded"
+                title="Claude design rendered output"
+                sandbox="allow-same-origin"
+              />
             </CardContent>
           </Card>
         )}

@@ -42,6 +42,7 @@ import {
 } from "@shared/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { discoverImagery, getManifest, type ImageryKind, type ImageryCandidate } from "./property-imagery";
+import { imageStudioImages } from "@shared/schema";
 import {
   composeLocationPlan,
   composeCompsChart,
@@ -702,4 +703,161 @@ export function registerDocumentBriefRoutes(app: Express): void {
       return res.status(500).json({ error: err?.message || "brief run failed" });
     }
   });
+
+  /**
+   * Render: run the brief AND hand the output to Claude design, which
+   * produces a print-ready self-contained HTML document. Returns
+   * { html, brief, briefPrompt } so the UI can iframe-display it
+   * immediately, or save to SharePoint as PDF.
+   */
+  app.post("/api/document-briefs/:id/render", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user?.id;
+      const ctx: BriefContext = {
+        propertyId: String(req.body?.propertyId || ""),
+        matterId: req.body?.matterId,
+        dealId: req.body?.dealId,
+        pathwayRunId: req.body?.pathwayRunId,
+        userId,
+        imageryOverrides: req.body?.imageryOverrides,
+      };
+      if (!ctx.propertyId) return res.status(400).json({ error: "propertyId required" });
+
+      const brief = await runBrief(req.params.id, ctx);
+      const briefPrompt = await buildClaudePromptFromBrief(brief);
+      const html = await renderWithClaude(briefPrompt);
+
+      return res.json({
+        html,
+        brief,
+        briefPromptPreview: briefPrompt.slice(0, 1200),
+        renderedAt: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error("[document-briefs] render error:", err);
+      return res.status(500).json({ error: err?.message || "render failed" });
+    }
+  });
+}
+
+// ─── Claude design adapter ───────────────────────────────────────────────────
+
+const BGP_BRAND = `
+BGP brand cues:
+- Primary teal: #15616D
+- Cream: #FBF5DF
+- Charcoal: #001524
+- Accent gold: #FF7D00
+- Typography: serif headlines (display), sans-serif body. Tight tracking on headlines.
+- Tone: confident, evidence-led, never hyperbolic. UK property language ('instructions', 'completions', 'lease events').
+- Layout: generous whitespace, clear sections, big numbers, supporting evidence underneath.
+`;
+
+const BASE_PROMPT_HEADER = `You are designing a print-ready document for Bruce Gillingham Pollard (BGP), a UK commercial property advisor.
+
+Output a SINGLE self-contained HTML document — no external assets, no scripts, all CSS inline in a <style> tag. Print-ready (A4 portrait or landscape per layoutHints, one section per page using @page and page-break-after on each section). Looks like a polished pitch / advisory document, not a webpage.
+
+${BGP_BRAND}
+
+Each section:
+- Bold section number top-left, title in serif
+- Big hero number / chart / image where the section.imageRef is set — embed via the data:image/jpeg;base64,... URI provided
+- Supporting body / bullets / structured data underneath
+- BGP footer band on every page with the document title + page number
+
+Every imagery reference uses an embedded base64 data URI provided in the brief. Use those — do not invent placeholder images.
+
+Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.
+`;
+
+/**
+ * Translate a BriefOutput into a prompt Claude can turn into HTML.
+ * Inlines thumbnail base64 for each pinned image so the rendered HTML
+ * is self-contained.
+ */
+async function buildClaudePromptFromBrief(brief: BriefOutput): Promise<string> {
+  // Resolve image studio thumbnails for each pinned imagery kind
+  const studioIds = Object.values(brief.imagery).map((v) => v?.imageStudioId).filter(Boolean) as string[];
+  const studioRows = studioIds.length > 0
+    ? await db.select().from(imageStudioImages).where(sql`${imageStudioImages.id} = ANY(${studioIds})`)
+    : [];
+  const studioById = new Map(studioRows.map((r) => [r.id, r]));
+
+  // Inline data-URI for each kind
+  const imagerySection = Object.entries(brief.imagery).map(([kind, v]) => {
+    if (!v) return null;
+    const row = studioById.get(v.imageStudioId);
+    const thumb = row?.thumbnailData;
+    const dataUri = thumb
+      ? (thumb.startsWith("data:") ? thumb : `data:image/jpeg;base64,${thumb}`)
+      : null;
+    return `### ${kind}\n- caption: ${v.caption || "(none)"}\n- source: ${v.source}\n- provenance: ${brief.imageryProvenance[kind as ImageryKind] || "unknown"}\n- imageDataUri: ${dataUri || "(missing — render a typographic placeholder)"}\n`;
+  }).filter(Boolean).join("\n");
+
+  const sectionsBlock = brief.sections.map((s, i) => {
+    const lines = [`### Section ${i + 1}: ${s.heading}`];
+    if (s.body) lines.push(`Body: ${s.body}`);
+    if (s.bullets && s.bullets.length > 0) {
+      lines.push(`Bullets:`);
+      s.bullets.forEach((b) => lines.push(`  - ${b}`));
+    }
+    if (s.imageRef) lines.push(`Image: use the "${s.imageRef}" image embedded above${s.imageCaption ? ` — caption: "${s.imageCaption}"` : ""}`);
+    if (s.data && Object.keys(s.data).length > 0) {
+      // Only include keys with non-null values, trim long arrays
+      const trimmed: any = {};
+      for (const [k, v] of Object.entries(s.data)) {
+        if (v == null) continue;
+        if (Array.isArray(v) && v.length > 8) {
+          trimmed[k] = v.slice(0, 8);
+          trimmed[`${k}_count`] = v.length;
+        } else {
+          trimmed[k] = v;
+        }
+      }
+      lines.push(`Data: ${JSON.stringify(trimmed, null, 2)}`);
+    }
+    return lines.join("\n");
+  }).join("\n\n");
+
+  return `${BASE_PROMPT_HEADER}
+
+# Brief: ${brief.briefName}
+Title: ${brief.title}
+${brief.subtitle ? `Subtitle: ${brief.subtitle}` : ""}
+
+# Layout hints
+${JSON.stringify(brief.layoutHints || {}, null, 2)}
+
+# Imagery available (use the data URIs verbatim — do not fabricate other images)
+${imagerySection || "(no imagery resolved — use typography only)"}
+
+# Sections (render in order, one per page)
+${sectionsBlock}
+
+# Output
+Return a single self-contained HTML document, starting with <!DOCTYPE html>, A4 print-ready, with embedded CSS in a <style> tag. Each section is a full page with page-break-after: always. BGP brand cues throughout.`;
+}
+
+async function renderWithClaude(prompt: string): Promise<string> {
+  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY not configured");
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
+    ? process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+    : undefined;
+  const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+  const msg = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 16000,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const raw = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
+  return safeHtml(raw.replace(/^```html\s*/i, "").replace(/```\s*$/i, "").trim());
+}
+
+function safeHtml(s: string): string {
+  // Strip anything before <!DOCTYPE html if Claude added prose, ensure we
+  // start with the doctype.
+  const idx = s.indexOf("<!DOCTYPE");
+  return idx >= 0 ? s.slice(idx) : s;
 }
