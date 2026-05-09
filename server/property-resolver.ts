@@ -282,40 +282,33 @@ async function createFromDpa(dpa: OsPlacesResult, source: ResolveSource): Promis
       resolvedAt: new Date(),
     })
     .returning();
-  // Fire-and-forget enrichment for newly-created properties — HMLR title +
-  // proprietor + Companies House follow-up. Existing cascade in
-  // server/land-registry.ts; we just kick it off so the property gets
-  // populated with title number, proprietor, etc by the time anyone opens it.
-  enrichResolvedPropertyAsync(created.id).catch((err) =>
-    console.warn(`[property-resolver] enrichment fire-and-forget failed for ${created.id}:`, err?.message),
-  );
+  // NOTE: heavy enrichment (HMLR / Companies House / AML) is deliberately
+  // NOT auto-fired here — the user might still be picking the wrong
+  // property, and we don't want to burn PropertyData credits or pollute
+  // the AML feed on every keystroke-resolve. Enrichment is feature-driven:
+  //   - Property Intelligence Land Registry tab → triggers HMLR
+  //   - Property Intelligence Investigator tab → triggers Companies House
+  //   - PLA matter creation → triggers folder template
+  //   - Pathway Stage 1 → triggers full investigation cascade
+  //   - "Confirm and enrich" button on the resolver UI (next commit) →
+  //     explicit user action to run the full cascade once they've
+  //     confirmed the right property
   return { kind: "resolved", property: created, source };
 }
 
 /**
- * Background enrichment cascade — fires on first-time resolution of a
- * property. Re-uses the existing infrastructure rather than re-building:
+ * Explicit enrichment endpoint — called by an "Enrich now" button on the
+ * resolver UI / property detail page after the user has CONFIRMED the
+ * property is the right one. Reuses the existing land-registry cascade.
  *
- *   1. server/land-registry.ts → resolveBuildingTitles → PropertyData API
- *      → HMLR title + proprietor. persistLandRegistrySearch (chained from
- *      resolveBuildingTitles) writes proprietor name/address/company
- *      number directly onto crm_properties.
- *   2. The Companies House follow-up auto-fires from the persistence
- *      step (existing AML auto-fire on counterparty link).
- *   3. VOA lookup by postcode/UPRN — populates voa_ba_reference on the
- *      property. (Best-effort; the VOA SQLite snapshot may not have the
- *      address.)
- *
- * Best-effort throughout. Logs warnings, never throws — the caller
- * already returned the resolved property; this just enriches in the
- * background.
+ * Best-effort throughout. Logs warnings, never throws.
  */
-async function enrichResolvedPropertyAsync(propertyId: string): Promise<void> {
+export async function enrichResolvedPropertyAsync(propertyId: string): Promise<{ ok: boolean; error?: string }> {
   const [prop] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
-  if (!prop) return;
+  if (!prop) return { ok: false, error: "property not found" };
   // Skip if already enriched recently
   if (prop.titleSearchDate && (Date.now() - new Date(prop.titleSearchDate).getTime()) < 24 * 60 * 60 * 1000) {
-    return;
+    return { ok: true };
   }
   try {
     const { resolveBuildingTitles } = await import("./land-registry");
@@ -331,12 +324,12 @@ async function enrichResolvedPropertyAsync(propertyId: string): Promise<void> {
       source: "resolver",
       pathwayRunId: null,
       userId: null,
-      skipPersist: false, // persist chains the proprietor write into crm_properties
-    } as any).catch((err: any) => {
-      console.warn(`[property-resolver] HMLR enrichment failed for ${propertyId}:`, err?.message);
-    });
+      skipPersist: false,
+    } as any);
+    return { ok: true };
   } catch (err: any) {
-    console.warn(`[property-resolver] enrichment cascade failed for ${propertyId}:`, err?.message);
+    console.warn(`[property-resolver] enrichment failed for ${propertyId}:`, err?.message);
+    return { ok: false, error: err?.message || "enrichment failed" };
   }
 }
 
@@ -496,6 +489,24 @@ export function registerPropertyResolverRoutes(app: Express): void {
     } catch (err: any) {
       console.error("[property-resolver] confirm error:", err);
       return res.status(500).json({ error: err?.message || "confirm failed" });
+    }
+  });
+
+  /**
+   * Explicit enrichment trigger — called by "Enrich now" UI button after
+   * the user confirms the property is the right one. Runs HMLR title +
+   * proprietor lookup (PropertyData API), which auto-cascades to Companies
+   * House + AML via the existing land-registry persistence flow.
+   *
+   * 24-hour cooldown built into the helper to avoid burning credits on
+   * rapid re-clicks.
+   */
+  app.post("/api/property-resolver/enrich/:propertyId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const result = await enrichResolvedPropertyAsync(req.params.propertyId);
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "enrich failed" });
     }
   });
 }

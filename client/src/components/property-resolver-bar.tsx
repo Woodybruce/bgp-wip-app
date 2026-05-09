@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Search, Loader2, MapPin, AlertCircle, Building2 } from "lucide-react";
+import { Search, Loader2, MapPin, AlertCircle, Building2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -282,11 +282,14 @@ export function PropertyResolverBar({ onResolve, current, placeholder }: Props) 
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Resolve"}
         </Button>
         {current && (
-          <Badge variant="secondary" className="gap-1">
-            <MapPin className="h-3 w-3" />
-            {current.name}
-            {current.postcode && <span className="opacity-60">· {current.postcode}</span>}
-          </Badge>
+          <>
+            <Badge variant="secondary" className="gap-1">
+              <MapPin className="h-3 w-3" />
+              {current.name}
+              {current.postcode && <span className="opacity-60">· {current.postcode}</span>}
+            </Badge>
+            <EnrichButton propertyId={current.id} />
+          </>
         )}
       </div>
       {error && (
@@ -330,6 +333,64 @@ export function PropertyResolverBar({ onResolve, current, placeholder }: Props) 
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/**
+ * Explicit "Enrich now" button — fires HMLR title + proprietor + Companies
+ * House + AML cascade only after the user has CONFIRMED the resolved
+ * property is the right one. Avoids burning PropertyData credits on a
+ * mid-typing wrong-property pick.
+ */
+function EnrichButton({ propertyId }: { propertyId: string }) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const enrich = async () => {
+    if (!propertyId) return;
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/property-resolver/enrich/${propertyId}`, {
+        method: "POST",
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => null);
+        toast({ title: "Enrich failed", description: e?.error || `${r.status}`, variant: "destructive" });
+        return;
+      }
+      setDone(true);
+      toast({
+        title: "Enriching property",
+        description: "HMLR + Companies House + AML — running in background, refresh in ~30s.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (done) {
+    return (
+      <Badge variant="outline" className="gap-1 border-emerald-300 text-emerald-700 dark:text-emerald-400">
+        <Sparkles className="h-3 w-3" /> Enriched
+      </Badge>
+    );
+  }
+
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={enrich}
+      disabled={busy}
+      className="gap-1 h-8"
+      title="Run HMLR title + Companies House + AML lookup for this property"
+    >
+      {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+      Enrich
+    </Button>
   );
 }
 
