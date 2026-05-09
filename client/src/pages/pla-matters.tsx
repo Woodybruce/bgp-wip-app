@@ -30,6 +30,7 @@ import { Plus, Scale, Calendar as CalendarIcon, MapPin, AlertCircle, Loader2, X 
 import { getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
+import { PropertyImageryPicker } from "@/components/property-imagery-picker";
 import { InlineNumber, InlineDate, InlineText } from "@/components/inline-edit";
 import type { PlaMatter, CrmComp } from "@shared/schema";
 
@@ -591,6 +592,15 @@ function MatterDetailView({ id }: { id: string }) {
               ))}
             </div>
           )}
+        </CardContent></Card>
+
+        {/* Imagery — hero + location plan + floor plan, drives RR reps and dilapidations cover */}
+        <Card><CardContent className="p-4">
+          <PropertyImageryPicker
+            propertyId={matter.propertyId}
+            matterId={id}
+            kinds={["hero", "secondary_external", "location_plan", "floor_plan", "comps_chart"]}
+          />
         </CardContent></Card>
 
         {/* Notes */}

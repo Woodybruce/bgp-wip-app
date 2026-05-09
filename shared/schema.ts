@@ -2738,3 +2738,31 @@ export const plaMatterEvents = pgTable("pla_matter_events", {
 });
 
 export type PlaMatterEvent = typeof plaMatterEvents.$inferSelect;
+
+// ─── Property Imagery Assets — curation layer over image_studio_images ───────
+// One row = "for property X, this image plays role Y". Discovery service
+// populates these; pickers (Pathway Stage 9, PLA matter pages, Property
+// Intelligence, Document Studio briefs) consume them.
+
+export const propertyImageryAssets = pgTable("property_imagery_assets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  propertyId: varchar("property_id").notNull(),                  // → crm_properties.id
+  kind: text("kind").notNull(),                                  // hero | internal | secondary_external | location_plan | floor_plan | covenant_card | comps_chart | erv_walk | overlay
+  source: text("source").notNull(),                              // brochure | sharepoint | street_view | planning_portal | os_ngd | google_static | edozo | cad_measure | image_studio | generated_chart | manual_upload
+  imageStudioId: varchar("image_studio_id"),                     // → image_studio_images.id (when imported)
+  sourceUrl: text("source_url"),                                 // raw URL for provenance / re-fetch
+  generatedFrom: jsonb("generated_from"),                        // inputs snapshot — lets us regenerate
+  score: real("score"),                                          // ranking 0-1; higher = more relevant
+  width: integer("width"),
+  height: integer("height"),
+  caption: text("caption"),
+  pinned: boolean("pinned").default(false),                      // user marked: "this is THE hero"
+  hidden: boolean("hidden").default(false),                      // user said: not this one
+  generatedAt: timestamp("generated_at").defaultNow(),
+  generatedBy: varchar("generated_by"),
+  pathwayRunId: varchar("pathway_run_id"),                       // discovered via Pathway run
+  matterId: varchar("matter_id"),                                // discovered for a PLA matter
+});
+
+export type PropertyImageryAsset = typeof propertyImageryAssets.$inferSelect;
+export type InsertPropertyImageryAsset = typeof propertyImageryAssets.$inferInsert;

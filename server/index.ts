@@ -1334,6 +1334,7 @@ import { registerPropertyResolverRoutes } from "./property-resolver";
 import { registerPlaMattersRoutes } from "./pla-matters";
 import { registerPlaValuationRoutes, registerComparablesScheduleRoute } from "./pla-valuation";
 import { registerWestminsterRestaurantsRoutes } from "./westminster-restaurants";
+import { registerPropertyImageryRoutes } from "./property-imagery";
 // Simple request queue for AI endpoints
 const activeRequests = new Set<string>();
 const requestQueue: Array<{ req: Request; res: Response; next: NextFunction }> = [];
@@ -1792,6 +1793,7 @@ app.use("/api/branding/assets", express.static(
   registerPlaValuationRoutes(app);
   registerComparablesScheduleRoute(app);
   registerWestminsterRestaurantsRoutes(app);
+  registerPropertyImageryRoutes(app);
   registerVoaRoutes(app);
   // Probe the VOA SQLite snapshot at boot so we log where rates data is coming
   // from. No-op if the file isn't mounted — callers gracefully degrade.

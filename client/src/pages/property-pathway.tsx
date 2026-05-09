@@ -3,6 +3,7 @@ import { useLocation, Link } from "wouter";
 import DOMPurify from "dompurify";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PropertyImageryPicker } from "@/components/property-imagery-picker";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -1514,7 +1515,7 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
 
       {/* Stage 9 — Why Buy */}
       {s9 && (
-        <WhyBuyCard runId={run.id} stage9={s9} onReload={onReload} />
+        <WhyBuyCard runId={run.id} stage9={s9} onReload={onReload} propertyId={run.propertyId || null} />
       )}
 
     </div>
@@ -2393,7 +2394,7 @@ function fmtPsf(v?: number): string {
   return `£${v.toFixed(v < 10 ? 2 : 0)}/sqft`;
 }
 
-function WhyBuyCard({ runId, stage9, onReload }: { runId: string; stage9: any; onReload: () => void }) {
+function WhyBuyCard({ runId, stage9, onReload, propertyId }: { runId: string; stage9: any; onReload: () => void; propertyId: string | null }) {
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
@@ -2406,8 +2407,19 @@ function WhyBuyCard({ runId, stage9, onReload }: { runId: string; stage9: any; o
           )}
         </div>
       </CardHeader>
-      <CardContent className="text-sm space-y-2">
+      <CardContent className="text-sm space-y-3">
         <p className="text-muted-foreground">4-page PE-style investment memo generated from the agreed business plan + agreed Excel model.</p>
+
+        {/* Imagery — pinned candidates per kind feed Claude design's brief */}
+        {propertyId && (
+          <div className="border rounded-md p-3 bg-muted/20">
+            <PropertyImageryPicker
+              propertyId={propertyId}
+              pathwayRunId={runId}
+              kinds={["hero", "secondary_external", "internal", "location_plan", "floor_plan", "comps_chart", "erv_walk", "covenant_card"]}
+            />
+          </div>
+        )}
 
         <ClaudeDesignPane runId={runId} />
       </CardContent>

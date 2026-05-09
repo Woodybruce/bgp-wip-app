@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Loader2, Map, LayoutGrid, ShieldCheck, Landmark, Receipt, FileSearch, Sparkles } from "lucide-react";
+import { Loader2, Map, LayoutGrid, ShieldCheck, Landmark, Receipt, FileSearch, Sparkles, ImageIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,6 +10,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
+import { PropertyImageryPicker } from "@/components/property-imagery-picker";
 
 const EdozoMap = lazy(() => import("@/pages/edozo-map"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
@@ -17,7 +18,7 @@ const LandRegistry = lazy(() => import("@/pages/land-registry"));
 const VoaRatings = lazy(() => import("@/pages/voa-ratings"));
 const PropertyPathway = lazy(() => import("@/pages/property-pathway"));
 
-type TabId = "pathway" | "map" | "investigator" | "land-registry" | "business-rates";
+type TabId = "pathway" | "map" | "investigator" | "land-registry" | "business-rates" | "imagery";
 
 const TABS: Array<{ id: TabId; label: string; icon: any }> = [
   { id: "pathway", label: "Pathway", icon: Sparkles },
@@ -25,6 +26,7 @@ const TABS: Array<{ id: TabId; label: string; icon: any }> = [
   { id: "investigator", label: "Investigator", icon: ShieldCheck },
   { id: "land-registry", label: "Land Registry", icon: Landmark },
   { id: "business-rates", label: "Business Rates", icon: Receipt },
+  { id: "imagery", label: "Imagery", icon: ImageIcon },
 ];
 
 const SEARCH_STATUSES = ["New", "Investigating", "Contacted Owner", "No Interest", "Acquired"] as const;
@@ -355,6 +357,16 @@ export default function PropertyIntelligence() {
             </TabsContent>
             <TabsContent value="business-rates" className="m-0">
               <VoaRatings />
+            </TabsContent>
+            <TabsContent value="imagery" className="m-0 p-4 lg:p-6">
+              {resolvedProperty ? (
+                <PropertyImageryPicker propertyId={resolvedProperty.id} />
+              ) : (
+                <Card><CardContent className="p-12 text-center text-muted-foreground">
+                  <ImageIcon className="h-12 w-12 mx-auto mb-3 opacity-30" />
+                  <p>Resolve a property above to see and curate its imagery — heroes, internals, location plans, floor plans.</p>
+                </CardContent></Card>
+              )}
             </TabsContent>
           </Suspense>
         </div>
