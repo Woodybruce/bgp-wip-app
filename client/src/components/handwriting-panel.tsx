@@ -123,11 +123,12 @@ export function HandwritingPanel() {
 
   return (
     <>
-      {/* Floating toggle button */}
+      {/* Floating toggle button — iPad and up only (handwriting input is
+          impractical on a phone-sized screen). */}
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-20 right-4 z-50 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:scale-105 transition-transform"
+          className="hidden md:flex fixed bottom-20 right-4 z-50 w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg items-center justify-center hover:scale-105 transition-transform"
           title="Open handwriting panel"
           data-testid="button-open-handwriting"
         >
@@ -135,13 +136,13 @@ export function HandwritingPanel() {
         </button>
       )}
 
-      {/* Panel */}
+      {/* Panel — same breakpoint as the toggle button. */}
       {open && (
         <div
-          className={`fixed z-50 bg-background border rounded-xl shadow-2xl transition-all ${
+          className={`hidden md:flex fixed z-50 bg-background border rounded-xl shadow-2xl transition-all ${
             minimized
               ? "bottom-20 right-4 w-48 h-10"
-              : "bottom-4 right-4 w-[400px] h-[380px] flex flex-col"
+              : "bottom-4 right-4 w-[400px] h-[380px] flex-col"
           }`}
           data-testid="handwriting-panel"
         >
