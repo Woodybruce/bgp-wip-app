@@ -69,11 +69,21 @@ export default function WestminsterRestaurantsPage() {
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "prospects" | "in_crm">("prospects");
   const [refreshing, setRefreshing] = useState(false);
+  const [laId, setLaId] = useState<string>("197");
 
-  const { data, isLoading, refetch } = useQuery<ApiResponse>({
-    queryKey: ["/api/westminster/restaurants"],
+  const { data: boroughs = [] } = useQuery<Array<{ id: number; name: string }>>({
+    queryKey: ["/api/westminster/boroughs"],
     queryFn: async () => {
-      const res = await fetch("/api/westminster/restaurants", {
+      const r = await fetch("/api/westminster/boroughs", { credentials: "include", headers: getAuthHeaders() });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  const { data, isLoading, refetch } = useQuery<ApiResponse & { laId: number }>({
+    queryKey: ["/api/westminster/restaurants", laId],
+    queryFn: async () => {
+      const res = await fetch(`/api/westminster/restaurants?laId=${laId}`, {
         credentials: "include",
         headers: getAuthHeaders(),
       });
@@ -81,6 +91,8 @@ export default function WestminsterRestaurantsPage() {
       return res.json();
     },
   });
+
+  const currentBorough = boroughs.find((b) => String(b.id) === laId)?.name || "City of Westminster";
 
   const rows = data?.rows || [];
 
@@ -116,7 +128,7 @@ export default function WestminsterRestaurantsPage() {
   const refresh = async () => {
     setRefreshing(true);
     try {
-      await fetch("/api/westminster/restaurants?refresh=1", {
+      await fetch(`/api/westminster/restaurants?laId=${laId}&refresh=1`, {
         credentials: "include",
         headers: getAuthHeaders(),
       });
@@ -135,7 +147,15 @@ export default function WestminsterRestaurantsPage() {
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-2">
             <Utensils className="h-5 w-5 text-primary" />
-            <h1 className="text-xl font-semibold">Westminster Restaurants</h1>
+            <h1 className="text-xl font-semibold">London Restaurants</h1>
+            <Select value={laId} onValueChange={setLaId}>
+              <SelectTrigger className="h-8 w-56"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {boroughs.map((b) => (
+                  <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Badge variant="outline" className="text-xs">FSA FHRS · BD prospecting</Badge>
           </div>
           <Button onClick={refresh} disabled={refreshing} variant="outline" size="sm" className="gap-1.5">

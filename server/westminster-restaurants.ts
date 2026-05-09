@@ -24,8 +24,22 @@ import { db } from "./db";
 import { crmProperties } from "@shared/schema";
 import { sql } from "drizzle-orm";
 
-// City of Westminster local authority id on the FSA API
-const WESTMINSTER_LA_ID = 197;
+// London local authority IDs on the FSA API — the commercial boroughs
+// BGP works in. Westminster (197) is the default.
+const LONDON_BOROUGHS: Array<{ id: number; name: string }> = [
+  { id: 197, name: "City of Westminster" },
+  { id: 195, name: "City of London" },
+  { id: 188, name: "Camden" },
+  { id: 192, name: "Hackney" },
+  { id: 194, name: "Kensington & Chelsea" },
+  { id: 191, name: "Islington" },
+  { id: 196, name: "Tower Hamlets" },
+  { id: 189, name: "Hammersmith & Fulham" },
+  { id: 198, name: "Wandsworth" },
+  { id: 200, name: "Lambeth" },
+  { id: 199, name: "Southwark" },
+];
+const DEFAULT_LA_ID = 197;
 // FHRS business types we care about
 const RESTAURANT_TYPES = new Set([1, 7846, 7843]);
 
@@ -64,14 +78,15 @@ interface RestaurantRow {
   inCrm: boolean;
 }
 
-let fhrsCache: { rows: RestaurantRow[]; expires: number } | null = null;
+// Cache per local-authority-id so switching boroughs doesn't trash the cache
+const fhrsCache = new Map<number, { rows: RestaurantRow[]; expires: number }>();
 const FHRS_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-async function fetchFhrsWestminster(): Promise<FhrsEstablishment[]> {
-  // FSA API caps each request at 5000 results — Westminster has ~3500
-  // food establishments so one page is enough. Filter to restaurant types
-  // server-side after fetch (the API filter is per-businessTypeId only).
-  const url = `https://api.ratings.food.gov.uk/Establishments?localAuthorityId=${WESTMINSTER_LA_ID}&pageSize=5000`;
+async function fetchFhrsForBorough(laId: number): Promise<FhrsEstablishment[]> {
+  // FSA API caps each request at 5000 results — most London boroughs have
+  // 3000-5000 food establishments so one page is enough. Filter to
+  // restaurant types server-side after fetch.
+  const url = `https://api.ratings.food.gov.uk/Establishments?localAuthorityId=${laId}&pageSize=5000`;
   const resp = await fetch(url, {
     headers: { "x-api-version": "2", Accept: "application/json" },
   });
@@ -148,14 +163,30 @@ async function resolveCrmCrossRef(rows: RestaurantRow[]): Promise<RestaurantRow[
   });
 }
 
+function pickLaId(req: Request): number {
+  const raw = req.query.laId ?? req.query.localAuthorityId;
+  if (typeof raw === "string") {
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return DEFAULT_LA_ID;
+}
+
 export function registerWestminsterRestaurantsRoutes(app: Express): void {
+  /** List the boroughs the page can switch between. */
+  app.get("/api/westminster/boroughs", requireAuth, (_req: Request, res: Response) => {
+    return res.json(LONDON_BOROUGHS);
+  });
+
   app.get("/api/westminster/restaurants", requireAuth, async (req: Request, res: Response) => {
     try {
+      const laId = pickLaId(req);
       const force = req.query.refresh === "1";
-      if (!force && fhrsCache && fhrsCache.expires > Date.now()) {
-        return res.json({ rows: fhrsCache.rows, cached: true, fetchedAt: fhrsCache.expires - FHRS_TTL_MS });
+      const cached = fhrsCache.get(laId);
+      if (!force && cached && cached.expires > Date.now()) {
+        return res.json({ rows: cached.rows, cached: true, fetchedAt: cached.expires - FHRS_TTL_MS, laId });
       }
-      const establishments = await fetchFhrsWestminster();
+      const establishments = await fetchFhrsForBorough(laId);
       const rows: RestaurantRow[] = establishments.map((e) => ({
         fhrsid: e.FHRSID,
         name: e.BusinessName,
@@ -172,20 +203,22 @@ export function registerWestminsterRestaurantsRoutes(app: Express): void {
         inCrm: false,
       }));
       const enriched = await resolveCrmCrossRef(rows);
-      fhrsCache = { rows: enriched, expires: Date.now() + FHRS_TTL_MS };
-      return res.json({ rows: enriched, cached: false, fetchedAt: Date.now() });
+      fhrsCache.set(laId, { rows: enriched, expires: Date.now() + FHRS_TTL_MS });
+      return res.json({ rows: enriched, cached: false, fetchedAt: Date.now(), laId });
     } catch (err: any) {
       console.error("[westminster-restaurants] error:", err);
       return res.status(500).json({ error: err?.message || "fetch failed" });
     }
   });
 
-  app.get("/api/westminster/restaurants/stats", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/westminster/restaurants/stats", requireAuth, async (req: Request, res: Response) => {
     try {
-      if (!fhrsCache || fhrsCache.expires < Date.now()) {
+      const laId = pickLaId(req);
+      const cached = fhrsCache.get(laId);
+      if (!cached || cached.expires < Date.now()) {
         return res.json({ ready: false });
       }
-      const rows = fhrsCache.rows;
+      const rows = cached.rows;
       const total = rows.length;
       const inCrm = rows.filter((r) => r.inCrm).length;
       const prospects = total - inCrm;
@@ -200,7 +233,8 @@ export function registerWestminsterRestaurantsRoutes(app: Express): void {
         inCrm,
         prospects,
         ratings,
-        fetchedAt: fhrsCache.expires - FHRS_TTL_MS,
+        fetchedAt: cached.expires - FHRS_TTL_MS,
+        laId,
       });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || "stats failed" });
