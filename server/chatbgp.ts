@@ -1126,6 +1126,14 @@ You are an active operational agent with full CRM read/write access, internet se
 - **SharePoint folders**: Always create inside "BGP share drive" root. Team folders: Investment, London F&B, London Retail, etc.
 - **deep_investigate**: If report.property.ambiguous === true, present options as numbered list and ask user to pick. Never guess.
 
+## Direct database access (sql_query, sql_write, describe_schema)
+You have read AND write access to almost every operational table in the BGP database. Use these whenever the standard tools don't cover what the user is asking — bulk image cleanups, recategorising, archiving stale rows, fixing data, pinning property imagery, anything ad-hoc.
+- **describe_schema**: list tables, or pass a table name to see its columns. Use first if you're not sure of a column.
+- **sql_query**: read-only SELECT (auto-LIMIT 500). Use freely.
+- **sql_write**: insert / update / delete. Every write is audited. \`where\` is required for update + delete (you can't accidentally wipe a table). Off-limits: users, sessions, api_keys, msal_token_cache, file_storage.
+- **Confirmation rule for destructives**: Before any DELETE that could affect more than ~10 rows, run sql_query first to count + sample, show the user the number and a few representative rows, then wait for explicit "yes" / "do it" before running sql_write. For UPDATEs of more than ~50 rows, same pattern. Single-row or trivially-small ops can run without a preview.
+- The Brand Library (\`category = 'Brands'\` in image_studio_images) is curated — only delete from it if the user is explicit about wanting to.
+
 ## Memory Systems
 1. **Auto-memories** (per-user): Extracted automatically after conversations. Loaded in future chats.
 2. **Business learnings** (save_learning): Shared across all users. Save client intel, market knowledge, BGP processes, property insights, team preferences. Save when users teach you facts, correct you, or you discover important info via tools. Don't save greetings or CRM data that's already in the database.
@@ -3042,30 +3050,20 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     },
   });
 
+  // ─── General-purpose database tools ─────────────────────────────────────
+  // Three primitives that let ChatBGP touch most of the app's tables. The
+  // server enforces a deny-list (users / sessions / tokens / file blobs)
+  // and column validation; everything else is fair game so ChatBGP can do
+  // whatever the user asks. Every write is audited in ai_write_audit.
   tools.push({
     type: "function",
     function: {
-      name: "delete_images",
-      description: "Delete one or more images from the BGP Image Studio library. Two modes: (1) explicit ids — pass an array of image IDs to delete. (2) filter — pass criteria (category, source, brandName, tagsAny, propertyId, sourcePattern, olderThanDays) and every matching row is deleted. ALWAYS call once with confirm:false first to show the user what would be deleted; only call again with confirm:true after the user explicitly agrees. The category 'Brands' is protected by default — pass excludeBrands:false to override. Local files and SharePoint tombstones are handled. This is irreversible.",
+      name: "describe_schema",
+      description: "Inspect the BGP database schema. Call without arguments to list all tables. Pass a table name to get its columns. Use this when you need to know what tables/columns exist before crafting a sql_query or sql_write.",
       parameters: {
         type: "object",
         properties: {
-          ids: { type: "array", items: { type: "string" }, description: "Explicit image IDs to delete. Mutually exclusive with filter." },
-          filter: {
-            type: "object",
-            description: "Filter-based delete. Any combination — they're AND'd together.",
-            properties: {
-              category: { type: "string", description: "Exact category match, e.g. 'Uncategorised', 'Headshots'." },
-              source: { type: "string", description: "Exact source match, e.g. 'pexels', 'unsplash', 'sharepoint', 'chatbgp'." },
-              sourcePattern: { type: "string", description: "ILIKE pattern on source, e.g. '%pexels%'. Use category for exact." },
-              brandName: { type: "string", description: "Exact brand name match." },
-              tagsAny: { type: "array", items: { type: "string" }, description: "Match any image whose tags array overlaps these." },
-              propertyId: { type: "string", description: "Match images linked to this property_id." },
-              olderThanDays: { type: "number", description: "Match images created more than N days ago." },
-            },
-          },
-          excludeBrands: { type: "boolean", description: "Default true — never delete category='Brands' (the curated brand library). Set false only if the user explicitly says so." },
-          confirm: { type: "boolean", description: "Default false. When false, returns a preview (count + sample) without deleting. When true, performs the delete." },
+          table: { type: "string", description: "Optional — get the column list for a single table. Omit to list all tables." },
         },
       },
     },
@@ -3074,18 +3072,34 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   tools.push({
     type: "function",
     function: {
-      name: "pin_image_to_property",
-      description: "Pin an image (from the Image Studio) onto a property in a specific role — hero, internal, secondary_external, location_plan, floor_plan, comps_chart, erv_walk, covenant_card, overlay. This adds (or updates) a row in property_imagery_assets so the image surfaces on the Property Intelligence Imagery tab, the WhyBuyCard, and any document brief that pulls property imagery. Pinning a kind unpins any other image of that kind on the same property. Use unpin:true to remove the pin instead of adding one.",
+      name: "sql_query",
+      description: "Run a read-only SQL SELECT (or WITH) against the BGP database. Use this when the user asks something the standard tools don't cover, or when you need to find rows before mutating them. Auto-LIMITed to 500 rows; 15s timeout; INSERT/UPDATE/DELETE/DDL are blocked — use sql_write for those. Tables off-limits: users, sessions, msal_token_cache, file_storage, ai_write_audit. Call describe_schema first if you don't know the columns.",
       parameters: {
         type: "object",
         properties: {
-          imageId: { type: "string", description: "image_studio_images.id of the image to pin." },
-          propertyId: { type: "string", description: "crm_properties.id of the property to pin to." },
-          kind: { type: "string", enum: ["hero", "internal", "secondary_external", "location_plan", "floor_plan", "comps_chart", "erv_walk", "covenant_card", "overlay"], description: "Imagery role on the property." },
-          caption: { type: "string", description: "Optional caption shown in the imagery picker." },
-          unpin: { type: "boolean", description: "Default false — if true, removes the (property, kind) pin instead of adding one." },
+          query: { type: "string", description: "A SELECT or WITH … SELECT query. Single statement, no trailing semicolon needed. Example: SELECT id, file_name FROM image_studio_images WHERE source = 'pexels' LIMIT 20" },
         },
-        required: ["imageId", "propertyId", "kind"],
+        required: ["query"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "sql_write",
+      description: "Run an INSERT, UPDATE, or DELETE on the BGP database. Use whenever the user asks to add, change, archive, or remove rows in any operational table — images, properties, deals, contacts, companies, comps, lease events, PLA matters, available units, tasks, diary, etc. Off-limits: users, sessions, api_keys, msal_token_cache, file_storage, deleted_sharepoint_images. Every write is audited. SAFETY RULE: before any DELETE that could affect more than a handful of rows, run sql_query first to count and show the user what's about to be deleted, get explicit confirmation in chat, then run the sql_write. UPDATE and DELETE both require a `where` clause — refusing to mutate the entire table is the only built-in guardrail.",
+      parameters: {
+        type: "object",
+        properties: {
+          table: { type: "string", description: "Physical table name (snake_case), e.g. 'image_studio_images', 'crm_properties', 'pla_matters'. Call describe_schema if unsure." },
+          op: { type: "string", enum: ["insert", "update", "delete"], description: "Mutation type." },
+          data: { type: "object", description: "For insert: { col: value, ... }. For update: { col: newValue, ... }. Ignored for delete." },
+          rows: { type: "array", items: { type: "object" }, description: "Bulk insert: array of row objects with the same column set. Use instead of `data` for inserting many rows at once." },
+          where: { type: "object", description: "Required for update + delete. { col: value } → equality. { col: [a, b] } → IN (a, b). { col: null } → IS NULL. AND'd together." },
+          returning: { type: "boolean", description: "Default true — return the affected rows. Set false for huge bulk ops where you don't need them." },
+        },
+        required: ["table", "op"],
       },
     },
   });
@@ -5605,217 +5619,35 @@ async function executeCrmToolRaw(
     }
   }
 
-  if (fnName === "delete_images") {
-    try {
-      // Admin-only — Image Studio is admin-gated everywhere else, mirror that.
-      const userId = req.session?.userId || (req as any).tokenUserId;
-      if (!userId) return { data: { success: false, error: "Not authenticated." } };
-      const adminCheck = await pool.query(
-        "SELECT is_admin, email FROM users WHERE id = $1",
-        [userId],
-      );
-      const u = adminCheck.rows[0];
-      if (!u || !u.is_admin) {
-        return { data: { success: false, error: "Image deletion is admin-only." } };
-      }
-
-      const ids = Array.isArray(fnArgs.ids) ? (fnArgs.ids as string[]).filter(s => typeof s === "string") : [];
-      const filter = (fnArgs.filter || {}) as any;
-      const excludeBrands = fnArgs.excludeBrands !== false;
-      const confirm = fnArgs.confirm === true;
-
-      if (ids.length === 0 && Object.keys(filter).length === 0) {
-        return { data: { success: false, error: "Provide either ids or filter — won't delete with no targets." } };
-      }
-
-      // Build a parameterised WHERE clause from filter.
-      const where: string[] = [];
-      const params: any[] = [];
-      const push = (sqlFrag: string, v: any) => { params.push(v); where.push(sqlFrag.replace("?", `$${params.length}`)); };
-
-      if (ids.length > 0) push("id = ANY(?::text[])", ids);
-      if (filter.category) push("category = ?", String(filter.category));
-      if (filter.source) push("source = ?", String(filter.source));
-      if (filter.sourcePattern) push("source ILIKE ?", String(filter.sourcePattern));
-      if (filter.brandName) push("brand_name = ?", String(filter.brandName));
-      if (filter.propertyId) push("property_id = ?", String(filter.propertyId));
-      if (Array.isArray(filter.tagsAny) && filter.tagsAny.length) push("tags && ?::text[]", filter.tagsAny.map(String));
-      if (typeof filter.olderThanDays === "number" && filter.olderThanDays > 0) {
-        params.push(filter.olderThanDays);
-        where.push(`created_at < (now() - ($${params.length}::int || ' days')::interval)`);
-      }
-      if (excludeBrands) where.push("category <> 'Brands'");
-
-      const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-      // Always show preview first.
-      const previewRes = await pool.query(
-        `SELECT id, file_name, category, source, brand_name, created_at FROM image_studio_images ${whereSql} ORDER BY created_at DESC LIMIT 10`,
-        params,
-      );
-      const countRes = await pool.query(
-        `SELECT COUNT(*)::int AS c FROM image_studio_images ${whereSql}`,
-        params,
-      );
-      const matched = countRes.rows[0]?.c || 0;
-
-      if (!confirm) {
-        return {
-          data: {
-            mode: "preview",
-            matched,
-            sample: previewRes.rows.map((r: any) => ({
-              id: r.id,
-              fileName: r.file_name,
-              category: r.category,
-              source: r.source,
-              brandName: r.brand_name,
-              createdAt: r.created_at,
-            })),
-            excludeBrandsApplied: excludeBrands,
-            message: matched === 0
-              ? "Nothing matches that filter."
-              : `Would delete ${matched} image(s). Show this to the user and call again with confirm:true after they explicitly agree.`,
-          },
-        };
-      }
-
-      if (matched === 0) {
-        return { data: { success: true, deleted: 0, message: "Nothing matched." } };
-      }
-
-      // Hand off to the existing bulk-delete code path so we get all the
-      // safety nets (local file unlink, SharePoint tombstones, collection
-      // cleanup) for free. Need the actual id list first.
-      const idsRes = await pool.query(
-        `SELECT id FROM image_studio_images ${whereSql}`,
-        params,
-      );
-      const targetIds: string[] = idsRes.rows.map((r: any) => r.id);
-
-      const { default: fs } = await import("fs");
-      const targetsRes = await pool.query(
-        `SELECT id, local_path, sharepoint_drive_id, sharepoint_item_id FROM image_studio_images WHERE id = ANY($1::text[])`,
-        [targetIds],
-      );
-      for (const row of targetsRes.rows) {
-        if (row.local_path && fs.existsSync(row.local_path)) {
-          try { fs.unlinkSync(row.local_path); } catch {}
-        }
-      }
-      const spPairs = targetsRes.rows.filter((r: any) => r.sharepoint_drive_id && r.sharepoint_item_id);
-      if (spPairs.length > 0) {
-        const values = spPairs.map((_: any, i: number) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(", ");
-        const tombstoneParams = spPairs.flatMap((r: any) => [r.sharepoint_drive_id, r.sharepoint_item_id]);
-        await pool.query(
-          `INSERT INTO deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id) VALUES ${values} ON CONFLICT (sharepoint_drive_id, sharepoint_item_id) DO NOTHING`,
-          tombstoneParams,
-        );
-      }
-      await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [targetIds]);
-      await pool.query(`DELETE FROM image_studio_images WHERE id = ANY($1::text[])`, [targetIds]);
-
-      console.log(`[chatbgp] delete_images: removed ${targetIds.length} row(s)`);
-      return {
-        data: {
-          success: true,
-          deleted: targetIds.length,
-          message: `Deleted ${targetIds.length} image(s) from the library.`,
-        },
-        action: { type: "image_studio_changed" },
-      };
-    } catch (err: any) {
-      console.error("[chatbgp] delete_images error:", err?.message);
-      return { data: { success: false, error: `Delete failed: ${err?.message}` } };
-    }
+  // ─── General-purpose database tools ─────────────────────────────────────
+  if (fnName === "describe_schema") {
+    const { executeDescribeSchema } = await import("./sql-tools");
+    return { data: executeDescribeSchema(fnArgs.table as string | undefined) };
   }
 
-  if (fnName === "pin_image_to_property") {
-    try {
-      const userId = req.session?.userId || (req as any).tokenUserId;
-      if (!userId) return { data: { success: false, error: "Not authenticated." } };
+  if (fnName === "sql_query") {
+    const { executeSqlQuery } = await import("./sql-tools");
+    return { data: await executeSqlQuery(String(fnArgs.query || "")) };
+  }
 
-      const imageId = String(fnArgs.imageId || "");
-      const propertyId = String(fnArgs.propertyId || "");
-      const kind = String(fnArgs.kind || "");
-      const caption = fnArgs.caption ? String(fnArgs.caption) : null;
-      const unpin = fnArgs.unpin === true;
-
-      const validKinds = ["hero", "internal", "secondary_external", "location_plan", "floor_plan", "comps_chart", "erv_walk", "covenant_card", "overlay"];
-      if (!imageId || !propertyId || !validKinds.includes(kind)) {
-        return { data: { success: false, error: `imageId, propertyId, and kind (one of ${validKinds.join(", ")}) are required.` } };
-      }
-
-      // Confirm both rows exist before touching property_imagery_assets.
-      const imgRes = await pool.query("SELECT id, file_name FROM image_studio_images WHERE id = $1", [imageId]);
-      if (imgRes.rows.length === 0) return { data: { success: false, error: "Image not found in image_studio_images." } };
-      const propRes = await pool.query("SELECT id, name FROM crm_properties WHERE id = $1", [propertyId]);
-      if (propRes.rows.length === 0) return { data: { success: false, error: "Property not found in crm_properties." } };
-
-      if (unpin) {
-        const result = await pool.query(
-          `UPDATE property_imagery_assets
-              SET pinned = false
-            WHERE property_id = $1 AND image_studio_id = $2 AND kind = $3 AND pinned = true
-            RETURNING id`,
-          [propertyId, imageId, kind],
-        );
-        return {
-          data: {
-            success: true,
-            unpinned: result.rowCount || 0,
-            message: result.rowCount
-              ? `Unpinned ${imgRes.rows[0].file_name} as ${kind} for ${propRes.rows[0].name}.`
-              : "Nothing to unpin — that image isn't pinned in that role.",
-          },
-          action: { type: "property_imagery_changed", propertyId },
-        };
-      }
-
-      // Pinning is exclusive per (property, kind) — unpin any current holder first.
-      await pool.query(
-        `UPDATE property_imagery_assets SET pinned = false WHERE property_id = $1 AND kind = $2 AND pinned = true`,
-        [propertyId, kind],
-      );
-
-      // Upsert: existing curation row for (property, image) → flip pinned/kind/caption;
-      // otherwise create one.
-      const existing = await pool.query(
-        `SELECT id FROM property_imagery_assets WHERE property_id = $1 AND image_studio_id = $2 LIMIT 1`,
-        [propertyId, imageId],
-      );
-      if (existing.rows.length > 0) {
-        await pool.query(
-          `UPDATE property_imagery_assets
-              SET pinned = true, kind = $1, hidden = false,
-                  caption = COALESCE($2, caption),
-                  generated_by = COALESCE(generated_by, $3)
-            WHERE id = $4`,
-          [kind, caption, userId, existing.rows[0].id],
-        );
-      } else {
-        await pool.query(
-          `INSERT INTO property_imagery_assets
-             (property_id, kind, source, image_studio_id, caption, pinned, generated_by)
-           VALUES ($1, $2, 'image_studio', $3, $4, true, $5)`,
-          [propertyId, kind, imageId, caption, userId],
-        );
-      }
-
-      return {
-        data: {
-          success: true,
-          imageId,
-          propertyId,
-          kind,
-          message: `Pinned "${imgRes.rows[0].file_name}" as ${kind} for ${propRes.rows[0].name}.`,
-        },
-        action: { type: "property_imagery_changed", propertyId },
-      };
-    } catch (err: any) {
-      console.error("[chatbgp] pin_image_to_property error:", err?.message);
-      return { data: { success: false, error: `Pin failed: ${err?.message}` } };
-    }
+  if (fnName === "sql_write") {
+    const { executeSqlWrite } = await import("./sql-tools");
+    const userId = req.session?.userId || (req as any).tokenUserId || undefined;
+    const result = await executeSqlWrite(
+      {
+        table: String(fnArgs.table || ""),
+        op: fnArgs.op as "insert" | "update" | "delete",
+        data: fnArgs.data as Record<string, any> | undefined,
+        rows: fnArgs.rows as Array<Record<string, any>> | undefined,
+        where: fnArgs.where as Record<string, any> | undefined,
+        returning: fnArgs.returning !== false,
+      },
+      { userId, threadId: (req.body?.threadId as string) || undefined },
+    );
+    const action = result.success
+      ? { type: "db_changed" as const, table: String(fnArgs.table || ""), op: fnArgs.op }
+      : undefined;
+    return { data: result, ...(action ? { action } : {}) };
   }
 
   if (fnName === "web_search") {
