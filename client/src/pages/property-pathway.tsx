@@ -2394,35 +2394,6 @@ function fmtPsf(v?: number): string {
 }
 
 function WhyBuyCard({ runId, stage9, onReload }: { runId: string; stage9: any; onReload: () => void }) {
-  const { toast } = useToast();
-  const [gammaBusy, setGammaBusy] = useState(false);
-  const gamma = stage9?.gamma || {};
-  const gammaRunning = gamma.status === "running" || gammaBusy;
-
-  useEffect(() => {
-    if (gamma.status !== "running") return;
-    const t = setInterval(onReload, 5000);
-    return () => clearInterval(t);
-  }, [gamma.status, onReload]);
-
-  const generateGamma = async (exportAs: "pdf" | "pptx") => {
-    setGammaBusy(true);
-    try {
-      const res = await fetch(`/api/property-pathway/${runId}/why-buy-gamma/generate`, {
-        method: "POST",
-        headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ exportAs }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      toast({ title: "Gamma started", description: `Generating ${exportAs.toUpperCase()} — watch the card for the link.` });
-      setTimeout(onReload, 2000);
-    } catch (err: any) {
-      toast({ title: "Gamma failed to start", description: err?.message || "Error", variant: "destructive" });
-    } finally {
-      setGammaBusy(false);
-    }
-  };
-
   return (
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
@@ -2433,37 +2404,10 @@ function WhyBuyCard({ runId, stage9, onReload }: { runId: string; stage9: any; o
               <Download className="w-3 h-3" /> Open Why Buy PDF
             </a>
           )}
-          <Button size="sm" variant="outline" onClick={() => generateGamma("pdf")} disabled={gammaRunning} className="gap-1.5">
-            {gammaRunning ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Try Gamma (PDF)
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => generateGamma("pptx")} disabled={gammaRunning} className="gap-1.5">
-            {gammaRunning ? <Clock className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Try Gamma (PPTX)
-          </Button>
         </div>
       </CardHeader>
       <CardContent className="text-sm space-y-2">
         <p className="text-muted-foreground">4-page PE-style investment memo generated from the agreed business plan + agreed Excel model.</p>
-        {gamma.status === "running" && (
-          <p className="text-xs text-muted-foreground">Gamma generating {(gamma.exportAs || "pdf").toUpperCase()}… this usually takes ~60–90s.</p>
-        )}
-        {gamma.status === "failed" && (
-          <p className="text-xs text-destructive">Gamma failed: {gamma.error || "unknown error"}</p>
-        )}
-        {gamma.status === "completed" && (
-          <div className="flex flex-wrap items-center gap-3 text-xs">
-            <span className="text-muted-foreground">Gamma {(gamma.exportAs || "pdf").toUpperCase()}:</span>
-            {(gamma.sharepointUrl || gamma.documentUrl) && (
-              <a href={gamma.sharepointUrl || gamma.documentUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
-                <Download className="w-3 h-3" /> Download
-              </a>
-            )}
-            {gamma.gammaUrl && (
-              <a href={gamma.gammaUrl} target="_blank" rel="noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
-                <ExternalLink className="w-3 h-3" /> Edit in Gamma
-              </a>
-            )}
-          </div>
-        )}
 
         <ClaudeDesignPane runId={runId} />
       </CardContent>
