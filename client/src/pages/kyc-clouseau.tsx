@@ -1265,6 +1265,7 @@ export default function KycClouseau() {
                     }
                   }}
                   placeholder="Start typing an address (e.g. 18-22 Haymarket)..."
+                  resolveProperty
                 />
                 <Input
                   data-testid="input-property-postcode"

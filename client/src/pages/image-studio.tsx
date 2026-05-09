@@ -1781,6 +1781,7 @@ export default function ImageStudio() {
                   setStreetViewFov(90);
                 }}
                 placeholder="Start typing an address..."
+                resolveProperty
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Drag the panorama to aim the camera, then save. We capture exactly the view you see.
