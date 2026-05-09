@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { usePropertyContext } from "@/lib/property-context";
 import { useLocation, Link } from "wouter";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -242,7 +243,15 @@ function statusColor(status: string | null): string {
 
 function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, label: string) => void }) {
   const [, navigate] = useLocation();
-  const [query, setQuery] = useState("");
+  const ctxProperty = usePropertyContext();
+  const [query, setQuery] = useState(ctxProperty?.name ? `${ctxProperty.name}${ctxProperty.postcode ? ", " + ctxProperty.postcode : ""}` : "");
+  // Refresh when the parent Property Intelligence resolves a different property
+  useEffect(() => {
+    if (ctxProperty?.name) {
+      const v = `${ctxProperty.name}${ctxProperty.postcode ? ", " + ctxProperty.postcode : ""}`;
+      setQuery(v);
+    }
+  }, [ctxProperty?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [results, setResults] = useState<AddressResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [selectedAddress, setSelectedAddress] = useState<AddressResult | null>(null);

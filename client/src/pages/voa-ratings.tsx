@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { usePropertyContext } from "@/lib/property-context";
 import { ScrollableTable } from "@/components/scrollable-table";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -92,7 +93,13 @@ const formatLargeCurrency = (val: number) => {
 
 export default function VoaRatingsPage() {
   const { toast } = useToast();
-  const [search, setSearch] = useState("");
+  const ctxProperty = usePropertyContext();
+  const [search, setSearch] = useState(ctxProperty?.postcode || ctxProperty?.name || "");
+  // Refresh when the parent Property Intelligence resolves a different property
+  useEffect(() => {
+    const next = ctxProperty?.postcode || ctxProperty?.name;
+    if (next) setSearch(next);
+  }, [ctxProperty?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [searchInput, setSearchInput] = useState("");
   const [baFilter, setBaFilter] = useState("all");
   const [descFilter, setDescFilter] = useState("all");
