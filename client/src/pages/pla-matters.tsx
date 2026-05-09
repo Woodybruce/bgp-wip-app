@@ -1395,12 +1395,17 @@ function DocumentBriefsDialog({
   }, [open]);
 
   const [renderedHtml, setRenderedHtml] = useState<string | null>(null);
+  const [renderedBriefId, setRenderedBriefId] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedUrl, setSavedUrl] = useState<string | null>(null);
 
   const run = async (briefId: string, withRender: boolean) => {
     setRunning(briefId);
     setOutput(null);
     setRenderedHtml(null);
+    setRenderedBriefId(null);
+    setSavedUrl(null);
     try {
       const endpoint = withRender ? "render" : "run";
       if (withRender) setRendering(true);
@@ -1418,7 +1423,10 @@ function DocumentBriefsDialog({
       const data = await res.json();
       const briefData = withRender ? data.brief : data;
       setOutput(briefData);
-      if (withRender && data.html) setRenderedHtml(data.html);
+      if (withRender && data.html) {
+        setRenderedHtml(data.html);
+        setRenderedBriefId(briefId);
+      }
       const provCounts: Record<string, number> = {};
       for (const p of Object.values(briefData.imageryProvenance || {})) {
         const k = String(p);
@@ -1510,13 +1518,70 @@ function DocumentBriefsDialog({
         {renderedHtml && (
           <Card>
             <CardContent className="p-2">
-              <div className="text-xs font-medium px-2 py-1">Claude design preview</div>
+              <div className="flex items-center justify-between px-2 py-1 gap-2">
+                <div className="text-xs font-medium">Claude design preview</div>
+                <div className="flex items-center gap-2">
+                  {savedUrl && (
+                    <a href={savedUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">
+                      Open in SharePoint ↗
+                    </a>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      const blob = new Blob([renderedHtml], { type: "text/html" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `${(output?.briefName || "document").replace(/[^a-z0-9]+/gi, "-")}.html`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    Download HTML
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={async () => {
+                      if (!renderedBriefId) return;
+                      setSaving(true);
+                      try {
+                        const r = await fetch(`/api/document-briefs/${renderedBriefId}/save-html`, {
+                          method: "POST",
+                          credentials: "include",
+                          headers: { "content-type": "application/json", ...getAuthHeaders() },
+                          body: JSON.stringify({ propertyId, matterId }),
+                        });
+                        if (!r.ok) {
+                          const e = await r.json().catch(() => null);
+                          toast({ title: "Save failed", description: e?.error || `${r.status}`, variant: "destructive" });
+                          return;
+                        }
+                        const data = await r.json();
+                        setSavedUrl(data.sharepointUrl);
+                        toast({ title: "Saved to SharePoint", description: data.filename });
+                      } finally {
+                        setSaving(false);
+                      }
+                    }}
+                    disabled={saving || !renderedBriefId}
+                    className="gap-1"
+                  >
+                    {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                    Save to SharePoint
+                  </Button>
+                </div>
+              </div>
               <iframe
                 srcDoc={renderedHtml}
                 className="w-full h-[60vh] border rounded"
                 title="Claude design rendered output"
                 sandbox="allow-same-origin"
               />
+              <div className="text-[10px] text-muted-foreground italic px-2 py-1">
+                HTML saves to the canonical SharePoint folder per brief category. PDF export via Cmd/Ctrl+P → Save as PDF in any browser; native PDF export lands when we wire a headless renderer.
+              </div>
             </CardContent>
           </Card>
         )}

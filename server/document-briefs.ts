@@ -43,6 +43,7 @@ import {
 import { and, desc, eq, sql } from "drizzle-orm";
 import { discoverImagery, getManifest, type ImageryKind, type ImageryCandidate } from "./property-imagery";
 import { imageStudioImages } from "@shared/schema";
+import { uploadFileToSharePoint, SHAREPOINT_ROOT_FOLDER } from "./microsoft";
 import {
   composeLocationPlan,
   composeCompsChart,
@@ -705,6 +706,51 @@ export function registerDocumentBriefRoutes(app: Express): void {
   });
 
   /**
+   * Render-and-save: render via Claude design, then upload the HTML
+   * to SharePoint inside the matter's folder (or the property's
+   * Lease Advisory folder when no matter). Returns the SharePoint URL
+   * so the UI can drop a link.
+   */
+  app.post("/api/document-briefs/:id/save-html", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user?.id;
+      const ctx: BriefContext = {
+        propertyId: String(req.body?.propertyId || ""),
+        matterId: req.body?.matterId,
+        dealId: req.body?.dealId,
+        pathwayRunId: req.body?.pathwayRunId,
+        userId,
+      };
+      if (!ctx.propertyId) return res.status(400).json({ error: "propertyId required" });
+
+      const brief = await runBrief(req.params.id, ctx);
+      const briefPrompt = await buildClaudePromptFromBrief(brief);
+      const html = await renderWithClaude(briefPrompt);
+
+      // Resolve property name for folder + filename
+      const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, ctx.propertyId));
+      const propertyName = property?.name || "Untitled";
+
+      // Pick the SharePoint folder per brief category
+      const folder = pickSharePointFolderForBrief(brief.briefId, propertyName);
+      const safeName = (brief.briefName).replace(/[<>:"/\\|?*]+/g, "-").slice(0, 100);
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const filename = `${safeName} — ${propertyName.replace(/[<>:"/\\|?*]+/g, "-").slice(0, 60)} — ${dateStr}.html`;
+
+      const upload = await uploadFileToSharePoint(
+        Buffer.from(html, "utf8"),
+        filename,
+        "text/html",
+        folder,
+      );
+      return res.json({ sharepointUrl: upload.webUrl, filename, folder, briefId: brief.briefId });
+    } catch (err: any) {
+      console.error("[document-briefs] save-html error:", err);
+      return res.status(500).json({ error: err?.message || "save failed" });
+    }
+  });
+
+  /**
    * Render: run the brief AND hand the output to Claude design, which
    * produces a print-ready self-contained HTML document. Returns
    * { html, brief, briefPrompt } so the UI can iframe-display it
@@ -860,4 +906,27 @@ function safeHtml(s: string): string {
   // start with the doctype.
   const idx = s.indexOf("<!DOCTYPE");
   return idx >= 0 ? s.slice(idx) : s;
+}
+
+/**
+ * Pick the canonical SharePoint folder for a brief output, matching
+ * Tom + Pete's existing folder taxonomy for Lease Advisory and the
+ * Investment "Why Buy Deck" pattern.
+ */
+function pickSharePointFolderForBrief(briefId: string, propertyName: string): string {
+  const cleanName = propertyName.replace(/[<>:"/\\|?*]+/g, "-").slice(0, 200);
+  switch (briefId) {
+    case "rent-review-representations":
+      return `${SHAREPOINT_ROOT_FOLDER}/Lease Advisory/${cleanName}/Rent Review/Representations`;
+    case "why-buy-memo":
+      return `${SHAREPOINT_ROOT_FOLDER}/Investment/${cleanName}/Why Buy Deck`;
+    case "brochure":
+      return `${SHAREPOINT_ROOT_FOLDER}/Marketing/${cleanName}/Brochure`;
+    case "heads-of-terms":
+      return `${SHAREPOINT_ROOT_FOLDER}/Lease Advisory/${cleanName}/Lease Renewal/Heads of Terms`;
+    case "market-report":
+      return `${SHAREPOINT_ROOT_FOLDER}/Reporting/${cleanName}/Market Reports`;
+    default:
+      return `${SHAREPOINT_ROOT_FOLDER}/Documents/${cleanName}`;
+  }
 }
