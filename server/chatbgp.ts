@@ -3045,6 +3045,54 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   tools.push({
     type: "function",
     function: {
+      name: "delete_images",
+      description: "Delete one or more images from the BGP Image Studio library. Two modes: (1) explicit ids — pass an array of image IDs to delete. (2) filter — pass criteria (category, source, brandName, tagsAny, propertyId, sourcePattern, olderThanDays) and every matching row is deleted. ALWAYS call once with confirm:false first to show the user what would be deleted; only call again with confirm:true after the user explicitly agrees. The category 'Brands' is protected by default — pass excludeBrands:false to override. Local files and SharePoint tombstones are handled. This is irreversible.",
+      parameters: {
+        type: "object",
+        properties: {
+          ids: { type: "array", items: { type: "string" }, description: "Explicit image IDs to delete. Mutually exclusive with filter." },
+          filter: {
+            type: "object",
+            description: "Filter-based delete. Any combination — they're AND'd together.",
+            properties: {
+              category: { type: "string", description: "Exact category match, e.g. 'Uncategorised', 'Headshots'." },
+              source: { type: "string", description: "Exact source match, e.g. 'pexels', 'unsplash', 'sharepoint', 'chatbgp'." },
+              sourcePattern: { type: "string", description: "ILIKE pattern on source, e.g. '%pexels%'. Use category for exact." },
+              brandName: { type: "string", description: "Exact brand name match." },
+              tagsAny: { type: "array", items: { type: "string" }, description: "Match any image whose tags array overlaps these." },
+              propertyId: { type: "string", description: "Match images linked to this property_id." },
+              olderThanDays: { type: "number", description: "Match images created more than N days ago." },
+            },
+          },
+          excludeBrands: { type: "boolean", description: "Default true — never delete category='Brands' (the curated brand library). Set false only if the user explicitly says so." },
+          confirm: { type: "boolean", description: "Default false. When false, returns a preview (count + sample) without deleting. When true, performs the delete." },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "pin_image_to_property",
+      description: "Pin an image (from the Image Studio) onto a property in a specific role — hero, internal, secondary_external, location_plan, floor_plan, comps_chart, erv_walk, covenant_card, overlay. This adds (or updates) a row in property_imagery_assets so the image surfaces on the Property Intelligence Imagery tab, the WhyBuyCard, and any document brief that pulls property imagery. Pinning a kind unpins any other image of that kind on the same property. Use unpin:true to remove the pin instead of adding one.",
+      parameters: {
+        type: "object",
+        properties: {
+          imageId: { type: "string", description: "image_studio_images.id of the image to pin." },
+          propertyId: { type: "string", description: "crm_properties.id of the property to pin to." },
+          kind: { type: "string", enum: ["hero", "internal", "secondary_external", "location_plan", "floor_plan", "comps_chart", "erv_walk", "covenant_card", "overlay"], description: "Imagery role on the property." },
+          caption: { type: "string", description: "Optional caption shown in the imagery picker." },
+          unpin: { type: "boolean", description: "Default false — if true, removes the (property, kind) pin instead of adding one." },
+        },
+        required: ["imageId", "propertyId", "kind"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "generate_designed_deck",
       description: "Generate a properly designed, visually polished deck, brochure, pitch document, or playbook using Gamma. Full visual design with photography, typography, and layout — NOT a text-only PDF. Use this whenever the user asks for a brochure, deck, pitch, presentation, playbook, placemaking document, or any client-facing visual output. Returns both a PDF and a PPTX. This is the ONLY tool for making good-looking client documents from scratch.",
       parameters: {
@@ -5554,6 +5602,219 @@ async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] Save to Image Studio error:", err?.message);
       return { data: { success: false, error: `Failed to save to Image Studio: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "delete_images") {
+    try {
+      // Admin-only — Image Studio is admin-gated everywhere else, mirror that.
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return { data: { success: false, error: "Not authenticated." } };
+      const adminCheck = await pool.query(
+        "SELECT is_admin, email FROM users WHERE id = $1",
+        [userId],
+      );
+      const u = adminCheck.rows[0];
+      if (!u || !u.is_admin) {
+        return { data: { success: false, error: "Image deletion is admin-only." } };
+      }
+
+      const ids = Array.isArray(fnArgs.ids) ? (fnArgs.ids as string[]).filter(s => typeof s === "string") : [];
+      const filter = (fnArgs.filter || {}) as any;
+      const excludeBrands = fnArgs.excludeBrands !== false;
+      const confirm = fnArgs.confirm === true;
+
+      if (ids.length === 0 && Object.keys(filter).length === 0) {
+        return { data: { success: false, error: "Provide either ids or filter — won't delete with no targets." } };
+      }
+
+      // Build a parameterised WHERE clause from filter.
+      const where: string[] = [];
+      const params: any[] = [];
+      const push = (sqlFrag: string, v: any) => { params.push(v); where.push(sqlFrag.replace("?", `$${params.length}`)); };
+
+      if (ids.length > 0) push("id = ANY(?::text[])", ids);
+      if (filter.category) push("category = ?", String(filter.category));
+      if (filter.source) push("source = ?", String(filter.source));
+      if (filter.sourcePattern) push("source ILIKE ?", String(filter.sourcePattern));
+      if (filter.brandName) push("brand_name = ?", String(filter.brandName));
+      if (filter.propertyId) push("property_id = ?", String(filter.propertyId));
+      if (Array.isArray(filter.tagsAny) && filter.tagsAny.length) push("tags && ?::text[]", filter.tagsAny.map(String));
+      if (typeof filter.olderThanDays === "number" && filter.olderThanDays > 0) {
+        params.push(filter.olderThanDays);
+        where.push(`created_at < (now() - ($${params.length}::int || ' days')::interval)`);
+      }
+      if (excludeBrands) where.push("category <> 'Brands'");
+
+      const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+      // Always show preview first.
+      const previewRes = await pool.query(
+        `SELECT id, file_name, category, source, brand_name, created_at FROM image_studio_images ${whereSql} ORDER BY created_at DESC LIMIT 10`,
+        params,
+      );
+      const countRes = await pool.query(
+        `SELECT COUNT(*)::int AS c FROM image_studio_images ${whereSql}`,
+        params,
+      );
+      const matched = countRes.rows[0]?.c || 0;
+
+      if (!confirm) {
+        return {
+          data: {
+            mode: "preview",
+            matched,
+            sample: previewRes.rows.map((r: any) => ({
+              id: r.id,
+              fileName: r.file_name,
+              category: r.category,
+              source: r.source,
+              brandName: r.brand_name,
+              createdAt: r.created_at,
+            })),
+            excludeBrandsApplied: excludeBrands,
+            message: matched === 0
+              ? "Nothing matches that filter."
+              : `Would delete ${matched} image(s). Show this to the user and call again with confirm:true after they explicitly agree.`,
+          },
+        };
+      }
+
+      if (matched === 0) {
+        return { data: { success: true, deleted: 0, message: "Nothing matched." } };
+      }
+
+      // Hand off to the existing bulk-delete code path so we get all the
+      // safety nets (local file unlink, SharePoint tombstones, collection
+      // cleanup) for free. Need the actual id list first.
+      const idsRes = await pool.query(
+        `SELECT id FROM image_studio_images ${whereSql}`,
+        params,
+      );
+      const targetIds: string[] = idsRes.rows.map((r: any) => r.id);
+
+      const { default: fs } = await import("fs");
+      const targetsRes = await pool.query(
+        `SELECT id, local_path, sharepoint_drive_id, sharepoint_item_id FROM image_studio_images WHERE id = ANY($1::text[])`,
+        [targetIds],
+      );
+      for (const row of targetsRes.rows) {
+        if (row.local_path && fs.existsSync(row.local_path)) {
+          try { fs.unlinkSync(row.local_path); } catch {}
+        }
+      }
+      const spPairs = targetsRes.rows.filter((r: any) => r.sharepoint_drive_id && r.sharepoint_item_id);
+      if (spPairs.length > 0) {
+        const values = spPairs.map((_: any, i: number) => `($${i * 2 + 1}, $${i * 2 + 2})`).join(", ");
+        const tombstoneParams = spPairs.flatMap((r: any) => [r.sharepoint_drive_id, r.sharepoint_item_id]);
+        await pool.query(
+          `INSERT INTO deleted_sharepoint_images (sharepoint_drive_id, sharepoint_item_id) VALUES ${values} ON CONFLICT (sharepoint_drive_id, sharepoint_item_id) DO NOTHING`,
+          tombstoneParams,
+        );
+      }
+      await pool.query(`DELETE FROM image_studio_collection_images WHERE image_id = ANY($1::text[])`, [targetIds]);
+      await pool.query(`DELETE FROM image_studio_images WHERE id = ANY($1::text[])`, [targetIds]);
+
+      console.log(`[chatbgp] delete_images: removed ${targetIds.length} row(s)`);
+      return {
+        data: {
+          success: true,
+          deleted: targetIds.length,
+          message: `Deleted ${targetIds.length} image(s) from the library.`,
+        },
+        action: { type: "image_studio_changed" },
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] delete_images error:", err?.message);
+      return { data: { success: false, error: `Delete failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "pin_image_to_property") {
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId;
+      if (!userId) return { data: { success: false, error: "Not authenticated." } };
+
+      const imageId = String(fnArgs.imageId || "");
+      const propertyId = String(fnArgs.propertyId || "");
+      const kind = String(fnArgs.kind || "");
+      const caption = fnArgs.caption ? String(fnArgs.caption) : null;
+      const unpin = fnArgs.unpin === true;
+
+      const validKinds = ["hero", "internal", "secondary_external", "location_plan", "floor_plan", "comps_chart", "erv_walk", "covenant_card", "overlay"];
+      if (!imageId || !propertyId || !validKinds.includes(kind)) {
+        return { data: { success: false, error: `imageId, propertyId, and kind (one of ${validKinds.join(", ")}) are required.` } };
+      }
+
+      // Confirm both rows exist before touching property_imagery_assets.
+      const imgRes = await pool.query("SELECT id, file_name FROM image_studio_images WHERE id = $1", [imageId]);
+      if (imgRes.rows.length === 0) return { data: { success: false, error: "Image not found in image_studio_images." } };
+      const propRes = await pool.query("SELECT id, name FROM crm_properties WHERE id = $1", [propertyId]);
+      if (propRes.rows.length === 0) return { data: { success: false, error: "Property not found in crm_properties." } };
+
+      if (unpin) {
+        const result = await pool.query(
+          `UPDATE property_imagery_assets
+              SET pinned = false
+            WHERE property_id = $1 AND image_studio_id = $2 AND kind = $3 AND pinned = true
+            RETURNING id`,
+          [propertyId, imageId, kind],
+        );
+        return {
+          data: {
+            success: true,
+            unpinned: result.rowCount || 0,
+            message: result.rowCount
+              ? `Unpinned ${imgRes.rows[0].file_name} as ${kind} for ${propRes.rows[0].name}.`
+              : "Nothing to unpin — that image isn't pinned in that role.",
+          },
+          action: { type: "property_imagery_changed", propertyId },
+        };
+      }
+
+      // Pinning is exclusive per (property, kind) — unpin any current holder first.
+      await pool.query(
+        `UPDATE property_imagery_assets SET pinned = false WHERE property_id = $1 AND kind = $2 AND pinned = true`,
+        [propertyId, kind],
+      );
+
+      // Upsert: existing curation row for (property, image) → flip pinned/kind/caption;
+      // otherwise create one.
+      const existing = await pool.query(
+        `SELECT id FROM property_imagery_assets WHERE property_id = $1 AND image_studio_id = $2 LIMIT 1`,
+        [propertyId, imageId],
+      );
+      if (existing.rows.length > 0) {
+        await pool.query(
+          `UPDATE property_imagery_assets
+              SET pinned = true, kind = $1, hidden = false,
+                  caption = COALESCE($2, caption),
+                  generated_by = COALESCE(generated_by, $3)
+            WHERE id = $4`,
+          [kind, caption, userId, existing.rows[0].id],
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO property_imagery_assets
+             (property_id, kind, source, image_studio_id, caption, pinned, generated_by)
+           VALUES ($1, $2, 'image_studio', $3, $4, true, $5)`,
+          [propertyId, kind, imageId, caption, userId],
+        );
+      }
+
+      return {
+        data: {
+          success: true,
+          imageId,
+          propertyId,
+          kind,
+          message: `Pinned "${imgRes.rows[0].file_name}" as ${kind} for ${propRes.rows[0].name}.`,
+        },
+        action: { type: "property_imagery_changed", propertyId },
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] pin_image_to_property error:", err?.message);
+      return { data: { success: false, error: `Pin failed: ${err?.message}` } };
     }
   }
 
