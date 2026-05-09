@@ -265,6 +265,8 @@ function ComposeButton({
   const [busy, setBusy] = useState(false);
   const [tubeLayer, setTubeLayer] = useState(true);
   const [compsLayer, setCompsLayer] = useState(true);
+  const [anchorsLayer, setAnchorsLayer] = useState(false);
+  const [restaurantsLayer, setRestaurantsLayer] = useState(false);
   const [mapType, setMapType] = useState<"hybrid" | "roadmap" | "satellite" | "terrain">("hybrid");
   const [scope, setScope] = useState<"investment" | "leasing">("investment");
 
@@ -278,6 +280,8 @@ function ComposeButton({
         const layers: string[] = [];
         if (tubeLayer) layers.push("tube");
         if (compsLayer) layers.push("comps");
+        if (anchorsLayer) layers.push("anchors");
+        if (restaurantsLayer) layers.push("restaurants");
         body = { ...body, zoom: 16, mapType, layers };
       } else if (kind === "comps_chart") {
         // Auto-pull from investment_comps + crm_comps in the same postcode area
@@ -345,6 +349,14 @@ function ComposeButton({
           <label className="flex items-center gap-1.5 cursor-pointer">
             <input type="checkbox" checked={compsLayer} onChange={(e) => setCompsLayer(e.target.checked)} />
             <span>Investment comps</span>
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={anchorsLayer} onChange={(e) => setAnchorsLayer(e.target.checked)} />
+            <span>Anchor brands (CRM)</span>
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={restaurantsLayer} onChange={(e) => setRestaurantsLayer(e.target.checked)} />
+            <span>Restaurants (Google)</span>
           </label>
         </div>
       )}

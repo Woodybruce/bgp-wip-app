@@ -41,7 +41,7 @@ import {
 import { and, desc, eq, sql } from "drizzle-orm";
 import { captureStreetViewForAddress } from "./image-studio";
 import { composeLocationPlan, composeCompsChart, composeErvWalk, composeCovenantCard, type LocationPlanInput, type CompsChartInput, type ErvWalkInput, type CovenantCardInput } from "./property-imagery-composers";
-import { plaMatters, crmCompanies, type PlaMatter } from "@shared/schema";
+import { plaMatters, crmCompanies, brandStores, type PlaMatter } from "@shared/schema";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -469,6 +469,12 @@ export function registerPropertyImageryRoutes(app: Express): void {
         if (layers.includes("comps")) {
           markers.push(...await fetchCompMarkers(property.postcode));
         }
+        if (layers.includes("anchors")) {
+          markers.push(...await fetchAnchorBrandMarkers(lat, lng, 600));
+        }
+        if (layers.includes("restaurants")) {
+          markers.push(...await fetchRestaurantMarkers(lat, lng, 500));
+        }
       }
 
       const result = await composeLocationPlan({
@@ -633,6 +639,73 @@ async function fetchTubeMarkers(lat: number, lng: number, radiusMeters = 600): P
     }));
   } catch (err: any) {
     console.warn("[property-imagery] tube markers failed:", err?.message);
+    return [];
+  }
+}
+
+/**
+ * Anchor brand markers — pull brand_stores within a lat/lng bounding box
+ * (radius in metres). Anchor brands are what makes a pitch make sense:
+ * "M&S 30m away, Pret next door" is the income story.
+ */
+async function fetchAnchorBrandMarkers(lat: number, lng: number, radiusMeters = 600): Promise<Array<{ lat: number; lng: number; label: string; color: "purple"; title: string }>> {
+  try {
+    // Convert radius to degrees — 1 deg lat ≈ 111km, lng varies by latitude
+    const latDelta = radiusMeters / 111_000;
+    const lngDelta = radiusMeters / (111_000 * Math.cos((lat * Math.PI) / 180));
+    const stores = await db
+      .select({
+        name: brandStores.name,
+        lat: brandStores.lat,
+        lng: brandStores.lng,
+      })
+      .from(brandStores)
+      .where(sql`
+        ${brandStores.lat} IS NOT NULL
+        AND ${brandStores.lng} IS NOT NULL
+        AND ${brandStores.lat} BETWEEN ${lat - latDelta} AND ${lat + latDelta}
+        AND ${brandStores.lng} BETWEEN ${lng - lngDelta} AND ${lng + lngDelta}
+        AND ${brandStores.status} != 'closed'
+      `)
+      .limit(8);
+    return stores.map((s) => ({
+      lat: s.lat as number,
+      lng: s.lng as number,
+      label: "A",
+      color: "purple" as const,
+      title: s.name,
+    }));
+  } catch (err: any) {
+    console.warn("[property-imagery] anchor markers failed:", err?.message);
+    return [];
+  }
+}
+
+/**
+ * Competitor restaurant markers — Google Places nearbysearch type=restaurant
+ * within a radius. Surfaces the competitive density / brand calibre of the
+ * area for both BD prospecting and investment memos ("F&B-rich, lots of
+ * brand activity nearby").
+ */
+async function fetchRestaurantMarkers(lat: number, lng: number, radiusMeters = 500): Promise<Array<{ lat: number; lng: number; label: string; color: "orange"; title: string }>> {
+  try {
+    if (!process.env.GOOGLE_API_KEY) return [];
+    const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=${radiusMeters}&type=restaurant&key=${process.env.GOOGLE_API_KEY}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    const places = (data?.results || []).slice(0, 8);
+    return places
+      .filter((p: any) => p.geometry?.location?.lat && p.geometry?.location?.lng)
+      .map((p: any) => ({
+        lat: p.geometry.location.lat,
+        lng: p.geometry.location.lng,
+        label: "R",
+        color: "orange" as const,
+        title: p.name || "Restaurant",
+      }));
+  } catch (err: any) {
+    console.warn("[property-imagery] restaurant markers failed:", err?.message);
     return [];
   }
 }
