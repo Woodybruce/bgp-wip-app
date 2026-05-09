@@ -1107,6 +1107,7 @@ import { pool } from "./db";
     // AML AI augments + MLR scope determination
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sof_analysis JSONB`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_ai_triage JSONB`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_market_data JSONB`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_reason TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_assessed_at TIMESTAMP`,
@@ -1364,7 +1365,7 @@ import brandScraperRouter, { runDailyBrandScraper } from "./brand-scraper";
 import brandSocialScraperRouter, { runWeeklySocialScrape } from "./brand-social-scraper";
 import apolloContactsRouter from "./apollo-contacts";
 import rocketreachContactsRouter, { rocketreachHealth } from "./rocketreach-contacts";
-import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExperianRaw } from "./experian";
+import { experianHealth, fetchCommercialCredit, isExperianConfigured, debugExperianRaw, sandboxAudit } from "./experian";
 import propertyGapAnalysisRouter from "./property-gap-analysis";
 import brandPackRouter from "./brand-pack";
 import dealDocsRouter from "./deal-docs";
@@ -1881,6 +1882,18 @@ app.use("/api/branding/assets", express.static(
         noAuth: req.body?.noAuth,
       });
       res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err?.message || "Unknown error" });
+    }
+  });
+  // Comprehensive sandbox audit — exercises every Experian product BGP cares
+  // about, returns a sales-ready buy list. Hit GET /api/experian/sandbox-audit
+  // (?regnum=XXXX optional, defaults to Experian's 99999999 dummy company).
+  app.get("/api/experian/sandbox-audit", async (req, res) => {
+    try {
+      const regnum = String(req.query?.regnum || "99999999");
+      const out = await sandboxAudit(regnum);
+      res.json(out);
     } catch (err: any) {
       res.status(500).json({ error: err?.message || "Unknown error" });
     }

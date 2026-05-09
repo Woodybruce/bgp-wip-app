@@ -877,6 +877,7 @@ export const crmDeals = pgTable("crm_deals", {
   // runAllAmlChecks.
   amlSofAnalysis: jsonb("aml_sof_analysis"),
   amlAiTriage: jsonb("aml_ai_triage"),
+  amlMarketData: jsonb("aml_market_data"),
   // MLR 2017 scope determination — drives whether CDD is legally mandatory
   // for this deal. Lettings under €10,000/month (~£100k pa) fall out of scope
   // of the regulations entirely, so unresponsive small-tenant deals can
