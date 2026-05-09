@@ -299,6 +299,9 @@ interface CoverageMap {
   bgpField: string;      // BGP-side identifier
   shapeMatchers: RegExp[]; // case-insensitive patterns to look for in walkShape output
   productsToCheck: string[]; // priority order
+  // Existing non-Experian vendor that already covers this — so the audit
+  // doesn't tell sales we need a new SKU when we already pay someone else.
+  alternativeVendor?: string;
 }
 const COVERAGE: CoverageMap[] = [
   {
@@ -342,6 +345,7 @@ const COVERAGE: CoverageMap[] = [
     bgpField: "kyc_adverse_media",
     shapeMatchers: [/adverse/i, /negative.?(news|media)/i, /press/i],
     productsToCheck: ["Business Profile (full report)", "Commercial Credit (Delphi)"],
+    alternativeVendor: "Perplexity (web-grounded, cited) + Claude AI triage synthesis",
   },
   {
     need: "Insolvency / dissolution / liquidation history",
@@ -354,6 +358,7 @@ const COVERAGE: CoverageMap[] = [
     bgpField: "kyc_pep",
     shapeMatchers: [/\bPEP\b/i, /sanction/i, /watchlist/i, /politically/i],
     productsToCheck: ["Business Profile (full report)", "Commercial Credit (Delphi)"],
+    alternativeVendor: "ComplyAdvantage Mesh + UK OFSI + US OFAC sanctions feeds (already wired)",
   },
   {
     need: "Previous registered office + trading addresses",
@@ -372,9 +377,10 @@ const COVERAGE: CoverageMap[] = [
 interface CoverageResult {
   need: string;
   bgpField: string;
-  coveredBy: string[];     // product names
+  coveredBy: string[];     // Experian product names
   matchedKeys: string[];   // shape-walk lines that matched
-  status: "covered" | "uncovered";
+  alternativeVendor?: string; // non-Experian vendor already covering this
+  status: "covered" | "covered_elsewhere" | "uncovered";
 }
 
 function buildCoverageReport(probes: SandboxProbe[]): CoverageResult[] {
@@ -391,12 +397,17 @@ function buildCoverageReport(probes: SandboxProbe[]): CoverageResult[] {
         matchedKeys.push(...matches.slice(0, 3).map(m => `${productName} → ${m}`));
       }
     }
+    let status: CoverageResult["status"];
+    if (coveredBy.length > 0) status = "covered";
+    else if (c.alternativeVendor) status = "covered_elsewhere";
+    else status = "uncovered";
     return {
       need: c.need,
       bgpField: c.bgpField,
       coveredBy,
       matchedKeys,
-      status: coveredBy.length > 0 ? "covered" : "uncovered",
+      alternativeVendor: c.alternativeVendor,
+      status,
     };
   });
 }
@@ -748,20 +759,27 @@ function buildRecommendation(probes: SandboxProbe[], coverage: CoverageResult[] 
   // already met by the 3 working products and which need new SKUs.
   if (coverage.length > 0) {
     const covered = coverage.filter(c => c.status === "covered");
+    const elsewhere = coverage.filter(c => c.status === "covered_elsewhere");
     const uncovered = coverage.filter(c => c.status === "uncovered");
     out.push(`## 🎯 BGP coverage map — what we need vs what's already provisioned`);
     out.push(``);
-    out.push(`### Already covered by the 3 working products (no new SKU needed)`);
+    out.push(`### Already covered by the 3 working Experian products (no new SKU needed)`);
     if (covered.length === 0) out.push(`(none yet)`);
     for (const c of covered) {
       out.push(`- **${c.need}** → ${c.coveredBy.join(", ")}`);
       for (const m of c.matchedKeys.slice(0, 3)) out.push(`  - ${m}`);
     }
     out.push(``);
-    out.push(`### NOT visible in any working response — these are real sales asks`);
-    if (uncovered.length === 0) out.push(`(everything BGP needs is already in the working set 🎉)`);
+    out.push(`### Already covered by other BGP vendors — DO NOT order from Experian unless it beats them on price`);
+    if (elsewhere.length === 0) out.push(`(none)`);
+    for (const c of elsewhere) {
+      out.push(`- **${c.need}** — already wired via: ${c.alternativeVendor}`);
+    }
+    out.push(``);
+    out.push(`### NOT visible in any working response and nothing else covers it — REAL sales asks`);
+    if (uncovered.length === 0) out.push(`(everything BGP needs is covered by the working set or another vendor 🎉)`);
     for (const c of uncovered) {
-      out.push(`- **${c.need}** (BGP field: \`${c.bgpField}\`) — not present in Commercial Credit or Business Profile shape. Either Experian bundles it deeper than 4 levels, or it's a separate SKU.`);
+      out.push(`- **${c.need}** (BGP field: \`${c.bgpField}\`) — not present in Commercial Credit or Business Profile shape, and no alternative vendor wired. Either Experian bundles it deeper than 4 levels, or it's a separate SKU.`);
     }
     out.push(``);
   }

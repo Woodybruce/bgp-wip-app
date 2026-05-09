@@ -27,7 +27,8 @@ interface CoverageResult {
   bgpField: string;
   coveredBy: string[];
   matchedKeys: string[];
-  status: "covered" | "uncovered";
+  alternativeVendor?: string;
+  status: "covered" | "covered_elsewhere" | "uncovered";
 }
 
 interface AuditResult {
@@ -146,25 +147,37 @@ export default function ExperianAuditPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-1.5">
-                  {result.coverage.map((c, i) => (
-                    <div key={i} className="flex items-start gap-2 text-sm border-b last:border-b-0 pb-1.5">
-                      {c.status === "covered"
-                        ? <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
-                        : <XCircle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />}
-                      <div className="flex-1 min-w-0">
-                        <div className={c.status === "covered" ? "" : "text-red-700"}>{c.need}</div>
-                        {c.coveredBy.length > 0 && (
-                          <div className="text-[11px] text-muted-foreground">in {c.coveredBy.join(", ")}</div>
-                        )}
-                        {c.matchedKeys.length > 0 && (
-                          <details className="text-[10px] text-muted-foreground font-mono mt-0.5">
-                            <summary className="cursor-pointer">match keys</summary>
-                            {c.matchedKeys.map((m, j) => <div key={j} className="pl-2">{m}</div>)}
-                          </details>
-                        )}
+                  {result.coverage.map((c, i) => {
+                    const Icon = c.status === "covered" ? CheckCircle2 :
+                      c.status === "covered_elsewhere" ? CheckCircle2 :
+                      XCircle;
+                    const iconColor = c.status === "covered" ? "text-emerald-600" :
+                      c.status === "covered_elsewhere" ? "text-blue-600" :
+                      "text-red-600";
+                    return (
+                      <div key={i} className="flex items-start gap-2 text-sm border-b last:border-b-0 pb-1.5">
+                        <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${iconColor}`} />
+                        <div className="flex-1 min-w-0">
+                          <div className={c.status === "uncovered" ? "text-red-700" : ""}>{c.need}</div>
+                          {c.coveredBy.length > 0 && (
+                            <div className="text-[11px] text-muted-foreground">Experian: {c.coveredBy.join(", ")}</div>
+                          )}
+                          {c.status === "covered_elsewhere" && c.alternativeVendor && (
+                            <div className="text-[11px] text-blue-700">Already covered by: {c.alternativeVendor}</div>
+                          )}
+                          {c.status === "uncovered" && (
+                            <div className="text-[11px] text-red-700 font-medium">→ Real sales ask</div>
+                          )}
+                          {c.matchedKeys.length > 0 && (
+                            <details className="text-[10px] text-muted-foreground font-mono mt-0.5">
+                              <summary className="cursor-pointer">match keys</summary>
+                              {c.matchedKeys.map((m, j) => <div key={j} className="pl-2">{m}</div>)}
+                            </details>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
