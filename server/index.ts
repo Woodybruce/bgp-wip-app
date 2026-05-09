@@ -1107,6 +1107,7 @@ import { pool } from "./db";
     // AML AI augments + MLR scope determination
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_sof_analysis JSONB`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_ai_triage JSONB`,
+    `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS aml_market_data JSONB`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_reason TEXT`,
     `ALTER TABLE crm_deals ADD COLUMN IF NOT EXISTS mlr_scope_assessed_at TIMESTAMP`,

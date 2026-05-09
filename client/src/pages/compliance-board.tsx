@@ -26,6 +26,9 @@ const SOURCE_META: Record<string, { label: string; tone: string; title: string }
   perplexity: { label: "Adverse media", tone: "border-purple-300 text-purple-700 bg-purple-50", title: "Perplexity adverse media scan" },
   clouseau: { label: "Clouseau", tone: "border-teal-300 text-teal-700 bg-teal-50", title: "Clouseau investigation" },
   comply_advantage: { label: "ComplyAdvantage", tone: "border-amber-300 text-amber-700 bg-amber-50", title: "ComplyAdvantage PEP/sanctions" },
+  sharepoint_history: { label: "Prior pack", tone: "border-emerald-300 text-emerald-700 bg-emerald-50", title: "Existing KYC pack found in BGP SharePoint folder" },
+  yahoo_finance: { label: "Yahoo Finance", tone: "border-violet-300 text-violet-700 bg-violet-50", title: "Listed share data — market cap, momentum, halts" },
+  creditsafe: { label: "Creditsafe", tone: "border-cyan-300 text-cyan-700 bg-cyan-50", title: "Creditsafe Connect commercial credit data" },
   system: { label: "System", tone: "border-slate-300 text-slate-700 bg-slate-50", title: "Automated rule" },
 };
 

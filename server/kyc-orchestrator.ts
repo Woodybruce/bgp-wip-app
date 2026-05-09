@@ -28,6 +28,8 @@ import { discoverUltimateParent } from "./companies-house";
 import { createVeriffSession } from "./veriff";
 import { adverseMediaSearch, isPerplexityConfigured } from "./perplexity";
 import { screenNames as complyAdvantageScreen, isComplyAdvantageConfigured } from "./comply-advantage";
+import { findHistoricalKycMatches, hasFreshHistoricalPack, type HistoricalKycMatch } from "./aml-historical";
+import { fetchAmlMarketData, hasMarketSignals } from "./aml-market";
 
 const router = Router();
 
@@ -38,6 +40,9 @@ type TickSource =
   | "companies_house"
   | "perplexity"
   | "comply_advantage"
+  | "sharepoint_history"
+  | "yahoo_finance"
+  | "creditsafe"
   | "manual"
   | "system";
 
@@ -271,6 +276,8 @@ export async function runAllAmlChecks(
     summary?: string;
     findingCount?: number;
   };
+  historicalKyc: HistoricalKycMatch[];
+  marketData: Awaited<ReturnType<typeof fetchAmlMarketData>> | null;
   checklistTicked: string[];
   warnings: string[];
 }> {
@@ -598,6 +605,60 @@ export async function runAllAmlChecks(
     }
   }
 
+  // 4a. Historical KYC pack on file — check the BGP SharePoint KYC folder for
+  // a prior pass on this entity. If one exists in the last 12 months, mark
+  // company_cert ticked from sharepoint_history and stash the matches so the
+  // panel can deep-link to the file.
+  let historicalKyc: HistoricalKycMatch[] = [];
+  try {
+    historicalKyc = await findHistoricalKycMatches(company.name || "");
+    if (hasFreshHistoricalPack(historicalKyc)) {
+      const newest = historicalKyc[0];
+      const updates = await tickChecklistItems(companyId, {
+        company_cert: {
+          source: "sharepoint_history",
+          evidence: {
+            file: newest.name,
+            webUrl: newest.webUrl,
+            ageDays: newest.ageDays,
+            totalMatches: historicalKyc.length,
+          },
+          notes: `Prior KYC pack on file (${newest.ageDays} days old) — ${newest.name}`,
+        },
+      });
+      checklistTicked = [...checklistTicked, ...updates];
+    }
+  } catch (e: any) {
+    warnings.push(`Historical KYC lookup failed: ${e?.message || "unknown"}`);
+  }
+
+  // 4b. Market data overlay — Yahoo Finance for listed counterparties,
+  // Creditsafe/RFA when a key is configured. Cheap signals that confirm
+  // financial health or flag concerns to look at.
+  let marketData: Awaited<ReturnType<typeof fetchAmlMarketData>> | null = null;
+  try {
+    marketData = await fetchAmlMarketData(company.name || "", company.companies_house_number || null);
+    if (marketData && hasMarketSignals(marketData)) {
+      // Stash on the deal for the AmlAiPanel to display
+      if (dealId) {
+        await pool.query(
+          `UPDATE crm_deals SET aml_market_data = $1 WHERE id = $2`,
+          [marketData, dealId],
+        ).catch(() => {});
+      }
+      // Sharp drop / halts are signals to flag, not to auto-tick anything off.
+      if (marketData.signals.sharpDrop || marketData.signals.halted) {
+        warnings.push(
+          marketData.signals.halted
+            ? `Listed share appears halted — verify before completion`
+            : `Share price down 30%+ over 52 weeks — sense-check covenant`
+        );
+      }
+    }
+  } catch (e: any) {
+    warnings.push(`Market data lookup failed: ${e?.message || "unknown"}`);
+  }
+
   // 5. Deal event trail — so the audit log carries the whole sweep
   if (dealId) {
     await pool.query(
@@ -613,6 +674,8 @@ export async function runAllAmlChecks(
           veriffLaunched,
           veriffSkipped,
           adverseMedia,
+          historicalKyc: historicalKyc.slice(0, 5),
+          marketData,
           checklistTicked,
           warnings,
         }),
@@ -630,6 +693,8 @@ export async function runAllAmlChecks(
     veriffLaunched,
     veriffSkipped,
     adverseMedia,
+    historicalKyc,
+    marketData,
     checklistTicked,
     warnings,
   };

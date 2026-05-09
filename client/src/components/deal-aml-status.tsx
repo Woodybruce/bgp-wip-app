@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp } from "lucide-react";
+import { CheckCircle2, AlertCircle, Clock, ShieldCheck, Loader2, FileDown, Sparkles, Upload, Trash2, Brain, ScrollText, Mail, Send, Copy, Cloud, ChevronDown, ChevronUp, TrendingUp, TrendingDown, FolderOpen } from "lucide-react";
 import { Link } from "wouter";
 import { KycPanel } from "@/components/kyc-panel";
 import { getAuthHeaders, queryClient, apiRequest } from "@/lib/queryClient";
@@ -188,6 +188,22 @@ interface DealAmlAi {
     evidence: string[];
     generatedAt: string;
   }> } | null;
+  amlMarketData: {
+    listed: boolean;
+    ticker: string | null;
+    exchange: string | null;
+    marketCapGBP: number | null;
+    fiftyTwoWeekChange: number | null;
+    signals: {
+      largeCap: boolean;
+      midCap: boolean;
+      sharpDrop: boolean;
+      strongMomentum: boolean;
+      halted: boolean;
+    };
+    creditSafe?: { configured: boolean; score?: number | null; riskBand?: string | null; insolvencyFlag?: boolean };
+    fetchedAt: string;
+  } | null;
 }
 
 // Exported so the Compliance Board (and other KYC review surfaces) can drop
@@ -201,9 +217,9 @@ export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: str
   // /api/kyc/deal/:id/status endpoint above doesn't include these, so we
   // hit /api/deals/:id and pluck the columns we need.
   const { data: deal } = useQuery<DealAmlAi>({
-    queryKey: ["/api/deals", dealId, "aml-ai"],
+    queryKey: ["/api/crm/deals", dealId, "aml-ai"],
     queryFn: async () => {
-      const res = await fetch(`/api/deals/${dealId}`, { credentials: "include", headers: getAuthHeaders() });
+      const res = await fetch(`/api/crm/deals/${dealId}`, { credentials: "include", headers: getAuthHeaders() });
       if (!res.ok) throw new Error("deal load failed");
       const d = await res.json();
       return {
@@ -213,6 +229,7 @@ export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: str
         amlSourceOfFunds: d.amlSourceOfFunds ?? d.aml_source_of_funds,
         amlAiTriage: d.amlAiTriage ?? d.aml_ai_triage ?? null,
         amlSofAnalysis: d.amlSofAnalysis ?? d.aml_sof_analysis ?? null,
+        amlMarketData: d.amlMarketData ?? d.aml_market_data ?? null,
       };
     },
   });
@@ -237,7 +254,7 @@ export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: str
 
   const deleteSof = useMutation({
     mutationFn: async (idx: number) => apiRequest("DELETE", `/api/aml/deal/${dealId}/sof/${idx}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "aml-ai"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId, "aml-ai"] }),
   });
 
   const uploadSof = async (file: File) => {
@@ -253,7 +270,7 @@ export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: str
         body: fd,
       });
       if (!res.ok) throw new Error(await res.text());
-      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "aml-ai"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/deals", dealId, "aml-ai"] });
       toast({ title: "Source-of-funds analysis complete" });
     } catch (e: any) {
       toast({ title: "Analysis failed", description: e?.message?.slice(0, 200), variant: "destructive" });
@@ -315,6 +332,41 @@ export function AmlAiPanel({ dealId, dealName }: { dealId: string; dealName: str
           <div className="flex-1 min-w-0">
             <div className="text-xs font-semibold text-orange-800">Enhanced Due Diligence required</div>
             <p className="text-[11px] text-orange-900 mt-0.5">{deal.amlEddReason || "Set by AML rules engine."}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Market data — Yahoo Finance for listed entities, Creditsafe when wired */}
+      {deal?.amlMarketData && (deal.amlMarketData.listed || deal.amlMarketData.creditSafe?.score != null) && (
+        <div className="flex items-start gap-2 p-2.5 rounded-md border bg-card" data-testid="market-data-card">
+          {deal.amlMarketData.signals.sharpDrop || deal.amlMarketData.signals.halted
+            ? <TrendingDown className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            : <TrendingUp className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-semibold uppercase tracking-wide">Market data</span>
+              {deal.amlMarketData.listed && (
+                <Badge variant="outline" className="text-[10px]">
+                  {deal.amlMarketData.ticker}{deal.amlMarketData.exchange ? ` · ${deal.amlMarketData.exchange}` : ""}
+                </Badge>
+              )}
+              {deal.amlMarketData.signals.largeCap && <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50">Large cap</Badge>}
+              {deal.amlMarketData.signals.midCap && <Badge variant="outline" className="text-[10px] border-blue-300 text-blue-700 bg-blue-50">Mid cap</Badge>}
+              {deal.amlMarketData.signals.strongMomentum && <Badge variant="outline" className="text-[10px] border-emerald-300 text-emerald-700 bg-emerald-50">Strong momentum</Badge>}
+              {deal.amlMarketData.signals.sharpDrop && <Badge variant="outline" className="text-[10px] border-red-300 text-red-700 bg-red-50">Sharp drop</Badge>}
+              {deal.amlMarketData.signals.halted && <Badge variant="outline" className="text-[10px] border-red-300 text-red-700 bg-red-50">Halted</Badge>}
+            </div>
+            <div className="text-[11px] text-muted-foreground mt-1 flex flex-wrap gap-x-3">
+              {deal.amlMarketData.marketCapGBP != null && (
+                <span>Mkt cap: £{(deal.amlMarketData.marketCapGBP / 1e6).toFixed(0)}m</span>
+              )}
+              {deal.amlMarketData.fiftyTwoWeekChange != null && (
+                <span>52w: {(deal.amlMarketData.fiftyTwoWeekChange * 100).toFixed(1)}%</span>
+              )}
+              {deal.amlMarketData.creditSafe?.score != null && (
+                <span>Creditsafe: {deal.amlMarketData.creditSafe.score}{deal.amlMarketData.creditSafe.riskBand ? ` (${deal.amlMarketData.creditSafe.riskBand})` : ""}</span>
+              )}
+            </div>
           </div>
         </div>
       )}
