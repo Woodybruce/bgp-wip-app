@@ -338,6 +338,35 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
   let osUprns: string[] = [];
   if (input.uprn && input.uprn.trim()) {
     osUprns = [input.uprn.trim()];
+  } else {
+    // Fallback: callers that don't yet pass UPRN explicitly — try to find
+    // it via the resolver-canonical crm_properties row by normalised
+    // address+postcode. So existing callers (Pathway internal plumbing,
+    // KYC Clouseau, the Investigator tool, ChatBGP) get the fix
+    // automatically when the property has been resolved before.
+    try {
+      const { db } = await import("./db");
+      const target = `${(resolvedAddress || "").toLowerCase().replace(/\s+/g, " ").trim()}::${(resolvedPostcode || "").toUpperCase().replace(/\s+/g, "")}`;
+      const all = await db.execute(sql`
+        SELECT uprn FROM crm_properties
+        WHERE uprn IS NOT NULL
+          AND UPPER(REPLACE(COALESCE(postcode, ''), ' ', '')) = ${(resolvedPostcode || "").toUpperCase().replace(/\s+/g, "")}
+          AND (
+            LOWER(name) = ${(resolvedAddress || "").toLowerCase()} OR
+            LOWER(COALESCE(address->>'formatted', '')) = ${(resolvedAddress || "").toLowerCase()} OR
+            LOWER(COALESCE(address->>'line1', '')) = ${(resolvedAddress || "").toLowerCase()}
+          )
+        LIMIT 1
+      ` as any).catch(() => null);
+      const rows = (all as any)?.rows || (all as any) || [];
+      const fallbackUprn = rows[0]?.uprn;
+      if (fallbackUprn) {
+        osUprns = [String(fallbackUprn)];
+        console.log(`[land-registry/resolve] using fallback UPRN ${fallbackUprn} from crm_properties`);
+      }
+    } catch (err: any) {
+      // Best-effort — fall through to OS Places discovery
+    }
   }
   try {
     const { osPlacesNearest, osPlacesFind } = await import("./os-data");

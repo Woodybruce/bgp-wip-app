@@ -325,6 +325,28 @@ interface StageStatusMap {
   stage9?: StageStatus;
 }
 
+/**
+ * Pull the resolver-canonical UPRN for a Pathway run if it's linked to a
+ * crm_property. Used so PropertyData uprn-title hits THIS building only,
+ * not every freehold in the postcode area. Best-effort; returns null if
+ * no link or no UPRN on the property.
+ */
+async function uprnForRun(run: PropertyPathwayRun | { propertyId?: string | null }): Promise<string | null> {
+  const propertyId = (run as any)?.propertyId;
+  if (!propertyId) return null;
+  try {
+    const rows = await pool.query(
+      "SELECT uprn FROM crm_properties WHERE id = $1 LIMIT 1",
+      [propertyId],
+    );
+    const u = rows.rows[0]?.uprn;
+    return u ? String(u) : null;
+  } catch (err: any) {
+    console.warn("[property-pathway] uprnForRun failed:", err?.message);
+    return null;
+  }
+}
+
 async function getRun(runId: string): Promise<PropertyPathwayRun | null> {
   const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, runId)).limit(1);
   return run || null;
@@ -1460,9 +1482,14 @@ async function runStage1Autonomous(runId: string, req: Request): Promise<void> {
       // the postcode. Falls back to street-number-filtered context if no
       // UPRN match is found.
       const { resolveBuildingTitles } = await import("./land-registry");
+      // If the run is anchored to a resolver-canonical property, pass its
+      // UPRN so PropertyData uprn-title returns THIS exact building only,
+      // not every freehold in the postcode area.
+      const runUprn = await uprnForRun(run);
       const lr = await resolveBuildingTitles({
         address: run.address,
         postcode: run.postcode || "",
+        uprn: runUprn,
         skipPersist: true,
       }).catch(() => null);
       const matchedFh = lr?.ok ? lr.matched.freeholds : [];
@@ -1612,9 +1639,12 @@ async function runStage1Inner(runId: string, req: Request): Promise<void> {
   let stage1LeaseholdsData: any[] = [];
   let resolvedUprn: string | undefined;
   try {
-    // Authoritative title resolution — UPRN-precise.
+    // Authoritative title resolution — UPRN-precise. Pass through the run's
+    // canonical UPRN if it has one, so PropertyData skips re-discovery and
+    // hits this exact building's title.
     const { resolveBuildingTitles } = await import("./land-registry");
-    const lr = await resolveBuildingTitles({ address, postcode, skipPersist: true });
+    const runUprn = await uprnForRun(run);
+    const lr = await resolveBuildingTitles({ address, postcode, uprn: runUprn, skipPersist: true });
     if (lr.ok) {
       resolvedUprn = lr.uprns?.[0];
       const matchedFh = lr.matched.freeholds || [];

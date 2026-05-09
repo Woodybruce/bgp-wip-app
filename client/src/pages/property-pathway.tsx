@@ -2096,13 +2096,16 @@ function ManualTitleDialog({
   // a row, but it dedupes by user/run — fine to call) to populate candidate
   // lists. Cached by react-query so reopening the dialog is instant.
   const { data: candidates, isFetching } = useQuery<any>({
-    queryKey: ["/api/land-registry/resolve", run.address, run.postcode],
+    queryKey: ["/api/land-registry/resolve", run.address, run.postcode, run.propertyId],
     queryFn: async () => {
       const r = await fetch("/api/land-registry/resolve", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ address: run.address, postcode: run.postcode, source: "pathway-manual", pathwayRunId: run.id }),
+        // propertyId → server looks up the resolver-canonical UPRN so
+        // PropertyData uprn-title returns titles for THIS building, not
+        // every freehold in the postcode.
+        body: JSON.stringify({ address: run.address, postcode: run.postcode, source: "pathway-manual", pathwayRunId: run.id, propertyId: run.propertyId || undefined }),
       });
       if (!r.ok) return null;
       return r.json();
