@@ -265,87 +265,201 @@ export interface SandboxProbe {
   fields: string[];           // top-level fields returned (when 200)
   preview: string;            // first 250 chars of response
   note: string;               // human read of what this means
+  errorCode?: string;         // parsed error code from body
+  errorMessage?: string;      // parsed error message
+  classification: "available" | "needs_real_input" | "not_entitled" | "path_unknown" | "rate_limited" | "server_error" | "ambiguous";
 }
 
-// Catalog of Experian UK B2B products we want to evaluate. Test regnum
-// 99999999 is Experian's standard UK sandbox dummy company.
-function probeCatalog(regnum: string): Array<Omit<SandboxProbe, "status" | "ok" | "latencyMs" | "fields" | "preview" | "note">> {
+// Catalog of Experian UK B2B products we want to evaluate.
+// Each entry has multiple `paths` candidates because Experian UK has two
+// active naming conventions: the older `risk/business/v2/<verb><thing>` and
+// the newer `risk/business/v2/registered<thing>`. The audit tries each in
+// order and reports the first non-404 result.
+//
+// Test regnum 99999999 is Experian's standard UK sandbox dummy company.
+interface ProbeCandidate {
+  product: string;
+  bgpUse: string;
+  paths: Array<{ path: string; method: "GET" | "POST"; reqBody?: any }>;
+}
+
+function probeCatalog(regnum: string): ProbeCandidate[] {
+  const r = encodeURIComponent(regnum);
   return [
     {
       product: "Commercial Credit (Delphi)",
       bgpUse: "Counterparty credit score, recommended limit, CCJs, filed turnover — feeds BGP risk rating + covenant assessment",
-      path: `/risk/business/v2/registeredcompanycredit/${encodeURIComponent(regnum)}`,
-      method: "GET",
+      paths: [
+        { path: `/risk/business/v2/registeredcompanycredit/${r}`, method: "GET" },
+      ],
     },
     {
       product: "KYB Business Targeter",
       bgpUse: "Confirm registered name + status from Companies House number — corroborates billing/contracting entity ID",
-      path: `/risk/business/v2/businesstargeter?businessref=${encodeURIComponent(regnum)}`,
-      method: "GET",
+      paths: [
+        { path: `/risk/business/v2/businesstargeter?businessref=${r}`, method: "GET" },
+      ],
     },
     {
       product: "Director Report",
       bgpUse: "Pull active + resigned directors, prior insolvencies, PEP signals — feeds UBO walk + adverse media",
-      path: `/risk/business/v2/directorreport/${encodeURIComponent(regnum)}`,
-      method: "GET",
+      paths: [
+        { path: `/risk/business/v2/registereddirectorreport/${r}`, method: "GET" },
+        { path: `/risk/business/v2/directorreport/${r}`, method: "GET" },
+        { path: `/risk/business/v2/directorsearch`, method: "POST", reqBody: { directorRef: regnum } },
+      ],
     },
     {
       product: "CCJ + Mortgage detail",
       bgpUse: "Itemised CCJs/satisfactions + outstanding charges — feeds covenant strength flag",
-      path: `/risk/business/v2/ccjmortgages/${encodeURIComponent(regnum)}`,
-      method: "GET",
+      paths: [
+        { path: `/risk/business/v2/registeredccjmortgages/${r}`, method: "GET" },
+        { path: `/risk/business/v2/ccjmortgages/${r}`, method: "GET" },
+      ],
     },
     {
       product: "Commercial Portfolio Monitoring",
       bgpUse: "Webhook alert when a counterparty's score / limit / CCJs change — replaces our quarterly re-screen with real-time push",
-      path: `/risk/business/v2/portfoliomonitoring`,
-      method: "GET",
+      paths: [
+        { path: `/risk/business/v2/portfolio`, method: "GET" },
+        { path: `/risk/business/v2/portfoliomonitoring`, method: "GET" },
+        { path: `/risk/business/v2/monitoredentities`, method: "GET" },
+      ],
     },
     {
       product: "Bureau Monitoring (consumer)",
       bgpUse: "Sole-trader / LLP partner tenant deals where the bureau record sits on the individual",
-      path: `/lookupServiceUK/Application/v1/monitoring`,
-      method: "GET",
+      paths: [
+        { path: `/consumer/v1/monitor`, method: "GET" },
+        { path: `/consumer/v1/bureau-monitoring`, method: "GET" },
+      ],
     },
     {
       product: "Fraud Prevention (CIFAS / Hunter)",
       bgpUse: "Identity-fraud markers — flags spoofed counterparties before we waste effort issuing KYC requests",
-      path: `/lookupServiceUK/Application/v1/cifas`,
-      method: "GET",
+      paths: [
+        { path: `/fraud/v1/check`, method: "POST", reqBody: { registrationNumber: regnum, country: "GB" } },
+        { path: `/risk/business/v2/registeredfraudprevention/${r}`, method: "GET" },
+        { path: `/cifas/v1/check`, method: "POST", reqBody: { registrationNumber: regnum, country: "GB" } },
+      ],
     },
     {
       product: "Group Structure / Corporate Linkage",
       bgpUse: "Walk parent → subsidiary chain — supplements Companies House PSCs with international parents we can't see in the UK filings",
-      path: `/risk/business/v2/groupstructure/${encodeURIComponent(regnum)}`,
-      method: "GET",
+      paths: [
+        { path: `/risk/business/v2/registeredcompanyfamilytree/${r}`, method: "GET" },
+        { path: `/risk/business/v2/groupstructure/${r}`, method: "GET" },
+        { path: `/risk/business/v2/registeredgrouplinkage/${r}`, method: "GET" },
+      ],
     },
     {
       product: "Sole Trader / Unincorporated Lookup",
       bgpUse: "Tenants trading as themselves — letting deals to individual operators where there's no Companies House record",
-      path: `/risk/business/v2/soletraderreport`,
-      method: "POST",
-      reqBody: { firstName: "Test", lastName: "Trader", postcode: "SW1A 1AA", country: "GB" },
+      paths: [
+        { path: `/risk/business/v2/soletradertargeter`, method: "GET" },
+        { path: `/risk/business/v2/unincorporatedreport`, method: "POST", reqBody: { firstName: "Test", lastName: "Trader", postcode: "SW1A 1AA" } },
+      ],
     },
     {
       product: "Adverse Media / Negative Press",
       bgpUse: "Curated press hits — reduces noise vs Perplexity, more legally defensible audit trail",
-      path: `/risk/business/v2/adverseMedia/${encodeURIComponent(regnum)}`,
-      method: "GET",
+      paths: [
+        { path: `/risk/business/v2/registeredadversemedia/${r}`, method: "GET" },
+        { path: `/risk/business/v2/adverseMedia/${r}`, method: "GET" },
+      ],
     },
     {
       product: "PEP / Sanctions Screening",
       bgpUse: "If priced right could replace ComplyAdvantage — single Experian invoice instead of two",
-      path: `/compliance/uk/v1/pep-sanctions`,
-      method: "POST",
-      reqBody: { name: "John Smith", country: "GB" },
+      paths: [
+        { path: `/compliance/uk/v1/pepsanctions`, method: "POST", reqBody: { name: "John Smith", country: "GB" } },
+        { path: `/compliance/uk/v1/pep-sanctions`, method: "POST", reqBody: { name: "John Smith", country: "GB" } },
+        { path: `/risk/business/v2/registeredpepscreen/${r}`, method: "GET" },
+      ],
     },
     {
       product: "Business Profile (full report)",
       bgpUse: "Single-call rich profile (filings + officers + financials + group + risk) — collapses several of the above into one",
-      path: `/risk/business/v2/businessprofile/${encodeURIComponent(regnum)}`,
-      method: "GET",
+      paths: [
+        { path: `/risk/business/v2/registeredcompanyprofile/${r}`, method: "GET" },
+        { path: `/risk/business/v2/businessprofile/${r}`, method: "GET" },
+      ],
     },
   ];
+}
+
+// Read the structured error fields out of a 400/4xx body. Experian UK uses
+// several shapes — we look at all the common ones.
+function parseExperianError(body: any): { code?: string; message?: string } {
+  if (!body || typeof body !== "object") return {};
+  const candidates = [
+    body?.errors?.[0],
+    body?.error,
+    body?.fault?.detail,
+    body?.fault,
+    body,
+  ].filter(Boolean);
+  for (const c of candidates) {
+    const code = c?.code || c?.errorCode || c?.faultcode || c?.fault?.faultcode;
+    const message = c?.message || c?.description || c?.detail || c?.faultstring || c?.fault?.faultstring || c?.error_description;
+    if (code || message) return { code: code ? String(code) : undefined, message: message ? String(message) : undefined };
+  }
+  return {};
+}
+
+// Decide what a status + body actually mean for sales conversation.
+// "available" → real working data
+// "needs_real_input" → endpoint is real, just rejected our dummy payload
+// "not_entitled" → endpoint exists, account doesn't have product enabled
+// "path_unknown" → path returns generic gateway 400/404 — likely wrong path
+// "rate_limited" → 429
+// "server_error" → 5xx
+// "ambiguous" → can't tell; ask Experian
+function classify(status: number | null, body: any): {
+  classification: SandboxProbe["classification"];
+  errorCode?: string;
+  errorMessage?: string;
+  note: string;
+} {
+  const { code, message } = parseExperianError(body);
+  if (status === null) {
+    return { classification: "ambiguous", errorCode: code, errorMessage: message, note: "Network error — not Experian-side. Re-run." };
+  }
+  if (status >= 200 && status < 300) {
+    return { classification: "available", errorCode: code, errorMessage: message, note: `Provisioned. Confirm production pricing.` };
+  }
+  if (status === 401 || status === 403) {
+    return { classification: "not_entitled", errorCode: code, errorMessage: message, note: `Endpoint exists; account lacks entitlement. Sales needs to add this SKU.` };
+  }
+  if (status === 404) {
+    return { classification: "path_unknown", errorCode: code, errorMessage: message, note: `Path not present. Likely wrong URL — ask Experian for canonical path.` };
+  }
+  if (status === 429) {
+    return { classification: "rate_limited", errorCode: code, errorMessage: message, note: `Rate-limited. Confirm sandbox call quota with sales.` };
+  }
+  if (status >= 500) {
+    return { classification: "server_error", errorCode: code, errorMessage: message, note: `Experian-side error. Re-run; raise with support if persistent.` };
+  }
+  // 400 — the interesting case. Read the body.
+  if (status === 400) {
+    const blob = `${(code || "").toLowerCase()} ${(message || "").toLowerCase()}`;
+    // "Resource not found" 400s on Experian's UK gateway often mean the path
+    // doesn't exist (gateway translates 404s into 400s for legacy reasons).
+    if (/not.?found|invalid.?path|invalid.?endpoint|unknown.?resource|api.?does.?not.?exist|operation.?not.?found|service.?not.?available|no.?route|no.?matching/i.test(blob)) {
+      return { classification: "path_unknown", errorCode: code, errorMessage: message, note: `Gateway says the path doesn't exist. Ask Experian for the canonical path for this product.` };
+    }
+    // Entitlement-style messages
+    if (/not.?subscribed|not.?entitled|not.?authoris|not.?provision|access.?denied|forbidden|not.?permitt/i.test(blob)) {
+      return { classification: "not_entitled", errorCode: code, errorMessage: message, note: `Account isn't entitled to this product. Sales needs to add it.` };
+    }
+    // Validation-style messages
+    if (/invalid.?(request|input|payload|parameter|field|format|value)|missing|required|must.?be|expected|cannot.?be|too.?(short|long)/i.test(blob)) {
+      return { classification: "needs_real_input", errorCode: code, errorMessage: message, note: `Endpoint exists; our test payload didn't validate. Real data should work.` };
+    }
+    // Plain "Bad Request" with no message — too ambiguous for a sales ask.
+    return { classification: "ambiguous", errorCode: code, errorMessage: message, note: `400 with no clear reason. Ask Experian: is this product on our sandbox?` };
+  }
+  return { classification: "ambiguous", errorCode: code, errorMessage: message, note: `Status ${status} — ambiguous.` };
 }
 
 export async function sandboxAudit(regnum: string = "99999999"): Promise<{
@@ -381,41 +495,56 @@ export async function sandboxAudit(regnum: string = "99999999"): Promise<{
   const cleanedReg = (regnum || "").trim().toUpperCase() || "99999999";
   const catalog = probeCatalog(cleanedReg);
 
+  // Try every candidate path per product, in parallel within product.
+  // Pick the most informative result: prefer 2xx > needs_real_input > not_entitled
+  // > path_unknown (worst).
+  const rank: Record<SandboxProbe["classification"], number> = {
+    available: 0, needs_real_input: 1, not_entitled: 2, rate_limited: 3,
+    ambiguous: 4, server_error: 5, path_unknown: 6,
+  };
+
   const probes = await Promise.all(catalog.map(async (c): Promise<SandboxProbe> => {
-    const start = Date.now();
-    try {
-      const r = await debugExperianRaw(cleanedReg, { path: c.path, method: c.method, reqBody: c.reqBody });
-      const ok = r.status >= 200 && r.status < 300;
-      const fields = ok && r.body && typeof r.body === "object" ? Object.keys(r.body).slice(0, 12) : [];
-      const note = explainResponse(c.product, r.status, r.body);
-      return {
-        product: c.product,
-        bgpUse: c.bgpUse,
-        path: c.path,
-        method: c.method,
-        reqBody: c.reqBody,
-        status: r.status,
-        ok,
-        latencyMs: Date.now() - start,
-        fields,
-        preview: JSON.stringify(r.body).slice(0, 250),
-        note,
-      };
-    } catch (e: any) {
-      return {
-        product: c.product,
-        bgpUse: c.bgpUse,
-        path: c.path,
-        method: c.method,
-        reqBody: c.reqBody,
-        status: null,
-        ok: false,
-        latencyMs: Date.now() - start,
-        fields: [],
-        preview: e?.message?.slice(0, 250) || "request failed",
-        note: "Network or library error — not a sales-relevant signal",
-      };
-    }
+    const tries = await Promise.all(c.paths.map(async (p) => {
+      const start = Date.now();
+      try {
+        const r = await debugExperianRaw(cleanedReg, { path: p.path, method: p.method, reqBody: p.reqBody });
+        const cls = classify(r.status, r.body);
+        const ok = r.status >= 200 && r.status < 300;
+        const fields = ok && r.body && typeof r.body === "object" ? Object.keys(r.body).slice(0, 12) : [];
+        return {
+          path: p.path,
+          method: p.method,
+          reqBody: p.reqBody,
+          status: r.status,
+          ok,
+          latencyMs: Date.now() - start,
+          fields,
+          preview: JSON.stringify(r.body).slice(0, 250),
+          ...cls,
+        };
+      } catch (e: any) {
+        return {
+          path: p.path,
+          method: p.method,
+          reqBody: p.reqBody,
+          status: null as number | null,
+          ok: false,
+          latencyMs: Date.now() - start,
+          fields: [] as string[],
+          preview: e?.message?.slice(0, 250) || "request failed",
+          classification: "ambiguous" as SandboxProbe["classification"],
+          note: "Network error",
+        };
+      }
+    }));
+    // Sort by helpful classification first, then status.
+    tries.sort((a, b) => rank[a.classification] - rank[b.classification]);
+    const best = tries[0];
+    return {
+      product: c.product,
+      bgpUse: c.bgpUse,
+      ...best,
+    };
   }));
 
   const recommendation = buildRecommendation(probes);
@@ -423,72 +552,92 @@ export async function sandboxAudit(regnum: string = "99999999"): Promise<{
   return { env, configured, tokenOk, tokenError, probes, recommendation };
 }
 
-function explainResponse(product: string, status: number | null, body: any): string {
-  if (status === 200 || status === 201) {
-    return `Available on this sandbox account. Confirm production pricing with sales.`;
-  }
-  if (status === 401 || status === 403) {
-    return `Endpoint exists but the sandbox account lacks entitlement — sales must add this product to the order.`;
-  }
-  if (status === 404) {
-    const errCode = body?.errors?.[0]?.code || body?.error?.code;
-    if (errCode) return `Path not enabled (code ${errCode}). Ask sales: "Is ${product} available under the v2 commercial bundle?"`;
-    return `Endpoint path not present on sandbox. Ask sales for the canonical path + entitlement name.`;
-  }
-  if (status === 400) {
-    return `Endpoint is reachable but the test payload was rejected — likely we just need real input data, the product itself is provisioned.`;
-  }
-  if (status === 429) return `Rate-limit hit. Worth confirming sandbox call quota with sales.`;
-  if (status && status >= 500) return `Experian-side error. Re-run; if persistent, raise with their support.`;
-  return `Status ${status ?? "n/a"} — ambiguous, ask sales to confirm product availability.`;
-}
+const REQUIRED_PRODUCTS = new Set([
+  "Commercial Credit (Delphi)",
+  "KYB Business Targeter",
+  "Director Report",
+  "CCJ + Mortgage detail",
+  "Commercial Portfolio Monitoring",
+  "Group Structure / Corporate Linkage",
+  "Sole Trader / Unincorporated Lookup",
+  "Business Profile (full report)",
+]);
 
 function buildRecommendation(probes: SandboxProbe[]): string[] {
-  const haves = probes.filter(p => p.ok).map(p => p.product);
-  const missingNeeded = probes.filter(p =>
-    !p.ok &&
-    [
-      "Commercial Credit (Delphi)",
-      "KYB Business Targeter",
-      "Director Report",
-      "CCJ + Mortgage detail",
-      "Commercial Portfolio Monitoring",
-      "Group Structure / Corporate Linkage",
-      "Sole Trader / Unincorporated Lookup",
-      "Business Profile (full report)",
-    ].includes(p.product)
-  );
-  const optional = probes.filter(p =>
-    !p.ok &&
-    [
-      "Adverse Media / Negative Press",
-      "PEP / Sanctions Screening",
-      "Fraud Prevention (CIFAS / Hunter)",
-      "Bureau Monitoring (consumer)",
-    ].includes(p.product)
-  );
+  const buckets = {
+    available: [] as SandboxProbe[],
+    likelyAvailable: [] as SandboxProbe[],   // needs_real_input
+    notEntitled: [] as SandboxProbe[],       // 401/403, "not subscribed"
+    pathUnknown: [] as SandboxProbe[],       // 404 / "Resource not found" 400
+    ambiguous: [] as SandboxProbe[],
+  };
+  for (const p of probes) {
+    if (p.classification === "available") buckets.available.push(p);
+    else if (p.classification === "needs_real_input") buckets.likelyAvailable.push(p);
+    else if (p.classification === "not_entitled") buckets.notEntitled.push(p);
+    else if (p.classification === "path_unknown") buckets.pathUnknown.push(p);
+    else buckets.ambiguous.push(p);
+  }
+
+  const fmt = (p: SandboxProbe, withReason = true) => {
+    const lines = [`- ${p.product}`];
+    if (withReason) lines.push(`  Why BGP needs it: ${p.bgpUse}`);
+    lines.push(`  Sandbox: ${p.status ?? "—"}${p.errorCode ? ` (${p.errorCode})` : ""}${p.errorMessage ? ` — ${p.errorMessage.slice(0, 140)}` : ""}`);
+    lines.push(`  Path tested: ${p.method} ${p.path}`);
+    return lines.join("\n");
+  };
 
   const out: string[] = [];
-  out.push(`# Experian sales requirements for BGP`);
+  out.push(`# Experian sandbox audit — BGP commercial property AML`);
   out.push(``);
-  out.push(`## Already available on the sandbox`);
-  if (haves.length === 0) out.push(`(none — sandbox not provisioning anything yet)`);
-  for (const p of haves) out.push(`- ${p}`);
+  out.push(`Account: ${(process.env.EXPERIAN_ENV || "sandbox").toUpperCase()}`);
+  out.push(`Audited: ${new Date().toISOString()}`);
   out.push(``);
-  out.push(`## REQUIRED for BGP commercial property AML — ask sales to enable`);
-  if (missingNeeded.length === 0) out.push(`(all required products available — proceed to production pricing)`);
-  for (const p of missingNeeded) out.push(`- ${p.product}\n   Reason: ${p.bgpUse}\n   Sandbox status: ${p.status ?? "—"} (${p.note})`);
+
+  out.push(`## ✅ Provisioned and returning data`);
+  if (buckets.available.length === 0) out.push(`(none yet)`);
+  for (const p of buckets.available) out.push(fmt(p, false));
   out.push(``);
-  out.push(`## OPTIONAL — quote anyway, may replace existing vendors`);
-  for (const p of optional) out.push(`- ${p.product}\n   Reason: ${p.bgpUse}\n   Sandbox status: ${p.status ?? "—"} (${p.note})`);
+
+  out.push(`## 🟡 Endpoint exists, sandbox payload validation rejected our dummy data`);
+  out.push(`These should work in production — confirm with Experian and provide a known good test reg.`);
+  for (const p of buckets.likelyAvailable) out.push(fmt(p));
+  if (buckets.likelyAvailable.length === 0) out.push(`(none)`);
   out.push(``);
-  out.push(`## Commercials to nail down`);
-  out.push(`- Per-call price for Commercial Credit + Director Report at ~250 / month volume`);
-  out.push(`- Webhook / portfolio monitoring: per-monitored-entity / month`);
-  out.push(`- Sole Trader lookup: included in commercial bundle or separate?`);
-  out.push(`- PEP/Sanctions: bundled or add-on? (We currently pay ComplyAdvantage — sole-vendor would simplify invoicing)`);
-  out.push(`- Production-only entitlements (some products are sandbox-blocked entirely)`);
-  out.push(`- Webhook delivery — does Experian push, or do we poll?`);
+
+  out.push(`## 🟠 Account not entitled — ASK SALES TO ADD THESE PRODUCTS`);
+  for (const p of buckets.notEntitled) out.push(fmt(p));
+  if (buckets.notEntitled.length === 0) out.push(`(none)`);
+  out.push(``);
+
+  out.push(`## 🔴 Gateway says path doesn't exist — ASK FOR THE CANONICAL PATH`);
+  out.push(`These probes hit URLs that returned 404 / "Resource not found" 400. Either Experian uses a different naming convention than the documented one, or these products live on a separate API host. Get the right path from your account manager.`);
+  for (const p of buckets.pathUnknown) {
+    const required = REQUIRED_PRODUCTS.has(p.product);
+    out.push(fmt(p) + (required ? `\n  ⚠ Required for BGP — must resolve.` : ""));
+  }
+  if (buckets.pathUnknown.length === 0) out.push(`(none)`);
+  out.push(``);
+
+  if (buckets.ambiguous.length > 0) {
+    out.push(`## ❓ Ambiguous — ask Experian to look at these`);
+    for (const p of buckets.ambiguous) out.push(fmt(p));
+    out.push(``);
+  }
+
+  out.push(`## Commercials to nail down on the sales call`);
+  out.push(`- Per-call pricing on Commercial Credit + Director Report at ~250 lookups / month`);
+  out.push(`- Per-monitored-entity / month on Commercial Portfolio Monitoring (real-time webhook on score / CCJ change)`);
+  out.push(`- Sole Trader / Unincorporated Lookup — included in commercial bundle or separate SKU?`);
+  out.push(`- PEP & Sanctions Screening — bundled or add-on? (We currently pay ComplyAdvantage; sole-vendor would simplify invoicing)`);
+  out.push(`- Group Structure / Corporate Linkage — does the commercial bundle include international parents (US/EU/Lux holdcos)?`);
+  out.push(`- Webhook delivery — does Experian push events, or do we poll?`);
+  out.push(`- Production-only entitlements — which of the above are sandbox-blocked entirely?`);
+  out.push(``);
+  out.push(`## Things to send Experian alongside this email`);
+  out.push(`- Our sandbox client_id (so they can look at exactly which probes we ran)`);
+  out.push(`- A real UK reg number you'd want to test against in sandbox (Experian seeds different test data depending on account)`);
+  out.push(`- Anticipated monthly volume (rough): ~250 commercial lookups, ~50 director reports, ~100 monitored entities`);
   out.push(``);
   return out;
 }

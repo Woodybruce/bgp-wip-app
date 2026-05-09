@@ -16,6 +16,9 @@ interface SandboxProbe {
   fields: string[];
   preview: string;
   note: string;
+  errorCode?: string;
+  errorMessage?: string;
+  classification: "available" | "needs_real_input" | "not_entitled" | "path_unknown" | "rate_limited" | "server_error" | "ambiguous";
 }
 
 interface AuditResult {
@@ -123,46 +126,62 @@ export default function ExperianAuditPage() {
 
           {/* Probes */}
           <div className="grid gap-2">
-            {result.probes.map((p, i) => (
-              <Card key={i} className={
-                p.ok ? "border-emerald-200" :
-                p.status === 401 || p.status === 403 ? "border-amber-200" :
-                p.status === 404 ? "border-red-200" : ""
-              }>
-                <CardContent className="p-3 grid grid-cols-1 md:grid-cols-12 gap-2 items-start">
-                  <div className="md:col-span-3 flex items-start gap-2">
-                    {p.ok
-                      ? <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
-                      : p.status === 401 || p.status === 403
-                        ? <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-                        : <XCircle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />}
-                    <div>
-                      <div className="font-semibold text-sm">{p.product}</div>
-                      <div className="text-[11px] text-muted-foreground font-mono break-all">{p.method} {p.path}</div>
-                    </div>
-                  </div>
-                  <div className="md:col-span-5 text-xs text-muted-foreground">{p.bgpUse}</div>
-                  <div className="md:col-span-2 text-xs">
-                    <Badge variant="outline" className={
-                      p.ok ? "border-emerald-300 text-emerald-700" :
-                      p.status === 401 || p.status === 403 ? "border-amber-300 text-amber-700" :
-                      p.status === 404 ? "border-red-300 text-red-700" : ""
-                    }>
-                      {p.status ?? "—"}
-                    </Badge>
-                    <span className="ml-2 text-muted-foreground">{p.latencyMs}ms</span>
-                    {p.fields.length > 0 && (
-                      <div className="text-[10px] mt-1 text-muted-foreground">
-                        {p.fields.slice(0, 4).join(", ")}{p.fields.length > 4 ? "…" : ""}
+            {result.probes.map((p, i) => {
+              const tone = p.classification === "available" ? "border-emerald-300" :
+                p.classification === "needs_real_input" ? "border-yellow-300" :
+                p.classification === "not_entitled" ? "border-orange-300" :
+                p.classification === "path_unknown" ? "border-red-300" : "border-slate-200";
+              const Icon = p.classification === "available" ? CheckCircle2 :
+                p.classification === "needs_real_input" ? AlertCircle :
+                p.classification === "not_entitled" ? AlertCircle :
+                XCircle;
+              const iconColor = p.classification === "available" ? "text-emerald-600" :
+                p.classification === "needs_real_input" ? "text-yellow-600" :
+                p.classification === "not_entitled" ? "text-orange-600" : "text-red-600";
+              const label = p.classification === "available" ? "Available" :
+                p.classification === "needs_real_input" ? "Endpoint OK, payload rejected" :
+                p.classification === "not_entitled" ? "Not entitled — ask sales" :
+                p.classification === "path_unknown" ? "Path unknown — ask Experian" :
+                p.classification;
+              return (
+                <Card key={i} className={tone}>
+                  <CardContent className="p-3 grid grid-cols-1 md:grid-cols-12 gap-2 items-start">
+                    <div className="md:col-span-3 flex items-start gap-2">
+                      <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${iconColor}`} />
+                      <div>
+                        <div className="font-semibold text-sm">{p.product}</div>
+                        <div className="text-[11px] text-muted-foreground font-mono break-all">{p.method} {p.path}</div>
                       </div>
-                    )}
-                  </div>
-                  <div className="md:col-span-2 text-[11px] text-muted-foreground">
-                    {p.note}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                    </div>
+                    <div className="md:col-span-4 text-xs text-muted-foreground">{p.bgpUse}</div>
+                    <div className="md:col-span-2 text-xs">
+                      <Badge variant="outline" className={
+                        p.classification === "available" ? "border-emerald-300 text-emerald-700" :
+                        p.classification === "needs_real_input" ? "border-yellow-400 text-yellow-700" :
+                        p.classification === "not_entitled" ? "border-orange-400 text-orange-700" :
+                        "border-red-300 text-red-700"
+                      }>
+                        {p.status ?? "—"}
+                      </Badge>
+                      <span className="ml-2 text-muted-foreground">{p.latencyMs}ms</span>
+                      <div className="text-[10px] mt-0.5 font-medium">{label}</div>
+                      {p.errorCode && <div className="text-[10px] text-muted-foreground font-mono">code: {p.errorCode}</div>}
+                      {p.fields.length > 0 && (
+                        <div className="text-[10px] mt-1 text-muted-foreground">
+                          {p.fields.slice(0, 4).join(", ")}{p.fields.length > 4 ? "…" : ""}
+                        </div>
+                      )}
+                    </div>
+                    <div className="md:col-span-3 text-[11px] text-muted-foreground">
+                      <div>{p.note}</div>
+                      {p.errorMessage && (
+                        <div className="mt-1 italic text-[10px] line-clamp-3">"{p.errorMessage}"</div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
 
           {/* Sales spec preview */}
