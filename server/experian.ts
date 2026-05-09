@@ -271,25 +271,134 @@ export interface SandboxProbe {
   classification: "available" | "needs_real_input" | "not_entitled" | "path_unknown" | "rate_limited" | "server_error" | "ambiguous";
 }
 
-// Walk an object 2 levels deep and return "key.subkey" strings. Skips
-// arrays beyond their first element to keep things short.
-function walkShape(obj: any, prefix = "", depth = 0, max = 60): string[] {
-  if (depth > 2 || !obj || typeof obj !== "object") return [];
+// Walk an object up to depth levels deep, returning "key.subkey" strings.
+// Arrays are sampled at [0] to keep output bounded but readable.
+function walkShape(obj: any, prefix = "", depth = 0, maxDepth = 4): string[] {
+  if (depth > maxDepth || !obj || typeof obj !== "object") return [];
   const out: string[] = [];
   const keys = Array.isArray(obj) ? (obj.length ? ["[0]"] : []) : Object.keys(obj);
   for (const k of keys) {
-    if (out.length >= max) break;
     const v = Array.isArray(obj) ? obj[0] : obj[k];
     const path = prefix ? `${prefix}.${k}` : k;
     if (v && typeof v === "object") {
-      out.push(`${path} (${Array.isArray(v) ? "[]" : "obj"})`);
-      out.push(...walkShape(v, path, depth + 1, max - out.length));
+      out.push(`${path} (${Array.isArray(v) ? `[]×${(obj as any).length ?? "?"}` : "obj"})`);
+      out.push(...walkShape(v, path, depth + 1, maxDepth));
     } else {
       const t = v == null ? "null" : typeof v;
       out.push(`${path}: ${t}`);
     }
   }
   return out;
+}
+
+// Map BGP's AML/KYC needs to the response shape buckets we expect to find.
+// Each entry: which top-level key on a working product covers that need.
+// Used to build the "what you can skip ordering" report.
+interface CoverageMap {
+  need: string;          // BGP requirement (sentence)
+  bgpField: string;      // BGP-side identifier
+  shapeMatchers: RegExp[]; // case-insensitive patterns to look for in walkShape output
+  productsToCheck: string[]; // priority order
+}
+const COVERAGE: CoverageMap[] = [
+  {
+    need: "Active + resigned directors / officers",
+    bgpField: "kyc_directors",
+    shapeMatchers: [/director/i, /officer/i, /\bAppointment/i],
+    productsToCheck: ["Business Profile (full report)", "Commercial Credit (Delphi)"],
+  },
+  {
+    need: "CCJ count + total value",
+    bgpField: "kyc_ccj",
+    shapeMatchers: [/\bCCJ/i, /CountyCourtJudg/i, /JudgmentCount/i],
+    productsToCheck: ["Commercial Credit (Delphi)", "Business Profile (full report)"],
+  },
+  {
+    need: "Mortgages / outstanding charges",
+    bgpField: "kyc_mortgages",
+    shapeMatchers: [/mortgage/i, /\bcharge/i, /securitised/i],
+    productsToCheck: ["Commercial Credit (Delphi)", "Business Profile (full report)"],
+  },
+  {
+    need: "Filed turnover + accounts data",
+    bgpField: "kyc_financials",
+    shapeMatchers: [/turnover/i, /financ/i, /\bAccounts/i, /profit/i, /balance.?sheet/i],
+    productsToCheck: ["Commercial Credit (Delphi)", "Business Profile (full report)"],
+  },
+  {
+    need: "Group structure / parent + subsidiaries",
+    bgpField: "kyc_group",
+    shapeMatchers: [/group/i, /parent/i, /subsid/i, /family.?tree/i, /linkage/i, /ultimate.?owner/i],
+    productsToCheck: ["Business Profile (full report)", "Commercial Credit (Delphi)"],
+  },
+  {
+    need: "Commercial Delphi score + recommended limit",
+    bgpField: "kyc_credit_score",
+    shapeMatchers: [/delphi/i, /credit.?score/i, /credit.?limit/i, /risk.?band/i, /risk.?indicator/i],
+    productsToCheck: ["Commercial Credit (Delphi)"],
+  },
+  {
+    need: "Adverse media / negative press",
+    bgpField: "kyc_adverse_media",
+    shapeMatchers: [/adverse/i, /negative.?(news|media)/i, /press/i],
+    productsToCheck: ["Business Profile (full report)", "Commercial Credit (Delphi)"],
+  },
+  {
+    need: "Insolvency / dissolution / liquidation history",
+    bgpField: "kyc_insolvency",
+    shapeMatchers: [/insolven/i, /liquidat/i, /dissolu/i, /administra/i, /receivership/i, /strike.?off/i, /\bgazette/i],
+    productsToCheck: ["Business Profile (full report)", "Commercial Credit (Delphi)"],
+  },
+  {
+    need: "PEP / Sanctions screening",
+    bgpField: "kyc_pep",
+    shapeMatchers: [/\bPEP\b/i, /sanction/i, /watchlist/i, /politically/i],
+    productsToCheck: ["Business Profile (full report)", "Commercial Credit (Delphi)"],
+  },
+  {
+    need: "Previous registered office + trading addresses",
+    bgpField: "kyc_addresses",
+    shapeMatchers: [/RegisteredOffice/i, /TradingLocation/i, /Previous(Address|Addresses)/i],
+    productsToCheck: ["Business Profile (full report)"],
+  },
+  {
+    need: "Previous company names",
+    bgpField: "kyc_prev_names",
+    shapeMatchers: [/PreviousNames/i, /PrevName/i],
+    productsToCheck: ["Business Profile (full report)"],
+  },
+];
+
+interface CoverageResult {
+  need: string;
+  bgpField: string;
+  coveredBy: string[];     // product names
+  matchedKeys: string[];   // shape-walk lines that matched
+  status: "covered" | "uncovered";
+}
+
+function buildCoverageReport(probes: SandboxProbe[]): CoverageResult[] {
+  const byProduct = new Map(probes.map(p => [p.product, p]));
+  return COVERAGE.map((c) => {
+    const coveredBy: string[] = [];
+    const matchedKeys: string[] = [];
+    for (const productName of c.productsToCheck) {
+      const probe = byProduct.get(productName);
+      if (!probe?.responseShape) continue;
+      const matches = probe.responseShape.filter(line => c.shapeMatchers.some(rx => rx.test(line)));
+      if (matches.length > 0) {
+        coveredBy.push(productName);
+        matchedKeys.push(...matches.slice(0, 3).map(m => `${productName} → ${m}`));
+      }
+    }
+    return {
+      need: c.need,
+      bgpField: c.bgpField,
+      coveredBy,
+      matchedKeys,
+      status: coveredBy.length > 0 ? "covered" : "uncovered",
+    };
+  });
 }
 
 // Catalog of Experian UK B2B products we want to evaluate.
@@ -504,6 +613,7 @@ export async function sandboxAudit(regnum: string = "99999999"): Promise<{
   tokenOk: boolean;
   tokenError?: string;
   probes: SandboxProbe[];
+  coverage: CoverageResult[];
   recommendation: string[];
 }> {
   const env = (process.env.EXPERIAN_ENV || "sandbox");
@@ -515,6 +625,7 @@ export async function sandboxAudit(regnum: string = "99999999"): Promise<{
       tokenOk: false,
       tokenError: "EXPERIAN_CLIENT_ID / EXPERIAN_CLIENT_SECRET not configured",
       probes: [],
+      coverage: [],
       recommendation: ["Set EXPERIAN_CLIENT_ID, EXPERIAN_CLIENT_SECRET, EXPERIAN_USERNAME, EXPERIAN_PASSWORD on Railway and re-run."],
     };
   }
@@ -585,9 +696,10 @@ export async function sandboxAudit(regnum: string = "99999999"): Promise<{
     };
   }));
 
-  const recommendation = buildRecommendation(probes);
+  const coverage = buildCoverageReport(probes);
+  const recommendation = buildRecommendation(probes, coverage);
 
-  return { env, configured, tokenOk, tokenError, probes, recommendation };
+  return { env, configured, tokenOk, tokenError, probes, coverage, recommendation };
 }
 
 const REQUIRED_PRODUCTS = new Set([
@@ -601,7 +713,7 @@ const REQUIRED_PRODUCTS = new Set([
   "Business Profile (full report)",
 ]);
 
-function buildRecommendation(probes: SandboxProbe[]): string[] {
+function buildRecommendation(probes: SandboxProbe[], coverage: CoverageResult[] = []): string[] {
   const buckets = {
     available: [] as SandboxProbe[],
     likelyAvailable: [] as SandboxProbe[],   // needs_real_input
@@ -632,19 +744,25 @@ function buildRecommendation(probes: SandboxProbe[]): string[] {
   out.push(`Audited: ${new Date().toISOString()}`);
   out.push(``);
 
-  // If Business Profile is available, surface its shape so the rep can see
-  // what's already bundled and we don't oversell the audit ask.
-  const businessProfile = buckets.available.find(p => p.product === "Business Profile (full report)");
-  if (businessProfile?.responseShape && businessProfile.responseShape.length > 0) {
-    out.push(`## 📋 Business Profile contents (already provisioned)`);
-    out.push(`Sandbox returns the following structure on \`${businessProfile.path}\`. Many of the products listed below may already be bundled inside this single response:`);
+  // Coverage map — most useful section. Tells sales which BGP needs are
+  // already met by the 3 working products and which need new SKUs.
+  if (coverage.length > 0) {
+    const covered = coverage.filter(c => c.status === "covered");
+    const uncovered = coverage.filter(c => c.status === "uncovered");
+    out.push(`## 🎯 BGP coverage map — what we need vs what's already provisioned`);
     out.push(``);
-    out.push(`\`\`\``);
-    for (const k of businessProfile.responseShape.slice(0, 40)) out.push(k);
-    if (businessProfile.responseShape.length > 40) out.push(`... (${businessProfile.responseShape.length - 40} more)`);
-    out.push(`\`\`\``);
+    out.push(`### Already covered by the 3 working products (no new SKU needed)`);
+    if (covered.length === 0) out.push(`(none yet)`);
+    for (const c of covered) {
+      out.push(`- **${c.need}** → ${c.coveredBy.join(", ")}`);
+      for (const m of c.matchedKeys.slice(0, 3)) out.push(`  - ${m}`);
+    }
     out.push(``);
-    out.push(`Ask Experian: which of the products below are already accessible via Business Profile vs need a separate SKU?`);
+    out.push(`### NOT visible in any working response — these are real sales asks`);
+    if (uncovered.length === 0) out.push(`(everything BGP needs is already in the working set 🎉)`);
+    for (const c of uncovered) {
+      out.push(`- **${c.need}** (BGP field: \`${c.bgpField}\`) — not present in Commercial Credit or Business Profile shape. Either Experian bundles it deeper than 4 levels, or it's a separate SKU.`);
+    }
     out.push(``);
   }
 

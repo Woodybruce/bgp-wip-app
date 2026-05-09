@@ -22,12 +22,21 @@ interface SandboxProbe {
   classification: "available" | "needs_real_input" | "not_entitled" | "path_unknown" | "rate_limited" | "server_error" | "ambiguous";
 }
 
+interface CoverageResult {
+  need: string;
+  bgpField: string;
+  coveredBy: string[];
+  matchedKeys: string[];
+  status: "covered" | "uncovered";
+}
+
 interface AuditResult {
   env: string;
   configured: boolean;
   tokenOk: boolean;
   tokenError?: string;
   probes: SandboxProbe[];
+  coverage: CoverageResult[];
   recommendation: string[];
 }
 
@@ -125,28 +134,56 @@ export default function ExperianAuditPage() {
             </CardContent>
           </Card>
 
-          {/* Business Profile schema explorer — what does the "full report" actually contain? */}
-          {(() => {
-            const bp = result.probes.find(p => p.product === "Business Profile (full report)" && p.ok && p.responseShape);
-            if (!bp || !bp.responseShape) return null;
-            return (
-              <Card className="border-blue-300">
-                <CardHeader>
-                  <CardTitle className="text-base">Business Profile bundled fields</CardTitle>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Business Profile is a "full report" endpoint — many separate products may already
-                    be bundled here. Below is the structure the sandbox returned. Anything Director-/CCJ-/Group-/Financials-shaped
-                    means we don't need that as a separate SKU.
-                  </p>
-                </CardHeader>
-                <CardContent>
-                  <pre className="text-[11px] font-mono whitespace-pre-wrap bg-muted/30 p-3 rounded-md max-h-72 overflow-auto">
-                    {bp.responseShape.join("\n")}
-                  </pre>
-                </CardContent>
-              </Card>
-            );
-          })()}
+          {/* Coverage map — single most useful summary. Maps BGP needs to what's bundled. */}
+          {result.coverage && result.coverage.length > 0 && (
+            <Card className="border-blue-300">
+              <CardHeader>
+                <CardTitle className="text-base">BGP coverage map</CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">
+                  What BGP needs vs what's already in the working products' responses.
+                  "Covered" = the data you'd want is already returned, no new SKU needed.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-1.5">
+                  {result.coverage.map((c, i) => (
+                    <div key={i} className="flex items-start gap-2 text-sm border-b last:border-b-0 pb-1.5">
+                      {c.status === "covered"
+                        ? <CheckCircle2 className="w-4 h-4 text-emerald-600 mt-0.5 shrink-0" />
+                        : <XCircle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />}
+                      <div className="flex-1 min-w-0">
+                        <div className={c.status === "covered" ? "" : "text-red-700"}>{c.need}</div>
+                        {c.coveredBy.length > 0 && (
+                          <div className="text-[11px] text-muted-foreground">in {c.coveredBy.join(", ")}</div>
+                        )}
+                        {c.matchedKeys.length > 0 && (
+                          <details className="text-[10px] text-muted-foreground font-mono mt-0.5">
+                            <summary className="cursor-pointer">match keys</summary>
+                            {c.matchedKeys.map((m, j) => <div key={j} className="pl-2">{m}</div>)}
+                          </details>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Full bundle shapes — drilldown for the 3 working products */}
+          {result.probes.filter(p => p.ok && p.responseShape && p.responseShape.length > 0).map((p, i) => (
+            <Card key={`bundle-${i}`} className="border-emerald-200">
+              <CardHeader>
+                <CardTitle className="text-base">{p.product} — full response shape</CardTitle>
+                <p className="text-[11px] text-muted-foreground font-mono">{p.method} {p.path}</p>
+              </CardHeader>
+              <CardContent>
+                <pre className="text-[10px] font-mono whitespace-pre-wrap bg-muted/30 p-3 rounded-md max-h-80 overflow-auto">
+                  {(p.responseShape || []).join("\n")}
+                </pre>
+              </CardContent>
+            </Card>
+          ))}
 
           {/* Probes */}
           <div className="grid gap-2">
