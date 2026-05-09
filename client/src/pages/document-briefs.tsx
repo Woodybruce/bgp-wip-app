@@ -118,23 +118,29 @@ export default function DocumentBriefsPage() {
     }
   };
 
-  const saveToSharePoint = async () => {
+  const saveToSharePoint = async (format: "html" | "pdf" = "html") => {
     if (!renderedBriefId || !property) return;
     setSaving(true);
     try {
-      const r = await fetch(`/api/document-briefs/${renderedBriefId}/save-html`, {
+      const endpoint = format === "pdf" ? "save-pdf" : "save-html";
+      const r = await fetch(`/api/document-briefs/${renderedBriefId}/${endpoint}`, {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ propertyId: property.id }),
       });
       if (!r.ok) {
-        toast({ title: "Save failed", variant: "destructive" });
+        const e = await r.json().catch(() => null);
+        toast({
+          title: format === "pdf" ? "PDF unavailable" : "Save failed",
+          description: e?.fallback || e?.detail || e?.error || `${r.status}`,
+          variant: "destructive",
+        });
         return;
       }
       const data = await r.json();
       setSavedUrl(data.sharepointUrl);
-      toast({ title: "Saved to SharePoint", description: data.filename });
+      toast({ title: `Saved as ${format.toUpperCase()}`, description: data.filename });
     } finally {
       setSaving(false);
     }
@@ -331,12 +337,22 @@ export default function DocumentBriefsPage() {
                   </Button>
                   <Button
                     size="sm"
-                    onClick={saveToSharePoint}
+                    variant="outline"
+                    onClick={() => saveToSharePoint("html")}
                     disabled={saving}
                     className="gap-1"
                   >
                     {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                    Save to SharePoint
+                    Save HTML
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => saveToSharePoint("pdf")}
+                    disabled={saving}
+                    className="gap-1"
+                  >
+                    {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                    Save PDF
                   </Button>
                 </div>
               </div>
@@ -346,6 +362,9 @@ export default function DocumentBriefsPage() {
                 title="Claude design rendered output"
                 sandbox="allow-same-origin"
               />
+              <div className="text-[10px] text-muted-foreground italic px-2 py-1">
+                Native PDF needs a chromium binary on the server (PUPPETEER_EXECUTABLE_PATH or SPARTICUZ_CHROMIUM_URL). If unavailable, Save HTML and use browser Print → Save as PDF.
+              </div>
               <div className="px-2 py-2 border-t mt-2">
                 <div className="text-xs font-medium mb-1.5 flex items-center gap-1">
                   <Wand2 className="h-3 w-3 text-muted-foreground" /> Iterate

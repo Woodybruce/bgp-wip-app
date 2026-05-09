@@ -744,6 +744,53 @@ export function registerDocumentBriefRoutes(app: Express): void {
   });
 
   /**
+   * Render-and-save as PDF: full loop — brief → Claude HTML → puppeteer
+   * PDF → SharePoint upload → URL. Replaces the browser-print step with
+   * server-side native PDF.
+   */
+  app.post("/api/document-briefs/:id/save-pdf", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user?.id;
+      const ctx: BriefContext = {
+        propertyId: String(req.body?.propertyId || ""),
+        matterId: req.body?.matterId,
+        dealId: req.body?.dealId,
+        pathwayRunId: req.body?.pathwayRunId,
+        userId,
+      };
+      if (!ctx.propertyId) return res.status(400).json({ error: "propertyId required" });
+
+      const brief = await runBrief(req.params.id, ctx);
+      const briefPrompt = await buildClaudePromptFromBrief(brief);
+      const html = await renderWithClaude(briefPrompt);
+
+      let pdf: Buffer;
+      try {
+        pdf = await htmlToPdfBuffer(html, { format: "A4", landscape: brief.layoutHints?.orientation === "landscape" });
+      } catch (err: any) {
+        return res.status(503).json({
+          error: "Native PDF unavailable",
+          detail: err?.message || "no chromium configured",
+          fallback: "Use Save as HTML — open in a browser and Print → Save as PDF.",
+        });
+      }
+
+      const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, ctx.propertyId));
+      const propertyName = property?.name || "Untitled";
+      const folder = pickSharePointFolderForBrief(brief.briefId, propertyName);
+      const safeName = (brief.briefName).replace(/[<>:"/\\|?*]+/g, "-").slice(0, 100);
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const filename = `${safeName} — ${propertyName.replace(/[<>:"/\\|?*]+/g, "-").slice(0, 60)} — ${dateStr}.pdf`;
+
+      const upload = await uploadFileToSharePoint(pdf, filename, "application/pdf", folder);
+      return res.json({ sharepointUrl: upload.webUrl, filename, folder, briefId: brief.briefId });
+    } catch (err: any) {
+      console.error("[document-briefs] save-pdf error:", err);
+      return res.status(500).json({ error: err?.message || "save-pdf failed" });
+    }
+  });
+
+  /**
    * Render-and-save: render via Claude design, then upload the HTML
    * to SharePoint inside the matter's folder (or the property's
    * Lease Advisory folder when no matter). Returns the SharePoint URL
@@ -944,6 +991,62 @@ function safeHtml(s: string): string {
   // start with the doctype.
   const idx = s.indexOf("<!DOCTYPE");
   return idx >= 0 ? s.slice(idx) : s;
+}
+
+/**
+ * HTML → PDF using puppeteer-core. Tries (in order):
+ *   1. PUPPETEER_EXECUTABLE_PATH env var (system chromium, e.g. on Railway
+ *      where you can install chromium via apt or via a buildpack)
+ *   2. @sparticuz/chromium-min — downloads a chromium tarball from
+ *      SPARTICUZ_CHROMIUM_URL (or the default GitHub release URL)
+ * Throws a clear error if neither is configured.
+ */
+async function htmlToPdfBuffer(html: string, options?: { format?: "A4" | "Letter"; landscape?: boolean }): Promise<Buffer> {
+  let puppeteer: any;
+  let executablePath: string | undefined;
+
+  try {
+    puppeteer = (await import("puppeteer-core")).default || (await import("puppeteer-core"));
+  } catch (err: any) {
+    throw new Error("puppeteer-core not installed — run npm install puppeteer-core @sparticuz/chromium-min");
+  }
+
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  } else {
+    try {
+      const chromium: any = (await import("@sparticuz/chromium-min")).default;
+      const url = process.env.SPARTICUZ_CHROMIUM_URL
+        || "https://github.com/Sparticuz/chromium/releases/download/v148.0.0/chromium-v148.0.0-pack.x64.tar";
+      executablePath = await chromium.executablePath(url);
+    } catch (err: any) {
+      throw new Error(
+        "Native PDF needs a chromium binary. Set PUPPETEER_EXECUTABLE_PATH to a system chromium, " +
+        "or set SPARTICUZ_CHROMIUM_URL to a chromium tarball (default: github.com/Sparticuz/chromium release). " +
+        `Underlying error: ${err?.message || "unknown"}`,
+      );
+    }
+  }
+
+  const browser = await puppeteer.launch({
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+    executablePath,
+    headless: true,
+  });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "networkidle0", timeout: 30000 });
+    const pdf = await page.pdf({
+      format: options?.format || "A4",
+      landscape: options?.landscape || false,
+      printBackground: true,
+      preferCSSPageSize: true,
+      margin: { top: "12mm", bottom: "12mm", left: "12mm", right: "12mm" },
+    });
+    return Buffer.from(pdf);
+  } finally {
+    await browser.close().catch(() => {});
+  }
 }
 
 /**
