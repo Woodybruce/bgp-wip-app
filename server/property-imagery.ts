@@ -40,7 +40,7 @@ import {
 } from "@shared/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { captureStreetViewForAddress } from "./image-studio";
-import { composeLocationPlan, composeCompsChart, type LocationPlanInput, type CompsChartInput } from "./property-imagery-composers";
+import { composeLocationPlan, composeCompsChart, composeErvWalk, composeCovenantCard, type LocationPlanInput, type CompsChartInput, type ErvWalkInput, type CovenantCardInput } from "./property-imagery-composers";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -510,6 +510,9 @@ export function registerPropertyImageryRoutes(app: Express): void {
     }
   });
 
+  // Wire ERV walk + covenant card composer routes
+  registerComposerExtras(app);
+
   /**
    * Auto-pull comps from investment_comps + crm_comps based on locality
    * (postcode prefix) and render the chart in one click. The most useful
@@ -660,6 +663,71 @@ async function fetchCompMarkers(postcode: string | null | undefined): Promise<Ar
     console.warn("[property-imagery] comp markers failed:", err?.message);
     return [];
   }
+}
+
+function registerComposerExtras(app: Express): void {
+  /** Generate an ERV walk chart. */
+  app.post("/api/property-imagery/:propertyId/compose/erv-walk", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user?.id;
+      const passing = Number(req.body?.passingRentPa);
+      const erv = Number(req.body?.ervPa);
+      if (!isFinite(passing) || !isFinite(erv) || passing <= 0 || erv <= 0) {
+        return res.status(400).json({ error: "passingRentPa and ervPa required (positive numbers)" });
+      }
+      const result = await composeErvWalk({
+        propertyId: req.params.propertyId,
+        passingRentPa: passing,
+        ervPa: erv,
+        steppedRents: Array.isArray(req.body?.steppedRents) ? req.body.steppedRents : undefined,
+        yearsToReview: req.body?.yearsToReview,
+        yearsToExpiry: req.body?.yearsToExpiry,
+        areaSqft: req.body?.areaSqft,
+        title: req.body?.title,
+        generatedBy: userId,
+        pathwayRunId: req.body?.pathwayRunId,
+        matterId: req.body?.matterId,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "compose failed" });
+    }
+  });
+
+  /** Generate a covenant card from explicit inputs (for now). Future: auto-pull Companies House data via tenantName / companyNumber. */
+  app.post("/api/property-imagery/:propertyId/compose/covenant-card", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user?.id;
+      const tenantName = String(req.body?.tenantName || "").trim();
+      if (!tenantName) return res.status(400).json({ error: "tenantName required" });
+      const result = await composeCovenantCard({
+        propertyId: req.params.propertyId,
+        tenantName,
+        companiesHouseNumber: req.body?.companiesHouseNumber,
+        latestAccountsYear: req.body?.latestAccountsYear,
+        revenuePa: req.body?.revenuePa,
+        ebitda: req.body?.ebitda,
+        netIncome: req.body?.netIncome,
+        netCash: req.body?.netCash,
+        numEmployees: req.body?.numEmployees,
+        parentName: req.body?.parentName,
+        sanctionsClean: req.body?.sanctionsClean,
+        pepClean: req.body?.pepClean,
+        riskLevel: req.body?.riskLevel,
+        dunbradstreetRating: req.body?.dunbradstreetRating,
+        notes: req.body?.notes,
+        title: req.body?.title,
+        generatedBy: userId,
+        pathwayRunId: req.body?.pathwayRunId,
+        matterId: req.body?.matterId,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "compose failed" });
+    }
+  });
 }
 
 function pcArea(pc: string): string | null {
