@@ -859,9 +859,39 @@ export async function sweepStage8ImagesForRun(args: {
 export function registerImageStudioRoutes(app: Express) {
   ensureTable().catch(err => console.error("[image-studio] Table setup error:", err.message));
 
+  // List images — DOES NOT return thumbnail_data (a base64 column that runs
+  // 5-10KB per row and balloons the response into multi-MB territory once
+  // the library has more than a few hundred images). The client fetches
+  // thumbnails individually via /api/image-studio/:id/thumb, which the
+  // browser then HTTP-caches.
+  const LIST_COLS = {
+    id: imageStudioImages.id,
+    fileName: imageStudioImages.fileName,
+    category: imageStudioImages.category,
+    tags: imageStudioImages.tags,
+    description: imageStudioImages.description,
+    source: imageStudioImages.source,
+    propertyId: imageStudioImages.propertyId,
+    area: imageStudioImages.area,
+    address: imageStudioImages.address,
+    brandName: imageStudioImages.brandName,
+    brandSector: imageStudioImages.brandSector,
+    propertyType: imageStudioImages.propertyType,
+    mimeType: imageStudioImages.mimeType,
+    fileSize: imageStudioImages.fileSize,
+    width: imageStudioImages.width,
+    height: imageStudioImages.height,
+    sharepointItemId: imageStudioImages.sharepointItemId,
+    sharepointDriveId: imageStudioImages.sharepointDriveId,
+    localPath: imageStudioImages.localPath,
+    uploadedBy: imageStudioImages.uploadedBy,
+    createdAt: imageStudioImages.createdAt,
+    hasThumbnail: sql<boolean>`(${imageStudioImages.thumbnailData} IS NOT NULL)`.as("has_thumbnail"),
+  };
+
   app.get("/api/image-studio", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const images = await db.select().from(imageStudioImages).orderBy(desc(imageStudioImages.createdAt));
+      const images = await db.select(LIST_COLS).from(imageStudioImages).orderBy(desc(imageStudioImages.createdAt));
       res.json(images);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -873,7 +903,7 @@ export function registerImageStudioRoutes(app: Express) {
       const q = (req.query.q as string || "").trim();
       if (!q) return res.json([]);
       const pattern = `%${q}%`;
-      const images = await db.select().from(imageStudioImages)
+      const images = await db.select(LIST_COLS).from(imageStudioImages)
         .where(or(
           ilike(imageStudioImages.fileName, pattern),
           ilike(imageStudioImages.description, pattern),
@@ -887,6 +917,26 @@ export function registerImageStudioRoutes(app: Express) {
         ))
         .orderBy(desc(imageStudioImages.createdAt));
       res.json(images);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Serve a single image's thumbnail (the base64 JPEG stored in
+  // thumbnail_data, decoded). Cached aggressively — the row is small but
+  // the trip to Postgres still adds up at scale, so let the browser cache
+  // it for a day.
+  app.get("/api/image-studio/:id/thumb", requireAuth, requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const [row] = await db
+        .select({ thumbnailData: imageStudioImages.thumbnailData, mimeType: imageStudioImages.mimeType })
+        .from(imageStudioImages)
+        .where(eq(imageStudioImages.id, String(req.params.id)));
+      if (!row?.thumbnailData) return res.status(404).end();
+      const buf = Buffer.from(row.thumbnailData, "base64");
+      res.setHeader("Content-Type", row.mimeType || "image/jpeg");
+      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+      res.end(buf);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -1920,11 +1970,18 @@ export function registerImageStudioRoutes(app: Express) {
       const [collection] = await db.select().from(imageStudioCollections).where(eq(imageStudioCollections.id, collectionId));
       if (!collection) return res.status(404).json({ error: "Collection not found" });
 
+      // Drop thumbnail_data (large base64) — client falls back to /thumb endpoint.
       const result = await pool.query(`
-        SELECT i.* FROM image_studio_images i
-        JOIN image_studio_collection_images ci ON ci.image_id = i.id
-        WHERE ci.collection_id = $1
-        ORDER BY ci.added_at DESC
+        SELECT i.id, i.file_name, i.category, i.tags, i.description, i.source,
+               i.property_id, i.area, i.address, i.brand_name, i.brand_sector,
+               i.property_type, i.mime_type, i.file_size, i.width, i.height,
+               i.sharepoint_item_id, i.sharepoint_drive_id, i.local_path,
+               i.uploaded_by, i.created_at,
+               (i.thumbnail_data IS NOT NULL) AS has_thumbnail
+          FROM image_studio_images i
+          JOIN image_studio_collection_images ci ON ci.image_id = i.id
+         WHERE ci.collection_id = $1
+         ORDER BY ci.added_at DESC
       `, [collectionId]);
 
       res.json({ ...collection, images: result.rows });

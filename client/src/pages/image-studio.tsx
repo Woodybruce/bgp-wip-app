@@ -1176,7 +1176,8 @@ export default function ImageStudio() {
                         fileSize: img.file_size,
                         width: img.width,
                         height: img.height,
-                        thumbnailData: img.thumbnail_data,
+                        thumbnailData: img.thumbnail_data || null,
+                        hasThumbnail: !!img.has_thumbnail,
                         sharepointItemId: img.sharepoint_item_id,
                         sharepointDriveId: img.sharepoint_drive_id,
                         localPath: img.local_path,
@@ -1301,7 +1302,7 @@ export default function ImageStudio() {
                       >
                         <div className="w-[100px] h-[100px] sm:w-[110px] sm:h-[110px] md:w-[120px] md:h-[120px] rounded-full overflow-hidden ring-[3px] ring-white dark:ring-gray-800 shadow-[0_1px_4px_rgba(0,0,0,0.12)] group-hover:shadow-[0_2px_12px_rgba(0,0,0,0.18)] group-hover:scale-[1.04] transition-all duration-200">
                           <img
-                            src={person.coverImage.thumbnailData || `/api/image-studio/${person.coverImage.id}/full`}
+                            src={person.coverImage.thumbnailData || ((person.coverImage as any).hasThumbnail ? `/api/image-studio/${person.coverImage.id}/thumb` : `/api/image-studio/${person.coverImage.id}/full`)}
                             alt={person.name}
                             className="w-full h-full object-cover"
                             loading="lazy"
@@ -2305,7 +2306,7 @@ function ImageCard({
       )}
       <div className="aspect-square" onClick={selectMode ? undefined : onView}>
         <img
-          src={image.thumbnailData || `/api/image-studio/${image.id}/full`}
+          src={image.thumbnailData || ((image as any).hasThumbnail ? `/api/image-studio/${image.id}/thumb` : `/api/image-studio/${image.id}/full`)}
           alt={image.fileName}
           className="w-full h-full object-cover"
           loading="lazy"
@@ -2390,8 +2391,13 @@ function ImageListRow({
         </div>
       )}
       <div className="h-12 w-12 rounded overflow-hidden flex-shrink-0">
-        {image.thumbnailData ? (
-          <img src={image.thumbnailData} alt={image.fileName} className="h-full w-full object-cover" />
+        {image.thumbnailData || (image as any).hasThumbnail ? (
+          <img
+            src={image.thumbnailData || `/api/image-studio/${image.id}/thumb`}
+            alt={image.fileName}
+            loading="lazy"
+            className="h-full w-full object-cover"
+          />
         ) : (
           <div className="h-full w-full bg-muted flex items-center justify-center">
             <ImageIconLucide className="h-4 w-4 text-muted-foreground/30" />

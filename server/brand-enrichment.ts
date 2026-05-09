@@ -344,23 +344,12 @@ async function searchUnsplash(query: string, count: number): Promise<StockHit[]>
   } catch { return []; }
 }
 
-async function searchPexels(query: string, count: number): Promise<StockHit[]> {
-  const key = process.env.PEXELS_API_KEY;
-  if (!key) return [];
-  try {
-    const res = await fetch(
-      `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=${count}&orientation=landscape`,
-      { headers: { Authorization: key } }
-    );
-    if (!res.ok) return [];
-    const data = await res.json() as any;
-    return (data.photos || []).map((p: any) => ({
-      url: p.src?.large || p.src?.medium,
-      description: p.alt || query,
-      photographer: p.photographer || "Pexels",
-      source: "pexels",
-    }));
-  } catch { return []; }
+// Pexels stock-image fetch is disabled — the nightly cron was bloating
+// image_studio_images with low-quality, brand-mismatched generic stock
+// photos that nobody used in proposals. Unsplash continues to fire as the
+// primary source. To re-enable, restore the body below and remove this guard.
+async function searchPexels(_query: string, _count: number): Promise<StockHit[]> {
+  return [];
 }
 
 async function fetchBrandImages(companyId: string, brandName: string, industry?: string): Promise<number> {
