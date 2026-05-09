@@ -14,6 +14,7 @@ interface SandboxProbe {
   ok: boolean;
   latencyMs: number;
   fields: string[];
+  responseShape?: string[];
   preview: string;
   note: string;
   errorCode?: string;
@@ -123,6 +124,29 @@ export default function ExperianAuditPage() {
               </span>
             </CardContent>
           </Card>
+
+          {/* Business Profile schema explorer — what does the "full report" actually contain? */}
+          {(() => {
+            const bp = result.probes.find(p => p.product === "Business Profile (full report)" && p.ok && p.responseShape);
+            if (!bp || !bp.responseShape) return null;
+            return (
+              <Card className="border-blue-300">
+                <CardHeader>
+                  <CardTitle className="text-base">Business Profile bundled fields</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Business Profile is a "full report" endpoint — many separate products may already
+                    be bundled here. Below is the structure the sandbox returned. Anything Director-/CCJ-/Group-/Financials-shaped
+                    means we don't need that as a separate SKU.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  <pre className="text-[11px] font-mono whitespace-pre-wrap bg-muted/30 p-3 rounded-md max-h-72 overflow-auto">
+                    {bp.responseShape.join("\n")}
+                  </pre>
+                </CardContent>
+              </Card>
+            );
+          })()}
 
           {/* Probes */}
           <div className="grid gap-2">

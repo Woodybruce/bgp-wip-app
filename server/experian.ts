@@ -263,11 +263,33 @@ export interface SandboxProbe {
   ok: boolean;
   latencyMs: number;
   fields: string[];           // top-level fields returned (when 200)
+  responseShape?: string[];   // 2-level deep keys for 200s — shows what's bundled
   preview: string;            // first 250 chars of response
   note: string;               // human read of what this means
   errorCode?: string;         // parsed error code from body
   errorMessage?: string;      // parsed error message
   classification: "available" | "needs_real_input" | "not_entitled" | "path_unknown" | "rate_limited" | "server_error" | "ambiguous";
+}
+
+// Walk an object 2 levels deep and return "key.subkey" strings. Skips
+// arrays beyond their first element to keep things short.
+function walkShape(obj: any, prefix = "", depth = 0, max = 60): string[] {
+  if (depth > 2 || !obj || typeof obj !== "object") return [];
+  const out: string[] = [];
+  const keys = Array.isArray(obj) ? (obj.length ? ["[0]"] : []) : Object.keys(obj);
+  for (const k of keys) {
+    if (out.length >= max) break;
+    const v = Array.isArray(obj) ? obj[0] : obj[k];
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (v && typeof v === "object") {
+      out.push(`${path} (${Array.isArray(v) ? "[]" : "obj"})`);
+      out.push(...walkShape(v, path, depth + 1, max - out.length));
+    } else {
+      const t = v == null ? "null" : typeof v;
+      out.push(`${path}: ${t}`);
+    }
+  }
+  return out;
 }
 
 // Catalog of Experian UK B2B products we want to evaluate.
@@ -304,60 +326,70 @@ function probeCatalog(regnum: string): ProbeCandidate[] {
       product: "Director Report",
       bgpUse: "Pull active + resigned directors, prior insolvencies, PEP signals — feeds UBO walk + adverse media",
       paths: [
+        { path: `/risk/business/v2/registereddirectors/${r}`, method: "GET" },
         { path: `/risk/business/v2/registereddirectorreport/${r}`, method: "GET" },
-        { path: `/risk/business/v2/directorreport/${r}`, method: "GET" },
-        { path: `/risk/business/v2/directorsearch`, method: "POST", reqBody: { directorRef: regnum } },
+        { path: `/risk/business/v2/registeredcompanydirectors/${r}`, method: "GET" },
+        { path: `/risk/business/v2/registereddirectorlist/${r}`, method: "GET" },
+        { path: `/risk/business/v2/directorsbyreg/${r}`, method: "GET" },
       ],
     },
     {
       product: "CCJ + Mortgage detail",
       bgpUse: "Itemised CCJs/satisfactions + outstanding charges — feeds covenant strength flag",
       paths: [
+        { path: `/risk/business/v2/registeredcompanyccjs/${r}`, method: "GET" },
+        { path: `/risk/business/v2/registeredccjs/${r}`, method: "GET" },
         { path: `/risk/business/v2/registeredccjmortgages/${r}`, method: "GET" },
-        { path: `/risk/business/v2/ccjmortgages/${r}`, method: "GET" },
+        { path: `/risk/business/v2/registeredmortgages/${r}`, method: "GET" },
+        { path: `/risk/business/v2/registeredpublicinformation/${r}`, method: "GET" },
       ],
     },
     {
       product: "Commercial Portfolio Monitoring",
       bgpUse: "Webhook alert when a counterparty's score / limit / CCJs change — replaces our quarterly re-screen with real-time push",
       paths: [
-        { path: `/risk/business/v2/portfolio`, method: "GET" },
-        { path: `/risk/business/v2/portfoliomonitoring`, method: "GET" },
-        { path: `/risk/business/v2/monitoredentities`, method: "GET" },
+        { path: `/risk/business/v2/registeredportfolio`, method: "GET" },
+        { path: `/risk/business/v2/registeredmonitoring`, method: "GET" },
+        { path: `/risk/business/v2/monitoring`, method: "GET" },
+        { path: `/risk/business/v2/alerts`, method: "GET" },
       ],
     },
     {
       product: "Bureau Monitoring (consumer)",
       bgpUse: "Sole-trader / LLP partner tenant deals where the bureau record sits on the individual",
       paths: [
+        { path: `/risk/consumer/v2/registeredbureaumonitoring`, method: "GET" },
+        { path: `/risk/consumer/v2/bureau`, method: "GET" },
         { path: `/consumer/v1/monitor`, method: "GET" },
-        { path: `/consumer/v1/bureau-monitoring`, method: "GET" },
       ],
     },
     {
       product: "Fraud Prevention (CIFAS / Hunter)",
       bgpUse: "Identity-fraud markers — flags spoofed counterparties before we waste effort issuing KYC requests",
       paths: [
+        { path: `/risk/business/v2/registeredfraudcheck/${r}`, method: "GET" },
+        { path: `/risk/business/v2/registeredhunter/${r}`, method: "GET" },
+        { path: `/risk/business/v2/registeredcifas/${r}`, method: "GET" },
         { path: `/fraud/v1/check`, method: "POST", reqBody: { registrationNumber: regnum, country: "GB" } },
-        { path: `/risk/business/v2/registeredfraudprevention/${r}`, method: "GET" },
-        { path: `/cifas/v1/check`, method: "POST", reqBody: { registrationNumber: regnum, country: "GB" } },
       ],
     },
     {
       product: "Group Structure / Corporate Linkage",
       bgpUse: "Walk parent → subsidiary chain — supplements Companies House PSCs with international parents we can't see in the UK filings",
       paths: [
+        { path: `/risk/business/v2/registeredgroupstructure/${r}`, method: "GET" },
         { path: `/risk/business/v2/registeredcompanyfamilytree/${r}`, method: "GET" },
-        { path: `/risk/business/v2/groupstructure/${r}`, method: "GET" },
-        { path: `/risk/business/v2/registeredgrouplinkage/${r}`, method: "GET" },
+        { path: `/risk/business/v2/registeredcorporatelinkage/${r}`, method: "GET" },
+        { path: `/risk/business/v2/registeredparent/${r}`, method: "GET" },
       ],
     },
     {
       product: "Sole Trader / Unincorporated Lookup",
       bgpUse: "Tenants trading as themselves — letting deals to individual operators where there's no Companies House record",
       paths: [
-        { path: `/risk/business/v2/soletradertargeter`, method: "GET" },
-        { path: `/risk/business/v2/unincorporatedreport`, method: "POST", reqBody: { firstName: "Test", lastName: "Trader", postcode: "SW1A 1AA" } },
+        { path: `/risk/business/v2/registeredsoletrader`, method: "GET" },
+        { path: `/risk/business/v2/registeredunincorporated`, method: "GET" },
+        { path: `/risk/business/v2/unincorporatedtargeter`, method: "GET" },
       ],
     },
     {
@@ -365,16 +397,17 @@ function probeCatalog(regnum: string): ProbeCandidate[] {
       bgpUse: "Curated press hits — reduces noise vs Perplexity, more legally defensible audit trail",
       paths: [
         { path: `/risk/business/v2/registeredadversemedia/${r}`, method: "GET" },
-        { path: `/risk/business/v2/adverseMedia/${r}`, method: "GET" },
+        { path: `/risk/business/v2/registerednegativenews/${r}`, method: "GET" },
       ],
     },
     {
       product: "PEP / Sanctions Screening",
       bgpUse: "If priced right could replace ComplyAdvantage — single Experian invoice instead of two",
       paths: [
-        { path: `/compliance/uk/v1/pepsanctions`, method: "POST", reqBody: { name: "John Smith", country: "GB" } },
+        { path: `/risk/business/v2/registeredpepsanctions`, method: "POST", reqBody: { name: "John Smith", country: "GB" } },
+        { path: `/risk/business/v2/registeredsanctions/${r}`, method: "GET" },
+        { path: `/risk/business/v2/registeredpep/${r}`, method: "GET" },
         { path: `/compliance/uk/v1/pep-sanctions`, method: "POST", reqBody: { name: "John Smith", country: "GB" } },
-        { path: `/risk/business/v2/registeredpepscreen/${r}`, method: "GET" },
       ],
     },
     {
@@ -443,20 +476,23 @@ function classify(status: number | null, body: any): {
   // 400 — the interesting case. Read the body.
   if (status === 400) {
     const blob = `${(code || "").toLowerCase()} ${(message || "").toLowerCase()}`;
-    // "Resource not found" 400s on Experian's UK gateway often mean the path
-    // doesn't exist (gateway translates 404s into 400s for legacy reasons).
+    // Experian UK's gateway "Invalid request format or URL" is deliberately
+    // ambiguous — it covers both unknown paths and bad payloads. Treat as
+    // ambiguous so we don't oversell to sales.
+    if (/format or url|format.?or.?url/i.test(blob)) {
+      return { classification: "ambiguous", errorCode: code, errorMessage: message, note: `Generic gateway 400 — could be wrong path OR rejected payload. Confirm canonical path with Experian.` };
+    }
     if (/not.?found|invalid.?path|invalid.?endpoint|unknown.?resource|api.?does.?not.?exist|operation.?not.?found|service.?not.?available|no.?route|no.?matching/i.test(blob)) {
       return { classification: "path_unknown", errorCode: code, errorMessage: message, note: `Gateway says the path doesn't exist. Ask Experian for the canonical path for this product.` };
     }
-    // Entitlement-style messages
     if (/not.?subscribed|not.?entitled|not.?authoris|not.?provision|access.?denied|forbidden|not.?permitt/i.test(blob)) {
       return { classification: "not_entitled", errorCode: code, errorMessage: message, note: `Account isn't entitled to this product. Sales needs to add it.` };
     }
-    // Validation-style messages
-    if (/invalid.?(request|input|payload|parameter|field|format|value)|missing|required|must.?be|expected|cannot.?be|too.?(short|long)/i.test(blob)) {
+    // Specific validation phrases — only mark needs_real_input when message
+    // really points at a field/value problem rather than the URL.
+    if (/missing|required|must.?be|expected|cannot.?be|too.?(short|long)|invalid.?(parameter|field|value|payload)/i.test(blob)) {
       return { classification: "needs_real_input", errorCode: code, errorMessage: message, note: `Endpoint exists; our test payload didn't validate. Real data should work.` };
     }
-    // Plain "Bad Request" with no message — too ambiguous for a sales ask.
     return { classification: "ambiguous", errorCode: code, errorMessage: message, note: `400 with no clear reason. Ask Experian: is this product on our sandbox?` };
   }
   return { classification: "ambiguous", errorCode: code, errorMessage: message, note: `Status ${status} — ambiguous.` };
@@ -511,6 +547,7 @@ export async function sandboxAudit(regnum: string = "99999999"): Promise<{
         const cls = classify(r.status, r.body);
         const ok = r.status >= 200 && r.status < 300;
         const fields = ok && r.body && typeof r.body === "object" ? Object.keys(r.body).slice(0, 12) : [];
+        const responseShape = ok ? walkShape(r.body) : undefined;
         return {
           path: p.path,
           method: p.method,
@@ -519,6 +556,7 @@ export async function sandboxAudit(regnum: string = "99999999"): Promise<{
           ok,
           latencyMs: Date.now() - start,
           fields,
+          responseShape,
           preview: JSON.stringify(r.body).slice(0, 250),
           ...cls,
         };
@@ -593,6 +631,22 @@ function buildRecommendation(probes: SandboxProbe[]): string[] {
   out.push(`Account: ${(process.env.EXPERIAN_ENV || "sandbox").toUpperCase()}`);
   out.push(`Audited: ${new Date().toISOString()}`);
   out.push(``);
+
+  // If Business Profile is available, surface its shape so the rep can see
+  // what's already bundled and we don't oversell the audit ask.
+  const businessProfile = buckets.available.find(p => p.product === "Business Profile (full report)");
+  if (businessProfile?.responseShape && businessProfile.responseShape.length > 0) {
+    out.push(`## 📋 Business Profile contents (already provisioned)`);
+    out.push(`Sandbox returns the following structure on \`${businessProfile.path}\`. Many of the products listed below may already be bundled inside this single response:`);
+    out.push(``);
+    out.push(`\`\`\``);
+    for (const k of businessProfile.responseShape.slice(0, 40)) out.push(k);
+    if (businessProfile.responseShape.length > 40) out.push(`... (${businessProfile.responseShape.length - 40} more)`);
+    out.push(`\`\`\``);
+    out.push(``);
+    out.push(`Ask Experian: which of the products below are already accessible via Business Profile vs need a separate SKU?`);
+    out.push(``);
+  }
 
   out.push(`## ✅ Provisioned and returning data`);
   if (buckets.available.length === 0) out.push(`(none yet)`);
