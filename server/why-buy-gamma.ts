@@ -166,10 +166,10 @@ export async function buildBrief(runId: string): Promise<{ brief: string; title:
     if (tenant) {
       const tKv: string[] = [];
       const tkName = kv("Name", tenant.name); if (tkName) tKv.push(tkName);
-      const tkSector = kv("Sector", tenant.sector || tenant.subSector); if (tkSector) tKv.push(tkSector);
-      const tkCov = kv("Covenant / rating", tenant.covenantStrength || tenant.rating); if (tkCov) tKv.push(tkCov);
-      const tkSites = kv("UK sites", tenant.ukStoreCount); if (tkSites) tKv.push(tkSites);
-      const tkRev = kv("Turnover", fmtMoney(tenant.lastTurnover)); if (tkRev) tKv.push(tkRev);
+      const tkSector = kv("Sector", tenant.industry); if (tkSector) tKv.push(tkSector);
+      const tkCov = kv("Covenant / AML risk", tenant.amlRiskLevel); if (tkCov) tKv.push(tkCov);
+      const tkSites = kv("UK sites", tenant.storeCount); if (tkSites) tKv.push(tkSites);
+      const tkRev = kv("Turnover", fmtMoney(tenant.annualRevenue)); if (tkRev) tKv.push(tkRev);
       if (tKv.length) lines.push(...tKv);
       if (tenant.description) lines.push("", tenant.description);
     } else if (mainTenants.length) {

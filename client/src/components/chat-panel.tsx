@@ -556,6 +556,9 @@ function AddMemberPopover({ threadId, existingMemberIds, creatorId }: { threadId
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
     },
+    onError: (err: any) => {
+      toast({ variant: "destructive", title: "Failed to add member", description: err?.message });
+    },
   });
 
   const availableUsers = useMemo(() => {
@@ -620,6 +623,9 @@ function PropertyPicker({ threadId, currentPropertyName }: { threadId: string; c
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
     },
+    onError: (err: any) => {
+      toast({ variant: "destructive", title: "Failed to link property", description: err?.message });
+    },
   });
 
   const unlinkMutation = useMutation({
@@ -631,6 +637,9 @@ function PropertyPicker({ threadId, currentPropertyName }: { threadId: string; c
       toast({ title: "Property unlinked" });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", threadId] });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+    },
+    onError: (err: any) => {
+      toast({ variant: "destructive", title: "Failed to unlink property", description: err?.message });
     },
   });
 
@@ -1243,6 +1252,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads", activeThreadId] });
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
     },
+    onError: (err: any) => {
+      toast({ variant: "destructive", title: "Failed to add member", description: err?.message });
+    },
   });
 
   const handleMentionSelect = useCallback(async (user: { id: string; name: string }) => {
@@ -1340,6 +1352,9 @@ export function ChatPanel({ open, onClose, openAiChat, onAiChatHandled }: ChatPa
       setView("chat");
       setMessages([]);
       queryClient.invalidateQueries({ queryKey: ["/api/chat/threads"] });
+    },
+    onError: (err: any) => {
+      toast({ variant: "destructive", title: "Failed to create chat", description: err?.message });
     },
   });
 

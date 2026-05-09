@@ -217,12 +217,12 @@ export function DealDetail({ id, isComps = false }: { id: string; isComps?: bool
   }, [deal?.id, deal?.name, (deal as any)?.propertyName]);
 
   useEffect(() => {
-    if (deal && window.location.search.includes("tab=invoice")) {
-      setTimeout(() => {
-        const el = document.querySelector('[data-testid="xero-invoice-section"]');
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 300);
-    }
+    if (!deal || !window.location.search.includes("tab=invoice")) return;
+    const timer = setTimeout(() => {
+      const el = document.querySelector('[data-testid="xero-invoice-section"]');
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 300);
+    return () => clearTimeout(timer);
   }, [deal?.id]);
 
   const linkedProperty = deal?.propertyId ? properties.find((p) => p.id === deal.propertyId) : null;

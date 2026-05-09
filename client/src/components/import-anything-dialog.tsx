@@ -100,19 +100,23 @@ export function ImportAnythingDialog({ open, onOpenChange, defaultTarget = "auto
   // When the dialog opens with a preloaded file or share URL (e.g. from global
   // drag-drop or global paste), auto-start processing immediately.
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
     if (open && preloadedFile && preloadedFile !== preloadedRef.current) {
       preloadedRef.current = preloadedFile;
       reset();
       setFile(preloadedFile);
-      setTimeout(() => handleUpload(preloadedFile), 0);
+      timer = setTimeout(() => handleUpload(preloadedFile), 0);
     } else if (open && preloadedShareUrl && !preloadedFile) {
       reset();
       setShareUrl(preloadedShareUrl);
-      setTimeout(() => handleUploadShareUrl(preloadedShareUrl), 0);
+      timer = setTimeout(() => handleUploadShareUrl(preloadedShareUrl), 0);
     }
     if (!open) {
       preloadedRef.current = null;
     }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, preloadedFile, preloadedShareUrl]);
 
