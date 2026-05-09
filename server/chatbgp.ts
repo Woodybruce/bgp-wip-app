@@ -5450,44 +5450,55 @@ async function executeCrmToolRaw(
       }
 
       // Branch-mode (default): commit to chatbgp/<date> via git plumbing,
-      // do NOT touch the live working tree. Admin merges to apply.
+      // do NOT touch the live working tree. Admin merges to apply. Falls
+      // back to direct write if git isn't available (Railway strips .git).
       if (!directMode) {
-        const { commitToChatbgpBranch } = await import("./chatbgp-branch-mode");
-        const userRow = await pool.query(
-          "SELECT name, email FROM users WHERE id = $1",
-          [req.session?.userId || (req as any).tokenUserId],
-        ).catch(() => ({ rows: [] }));
-        const u = userRow.rows[0] || {};
-        const result = commitToChatbgpBranch({
-          filePath: safePath,
-          newContent: afterContent,
-          description,
-          userName: u.name,
-          userEmail: u.email,
-        });
-
-        await pool.query(
-          `INSERT INTO code_changes (tool_used, file_path, description, before_content, after_content, status) VALUES ($1, $2, $3, $4, $5, 'committed-to-branch')`,
-          ["edit_source_file", safePath, `[${result.branch}@${result.commitHash.slice(0,8)}] ${description}`, beforeContent.substring(0, 50000), afterContent.substring(0, 50000)],
-        );
-
-        return {
-          data: {
-            success: true,
-            mode: "branch",
-            branch: result.branch,
-            commitHash: result.commitHash,
-            isFirstCommit: result.isFirstCommit,
-            filePath: safePath,
-            description,
-            linesChanged: Math.abs(afterContent.split("\n").length - beforeContent.split("\n").length),
-            message: result.message,
-            nextStep: `Tell the admin: edit committed to ${result.branch}. To apply, they run \`git checkout <deploy-branch> && git merge ${result.branch}\` and restart. The change is NOT live until merged.`,
-          },
-        };
+        const branchMod = await import("./chatbgp-branch-mode");
+        if (!branchMod.isGitAvailable()) {
+          // No .git in this environment — fall through to direct mode but
+          // tell the caller why. Audit log still records the change.
+          console.warn("[edit_source_file] git unavailable in this environment, falling back to direct write");
+        } else {
+          const userRow = await pool.query(
+            "SELECT name, email FROM users WHERE id = $1",
+            [req.session?.userId || (req as any).tokenUserId],
+          ).catch(() => ({ rows: [] }));
+          const u = userRow.rows[0] || {};
+          try {
+            const result = branchMod.commitToChatbgpBranch({
+              filePath: safePath,
+              newContent: afterContent,
+              description,
+              userName: u.name,
+              userEmail: u.email,
+            });
+            await pool.query(
+              `INSERT INTO code_changes (tool_used, file_path, description, before_content, after_content, status) VALUES ($1, $2, $3, $4, $5, 'committed-to-branch')`,
+              ["edit_source_file", safePath, `[${result.branch}@${result.commitHash.slice(0,8)}] ${description}`, beforeContent.substring(0, 50000), afterContent.substring(0, 50000)],
+            );
+            return {
+              data: {
+                success: true,
+                mode: "branch",
+                branch: result.branch,
+                commitHash: result.commitHash,
+                isFirstCommit: result.isFirstCommit,
+                filePath: safePath,
+                description,
+                linesChanged: Math.abs(afterContent.split("\n").length - beforeContent.split("\n").length),
+                message: result.message,
+                nextStep: `Tell the admin: edit committed to ${result.branch}. To apply, they run \`git checkout <deploy-branch> && git merge ${result.branch}\` and restart. The change is NOT live until merged.`,
+              },
+            };
+          } catch (err: any) {
+            // Git plumbing failed mid-flight (rare — partially stripped .git,
+            // permission issue, etc). Fall through to direct mode.
+            console.warn("[edit_source_file] branch-mode failed, falling back to direct:", err?.message);
+          }
+        }
       }
 
-      // Direct mode: write live, audit, return.
+      // Direct mode (also the fallback): write live, audit, return.
       if (action === "create") {
         const dir = path.dirname(fullPath);
         fs.mkdirSync(dir, { recursive: true });
@@ -5607,7 +5618,10 @@ async function executeCrmToolRaw(
 
   if (fnName === "list_chatbgp_branches") {
     try {
-      const { listChatbgpBranches } = await import("./chatbgp-branch-mode");
+      const { isGitAvailable, listChatbgpBranches } = await import("./chatbgp-branch-mode");
+      if (!isGitAvailable()) {
+        return { data: { success: true, gitAvailable: false, branches: [], count: 0, message: "git is not available in this environment — no branches to list." } };
+      }
       const branches = listChatbgpBranches();
       return {
         data: {
@@ -5627,6 +5641,10 @@ async function executeCrmToolRaw(
   if (fnName === "merge_chatbgp_branch") {
     const fail = await ensureAdmin();
     if (fail) return fail;
+    const { isGitAvailable } = await import("./chatbgp-branch-mode");
+    if (!isGitAvailable()) {
+      return { data: { success: false, gitAvailable: false, error: "git is not available in this environment — can't merge here. ChatBGP edits in this env fall back to direct write automatically." } };
+    }
     const branch = String(fnArgs.branch || "");
     if (!branch.startsWith("chatbgp/")) {
       return { data: { success: false, error: "Refusing to merge: only chatbgp/* branches accepted." } };
@@ -5750,6 +5768,10 @@ async function executeCrmToolRaw(
 
   if (fnName === "git_status") {
     try {
+      const { isGitAvailable } = await import("./chatbgp-branch-mode");
+      if (!isGitAvailable()) {
+        return { data: { success: false, gitAvailable: false, error: "git is not available in this environment (Railway / nixpacks usually strips .git). Branch-mode tools fall back to direct write automatically; the read-only git_* tools have nothing to report here." } };
+      }
       const { execSync } = await import("child_process");
       const exec = (cmd: string) => execSync(cmd, { cwd: process.cwd(), encoding: "utf-8" }).trim();
 
@@ -5796,6 +5818,10 @@ async function executeCrmToolRaw(
 
   if (fnName === "git_diff") {
     try {
+      const { isGitAvailable } = await import("./chatbgp-branch-mode");
+      if (!isGitAvailable()) {
+        return { data: { success: false, gitAvailable: false, error: "git is not available in this environment — diff unavailable." } };
+      }
       const { execSync } = await import("child_process");
       const branch = fnArgs.branch ? String(fnArgs.branch) : "";
       const file = fnArgs.file ? String(fnArgs.file) : "";
@@ -5837,6 +5863,10 @@ async function executeCrmToolRaw(
   if (fnName === "revert_chatbgp_commit") {
     const fail = await ensureAdmin();
     if (fail) return fail;
+    const { isGitAvailable } = await import("./chatbgp-branch-mode");
+    if (!isGitAvailable()) {
+      return { data: { success: false, gitAvailable: false, error: "git is not available — nothing to revert in this environment." } };
+    }
     const branch = String(fnArgs.branch || "");
     if (!branch.startsWith("chatbgp/")) {
       return { data: { success: false, error: "Refusing — only chatbgp/* branches can be reverted via this tool." } };

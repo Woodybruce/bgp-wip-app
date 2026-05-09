@@ -23,12 +23,24 @@
  *   git checkout <deploy-branch>
  *   git merge chatbgp/<date>
  *   (and restart, if the change requires a server reload)
+ *
+ * Production caveat: Railway / nixpacks builds typically strip `.git/` from
+ * the deployed image, so branch-mode is unavailable there. Callers should
+ * use `isGitAvailable()` to check before calling — or catch the thrown
+ * `GitUnavailableError` and fall back to direct write mode.
  */
 
 import { execSync } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+
+export class GitUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GitUnavailableError";
+  }
+}
 
 export interface BranchCommitArgs {
   filePath: string;       // path relative to project root
@@ -63,21 +75,39 @@ function todayStamp(): string {
   return new Date().toISOString().split("T")[0];
 }
 
+let _gitAvailable: boolean | null = null;
+
+/**
+ * Returns true if a usable `.git` directory exists in the project root and
+ * `git` is on PATH. Cached after the first call so we don't shell out on
+ * every edit. Production deploys (Railway / nixpacks) usually strip `.git`,
+ * so this returns false there — callers should fall back to direct write.
+ */
+export function isGitAvailable(): boolean {
+  if (_gitAvailable !== null) return _gitAvailable;
+  try {
+    const gitDir = gitExec("git rev-parse --git-dir");
+    _gitAvailable = gitDir.length > 0;
+  } catch {
+    _gitAvailable = false;
+  }
+  return _gitAvailable;
+}
+
 /**
  * Commit a single-file change to the dated chatbgp branch. Returns the new
- * commit hash + branch name. Throws on git plumbing failure (caller should
- * surface the error).
+ * commit hash + branch name. Throws GitUnavailableError if `.git` is missing
+ * (caller should fall back to direct write); throws plain Error on any other
+ * git plumbing failure.
  */
 export function commitToChatbgpBranch(args: BranchCommitArgs): BranchCommitResult {
+  if (!isGitAvailable()) {
+    throw new GitUnavailableError(
+      "git is not available in this environment (likely a stripped Railway / nixpacks deploy). Use direct: true to bypass branch-mode.",
+    );
+  }
   const branchName = `chatbgp/${todayStamp()}`;
   const refName = `refs/heads/${branchName}`;
-
-  // Sanity: must be inside a git repo.
-  try {
-    gitExec("git rev-parse --is-inside-work-tree");
-  } catch {
-    throw new Error("Not inside a git repository — branch-mode unavailable.");
-  }
 
   // 1. Hash the new content as a blob (writes the blob to git's object store
   //    without ever touching the working tree).
