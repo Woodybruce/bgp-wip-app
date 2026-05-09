@@ -279,6 +279,9 @@ export function registerWestminsterRestaurantsRoutes(app: Express): void {
         lng: e.Geocode?.longitude ? Number(e.Geocode.longitude) : null,
         crmPropertyId: null,
         crmPropertyName: null,
+        brandStoreId: null,
+        brandCompanyId: null,
+        brandCompanyName: null,
         inCrm: false,
       }));
       const enriched = await resolveCrmCrossRef(rows);

@@ -167,7 +167,7 @@ export function registerPlaMattersRoutes(app: Express): void {
   // ── Get one (with linked comps, events, workbooks) ────────────────────────
   app.get("/api/pla/matters/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = req.params.id;
+      const id = String(req.params.id);
       const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, id));
       if (!matter) return res.status(404).json({ error: "matter not found" });
       const [comps, events, workbooks] = await Promise.all([
@@ -263,7 +263,7 @@ export function registerPlaMattersRoutes(app: Express): void {
   // after manually deleting it.
   app.post("/api/pla/matters/:id/apply-folder-template", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = req.params.id;
+      const id = String(req.params.id);
       const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, id));
       if (!matter) return res.status(404).json({ error: "matter not found" });
       const [property] = await db
@@ -284,7 +284,7 @@ export function registerPlaMattersRoutes(app: Express): void {
   // ── Update ─────────────────────────────────────────────────────────────────
   app.patch("/api/pla/matters/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = req.params.id;
+      const id = String(req.params.id);
       const body = req.body || {};
       const updates: any = {};
       const setIfPresent = (key: string, transform?: (v: any) => any) => {
@@ -336,7 +336,7 @@ export function registerPlaMattersRoutes(app: Express): void {
   // ── Soft close ─────────────────────────────────────────────────────────────
   app.delete("/api/pla/matters/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = req.params.id;
+      const id = String(req.params.id);
       const [closed] = await db
         .update(plaMatters)
         .set({ status: "closed", closedAt: new Date(), updatedAt: new Date() })
@@ -355,7 +355,7 @@ export function registerPlaMattersRoutes(app: Express): void {
   // ── Linked comps ───────────────────────────────────────────────────────────
   app.post("/api/pla/matters/:id/comps", requireAuth, async (req: Request, res: Response) => {
     try {
-      const matterId = req.params.id;
+      const matterId = String(req.params.id);
       const compId = String(req.body?.compId || "");
       if (!compId) return res.status(400).json({ error: "compId required" });
       const weight = typeof req.body?.weight === "number" ? req.body.weight : 1.0;
@@ -373,7 +373,8 @@ export function registerPlaMattersRoutes(app: Express): void {
 
   app.delete("/api/pla/matters/:id/comps/:compId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { id, compId } = req.params;
+      const id = String(req.params.id);
+      const compId = String(req.params.compId);
       await db
         .delete(plaMatterComps)
         .where(and(eq(plaMatterComps.matterId, id), eq(plaMatterComps.compId, compId)));
@@ -387,7 +388,7 @@ export function registerPlaMattersRoutes(app: Express): void {
   // ── Events / key dates ─────────────────────────────────────────────────────
   app.post("/api/pla/matters/:id/events", requireAuth, async (req: Request, res: Response) => {
     try {
-      const matterId = req.params.id;
+      const matterId = String(req.params.id);
       const body = req.body || {};
       const eventKind = String(body.eventKind || "note");
       const eventDate = body.eventDate ? new Date(body.eventDate) : new Date();
@@ -411,7 +412,7 @@ export function registerPlaMattersRoutes(app: Express): void {
 
   app.patch("/api/pla/matters/:id/events/:eventId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const { eventId } = req.params;
+      const eventId = String(req.params.eventId);
       const body = req.body || {};
       const updates: any = {};
       if ("done" in body) {

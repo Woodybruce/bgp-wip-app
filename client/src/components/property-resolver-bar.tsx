@@ -33,14 +33,16 @@ type ResolverCandidate = {
   existingPropertyId: string | null;
 };
 
+type ResolvedProperty = { id: string; name: string; postcode: string | null; uprn: string | null };
+
 type ResolveResult =
-  | { kind: "resolved"; property: { id: string; name: string; postcode: string | null; uprn: string | null }; source: string }
+  | { kind: "resolved"; property: ResolvedProperty; source: string }
   | { kind: "candidates"; candidates: ResolverCandidate[]; reason: string }
   | { kind: "not_found"; reason: string };
 
 interface Props {
   /** Called when a property is canonically resolved. */
-  onResolve: (propertyId: string, property: ResolveResult extends { kind: "resolved"; property: infer P } ? P : never) => void;
+  onResolve: (propertyId: string, property: ResolvedProperty) => void;
   /** Currently-selected property — shown as a badge. */
   current?: { id: string; name: string; postcode: string | null } | null;
   placeholder?: string;
@@ -134,7 +136,7 @@ export function PropertyResolverBar({ onResolve, current, placeholder }: Props) 
       });
       const result = (await resp.json()) as ResolveResult;
       if (result.kind === "resolved") {
-        onResolve(result.property.id, result.property as any);
+        onResolve(result.property.id, result.property);
         toast({ title: "Property resolved", description: result.property.name });
       } else if (result.kind === "candidates") {
         setCandidates(result.candidates);
@@ -177,7 +179,7 @@ export function PropertyResolverBar({ onResolve, current, placeholder }: Props) 
       });
       const result = (await resp.json()) as ResolveResult;
       if (result.kind === "resolved") {
-        onResolve(result.property.id, result.property as any);
+        onResolve(result.property.id, result.property);
         toast({ title: "Property resolved", description: result.property.name });
       } else if (result.kind === "candidates") {
         setCandidates(result.candidates);
@@ -226,7 +228,7 @@ export function PropertyResolverBar({ onResolve, current, placeholder }: Props) 
       });
       const result = (await resp.json()) as ResolveResult;
       if (result.kind === "resolved") {
-        onResolve(result.property.id, result.property as any);
+        onResolve(result.property.id, result.property);
         setCandidates(null);
         toast({ title: "Property confirmed", description: result.property.name });
       } else {

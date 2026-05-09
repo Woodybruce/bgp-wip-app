@@ -201,7 +201,7 @@ export function registerPlaValuationRoutes(app: Express): void {
    */
   app.post("/api/pla/matters/:id/valuation/net-effective", requireAuth, async (req: Request, res: Response) => {
     try {
-      const matterId = req.params.id;
+      const matterId = String(req.params.id);
       const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, matterId));
       if (!matter) return res.status(404).json({ error: "matter not found" });
       const input: NetEffectiveInput = {
@@ -263,7 +263,7 @@ export function registerPlaValuationRoutes(app: Express): void {
   /** Per-matter ITZA — computes and persists a workbook snapshot. */
   app.post("/api/pla/matters/:id/valuation/itza", requireAuth, async (req: Request, res: Response) => {
     try {
-      const matterId = req.params.id;
+      const matterId = String(req.params.id);
       const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, matterId));
       if (!matter) return res.status(404).json({ error: "matter not found" });
       const input = itzaInputFromBody(req.body);
@@ -302,7 +302,7 @@ export function registerPlaValuationRoutes(app: Express): void {
   /** Per-matter Devaluation — computes and persists a workbook snapshot. */
   app.post("/api/pla/matters/:id/valuation/devaluation", requireAuth, async (req: Request, res: Response) => {
     try {
-      const matterId = req.params.id;
+      const matterId = String(req.params.id);
       const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, matterId));
       if (!matter) return res.status(404).json({ error: "matter not found" });
       const itza = calcItza(itzaInputFromBody(req.body));
@@ -392,7 +392,7 @@ function itzaInputFromBody(body: any): ItzaInput {
 export function registerComparablesScheduleRoute(app: Express): void {
   app.post("/api/pla/matters/:id/valuation/comparables-schedule", requireAuth, async (req: Request, res: Response) => {
     try {
-      const matterId = req.params.id;
+      const matterId = String(req.params.id);
       const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, matterId));
       if (!matter) return res.status(404).json({ error: "matter not found" });
 

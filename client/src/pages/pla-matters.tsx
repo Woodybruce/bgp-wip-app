@@ -854,7 +854,7 @@ function MoneyField({ label, value, onSave, highlight }: {
           value={value ?? null}
           onSave={(v) => onSave(v)}
           prefix="£"
-          format="money"
+          format={(v) => v.toLocaleString("en-GB")}
           placeholder="—"
         />
       </div>

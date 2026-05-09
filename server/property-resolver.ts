@@ -536,7 +536,7 @@ export function registerPropertyResolverRoutes(app: Express): void {
    */
   app.post("/api/property-resolver/enrich/:propertyId", requireAuth, async (req: Request, res: Response) => {
     try {
-      const result = await enrichResolvedPropertyAsync(req.params.propertyId);
+      const result = await enrichResolvedPropertyAsync(String(req.params.propertyId));
       return res.json(result);
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || "enrich failed" });

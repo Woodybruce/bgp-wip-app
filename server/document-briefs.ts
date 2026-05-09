@@ -257,15 +257,17 @@ async function autoComposeForBrief(kind: ImageryKind, ctx: BriefContext): Promis
         propertyId: ctx.propertyId,
         tenantName: co.name,
         companiesHouseNumber: co.companiesHouseNumber || null,
-        latestAccountsYear: co.financialYearEnd ? new Date(co.financialYearEnd).getFullYear() : null,
-        revenuePa: co.revenue ? Number(co.revenue) : null,
-        netIncome: co.netIncome ? Number(co.netIncome) : null,
-        netCash: co.netCash ? Number(co.netCash) : null,
-        numEmployees: co.employees || null,
-        parentName: co.parentCompany || null,
+        // Most company financial fields aren't on crm_companies — covenant
+        // card composer treats nulls as "not yet enriched" and renders accordingly.
+        latestAccountsYear: null,
+        revenuePa: co.annualRevenue ? Number(co.annualRevenue) : null,
+        netIncome: null,
+        netCash: null,
+        numEmployees: null,
+        parentName: null,
         riskLevel: (co.amlRiskLevel as any) || null,
-        pepClean: co.amlPepStatus === "no_pep" ? true : co.amlPepStatus === "pep_match" ? false : null,
-        sanctionsClean: co.amlSanctionsStatus === "no_match" ? true : co.amlSanctionsStatus === "match" ? false : null,
+        pepClean: co.amlPepStatus === "clear" ? true : (co.amlPepStatus && co.amlPepStatus.startsWith("pep_")) ? false : null,
+        sanctionsClean: null,
         generatedBy: ctx.userId,
         pathwayRunId: ctx.pathwayRunId,
         matterId: ctx.matterId,
@@ -825,7 +827,7 @@ export function registerDocumentBriefRoutes(app: Express): void {
 
   /** Look up a brief's metadata + required/optional imagery (for the Document Studio UI). */
   app.get("/api/document-briefs/:id", requireAuth, (req: Request, res: Response) => {
-    const brief = BRIEF_REGISTRY[req.params.id];
+    const brief = BRIEF_REGISTRY[String(req.params.id)];
     if (!brief) return res.status(404).json({ error: "brief not found" });
     const { build, ...meta } = brief;
     return res.json(meta);
@@ -847,7 +849,7 @@ export function registerDocumentBriefRoutes(app: Express): void {
         imageryOverrides: req.body?.imageryOverrides,
       };
       if (!ctx.propertyId) return res.status(400).json({ error: "propertyId required" });
-      const output = await runBrief(req.params.id, ctx);
+      const output = await runBrief(String(req.params.id), ctx);
       return res.json(output);
     } catch (err: any) {
       console.error("[document-briefs] run error:", err);
@@ -910,7 +912,7 @@ export function registerDocumentBriefRoutes(app: Express): void {
       };
       if (!ctx.propertyId) return res.status(400).json({ error: "propertyId required" });
 
-      const brief = await runBrief(req.params.id, ctx);
+      const brief = await runBrief(String(req.params.id), ctx);
       const briefPrompt = await buildClaudePromptFromBrief(brief);
       const html = await renderWithClaude(briefPrompt);
 
@@ -958,7 +960,7 @@ export function registerDocumentBriefRoutes(app: Express): void {
       };
       if (!ctx.propertyId) return res.status(400).json({ error: "propertyId required" });
 
-      const brief = await runBrief(req.params.id, ctx);
+      const brief = await runBrief(String(req.params.id), ctx);
       const briefPrompt = await buildClaudePromptFromBrief(brief);
       const html = await renderWithClaude(briefPrompt);
 
@@ -1004,7 +1006,7 @@ export function registerDocumentBriefRoutes(app: Express): void {
       };
       if (!ctx.propertyId) return res.status(400).json({ error: "propertyId required" });
 
-      const brief = await runBrief(req.params.id, ctx);
+      const brief = await runBrief(String(req.params.id), ctx);
       const briefPrompt = await buildClaudePromptFromBrief(brief);
       const html = await renderWithClaude(briefPrompt);
 

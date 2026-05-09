@@ -428,7 +428,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
   /** Run discovery for a property and return the manifest. */
   app.post("/api/property-imagery/:propertyId/discover", requireAuth, async (req: Request, res: Response) => {
     try {
-      const propertyId = req.params.propertyId;
+      const propertyId = String(req.params.propertyId);
       const userId = (req as any).user?.id;
       const sources = Array.isArray(req.body?.sources) ? req.body.sources as ImagerySource[] : undefined;
       const manifest = await discoverImagery({
@@ -448,7 +448,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
   /** Get the existing manifest without re-running discovery. */
   app.get("/api/property-imagery/:propertyId/manifest", requireAuth, async (req: Request, res: Response) => {
     try {
-      const manifest = await getManifest(req.params.propertyId);
+      const manifest = await getManifest(String(req.params.propertyId));
       return res.json(manifest);
     } catch (err: any) {
       console.error("[property-imagery] manifest error:", err);
@@ -459,7 +459,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
   /** Pin / unpin / reclassify / hide / unhide an asset. */
   app.patch("/api/property-imagery/asset/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = req.params.id;
+      const id = String(req.params.id);
       const updates: Partial<PropertyImageryAsset> = {};
       if ("pinned" in req.body) (updates as any).pinned = !!req.body.pinned;
       if ("hidden" in req.body) (updates as any).hidden = !!req.body.hidden;
@@ -495,7 +495,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
   /** Delete (hard) — for clearing genuinely bad rows. */
   app.delete("/api/property-imagery/asset/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      await db.delete(propertyImageryAssets).where(eq(propertyImageryAssets.id, req.params.id));
+      await db.delete(propertyImageryAssets).where(eq(propertyImageryAssets.id, String(req.params.id)));
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || "delete failed" });
@@ -507,7 +507,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
   app.post("/api/property-imagery/:propertyId/compose/location-plan", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user?.id;
-      const propertyId = req.params.propertyId;
+      const propertyId = String(req.params.propertyId);
       const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
       if (!property) return res.status(404).json({ error: "property not found" });
 
@@ -557,7 +557,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
         return res.status(400).json({ error: "comps array required" });
       }
       const result = await composeCompsChart({
-        propertyId: req.params.propertyId,
+        propertyId: String(req.params.propertyId),
         comps: req.body.comps,
         unit: req.body?.unit,
         title: req.body?.title,
@@ -584,7 +584,7 @@ export function registerPropertyImageryRoutes(app: Express): void {
   app.post("/api/property-imagery/:propertyId/compose/comps-chart-auto", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user?.id;
-      const propertyId = req.params.propertyId;
+      const propertyId = String(req.params.propertyId);
       const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
       if (!property) return res.status(404).json({ error: "property not found" });
 
@@ -803,7 +803,7 @@ function registerComposerExtras(app: Express): void {
   app.post("/api/property-imagery/:propertyId/compose/erv-walk-auto", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user?.id;
-      const propertyId = req.params.propertyId;
+      const propertyId = String(req.params.propertyId);
       const matterId = req.body?.matterId;
       let passing = 0;
       let erv = 0;
@@ -868,7 +868,7 @@ function registerComposerExtras(app: Express): void {
   app.post("/api/property-imagery/:propertyId/compose/covenant-card-auto", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user?.id;
-      const propertyId = req.params.propertyId;
+      const propertyId = String(req.params.propertyId);
       const matterId = req.body?.matterId;
 
       let tenantName = "";
@@ -891,18 +891,12 @@ function registerComposerExtras(app: Express): void {
           if (co) {
             tenantName = co.name || "";
             chNumber = co.companiesHouseNumber || null;
-            parentName = co.parentCompany || null;
-            revenuePa = co.revenue ? Number(co.revenue) : null;
-            netIncome = co.netIncome ? Number(co.netIncome) : null;
-            netCash = co.netCash ? Number(co.netCash) : null;
-            numEmployees = co.employees || null;
-            latestAccountsYear = co.financialYearEnd
-              ? new Date(co.financialYearEnd).getFullYear()
-              : null;
+            // crm_companies doesn't carry detailed financials yet — leave null
+            // and let the covenant card composer render "n/a" for missing.
+            revenuePa = co.annualRevenue ? Number(co.annualRevenue) : null;
             // AML status if populated by the AML sweep
             riskLevel = (co.amlRiskLevel as any) || null;
-            pepClean = co.amlPepStatus === "no_pep" ? true : co.amlPepStatus === "pep_match" ? false : null;
-            sanctionsClean = co.amlSanctionsStatus === "no_match" ? true : co.amlSanctionsStatus === "match" ? false : null;
+            pepClean = co.amlPepStatus === "clear" ? true : (co.amlPepStatus && co.amlPepStatus.startsWith("pep_")) ? false : null;
           }
         }
       }
@@ -953,7 +947,7 @@ function registerComposerExtras(app: Express): void {
         return res.status(400).json({ error: "passingRentPa and ervPa required (positive numbers)" });
       }
       const result = await composeErvWalk({
-        propertyId: req.params.propertyId,
+        propertyId: String(req.params.propertyId),
         passingRentPa: passing,
         ervPa: erv,
         steppedRents: Array.isArray(req.body?.steppedRents) ? req.body.steppedRents : undefined,
@@ -979,7 +973,7 @@ function registerComposerExtras(app: Express): void {
       const tenantName = String(req.body?.tenantName || "").trim();
       if (!tenantName) return res.status(400).json({ error: "tenantName required" });
       const result = await composeCovenantCard({
-        propertyId: req.params.propertyId,
+        propertyId: String(req.params.propertyId),
         tenantName,
         companiesHouseNumber: req.body?.companiesHouseNumber,
         latestAccountsYear: req.body?.latestAccountsYear,
