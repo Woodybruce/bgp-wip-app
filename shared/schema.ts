@@ -1863,6 +1863,30 @@ export const systemActivityLog = pgTable("system_activity_log", {
 
 export type SystemActivityLog = typeof systemActivityLog.$inferSelect;
 
+// ChatBGP-authorable scheduled jobs. The worker in server/scheduled-jobs.ts
+// polls this table every minute and runs whatever's due.
+export const scheduledJobs = pgTable("scheduled_jobs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  description: text("description"),
+  scheduleKind: text("schedule_kind").notNull(),    // daily | weekly | hourly | cron
+  scheduleValue: text("schedule_value").notNull(),  // "HH:MM" | "DOW:HH:MM" | "MM" | cron
+  actionKind: text("action_kind").notNull(),        // sql_query | sql_write | send_chat_message | send_email
+  actionPayload: jsonb("action_payload").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  nextRunAt: timestamp("next_run_at").notNull(),
+  lastRunAt: timestamp("last_run_at"),
+  lastRunStatus: text("last_run_status"),
+  lastRunOutput: text("last_run_output"),
+  lastRunMs: integer("last_run_ms"),
+  runCount: integer("run_count").notNull().default(0),
+  errorCount: integer("error_count").notNull().default(0),
+});
+
+export type ScheduledJob = typeof scheduledJobs.$inferSelect;
+
 export const systemSettings = pgTable("system_settings", {
   key: text("key").primaryKey(),
   value: jsonb("value"),

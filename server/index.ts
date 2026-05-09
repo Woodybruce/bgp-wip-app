@@ -1983,6 +1983,16 @@ app.use("/api/branding/assets", express.static(
       log(`serving on port ${port}`);
       // startEmailProcessor(); // DISABLED - maintenance mode
       setTimeout(() => startHealthCheck(), 10000);
+      // ChatBGP-authored scheduled jobs — runs in dev too so local testing
+      // works. Worker is idle if the table is empty / has nothing due.
+      setTimeout(async () => {
+        try {
+          const { startScheduledJobs } = await import("./scheduled-jobs");
+          startScheduledJobs();
+        } catch (e: any) {
+          console.error("[scheduled-jobs] Failed to start:", e?.message);
+        }
+      }, 15000);
       // Background crawls only run in production — too slow/fragile over local internet
       const isProduction = process.env.NODE_ENV === "production";
       if (isProduction) {

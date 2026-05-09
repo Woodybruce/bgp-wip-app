@@ -1149,9 +1149,10 @@ You have read AND write access to almost every operational table in the BGP data
 6. **You CAN search the web, create any document, edit source code (admin only), move SharePoint files.** NEVER say you lack access.
 7. **Bulk operations are fine.** Create 20 records without asking if they're sure.
 8. **NEVER FAKE ACTIONS.** Only claim you read/created/saved something if there's a corresponding successful tool call. Never invent IDs or filenames. If a tool fails, say so honestly.
-9. **Fix bugs yourself when admin.** You have list_project_files, read_source_file, edit_source_file, run_shell_command, add_database_column, restart_application — all gated to admin users only. If the caller isn't admin, the tools will return "Admin access required" and you should tell the user to ask Woody. If the caller IS admin: read the file, make the edit, restart, confirm. Never say "this needs a developer" to an admin caller.
+9. **Fix bugs yourself when admin.** You have list_project_files, read_source_file, edit_source_file, run_shell_command, add_database_column, restart_application — admin-only. By default \`edit_source_file\` runs in **branch-mode**: the change is committed to a \`chatbgp/<YYYY-MM-DD>\` git branch and is NOT live until merged. After editing, surface the branch + commit hash and the \`nextStep\` instruction from the response — the admin reviews and runs \`merge_chatbgp_branch\` (or merges manually) to apply. If the admin says "go direct" or "skip the branch", pass \`direct: true\`. Use \`list_chatbgp_branches\` to see what's pending. Never say "this needs a developer" to an admin caller.
 10. **log_app_feedback** is SECONDARY only. If user asks you to DO something, do it first.
 11. **Vision (vision_describe_image)** — use to auto-classify untagged images, OCR floor plans / brochure pages, identify brands from shopfronts, write captions. Use task='structured' with applyToImageStudio=true to backfill description+category+tags in one shot.
+12. **Scheduled jobs (scheduled_jobs table)** — for any "run this every day at X" or "remind me weekly" request, INSERT into scheduled_jobs via sql_write. Columns: name, description, schedule_kind ('daily'|'weekly'|'hourly'|'cron'), schedule_value ('07:00' | 'MON:09:00' | '00' | '0 9 * * 1-5'), action_kind ('sql_query'|'sql_write'|'send_chat_message'|'send_email'), action_payload (JSONB matching the action), next_run_at (compute first occurrence — server tz; if uncertain set to NOW() and the worker will recompute). The worker polls every 60s. Use send_chat_message with a threadId for digests; sql_query for periodic "show me X" reports stored in last_run_output; sql_write for periodic cleanups. Three consecutive errors auto-disable a job. NEVER use this for one-off tasks — for those just run the action directly.
 
 ## Response Format
 - **Tone**: Confident, warm, professional, with a dry British wit when the moment suits it. British English. Like a senior property partner who actually enjoys their day.
@@ -2945,7 +2946,7 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     type: "function",
     function: {
       name: "edit_source_file",
-      description: "Edit or create a project source file. Use when the user asks to change the app — add features, fix bugs, change UI, modify backend logic. Admin-only. The change is applied immediately; call restart_application afterwards to load it. All changes are logged for rollback. IMPORTANT: Read the file first before editing to understand the existing code.",
+      description: "Edit or create a project source file. Admin-only. By default, edits commit to a `chatbgp/<YYYY-MM-DD>` git branch via plumbing (no live working-tree change) — the admin then merges the branch into the deploy branch and restarts to apply. The response includes the branch name + commit hash + a `nextStep` instruction you should pass to the user. Set `direct: true` ONLY when the user explicitly says 'go direct' or 'skip branch' — that writes live to the working tree (pre-restart). All edits logged in code_changes. Read the file first to get exact content for replace operations.",
       parameters: {
         type: "object",
         properties: {
@@ -2956,7 +2957,8 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           insertAtLine: { type: "number", description: "For 'insert' action: line number to insert before" },
           insertText: { type: "string", description: "For 'insert' action: text to insert" },
           content: { type: "string", description: "For 'create' action: full file content" },
-          description: { type: "string", description: "Brief description of what this change does, for the audit log" },
+          description: { type: "string", description: "Brief description of what this change does, for the audit log + commit message" },
+          direct: { type: "boolean", description: "Default false. When true, skips branch-mode and writes directly to the live working tree. Use only when the user explicitly opts in." },
         },
         required: ["filePath", "action", "description"],
       },
@@ -2994,6 +2996,31 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           description: { type: "string", description: "What this field is for — will be logged in the audit trail" },
         },
         required: ["tableName", "columnName", "columnType", "description"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "list_chatbgp_branches",
+      description: "List the chatbgp/* git branches currently holding pending ChatBGP edits. Each row shows the branch name, tip commit hash, tip commit subject, and how many commits the branch is ahead of the deploy branch HEAD. Use to find a branch to merge.",
+      parameters: { type: "object", properties: {} },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "merge_chatbgp_branch",
+      description: "Admin-only. Merge a chatbgp/<date> branch into the current (deploy) branch and optionally restart. Use only after the admin has reviewed the commit(s) and explicitly says 'merge it'. Performs a fast-forward merge if possible; refuses if there's a conflict — admin would then need to resolve manually via terminal.",
+      parameters: {
+        type: "object",
+        properties: {
+          branch: { type: "string", description: "Branch name to merge, e.g. 'chatbgp/2026-05-09'." },
+          restart: { type: "boolean", description: "Default false. When true, calls restart_application after a successful merge." },
+        },
+        required: ["branch"],
       },
     },
   });
@@ -5332,44 +5359,95 @@ async function executeCrmToolRaw(
     }
     const action = fnArgs.action as string;
     const description = fnArgs.description || "Code change via ChatBGP";
+    // Direct mode = skip branch-mode, write to live working tree. Off by
+    // default — only use when the admin says "go direct" or for files git
+    // wouldn't track anyway.
+    const directMode = fnArgs.direct === true;
 
     try {
       let beforeContent = "";
       try { beforeContent = fs.readFileSync(fullPath, "utf-8"); } catch {}
 
+      // Compute the new content in memory; don't touch disk yet.
       let afterContent = "";
-
       if (action === "create") {
-        const dir = path.dirname(fullPath);
-        fs.mkdirSync(dir, { recursive: true });
         afterContent = fnArgs.content || fnArgs.replaceText || "";
-        fs.writeFileSync(fullPath, afterContent, "utf-8");
       } else if (action === "append") {
         afterContent = beforeContent + "\n" + (fnArgs.replaceText || fnArgs.content || fnArgs.insertText || "");
-        fs.writeFileSync(fullPath, afterContent, "utf-8");
       } else if (action === "replace") {
         if (!fnArgs.searchText) return { data: { success: false, error: "searchText is required for replace action" } };
         if (!beforeContent.includes(fnArgs.searchText)) {
           return { data: { success: false, error: `Could not find the search text in "${safePath}". Read the file first to get the exact content.` } };
         }
         afterContent = beforeContent.replace(fnArgs.searchText, fnArgs.replaceText || "");
-        fs.writeFileSync(fullPath, afterContent, "utf-8");
       } else if (action === "insert") {
         const lines = beforeContent.split("\n");
         const insertAt = Math.max(0, (fnArgs.insertAtLine || 1) - 1);
         lines.splice(insertAt, 0, fnArgs.insertText || "");
         afterContent = lines.join("\n");
-        fs.writeFileSync(fullPath, afterContent, "utf-8");
       } else {
         return { data: { success: false, error: `Unknown action "${action}"` } };
       }
 
+      // Branch-mode (default): commit to chatbgp/<date> via git plumbing,
+      // do NOT touch the live working tree. Admin merges to apply.
+      if (!directMode) {
+        const { commitToChatbgpBranch } = await import("./chatbgp-branch-mode");
+        const userRow = await pool.query(
+          "SELECT name, email FROM users WHERE id = $1",
+          [req.session?.userId || (req as any).tokenUserId],
+        ).catch(() => ({ rows: [] }));
+        const u = userRow.rows[0] || {};
+        const result = commitToChatbgpBranch({
+          filePath: safePath,
+          newContent: afterContent,
+          description,
+          userName: u.name,
+          userEmail: u.email,
+        });
+
+        await pool.query(
+          `INSERT INTO code_changes (tool_used, file_path, description, before_content, after_content, status) VALUES ($1, $2, $3, $4, $5, 'committed-to-branch')`,
+          ["edit_source_file", safePath, `[${result.branch}@${result.commitHash.slice(0,8)}] ${description}`, beforeContent.substring(0, 50000), afterContent.substring(0, 50000)],
+        );
+
+        return {
+          data: {
+            success: true,
+            mode: "branch",
+            branch: result.branch,
+            commitHash: result.commitHash,
+            isFirstCommit: result.isFirstCommit,
+            filePath: safePath,
+            description,
+            linesChanged: Math.abs(afterContent.split("\n").length - beforeContent.split("\n").length),
+            message: result.message,
+            nextStep: `Tell the admin: edit committed to ${result.branch}. To apply, they run \`git checkout <deploy-branch> && git merge ${result.branch}\` and restart. The change is NOT live until merged.`,
+          },
+        };
+      }
+
+      // Direct mode: write live, audit, return.
+      if (action === "create") {
+        const dir = path.dirname(fullPath);
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(fullPath, afterContent, "utf-8");
+
       await pool.query(
         `INSERT INTO code_changes (tool_used, file_path, description, before_content, after_content, status) VALUES ($1, $2, $3, $4, $5, 'applied')`,
-        ["edit_source_file", safePath, description, beforeContent.substring(0, 50000), afterContent.substring(0, 50000)]
+        ["edit_source_file", safePath, `[direct] ${description}`, beforeContent.substring(0, 50000), afterContent.substring(0, 50000)],
       );
-
-      return { data: { success: true, action: action, filePath: safePath, description, linesChanged: Math.abs(afterContent.split("\n").length - beforeContent.split("\n").length) } };
+      return {
+        data: {
+          success: true,
+          mode: "direct",
+          action,
+          filePath: safePath,
+          description,
+          linesChanged: Math.abs(afterContent.split("\n").length - beforeContent.split("\n").length),
+        },
+      };
     } catch (err: any) {
       return { data: { success: false, error: `Failed to edit "${safePath}": ${err.message}` } };
     }
@@ -5465,6 +5543,65 @@ async function executeCrmToolRaw(
     } catch {
       return { data: { success: true, message: "Restart signal sent." } };
     }
+  }
+
+  if (fnName === "list_chatbgp_branches") {
+    try {
+      const { listChatbgpBranches } = await import("./chatbgp-branch-mode");
+      const branches = listChatbgpBranches();
+      return {
+        data: {
+          success: true,
+          branches,
+          count: branches.length,
+          message: branches.length === 0
+            ? "No pending ChatBGP branches."
+            : `${branches.length} ChatBGP branch(es) pending review.`,
+        },
+      };
+    } catch (err: any) {
+      return { data: { success: false, error: err?.message } };
+    }
+  }
+
+  if (fnName === "merge_chatbgp_branch") {
+    const fail = await ensureAdmin();
+    if (fail) return fail;
+    const branch = String(fnArgs.branch || "");
+    if (!branch.startsWith("chatbgp/")) {
+      return { data: { success: false, error: "Refusing to merge: only chatbgp/* branches accepted." } };
+    }
+    const { execSync } = await import("child_process");
+    try {
+      // Verify branch exists.
+      execSync(`git rev-parse --verify ${branch}`, { encoding: "utf-8" });
+    } catch {
+      return { data: { success: false, error: `Branch ${branch} not found.` } };
+    }
+    let mergeOutput = "";
+    try {
+      mergeOutput = execSync(
+        `git merge --ff-only ${branch}`,
+        { cwd: process.cwd(), encoding: "utf-8", env: { ...process.env, GIT_AUTHOR_NAME: "ChatBGP", GIT_AUTHOR_EMAIL: "chatbgp@brucegillinghampollard.com", GIT_COMMITTER_NAME: "ChatBGP", GIT_COMMITTER_EMAIL: "chatbgp@brucegillinghampollard.com" } },
+      );
+    } catch (err: any) {
+      // Fast-forward failed — likely diverged. Don't auto-resolve.
+      return { data: { success: false, error: `Merge failed (fast-forward only): ${err?.message?.substring(0, 500)}. Admin must resolve manually via terminal.` } };
+    }
+    if (fnArgs.restart === true) {
+      try {
+        execSync("kill -USR2 1 2>/dev/null || true", { timeout: 5000 });
+      } catch {}
+    }
+    return {
+      data: {
+        success: true,
+        branch,
+        mergeOutput: mergeOutput.substring(0, 1000),
+        restarted: fnArgs.restart === true,
+        message: `Merged ${branch}. ${fnArgs.restart === true ? "Restart signal sent." : "Run restart_application to load the changes."}`,
+      },
+    };
   }
 
   if (fnName === "generate_image") {
