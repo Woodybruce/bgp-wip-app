@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FileText, Loader2, Filter, Sparkles, Download, ExternalLink } from "lucide-react";
+import { FileText, Loader2, Filter, Sparkles, Download, ExternalLink, Printer, Wand2 } from "lucide-react";
 import { getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
@@ -54,6 +54,8 @@ export default function DocumentBriefsPage() {
   const [renderedBriefId, setRenderedBriefId] = useState<string | null>(null);
   const [savedUrl, setSavedUrl] = useState<string | null>(null);
   const [output, setOutput] = useState<any | null>(null);
+  const [iteratePrompt, setIteratePrompt] = useState("");
+  const [iterating, setIterating] = useState(false);
 
   const { data: briefs = [], isLoading } = useQuery<BriefMeta[]>({
     queryKey: ["/api/document-briefs"],
@@ -136,6 +138,49 @@ export default function DocumentBriefsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const iterate = async () => {
+    if (!renderedHtml || !iteratePrompt.trim()) return;
+    setIterating(true);
+    try {
+      const r = await fetch("/api/document-briefs/iterate", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ baseHtml: renderedHtml, prompt: iteratePrompt }),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => null);
+        toast({ title: "Iterate failed", description: e?.error || `${r.status}`, variant: "destructive" });
+        return;
+      }
+      const data = await r.json();
+      setRenderedHtml(data.html);
+      setSavedUrl(null); // user must save again
+      setIteratePrompt("");
+      toast({ title: "Updated", description: "Iframe refreshed with the new version" });
+    } finally {
+      setIterating(false);
+    }
+  };
+
+  const printAsPdf = () => {
+    if (!renderedHtml) return;
+    // Open the HTML in a new window and trigger print. The HTML's CSS is
+    // already @page A4 print-ready, so Save-as-PDF in the browser produces
+    // a clean document. Native server-side PDF needs a headless renderer
+    // (puppeteer / @sparticuz/chromium) — separate work item.
+    const w = window.open("", "_blank");
+    if (!w) {
+      toast({ title: "Pop-up blocked", description: "Allow pop-ups to print, or use Download HTML and open it manually.", variant: "destructive" });
+      return;
+    }
+    w.document.write(renderedHtml);
+    w.document.close();
+    setTimeout(() => {
+      try { w.focus(); w.print(); } catch {}
+    }, 300);
   };
 
   return (
@@ -259,12 +304,15 @@ export default function DocumentBriefsPage() {
                 <div className="text-xs font-medium">
                   Claude design preview · {output?.briefName}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   {savedUrl && (
                     <a href={savedUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
                       <ExternalLink className="h-3 w-3" /> Open in SharePoint
                     </a>
                   )}
+                  <Button size="sm" variant="ghost" onClick={printAsPdf} className="gap-1">
+                    <Printer className="h-3 w-3" /> Print / Save as PDF
+                  </Button>
                   <Button
                     size="sm"
                     variant="ghost"
@@ -298,8 +346,27 @@ export default function DocumentBriefsPage() {
                 title="Claude design rendered output"
                 sandbox="allow-same-origin"
               />
-              <div className="text-[10px] text-muted-foreground italic px-2 py-1">
-                HTML saves to the canonical SharePoint folder per brief category. PDF export via Cmd/Ctrl+P → Save as PDF in any browser; native PDF export lands when we wire a headless renderer.
+              <div className="px-2 py-2 border-t mt-2">
+                <div className="text-xs font-medium mb-1.5 flex items-center gap-1">
+                  <Wand2 className="h-3 w-3 text-muted-foreground" /> Iterate
+                </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={iteratePrompt}
+                    onChange={(e) => setIteratePrompt(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && iteratePrompt.trim() && !iterating && iterate()}
+                    placeholder='e.g. "make the cover punchier", "drop the risks section", "use BGP teal for accents"'
+                    disabled={iterating}
+                    className="text-sm"
+                  />
+                  <Button size="sm" onClick={iterate} disabled={!iteratePrompt.trim() || iterating} className="gap-1">
+                    {iterating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+                    Apply
+                  </Button>
+                </div>
+                <div className="text-[10px] text-muted-foreground italic mt-1">
+                  Each iteration replaces the preview. Save to SharePoint after the version you want lands.
+                </div>
               </div>
             </CardContent>
           </Card>

@@ -706,6 +706,44 @@ export function registerDocumentBriefRoutes(app: Express): void {
   });
 
   /**
+   * Iterate: take a previous rendered HTML + user instruction ("make it
+   * punchier", "drop section 3", "use BGP teal for accents") and Claude
+   * re-emits the full document. Same pattern as why-buy-design's iterate,
+   * but generalised for any brief.
+   */
+  app.post("/api/document-briefs/iterate", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const baseHtml = String(req.body?.baseHtml || "");
+      const prompt = String(req.body?.prompt || "").trim();
+      if (!baseHtml) return res.status(400).json({ error: "baseHtml required" });
+      if (!prompt) return res.status(400).json({ error: "prompt required" });
+
+      const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+      if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY not configured" });
+
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const baseURL = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL && process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
+        ? process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
+        : undefined;
+      const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+      const msg = await client.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 16000,
+        messages: [{
+          role: "user",
+          content: `Here is the current HTML of a BGP document:\n\n${baseHtml}\n\n---\n\nUser request: ${prompt}\n\nReturn the FULL updated HTML (single self-contained document, inline CSS, print-ready A4). Apply the user's change while keeping everything else intact and on-brand. Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`,
+        }],
+      });
+      const raw = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
+      const html = safeHtml(raw.replace(/^```html\s*/i, "").replace(/```\s*$/i, "").trim());
+      return res.json({ html, iteratedAt: new Date().toISOString() });
+    } catch (err: any) {
+      console.error("[document-briefs] iterate error:", err);
+      return res.status(500).json({ error: err?.message || "iterate failed" });
+    }
+  });
+
+  /**
    * Render-and-save: render via Claude design, then upload the HTML
    * to SharePoint inside the matter's folder (or the property's
    * Lease Advisory folder when no matter). Returns the SharePoint URL
