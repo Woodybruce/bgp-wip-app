@@ -585,6 +585,7 @@ export const brandStores = pgTable("brand_stores", {
   lat: doublePrecision("lat"),
   lng: doublePrecision("lng"),
   placeId: text("place_id"),             // Google Places ID
+  crmPropertyId: varchar("crm_property_id"), // → crm_properties.id (resolver-canonical)
   status: text("status").default("open"), // open | closed | unconfirmed
   storeType: text("store_type"),         // flagship | outlet | concession | pop_up | etc.
   notes: text("notes"),

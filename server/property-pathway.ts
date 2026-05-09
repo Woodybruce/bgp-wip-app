@@ -4268,6 +4268,22 @@ async function runStage8(runId: string, req: Request): Promise<void> {
     });
     patch.streetViewImageId = sweep.streetViewImageId;
     patch.collections = sweep.collections;
+    // Auto-fold the freshly-swept images into property_imagery_assets so
+    // they surface in the picker on the Property Intelligence Imagery
+    // tab and the WhyBuyCard without anyone having to click Discover.
+    if (run.propertyId) {
+      try {
+        const { discoverImagery } = await import("./property-imagery");
+        await discoverImagery({
+          propertyId: run.propertyId,
+          pathwayRunId: runId,
+          userId: (run as any).startedBy || undefined,
+          sources: ["image_studio"], // just fold in; no new captures here
+        });
+      } catch (err: any) {
+        console.warn("[pathway stage8] imagery discover post-sweep failed:", err?.message);
+      }
+    }
   } catch (err: any) {
     console.warn("[pathway stage8] image sweep failed:", err?.message);
   }

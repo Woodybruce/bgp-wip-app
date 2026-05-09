@@ -37,6 +37,9 @@ type RestaurantRow = {
   lng: number | null;
   crmPropertyId: string | null;
   crmPropertyName: string | null;
+  brandStoreId: string | null;
+  brandCompanyId: string | null;
+  brandCompanyName: string | null;
   inCrm: boolean;
 };
 
@@ -256,9 +259,13 @@ export default function WestminsterRestaurantsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      {r.inCrm ? (
+                      {r.crmPropertyId ? (
                         <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
                           In CRM
+                        </Badge>
+                      ) : r.brandStoreId || r.brandCompanyId ? (
+                        <Badge variant="outline" className="bg-violet-50 text-violet-700 border-violet-200" title={r.brandCompanyName ? `Brand: ${r.brandCompanyName}` : undefined}>
+                          Brand{r.brandCompanyName ? `: ${r.brandCompanyName}` : ""}
                         </Badge>
                       ) : (
                         <ResolveButton restaurant={r} onResolved={() => refetch()} />

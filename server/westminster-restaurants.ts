@@ -21,7 +21,7 @@
 import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { db } from "./db";
-import { crmProperties } from "@shared/schema";
+import { crmProperties, brandStores, crmCompanies } from "@shared/schema";
 import { sql } from "drizzle-orm";
 
 // London local authority IDs on the FSA API — the commercial boroughs
@@ -72,10 +72,14 @@ interface RestaurantRow {
   hygieneScore: number | null;
   lat: number | null;
   lng: number | null;
-  // CRM cross-ref
+  // CRM cross-ref — multiple sources, any of which means this restaurant
+  // is already known to BGP and shouldn't be flagged as a fresh prospect
   crmPropertyId: string | null;
   crmPropertyName: string | null;
-  inCrm: boolean;
+  brandStoreId: string | null;             // brand_stores match (e.g. Pret has many stores)
+  brandCompanyId: string | null;           // crm_companies brand row (covenant exists)
+  brandCompanyName: string | null;
+  inCrm: boolean;                          // true if any of the three above match
 }
 
 // Cache per local-authority-id so switching boroughs doesn't trash the cache
@@ -105,14 +109,19 @@ function joinAddress(e: FhrsEstablishment): string {
 }
 
 async function resolveCrmCrossRef(rows: RestaurantRow[]): Promise<RestaurantRow[]> {
-  // Pull every property in the postcodes we touch — single query rather
-  // than one-per-row. Westminster postcodes start with W1, SW1, WC1, WC2,
-  // NW1 — we'll just match by exact postcode.
+  // Three sources to cross-reference, all in one pass:
+  //   1. crm_properties — the canonical building (resolver-anchored)
+  //   2. brand_stores — known operator stores (Pret, Itsu, Soho House etc.)
+  //      where a brand is already in our intelligence
+  //   3. crm_companies — the brand entity itself (covenant data)
+  // Any match → the restaurant is "known to BGP" and shouldn't appear as
+  // a fresh prospect.
   const postcodes = Array.from(
     new Set(rows.map((r) => (r.postcode || "").replace(/\s+/g, "").toUpperCase()).filter(Boolean)),
   );
   if (postcodes.length === 0) return rows;
 
+  // 1. CRM properties by postcode
   const props = await db
     .select({
       id: crmProperties.id,
@@ -123,43 +132,113 @@ async function resolveCrmCrossRef(rows: RestaurantRow[]): Promise<RestaurantRow[
     .from(crmProperties)
     .where(sql`UPPER(REPLACE(COALESCE(${crmProperties.postcode}, ''), ' ', '')) = ANY(${postcodes})`);
 
-  // Group by postcode for quick lookup
-  const byPostcode = new Map<string, Array<{ id: string; name: string; address: any }>>();
+  // 2. brand_stores by postcode (extracted from the address tail)
+  const stores = await db
+    .select({
+      id: brandStores.id,
+      name: brandStores.name,
+      brandCompanyId: brandStores.brandCompanyId,
+      address: brandStores.address,
+    })
+    .from(brandStores)
+    .where(sql`UPPER(REPLACE(COALESCE(SPLIT_PART(${brandStores.address}, ',', -1), ''), ' ', '')) = ANY(${postcodes})`);
+
+  // 3. crm_companies — pull all companies once, match by name. Cheap-ish
+  //    given it's a one-time per-page scan, and brand names are short.
+  const lowerNames = Array.from(new Set(rows.map((r) => r.name.toLowerCase().trim()).filter(Boolean)));
+  const companies = lowerNames.length > 0
+    ? await db
+        .select({ id: crmCompanies.id, name: crmCompanies.name })
+        .from(crmCompanies)
+        .where(sql`LOWER(${crmCompanies.name}) = ANY(${lowerNames}) OR LOWER(${crmCompanies.name}) LIKE ANY(${lowerNames.map((n) => `%${n}%`)})`)
+        .limit(500)
+        .catch(() => [])
+    : [];
+
+  // Index lookups
+  const propByPostcode = new Map<string, Array<{ id: string; name: string; address: any }>>();
   for (const p of props) {
     const pc = (p.postcode || "").replace(/\s+/g, "").toUpperCase();
     if (!pc) continue;
-    if (!byPostcode.has(pc)) byPostcode.set(pc, []);
-    byPostcode.get(pc)!.push({ id: p.id, name: p.name, address: p.address });
+    if (!propByPostcode.has(pc)) propByPostcode.set(pc, []);
+    propByPostcode.get(pc)!.push({ id: p.id, name: p.name, address: p.address });
+  }
+  const storeByPostcode = new Map<string, Array<{ id: string; name: string; brandCompanyId: string; address: string | null }>>();
+  for (const s of stores) {
+    const pcMatch = (s.address || "").match(/\b([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})\b/i);
+    const pc = pcMatch?.[1]?.replace(/\s+/g, "").toUpperCase() || "";
+    if (!pc) continue;
+    if (!storeByPostcode.has(pc)) storeByPostcode.set(pc, []);
+    storeByPostcode.get(pc)!.push({ id: s.id, name: s.name, brandCompanyId: s.brandCompanyId, address: s.address });
+  }
+  const companyByName = new Map<string, { id: string; name: string }>();
+  for (const c of companies) {
+    companyByName.set(c.name.toLowerCase(), c);
   }
 
   return rows.map((r) => {
     const pc = (r.postcode || "").replace(/\s+/g, "").toUpperCase();
-    const candidates = byPostcode.get(pc) || [];
-    if (candidates.length === 0) return r;
-    // Try a name match first — restaurant names tend to be distinctive
-    const lowName = r.name.toLowerCase();
-    let match = candidates.find((c) => c.name.toLowerCase() === lowName);
-    if (!match) {
-      // Try substring match (BGP CRM names often include parent + brand)
-      match = candidates.find((c) => {
-        const cn = c.name.toLowerCase();
-        return cn.includes(lowName) || lowName.includes(cn);
-      });
-    }
-    if (!match) {
-      // Fall back to street-line match
+    const lowName = r.name.toLowerCase().trim();
+    let crmPropertyId: string | null = null;
+    let crmPropertyName: string | null = null;
+    let brandStoreId: string | null = null;
+    let brandCompanyId: string | null = null;
+    let brandCompanyName: string | null = null;
+
+    // 1. CRM property match
+    const propCandidates = propByPostcode.get(pc) || [];
+    let propMatch = propCandidates.find((c) => c.name.toLowerCase() === lowName)
+      || propCandidates.find((c) => c.name.toLowerCase().includes(lowName) || lowName.includes(c.name.toLowerCase()));
+    if (!propMatch) {
       const addrLow = r.address.toLowerCase();
-      match = candidates.find((c) => {
+      propMatch = propCandidates.find((c) => {
         const propAddr = typeof c.address === "string"
           ? c.address.toLowerCase()
           : (c.address?.formatted || c.address?.line1 || "").toLowerCase();
         return propAddr && (addrLow.includes(propAddr) || propAddr.includes(addrLow.split(",")[0] || ""));
       });
     }
-    if (match) {
-      return { ...r, crmPropertyId: match.id, crmPropertyName: match.name, inCrm: true };
+    if (propMatch) {
+      crmPropertyId = propMatch.id;
+      crmPropertyName = propMatch.name;
     }
-    return r;
+
+    // 2. brand_stores match — same postcode
+    const storeCandidates = storeByPostcode.get(pc) || [];
+    const storeMatch = storeCandidates.find((s) => {
+      const sn = s.name.toLowerCase();
+      return sn === lowName || sn.includes(lowName) || lowName.includes(sn);
+    });
+    if (storeMatch) {
+      brandStoreId = storeMatch.id;
+      brandCompanyId = storeMatch.brandCompanyId;
+    }
+
+    // 3. crm_companies match — by name (the brand entity)
+    const companyMatch = companyByName.get(lowName)
+      || Array.from(companyByName.values()).find((c) => {
+        const cn = c.name.toLowerCase();
+        return cn.includes(lowName) || lowName.includes(cn);
+      });
+    if (companyMatch && !brandCompanyId) {
+      brandCompanyId = companyMatch.id;
+      brandCompanyName = companyMatch.name;
+    } else if (brandCompanyId && !brandCompanyName) {
+      // Look up the company name from the brand_store match
+      const co = Array.from(companyByName.values()).find((c) => c.id === brandCompanyId);
+      brandCompanyName = co?.name || null;
+    }
+
+    const inCrm = !!(crmPropertyId || brandStoreId || brandCompanyId);
+    return {
+      ...r,
+      crmPropertyId,
+      crmPropertyName,
+      brandStoreId,
+      brandCompanyId,
+      brandCompanyName,
+      inCrm,
+    };
   });
 }
 

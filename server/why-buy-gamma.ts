@@ -237,93 +237,11 @@ export async function buildBrief(runId: string): Promise<{ brief: string; title:
   return { brief, title, address };
 }
 
-export interface WhyBuyGammaResult {
-  documentUrl: string;
-  sharepointUrl?: string;
-  pdfPath: string;
-  imageStudioId?: string;
-  gammaUrl?: string;
-  generationId: string;
-}
-
-export async function renderWhyBuyGamma(args: {
-  runId: string;
-  themeName?: string;
-  exportAs?: "pdf" | "pptx";
-}): Promise<WhyBuyGammaResult> {
-  if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });
-
-  const [run] = await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.id, args.runId)).limit(1);
-  if (!run) throw new Error("Pathway run not found");
-
-  const { brief, title, address } = await buildBrief(args.runId);
-
-  const exportAs = args.exportAs || "pdf";
-  const { generationId } = await gammaGenerate({
-    inputText: brief,
-    format: "document",
-    exportAs,
-    textMode: "preserve",
-    themeName: args.themeName || process.env.GAMMA_DEFAULT_THEME || undefined,
-    additionalInstructions:
-      "BGP investment memo. Institutional / private-equity aesthetic. Serif headlines, " +
-      "clean grid, muted palette (slate, warm grey, white). No emoji. No hype. " +
-      "Confidential investment committee material.",
-    cardOptions: { dimensions: "a4" },
-    imageOptions: { source: "aiGenerated" },
-  });
-
-  const done = await gammaWaitFor(generationId, { timeoutMs: 6 * 60 * 1000 });
-  if (!done.exportUrl) throw new Error(`Gamma returned no exportUrl (gammaUrl: ${done.gammaUrl || "n/a"})`);
-
-  const buf = await gammaDownloadExport(done.exportUrl);
-  const ext = exportAs === "pptx" ? "pptx" : "pdf";
-  const mime = exportAs === "pptx"
-    ? "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    : "application/pdf";
-  const fileName = `why-buy-gamma-${run.id}-${Date.now()}.${ext}`;
-  const outPath = path.join(OUT_DIR, fileName);
-  fs.writeFileSync(outPath, buf);
-
-  // Optional SharePoint upload
-  let sharepointUrl: string | undefined;
-  try {
-    const { uploadFileToSharePoint } = await import("./microsoft");
-    const folderPath = run.sharepointFolderPath
-      ? `${run.sharepointFolderPath}/Why Buy Deck`
-      : `BGP share drive/Investment/${address.replace(/[\/\\:*?"<>|]/g, "-")}/Why Buy Deck`;
-    const upload = await uploadFileToSharePoint(buf, fileName, mime, folderPath);
-    sharepointUrl = upload.webUrl;
-  } catch (err: any) {
-    console.warn("[why-buy-gamma] SharePoint upload failed:", err?.message);
-  }
-
-  // Log into image_studio_images so the asset is findable in the library
-  let imageStudioId: string | undefined;
-  try {
-    const [row] = await db.insert(imageStudioImages).values({
-      fileName: title,
-      category: "Investment Memo",
-      tags: ["why-buy", "gamma", exportAs, run.id],
-      description: `Gamma-generated Why Buy ${exportAs.toUpperCase()} for ${address}. Source: pathway ${run.id}.`,
-      source: "why-buy-gamma",
-      propertyId: (run as any).propertyId || undefined,
-      address,
-      mimeType: mime,
-      fileSize: buf.length,
-      localPath: outPath,
-    } as any).returning();
-    imageStudioId = row?.id;
-  } catch (err: any) {
-    console.warn("[why-buy-gamma] image_studio insert failed:", err?.message);
-  }
-
-  return {
-    documentUrl: `/uploads/why-buy-gamma/${fileName}`,
-    sharepointUrl,
-    pdfPath: outPath,
-    imageStudioId,
-    gammaUrl: done.gammaUrl,
-    generationId,
-  };
-}
+// ─── DEPRECATED: renderWhyBuyGamma removed (May 2026) ────────────────────────
+// The Gamma export path was removed when Claude design proved a better
+// renderer. The route + UI buttons are gone; this file now only exports
+// buildBrief (still used by server/why-buy-design.ts).
+//
+// Future migration: replace why-buy-design.ts's buildBrief call with
+// document-briefs.runBrief("why-buy-memo") so Stage 9 fully consumes the
+// brief framework. Then this file can be deleted.
