@@ -26,12 +26,12 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Plus, Scale, Calendar as CalendarIcon, MapPin, AlertCircle, Loader2, X, FileText } from "lucide-react";
+import { Plus, Scale, Calendar as CalendarIcon, MapPin, Loader2, X, FileText } from "lucide-react";
 import { getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
-import { InlineNumber, InlineDate, InlineText } from "@/components/inline-edit";
+import { InlineNumber, InlineDate } from "@/components/inline-edit";
 import type { PlaMatter, CrmComp } from "@shared/schema";
 
 const MATTER_TYPES: Array<{ value: string; label: string }> = [
