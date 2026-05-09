@@ -220,7 +220,7 @@ function KindPanel({
   matterId?: string;
   onComposed: () => void;
 }) {
-  const composable = kind === "location_plan" || kind === "comps_chart";
+  const composable = kind === "location_plan" || kind === "comps_chart" || kind === "erv_walk" || kind === "covenant_card";
   const cols = compact ? "grid-cols-1" : "grid-cols-2 md:grid-cols-3";
   return (
     <div className="space-y-3">
@@ -283,6 +283,12 @@ function ComposeButton({
         // Auto-pull from investment_comps + crm_comps in the same postcode area
         endpoint = `/api/property-imagery/${propertyId}/compose/comps-chart-auto`;
         body = { ...body, scope, limit: 8, monthsBack: 36 };
+      } else if (kind === "erv_walk") {
+        // Reads passing/quoting rents + dates off the matter when matterId is set
+        endpoint = `/api/property-imagery/${propertyId}/compose/erv-walk-auto`;
+      } else if (kind === "covenant_card") {
+        // Reads tenant + financials off matter.clientCompanyId when matterId is set
+        endpoint = `/api/property-imagery/${propertyId}/compose/covenant-card-auto`;
       }
       const res = await fetch(endpoint, {
         method: "POST",
@@ -312,6 +318,12 @@ function ComposeButton({
         <div className="text-xs text-muted-foreground">
           {kind === "location_plan" && "Google Static map + BGP-red subject pin + selected overlays."}
           {kind === "comps_chart" && "Auto-pulls comps in same postcode area (last 36 months), horizontal bars."}
+          {kind === "erv_walk" && (matterId
+            ? "Reads passing rent + ERV + dates from this matter, draws stepped reversion path."
+            : "Needs passing + ERV + dates — open from a matter detail page for one-click, or set them on the matter first.")}
+          {kind === "covenant_card" && (matterId
+            ? "Reads tenant + Companies House data + AML status off this matter's client company."
+            : "Needs a tenant — link a client company to a matter for one-click, or pass tenantName.")}
         </div>
         <Button size="sm" variant="outline" onClick={compose} disabled={busy} className="gap-1.5 h-7">
           {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}

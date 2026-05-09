@@ -41,6 +41,7 @@ import {
 import { and, desc, eq, sql } from "drizzle-orm";
 import { captureStreetViewForAddress } from "./image-studio";
 import { composeLocationPlan, composeCompsChart, composeErvWalk, composeCovenantCard, type LocationPlanInput, type CompsChartInput, type ErvWalkInput, type CovenantCardInput } from "./property-imagery-composers";
+import { plaMatters, crmCompanies, type PlaMatter } from "@shared/schema";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -666,6 +667,154 @@ async function fetchCompMarkers(postcode: string | null | undefined): Promise<Ar
 }
 
 function registerComposerExtras(app: Express): void {
+  /**
+   * Auto ERV walk: reads passingRent / quotingRent / agreedRent + key dates
+   * off the matter (or the property's current state) and composes the chart.
+   * One-click from a matter detail page.
+   */
+  app.post("/api/property-imagery/:propertyId/compose/erv-walk-auto", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user?.id;
+      const propertyId = req.params.propertyId;
+      const matterId = req.body?.matterId;
+      let passing = 0;
+      let erv = 0;
+      let yearsToReview: number | undefined;
+      let yearsToExpiry: number | undefined;
+      let areaSqft: number | undefined;
+      let title: string | undefined;
+
+      if (matterId) {
+        const [m] = await db.select().from(plaMatters).where(eq(plaMatters.id, matterId));
+        if (!m) return res.status(404).json({ error: "matter not found" });
+        passing = Number(m.currentRent) || 0;
+        erv = Number(m.quotingRent || m.agreedRent || m.counterQuotingRent || 0);
+        if (m.currentRentReviewDate) {
+          yearsToReview = yearsBetween(new Date(), new Date(m.currentRentReviewDate as any));
+        }
+        if (m.expiryDate) {
+          yearsToExpiry = yearsBetween(new Date(), new Date(m.expiryDate as any));
+        }
+        title = `ERV walk — ${m.matterType.replace(/_/g, " ")}`;
+      } else {
+        const [p] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
+        if (!p) return res.status(404).json({ error: "property not found" });
+        // Bare-property ERV walk relies on caller-supplied numbers
+        passing = Number(req.body?.passingRentPa) || 0;
+        erv = Number(req.body?.ervPa) || 0;
+        yearsToReview = req.body?.yearsToReview;
+        yearsToExpiry = req.body?.yearsToExpiry;
+        areaSqft = p.sqft || undefined;
+      }
+
+      if (passing <= 0 || erv <= 0) {
+        return res.status(400).json({
+          error: "couldn't infer passing rent + ERV from matter — set currentRent + quotingRent on the matter first, or pass them in the body",
+        });
+      }
+
+      const result = await composeErvWalk({
+        propertyId,
+        passingRentPa: passing,
+        ervPa: erv,
+        yearsToReview,
+        yearsToExpiry,
+        areaSqft,
+        title,
+        generatedBy: userId,
+        pathwayRunId: req.body?.pathwayRunId,
+        matterId,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      return res.json({ ...result, source: matterId ? "matter" : "property" });
+    } catch (err: any) {
+      console.error("[property-imagery] erv-walk-auto error:", err);
+      return res.status(500).json({ error: err?.message || "compose failed" });
+    }
+  });
+
+  /**
+   * Auto Covenant card: tenant CH number → fetch headline financials +
+   * AML risk → render the card. One click from a matter or pathway run.
+   */
+  app.post("/api/property-imagery/:propertyId/compose/covenant-card-auto", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user?.id;
+      const propertyId = req.params.propertyId;
+      const matterId = req.body?.matterId;
+
+      let tenantName = "";
+      let chNumber: string | null = null;
+      let parentName: string | null = null;
+      let revenuePa: number | null = null;
+      let netIncome: number | null = null;
+      let netCash: number | null = null;
+      let numEmployees: number | null = null;
+      let latestAccountsYear: number | null = null;
+      let riskLevel: "low" | "medium" | "high" | null = null;
+      let pepClean: boolean | null = null;
+      let sanctionsClean: boolean | null = null;
+
+      // Resolve tenant: matter.clientCompanyId → crm_companies, OR caller can pass tenantName explicitly
+      if (matterId) {
+        const [m] = await db.select().from(plaMatters).where(eq(plaMatters.id, matterId));
+        if (m && m.clientCompanyId) {
+          const [co] = await db.select().from(crmCompanies).where(eq(crmCompanies.id, m.clientCompanyId));
+          if (co) {
+            tenantName = co.name || "";
+            chNumber = co.companiesHouseNumber || null;
+            parentName = co.parentCompany || null;
+            revenuePa = co.revenue ? Number(co.revenue) : null;
+            netIncome = co.netIncome ? Number(co.netIncome) : null;
+            netCash = co.netCash ? Number(co.netCash) : null;
+            numEmployees = co.employees || null;
+            latestAccountsYear = co.financialYearEnd
+              ? new Date(co.financialYearEnd).getFullYear()
+              : null;
+            // AML status if populated by the AML sweep
+            riskLevel = (co.amlRiskLevel as any) || null;
+            pepClean = co.amlPepStatus === "no_pep" ? true : co.amlPepStatus === "pep_match" ? false : null;
+            sanctionsClean = co.amlSanctionsStatus === "no_match" ? true : co.amlSanctionsStatus === "match" ? false : null;
+          }
+        }
+      }
+      // Fallback / overrides from body
+      tenantName = String(req.body?.tenantName || tenantName).trim();
+      if (!tenantName) {
+        return res.status(400).json({
+          error: "no tenant identified — link a clientCompanyId on the matter or pass tenantName",
+        });
+      }
+
+      const result = await composeCovenantCard({
+        propertyId,
+        tenantName,
+        companiesHouseNumber: req.body?.companiesHouseNumber ?? chNumber,
+        latestAccountsYear: req.body?.latestAccountsYear ?? latestAccountsYear,
+        revenuePa: req.body?.revenuePa ?? revenuePa,
+        ebitda: req.body?.ebitda,
+        netIncome: req.body?.netIncome ?? netIncome,
+        netCash: req.body?.netCash ?? netCash,
+        numEmployees: req.body?.numEmployees ?? numEmployees,
+        parentName: req.body?.parentName ?? parentName,
+        sanctionsClean: req.body?.sanctionsClean ?? sanctionsClean,
+        pepClean: req.body?.pepClean ?? pepClean,
+        riskLevel: req.body?.riskLevel ?? riskLevel,
+        dunbradstreetRating: req.body?.dunbradstreetRating,
+        notes: req.body?.notes,
+        title: req.body?.title,
+        generatedBy: userId,
+        pathwayRunId: req.body?.pathwayRunId,
+        matterId,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      return res.json({ ...result, autoFilled: !!matterId });
+    } catch (err: any) {
+      console.error("[property-imagery] covenant-card-auto error:", err);
+      return res.status(500).json({ error: err?.message || "compose failed" });
+    }
+  });
+
   /** Generate an ERV walk chart. */
   app.post("/api/property-imagery/:propertyId/compose/erv-walk", requireAuth, async (req: Request, res: Response) => {
     try {
@@ -728,6 +877,11 @@ function registerComposerExtras(app: Express): void {
       return res.status(500).json({ error: err?.message || "compose failed" });
     }
   });
+}
+
+function yearsBetween(from: Date, to: Date): number {
+  const ms = to.getTime() - from.getTime();
+  return Math.max(0, ms / (365.25 * 24 * 60 * 60 * 1000));
 }
 
 function pcArea(pc: string): string | null {
