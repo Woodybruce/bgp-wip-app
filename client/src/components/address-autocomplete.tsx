@@ -21,6 +21,21 @@ interface AddressAutocompleteProps {
   onChange: (address: AddressResult | null) => void;
   placeholder?: string;
   className?: string;
+  /**
+   * When true, picking a Google Place fires the canonical Property Resolver
+   * (Google place_id → OS Places nearest → UPRN → find-or-create
+   * crm_property → background HMLR + Companies House enrichment cascade).
+   * Use on "add property" / "search property" / "add comp" inputs — anywhere
+   * we want the canonical UPRN and the enrichment chain to fire automatically.
+   * Off by default for legacy callers (just storing an address string).
+   */
+  resolveProperty?: boolean;
+  /**
+   * Optional callback fired after resolveProperty resolves — gives the
+   * caller the canonical CRM property id + name + postcode for further
+   * use (e.g. linking forms to existing records, navigating to detail).
+   */
+  onResolve?: (propertyId: string, prop: { id: string; name: string; postcode: string | null }) => void;
 }
 
 function useServerAddressSearch() {
@@ -52,7 +67,37 @@ export function AddressAutocomplete({
   onChange,
   placeholder = "Search address...",
   className = "",
+  resolveProperty = false,
+  onResolve,
 }: AddressAutocompleteProps) {
+  // Fire the canonical Property Resolver when a place is picked. Best-effort,
+  // background — doesn't block the onChange callback (which fires immediately
+  // with the address string). Resolver gives us the UPRN, finds-or-creates the
+  // crm_property, and kicks off HMLR + Companies House enrichment async.
+  const triggerResolver = async (placeId: string | undefined) => {
+    if (!resolveProperty || !placeId) return;
+    try {
+      const resp = await fetch("/api/property-resolver/resolve", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ kind: "googlePlace", placeId }),
+      });
+      if (!resp.ok) return;
+      const result = await resp.json();
+      if (result?.kind === "resolved" && result.property?.id) {
+        if (onResolve) onResolve(result.property.id, {
+          id: result.property.id,
+          name: result.property.name,
+          postcode: result.property.postcode,
+        });
+      }
+    } catch (err) {
+      // Best-effort — never break the address-pick UX
+      console.warn("[address-autocomplete] resolver trigger failed:", err);
+    }
+  };
+
   const [query, setQuery] = useState(value?.formatted || "");
   const [showDropdown, setShowDropdown] = useState(false);
   const [useGoogle, setUseGoogle] = useState(false);
@@ -164,6 +209,8 @@ export function AddressAutocomplete({
           setGooglePredictions([]);
           setShowDropdown(false);
           onChange(result);
+          // Fire the resolver chain when opted in
+          triggerResolver(result.placeId);
         }
       }
     );

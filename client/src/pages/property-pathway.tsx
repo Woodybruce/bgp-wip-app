@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
 import { usePropertyContext } from "@/lib/property-context";
+import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -392,18 +393,31 @@ export default function PropertyPathway() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Start a new investigation</CardTitle>
         </CardHeader>
-        <CardContent className="flex gap-2 items-end">
-          <div className="flex-1">
-            <label className="text-xs text-muted-foreground mb-1 block">Address</label>
-            <Input value={newAddress} onChange={e => setNewAddress(e.target.value)} placeholder="e.g. 18-22 Haymarket" className="h-9" />
+        <CardContent className="space-y-3">
+          {/* Resolver-canonical entry point — Google Places autocomplete →
+              OS Places UPRN → enrichment cascade. Pre-fills the manual
+              fields below on pick. */}
+          <PropertyResolverBar
+            current={newAddress ? { id: "", name: newAddress, postcode: newPostcode || null } : null}
+            onResolve={(_id, prop) => {
+              setNewAddress(prop.name || "");
+              setNewPostcode(prop.postcode || "");
+            }}
+            placeholder="Type any address — Google suggests, OS confirms…"
+          />
+          <div className="flex gap-2 items-end">
+            <div className="flex-1">
+              <label className="text-xs text-muted-foreground mb-1 block">Address (editable)</label>
+              <Input value={newAddress} onChange={e => setNewAddress(e.target.value)} placeholder="e.g. 18-22 Haymarket" className="h-9" />
+            </div>
+            <div className="w-32">
+              <label className="text-xs text-muted-foreground mb-1 block">Postcode</label>
+              <Input value={newPostcode} onChange={e => setNewPostcode(e.target.value)} placeholder="SW1Y 4DG" className="h-9" />
+            </div>
+            <Button onClick={startRun} disabled={!newAddress.trim()} className="h-9 gap-1.5">
+              <Plus className="w-4 h-4" /> Start
+            </Button>
           </div>
-          <div className="w-32">
-            <label className="text-xs text-muted-foreground mb-1 block">Postcode</label>
-            <Input value={newPostcode} onChange={e => setNewPostcode(e.target.value)} placeholder="SW1Y 4DG" className="h-9" />
-          </div>
-          <Button onClick={startRun} disabled={!newAddress.trim()} className="h-9 gap-1.5">
-            <Plus className="w-4 h-4" /> Start
-          </Button>
         </CardContent>
       </Card>
 
