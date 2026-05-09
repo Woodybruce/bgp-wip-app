@@ -11,6 +11,7 @@ import { queryClient, getAuthHeaders } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
+import { PropertyProvider } from "@/lib/property-context";
 
 const EdozoMap = lazy(() => import("@/pages/edozo-map"));
 const KycClouseau = lazy(() => import("@/pages/kyc-clouseau"));
@@ -297,6 +298,7 @@ export default function PropertyIntelligence() {
   };
 
   return (
+    <PropertyProvider initial={resolvedProperty}>
     <div className="flex flex-col h-full min-h-screen">
       <Tabs value={tab} onValueChange={handleTabChange} className="flex flex-col h-full">
         <div className="border-b bg-background sticky top-0 z-10">
@@ -305,11 +307,9 @@ export default function PropertyIntelligence() {
               current={resolvedProperty}
               onResolve={(id, prop) => {
                 setResolvedProperty({ id, name: prop.name, postcode: prop.postcode });
-                // Drive every tab that already accepts an initial search.
-                // The Map tab consumes pendingSearch directly; other tabs
-                // (Pathway, Investigator, Land Registry, VOA) get the
-                // canonical property via the resolved state above and will
-                // be refactored per-tab to read it.
+                // Drive every tab — Map via pendingSearch, others via the
+                // PropertyContext (each can call usePropertyContext() to
+                // read the canonical selection and prefill).
                 setPendingSearch({ address: prop.name, postcode: prop.postcode });
               }}
             />
@@ -372,5 +372,6 @@ export default function PropertyIntelligence() {
         </div>
       </Tabs>
     </div>
+    </PropertyProvider>
   );
 }

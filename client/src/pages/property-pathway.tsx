@@ -4,6 +4,7 @@ import DOMPurify from "dompurify";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
+import { usePropertyContext } from "@/lib/property-context";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -65,8 +66,15 @@ export default function PropertyPathway() {
   const [selectedRun, setSelectedRun] = useState<PathwayRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [advancing, setAdvancing] = useState(false);
-  const [newAddress, setNewAddress] = useState("");
-  const [newPostcode, setNewPostcode] = useState("");
+  const ctxProperty = usePropertyContext();
+  const [newAddress, setNewAddress] = useState(ctxProperty?.name || "");
+  const [newPostcode, setNewPostcode] = useState(ctxProperty?.postcode || "");
+  // When the parent Property Intelligence page resolves a different property,
+  // freshen the New-investigation inputs so they line up with the selection.
+  useEffect(() => {
+    if (ctxProperty?.name && !newAddress) setNewAddress(ctxProperty.name);
+    if (ctxProperty?.postcode && !newPostcode) setNewPostcode(ctxProperty.postcode);
+  }, [ctxProperty?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const runIdFromUrl = (() => {
     try {
