@@ -640,6 +640,7 @@ function getToolProgressLabel(toolName: string): string {
     generate_word: "Generating Word document...",
     generate_pptx: "Generating PowerPoint...",
     generate_document: "Generating document...",
+    generate_brief_document: "Generating with Claude design...",
     generate_image: "Generating image...",
     browse_sharepoint_folder: "Browsing SharePoint...",
     read_sharepoint_file: "Reading file...",
@@ -1663,6 +1664,52 @@ export async function getAvailableTools(): Promise<{
       },
     });
   }
+
+  // ── New brief-based document generation (Document Studio convergence) ──
+  // Lets users say "Generate a Brochure for 12 Hanover Square" and the
+  // brief framework pulls structured data + auto-resolves imagery + Claude
+  // design renders the final HTML, all in one tool call.
+  tools.push({
+    type: "function",
+    function: {
+      name: "generate_brief_document",
+      description: `Generate a polished BGP document from the brief registry — the new path that uses Claude design + the imagery layer. Use this when the user asks for a Brochure, Why Buy memo, Heads of Terms, Rent Review Representations, or Market Report on a specific property or matter. Available briefs:
+- "why-buy-memo" — PE-style 4-page investment memo (best with a Pathway run)
+- "brochure" — letting/sale marketing brochure with hero + internals + floor plan + location plan
+- "heads-of-terms" — concise 2-page HoT for a deal
+- "rent-review-representations" — Tom + Pete's RR pack (REQUIRES matterId)
+- "market-report" — area / asset-class market report with comps chart
+
+The tool runs the brief, renders via Claude design, and saves to the canonical SharePoint folder per brief category. Prefer this over the legacy generate_document for any new property document.`,
+      parameters: {
+        type: "object",
+        properties: {
+          briefId: {
+            type: "string",
+            enum: ["why-buy-memo", "brochure", "heads-of-terms", "rent-review-representations", "market-report"],
+            description: "Which brief to run.",
+          },
+          propertyId: {
+            type: "string",
+            description: "Canonical CRM property id (look it up via search_crm or resolveAddressToUprn first if you have a free-text address).",
+          },
+          matterId: {
+            type: "string",
+            description: "Optional PLA matter id — required for rent-review-representations brief; pulls linked comps + workbook snapshots.",
+          },
+          pathwayRunId: {
+            type: "string",
+            description: "Optional Pathway run id — for why-buy-memo brief, pulls Stage 6 business plan + Stage 7 model.",
+          },
+          saveToSharePoint: {
+            type: "boolean",
+            description: "Save the rendered HTML to the canonical SharePoint folder. Default true.",
+          },
+        },
+        required: ["briefId", "propertyId"],
+      },
+    },
+  });
 
   tools.push({
     type: "function",
@@ -10379,6 +10426,49 @@ export function setupChatBGPRoutes(app: Express) {
     if (tcName === "generate_document") {
       const docResult = await executeDocumentGenerate(tcArgs);
       return { data: { templateName: docResult.templateName, fieldsUsed: docResult.fieldsUsed, totalFields: docResult.totalFields }, action: { type: "document_generate", templateName: docResult.templateName, content: docResult.content, fieldsUsed: docResult.fieldsUsed, totalFields: docResult.totalFields } };
+    }
+    // Brief-based document generation (new Document Studio convergence path)
+    if (tcName === "generate_brief_document") {
+      try {
+        if (!tcArgs.briefId || !tcArgs.propertyId) {
+          return { data: { error: "briefId and propertyId are required" } };
+        }
+        const briefMod: any = await import("./document-briefs");
+        if (!briefMod.BRIEF_REGISTRY[tcArgs.briefId]) {
+          return { data: { error: `Unknown briefId: ${tcArgs.briefId}. Valid: ${Object.keys(briefMod.BRIEF_REGISTRY).join(", ")}` } };
+        }
+        const ctx = {
+          propertyId: String(tcArgs.propertyId),
+          matterId: tcArgs.matterId,
+          pathwayRunId: tcArgs.pathwayRunId,
+          userId: undefined,
+        };
+        const brief = await briefMod.runBrief(tcArgs.briefId, ctx);
+        const result: any = {
+          briefId: brief.briefId,
+          briefName: brief.briefName,
+          title: brief.title,
+          sectionCount: brief.sections.length,
+          imageryResolved: Object.keys(brief.imagery).length,
+          imageryProvenance: brief.imageryProvenance,
+          summary: `Brief built. ${brief.sections.length} sections, imagery: ${Object.entries(brief.imageryProvenance).map(([k, p]) => `${k} (${p})`).join(", ")}.`,
+        };
+        // For chat, the brief output JSON is the deliverable — the user can
+        // jump to /document-briefs to render with Claude design and save to
+        // SharePoint via the picker. Keeps the chat call lean (Claude render
+        // takes ~10-30s and the client iframe preview is the better UX for
+        // iteration).
+        result.nextStep = "Open /document-briefs and click Render on this brief to produce the styled HTML, then Save to SharePoint.";
+        return {
+          data: result,
+          action: {
+            type: "navigate",
+            path: tcArgs.matterId ? `/pla/matters/${tcArgs.matterId}` : `/document-briefs`,
+          },
+        };
+      } catch (err: any) {
+        return { data: { error: err?.message || "brief document generation failed" } };
+      }
     }
     // Template creation
     if (tcName === "create_document_template") {
