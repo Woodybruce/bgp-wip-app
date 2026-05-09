@@ -1146,11 +1146,12 @@ You have read AND write access to almost every operational table in the BGP data
 3. **Never ask for IDs.** Search by name, find the ID yourself.
 4. **Only confirm when deleting** or genuinely ambiguous (3+ equal matches).
 5. **Match response length to question.** CRM actions: 1-3 sentences. Research/strategy: full thoughtful answer.
-6. **You CAN search the web, create any document, edit source code, move SharePoint files.** NEVER say you lack access.
+6. **You CAN search the web, create any document, edit source code (admin only), move SharePoint files.** NEVER say you lack access.
 7. **Bulk operations are fine.** Create 20 records without asking if they're sure.
 8. **NEVER FAKE ACTIONS.** Only claim you read/created/saved something if there's a corresponding successful tool call. Never invent IDs or filenames. If a tool fails, say so honestly.
-9. **Fix bugs yourself.** You have list_project_files, read_source_file, edit_source_file, restart_application. Never say "this needs a developer."
+9. **Fix bugs yourself when admin.** You have list_project_files, read_source_file, edit_source_file, run_shell_command, add_database_column, restart_application — all gated to admin users only. If the caller isn't admin, the tools will return "Admin access required" and you should tell the user to ask Woody. If the caller IS admin: read the file, make the edit, restart, confirm. Never say "this needs a developer" to an admin caller.
 10. **log_app_feedback** is SECONDARY only. If user asks you to DO something, do it first.
+11. **Vision (vision_describe_image)** — use to auto-classify untagged images, OCR floor plans / brochure pages, identify brands from shopfronts, write captions. Use task='structured' with applyToImageStudio=true to backfill description+category+tags in one shot.
 
 ## Response Format
 - **Tone**: Confident, warm, professional, with a dry British wit when the moment suits it. British English. Like a senior property partner who actually enjoys their day.
@@ -1209,6 +1210,48 @@ Drizzle: camelCase (JS) = snake_case (SQL). dealType = deal_type, assetClass = a
 
   setCache("systemPrompt", prompt, 10 * 60 * 1000);
   return prompt;
+}
+
+// Per-user personalisation block — appended to the system prompt so ChatBGP
+// opens with the right defaults for whoever is talking to it. Pulls name,
+// role, department from the users table and adds a department-keyed focus
+// hint. Cheap (single SELECT, cached 5 min per user).
+const PERSONALISATION_CACHE = new Map<string, { ctx: string; expires: number }>();
+const DEPARTMENT_FOCUS: Record<string, string> = {
+  "Investment": "Investment-led: deal pipeline, yields, vendor dynamics, off-market opportunities, capital sources. Lead with investment_tracker, comps with capital values, recent transactions. Suggest matched buyer mandates when properties come up.",
+  "Lease Advisory": "Lease Advisory-led: rent reviews, lease renewals, dilapidations, ITZA, net effective. Lead with PLA matters and lease_events. Comps default to leasing — Zone A rents, deal incentives, recent lettings.",
+  "London Retail": "Retail leasing-led: West End / City retail flow, requirements vs available units, target tenants, brand activity. Lead with brand intel and active requirements. Tenant mix recommendations should focus on physical retail / F&B / leisure.",
+  "London F&B": "F&B-led: restaurant operators, café concepts, premium licences, anchor tenants. Lead with brand stores, FHRS data, and recent F&B lettings. Target new entrants to UK and expanding operators.",
+  "National Leasing": "National retail leasing — multi-site mandates, schemes, anchor strategy. Cross-reference brand_stores for footprint, target tenants for expansion intent.",
+  "Tenant Rep": "Tenant rep-led: requirements vs market, broker briefs, viewing programmes. Lead with crm_requirements and matched units. Push proactive options.",
+  "Office / Corporate": "Office-led: corporate occupier requirements, rent affordability, lease structuring. Comps focused on office rents and incentives.",
+  "Development": "Development-led: planning, scheme viability, ERV walks, GDV. Lead with planning_apps and OS/HMLR data.",
+};
+
+async function getUserPersonalisationContext(userId: string): Promise<string> {
+  if (!userId) return "";
+  const cached = PERSONALISATION_CACHE.get(userId);
+  if (cached && cached.expires > Date.now()) return cached.ctx;
+  try {
+    const r = await pool.query(
+      `SELECT name, email, role, department, group_name FROM users WHERE id = $1`,
+      [userId],
+    );
+    if (r.rows.length === 0) return "";
+    const u = r.rows[0];
+    const firstName = (u.name || "").split(" ")[0] || u.name || "there";
+    const dept = u.department || u.group_name || "";
+    const focus = DEPARTMENT_FOCUS[dept] || "";
+    let ctx = `\n\n## You're chatting with ${u.name}${u.role ? ` (${u.role})` : ""}${dept ? ` — ${dept}` : ""}.\n`;
+    ctx += `Open with "${firstName}" not "user". `;
+    if (focus) ctx += `\n\n**Default focus for ${dept}:** ${focus}\n`;
+    ctx += `If their current question contradicts this focus, follow the question — these are just defaults to bias toward when the request is ambiguous.\n`;
+    PERSONALISATION_CACHE.set(userId, { ctx, expires: Date.now() + 5 * 60 * 1000 });
+    return ctx;
+  } catch (err: any) {
+    console.warn("[chatbgp] getUserPersonalisationContext failed:", err?.message);
+    return "";
+  }
 }
 
 async function getMemoryContext(userId: string): Promise<string> {
@@ -2896,79 +2939,79 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
     },
   });
 
-  if (process.env.CHATBGP_ALLOW_CODE_EDITS === "true") {
-    tools.push({
-      type: "function",
-      function: {
-        name: "edit_source_file",
-        description: "Edit or create a project source file. Use when the user asks to change the app — add features, fix bugs, change UI, modify backend logic. The change is applied immediately and the app restarts. All changes are logged for rollback. IMPORTANT: Read the file first before editing to understand the existing code.",
-        parameters: {
-          type: "object",
-          properties: {
-            filePath: { type: "string", description: "File path relative to project root, e.g. 'server/routes.ts'" },
-            action: { type: "string", enum: ["replace", "insert", "create", "append"], description: "replace: find and replace text. insert: insert text at a line number. create: create a new file. append: add text to end of file." },
-            searchText: { type: "string", description: "For 'replace' action: the exact text to find and replace. Must match the file content exactly." },
-            replaceText: { type: "string", description: "For 'replace' action: the new text to replace searchText with. For 'create'/'append': the full content to write." },
-            insertAtLine: { type: "number", description: "For 'insert' action: line number to insert before" },
-            insertText: { type: "string", description: "For 'insert' action: text to insert" },
-            content: { type: "string", description: "For 'create' action: full file content" },
-            description: { type: "string", description: "Brief description of what this change does, for the audit log" },
-          },
-          required: ["filePath", "action", "description"],
+  // Codebase write + shell + restart tools — always registered. The
+  // dispatcher gates each call on admin. Audit log lives in code_changes.
+  tools.push({
+    type: "function",
+    function: {
+      name: "edit_source_file",
+      description: "Edit or create a project source file. Use when the user asks to change the app — add features, fix bugs, change UI, modify backend logic. Admin-only. The change is applied immediately; call restart_application afterwards to load it. All changes are logged for rollback. IMPORTANT: Read the file first before editing to understand the existing code.",
+      parameters: {
+        type: "object",
+        properties: {
+          filePath: { type: "string", description: "File path relative to project root, e.g. 'server/routes.ts'" },
+          action: { type: "string", enum: ["replace", "insert", "create", "append"], description: "replace: find and replace text. insert: insert text at a line number. create: create a new file. append: add text to end of file." },
+          searchText: { type: "string", description: "For 'replace' action: the exact text to find and replace. Must match the file content exactly." },
+          replaceText: { type: "string", description: "For 'replace' action: the new text to replace searchText with. For 'create'/'append': the full content to write." },
+          insertAtLine: { type: "number", description: "For 'insert' action: line number to insert before" },
+          insertText: { type: "string", description: "For 'insert' action: text to insert" },
+          content: { type: "string", description: "For 'create' action: full file content" },
+          description: { type: "string", description: "Brief description of what this change does, for the audit log" },
         },
+        required: ["filePath", "action", "description"],
       },
-    });
+    },
+  });
 
-    tools.push({
-      type: "function",
-      function: {
-        name: "run_shell_command",
-        description: "Execute a shell command on the server. Use for database migrations (ALTER TABLE), installing packages (npm install), checking logs, or running scripts. Dangerous commands (rm -rf, git push --force, DROP DATABASE) are blocked. Output is captured and logged.",
-        parameters: {
-          type: "object",
-          properties: {
-            command: { type: "string", description: "The shell command to run. e.g. 'npm install lodash', 'psql $DATABASE_URL -c \"ALTER TABLE crm_contacts ADD COLUMN linkedin TEXT\"'" },
-            description: { type: "string", description: "Brief description of what this command does, for the audit log" },
-          },
-          required: ["command", "description"],
+  tools.push({
+    type: "function",
+    function: {
+      name: "run_shell_command",
+      description: "Execute a shell command on the server. Admin-only. Use for database migrations (ALTER TABLE), installing packages (npm install), checking logs, or running scripts. Dangerous commands (rm -rf, git push --force, DROP DATABASE) are blocked. Output is captured and logged.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string", description: "The shell command to run. e.g. 'npm install lodash', 'psql $DATABASE_URL -c \"ALTER TABLE crm_contacts ADD COLUMN linkedin TEXT\"'" },
+          description: { type: "string", description: "Brief description of what this command does, for the audit log" },
         },
+        required: ["command", "description"],
       },
-    });
+    },
+  });
 
-    tools.push({
-      type: "function",
-      function: {
-        name: "add_database_column",
-        description: "Add a new column to an existing database table. A safe, targeted tool for extending the CRM schema. The column will automatically appear in search results and API responses. Use when the user says 'add a field for X' or 'I need to track Y on deals/contacts/properties'.",
-        parameters: {
-          type: "object",
-          properties: {
-            tableName: { type: "string", enum: ["crm_deals", "crm_contacts", "crm_companies", "crm_properties", "investment_tracker", "available_units", "requirements", "crm_comps", "investment_comps", "crm_leads", "diary_entries"], description: "Database table to add the column to" },
-            columnName: { type: "string", description: "Column name in snake_case, e.g. 'linkedin_url', 'floor_area', 'aml_status'" },
-            columnType: { type: "string", enum: ["TEXT", "INTEGER", "REAL", "BOOLEAN", "TIMESTAMP", "JSONB"], description: "Data type for the column" },
-            defaultValue: { type: "string", description: "Optional default value. Use 'NULL' for nullable, or a specific value like 'true', '0', 'active'" },
-            description: { type: "string", description: "What this field is for — will be logged in the audit trail" },
-          },
-          required: ["tableName", "columnName", "columnType", "description"],
+  tools.push({
+    type: "function",
+    function: {
+      name: "add_database_column",
+      description: "Add a new column to an existing database table. Admin-only. A safe, targeted tool for extending the CRM schema. The column will automatically appear in search results and API responses. Use when the user says 'add a field for X' or 'I need to track Y on deals/contacts/properties'.",
+      parameters: {
+        type: "object",
+        properties: {
+          tableName: { type: "string", enum: ["crm_deals", "crm_contacts", "crm_companies", "crm_properties", "investment_tracker", "available_units", "requirements", "crm_comps", "investment_comps", "crm_leads", "diary_entries"], description: "Database table to add the column to" },
+          columnName: { type: "string", description: "Column name in snake_case, e.g. 'linkedin_url', 'floor_area', 'aml_status'" },
+          columnType: { type: "string", enum: ["TEXT", "INTEGER", "REAL", "BOOLEAN", "TIMESTAMP", "JSONB"], description: "Data type for the column" },
+          defaultValue: { type: "string", description: "Optional default value. Use 'NULL' for nullable, or a specific value like 'true', '0', 'active'" },
+          description: { type: "string", description: "What this field is for — will be logged in the audit trail" },
         },
+        required: ["tableName", "columnName", "columnType", "description"],
       },
-    });
+    },
+  });
 
-    tools.push({
-      type: "function",
-      function: {
-        name: "restart_application",
-        description: "Restart the BGP application after making code changes. Use after editing source files to apply the changes. The app typically restarts automatically, but use this if it doesn't or if the user reports issues.",
-        parameters: {
-          type: "object",
-          properties: {
-            reason: { type: "string", description: "Why the restart is needed" },
-          },
-          required: ["reason"],
+  tools.push({
+    type: "function",
+    function: {
+      name: "restart_application",
+      description: "Restart the BGP application after making code changes. Admin-only. Use after editing source files to apply the changes. The app typically restarts automatically, but use this if it doesn't or if the user reports issues.",
+      parameters: {
+        type: "object",
+        properties: {
+          reason: { type: "string", description: "Why the restart is needed" },
         },
+        required: ["reason"],
       },
-    });
-  }
+    },
+  });
 
   tools.push({
     type: "function",
@@ -3046,6 +3089,27 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           maxPages: { type: "number", description: "Maximum pages to capture (default: all). Use 1 for cover-only." },
         },
         required: ["driveId", "itemId", "fileName"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "vision_describe_image",
+      description: "Look at an image and return structured intelligence about it via Claude vision. Use to: classify untagged Image Studio rows, OCR floor plans / brochure pages / business rates letters, identify a brand from a shopfront photo, write a caption for a hero shot, or extract structured data from a document scan. Pass either an Image Studio image id (preferred — loads from the local file or fetches from SharePoint), a public https image URL, or base64 data. Optionally apply the result back to the row with applyToImageStudio:true (writes description / category / tags). Cheap (Sonnet) and fast.",
+      parameters: {
+        type: "object",
+        properties: {
+          imageStudioId: { type: "string", description: "Preferred — image_studio_images.id. Loads from disk or SharePoint." },
+          imageUrl: { type: "string", description: "Public https image URL (alternative to imageStudioId)." },
+          base64Data: { type: "string", description: "Base64-encoded image bytes (alternative)." },
+          mimeType: { type: "string", description: "Required if base64Data is used. e.g. 'image/jpeg', 'image/png'." },
+          task: { type: "string", enum: ["describe", "classify", "ocr", "tag", "structured"], description: "describe = free-text caption. classify = pick a category from the Image Studio list. ocr = extract all readable text. tag = generate 3-8 short tags. structured = describe + classify + ocr + tag in one pass (recommended for backfill jobs)." },
+          customPrompt: { type: "string", description: "Optional extra instructions appended to the task prompt — e.g. 'this is a UK retail unit, focus on the brand name and shopfront condition'." },
+          applyToImageStudio: { type: "boolean", description: "Default false. When true and imageStudioId is set, writes the result back to the row (description for describe/structured, category for classify/structured, tags for tag/structured, description ← OCR text for ocr)." },
+        },
+        required: ["task"],
       },
     },
   });
@@ -5237,10 +5301,27 @@ async function executeCrmToolRaw(
     }
   }
 
-  if (fnName === "edit_source_file") {
-    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
-      return { data: { success: false, error: "Code editing is disabled. Ask Woody to make the change via terminal Claude Code, or enable CHATBGP_ALLOW_CODE_EDITS=true in Railway." } };
+  // Inline helper: admin gate for the codebase-write / shell / restart family.
+  // Looks up the session user and bails if they're not flagged is_admin.
+  // Cheap (one cached query). Returns null on success, an error response on
+  // refusal — caller does `const fail = await ensureAdmin(); if (fail) return fail;`.
+  async function ensureAdmin(): Promise<{ data: { success: false; error: string } } | null> {
+    const userId = req.session?.userId || (req as any).tokenUserId;
+    if (!userId) return { data: { success: false, error: "Not authenticated." } };
+    try {
+      const r = await pool.query("SELECT is_admin FROM users WHERE id = $1", [userId]);
+      if (r.rows.length === 0 || !r.rows[0].is_admin) {
+        return { data: { success: false, error: "Admin access required for this tool." } };
+      }
+    } catch (e: any) {
+      return { data: { success: false, error: `Admin check failed: ${e?.message}` } };
     }
+    return null;
+  }
+
+  if (fnName === "edit_source_file") {
+    const fail = await ensureAdmin();
+    if (fail) return fail;
     const fs = await import("fs");
     const path = await import("path");
     const projectRoot = process.cwd();
@@ -5295,9 +5376,8 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "run_shell_command") {
-    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
-      return { data: { success: false, error: "Shell access is disabled. Ask Woody to run the command manually, or enable CHATBGP_ALLOW_CODE_EDITS=true in Railway." } };
-    }
+    const fail = await ensureAdmin();
+    if (fail) return fail;
     const { execSync } = await import("child_process");
     const command = fnArgs.command as string;
     const description = fnArgs.description || "Shell command via ChatBGP";
@@ -5341,9 +5421,8 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "add_database_column") {
-    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
-      return { data: { success: false, error: "Schema changes are disabled. Ask Woody to run the migration, or enable CHATBGP_ALLOW_CODE_EDITS=true in Railway." } };
-    }
+    const fail = await ensureAdmin();
+    if (fail) return fail;
     const tableName = fnArgs.tableName as string;
     const columnName = (fnArgs.columnName as string).replace(/[^a-z0-9_]/gi, "");
     const columnType = fnArgs.columnType as string;
@@ -5377,9 +5456,8 @@ async function executeCrmToolRaw(
   }
 
   if (fnName === "restart_application") {
-    if (process.env.CHATBGP_ALLOW_CODE_EDITS !== "true") {
-      return { data: { success: false, error: "Application restart is disabled. Ask Woody to redeploy via Railway." } };
-    }
+    const fail = await ensureAdmin();
+    if (fail) return fail;
     const { execSync } = await import("child_process");
     try {
       execSync("kill -USR2 1 2>/dev/null || true", { timeout: 5000 });
@@ -5616,6 +5694,135 @@ async function executeCrmToolRaw(
     } catch (err: any) {
       console.error("[chatbgp] Save to Image Studio error:", err?.message);
       return { data: { success: false, error: `Failed to save to Image Studio: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "vision_describe_image") {
+    try {
+      const task = String(fnArgs.task || "structured");
+      const applyToImageStudio = fnArgs.applyToImageStudio === true;
+      const customPrompt = fnArgs.customPrompt ? String(fnArgs.customPrompt) : "";
+      let mimeType = String(fnArgs.mimeType || "image/jpeg") as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+      let base64: string | null = null;
+      let imageStudioId: string | null = fnArgs.imageStudioId ? String(fnArgs.imageStudioId) : null;
+
+      // ── Source the image bytes ────────────────────────────────────────
+      if (imageStudioId) {
+        const r = await pool.query(
+          "SELECT local_path, mime_type, sharepoint_drive_id, sharepoint_item_id, thumbnail_data FROM image_studio_images WHERE id = $1",
+          [imageStudioId],
+        );
+        if (r.rows.length === 0) return { data: { success: false, error: "Image not found in image_studio_images." } };
+        const row = r.rows[0];
+        mimeType = (row.mime_type || "image/jpeg") as any;
+        const fs = await import("fs");
+        if (row.local_path && fs.existsSync(row.local_path)) {
+          base64 = fs.readFileSync(row.local_path).toString("base64");
+        } else if (row.sharepoint_drive_id && row.sharepoint_item_id) {
+          const token = await getValidMsToken(req);
+          if (!token) return { data: { success: false, error: "Local file missing and not signed into Microsoft to fetch from SharePoint." } };
+          const cr = await fetch(
+            `https://graph.microsoft.com/v1.0/drives/${row.sharepoint_drive_id}/items/${row.sharepoint_item_id}/content`,
+            { headers: { Authorization: `Bearer ${token}` }, redirect: "follow" },
+          );
+          if (!cr.ok) return { data: { success: false, error: `SharePoint fetch failed: HTTP ${cr.status}` } };
+          base64 = Buffer.from(await cr.arrayBuffer()).toString("base64");
+        } else if (row.thumbnail_data) {
+          // Last resort — thumbnail is small but classification still works.
+          base64 = String(row.thumbnail_data).replace(/^data:image\/\w+;base64,/, "");
+          mimeType = "image/jpeg";
+        } else {
+          return { data: { success: false, error: "Image bytes unavailable (no local file, no SharePoint refs, no thumbnail)." } };
+        }
+      } else if (fnArgs.imageUrl) {
+        const url = String(fnArgs.imageUrl);
+        if (!url.startsWith("https://")) return { data: { success: false, error: "imageUrl must be https://" } };
+        const resp = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(15000) });
+        if (!resp.ok) return { data: { success: false, error: `Image fetch failed: HTTP ${resp.status}` } };
+        const ctype = resp.headers.get("content-type") || "image/jpeg";
+        if (!ctype.startsWith("image/")) return { data: { success: false, error: `URL did not return an image (${ctype})` } };
+        mimeType = (ctype.split(";")[0].trim() as any);
+        base64 = Buffer.from(await resp.arrayBuffer()).toString("base64");
+      } else if (fnArgs.base64Data) {
+        base64 = String(fnArgs.base64Data).replace(/^data:image\/\w+;base64,/, "");
+      } else {
+        return { data: { success: false, error: "Provide imageStudioId, imageUrl, or base64Data." } };
+      }
+
+      // ── Build the prompt for the chosen task ──────────────────────────
+      const CATEGORIES = ["Exteriors", "Interiors", "Floor Plans", "Properties", "Areas", "Marketing", "Brands", "Generated", "Headshots", "Other"];
+      const taskPrompts: Record<string, string> = {
+        describe: "Write a single-paragraph factual description of this image — what it shows, key visible details, mood/condition. No flowery language.",
+        classify: `Classify this image into ONE of these categories: ${CATEGORIES.join(", ")}. Respond ONLY with the category name, nothing else.`,
+        ocr: "Extract all readable text from this image. Preserve line breaks and structure. If there is no text, respond with 'NO_TEXT'.",
+        tag: "Generate 3 to 8 short, lower-case tags describing this image (subject matter, location type, brand if visible, condition, style). Respond as a JSON array of strings, e.g. [\"shopfront\",\"belgravia\",\"luxury-retail\"].",
+        structured: `Analyse this image and respond ONLY with valid minified JSON, no other text, in this exact shape: {"description": "single paragraph factual description", "category": "ONE OF: ${CATEGORIES.join("|")}", "tags": ["tag1","tag2",...], "ocr": "all readable text or empty string"}. Tags 3-8, lower-case, hyphen-separated. OCR preserves line breaks with \\n.`,
+      };
+      const prompt = taskPrompts[task] + (customPrompt ? `\n\nAdditional context: ${customPrompt}` : "");
+
+      // ── Call Claude vision ────────────────────────────────────────────
+      const anthropic = getAnthropicClient(false);
+      const visionResp = await anthropic.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1500,
+        messages: [{
+          role: "user",
+          content: [
+            { type: "image", source: { type: "base64", media_type: mimeType, data: base64 } },
+            { type: "text", text: prompt },
+          ],
+        }],
+      });
+      const textBlock = visionResp.content.find(b => b.type === "text") as { type: "text"; text: string } | undefined;
+      const raw = textBlock?.text?.trim() || "";
+
+      // ── Parse the response ────────────────────────────────────────────
+      let parsed: any = { raw };
+      if (task === "structured") {
+        try {
+          const cleaned = raw.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+          parsed = JSON.parse(cleaned);
+        } catch (e: any) {
+          return { data: { success: false, error: `Couldn't parse structured response: ${e?.message}`, raw } };
+        }
+      } else if (task === "tag") {
+        try {
+          const cleaned = raw.replace(/^```json\s*/i, "").replace(/```$/, "").trim();
+          parsed = { tags: JSON.parse(cleaned) };
+        } catch {
+          parsed = { tags: raw.split(/[,\n]/).map(t => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean) };
+        }
+      } else if (task === "classify") {
+        const cat = CATEGORIES.find(c => c.toLowerCase() === raw.toLowerCase()) || raw;
+        parsed = { category: cat };
+      } else if (task === "ocr") {
+        parsed = { text: raw === "NO_TEXT" ? "" : raw };
+      } else {
+        parsed = { description: raw };
+      }
+
+      // ── Optionally write back to the image_studio_images row ─────────
+      let applied: string[] = [];
+      if (applyToImageStudio && imageStudioId) {
+        const sets: string[] = [];
+        const params: any[] = [];
+        if (parsed.description) { params.push(parsed.description); sets.push(`description = $${params.length}`); applied.push("description"); }
+        if (parsed.category && CATEGORIES.includes(parsed.category)) { params.push(parsed.category); sets.push(`category = $${params.length}`); applied.push("category"); }
+        if (Array.isArray(parsed.tags) && parsed.tags.length) { params.push(parsed.tags); sets.push(`tags = $${params.length}::text[]`); applied.push("tags"); }
+        if (task === "ocr" && parsed.text) { params.push(parsed.text); sets.push(`description = $${params.length}`); applied.push("description (OCR)"); }
+        if (sets.length) {
+          params.push(imageStudioId);
+          await pool.query(`UPDATE image_studio_images SET ${sets.join(", ")} WHERE id = $${params.length}`, params);
+        }
+      }
+
+      return {
+        data: { success: true, task, ...parsed, applied: applied.length ? applied : undefined },
+        ...(applied.length ? { action: { type: "image_studio_changed" as const } } : {}),
+      };
+    } catch (err: any) {
+      console.error("[chatbgp] vision_describe_image error:", err?.message);
+      return { data: { success: false, error: `Vision failed: ${err?.message}` } };
     }
   }
 
@@ -9979,12 +10186,13 @@ export function setupChatBGPRoutes(app: Express) {
       }
 
       const fileUserId = req.session.userId || (req as any).tokenUserId || "unknown";
-      const [knowledgeContext, fileMemoryContext, fileEmailCalContext, fileCrmCtx, businessLearnings] = await Promise.all([
+      const [knowledgeContext, fileMemoryContext, fileEmailCalContext, fileCrmCtx, businessLearnings, personalisation] = await Promise.all([
         withTimeout(getKnowledgeContext(), 8000, ""),
         withTimeout(getMemoryContext(fileUserId), 8000, ""),
         withTimeout(getEmailAndCalendarContext(req), 8000, ""),
         withTimeout(getCrmContext(), 8000, ""),
         withTimeout(getBusinessLearningsContext(), 8000, ""),
+        withTimeout(getUserPersonalisationContext(fileUserId), 2000, ""),
       ]);
       let systemPrompt: string;
       try {
@@ -9992,7 +10200,7 @@ export function setupChatBGPRoutes(app: Express) {
       } catch {
         systemPrompt = SYSTEM_PROMPT_FALLBACK;
       }
-      const systemContent = systemPrompt + knowledgeContext + businessLearnings + fileMemoryContext + fileEmailCalContext + fileCrmCtx;
+      const systemContent = systemPrompt + personalisation + knowledgeContext + businessLearnings + fileMemoryContext + fileEmailCalContext + fileCrmCtx;
 
       const completionOptions: any = {
         model: CHATBGP_MODEL,
@@ -10705,12 +10913,16 @@ export function setupChatBGPRoutes(app: Express) {
           withTimeout(getCrmContext(), 3000, ""),
           withTimeout(getKnowledgeContext(), 3000, ""),
           withTimeout(getEmailAndCalendarContext(req), 3000, ""),
+          withTimeout(getUserPersonalisationContext(userId), 1500, ""),
         ]);
         memoryContext = contextResults[0];
         businessLearnings2 = contextResults[1];
         crmCtx = contextResults[2];
         knowledgeContext2 = contextResults[3];
         emailCalContext = contextResults[4];
+        // Per-user personalisation prepends so role/department defaults are
+        // the first thing Claude sees after the static system prompt.
+        memoryContext = (contextResults[5] || "") + memoryContext;
         // Trim to stay under 120KB total context
         const totalLen = memoryContext.length + businessLearnings2.length + crmCtx.length + knowledgeContext2.length + emailCalContext.length;
         if (totalLen > 120000) {
@@ -11179,13 +11391,15 @@ export function setupChatBGPRoutes(app: Express) {
       // Load full contexts (same as main ChatBGP) so Excel add-in has the same reach
       sendProgress("Gathering intelligence...");
       const userId = req.session.userId!;
-      const [memoryContext, businessLearnings, crmCtx, knowledgeContext, emailCalContext] = await Promise.all([
+      const [memoryContextRaw, businessLearnings, crmCtx, knowledgeContext, emailCalContext, personalisation] = await Promise.all([
         withTimeout(getMemoryContext(userId), 5000, ""),
         withTimeout(getBusinessLearningsContext(), 5000, ""),
         withTimeout(getCrmContext(), 5000, ""),
         withTimeout(getKnowledgeContext(), 5000, ""),
         withTimeout(getEmailAndCalendarContext(req), 5000, ""),
+        withTimeout(getUserPersonalisationContext(userId), 1500, ""),
       ]);
+      const memoryContext = personalisation + memoryContextRaw;
 
       let baseSystemPrompt: string;
       try { baseSystemPrompt = await buildSystemPrompt(); } catch { baseSystemPrompt = SYSTEM_PROMPT_FALLBACK; }
