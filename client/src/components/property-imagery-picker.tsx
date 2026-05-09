@@ -24,7 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tabs, TabsList, TabsTrigger, TabsContent,
 } from "@/components/ui/tabs";
-import { Pin, EyeOff, Eye, RefreshCw, ImageIcon, Loader2, ExternalLink, Edit } from "lucide-react";
+import { Pin, EyeOff, Eye, RefreshCw, ImageIcon, Loader2, ExternalLink, Edit, Wand2 } from "lucide-react";
 import { getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -195,6 +195,10 @@ export function PropertyImageryPicker({ propertyId, kinds, pathwayRunId, matterI
                 candidates={data?.byKind[k] || []}
                 compact={compact}
                 onPatch={patch}
+                propertyId={propertyId}
+                pathwayRunId={pathwayRunId}
+                matterId={matterId}
+                onComposed={() => refetch()}
               />
             </TabsContent>
           ))}
@@ -205,26 +209,107 @@ export function PropertyImageryPicker({ propertyId, kinds, pathwayRunId, matterI
 }
 
 function KindPanel({
-  kind, candidates, compact, onPatch,
+  kind, candidates, compact, onPatch, propertyId, pathwayRunId, matterId, onComposed,
 }: {
   kind: ImageryKind;
   candidates: ImageryCandidate[];
   compact?: boolean;
   onPatch: (id: string, updates: any) => Promise<void>;
+  propertyId: string;
+  pathwayRunId?: string;
+  matterId?: string;
+  onComposed: () => void;
 }) {
-  if (candidates.length === 0) {
-    return (
-      <Card><CardContent className="p-6 text-center text-sm text-muted-foreground">
-        No {KIND_LABELS[kind].toLowerCase()} candidates yet — try Re-discover, or upload one via Image Studio.
-      </CardContent></Card>
-    );
-  }
+  const composable = kind === "location_plan" || kind === "comps_chart";
   const cols = compact ? "grid-cols-1" : "grid-cols-2 md:grid-cols-3";
   return (
-    <div className={`grid ${cols} gap-3`}>
-      {candidates.map((c) => (
-        <CandidateCard key={c.id} candidate={c} onPatch={onPatch} />
-      ))}
+    <div className="space-y-3">
+      {composable && (
+        <ComposeButton
+          kind={kind}
+          propertyId={propertyId}
+          pathwayRunId={pathwayRunId}
+          matterId={matterId}
+          onComposed={onComposed}
+          existingCount={candidates.length}
+        />
+      )}
+      {candidates.length === 0 ? (
+        <Card><CardContent className="p-6 text-center text-sm text-muted-foreground">
+          {composable
+            ? `No ${KIND_LABELS[kind].toLowerCase()} yet — click Generate above to compose one.`
+            : `No ${KIND_LABELS[kind].toLowerCase()} candidates yet — try Re-discover, or upload one via Image Studio.`}
+        </CardContent></Card>
+      ) : (
+        <div className={`grid ${cols} gap-3`}>
+          {candidates.map((c) => (
+            <CandidateCard key={c.id} candidate={c} onPatch={onPatch} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ComposeButton({
+  kind, propertyId, pathwayRunId, matterId, onComposed, existingCount,
+}: {
+  kind: ImageryKind;
+  propertyId: string;
+  pathwayRunId?: string;
+  matterId?: string;
+  onComposed: () => void;
+  existingCount: number;
+}) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const compose = async () => {
+    setBusy(true);
+    try {
+      let endpoint = "";
+      let body: any = { pathwayRunId, matterId };
+      if (kind === "location_plan") {
+        endpoint = `/api/property-imagery/${propertyId}/compose/location-plan`;
+        body = { ...body, zoom: 16, mapType: "hybrid" };
+      } else if (kind === "comps_chart") {
+        // For comps chart we need actual comp data — punt with friendly message
+        // until we wire it to crmComps / investmentComps server-side.
+        toast({
+          title: "Comps chart needs comps to plot",
+          description: "Link comps to this matter or run from a Pathway Stage 9 brief; bare-property comps-chart auto-pull lands next commit.",
+        });
+        setBusy(false);
+        return;
+      }
+      const res = await fetch(endpoint, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => null);
+        toast({ title: "Compose failed", description: e?.error || `${res.status}`, variant: "destructive" });
+        return;
+      }
+      toast({ title: `${KIND_LABELS[kind]} generated`, description: "Saved to Image Studio + this picker" });
+      onComposed();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center justify-between border rounded-md px-3 py-2 bg-muted/40">
+      <div className="text-xs text-muted-foreground">
+        {kind === "location_plan" && "Hybrid Google map at zoom 16, BGP red property pin. Layer markers (tube/anchors/comps) land in next commit."}
+        {kind === "comps_chart" && "Horizontal bars per comp, BGP-blue, subject highlighted. Auto-pulls from linked comps."}
+      </div>
+      <Button size="sm" variant="outline" onClick={compose} disabled={busy} className="gap-1.5 h-7">
+        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+        {existingCount > 0 ? "Generate another" : "Generate"}
+      </Button>
     </div>
   );
 }

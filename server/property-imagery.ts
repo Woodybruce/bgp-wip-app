@@ -38,6 +38,7 @@ import {
 } from "@shared/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { captureStreetViewForAddress } from "./image-studio";
+import { composeLocationPlan, composeCompsChart, type LocationPlanInput, type CompsChartInput } from "./property-imagery-composers";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -440,6 +441,51 @@ export function registerPropertyImageryRoutes(app: Express): void {
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || "delete failed" });
+    }
+  });
+
+  // ── Composers ────────────────────────────────────────────────────────────
+  /** Generate a location plan PNG (Google Static + property pin + optional markers). */
+  app.post("/api/property-imagery/:propertyId/compose/location-plan", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user?.id;
+      const result = await composeLocationPlan({
+        propertyId: req.params.propertyId,
+        zoom: req.body?.zoom,
+        mapType: req.body?.mapType,
+        markers: req.body?.markers,
+        size: req.body?.size,
+        generatedBy: userId,
+        pathwayRunId: req.body?.pathwayRunId,
+        matterId: req.body?.matterId,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "compose failed" });
+    }
+  });
+
+  /** Generate a comps chart PNG (horizontal bars, BGP-styled). */
+  app.post("/api/property-imagery/:propertyId/compose/comps-chart", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user?.id;
+      if (!Array.isArray(req.body?.comps) || req.body.comps.length === 0) {
+        return res.status(400).json({ error: "comps array required" });
+      }
+      const result = await composeCompsChart({
+        propertyId: req.params.propertyId,
+        comps: req.body.comps,
+        unit: req.body?.unit,
+        title: req.body?.title,
+        generatedBy: userId,
+        pathwayRunId: req.body?.pathwayRunId,
+        matterId: req.body?.matterId,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "compose failed" });
     }
   });
 }
