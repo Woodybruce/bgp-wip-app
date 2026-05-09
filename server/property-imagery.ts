@@ -40,8 +40,8 @@ import {
 } from "@shared/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { captureStreetViewForAddress } from "./image-studio";
-import { composeLocationPlan, composeCompsChart, composeErvWalk, composeCovenantCard, type LocationPlanInput, type CompsChartInput, type ErvWalkInput, type CovenantCardInput } from "./property-imagery-composers";
-import { plaMatters, crmCompanies, brandStores, type PlaMatter } from "@shared/schema";
+import { composeLocationPlan, composeCompsChart, composeErvWalk, composeCovenantCard } from "./property-imagery-composers";
+import { plaMatters, crmCompanies, brandStores } from "@shared/schema";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

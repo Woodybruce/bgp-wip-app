@@ -30,18 +30,16 @@ import { db } from "./db";
 import {
   crmProperties,
   crmCompanies,
-  crmContacts,
   crmComps,
   investmentComps,
   plaMatters,
   plaMatterComps,
-  plaMatterEvents,
   plaMatterWorkbooks,
   propertyPathwayRuns,
   availableUnits,
 } from "@shared/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { discoverImagery, getManifest, type ImageryKind, type ImageryCandidate } from "./property-imagery";
+import { discoverImagery, getManifest, type ImageryKind } from "./property-imagery";
 import { imageStudioImages } from "@shared/schema";
 import { uploadFileToSharePoint, SHAREPOINT_ROOT_FOLDER } from "./microsoft";
 import {
