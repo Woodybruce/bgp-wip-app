@@ -263,6 +263,10 @@ function ComposeButton({
 }) {
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
+  const [tubeLayer, setTubeLayer] = useState(true);
+  const [compsLayer, setCompsLayer] = useState(true);
+  const [mapType, setMapType] = useState<"hybrid" | "roadmap" | "satellite" | "terrain">("hybrid");
+  const [scope, setScope] = useState<"investment" | "leasing">("investment");
 
   const compose = async () => {
     setBusy(true);
@@ -271,16 +275,14 @@ function ComposeButton({
       let body: any = { pathwayRunId, matterId };
       if (kind === "location_plan") {
         endpoint = `/api/property-imagery/${propertyId}/compose/location-plan`;
-        body = { ...body, zoom: 16, mapType: "hybrid" };
+        const layers: string[] = [];
+        if (tubeLayer) layers.push("tube");
+        if (compsLayer) layers.push("comps");
+        body = { ...body, zoom: 16, mapType, layers };
       } else if (kind === "comps_chart") {
-        // For comps chart we need actual comp data — punt with friendly message
-        // until we wire it to crmComps / investmentComps server-side.
-        toast({
-          title: "Comps chart needs comps to plot",
-          description: "Link comps to this matter or run from a Pathway Stage 9 brief; bare-property comps-chart auto-pull lands next commit.",
-        });
-        setBusy(false);
-        return;
+        // Auto-pull from investment_comps + crm_comps in the same postcode area
+        endpoint = `/api/property-imagery/${propertyId}/compose/comps-chart-auto`;
+        body = { ...body, scope, limit: 8, monthsBack: 36 };
       }
       const res = await fetch(endpoint, {
         method: "POST",
@@ -293,7 +295,11 @@ function ComposeButton({
         toast({ title: "Compose failed", description: e?.error || `${res.status}`, variant: "destructive" });
         return;
       }
-      toast({ title: `${KIND_LABELS[kind]} generated`, description: "Saved to Image Studio + this picker" });
+      const data = await res.json().catch(() => ({}));
+      const desc = kind === "comps_chart" && data?.compsCount
+        ? `${data.compsCount} comps from area ${data.postcodePrefix}`
+        : "Saved to Image Studio + this picker";
+      toast({ title: `${KIND_LABELS[kind]} generated`, description: desc });
       onComposed();
     } finally {
       setBusy(false);
@@ -301,15 +307,43 @@ function ComposeButton({
   };
 
   return (
-    <div className="flex items-center justify-between border rounded-md px-3 py-2 bg-muted/40">
-      <div className="text-xs text-muted-foreground">
-        {kind === "location_plan" && "Hybrid Google map at zoom 16, BGP red property pin. Layer markers (tube/anchors/comps) land in next commit."}
-        {kind === "comps_chart" && "Horizontal bars per comp, BGP-blue, subject highlighted. Auto-pulls from linked comps."}
+    <div className="border rounded-md px-3 py-2 bg-muted/40 space-y-2">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-xs text-muted-foreground">
+          {kind === "location_plan" && "Google Static map + BGP-red subject pin + selected overlays."}
+          {kind === "comps_chart" && "Auto-pulls comps in same postcode area (last 36 months), horizontal bars."}
+        </div>
+        <Button size="sm" variant="outline" onClick={compose} disabled={busy} className="gap-1.5 h-7">
+          {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+          {existingCount > 0 ? "Generate another" : "Generate"}
+        </Button>
       </div>
-      <Button size="sm" variant="outline" onClick={compose} disabled={busy} className="gap-1.5 h-7">
-        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
-        {existingCount > 0 ? "Generate another" : "Generate"}
-      </Button>
+      {kind === "location_plan" && (
+        <div className="flex items-center gap-3 flex-wrap text-xs">
+          <select value={mapType} onChange={(e) => setMapType(e.target.value as any)} className="bg-background border rounded px-2 py-1">
+            <option value="hybrid">Hybrid (satellite + labels)</option>
+            <option value="satellite">Satellite</option>
+            <option value="terrain">Terrain</option>
+            <option value="roadmap">Roadmap</option>
+          </select>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={tubeLayer} onChange={(e) => setTubeLayer(e.target.checked)} />
+            <span>Tube/rail (TfL)</span>
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input type="checkbox" checked={compsLayer} onChange={(e) => setCompsLayer(e.target.checked)} />
+            <span>Investment comps</span>
+          </label>
+        </div>
+      )}
+      {kind === "comps_chart" && (
+        <div className="flex items-center gap-3 flex-wrap text-xs">
+          <select value={scope} onChange={(e) => setScope(e.target.value as any)} className="bg-background border rounded px-2 py-1">
+            <option value="investment">Investment comps (capital £/sqft)</option>
+            <option value="leasing">Leasing comps (rent £/sqft)</option>
+          </select>
+        </div>
+      )}
     </div>
   );
 }

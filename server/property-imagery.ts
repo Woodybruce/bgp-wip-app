@@ -34,6 +34,8 @@ import {
   propertyImageryAssets,
   imageStudioImages,
   crmProperties,
+  investmentComps,
+  crmComps,
   type PropertyImageryAsset,
 } from "@shared/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
@@ -449,18 +451,37 @@ export function registerPropertyImageryRoutes(app: Express): void {
   app.post("/api/property-imagery/:propertyId/compose/location-plan", requireAuth, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).user?.id;
+      const propertyId = req.params.propertyId;
+      const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
+      if (!property) return res.status(404).json({ error: "property not found" });
+
+      // Caller can request layer auto-population — we resolve the markers
+      // server-side rather than making the client ferry coordinates.
+      const layers = Array.isArray(req.body?.layers) ? req.body.layers as string[] : [];
+      let markers = Array.isArray(req.body?.markers) ? [...req.body.markers] : [];
+      if (layers.length > 0 && property.latitude && property.longitude) {
+        const lat = Number(property.latitude);
+        const lng = Number(property.longitude);
+        if (layers.includes("tube")) {
+          markers.push(...await fetchTubeMarkers(lat, lng));
+        }
+        if (layers.includes("comps")) {
+          markers.push(...await fetchCompMarkers(property.postcode));
+        }
+      }
+
       const result = await composeLocationPlan({
-        propertyId: req.params.propertyId,
+        propertyId,
         zoom: req.body?.zoom,
         mapType: req.body?.mapType,
-        markers: req.body?.markers,
+        markers,
         size: req.body?.size,
         generatedBy: userId,
         pathwayRunId: req.body?.pathwayRunId,
         matterId: req.body?.matterId,
       });
       if (!result.ok) return res.status(400).json(result);
-      return res.json(result);
+      return res.json({ ...result, markersUsed: markers.length });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || "compose failed" });
     }
@@ -488,4 +509,178 @@ export function registerPropertyImageryRoutes(app: Express): void {
       return res.status(500).json({ error: err?.message || "compose failed" });
     }
   });
+
+  /**
+   * Auto-pull comps from investment_comps + crm_comps based on locality
+   * (postcode prefix) and render the chart in one click. The most useful
+   * variant for Tom + Pete + Nick — they don't want to construct the
+   * comps array by hand.
+   */
+  app.post("/api/property-imagery/:propertyId/compose/comps-chart-auto", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).user?.id;
+      const propertyId = req.params.propertyId;
+      const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, propertyId));
+      if (!property) return res.status(404).json({ error: "property not found" });
+
+      // Use the supplied scope, or fall back to postcode-prefix matching
+      // (e.g. "W1" matches "W1A 1AB", "W1B 5DG" etc).
+      const scope = (req.body?.scope || "investment") as "investment" | "leasing" | "both";
+      const limit = Math.min(Number(req.body?.limit) || 8, 12);
+      const monthsBack = Number(req.body?.monthsBack) || 36;
+      const postcode = (property.postcode || "").trim().toUpperCase();
+      const pcPrefix = pcArea(postcode);
+      if (!pcPrefix) {
+        return res.status(400).json({ error: "property has no postcode — set one or supply explicit comps" });
+      }
+
+      const comps: Array<{ label: string; psf: number; isSubject?: boolean; note?: string; date?: string | null }> = [];
+
+      // Investment comps: pricePsf (capital values, not rent)
+      if (scope === "investment" || scope === "both") {
+        const rows = await db
+          .select()
+          .from(investmentComps)
+          .where(sql`${investmentComps.postalCode} ILIKE ${pcPrefix + "%"}`)
+          .limit(50);
+        const recent = rows
+          .filter((r) => (r.pricePsf ?? 0) > 0)
+          .filter((r) => withinMonths(r.transactionDate, monthsBack))
+          .sort((a, b) => (txDate(b.transactionDate)?.getTime() || 0) - (txDate(a.transactionDate)?.getTime() || 0))
+          .slice(0, limit);
+        for (const r of recent) {
+          comps.push({
+            label: r.propertyName || r.address || `Investment comp`,
+            psf: r.pricePsf!,
+            note: [r.transactionDate, r.capRate ? `${(r.capRate * 100).toFixed(2)}% cap` : null, r.buyer ? `→ ${r.buyer}` : null]
+              .filter(Boolean)
+              .join(" · "),
+            date: r.transactionDate,
+          });
+        }
+      }
+
+      // Leasing comps: rentPsfNia / rentPsfOverall — only if asked, and only
+      // if we don't already have investment comps (different psf basis).
+      if ((scope === "leasing" || (scope === "both" && comps.length === 0))) {
+        const rows = await db
+          .select()
+          .from(crmComps)
+          .where(sql`UPPER(REPLACE(COALESCE(${crmComps.postcode}, ''), ' ', '')) ILIKE ${pcPrefix.replace(/\s/g, "") + "%"}`)
+          .limit(50);
+        for (const r of rows.slice(0, limit)) {
+          const psfStr = r.rentPsfNia || r.rentPsfOverall || r.zoneARatePsf || "";
+          const psf = parseFloat(String(psfStr).replace(/[£,]/g, ""));
+          if (!isFinite(psf) || psf <= 0) continue;
+          comps.push({
+            label: r.name || r.tenant || "Leasing comp",
+            psf,
+            note: [r.completionDate, r.term, r.tenant].filter(Boolean).join(" · ").slice(0, 70),
+            date: r.completionDate || null,
+          });
+        }
+      }
+
+      if (comps.length === 0) {
+        return res.status(404).json({
+          error: `No comps found in postcode area "${pcPrefix}" within last ${monthsBack} months. Try expanding the search or supply explicit comps.`,
+        });
+      }
+
+      const result = await composeCompsChart({
+        propertyId,
+        comps,
+        unit: scope === "leasing" ? "£/sqft (rent)" : "£/sqft (capital)",
+        title: scope === "leasing"
+          ? `Leasing comparables — ${pcPrefix}`
+          : `Investment comparables — ${pcPrefix}`,
+        generatedBy: userId,
+        pathwayRunId: req.body?.pathwayRunId,
+        matterId: req.body?.matterId,
+      });
+      if (!result.ok) return res.status(400).json(result);
+      return res.json({ ...result, compsCount: comps.length, postcodePrefix: pcPrefix });
+    } catch (err: any) {
+      console.error("[property-imagery] comps-chart-auto error:", err);
+      return res.status(500).json({ error: err?.message || "auto-comps failed" });
+    }
+  });
+}
+
+/**
+ * Fetch nearby tube/rail/Overground stations via TfL StopPoint API.
+ * No auth needed for the public endpoint; rate-limited but fine for
+ * occasional location-plan composes.
+ */
+async function fetchTubeMarkers(lat: number, lng: number, radiusMeters = 600): Promise<Array<{ lat: number; lng: number; label: string; color: "blue"; title: string }>> {
+  try {
+    const stopTypes = ["NaptanMetroStation", "NaptanRailStation"].join(",");
+    const url = `https://api.tfl.gov.uk/StopPoint?lat=${lat}&lon=${lng}&radius=${radiusMeters}&stopTypes=${stopTypes}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    const stops = (data?.stopPoints || []).slice(0, 6);
+    return stops.map((s: any) => ({
+      lat: s.lat,
+      lng: s.lon,
+      label: "T",
+      color: "blue" as const,
+      title: s.commonName || "Station",
+    }));
+  } catch (err: any) {
+    console.warn("[property-imagery] tube markers failed:", err?.message);
+    return [];
+  }
+}
+
+/**
+ * Drop markers for nearby investment comps in the same postcode area
+ * (uses the same prefix-match as the comps-chart auto-pull).
+ */
+async function fetchCompMarkers(postcode: string | null | undefined): Promise<Array<{ lat: number; lng: number; label: string; color: "green"; title: string }>> {
+  try {
+    if (!postcode) return [];
+    const pc = postcode.trim().toUpperCase();
+    const m = pc.match(/^([A-Z]{1,2}\d{1,2})/);
+    if (!m) return [];
+    const prefix = m[1];
+    const rows = await db
+      .select()
+      .from(investmentComps)
+      .where(sql`${investmentComps.postalCode} ILIKE ${prefix + "%"} AND ${investmentComps.latitude} IS NOT NULL AND ${investmentComps.longitude} IS NOT NULL`)
+      .limit(8);
+    return rows.map((r) => ({
+      lat: r.latitude as number,
+      lng: r.longitude as number,
+      label: "C",
+      color: "green" as const,
+      title: r.propertyName || r.address || "Comp",
+    }));
+  } catch (err: any) {
+    console.warn("[property-imagery] comp markers failed:", err?.message);
+    return [];
+  }
+}
+
+function pcArea(pc: string): string | null {
+  // Take the outward code (e.g. "W1A 1AB" → "W1A", "SW1A 0AA" → "SW1A")
+  // and broaden to district level (e.g. "W1A" → "W1", "SW1A" → "SW1") so
+  // we catch enough comps. The query uses ILIKE prefix so this is fine.
+  if (!pc) return null;
+  const m = pc.match(/^([A-Z]{1,2}\d{1,2})/);
+  return m ? m[1] : null;
+}
+
+function txDate(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function withinMonths(s: string | null | undefined, months: number): boolean {
+  const d = txDate(s);
+  if (!d) return false;
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - months);
+  return d.getTime() >= cutoff.getTime();
 }
