@@ -26,7 +26,7 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Plus, Scale, Calendar as CalendarIcon, MapPin, AlertCircle, Loader2, X } from "lucide-react";
+import { Plus, Scale, Calendar as CalendarIcon, MapPin, AlertCircle, Loader2, X, FileText } from "lucide-react";
 import { getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
@@ -366,6 +366,7 @@ function MatterDetailView({ id }: { id: string }) {
   const [netEffectiveOpen, setNetEffectiveOpen] = useState(false);
   const [itzaOpen, setItzaOpen] = useState(false);
   const [devaluationOpen, setDevaluationOpen] = useState(false);
+  const [briefsOpen, setBriefsOpen] = useState(false);
 
   const { data, isLoading, refetch } = useQuery<MatterDetailResponse>({
     queryKey: ["/api/pla/matters", id],
@@ -438,6 +439,9 @@ function MatterDetailView({ id }: { id: string }) {
             </SelectContent>
           </Select>
           <div className="ml-auto flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setBriefsOpen(true)} className="gap-1.5">
+              <FileText className="h-3.5 w-3.5" /> Generate document
+            </Button>
             {matter.sharepointFolderUrl ? (
               <Button variant="outline" size="sm" asChild>
                 <a href={matter.sharepointFolderUrl} target="_blank" rel="noreferrer">SharePoint folder</a>
@@ -630,6 +634,12 @@ function MatterDetailView({ id }: { id: string }) {
         matterId={id}
         existingCompIds={new Set(comps.map((c) => c.compId))}
         onLinked={() => { setLinkCompOpen(false); refetch(); }}
+      />
+      <DocumentBriefsDialog
+        open={briefsOpen}
+        onClose={() => setBriefsOpen(false)}
+        propertyId={matter.propertyId}
+        matterId={id}
       />
       <NetEffectiveDialog
         open={netEffectiveOpen}
@@ -1349,6 +1359,134 @@ function AddEventDialog({
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={submit}>Add</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Document Briefs dialog ──────────────────────────────────────────────────
+
+type BriefMeta = {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  scope: string;
+  requiredImagery: string[];
+  optionalImagery: string[];
+};
+
+function DocumentBriefsDialog({
+  open, onClose, propertyId, matterId,
+}: { open: boolean; onClose: () => void; propertyId: string; matterId: string }) {
+  const { toast } = useToast();
+  const [briefs, setBriefs] = useState<BriefMeta[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [running, setRunning] = useState<string | null>(null);
+  const [output, setOutput] = useState<any | null>(null);
+
+  useMemo(() => {
+    if (!open) { setOutput(null); return; }
+    setLoading(true);
+    fetch("/api/document-briefs", { credentials: "include", headers: getAuthHeaders() })
+      .then((r) => r.json())
+      .then((data) => setBriefs(Array.isArray(data) ? data : []))
+      .finally(() => setLoading(false));
+  }, [open]);
+
+  const run = async (briefId: string) => {
+    setRunning(briefId);
+    setOutput(null);
+    try {
+      const res = await fetch(`/api/document-briefs/${briefId}/run`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ propertyId, matterId }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => null);
+        toast({ title: "Brief run failed", description: e?.error || `${res.status}`, variant: "destructive" });
+        return;
+      }
+      const data = await res.json();
+      setOutput(data);
+      const provCounts: Record<string, number> = {};
+      for (const p of Object.values(data.imageryProvenance || {})) {
+        const k = String(p);
+        provCounts[k] = (provCounts[k] || 0) + 1;
+      }
+      const summary = Object.entries(provCounts).map(([k, v]) => `${v} ${k}`).join(", ");
+      toast({ title: `${data.briefName} ready`, description: summary || "Brief built — Claude design renders next" });
+    } finally {
+      setRunning(null);
+    }
+  };
+
+  const applicable = briefs.filter((b) => b.scope === "matter" || b.scope === "property");
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Generate document</DialogTitle>
+          <DialogDescription>
+            Pick a brief — server pulls structured data + auto-resolves required imagery (or composes it on the fly), Claude design renders the final document. Briefs are TS-defined recipes shared across matters, properties and Pathway runs.
+          </DialogDescription>
+        </DialogHeader>
+        {loading ? (
+          <Skeleton className="h-32 w-full" />
+        ) : (
+          <div className="space-y-2 py-2">
+            {applicable.map((b) => (
+              <Card key={b.id} className="hover:border-primary/40 transition">
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className="font-medium">{b.name}</span>
+                        <Badge variant="outline" className="text-[10px]">{b.category}</Badge>
+                        <Badge variant="outline" className="text-[10px]">scope: {b.scope}</Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground">{b.description}</p>
+                      {b.requiredImagery.length > 0 && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Imagery: {b.requiredImagery.map((k) => k.replace(/_/g, " ")).join(" · ")}
+                          {b.optionalImagery.length > 0 && (
+                            <span className="opacity-60"> (optional: {b.optionalImagery.map((k) => k.replace(/_/g, " ")).join(", ")})</span>
+                          )}
+                        </p>
+                      )}
+                    </div>
+                    <Button size="sm" onClick={() => run(b.id)} disabled={running !== null}>
+                      {running === b.id ? <Loader2 className="h-4 w-4 animate-spin" /> : "Run"}
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+        {output && (
+          <Card className="bg-muted/40">
+            <CardContent className="p-4 space-y-2">
+              <div className="font-medium text-sm">{output.title}</div>
+              {output.subtitle && <div className="text-xs text-muted-foreground">{output.subtitle}</div>}
+              <div className="text-xs text-muted-foreground">
+                <span className="font-medium">Sections:</span> {output.sections.map((s: any) => s.heading).join(" · ")}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                <span className="font-medium">Imagery resolved:</span>{" "}
+                {Object.entries(output.imageryProvenance || {})
+                  .map(([k, p]) => `${k.replace(/_/g, " ")} (${p})`)
+                  .join(" · ")}
+              </div>
+              <div className="text-[10px] text-muted-foreground italic">
+                Brief built — Claude design integration to render PDF/Word lands next. Output JSON above is what Claude design will receive.
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </DialogContent>
     </Dialog>
   );
