@@ -12,8 +12,8 @@
  * what it learns. No more postcode-wide noise, no more "wrong McDonald's".
  */
 
-import { useState } from "react";
-import { Search, Loader2, MapPin, AlertCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Search, Loader2, MapPin, AlertCircle, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -46,22 +46,128 @@ interface Props {
   placeholder?: string;
 }
 
+type GoogleSuggestion = {
+  placeId: string;
+  description: string;
+  mainText: string;
+  secondaryText: string;
+  types: string[];
+};
+
 export function PropertyResolverBar({ onResolve, current, placeholder }: Props) {
   const { toast } = useToast();
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [candidates, setCandidates] = useState<ResolverCandidate[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Google Places autocomplete state
+  const [suggestions, setSuggestions] = useState<GoogleSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(-1);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Per-typing-session token so Google bills these as one autocomplete
+  // session — picking a suggestion charges only the place-details call,
+  // not each keystroke.
+  const sessionTokenRef = useRef<string>(crypto.randomUUID());
+  const inputWrapperRef = useRef<HTMLDivElement | null>(null);
 
-  async function submit() {
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (inputWrapperRef.current && !inputWrapperRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  // Debounced autocomplete fetch
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     const text = query.trim();
-    if (!text) return;
+    if (text.length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    // Skip if input looks like UPRN / postcode / title — those bypass
+    // Google and go to the resolver directly via Enter / Resolve button.
+    const explicitInput = inferInput(text);
+    if (explicitInput.kind !== "address") {
+      setSuggestions([]);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const resp = await fetch(
+          `/api/property-resolver/autocomplete?q=${encodeURIComponent(text)}&sessionToken=${sessionTokenRef.current}`,
+          { credentials: "include", headers: getAuthHeaders() },
+        );
+        if (!resp.ok) return;
+        const data = await resp.json();
+        setSuggestions(Array.isArray(data?.suggestions) ? data.suggestions : []);
+        setShowSuggestions(true);
+        setHighlightIdx(-1);
+      } catch {
+        // network blip; ignore — Resolve button still works
+      }
+    }, 250);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [query]);
+
+  async function pickGoogleSuggestion(s: GoogleSuggestion) {
+    setShowSuggestions(false);
+    setQuery(s.description);
     setLoading(true);
     setError(null);
     setCandidates(null);
     try {
-      // The resolver auto-detects the input shape — UPRN if all digits,
-      // postcode if it looks like one, otherwise address text.
+      // Google place_id → server-side place details → OS Places nearest →
+      // canonical UPRN. End-to-end pin-pointing.
+      const resp = await fetch("/api/property-resolver/resolve", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ kind: "googlePlace", placeId: s.placeId }),
+      });
+      const result = (await resp.json()) as ResolveResult;
+      if (result.kind === "resolved") {
+        onResolve(result.property.id, result.property as any);
+        toast({ title: "Property resolved", description: result.property.name });
+      } else if (result.kind === "candidates") {
+        setCandidates(result.candidates);
+      } else {
+        setError(result.reason || "Couldn't resolve to a UK address");
+      }
+      // New session for the next typing burst
+      sessionTokenRef.current = crypto.randomUUID();
+    } catch (err: any) {
+      setError(err?.message || "Resolver request failed");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submit() {
+    const text = query.trim();
+    if (!text) return;
+    // If suggestions are showing and one is highlighted, treat Enter as a pick
+    if (showSuggestions && highlightIdx >= 0 && suggestions[highlightIdx]) {
+      return pickGoogleSuggestion(suggestions[highlightIdx]);
+    }
+    // If suggestions are showing and we have any, pick the first by default
+    if (showSuggestions && suggestions.length > 0) {
+      return pickGoogleSuggestion(suggestions[0]);
+    }
+    setLoading(true);
+    setError(null);
+    setCandidates(null);
+    try {
+      // Bypass Google for UPRN / postcode / title — those go straight to the
+      // resolver. For free-text address with no Google suggestions, fall back
+      // to OS Places find via the address kind.
       const input = inferInput(text);
       const resp = await fetch("/api/property-resolver/resolve", {
         method: "POST",
@@ -82,6 +188,29 @@ export function PropertyResolverBar({ onResolve, current, placeholder }: Props) 
       setError(err?.message || "Resolver request failed");
     } finally {
       setLoading(false);
+    }
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (showSuggestions && suggestions.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setHighlightIdx((i) => Math.min(i + 1, suggestions.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHighlightIdx((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Escape") {
+        setShowSuggestions(false);
+        return;
+      }
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submit();
     }
   }
 
@@ -111,16 +240,43 @@ export function PropertyResolverBar({ onResolve, current, placeholder }: Props) 
   return (
     <>
       <div className="flex items-center gap-2 w-full">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <div className="relative flex-1" ref={inputWrapperRef}>
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground z-10" />
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && submit()}
+            onKeyDown={handleKeyDown}
+            onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
             placeholder={placeholder || "Address, postcode, UPRN, or title number…"}
             className="pl-9"
             disabled={loading}
+            autoComplete="off"
           />
+          {showSuggestions && suggestions.length > 0 && (
+            <div className="absolute top-full mt-1 left-0 right-0 bg-popover border border-border rounded shadow-lg z-50 max-h-80 overflow-y-auto">
+              <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-muted-foreground border-b">
+                Google Places — pick to resolve to canonical UK address
+              </div>
+              {suggestions.map((s, i) => (
+                <button
+                  key={s.placeId}
+                  onClick={() => pickGoogleSuggestion(s)}
+                  onMouseEnter={() => setHighlightIdx(i)}
+                  className={`w-full text-left px-3 py-2 flex items-start gap-2 transition ${
+                    i === highlightIdx ? "bg-accent" : "hover:bg-accent/60"
+                  }`}
+                >
+                  <Building2 className="h-3.5 w-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{s.mainText}</div>
+                    {s.secondaryText && (
+                      <div className="text-xs text-muted-foreground truncate">{s.secondaryText}</div>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <Button onClick={submit} disabled={loading || !query.trim()} size="sm">
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Resolve"}

@@ -40,6 +40,7 @@ export type PropertyInput =
   | { kind: "address"; text: string; postcode?: string }
   | { kind: "postcode"; postcode: string }
   | { kind: "latLng"; lat: number; lng: number }
+  | { kind: "googlePlace"; placeId: string }
   | { kind: "internalId"; id: string };
 
 export type CanonicalProperty = CrmProperty;
@@ -84,6 +85,7 @@ export async function resolveProperty(input: PropertyInput): Promise<ResolveResu
     case "latLng":          return resolveByLatLng(input.lat, input.lng);
     case "postcode":        return resolveByPostcode(input.postcode);
     case "address":         return resolveByAddress(input.text, input.postcode);
+    case "googlePlace":     return resolveByGooglePlace(input.placeId);
   }
 }
 
@@ -177,6 +179,49 @@ async function resolveByAddress(text: string, postcode?: string): Promise<Resolv
     candidates: await annotateCandidates(results),
     reason: "ambiguous address — user must pick",
   };
+}
+
+/**
+ * Google Places ID → resolver. Google Places Autocomplete is much better at
+ * "what address did the user actually mean" than OS Places — handles typos,
+ * partial postcodes, business names. Once Google gives us a confirmed
+ * place_id, we look up its precise lat/lng and feed that to OS Places nearest
+ * to get the canonical UK UPRN. End-to-end: typo-friendly UX → authoritative
+ * UK government identifier.
+ */
+async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
+  if (!process.env.GOOGLE_API_KEY) {
+    return { kind: "not_found", reason: "GOOGLE_API_KEY not configured" };
+  }
+  if (!placeId) return { kind: "not_found", reason: "empty placeId" };
+
+  // Fetch place details — fields restricted to what we need (cheap)
+  const fields = "geometry,formatted_address,place_id,address_components";
+  const url = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${encodeURIComponent(placeId)}&fields=${fields}&key=${process.env.GOOGLE_API_KEY}`;
+  const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!resp.ok) return { kind: "not_found", reason: `Google Place Details ${resp.status}` };
+  const data = await resp.json();
+  if (data.status !== "OK") {
+    return { kind: "not_found", reason: `Google Place Details: ${data.status} ${data.error_message || ""}` };
+  }
+  const result = data.result;
+  const lat = result?.geometry?.location?.lat;
+  const lng = result?.geometry?.location?.lng;
+  const formatted = result?.formatted_address;
+  const postcode = (result?.address_components || []).find((c: any) => c.types?.includes("postal_code"))?.long_name;
+  if (typeof lat !== "number" || typeof lng !== "number") {
+    return { kind: "not_found", reason: "Google Place Details returned no geometry" };
+  }
+  // Resolve via lat/lng — OS Places nearest gives us the canonical UPRN at
+  // this exact location.
+  const llResult = await resolveByLatLng(lat, lng);
+  // If lat/lng yields nothing (e.g. location outside UK), fall back to the
+  // formatted address through OS Places find.
+  if (llResult.kind === "not_found" && formatted) {
+    const fallback = await resolveByAddress(formatted, postcode || undefined);
+    if (fallback.kind !== "not_found") return fallback;
+  }
+  return llResult;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -290,6 +335,57 @@ export function registerPropertyResolverRoutes(app: Express): void {
   });
 
   /**
+   * Google Places Autocomplete proxy — the UI uses this to give live
+   * suggestions as the user types. Pinpointing the exact address with
+   * Google FIRST means we feed OS Places a precise lat/lng (via the
+   * googlePlace kind) and get back the canonical UPRN — instead of
+   * passing free-text into OS Places which is fuzzy-match-poor and
+   * often returns the wrong building.
+   *
+   * Bias the search to UK by default; callers can pass `country=` to
+   * relax. We restrict to addresses + establishments — most BGP
+   * lookups are buildings, not place names like "Westminster".
+   */
+  app.get("/api/property-resolver/autocomplete", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      if (!q || q.length < 3) return res.json({ suggestions: [] });
+      if (!process.env.GOOGLE_API_KEY) {
+        return res.status(503).json({ error: "GOOGLE_API_KEY not configured" });
+      }
+      const country = String(req.query.country || "uk").toLowerCase();
+      const sessionToken = String(req.query.sessionToken || "");
+      const params = new URLSearchParams({
+        input: q,
+        key: process.env.GOOGLE_API_KEY,
+        // address + establishment covers buildings + businesses; geocode
+        // alone strips named places like "Selfridges, Oxford St"
+        types: "geocode|establishment",
+        components: `country:${country}`,
+      });
+      if (sessionToken) params.set("sessiontoken", sessionToken);
+      const url = `https://maps.googleapis.com/maps/api/place/autocomplete/json?${params}`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      if (!resp.ok) return res.status(502).json({ error: `Google Autocomplete ${resp.status}` });
+      const data = await resp.json();
+      if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+        return res.status(502).json({ error: `Google: ${data.status} ${data.error_message || ""}` });
+      }
+      const suggestions = (data.predictions || []).map((p: any) => ({
+        placeId: p.place_id,
+        description: p.description,
+        mainText: p.structured_formatting?.main_text || p.description,
+        secondaryText: p.structured_formatting?.secondary_text || "",
+        types: p.types || [],
+      }));
+      return res.json({ suggestions });
+    } catch (err: any) {
+      console.error("[property-resolver] autocomplete error:", err);
+      return res.status(500).json({ error: err?.message || "autocomplete failed" });
+    }
+  });
+
+  /**
    * Confirm a candidate pick — the UI calls this after the user clicks
    * one of the candidates returned above. Server creates/links the row
    * and returns the canonical property. Idempotent.
@@ -323,6 +419,7 @@ function parseInput(body: any): PropertyInput | null {
     case "voaBaReference": return typeof body.reference === "string" ? { kind, reference: body.reference } : null;
     case "internalId":     return typeof body.id === "string" ? { kind, id: body.id } : null;
     case "postcode":       return typeof body.postcode === "string" ? { kind, postcode: body.postcode } : null;
+    case "googlePlace":    return typeof body.placeId === "string" ? { kind, placeId: body.placeId } : null;
     case "latLng":
       return typeof body.lat === "number" && typeof body.lng === "number"
         ? { kind, lat: body.lat, lng: body.lng }
