@@ -4981,13 +4981,17 @@ export function registerPropertyPathwayRoutes(app: Express) {
   });
 
   // List recent pathway runs
-  app.get("/api/property-pathway", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/property-pathway", requireAuth, async (req: Request, res: Response) => {
     try {
-      const runs = await db
+      const propertyId = typeof req.query.propertyId === "string" ? req.query.propertyId : undefined;
+      const q = db
         .select()
         .from(propertyPathwayRuns)
         .orderBy(desc(propertyPathwayRuns.updatedAt))
         .limit(50);
+      const runs = propertyId
+        ? await db.select().from(propertyPathwayRuns).where(eq(propertyPathwayRuns.propertyId, propertyId)).orderBy(desc(propertyPathwayRuns.updatedAt)).limit(20)
+        : await q;
       res.json(runs);
     } catch (err: any) {
       res.status(500).json({ error: err?.message });

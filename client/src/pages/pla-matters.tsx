@@ -607,6 +607,9 @@ function MatterDetailView({ id }: { id: string }) {
           />
         </CardContent></Card>
 
+        {/* Related Pathway runs — same property */}
+        <RelatedPathwayRuns propertyId={matter.propertyId} />
+
         {/* Notes */}
         <Card><CardContent className="p-4">
           <div className="text-sm font-medium mb-2">Notes</div>
@@ -1297,6 +1300,53 @@ function DevaluationDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * RelatedPathwayRuns — surfaces any Property Pathway runs for the same
+ * property anchor. Stops the matter being blind to a Pathway investigation
+ * already done on this asset.
+ */
+function RelatedPathwayRuns({ propertyId }: { propertyId: string }) {
+  const { data: runs = [] } = useQuery<Array<{ id: string; address: string; postcode: string | null; currentStage: number; updatedAt: string }>>({
+    queryKey: ["/api/property-pathway", propertyId],
+    enabled: !!propertyId,
+    queryFn: async () => {
+      const r = await fetch(`/api/property-pathway?propertyId=${propertyId}`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  if (runs.length === 0) return null;
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="text-sm font-medium mb-2 flex items-center gap-2">
+          <FileText className="h-3.5 w-3.5 text-muted-foreground" /> Related Pathway investigations · {runs.length}
+        </div>
+        <div className="space-y-1">
+          {runs.map((r) => (
+            <Link
+              key={r.id}
+              to={`/property-intelligence?tab=pathway&runId=${r.id}`}
+              className="flex items-center justify-between text-sm py-1.5 px-2 rounded hover:bg-accent border-b border-border last:border-0"
+            >
+              <span className="truncate">
+                {r.address}
+                {r.postcode && <span className="opacity-60"> · {r.postcode}</span>}
+              </span>
+              <span className="text-xs text-muted-foreground shrink-0 ml-2">
+                Stage {r.currentStage}/9 · {formatDate(r.updatedAt)}
+              </span>
+            </Link>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

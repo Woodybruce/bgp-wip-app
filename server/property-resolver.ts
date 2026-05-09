@@ -329,6 +329,36 @@ export async function enrichResolvedPropertyAsync(propertyId: string): Promise<{
       userId: null,
       skipPersist: false,
     } as any);
+
+    // VOA enrichment — if the local VOA SQLite snapshot has a row that
+    // looks like this property, stamp the BA reference. Free data, the
+    // crm_properties.voa_ba_reference field already exists.
+    if (prop.postcode && !prop.voaBaReference) {
+      try {
+        const { lookupVoaByPostcode, voaSqliteAvailable } = await import("./voa-sqlite");
+        if (voaSqliteAvailable()) {
+          const street = (addressStr || "").split(",")[0]?.trim();
+          const candidates = lookupVoaByPostcode(prop.postcode, street, 5);
+          // Best-match heuristic: candidate whose address starts with the
+          // property name (e.g. "12 Hanover Square" matches "12 Hanover Sq").
+          const propLower = (prop.name || "").toLowerCase();
+          const best = candidates.find((c) => {
+            if (!c.address) return false;
+            const addrLower = c.address.toLowerCase();
+            return addrLower.includes(propLower) || propLower.includes(addrLower.split(",")[0] || "");
+          }) || candidates[0];
+          if (best?.baRef) {
+            await db
+              .update(crmProperties)
+              .set({ voaBaReference: best.baRef })
+              .where(eq(crmProperties.id, propertyId));
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[property-resolver] VOA enrichment failed for ${propertyId}:`, err?.message);
+      }
+    }
+
     return { ok: true };
   } catch (err: any) {
     console.warn(`[property-resolver] enrichment failed for ${propertyId}:`, err?.message);

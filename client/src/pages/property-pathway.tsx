@@ -1540,6 +1540,9 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
         <WhyBuyCard runId={run.id} stage9={s9} onReload={onReload} propertyId={run.propertyId || null} />
       )}
 
+      {/* Related Lease Advisory matters — same property anchor */}
+      {run.propertyId && <RelatedLeaseAdvisoryMatters propertyId={run.propertyId} />}
+
     </div>
   );
 }
@@ -2417,6 +2420,49 @@ function fmtGBP(v?: number): string {
 function fmtPsf(v?: number): string {
   if (v == null || !Number.isFinite(v)) return "—";
   return `£${v.toFixed(v < 10 ? 2 : 0)}/sqft`;
+}
+
+/**
+ * RelatedLeaseAdvisoryMatters — lists any PLA matters that share the same
+ * canonical property as this Pathway run. Stops Pathway being blind to
+ * an existing rent-review / dilapidations / lease-renewal advisory matter
+ * already open against this asset.
+ */
+function RelatedLeaseAdvisoryMatters({ propertyId }: { propertyId: string }) {
+  const { data: matters = [] } = useQuery<Array<{ id: string; matterType: string; status: string; actingFor: string | null; updatedAt: string }>>({
+    queryKey: ["/api/pla/matters", { propertyId, includeClosed: true }],
+    queryFn: async () => {
+      const r = await fetch(`/api/pla/matters?propertyId=${propertyId}&includeClosed=true`, {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      });
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  if (matters.length === 0) return null;
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2"><Briefcase className="w-4 h-4" /> Related Lease Advisory matters · {matters.length}</CardTitle>
+      </CardHeader>
+      <CardContent className="text-sm space-y-1">
+        {matters.map((m) => (
+          <a
+            key={m.id}
+            href={`/pla/matters/${m.id}`}
+            className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-accent border-b border-border last:border-0"
+          >
+            <span className="capitalize">{m.matterType.replace(/_/g, " ")}</span>
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              {m.actingFor && <Badge variant="outline" className="capitalize">{m.actingFor}</Badge>}
+              <Badge variant="outline" className="capitalize">{m.status.replace(/_/g, " ")}</Badge>
+            </span>
+          </a>
+        ))}
+      </CardContent>
+    </Card>
+  );
 }
 
 function WhyBuyCard({ runId, stage9, onReload, propertyId }: { runId: string; stage9: any; onReload: () => void; propertyId: string | null }) {

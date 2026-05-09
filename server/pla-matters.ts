@@ -30,7 +30,9 @@ import {
   plaMatterEvents,
   plaMatterWorkbooks,
   crmProperties,
+  leaseEvents,
   type InsertPlaMatter,
+  type PlaMatter,
 } from "@shared/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { resolveProperty, type PropertyInput } from "./property-resolver";
@@ -44,6 +46,83 @@ const VALID_TYPES = new Set([
   "service_charge",
   "general",
 ]);
+
+/**
+ * Sync lease_events rows for a PLA matter — wipes any existing events
+ * we generated for this matter, then writes fresh ones for each dated
+ * field (review, break, expiry, notice deadlines). Property dashboards
+ * and the lease-events board pick these up automatically.
+ *
+ * Idempotent — re-runnable on every matter update without leaving
+ * orphan rows.
+ */
+async function syncLeaseEventsForMatter(matter: PlaMatter): Promise<void> {
+  try {
+    // Wipe-and-rewrite — simplest correct approach for date sync.
+    await db.delete(leaseEvents).where(eq(leaseEvents.matterId, matter.id));
+
+    const writes: Array<{
+      eventType: string;
+      eventDate: Date | null;
+      noticeDate?: Date | null;
+      notes: string;
+    }> = [];
+    if (matter.currentRentReviewDate) {
+      writes.push({
+        eventType: "rent_review",
+        eventDate: new Date(matter.currentRentReviewDate as any),
+        notes: `From PLA matter (${matter.matterType.replace(/_/g, " ")}, ${matter.status})`,
+      });
+    }
+    if (matter.breakDate) {
+      writes.push({
+        eventType: "break",
+        eventDate: new Date(matter.breakDate as any),
+        notes: `From PLA matter (${matter.matterType.replace(/_/g, " ")}, ${matter.status})`,
+      });
+    }
+    if (matter.expiryDate) {
+      writes.push({
+        eventType: "expiry",
+        eventDate: new Date(matter.expiryDate as any),
+        notes: `From PLA matter (${matter.matterType.replace(/_/g, " ")}, ${matter.status})`,
+      });
+    }
+    if (matter.counterNoticeDeadline) {
+      writes.push({
+        eventType: "counter_notice_deadline",
+        eventDate: new Date(matter.counterNoticeDeadline as any),
+        notes: `Counter-notice deadline · ${matter.matterType.replace(/_/g, " ")}, acting for ${matter.actingFor || "—"}`,
+      });
+    }
+
+    if (writes.length === 0) return;
+
+    // Look up the property for address/tenant context
+    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, matter.propertyId));
+    const addressStr = property?.name || (typeof property?.address === "string" ? property.address : (property?.address as any)?.formatted) || null;
+
+    for (const w of writes) {
+      await db.insert(leaseEvents).values({
+        propertyId: matter.propertyId,
+        address: addressStr,
+        eventType: w.eventType,
+        eventDate: w.eventDate,
+        noticeDate: w.noticeDate || null,
+        currentRent: matter.currentRent != null ? String(matter.currentRent) : null,
+        estimatedErv: matter.quotingRent != null ? String(matter.quotingRent) : null,
+        sourceEvidence: "PLA Matter",
+        status: matter.status === "closed" || matter.status === "settled" ? "Resolved" : "Monitoring",
+        notes: w.notes,
+        matterId: matter.id,
+        assignedTo: matter.leadUserId,
+      });
+    }
+  } catch (err: any) {
+    // Best-effort — never break the matter create/update on a sync failure
+    console.warn(`[pla-matters] lease_events sync failed for matter ${matter.id}:`, err?.message);
+  }
+}
 
 const VALID_STATUSES = new Set([
   "open",
@@ -150,6 +229,9 @@ export function registerPlaMattersRoutes(app: Express): void {
 
       const [created] = await db.insert(plaMatters).values(insert).returning();
 
+      // Sync lease_events so this matter's key dates surface on dashboards
+      syncLeaseEventsForMatter(created).catch(() => {});
+
       // Fire-and-forget: apply Tom + Pete's canonical Lease Advisory folder
       // template in SharePoint. We don't block the create response on this —
       // the UI refetches and picks up sharepointFolderUrl when it lands.
@@ -242,6 +324,8 @@ export function registerPlaMattersRoutes(app: Express): void {
         .where(eq(plaMatters.id, id))
         .returning();
       if (!updated) return res.status(404).json({ error: "matter not found" });
+      // Re-sync lease_events with the new dates / status
+      syncLeaseEventsForMatter(updated).catch(() => {});
       return res.json(updated);
     } catch (err: any) {
       console.error("[pla-matters] update error:", err);
@@ -259,6 +343,8 @@ export function registerPlaMattersRoutes(app: Express): void {
         .where(eq(plaMatters.id, id))
         .returning();
       if (!closed) return res.status(404).json({ error: "matter not found" });
+      // Re-sync lease_events to mark them Resolved
+      syncLeaseEventsForMatter(closed).catch(() => {});
       return res.json(closed);
     } catch (err: any) {
       console.error("[pla-matters] close error:", err);
