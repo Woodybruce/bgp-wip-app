@@ -3028,6 +3028,66 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
   tools.push({
     type: "function",
     function: {
+      name: "grep_codebase",
+      description: "Search the project for a regex pattern. Returns file:line + a snippet for each match. Excludes node_modules, .git, dist, build artefacts. Use this BEFORE read_source_file when you need to find where something is defined or referenced — much faster than guessing paths. Use \"\\b\" word boundaries for symbols. Case-insensitive by default.",
+      parameters: {
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: "Regex pattern to search for. Examples: 'export function buildSystemPrompt', 'eq\\(crmCompanies\\.id', '/api/property-imagery'." },
+          glob: { type: "string", description: "Optional path glob to scope the search, e.g. 'server/**/*.ts', 'client/src/pages/**', 'shared/schema.ts'. Defaults to whole repo." },
+          caseSensitive: { type: "boolean", description: "Default false (case-insensitive). Set true for exact matches." },
+          maxResults: { type: "number", description: "Max matches to return. Default 50, max 200." },
+        },
+        required: ["pattern"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "git_status",
+      description: "Show current branch, working-tree state (clean/dirty + per-file flags), upstream ahead/behind counts, and the last 10 commits. Use to understand what state the repo is in before / after edits.",
+      parameters: {
+        type: "object",
+        properties: {},
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "git_diff",
+      description: "Show a unified diff. Three modes: (1) no args → diff of working tree against HEAD (uncommitted changes). (2) branch only → diff of that branch against the current deploy branch (use to review a chatbgp/<date> branch before merging). (3) branch + file → diff for one file only. Truncated to 8KB if huge.",
+      parameters: {
+        type: "object",
+        properties: {
+          branch: { type: "string", description: "Optional branch to diff against current HEAD (e.g. 'chatbgp/2026-05-09'). Omit to see uncommitted working-tree changes." },
+          file: { type: "string", description: "Optional file path to scope the diff. Useful for reviewing a single file's changes on a multi-file branch." },
+        },
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "revert_chatbgp_commit",
+      description: "Drop the most recent commit from a chatbgp/<date> branch. Admin-only. Useful when you spot a typo or wrong edit you just made and want to back the branch up before merging. If the branch only has one commit, deletes the branch entirely. Cannot undo merges or touch any branch other than chatbgp/*. The dropped commit's hash is returned in case you need to recover it manually with `git reflog`.",
+      parameters: {
+        type: "object",
+        properties: {
+          branch: { type: "string", description: "chatbgp/* branch name to back up by one commit." },
+        },
+        required: ["branch"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
       name: "restart_application",
       description: "Restart the BGP application after making code changes. Admin-only. Use after editing source files to apply the changes. The app typically restarts automatically, but use this if it doesn't or if the user reports issues.",
       parameters: {
@@ -5602,6 +5662,228 @@ async function executeCrmToolRaw(
         message: `Merged ${branch}. ${fnArgs.restart === true ? "Restart signal sent." : "Run restart_application to load the changes."}`,
       },
     };
+  }
+
+  if (fnName === "grep_codebase") {
+    try {
+      const pattern = String(fnArgs.pattern || "");
+      if (!pattern) return { data: { success: false, error: "pattern required" } };
+      const glob = fnArgs.glob ? String(fnArgs.glob) : "";
+      const caseSensitive = fnArgs.caseSensitive === true;
+      const maxResults = Math.min(Math.max(Number(fnArgs.maxResults) || 50, 1), 200);
+
+      const { execFileSync } = await import("child_process");
+      const args: string[] = [
+        "-rn",                            // recursive, with line numbers
+        "--color=never",
+        "--exclude-dir=node_modules",
+        "--exclude-dir=.git",
+        "--exclude-dir=dist",
+        "--exclude-dir=build",
+        "--exclude-dir=.next",
+        "--exclude=*.lock",
+        "--exclude=*.map",
+      ];
+      if (!caseSensitive) args.push("-i");
+      args.push("-E");                     // ERE so the LLM can use ()|+? naturally
+      args.push("--", pattern);
+      // grep takes paths after the pattern. If glob given, pass as --include
+      // and search the repo root; otherwise just the repo root.
+      if (glob) {
+        // grep --include is a filename pattern, not a path glob. Translate
+        // common cases: "server/**/*.ts" → search server/ with --include='*.ts',
+        // "shared/schema.ts" → just that one file.
+        const m = glob.match(/^([^*?[\]]+?)\/(?:\*\*\/)?(\*[^/]*|[^/*]+)$/);
+        if (m && !m[2].includes("*") && !m[2].includes("?")) {
+          // Single-file shortcut.
+          args.push(m[1] + "/" + m[2]);
+        } else if (m) {
+          args.push(`--include=${m[2]}`);
+          args.push(m[1] || ".");
+        } else {
+          // Treat as a literal path or include pattern.
+          if (glob.includes("*") || glob.includes("?")) {
+            args.push(`--include=${glob}`);
+            args.push(".");
+          } else {
+            args.push(glob);
+          }
+        }
+      } else {
+        args.push(".");
+      }
+
+      let raw = "";
+      try {
+        raw = execFileSync("grep", args, { cwd: process.cwd(), encoding: "utf-8", maxBuffer: 1024 * 1024 }).toString();
+      } catch (err: any) {
+        // grep exits 1 on no matches — that's not an error for us.
+        if (err?.status === 1) return { data: { success: true, pattern, matches: [], count: 0, message: "No matches." } };
+        return { data: { success: false, error: `grep failed: ${err?.message?.substring(0, 500)}` } };
+      }
+
+      const lines = raw.split("\n").filter(Boolean);
+      const matches = lines.slice(0, maxResults).map(line => {
+        const m = line.match(/^([^:]+):(\d+):(.*)$/);
+        if (!m) return { file: "", lineNumber: 0, snippet: line.substring(0, 200) };
+        return {
+          file: m[1].replace(/^\.\//, ""),
+          lineNumber: parseInt(m[2], 10),
+          snippet: m[3].substring(0, 200),
+        };
+      });
+
+      return {
+        data: {
+          success: true,
+          pattern,
+          matches,
+          count: matches.length,
+          truncated: lines.length > maxResults,
+          totalUntruncated: lines.length,
+        },
+      };
+    } catch (err: any) {
+      return { data: { success: false, error: `grep_codebase failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "git_status") {
+    try {
+      const { execSync } = await import("child_process");
+      const exec = (cmd: string) => execSync(cmd, { cwd: process.cwd(), encoding: "utf-8" }).trim();
+
+      const branch = exec("git rev-parse --abbrev-ref HEAD");
+      let upstream = "";
+      let ahead = 0;
+      let behind = 0;
+      try {
+        upstream = exec("git rev-parse --abbrev-ref --symbolic-full-name @{u}");
+        const counts = exec(`git rev-list --left-right --count HEAD...${upstream}`);
+        const [a, b] = counts.split("\t").map(n => parseInt(n.trim(), 10) || 0);
+        ahead = a; behind = b;
+      } catch {} // no upstream is fine
+
+      const porcelain = exec("git status --porcelain=v1");
+      const dirty = porcelain.length > 0;
+      const changed = porcelain.split("\n").filter(Boolean).map(l => ({
+        flag: l.substring(0, 2).trim(),
+        file: l.substring(3),
+      }));
+
+      const log = exec("git log -10 --pretty=format:%H|%h|%s|%an|%ar")
+        .split("\n").filter(Boolean).map(l => {
+          const [hash, short, subject, author, when] = l.split("|");
+          return { hash, short, subject, author, when };
+        });
+
+      return {
+        data: {
+          success: true,
+          branch,
+          upstream: upstream || null,
+          ahead, behind,
+          dirty,
+          changedCount: changed.length,
+          changed: changed.slice(0, 30),
+          recentCommits: log,
+        },
+      };
+    } catch (err: any) {
+      return { data: { success: false, error: `git_status failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "git_diff") {
+    try {
+      const { execSync } = await import("child_process");
+      const branch = fnArgs.branch ? String(fnArgs.branch) : "";
+      const file = fnArgs.file ? String(fnArgs.file) : "";
+
+      let cmd: string;
+      if (branch) {
+        // Diff branch against current HEAD (so review of a chatbgp branch
+        // shows what would be merged in).
+        cmd = `git diff HEAD..${branch}`;
+        if (file) cmd += ` -- ${file}`;
+      } else {
+        cmd = "git diff HEAD";
+        if (file) cmd += ` -- ${file}`;
+      }
+
+      let out: string;
+      try {
+        out = execSync(cmd, { cwd: process.cwd(), encoding: "utf-8", maxBuffer: 4 * 1024 * 1024 }).toString();
+      } catch (err: any) {
+        return { data: { success: false, error: `git diff failed: ${err?.message?.substring(0, 500)}` } };
+      }
+      const truncated = out.length > 8000;
+      return {
+        data: {
+          success: true,
+          mode: branch ? "branch" : "working-tree",
+          branch: branch || null,
+          file: file || null,
+          diff: out.substring(0, 8000),
+          truncated,
+          message: out.length === 0 ? "No changes." : `Diff (${out.length} bytes${truncated ? ", truncated" : ""}).`,
+        },
+      };
+    } catch (err: any) {
+      return { data: { success: false, error: `git_diff failed: ${err?.message}` } };
+    }
+  }
+
+  if (fnName === "revert_chatbgp_commit") {
+    const fail = await ensureAdmin();
+    if (fail) return fail;
+    const branch = String(fnArgs.branch || "");
+    if (!branch.startsWith("chatbgp/")) {
+      return { data: { success: false, error: "Refusing — only chatbgp/* branches can be reverted via this tool." } };
+    }
+    try {
+      const { execSync } = await import("child_process");
+      const exec = (cmd: string) => execSync(cmd, { cwd: process.cwd(), encoding: "utf-8" }).trim();
+      const refName = `refs/heads/${branch}`;
+
+      const tipHash = exec(`git rev-parse --verify ${refName}`);
+      // How many commits is this branch ahead of HEAD?
+      const aheadStr = exec(`git rev-list --count HEAD..${refName}`);
+      const ahead = parseInt(aheadStr, 10) || 0;
+      if (ahead === 0) {
+        return { data: { success: false, error: `${branch} has no commits ahead of HEAD — nothing to revert.` } };
+      }
+
+      if (ahead === 1) {
+        // Only one commit on the branch — delete the ref entirely.
+        execSync(`git update-ref -d ${refName}`, { cwd: process.cwd() });
+        return {
+          data: {
+            success: true,
+            branch,
+            droppedHash: tipHash,
+            action: "branch-deleted",
+            message: `Deleted ${branch} (was the only commit). Reflog still holds ${tipHash.slice(0, 8)} if you need it.`,
+          },
+        };
+      }
+
+      // Move the branch ref back by one commit.
+      const newTip = exec(`git rev-parse ${refName}~1`);
+      execSync(`git update-ref ${refName} ${newTip} ${tipHash}`, { cwd: process.cwd() });
+      return {
+        data: {
+          success: true,
+          branch,
+          droppedHash: tipHash,
+          newTipHash: newTip,
+          action: "ref-moved",
+          message: `${branch} backed up by one. Dropped ${tipHash.slice(0, 8)}; new tip is ${newTip.slice(0, 8)}. Reflog still holds the dropped commit.`,
+        },
+      };
+    } catch (err: any) {
+      return { data: { success: false, error: `revert failed: ${err?.message}` } };
+    }
   }
 
   if (fnName === "generate_image") {
