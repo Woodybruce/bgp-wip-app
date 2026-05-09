@@ -1970,6 +1970,10 @@ function CreatePropertyDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const { toast } = useToast();
+  // When the address autocomplete resolves to a UPRN-canonical property
+  // that already exists in CRM, we capture its id here. Save then routes
+  // to it instead of creating a duplicate.
+  const [resolvedExistingId, setResolvedExistingId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: "",
     groupName: "Properties",
@@ -1986,6 +1990,20 @@ function CreatePropertyDialog({
 
   const createMutation = useMutation({
     mutationFn: async () => {
+      // Dedupe via resolver — if this address resolved to an existing
+      // UPRN-canonical property, update that one with the form's other
+      // fields instead of creating a duplicate.
+      if (resolvedExistingId) {
+        const updates: any = { ...formData };
+        if (updates.sqft) updates.sqft = parseFloat(updates.sqft);
+        else delete updates.sqft;
+        // Don't overwrite the resolver-set address with the same payload
+        Object.keys(updates).forEach((k) => {
+          if (updates[k] === "" || (Array.isArray(updates[k]) && updates[k].length === 0)) delete updates[k];
+        });
+        const res = await apiRequest("PATCH", `/api/crm/properties/${resolvedExistingId}`, updates);
+        return { ...(await res.json()), _existingId: resolvedExistingId };
+      }
       const payload: any = { ...formData };
       if (payload.sqft) payload.sqft = parseFloat(payload.sqft);
       else delete payload.sqft;
@@ -1995,11 +2013,17 @@ function CreatePropertyDialog({
       const res = await apiRequest("POST", "/api/crm/properties", payload);
       return res.json();
     },
-    onSuccess: () => {
-      toast({ title: "Property Created", description: `${formData.name} has been added.` });
+    onSuccess: (data: any) => {
+      toast({
+        title: data?._existingId ? "Property Updated" : "Property Created",
+        description: data?._existingId
+          ? `${formData.name} already existed — your changes have been merged in.`
+          : `${formData.name} has been added.`,
+      });
       queryClient.invalidateQueries({ queryKey: ["/api/crm/properties"] });
       onOpenChange(false);
       setFormData({ name: "", groupName: "Properties", status: "", assetClass: [], tenure: "", bgpEngagement: [], address: null, agent: "", sqft: "", notes: "", website: "" });
+      setResolvedExistingId(null);
     },
     onError: (err: any) => {
       toast({ title: "Error", description: err.message || "Failed to create property", variant: "destructive" });
@@ -2030,9 +2054,26 @@ function CreatePropertyDialog({
             <Label>Address</Label>
             <AddressAutocomplete
               value={formData.address ? addressToResult(formData.address) : null}
-              onChange={(result) => setFormData((p) => ({ ...p, address: resultToAddress(result) }))}
+              onChange={(result) => {
+                setFormData((p) => ({ ...p, address: resultToAddress(result) }));
+                // If the user clears the address, drop the resolver link too
+                if (!result) setResolvedExistingId(null);
+              }}
               placeholder="Search for an address..."
+              resolveProperty
+              onResolve={(propertyId) => setResolvedExistingId(propertyId)}
             />
+            {resolvedExistingId && (
+              <div className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5 bg-amber-50 dark:bg-amber-900/20 rounded px-2 py-1.5">
+                <span className="shrink-0">ℹ️</span>
+                <span>
+                  This address already has a CRM record. Saving will open it instead of creating a duplicate.{" "}
+                  <a href={`/properties/${resolvedExistingId}`} className="underline font-medium">
+                    Open now
+                  </a>
+                </span>
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">

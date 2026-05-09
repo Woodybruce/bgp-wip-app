@@ -645,7 +645,154 @@ const marketReportBrief: DocumentBrief = {
   },
 };
 
+const pitchDocumentBrief: DocumentBrief = {
+  id: "pitch-document",
+  name: "Pitch Document (New Instruction)",
+  description: "Why-BGP pitch for winning a new instruction — relevant comps, team experience, area expertise, fee proposal. The first document we send when prospecting.",
+  category: "marketing",
+  scope: "property",
+  requiredImagery: ["hero", "location_plan"],
+  optionalImagery: ["comps_chart", "secondary_external"],
+
+  async build(ctx) {
+    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, ctx.propertyId));
+    if (!property) throw new Error("property not found");
+
+    const { imagery, provenance } = await resolveImageryForBrief(
+      ctx,
+      pitchDocumentBrief.requiredImagery,
+      pitchDocumentBrief.optionalImagery,
+    );
+
+    return {
+      briefId: pitchDocumentBrief.id,
+      briefName: pitchDocumentBrief.name,
+      title: `BGP Pitch — ${property.name}`,
+      subtitle: property.postcode || undefined,
+      sections: [
+        { heading: "Cover", imageRef: "hero", data: { property } },
+        { heading: "Why BGP", bullets: [
+          "Hyper-local market knowledge — we live in the postcodes we work in",
+          "Single point of contact through the whole instruction",
+          "Real-time comp data and AI-driven evidence gathering",
+          "Proven track record: see comps below",
+        ] },
+        { heading: "Recent comparable evidence", imageRef: "comps_chart" },
+        { heading: "The opportunity / strategy", body: "BGP's view on what to do with this asset — letting strategy, refurb opportunity, or repositioning thesis." },
+        { heading: "Location", imageRef: "location_plan" },
+        { heading: "Fee proposal" },
+        { heading: "Next steps & team" },
+      ],
+      imagery,
+      imageryProvenance: provenance,
+      metadata: { property, generatedAt: new Date().toISOString() },
+      layoutHints: { pageCount: 6, toneOfVoice: "Confident, evidence-led, BGP voice" },
+    };
+  },
+};
+
+const tenantRepBriefBrief: DocumentBrief = {
+  id: "tenant-rep-brief",
+  name: "Tenant Rep Brief",
+  description: "Search proposal for a tenant client — requirements, longlist, shortlist, recommended next steps. Drives the tenant-rep instruction.",
+  category: "letting",
+  scope: "property",                        // anchored to subject area or one-of-the-shortlist
+  requiredImagery: ["location_plan"],
+  optionalImagery: ["hero", "comps_chart"],
+
+  async build(ctx) {
+    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, ctx.propertyId));
+    if (!property) throw new Error("property not found");
+
+    const { imagery, provenance } = await resolveImageryForBrief(
+      ctx,
+      tenantRepBriefBrief.requiredImagery,
+      tenantRepBriefBrief.optionalImagery,
+    );
+
+    return {
+      briefId: tenantRepBriefBrief.id,
+      briefName: tenantRepBriefBrief.name,
+      title: `Tenant Rep — Search in ${property.postcode || property.name}`,
+      sections: [
+        { heading: "Brief", body: "Client requirements — area, sq ft, budget, fit-out, timing, dealbreakers." },
+        { heading: "Market context", imageRef: "comps_chart" },
+        { heading: "Long list" },
+        { heading: "Short list" },
+        { heading: "Recommended target", imageRef: "hero" },
+        { heading: "Location", imageRef: "location_plan" },
+        { heading: "Fee proposal" },
+      ],
+      imagery,
+      imageryProvenance: provenance,
+      metadata: { property, generatedAt: new Date().toISOString() },
+      layoutHints: { pageCount: 5, toneOfVoice: "Advisory, action-oriented" },
+    };
+  },
+};
+
+const dilapidationsCoverBrief: DocumentBrief = {
+  id: "dilapidations-cover",
+  name: "Dilapidations Cover Note",
+  description: "Tom + Pete's dilapidations claim cover — schedule reference, total, key items, next steps. Front-page summary for the schedule.",
+  category: "advisory",
+  scope: "matter",
+  requiredImagery: ["hero"],
+  optionalImagery: ["floor_plan", "internal"],
+
+  async build(ctx) {
+    if (!ctx.matterId) throw new Error("dilapidations-cover requires matterId");
+    const [matter] = await db.select().from(plaMatters).where(eq(plaMatters.id, ctx.matterId));
+    if (!matter) throw new Error("matter not found");
+    const [property] = await db.select().from(crmProperties).where(eq(crmProperties.id, matter.propertyId));
+    if (!property) throw new Error("property not found");
+
+    const workbooks = await db
+      .select()
+      .from(plaMatterWorkbooks)
+      .where(eq(plaMatterWorkbooks.matterId, ctx.matterId))
+      .orderBy(desc(plaMatterWorkbooks.generatedAt));
+
+    const { imagery, provenance } = await resolveImageryForBrief(
+      { ...ctx, propertyId: matter.propertyId },
+      dilapidationsCoverBrief.requiredImagery,
+      dilapidationsCoverBrief.optionalImagery,
+    );
+
+    return {
+      briefId: dilapidationsCoverBrief.id,
+      briefName: dilapidationsCoverBrief.name,
+      title: `Dilapidations — ${property.name}`,
+      subtitle: matter.matterType === "dilapidations" ? "Dilapidations claim" : matter.matterType.replace(/_/g, " "),
+      sections: [
+        { heading: "Property", imageRef: "hero", data: { property, matter } },
+        { heading: "Lease summary", data: {
+          expiry: matter.expiryDate,
+          break: matter.breakDate,
+          actingFor: matter.actingFor,
+        } },
+        { heading: "Demise", imageRef: "floor_plan" },
+        { heading: "Schedule of dilapidations", body: "See attached schedule. Headline figure and category breakdown below." },
+        { heading: "Costings summary", data: {
+          workbooks: workbooks.filter((w) => w.kind === "comparables_schedule" || w.kind === "devaluation").map((w) => ({ kind: w.kind, summary: w.outputSummary })),
+        } },
+        { heading: "Recommended position" },
+        { heading: "Next steps" },
+      ],
+      imagery,
+      imageryProvenance: provenance,
+      metadata: { matter, property, workbooks, generatedAt: new Date().toISOString() },
+      layoutHints: { pageCount: 4, toneOfVoice: "Authoritative advisory" },
+    };
+  },
+};
+
 // ─── Registry ────────────────────────────────────────────────────────────────
+//
+// Adding a new brief: write the recipe above, register it here, restart.
+// Migrating a legacy /templates Word template: read the template's fields
+// + content, write the equivalent brief recipe (sections + imagery refs +
+// data pulls from the right tables), register, sunset the legacy version.
 
 export const BRIEF_REGISTRY: Record<string, DocumentBrief> = {
   "why-buy-memo": whyBuyBrief,
@@ -653,6 +800,9 @@ export const BRIEF_REGISTRY: Record<string, DocumentBrief> = {
   "heads-of-terms": headsOfTermsBrief,
   "rent-review-representations": rentReviewRepsBrief,
   "market-report": marketReportBrief,
+  "pitch-document": pitchDocumentBrief,
+  "tenant-rep-brief": tenantRepBriefBrief,
+  "dilapidations-cover": dilapidationsCoverBrief,
 };
 
 export function listBriefs(): Array<Omit<DocumentBrief, "build">> {

@@ -205,6 +205,64 @@ export async function resolveToUprn(freeText: string): Promise<OsPlacesResult | 
 }
 
 export function registerOSDataRoutes(app: Express): void {
+  // ─── NGD status check ────────────────────────────────────────────
+  // One-click verification that the current OS_PLACES_API_KEY tier
+  // supports NGD building polygons. Hits Trafalgar Square (known to have
+  // building polygons) and reports status. Use this to know whether the
+  // key needs upgrading to Premium / Partner.
+  app.get("/api/os/ngd-status", requireAuth, async (_req: Request, res: Response) => {
+    const key = getOsKey();
+    if (!key) {
+      return res.json({
+        configured: false,
+        recommendation: "Set OS_PLACES_API_KEY in env. Get a free Startup-tier key from os.uk/business-government/products/os-data-hub.",
+      });
+    }
+    const bbox = "-0.130,51.506,-0.124,51.510"; // Trafalgar Square
+    const ngdCrs = "filter-crs=http://www.opengis.net/def/crs/EPSG/0/4326";
+    const ngdUrl = `${NGD_BASE}/collections/bld-fts-buildingpart-1/items?${ngdCrs}&bbox=${bbox}&limit=10&key=${encodeURIComponent(key)}`;
+    try {
+      const resp = await fetch(ngdUrl, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(8000) });
+      if (resp.ok) {
+        const data = await resp.json();
+        const count = data?.features?.length ?? 0;
+        return res.json({
+          configured: true,
+          ngd: "ok",
+          featureCount: count,
+          message: count > 0
+            ? `NGD building polygons working — ${count} features at the Trafalgar Square test bbox.`
+            : "NGD endpoint accessible but returned no features at the test bbox (unexpected).",
+        });
+      }
+      const body = await resp.text().catch(() => "");
+      const wfsUrl = `${WFS_BASE}?service=WFS&version=2.0.0&request=GetFeature&typeNames=Topography_TopographicArea&outputFormat=GeoJSON&srsName=urn:ogc:def:crs:EPSG::4326&bbox=${bbox},urn:ogc:def:crs:EPSG::4326&count=10&key=${encodeURIComponent(key)}`;
+      let wfsStatus: string | undefined;
+      try {
+        const wfsResp = await fetch(wfsUrl, { signal: AbortSignal.timeout(8000) });
+        wfsStatus = wfsResp.ok ? "ok" : `${wfsResp.status}`;
+      } catch {
+        wfsStatus = "error";
+      }
+      return res.json({
+        configured: true,
+        ngd: "denied",
+        ngdStatus: resp.status,
+        ngdBody: body.slice(0, 200),
+        wfsStatus,
+        recommendation: resp.status === 401 || resp.status === 403
+          ? "Current OS API key tier doesn't include NGD building polygons. Upgrade to Premium or Partner access at os.uk/business-government/products/os-data-hub. Legacy WFS Topography_TopographicArea " + (wfsStatus === "ok" ? "still works as a fallback." : "isn't available either.")
+          : "Unexpected response from NGD. Check OS Data Hub status page.",
+      });
+    } catch (err: any) {
+      return res.json({
+        configured: true,
+        ngd: "error",
+        error: err?.message || "request failed",
+      });
+    }
+  });
+
   // ─── Building footprints ───────────────────────────────────────
   app.get("/api/os/buildings", requireAuth, async (req: Request, res: Response) => {
     try {
