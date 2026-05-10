@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
 import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
+import { RetailContextPlanEditor } from "@/components/retail-context-plan-editor";
 import { usePropertyContext } from "@/lib/property-context";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { Button } from "@/components/ui/button";
@@ -2783,12 +2784,14 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
   const { toast } = useToast();
   const [propertyId, setPropertyId] = useState<string | null>(null);
   const [propertyAddress, setPropertyAddress] = useState<string>("");
+  const [propertyPostcode, setPropertyPostcode] = useState<string>("");
   const [propertyLat, setPropertyLat] = useState<number | undefined>(undefined);
   const [propertyLng, setPropertyLng] = useState<number | undefined>(undefined);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [planEditorOpen, setPlanEditorOpen] = useState(false);
   const [pov, setPov] = useState<{ heading: number; pitch: number; fov: number }>({ heading: 0, pitch: 0, fov: 90 });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -2819,12 +2822,14 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
         const data = await r.json();
         const pid = data?.propertyId || data?.property_id || null;
         const addr = data?.address || "";
+        const pc = data?.postcode || "";
         const stage1 = data?.stageResults?.stage1 || data?.stage_results?.stage1 || {};
         const lat = stage1?.coordinates?.lat ?? data?.lat;
         const lng = stage1?.coordinates?.lng ?? data?.lng;
         if (!cancelled) {
           setPropertyId(pid);
           setPropertyAddress(addr);
+          setPropertyPostcode(pc);
           if (typeof lat === "number") setPropertyLat(lat);
           if (typeof lng === "number") setPropertyLng(lng);
         }
@@ -2839,14 +2844,15 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
     if (propertyId) loadManifest(propertyId);
   }, [propertyId, loadManifest]);
 
-  // Source / kind grouping for display. Hero is its own group; Street View
-  // means anything sourced from street_view; Map is google_static; everything
-  // else is "Other / gallery".
+  // Source / kind grouping for display. Hero is its own group; Plans
+  // covers the composed/generated (retail context plan, comps chart, etc.);
+  // Street View is photos from Google Street View; Map is google_static.
   const groups: Array<{ key: string; label: string; predicate: (a: Asset) => boolean }> = [
     { key: "hero", label: "Hero", predicate: (a) => a.kind === "hero" },
+    { key: "plans", label: "Plans (Retail Context, Comps, ERV)", predicate: (a) => a.kind !== "hero" && (a.kind === "location_plan" || a.kind === "comps_chart" || a.kind === "erv_walk" || a.kind === "covenant_card") },
     { key: "street_view", label: "Street View", predicate: (a) => a.kind !== "hero" && a.source === "street_view" },
     { key: "map", label: "Map view", predicate: (a) => a.kind !== "hero" && a.source === "google_static" },
-    { key: "other", label: "Other", predicate: (a) => a.kind !== "hero" && a.source !== "street_view" && a.source !== "google_static" },
+    { key: "other", label: "Other", predicate: (a) => a.kind !== "hero" && a.kind !== "location_plan" && a.kind !== "comps_chart" && a.kind !== "erv_walk" && a.kind !== "covenant_card" && a.source !== "street_view" && a.source !== "google_static" },
   ];
 
   const tagAsHero = async (assetId: string) => {
@@ -2958,6 +2964,9 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
           <Button size="sm" variant="outline" onClick={() => setCaptureOpen(true)} disabled={busy || !propertyAddress} className="h-7 text-xs">
             + New Street View
           </Button>
+          <Button size="sm" variant="outline" onClick={() => setPlanEditorOpen(true)} disabled={busy || !propertyId} className="h-7 text-xs">
+            + Retail Context Plan
+          </Button>
           <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={busy || !propertyId} className="h-7 text-xs">
             + Upload
           </Button>
@@ -3053,6 +3062,18 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
           )}
         </div>
       </div>
+
+      {planEditorOpen && propertyId && (
+        <RetailContextPlanEditor
+          propertyId={propertyId}
+          address={propertyAddress}
+          postcode={propertyPostcode}
+          initialLat={propertyLat}
+          initialLng={propertyLng}
+          onClose={() => setPlanEditorOpen(false)}
+          onChange={refresh}
+        />
+      )}
 
       {captureOpen && propertyAddress && (
         <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4" onClick={() => setCaptureOpen(false)}>
