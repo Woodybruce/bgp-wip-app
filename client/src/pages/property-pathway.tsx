@@ -2610,6 +2610,109 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
           </Button>
         </form>
       )}
+
+      <HouseStylePanel scope="why_buy" />
+    </div>
+  );
+}
+
+// Inline "House style" panel — free-text preferences that flow into every
+// Why Buy generation/iteration as prompt context. Same data is editable
+// via ChatBGP (sql_write into document_design_preferences) — keeping
+// Claude's design fluid rather than locking it down with rigid fields.
+function HouseStylePanel({ scope }: { scope: string }) {
+  const { toast } = useToast();
+  const [prefs, setPrefs] = useState<Array<{ id: string; preference: string; category: string | null; added_at: string }>>([]);
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const reload = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/document-design-preferences?scope=${encodeURIComponent(scope)}`);
+      if (!r.ok) return;
+      const data = await r.json();
+      setPrefs(data);
+    } catch { /* ignore */ }
+  }, [scope]);
+
+  useEffect(() => { if (open) reload(); }, [open, reload]);
+
+  const add = async () => {
+    if (!draft.trim()) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/document-design-preferences", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope, preference: draft.trim() }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      setDraft("");
+      await reload();
+      toast({ title: "House style updated", description: "Will apply to the next generation." });
+    } catch (e: any) {
+      toast({ title: "Couldn't save", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const disable = async (id: string) => {
+    try {
+      const r = await fetch(`/api/document-design-preferences/${id}/disable`, { method: "PATCH" });
+      if (!r.ok) throw new Error(await r.text());
+      await reload();
+    } catch (e: any) {
+      toast({ title: "Couldn't disable", description: e?.message || "", variant: "destructive" });
+    }
+  };
+
+  return (
+    <div className="border-t pt-2 mt-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-[11px] font-medium text-muted-foreground hover:text-foreground flex items-center gap-1.5"
+      >
+        <span>{open ? "▼" : "▶"}</span>
+        House style ({prefs.length})
+        <span className="text-[10px] opacity-60">— preferences applied to every deck</span>
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2">
+          {prefs.length === 0 ? (
+            <div className="text-[11px] text-muted-foreground italic">
+              No house preferences yet. Add one below — or ask ChatBGP "remember to ___ on Why Buy decks" and it will save the same way.
+            </div>
+          ) : (
+            <ul className="space-y-1">
+              {prefs.map((p) => (
+                <li key={p.id} className="flex items-start justify-between gap-2 text-[11px] bg-background/60 rounded px-2 py-1 border">
+                  <span className="flex-1">{p.preference}</span>
+                  <button
+                    onClick={() => disable(p.id)}
+                    className="text-muted-foreground hover:text-destructive text-[10px]"
+                    title="Remove this preference"
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <form onSubmit={(e) => { e.preventDefault(); add(); }} className="flex gap-1.5">
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="e.g. Always use the brochure hero on the cover"
+              className="flex-1 h-7 rounded-md border bg-background px-2 text-[11px]"
+              disabled={busy}
+            />
+            <Button size="sm" type="submit" disabled={busy || !draft.trim()} className="h-7 text-[11px] px-2">
+              Add
+            </Button>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

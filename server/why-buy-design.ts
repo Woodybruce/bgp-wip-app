@@ -11,6 +11,9 @@ import type { Express, Request, Response } from "express";
 import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { buildBrief } from "./why-buy-gamma";
+import { preferencesPromptFor } from "./document-preferences";
+
+const PREFERENCES_SCOPE = "why_buy";
 
 const BGP_BRAND = `
 BGP brand cues:
@@ -107,7 +110,14 @@ export function setupWhyBuyDesignRoutes(app: Express) {
     try {
       const userId = req.session?.userId || (req as any).tokenUserId || null;
       const built = await buildBrief(req.params.runId);
-      const userPrompt = `${BASE_PROMPT}\n\n--- DEAL BRIEF ---\n\n${built.brief}`;
+      // Active house preferences are injected as a prompt fragment so
+      // every generation respects accumulated team direction (Nick saying
+      // "always use the brochure hero on the cover" etc.) without
+      // hardcoding it. Empty string when there are no prefs yet.
+      const housePrefs = await preferencesPromptFor(PREFERENCES_SCOPE);
+      const userPrompt = housePrefs
+        ? `${BASE_PROMPT}\n\n${housePrefs}\n\n--- DEAL BRIEF ---\n\n${built.brief}`
+        : `${BASE_PROMPT}\n\n--- DEAL BRIEF ---\n\n${built.brief}`;
 
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -152,6 +162,12 @@ export function setupWhyBuyDesignRoutes(app: Express) {
       if (!baseRows.rows[0]) return res.status(400).json({ error: "No base design — generate first" });
       const baseHtml = baseRows.rows[0].html;
 
+      // House preferences also flow into iterations so the team's
+      // accumulated direction stays in scope as the deck evolves — the
+      // user's per-iteration prompt is layered on top.
+      const housePrefs = await preferencesPromptFor(PREFERENCES_SCOPE);
+      const prefsBlock = housePrefs ? `\n\n${housePrefs}\n` : "";
+
       const Anthropic = (await import("@anthropic-ai/sdk")).default;
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
       const msg = await client.messages.create({
@@ -159,7 +175,7 @@ export function setupWhyBuyDesignRoutes(app: Express) {
         max_tokens: 16000,
         messages: [{
           role: "user",
-          content: `Here is the current HTML of a BGP Why Buy investment deck:\n\n${baseHtml}\n\n---\n\nUser request: ${prompt}\n\nReturn the FULL updated HTML (single self-contained document, inline CSS, print-ready A4 landscape). Apply the user's change while keeping everything else intact. Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`,
+          content: `Here is the current HTML of a BGP Why Buy investment deck:\n\n${baseHtml}${prefsBlock}\n---\n\nUser request: ${prompt}\n\nReturn the FULL updated HTML (single self-contained document, inline CSS, print-ready A4 landscape). Apply the user's change while keeping everything else intact AND respecting the house preferences above. Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`,
         }],
       });
       const raw = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";

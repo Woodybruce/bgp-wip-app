@@ -42,6 +42,7 @@ import { registerGenericCrmRoutes } from "./generic-crm-routes";
 import { setupStripeIssuingRoutes } from "./stripe-issuing";
 import { setupHrRoutes } from "./hr-routes";
 import { setupWhyBuyDesignRoutes } from "./why-buy-design";
+import { setupDocumentPreferencesRoutes } from "./document-preferences";
 import { importTrlRequirement } from "./trl";
 import { searchPipnetRequirements, searchPipnetProperties, importPipnetRequirements } from "./pipnet";
 import { executeSeedSql } from "./seed";
@@ -5418,6 +5419,7 @@ ${t.description ? `<p>${t.description.replace(/\n/g, "<br/>")}</p>` : ""}
   setupStripeIssuingRoutes(app);
   setupHrRoutes(app);
   setupWhyBuyDesignRoutes(app);
+  setupDocumentPreferencesRoutes(app);
 
   return httpServer;
 }

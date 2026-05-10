@@ -61,6 +61,24 @@ explicit permission.
   (`shared/schema.ts`, migrations).
 - For UI changes, say explicitly when you haven't verified in a browser.
 
+## Document design preferences (the "house style" pattern)
+
+For Claude-driven document generation (Why Buy decks initially, Document
+Briefs / KYC Clouseau / PLA briefs over time), team preferences live in
+`document_design_preferences` (free-text rows, scope + preference).
+Active rows are prepended to the generation prompt as "House preferences"
+so Claude designs each doc fresh but follows accumulated direction.
+
+**Don't add rigid override fields.** When Nick (or anyone) says "always
+do X on the Why Buy deck", insert one row into
+`document_design_preferences` with scope='why_buy'. ChatBGP can do this
+via `sql_write` directly — no dedicated tool needed. The pattern
+generalises: pick a new scope string for a new doc type, fetch active
+prefs in the generation path, prepend to prompt.
+
+Helper: `server/document-preferences.ts` (`preferencesPromptFor(scope)`).
+UI: inline `HouseStylePanel` on Pathway → Why Buy section.
+
 ## Key files
 
 | Area | Path |

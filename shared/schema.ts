@@ -1887,6 +1887,25 @@ export const scheduledJobs = pgTable("scheduled_jobs", {
 
 export type ScheduledJob = typeof scheduledJobs.$inferSelect;
 
+// Free-text "house style" preferences that flow into Claude-driven document
+// generation (Why Buy decks, etc.). One row per preference, scoped by
+// document type. Active rows are prepended to the generation prompt so
+// Claude designs each doc fresh but follows accumulated team preferences.
+// Manageable via sql_write (ChatBGP) or the inline UI on the Pathway page.
+export const documentDesignPreferences = pgTable("document_design_preferences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  scope: text("scope").notNull(),                     // 'why_buy' | 'kyc_clouseau' | 'pla_brief' | ...
+  preference: text("preference").notNull(),           // free-text instruction
+  category: text("category"),                         // optional grouping: 'cover' | 'comps' | 'branding'
+  enabled: boolean("enabled").notNull().default(true),
+  addedBy: text("added_by"),
+  addedAt: timestamp("added_at").notNull().defaultNow(),
+  disabledAt: timestamp("disabled_at"),
+  notes: text("notes"),
+});
+
+export type DocumentDesignPreference = typeof documentDesignPreferences.$inferSelect;
+
 export const systemSettings = pgTable("system_settings", {
   key: text("key").primaryKey(),
   value: jsonb("value"),
