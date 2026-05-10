@@ -45,7 +45,14 @@ export function loadGoogleMaps(): Promise<boolean> {
     const script = document.createElement("script");
     // v=beta enables Map3DElement (Photorealistic 3D Tiles). The other
     // libraries we use (places, geometry) work the same on the beta channel.
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places,geometry&v=beta&loading=async`;
+    //
+    // NOTE: do NOT add `loading=async` here — the existing
+    // StreetViewPanoramaCapture component (and other call sites) use
+    // the synchronous `new google.maps.StreetViewPanorama(…)` pattern.
+    // `loading=async` forces all map constructors through
+    // `google.maps.importLibrary(…)`, which breaks them silently /
+    // makes them hang forever.
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places,geometry&v=beta`;
     script.async = true;
     script.onload = () => {
       loaded = true;
