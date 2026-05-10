@@ -138,10 +138,10 @@ async function resolveByVoaRef(reference: string): Promise<ResolveResult> {
     : { kind: "not_found", reason: `no CRM property with voa_ba_reference ${reference}` };
 }
 
-async function resolveByLatLng(lat: number, lng: number): Promise<ResolveResult> {
+async function resolveByLatLng(lat: number, lng: number, radius = 25): Promise<ResolveResult> {
   if (!isOsConfigured()) return { kind: "not_found", reason: "OS Places not configured" };
-  const results = await osPlacesNearest(lat, lng, 25);
-  if (results.length === 0) return { kind: "not_found", reason: "no UPRN within 25m of point" };
+  const results = await osPlacesNearest(lat, lng, radius);
+  if (results.length === 0) return { kind: "not_found", reason: `no UPRN within ${radius}m of point` };
   if (results.length === 1 && results[0].uprn) {
     return resolveByUprn(results[0].uprn);
   }
@@ -249,13 +249,25 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
     return { kind: "not_found", reason: "Google Place Details returned no geometry" };
   }
   // Resolve via lat/lng — OS Places nearest gives us the canonical UPRN at
-  // this exact location.
-  const llResult = await resolveByLatLng(lat, lng);
-  // If lat/lng yields nothing (e.g. location outside UK), fall back to the
-  // formatted address through OS Places find.
+  // this exact location. 50m radius (vs 25m default) because Google-derived
+  // address centroids on big West End buildings sit further from individual
+  // entrance UPRNs than the tight default.
+  const llResult = await resolveByLatLng(lat, lng, 50);
+  // If lat/lng yields nothing, go straight to OS Places with Google's
+  // formatted address — don't re-enter resolveByAddress, which would
+  // re-Google and end up back here in a loop.
   if (llResult.kind === "not_found" && formatted) {
-    const fallback = await resolveByAddress(formatted, postcode || undefined);
-    if (fallback.kind !== "not_found") return fallback;
+    const results = await osPlacesFind(formatted, 10);
+    if (results.length === 1 && results[0].uprn) {
+      return resolveByUprn(results[0].uprn);
+    }
+    if (results.length > 1) {
+      return {
+        kind: "candidates",
+        candidates: await annotateCandidates(results),
+        reason: "Google match → OS Places returned multiple — user must pick",
+      };
+    }
   }
   return llResult;
 }

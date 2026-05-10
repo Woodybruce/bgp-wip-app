@@ -552,12 +552,16 @@ function PropertySearch({ onSelectPostcode }: { onSelectPostcode: (pc: string, l
           rows.map(r => ({ ...r, _match: matchSource }));
 
         if (matchedFh.length > 0 || matchedLh.length > 0) {
-          fetchedFreeholds = [...tag(matchedFh, "uprn"), ...tag(contextFh, "postcode")];
-          fetchedLeaseholds = [...tag(matchedLh, "uprn"), ...tag(contextLh, "postcode")];
+          // UPRN-confirmed titles only — no postcode dilution. Every other
+          // freehold in this postcode is unrelated to this building.
+          fetchedFreeholds = tag(matchedFh, "uprn");
+          fetchedLeaseholds = tag(matchedLh, "uprn");
         } else if (fallbackFh.length > 0 || fallbackLh.length > 0) {
-          fetchedFreeholds = [...tag(fallbackFh, "street"), ...tag(contextFh, "postcode")];
-          fetchedLeaseholds = [...tag(fallbackLh, "street"), ...tag(contextLh, "postcode")];
+          // Street-number fallback when UPRN match failed — show only those.
+          fetchedFreeholds = tag(fallbackFh, "street");
+          fetchedLeaseholds = tag(fallbackLh, "street");
         } else {
+          // Last resort: postcode-wide. Clearly labelled, but it's all we have.
           fetchedFreeholds = tag(contextFh, "postcode");
           fetchedLeaseholds = tag(contextLh, "postcode");
         }

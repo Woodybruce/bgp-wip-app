@@ -493,7 +493,12 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
     if (i > 0) await sleep(300);
     uprnTitleResults.push(await pdFetch("uprn-title", { uprn: uprnsToQuery[i] }));
   }
-  const postcodeFreeholds = cleanPc ? await pdFetch("freeholds", { postcode: cleanPc }) : null;
+  // Skip the postcode-wide freeholds pull when the caller passed an explicit
+  // UPRN — they're on the resolver-canonical path and don't want postcode
+  // noise. Discovery-mode callers (LR page, Pathway investigator) still get
+  // the wider list because some of them surface it as a "neighbours" feature.
+  const skipPostcodeWide = !!(input.uprn && input.uprn.trim());
+  const postcodeFreeholds = (cleanPc && !skipPostcodeWide) ? await pdFetch("freeholds", { postcode: cleanPc }) : null;
 
   // Flatten uprn-title results — each may return { data: { freeholds: [], leaseholds: [] } }
   const matchedFreeholds: any[] = [];
