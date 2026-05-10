@@ -269,4 +269,135 @@ export function registerRetailContextPlanRoutes(app: Express) {
       res.status(500).json({ error: err?.message || "Failed to render retail context plan" });
     }
   });
+
+  // Export the live MAP BGP / Edozo view as a Retail Context Plan PNG —
+  // the user captures the map client-side via html-to-image, we frame it
+  // with a BGP title block + legend, save into image_studio_images +
+  // property_imagery_assets so it appears in the deck picker.
+  app.post("/api/retail-context-plan/export-from-map", requireAuth, async (req: any, res: Response) => {
+    try {
+      const { propertyId, address, postcode, imageDataUrl } = req.body as {
+        propertyId?: string | null;
+        address?: string;
+        postcode?: string;
+        imageDataUrl: string;
+      };
+      if (!imageDataUrl) return res.status(400).json({ error: "imageDataUrl required" });
+      const m = imageDataUrl.match(/^data:image\/(png|jpeg);base64,(.+)$/);
+      if (!m) return res.status(400).json({ error: "expected PNG / JPEG data URL" });
+      const mapBuffer = Buffer.from(m[2], "base64");
+
+      const meta = await sharp(mapBuffer).metadata();
+      const mapW = meta.width || 1600;
+      const mapH = meta.height || 1000;
+
+      const titleH = 90;
+      const legendH = 90;
+      const totalW = mapW;
+      const totalH = titleH + mapH + legendH;
+      const addressLine = (address || "").trim();
+      const postcodeLine = (postcode || "").trim();
+
+      const esc = (s: string) =>
+        s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+      const titleSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${titleH}" viewBox="0 0 ${totalW} ${titleH}">
+        <rect width="${totalW}" height="${titleH}" fill="#ffffff"/>
+        <text x="24" y="38" font-family="Georgia, 'Times New Roman', serif" font-size="26" font-weight="400" fill="#1F1F1F">BGP Retail Context Plan</text>
+        ${addressLine ? `<text x="24" y="64" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#1F1F1F">${esc(addressLine)}</text>` : ""}
+        ${postcodeLine ? `<text x="24" y="82" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#7A7A7A">${esc(postcodeLine)}</text>` : ""}
+        <line x1="0" y1="${titleH - 1}" x2="${totalW}" y2="${titleH - 1}" stroke="#E5E5E5" stroke-width="1"/>
+      </svg>`;
+
+      // Legend strip — same colours the editor / renderer use.
+      const legendItems = [
+        { label: "Subject", fill: "#FFFFFF", stroke: "#D03B26" },
+        { label: "Fashion & Comparison", fill: "#C9A961" },
+        { label: "Convenience", fill: "#7FA99B" },
+        { label: "Food & Beverage", fill: "#D08F6E" },
+        { label: "Services", fill: "#8B9DC3" },
+        { label: "Beauty", fill: "#B8A4B6" },
+        { label: "Vacant", fill: "#FF7D00" },
+      ];
+      let lx = 24;
+      const legendChunks = legendItems.map((it) => {
+        const swatchW = 14;
+        const labelW = it.label.length * 6.6 + 12;
+        const x = lx;
+        lx += swatchW + labelW + 18;
+        return `<g transform="translate(${x} 22)">
+          <rect width="${swatchW}" height="${swatchW}" fill="${it.fill}" stroke="${it.stroke || "#666"}" stroke-width="1"/>
+          <text x="${swatchW + 6}" y="11" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#1F1F1F">${esc(it.label)}</text>
+        </g>`;
+      });
+      const legendSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${legendH}" viewBox="0 0 ${totalW} ${legendH}">
+        <rect width="${totalW}" height="${legendH}" fill="#ffffff"/>
+        <line x1="0" y1="0" x2="${totalW}" y2="0" stroke="#E5E5E5" stroke-width="1"/>
+        ${legendChunks.join("\n")}
+        <text x="${totalW - 24}" y="22" font-family="Helvetica, Arial, sans-serif" font-size="10" fill="#7A7A7A" text-anchor="end">Bruce Gillingham Pollard</text>
+        <text x="${totalW - 24}" y="40" font-family="Helvetica, Arial, sans-serif" font-size="9" fill="#9E9E9E" text-anchor="end">Map data: OS NGD · Google · OpenStreetMap contributors</text>
+      </svg>`;
+
+      const composed = await sharp({
+        create: { width: totalW, height: totalH, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } },
+      })
+        .composite([
+          { input: Buffer.from(titleSvg), top: 0, left: 0 },
+          { input: mapBuffer, top: titleH, left: 0 },
+          { input: Buffer.from(legendSvg), top: titleH + mapH, left: 0 },
+        ])
+        .png()
+        .toBuffer();
+
+      // Persist
+      await fs.mkdir(IMAGE_DIR, { recursive: true });
+      const fileName = `retail-context-export-${crypto.randomUUID()}.png`;
+      const localPath = path.join(IMAGE_DIR, fileName);
+      await fs.writeFile(localPath, composed);
+      const thumb = await sharp(composed).resize(320, 240, { fit: "cover" }).jpeg({ quality: 80 }).toBuffer();
+
+      const userId = req.session?.userId || (req as any).tokenUserId || null;
+      const [row] = await db.insert(imageStudioImages).values({
+        fileName: `Retail Context Plan — ${addressLine || "exported"}`,
+        category: "Retail Context Plan",
+        tags: ["retail-context-plan", "exported-from-map"],
+        description: `Exported from MAP BGP / Edozo live view${addressLine ? ` — ${addressLine}` : ""}.`,
+        source: "retail-context-plan",
+        propertyId: propertyId || undefined,
+        address: addressLine,
+        mimeType: "image/png",
+        fileSize: composed.length,
+        width: totalW,
+        height: totalH,
+        thumbnailData: thumb.toString("base64"),
+        localPath,
+      }).returning();
+
+      let assetId: string | null = null;
+      if (propertyId) {
+        try {
+          const [asset] = await db.insert(propertyImageryAssets).values({
+            propertyId,
+            kind: "location_plan",
+            source: "generated_chart",
+            imageStudioId: row.id,
+            score: 0.9,
+            width: totalW,
+            height: totalH,
+            caption: `Retail context plan (exported from map)`,
+            generatedFrom: { kind: "retail_context_plan_export", from: "edozo_map", at: new Date().toISOString() } as any,
+            generatedBy: userId || undefined,
+          } as any).returning();
+          assetId = asset?.id ?? null;
+        } catch (err: any) {
+          console.warn("[retail-context-plan/export] asset link failed:", err?.message);
+        }
+      }
+
+      res.json({ success: true, imageId: row.id, assetId, width: totalW, height: totalH });
+    } catch (err: any) {
+      console.error("[retail-context-plan/export-from-map] error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to export plan" });
+    }
+  });
 }
