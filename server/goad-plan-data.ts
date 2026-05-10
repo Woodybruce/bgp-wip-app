@@ -379,8 +379,90 @@ export async function buildMappedUnits(args: PlanDataArgs & {
     }
   }
 
-  // 6. CRM overrides.
+  // 6. CRM enrichment — three flavours, all best-effort:
+  //    a) brand_stores: every brand store we've researched for a brand
+  //       profile is geocoded with lat/lng. Match by spatial proximity
+  //       to fill in named tenants where Places didn't (especially
+  //       luxury brands that aren't well-indexed in Places)
+  //    b) crm_property_tenants: explicit tenant attribution from the
+  //       CRM (we know who's actually in this building)
+  //    c) available_units: marketed-as-available signals confirmed
+  //       vacancy, overrides any "trading" guess
   let crmOverrides = 0;
+  // a) brand_stores within the bbox — cheap spatial filter
+  try {
+    const { rows: stores } = await pool.query(
+      `SELECT bs.name, bs.lat, bs.lng, bs.status, bs.store_type, c.name AS brand_name
+         FROM brand_stores bs
+    LEFT JOIN crm_companies c ON c.id = bs.brand_company_id
+        WHERE bs.lat IS NOT NULL AND bs.lng IS NOT NULL
+          AND bs.lat BETWEEN $1 AND $2
+          AND bs.lng BETWEEN $3 AND $4
+          AND COALESCE(bs.status, 'open') <> 'closed'`,
+      [bbox.south, bbox.north, bbox.west, bbox.east],
+    );
+    for (const s of stores) {
+      // Snap each brand store to the nearest unit within ~25m. If we
+      // find one and it doesn't already have a tenant name, assign the
+      // brand. Don't overwrite Places matches (which already had a
+      // confirmed name).
+      let bestUnit: MappedUnit | null = null;
+      let bestDist = Infinity;
+      for (const u of unitsByBaRef.values()) {
+        const d = distMeters({ lat: u.lat, lng: u.lng }, { lat: s.lat, lng: s.lng });
+        if (d < bestDist && d <= 25) { bestDist = d; bestUnit = u; }
+      }
+      if (bestUnit && (!bestUnit.tenantName || bestUnit.sourceLayers.indexOf("google_places") === -1)) {
+        bestUnit.tenantName = s.brand_name || s.name;
+        bestUnit.tradingStatus = "trading";
+        if (!bestUnit.sourceLayers.includes("brand_stores")) bestUnit.sourceLayers.push("brand_stores");
+        crmOverrides++;
+      }
+    }
+  } catch (err: any) {
+    console.warn("[goad-plan-data] brand_stores enrichment failed:", err?.message);
+  }
+
+  // b) crm_property_tenants — explicit tenant attribution per property.
+  // Joins through crm_properties to get the address/postcode, then
+  // matches units by postcode + name fuzzy match.
+  try {
+    const { rows: tenants } = await pool.query(
+      `SELECT cp.postcode AS postcode, cp.name AS property_name,
+              c.name AS tenant_name, t.unit_label, t.start_date, t.end_date
+         FROM crm_property_tenants t
+         JOIN crm_properties cp ON cp.id = t.property_id
+         JOIN crm_companies c ON c.id = t.tenant_company_id
+        WHERE cp.postcode IS NOT NULL
+          AND UPPER(REPLACE(cp.postcode, ' ', '')) IN (
+            SELECT DISTINCT UPPER(REPLACE(postcode, ' ', '')) FROM voa_geocode_cache WHERE ba_ref = ANY($1::text[])
+          )
+          AND (t.end_date IS NULL OR t.end_date > CURRENT_DATE)`,
+      [inBboxRefs],
+    );
+    for (const t of tenants) {
+      const tPostcode = String(t.postcode || "").toUpperCase().replace(/\s+/g, "");
+      const propName = String(t.property_name || "").toLowerCase();
+      for (const u of unitsByBaRef.values()) {
+        const uPostcode = String(u.postcode || "").toUpperCase().replace(/\s+/g, "");
+        if (uPostcode !== tPostcode) continue;
+        // Match by address overlap with the CRM property's name.
+        const uAddr = String(u.address || "").toLowerCase();
+        if (uAddr && propName && (uAddr.includes(propName) || propName.includes(uAddr.split(",")[0] || ""))) {
+          if (!u.tenantName || u.sourceLayers.indexOf("google_places") === -1) {
+            u.tenantName = t.tenant_name;
+            u.tradingStatus = "trading";
+            if (!u.sourceLayers.includes("crm_tenants")) u.sourceLayers.push("crm_tenants");
+            crmOverrides++;
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn("[goad-plan-data] crm_property_tenants enrichment failed:", err?.message);
+  }
+
+  // c) available_units → vacancy override (existing behaviour, unchanged)
   try {
     const { rows: crm } = await pool.query(
       `SELECT cp.id, cp.name, cp.address, cp.postcode, au.marketing_status

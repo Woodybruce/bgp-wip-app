@@ -298,23 +298,6 @@ export function RetailContextPlanEditor({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Button size="sm" onClick={regenerate} disabled={busy !== null || !centre} className="h-8 flex-1">
-                {busy === "render" && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
-                Regenerate
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={useThisVersion}
-                disabled={busy !== null || !previewAssetId}
-                className="h-8"
-                title={previewAssetId ? "Pin this version as the canonical retail context plan" : "Regenerate first"}
-              >
-                {busy === "pin" && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
-                Use this version
-              </Button>
-            </div>
           </div>
 
           {/* Right: preview */}
@@ -360,6 +343,31 @@ export function RetailContextPlanEditor({
               </div>
             )}
           </div>
+        </div>
+
+        {/* Sticky action footer — always visible regardless of how
+            far the controls column is scrolled. */}
+        <div className="border-t bg-background px-4 py-3 flex items-center justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={useThisVersion}
+            disabled={busy !== null || !previewAssetId}
+            className="h-9"
+            title={previewAssetId ? "Pin this version as the canonical retail context plan" : "Regenerate first"}
+          >
+            {busy === "pin" && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
+            Use this version
+          </Button>
+          <Button
+            size="sm"
+            onClick={regenerate}
+            disabled={busy !== null || !centre}
+            className="h-9 min-w-[140px]"
+          >
+            {busy === "render" && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
+            Regenerate
+          </Button>
         </div>
       </div>
     </div>
