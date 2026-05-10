@@ -1,20 +1,25 @@
 /**
  * HMLR-direct property lookups — replaces PropertyData postcode-level
- * wrappers with deterministic queries against locally-ingested HMLR data:
+ * wrappers with deterministic queries against locally-ingested HMLR data.
  *
- *   - hmlr_title_polygons (INSPIRE / National Polygon Service)
- *     Loaded by scripts/ingest-hmlr-polygons.ts
- *   - hmlr_proprietors (CCOD + OCOD)
- *     Loaded by scripts/ingest-hmlr-proprietors.ts
+ * Free datasets:
+ *   - hmlr_proprietors (CCOD + OCOD): title_number → proprietor +
+ *     property_address text. Loaded by ingest-hmlr-proprietors.ts.
+ *     PRIMARY ownership lookup path: postcode_normalised + property_address
+ *     ILIKE on the resolved street number.
+ *   - hmlr_title_polygons (INSPIRE Index Polygons, free): polygons WITHOUT
+ *     title_number. Useful for map visualisation. Loaded by
+ *     ingest-hmlr-polygons.ts. Not used for ownership lookups in v1
+ *     because the free INSPIRE dataset has no title link.
  *
- * The whole point: given a lat/lng (or a UPRN we can resolve to lat/lng),
- * return the EXACT title(s) and proprietor(s) for THAT building. No
- * postcode noise, no API quota, no throttling. Sub-10ms queries.
+ * Paid (not used unless we subscribe):
+ *   - National Polygon Service (£20k/yr): polygons WITH title_number.
+ *     Would let us do point-in-polygon → title. Skipped for now.
+ *   - Registered Leases (fee-dependent): leasehold title detail. Maybe v2.
  *
- * This is the primary path. PropertyData stays as a fallback for:
- *   - Properties not yet ingested (rare once monthly refresh is running)
- *   - Properties outside England & Wales (Scotland uses Registers of
- *     Scotland — different format, separate ingest)
+ * PropertyData stays as a fallback for:
+ *   - Properties outside CCOD/OCOD coverage (residential, very fresh
+ *     registrations, Scotland)
  *   - Paid title register PDF orders (the actual deeds document)
  *   - Valuation tools (PropertyData blends multiple sources)
  */
@@ -42,29 +47,45 @@ export interface HmlrProprietor {
   tenure: string | null;
 }
 
-let _hmlrAvailable: boolean | null = null;
+let _hmlrPolygonsAvailable: boolean | null = null;
+let _hmlrProprietorsAvailable: boolean | null = null;
 
-/**
- * Returns true if hmlr_title_polygons has at least one row. Cached after
- * the first call. When false, callers should fall back to PropertyData.
- */
+/** True iff hmlr_title_polygons has rows. Polygons are optional in v1. */
 export async function isHmlrPolygonsAvailable(): Promise<boolean> {
-  if (_hmlrAvailable !== null) return _hmlrAvailable;
+  if (_hmlrPolygonsAvailable !== null) return _hmlrPolygonsAvailable;
   try {
     const r = await pool.query<{ exists: boolean }>(
       `SELECT EXISTS (SELECT 1 FROM hmlr_title_polygons LIMIT 1) AS exists`,
     );
-    _hmlrAvailable = !!r.rows[0]?.exists;
+    _hmlrPolygonsAvailable = !!r.rows[0]?.exists;
   } catch {
-    // Table doesn't exist yet (migration pending) — treat as unavailable.
-    _hmlrAvailable = false;
+    _hmlrPolygonsAvailable = false;
   }
-  return _hmlrAvailable;
+  return _hmlrPolygonsAvailable;
+}
+
+/**
+ * True iff hmlr_proprietors has rows — i.e. CCOD/OCOD has been ingested.
+ * This is the gate for the address-match-based ownership lookup. When
+ * false, callers fall through to PropertyData.
+ */
+export async function isHmlrProprietorsAvailable(): Promise<boolean> {
+  if (_hmlrProprietorsAvailable !== null) return _hmlrProprietorsAvailable;
+  try {
+    const r = await pool.query<{ exists: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM hmlr_proprietors LIMIT 1) AS exists`,
+    );
+    _hmlrProprietorsAvailable = !!r.rows[0]?.exists;
+  } catch {
+    _hmlrProprietorsAvailable = false;
+  }
+  return _hmlrProprietorsAvailable;
 }
 
 /** Force re-check on the next call (e.g. after a fresh ingest run). */
-export function resetHmlrPolygonsAvailableCache(): void {
-  _hmlrAvailable = null;
+export function resetHmlrAvailabilityCache(): void {
+  _hmlrPolygonsAvailable = null;
+  _hmlrProprietorsAvailable = null;
 }
 
 /**
@@ -175,8 +196,118 @@ export async function findTitlesAndProprietorsAtPoint(lat: number, lng: number):
 }
 
 /**
+ * PRIMARY OWNERSHIP LOOKUP (free path) — match a resolved property to
+ * CCOD/OCOD by postcode + street number. Returns rows grouped by
+ * title_number, each with its proprietor list.
+ *
+ * postcode is normalised internally (uppercase, no whitespace).
+ * streetNumber should be like "18" or "18-22" — extracted by the caller
+ * from the resolved address.
+ *
+ * Range matching: when streetNumber is "18-22", we match any CCOD row
+ * whose property_address starts with 18, 19, 20, 21 or 22 — covers the
+ * case where HMLR has split a multi-unit block into per-door titles.
+ */
+export async function findProprietorsByAddress(
+  postcode: string,
+  streetNumber: string | null,
+): Promise<Array<{ titleNumber: string; tenure: string | null; propertyAddress: string | null; pricePaid: string | null; dateProprietorAdded: string | null; proprietors: HmlrProprietor[] }>> {
+  if (!postcode) return [];
+  const pcNormalised = postcode.toUpperCase().replace(/\s+/g, "").trim();
+  if (!pcNormalised) return [];
+
+  // Build the address filter. If we have a street number we do an ILIKE
+  // anchored at the start of property_address — fast with the trigram
+  // index. If we have a range like "18-22", we expand to the individual
+  // numbers in the range.
+  let addressFilter = "TRUE";
+  const params: any[] = [pcNormalised];
+  if (streetNumber) {
+    const sn = streetNumber.toLowerCase();
+    const range = sn.match(/^(\d+)([a-z]?)-(\d+)([a-z]?)$/);
+    const numbers: string[] = [];
+    if (range) {
+      const lo = parseInt(range[1], 10);
+      const hi = parseInt(range[3], 10);
+      // Push the canonical "18-22" form first plus each individual number.
+      numbers.push(sn);
+      for (let n = lo; n <= hi; n++) numbers.push(String(n));
+    } else {
+      numbers.push(sn);
+    }
+    const placeholders: string[] = [];
+    for (const n of numbers) {
+      params.push(`${n} %`);
+      placeholders.push(`lower(property_address) LIKE $${params.length}`);
+      params.push(`${n}, %`);
+      placeholders.push(`lower(property_address) LIKE $${params.length}`);
+      params.push(`${n}-%`);
+      placeholders.push(`lower(property_address) LIKE $${params.length}`);
+    }
+    addressFilter = `(${placeholders.join(" OR ")})`;
+  }
+
+  const r = await pool.query<any>(
+    `SELECT title_number, dataset, proprietor_position,
+            proprietor_name, proprietor_category,
+            company_registration_no, country_incorporated,
+            proprietor_address_1, proprietor_address_2, proprietor_address_3,
+            to_char(date_proprietor_added, 'YYYY-MM-DD') AS date_proprietor_added,
+            price_paid, property_address, tenure
+       FROM hmlr_proprietors
+      WHERE postcode_normalised = $1
+        AND ${addressFilter}
+      ORDER BY title_number, dataset, proprietor_position
+      LIMIT 50`,
+    params,
+  );
+
+  // Group by title_number — one title can have up to 4 proprietor rows
+  // across the two datasets.
+  const byTitle = new Map<string, ReturnType<typeof groupTemplate>>();
+  function groupTemplate() {
+    return {
+      titleNumber: "",
+      tenure: null as string | null,
+      propertyAddress: null as string | null,
+      pricePaid: null as string | null,
+      dateProprietorAdded: null as string | null,
+      proprietors: [] as HmlrProprietor[],
+    };
+  }
+  for (const row of r.rows) {
+    const tn = row.title_number;
+    if (!byTitle.has(tn)) {
+      byTitle.set(tn, {
+        titleNumber: tn,
+        tenure: row.tenure || null,
+        propertyAddress: row.property_address || null,
+        pricePaid: row.price_paid || null,
+        dateProprietorAdded: row.date_proprietor_added || null,
+        proprietors: [],
+      });
+    }
+    byTitle.get(tn)!.proprietors.push({
+      titleNumber: tn,
+      dataset: row.dataset,
+      position: row.proprietor_position,
+      proprietorName: row.proprietor_name,
+      proprietorCategory: row.proprietor_category,
+      companyRegistrationNo: row.company_registration_no,
+      countryIncorporated: row.country_incorporated,
+      proprietorAddress: [row.proprietor_address_1, row.proprietor_address_2, row.proprietor_address_3].filter(Boolean).join(", ") || null,
+      dateProprietorAdded: row.date_proprietor_added,
+      pricePaid: row.price_paid,
+      propertyAddress: row.property_address,
+      tenure: row.tenure,
+    });
+  }
+  return Array.from(byTitle.values());
+}
+
+/**
  * Last-completed ingest run for a dataset — used by the admin UI / health
- * check to show "Title polygons last refreshed: 3 days ago".
+ * check to show "CCOD last refreshed: 3 days ago".
  */
 export async function lastIngestRun(dataset: string): Promise<{ startedAt: string; finishedAt: string | null; rowsProcessed: number; status: string } | null> {
   const r = await pool.query<any>(

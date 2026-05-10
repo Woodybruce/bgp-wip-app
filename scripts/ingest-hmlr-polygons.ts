@@ -1,27 +1,29 @@
 /**
- * Ingest HMLR INSPIRE / National Polygon Service polygons into Postgres.
+ * Ingest HMLR INSPIRE Index Polygons (free) or National Polygon Service
+ * (paid, £20k/yr) into Postgres.
  *
- * Input format: NDJSON (one GeoJSON feature per line). HMLR distributes the
- * source as a single huge GeoJSON FeatureCollection (or GML). To convert:
+ * IMPORTANT: free INSPIRE polygons do NOT include title_number — only the
+ * paid NPS dataset links polygons to titles. So this ingest writes
+ * polygons with title_number=NULL when fed INSPIRE, and populated when
+ * fed NPS-derived data. Ownership lookups in v1 use CCOD/OCOD address
+ * text-matching instead — see scripts/ingest-hmlr-proprietors.ts.
  *
- *   # GeoJSON FeatureCollection → NDJSON of features
+ * Polygons here are useful for map visualisation only, until/unless we
+ * pay for NPS.
+ *
+ * Input format: NDJSON (one GeoJSON feature per line). Convert from
+ * source GML/GeoJSON like:
+ *
  *   jq -c '.features[]' Land_Registry_Cadastral_Parcels.geojson > polygons.ndjson
- *
- *   # GML → NDJSON (requires GDAL / ogr2ogr)
- *   ogr2ogr -f GeoJSONSeq output.ndjson Land_Registry_Cadastral_Parcels.gml
+ *   ogr2ogr -f GeoJSONSeq polygons.ndjson Land_Registry_Cadastral_Parcels.gml
  *
  * Each feature must have at minimum:
  *   properties.INSPIREID  (numeric INSPIRE polygon ID)
- *   properties.TITLE_NO   (HMLR title number — required; National Polygon
- *                          Service only, NOT the basic INSPIRE dataset)
+ *   properties.TITLE_NO   (HMLR title number — OPTIONAL, NPS only)
  *   geometry              (Polygon or MultiPolygon, EPSG:4326 / WGS84)
  *
  * Run:
  *   npx tsx scripts/ingest-hmlr-polygons.ts <ndjson-file> [--region <name>]
- *
- *   --region <name>   Tag every row with this region (e.g. "Westminster")
- *   --batch <n>       Insert batch size (default 500)
- *   --dry             Parse only, don't write
  */
 
 import * as fs from "fs";
@@ -57,7 +59,7 @@ function parseArgs(argv: string[]): CliArgs {
 
 interface FeatureRow {
   inspireId: number;
-  titleNumber: string;
+  titleNumber: string | null;
   geometryJson: string;
 }
 
@@ -66,23 +68,22 @@ function parseFeature(line: string): FeatureRow | { skip: string } {
   try { f = JSON.parse(line); } catch { return { skip: "invalid JSON" }; }
   if (f?.type !== "Feature") return { skip: "not a Feature" };
   const props = f.properties || {};
-  // HMLR sometimes ships INSPIREID, sometimes inspireid, sometimes INSPIRE_ID
   const inspireRaw = props.INSPIREID ?? props.inspireid ?? props.INSPIRE_ID ?? props.inspire_id;
   const titleRaw = props.TITLE_NO ?? props.title_no ?? props.TITLE_NUMBER ?? props.title_number;
   if (inspireRaw == null) return { skip: "missing INSPIREID" };
-  if (titleRaw == null || String(titleRaw).trim() === "") return { skip: "missing TITLE_NO (use NPS dataset, not INSPIRE-only)" };
   const inspireId = Number(inspireRaw);
   if (!Number.isFinite(inspireId)) return { skip: "INSPIREID not numeric" };
   const geom = f.geometry;
   if (!geom || (geom.type !== "Polygon" && geom.type !== "MultiPolygon")) {
     return { skip: `geometry not Polygon/MultiPolygon (${geom?.type})` };
   }
-  // ST_GeomFromGeoJSON expects a JSON-stringified geometry. Wrap single
-  // Polygons as MultiPolygon so the column type is uniform.
   const geometryJson = geom.type === "MultiPolygon"
     ? JSON.stringify(geom)
     : JSON.stringify({ type: "MultiPolygon", coordinates: [geom.coordinates] });
-  return { inspireId, titleNumber: String(titleRaw).trim(), geometryJson };
+  // title_number is optional — populated only when ingest source is NPS,
+  // null for free INSPIRE polygons.
+  const titleNumber = (titleRaw == null || String(titleRaw).trim() === "") ? null : String(titleRaw).trim();
+  return { inspireId, titleNumber, geometryJson };
 }
 
 async function startRun(file: string): Promise<string> {

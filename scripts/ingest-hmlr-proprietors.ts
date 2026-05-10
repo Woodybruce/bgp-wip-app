@@ -79,9 +79,26 @@ interface ProprietorRow {
   dateProprietorAdded: string | null;
   pricePaid: string | null;
   propertyAddress: string | null;
+  postcode: string | null;
+  postcodeNormalised: string | null;
   tenure: string | null;
   multipleAddressIndicator: string | null;
   additionalProprietorIndicator: string | null;
+}
+
+/** Normalise a postcode to uppercase, no whitespace — what we index on. */
+function normalisePostcode(pc: string | null): string | null {
+  if (!pc) return null;
+  const cleaned = pc.toUpperCase().replace(/\s+/g, "").trim();
+  return cleaned || null;
+}
+
+/** If CCOD/OCOD doesn't have a separate Postcode column for some rows,
+ *  pull the postcode out of the property_address text as a fallback. */
+function extractPostcode(s: string | null): string | null {
+  if (!s) return null;
+  const m = s.toUpperCase().match(/\b([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})\b/);
+  return m ? `${m[1]} ${m[2]}` : null;
 }
 
 function clean(s: any): string | null {
@@ -104,6 +121,11 @@ function parseDate(s: any): string | null {
 function explodeRow(row: Record<string, any>, dataset: "ccod" | "ocod"): ProprietorRow[] {
   const titleNumber = clean(row["Title Number"]);
   if (!titleNumber) return [];
+  const propertyAddress = clean(row["Property Address"]);
+  // CCOD has a separate Postcode column; OCOD historically didn't, so we
+  // fall back to extracting it from property_address text.
+  const postcodeRaw = clean(row["Postcode"]) || extractPostcode(propertyAddress);
+  const postcodeNormalised = normalisePostcode(postcodeRaw);
   const out: ProprietorRow[] = [];
   for (let i = 1; i <= 4; i++) {
     const name = clean(row[`Proprietor Name (${i})`]);
@@ -121,7 +143,9 @@ function explodeRow(row: Record<string, any>, dataset: "ccod" | "ocod"): Proprie
       proprietorAddress3: clean(row[`Proprietor (${i}) Address (3)`]),
       dateProprietorAdded: parseDate(row["Date Proprietor Added"]),
       pricePaid: clean(row["Price Paid"]),
-      propertyAddress: clean(row["Property Address"]),
+      propertyAddress,
+      postcode: postcodeRaw,
+      postcodeNormalised,
       tenure: clean(row["Tenure"]),
       multipleAddressIndicator: clean(row["Multiple Address Indicator"]),
       additionalProprietorIndicator: clean(row["Additional Proprietor Indicator"]),
@@ -166,12 +190,13 @@ async function flushBatch(batch: ProprietorRow[], runId: string): Promise<{ inse
   const params: any[] = [];
   let p = 1;
   for (const r of batch) {
-    values.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
+    values.push(`($${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++}, $${p++})`);
     params.push(
       r.titleNumber, r.dataset, r.position, r.proprietorName, r.proprietorCategory,
       r.companyRegistrationNo, r.countryIncorporated,
       r.proprietorAddress1, r.proprietorAddress2, r.proprietorAddress3,
       r.dateProprietorAdded, r.pricePaid, r.propertyAddress,
+      r.postcode, r.postcodeNormalised,
       r.tenure, r.multipleAddressIndicator, r.additionalProprietorIndicator,
       runId,
     );
@@ -182,6 +207,7 @@ async function flushBatch(batch: ProprietorRow[], runId: string): Promise<{ inse
       company_registration_no, country_incorporated,
       proprietor_address_1, proprietor_address_2, proprietor_address_3,
       date_proprietor_added, price_paid, property_address,
+      postcode, postcode_normalised,
       tenure, multiple_address_indicator, additional_proprietor_indicator,
       ingest_run_id
     ) VALUES ${values.join(",")}
@@ -196,6 +222,8 @@ async function flushBatch(batch: ProprietorRow[], runId: string): Promise<{ inse
           date_proprietor_added = EXCLUDED.date_proprietor_added,
           price_paid = EXCLUDED.price_paid,
           property_address = EXCLUDED.property_address,
+          postcode = EXCLUDED.postcode,
+          postcode_normalised = EXCLUDED.postcode_normalised,
           tenure = EXCLUDED.tenure,
           multiple_address_indicator = EXCLUDED.multiple_address_indicator,
           additional_proprietor_indicator = EXCLUDED.additional_proprietor_indicator,

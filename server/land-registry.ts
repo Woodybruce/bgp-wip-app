@@ -5,7 +5,7 @@ import { db, pool } from "./db";
 import { landRegistrySearches } from "@shared/schema";
 import { desc, eq, sql } from "drizzle-orm";
 import pLimit from "p-limit";
-import { findTitlesAndProprietorsAtPoint, isHmlrPolygonsAvailable, type HmlrProprietor } from "./hmlr-direct";
+import { findProprietorsByAddress, isHmlrProprietorsAvailable, type HmlrProprietor } from "./hmlr-direct";
 
 /**
  * Shared persistence helper for land_registry_searches — used by:
@@ -247,7 +247,7 @@ export type ResolveBuildingTitlesResult =
       matched: { freeholds: any[]; leaseholds: any[]; exact: boolean };
       fallback: { freeholds: any[]; leaseholds: any[]; usedStreetNumberMatch: boolean };
       context: { freeholds: any[]; leaseholds: any[] };
-      source: "hmlr_direct" | "uprn" | "street_number" | "postcode_only";
+      source: "uprn" | "street_number" | "postcode_only";
     }
   | { ok: false; status: number; error: string };
 
@@ -485,30 +485,30 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
     return null;
   };
 
-  // PRIMARY PATH: HMLR-direct. If we have a lat/lng AND the
-  // hmlr_title_polygons table has been ingested, do a point-in-polygon
-  // query against the local INSPIRE / National Polygon Service data. The
-  // result is the EXACT title(s) and proprietor(s) for THIS building —
-  // no postcode noise, no PropertyData call, no quota cost. Sub-10ms.
-  // Falls through to PropertyData if HMLR has no matches (Scotland, very
-  // new registrations not yet in INSPIRE) or if the table isn't ingested.
+  // PRIMARY PATH: HMLR-direct via CCOD/OCOD address-text matching. When
+  // hmlr_proprietors has rows AND we have a postcode + street number,
+  // we do a deterministic SQL match against the locally-ingested CCOD +
+  // OCOD data — the EXACT title(s) and proprietor(s) for THIS building,
+  // no postcode noise, no PropertyData call, no quota cost.
+  //
+  // Falls through to PropertyData if:
+  //   - hmlr_proprietors is empty (CCOD/OCOD not yet ingested)
+  //   - the address is residential / individually-owned (not in CCOD/OCOD)
+  //   - we couldn't extract a street number from the resolved address
   const uprnTitleResults: any[] = [];
   let hmlrUsed = false;
-  if (typeof lat === "number" && typeof lng === "number" && await isHmlrPolygonsAvailable()) {
+  if (resolvedPostcode && streetNumberRaw && await isHmlrProprietorsAvailable()) {
     try {
-      const hmlrTitles = await findTitlesAndProprietorsAtPoint(lat, lng);
+      const hmlrTitles = await findProprietorsByAddress(resolvedPostcode, streetNumberRaw);
       if (hmlrTitles.length > 0) {
         hmlrUsed = true;
-        // Convert HMLR-direct rows into the existing PD-style shape so
-        // downstream consumers don't need to know which source we used.
         const formatHmlr = (t: typeof hmlrTitles[number]) => {
           const fh: Record<string, any> = {
             title_number: t.titleNumber,
-            inspire_id: t.inspireId,
-            tenure: (t.proprietors[0]?.tenure || "").toLowerCase(),
-            property: t.proprietors[0]?.propertyAddress ? [t.proprietors[0].propertyAddress] : undefined,
-            price_paid: t.proprietors[0]?.pricePaid,
-            date_proprietor_added: t.proprietors[0]?.dateProprietorAdded,
+            tenure: (t.tenure || "").toLowerCase(),
+            property: t.propertyAddress ? [t.propertyAddress] : undefined,
+            price_paid: t.pricePaid,
+            date_proprietor_added: t.dateProprietorAdded,
             _source: "hmlr_direct",
           };
           t.proprietors.forEach((p: HmlrProprietor, i: number) => {
@@ -517,25 +517,18 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
             fh[`company_registration_no_${i + 1}`] = p.companyRegistrationNo;
             fh[`country_incorporated_${i + 1}`] = p.countryIncorporated;
           });
-          // First-row proprietor exposed without suffix for legacy
-          // consumers that read .proprietor_name_1 only.
           fh.proprietor_name_1 = t.proprietors[0]?.proprietorName ?? null;
           fh.proprietor_category = t.proprietors[0]?.proprietorCategory ?? null;
           return fh;
         };
-        // Group by tenure — Freehold goes to freeholds, Leasehold to leaseholds.
-        // Titles with no proprietor row at all (no CCOD/OCOD entry — typical
-        // for individually-owned residential) default to freeholds with a
-        // null proprietor so the title still shows up.
         const fhData = hmlrTitles
-          .filter((t) => !t.proprietors[0] || (t.proprietors[0]?.tenure || "").toLowerCase() !== "leasehold")
+          .filter((t) => (t.tenure || "").toLowerCase() !== "leasehold")
           .map(formatHmlr);
         const lhData = hmlrTitles
-          .filter((t) => (t.proprietors[0]?.tenure || "").toLowerCase() === "leasehold")
+          .filter((t) => (t.tenure || "").toLowerCase() === "leasehold")
           .map(formatHmlr);
-        // Stuff into uprnTitleResults so the existing flatten loop picks them up.
         uprnTitleResults.push({ data: { freeholds: fhData, leaseholds: lhData } });
-        console.log(`[land-registry/resolve] HMLR-direct hit at (${lat.toFixed(5)}, ${lng.toFixed(5)}) — ${hmlrTitles.length} titles`);
+        console.log(`[land-registry/resolve] HMLR-direct hit for ${resolvedPostcode} ${streetNumberRaw} — ${hmlrTitles.length} titles`);
       }
     } catch (err: any) {
       console.warn("[land-registry/resolve] HMLR-direct lookup threw, falling back to PD:", err?.message);
@@ -646,7 +639,9 @@ export async function resolveBuildingTitles(input: ResolveBuildingTitlesInput): 
       freeholds: contextFreeholds,
       leaseholds: contextLeaseholds,
     },
-    source: hmlrUsed ? "hmlr_direct" : (matchedFreeholds.length > 0 ? "uprn" : fallbackFreeholds.length > 0 ? "street_number" : "postcode_only"),
+    // hmlrUsed implies UPRN-equivalent precision (we matched the exact title
+    // by postcode + street number against CCOD/OCOD), so report it as "uprn".
+    source: (hmlrUsed || matchedFreeholds.length > 0) ? "uprn" : fallbackFreeholds.length > 0 ? "street_number" : "postcode_only",
   };
 }
 
