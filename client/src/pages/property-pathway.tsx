@@ -2463,16 +2463,9 @@ function WhyBuyCard({ runId, stage9, onReload, propertyId }: { runId: string; st
     <Card>
       <CardHeader className="pb-3 flex flex-row items-center justify-between">
         <CardTitle className="text-base flex items-center gap-2"><FileText className="w-4 h-4" /> Why Buy</CardTitle>
-        <div className="flex items-center gap-2">
-          {(stage9?.sharepointUrl || stage9?.documentUrl) && (
-            <a href={stage9.sharepointUrl || stage9.documentUrl} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1">
-              <Download className="w-3 h-3" /> Open Why Buy PDF
-            </a>
-          )}
-        </div>
       </CardHeader>
       <CardContent className="text-sm space-y-3">
-        <p className="text-muted-foreground">4-page PE-style investment memo generated from the agreed business plan + agreed Excel model.</p>
+        <p className="text-muted-foreground">In-app, Claude-designed pitch deck — generated from the agreed business plan + agreed Excel model. Iterate by prompt or click any image / headline to edit inline.</p>
 
         {/* Imagery — pinned candidates per kind feed Claude design's brief */}
         {propertyId && (
