@@ -2,7 +2,15 @@ import type { Express, Request, Response } from "express";
 import { requireAuth } from "./auth";
 import { pool } from "./db";
 import { db } from "./db";
-import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages } from "@shared/schema";
+import { imageStudioImages, imageStudioCollections, imageStudioCollectionImages, propertyImageryAssets } from "@shared/schema";
+
+// Image kinds accepted on the property_imagery_assets row when a capture
+// or upload is linked to a property. Mirrors ImageryKind in property-imagery.ts.
+const ALL_KINDS = [
+  "hero", "internal", "secondary_external",
+  "location_plan", "floor_plan", "covenant_card",
+  "comps_chart", "erv_walk", "overlay",
+] as const;
 import { eq, desc, ilike, or, sql, inArray, count } from "drizzle-orm";
 import multer from "multer";
 import sharp from "sharp";
@@ -956,6 +964,11 @@ export function registerImageStudioRoutes(app: Express) {
       const propertyType = (req.body.propertyType as string) || null;
       const tagsRaw = req.body.tags as string || "";
       const tags = tagsRaw ? tagsRaw.split(",").map(t => t.trim()).filter(Boolean) : [];
+      // Optional: link uploaded files to a CRM property as imagery assets
+      // so they appear in the Pathway picker / Property Intelligence
+      // imagery tab without a separate Discover step.
+      const linkPropertyId = (req.body.propertyId as string) || null;
+      const linkKind = (req.body.kind as string) || "secondary_external";
 
       const results = [];
       for (const file of files) {
@@ -985,6 +998,25 @@ export function registerImageStudioRoutes(app: Express) {
           localPath: filePath,
           uploadedBy: userId,
         }).returning();
+
+        // Link to a CRM property (imagery asset) when caller provided one.
+        if (linkPropertyId) {
+          try {
+            await db.insert(propertyImageryAssets).values({
+              propertyId: linkPropertyId,
+              kind: ALL_KINDS.includes(linkKind as any) ? linkKind : "secondary_external",
+              source: "manual_upload",
+              imageStudioId: inserted.id,
+              score: 0.6,
+              width,
+              height,
+              caption: file.originalname,
+              generatedBy: userId,
+            } as any);
+          } catch (linkErr: any) {
+            console.warn("[image-studio/upload] property_imagery_assets link failed:", linkErr?.message);
+          }
+        }
 
         results.push(inserted);
       }
@@ -1680,7 +1712,7 @@ export function registerImageStudioRoutes(app: Express) {
 
   app.post("/api/image-studio/capture-streetview", requireAuth, requireAdmin, async (req: Request, res: Response) => {
     try {
-      const { location, heading, pitch, fov, category, area, tags } = req.body;
+      const { location, heading, pitch, fov, category, area, tags, propertyId, kind } = req.body;
       if (!location) return res.status(400).json({ error: "location required" });
 
       const apiKey = process.env.GOOGLE_API_KEY;
@@ -1723,6 +1755,29 @@ export function registerImageStudioRoutes(app: Express) {
         localPath: filePath,
         uploadedBy: userId,
       }).returning();
+
+      // If a property was specified, link this capture to it as a
+      // property_imagery_asset so it shows up in the Pathway picker
+      // (and Property Intelligence imagery tab) without anyone having
+      // to manually re-link. Default kind is secondary_external —
+      // user can re-tag as hero from the picker.
+      if (propertyId && typeof propertyId === "string") {
+        try {
+          await db.insert(propertyImageryAssets).values({
+            propertyId,
+            kind: (kind && ALL_KINDS.includes(kind)) ? kind : "secondary_external",
+            source: "street_view",
+            imageStudioId: inserted.id,
+            score: 0.7,
+            width,
+            height,
+            caption: `Street View · heading ${heading || 0}°`,
+            generatedBy: userId,
+          } as any);
+        } catch (linkErr: any) {
+          console.warn("[capture-streetview] property_imagery_assets link failed:", linkErr?.message);
+        }
+      }
 
       res.json(inserted);
     } catch (e: any) {

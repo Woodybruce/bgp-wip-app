@@ -4,6 +4,7 @@ import DOMPurify from "dompurify";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PropertyImageryPicker } from "@/components/property-imagery-picker";
+import { StreetViewPanoramaCapture } from "@/components/image-studio/street-view-panorama";
 import { usePropertyContext } from "@/lib/property-context";
 import { PropertyResolverBar } from "@/components/property-resolver-bar";
 import { Button } from "@/components/ui/button";
@@ -2760,9 +2761,61 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
 // Modal that lists all images discovered for this pathway run (Stage 8 —
 // Street View, Retail Context Plan, additional, collections) so the user
 // can swap one into the deck without leaving the page.
+// ImageStudioPicker — grouped picker that doubles as a property's image
+// inventory manager. Reads from the canonical property_imagery_assets
+// manifest (any image attached to this property, from any source) so
+// captures + uploads done elsewhere in Image Studio show up automatically.
+//
+// Per-image actions:
+//   • Use   — swap into the deck slot the user clicked (calls onPick)
+//   • ⭐    — toggle hero tag (PATCH kind=hero)
+//   • 📷   — open Image Studio for this property (deep link)
+//   • ✕    — soft-delete (PATCH hidden=true)
+//
+// Plus + New Street View capture (inline dialog, reuses StreetViewPanoramaCapture)
+// and + Upload (multi-file). Both link the result to the property automatically
+// so it appears in this picker on next refresh — no separate Discover step.
+type Asset = {
+  id: string;
+  kind: string;
+  source: string;
+  thumbnail: string | null;     // base64
+  imageStudioId: string | null;
+  caption: string | null;
+  pinned: boolean;
+  score: number;
+};
+
 function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: (url: string) => void; onClose: () => void }) {
-  const [images, setImages] = useState<Array<{ id: string; label: string; thumb: string; full: string }>>([]);
+  const { toast } = useToast();
+  const [propertyId, setPropertyId] = useState<string | null>(null);
+  const [propertyAddress, setPropertyAddress] = useState<string>("");
+  const [propertyLat, setPropertyLat] = useState<number | undefined>(undefined);
+  const [propertyLng, setPropertyLng] = useState<number | undefined>(undefined);
+  const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [pov, setPov] = useState<{ heading: number; pitch: number; fov: number }>({ heading: 0, pitch: 0, fov: 90 });
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const loadManifest = useCallback(async (pid: string) => {
+    try {
+      const r = await fetch(`/api/property-imagery/${pid}/manifest`);
+      if (!r.ok) return;
+      const data = await r.json();
+      const merged: Asset[] = [];
+      const byKind = data?.byKind || {};
+      for (const k of Object.keys(byKind)) {
+        for (const c of byKind[k]) merged.push({
+          id: c.id, kind: c.kind, source: c.source,
+          thumbnail: c.thumbnail, imageStudioId: c.imageStudioId,
+          caption: c.caption, pinned: !!c.pinned, score: c.score ?? 0.5,
+        });
+      }
+      setAssets(merged);
+    } catch { /* ignore */ }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -2771,75 +2824,273 @@ function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: 
         const r = await fetch(`/api/property-pathway/${runId}`);
         if (!r.ok) return;
         const data = await r.json();
-        const stage8 = data?.stageResults?.stage8 || data?.stage_results?.stage8 || {};
-        const out: Array<{ id: string; label: string; thumb: string; full: string }> = [];
-        const push = (id: string | null | undefined, label: string) => {
-          if (!id) return;
-          out.push({
-            id,
-            label,
-            thumb: `/api/property-pathway/${runId}/image/${id}?thumb=1`,
-            full: `/api/property-pathway/${runId}/image/${id}`,
-          });
-        };
-        push(stage8.streetViewImageId, "Street View");
-        push(stage8.retailContextImageId, "Retail Context");
-        const additional = Array.isArray(stage8.additionalImageIds) ? stage8.additionalImageIds : [];
-        additional.forEach((id: string, i: number) => push(id, `Additional ${i + 1}`));
-        const collections = Array.isArray(stage8.collections) ? stage8.collections : [];
-        for (const c of collections) {
-          const ids = Array.isArray(c.imageIds) ? c.imageIds : [];
-          ids.forEach((id: string, i: number) => push(id, `${c.name || "Collection"} ${i + 1}`));
+        const pid = data?.propertyId || data?.property_id || null;
+        const addr = data?.address || "";
+        const stage1 = data?.stageResults?.stage1 || data?.stage_results?.stage1 || {};
+        const lat = stage1?.coordinates?.lat ?? data?.lat;
+        const lng = stage1?.coordinates?.lng ?? data?.lng;
+        if (!cancelled) {
+          setPropertyId(pid);
+          setPropertyAddress(addr);
+          if (typeof lat === "number") setPropertyLat(lat);
+          if (typeof lng === "number") setPropertyLng(lng);
         }
-        if (!cancelled) setImages(out);
+        if (pid) await loadManifest(pid);
       } catch { /* ignore */ }
       finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [runId]);
+  }, [runId, loadManifest]);
+
+  const refresh = useCallback(() => {
+    if (propertyId) loadManifest(propertyId);
+  }, [propertyId, loadManifest]);
+
+  // Source / kind grouping for display. Hero is its own group; Street View
+  // means anything sourced from street_view; Map is google_static; everything
+  // else is "Other / gallery".
+  const groups: Array<{ key: string; label: string; predicate: (a: Asset) => boolean }> = [
+    { key: "hero", label: "Hero", predicate: (a) => a.kind === "hero" },
+    { key: "street_view", label: "Street View", predicate: (a) => a.kind !== "hero" && a.source === "street_view" },
+    { key: "map", label: "Map view", predicate: (a) => a.kind !== "hero" && a.source === "google_static" },
+    { key: "other", label: "Other", predicate: (a) => a.kind !== "hero" && a.source !== "street_view" && a.source !== "google_static" },
+  ];
+
+  const tagAsHero = async (assetId: string) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/property-imagery/asset/${assetId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "hero", pinned: true }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      await refresh();
+      toast({ title: "Tagged as hero" });
+    } catch (e: any) {
+      toast({ title: "Couldn't tag", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const hideAsset = async (assetId: string) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/property-imagery/asset/${assetId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hidden: true }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Couldn't hide", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const captureStreetView = async () => {
+    if (!propertyAddress) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/image-studio/capture-streetview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          location: propertyAddress,
+          heading: pov.heading,
+          pitch: pov.pitch,
+          fov: pov.fov,
+          propertyId,
+          kind: "secondary_external",
+        }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      await refresh();
+      setCaptureOpen(false);
+      toast({ title: "Captured", description: `Heading ${pov.heading}° saved` });
+    } catch (e: any) {
+      toast({ title: "Capture failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const handleUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !propertyId) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      for (let i = 0; i < files.length; i++) fd.append("images", files[i]);
+      fd.append("propertyId", propertyId);
+      fd.append("kind", "secondary_external");
+      fd.append("category", "Property Photos");
+      if (propertyAddress) fd.append("address", propertyAddress);
+      const r = await fetch("/api/image-studio/upload", { method: "POST", body: fd });
+      if (!r.ok) throw new Error(await r.text());
+      await refresh();
+      toast({ title: "Uploaded", description: `${files.length} image(s) added` });
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  const fullUrl = (a: Asset) => `/api/image-studio/${a.imageStudioId}/full`;
+  const thumbSrc = (a: Asset) => a.thumbnail ? `data:image/jpeg;base64,${a.thumbnail}` : `/api/image-studio/${a.imageStudioId}/thumbnail`;
 
   return (
-    <div
-      className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-background rounded-lg shadow-2xl max-w-3xl w-full max-h-[85vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-background rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="p-4 border-b flex items-center justify-between">
           <div>
             <h3 className="font-semibold text-sm">Pick an image</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">From this property's Image Studio output. Click to use.</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              All images linked to {propertyAddress || "this property"}. Click <strong>Use</strong> to swap into the deck.
+              Tag a different one as ⭐ to make it the hero. ✕ to hide. 📷 to edit in Image Studio.
+            </p>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+          <div className="flex items-center gap-1">
+            {propertyId && (
+              <a
+                href={`/image-studio?propertyId=${propertyId}&property=${encodeURIComponent(propertyAddress)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-muted-foreground hover:text-foreground border rounded px-2 py-1"
+                title="Open Image Studio with this property"
+              >
+                Open Image Studio ↗
+              </a>
+            )}
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none ml-2">✕</button>
+          </div>
         </div>
-        <div className="p-4 overflow-y-auto flex-1">
+
+        <div className="p-3 border-b flex items-center gap-2 flex-wrap">
+          <Button size="sm" variant="outline" onClick={() => setCaptureOpen(true)} disabled={busy || !propertyAddress} className="h-7 text-xs">
+            + New Street View
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()} disabled={busy || !propertyId} className="h-7 text-xs">
+            + Upload
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => { handleUpload(e.target.files); e.target.value = ""; }}
+          />
+          {busy && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+        </div>
+
+        <div className="p-4 overflow-y-auto flex-1 space-y-5">
           {loading ? (
             <div className="text-xs text-muted-foreground italic text-center py-12">Loading…</div>
-          ) : images.length === 0 ? (
+          ) : !propertyId ? (
             <div className="text-xs text-muted-foreground italic text-center py-12">
-              No images yet for this property. Run Stage 8 (Image Studio) first.
+              This pathway run isn't linked to a CRM property yet — Stage 1 needs to resolve the address first.
+            </div>
+          ) : assets.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic text-center py-12">
+              No images yet for this property. Use <strong>+ New Street View</strong> or <strong>+ Upload</strong> above to add some.
             </div>
           ) : (
-            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-              {images.map((img) => (
-                <button
-                  key={img.id}
-                  onClick={() => onPick(img.full)}
-                  className="group relative aspect-[4/3] rounded-md overflow-hidden border hover:border-primary hover:ring-2 hover:ring-primary/30 bg-muted"
-                  title={img.label}
-                >
-                  <img src={img.thumb} alt={img.label} className="w-full h-full object-cover" />
-                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent text-white text-[10px] p-1 leading-tight">
-                    {img.label}
+            groups.map(({ key, label, predicate }) => {
+              const items = assets.filter(predicate);
+              if (items.length === 0) return null;
+              return (
+                <section key={key}>
+                  <h4 className="text-[11px] uppercase tracking-wide font-semibold text-muted-foreground mb-1.5">
+                    {label} ({items.length})
+                  </h4>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    {items.map((a) => (
+                      <div
+                        key={a.id}
+                        className="group relative aspect-[4/3] rounded-md overflow-hidden border bg-muted"
+                      >
+                        <img src={thumbSrc(a)} alt={a.caption || ""} className="w-full h-full object-cover" />
+                        {a.kind === "hero" && (
+                          <span className="absolute top-1 left-1 bg-amber-500 text-white text-[9px] px-1 rounded">⭐ HERO</span>
+                        )}
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/45 transition-colors flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100">
+                          <button
+                            onClick={() => onPick(fullUrl(a))}
+                            className="bg-primary text-primary-foreground text-[10px] px-2 py-1 rounded hover:opacity-90"
+                            title="Use this image in the deck"
+                          >
+                            Use
+                          </button>
+                          {a.kind !== "hero" && (
+                            <button
+                              onClick={() => tagAsHero(a.id)}
+                              disabled={busy}
+                              className="bg-amber-500 text-white text-[10px] px-1.5 py-1 rounded hover:opacity-90"
+                              title="Tag as the hero shot"
+                            >
+                              ⭐
+                            </button>
+                          )}
+                          <a
+                            href={`/image-studio?propertyId=${propertyId}&property=${encodeURIComponent(propertyAddress)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="bg-white/90 text-foreground text-[10px] px-1.5 py-1 rounded hover:opacity-90"
+                            title="Edit in Image Studio"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            📷
+                          </a>
+                          <button
+                            onClick={() => hideAsset(a.id)}
+                            disabled={busy}
+                            className="bg-destructive text-destructive-foreground text-[10px] px-1.5 py-1 rounded hover:opacity-90"
+                            title="Hide this image"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                        {a.caption && (
+                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent text-white text-[9px] p-1 leading-tight pointer-events-none truncate">
+                            {a.caption}
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                </button>
-              ))}
-            </div>
+                </section>
+              );
+            })
           )}
         </div>
       </div>
+
+      {captureOpen && propertyAddress && (
+        <div className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4" onClick={() => setCaptureOpen(false)}>
+          <div className="bg-background rounded-lg shadow-2xl w-full max-w-3xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="p-3 border-b flex items-center justify-between">
+              <h4 className="text-sm font-semibold">New Street View capture</h4>
+              <button onClick={() => setCaptureOpen(false)} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+            </div>
+            <div className="p-3 space-y-2">
+              <div className="rounded-md overflow-hidden border" style={{ height: 360 }}>
+                <StreetViewPanoramaCapture
+                  address={propertyAddress}
+                  lat={propertyLat}
+                  lng={propertyLng}
+                  onPovChange={setPov}
+                />
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                Pan to the angle you want, then click Capture. The image saves to Image Studio AND links to this property.
+              </div>
+            </div>
+            <div className="p-3 border-t flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setCaptureOpen(false)}>Cancel</Button>
+              <Button size="sm" onClick={captureStreetView} disabled={busy}>
+                {busy && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />}
+                Capture
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
