@@ -224,6 +224,73 @@ interface PlaceMatch {
 }
 
 /**
+ * Bbox-wide Nearby Search — fetches every operational business inside
+ * the subject's bbox, paginated. Used as a *discovery* source (vs the
+ * existing per-unit `googlePlacesAtCoord` which only reads what's at a
+ * known coordinate). This is what gives us comprehensive retail
+ * coverage where VOA + brand_stores leave gaps.
+ *
+ * Costs: ~3 API calls per render (up to 60 places). Each call is ~$0.032.
+ * We don't cache yet — fresh data on every render is fine for the
+ * volume we'll do, and Places is what users complain about being stale.
+ */
+interface NearbyPlace {
+  placeId: string;
+  name: string;
+  lat: number;
+  lng: number;
+  types: string[];
+  businessStatus: string;
+}
+
+async function nearbyPlacesInBbox(
+  centre: { lat: number; lng: number },
+  halfMeters: number,
+): Promise<NearbyPlace[]> {
+  const key = process.env.GOOGLE_API_KEY;
+  if (!key) return [];
+  // Smallest circle that fully contains the square bbox.
+  const radius = Math.min(50_000, Math.ceil(halfMeters * Math.SQRT2));
+  const results: NearbyPlace[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < 3; page++) {
+    const params = new URLSearchParams({
+      location: `${centre.lat},${centre.lng}`,
+      radius: String(radius),
+      key,
+    });
+    if (pageToken) params.set("pagetoken", pageToken);
+    const url = `https://maps.googleapis.com/maps/api/place/nearbysearch/json?${params}`;
+    try {
+      // Google requires a ~2s delay before next_page_token activates.
+      if (pageToken) await new Promise((r) => setTimeout(r, 2200));
+      const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!r.ok) break;
+      const data: any = await r.json();
+      for (const res of data.results || []) {
+        if (res.business_status === "CLOSED_PERMANENTLY") continue;
+        const loc = res.geometry?.location;
+        if (typeof loc?.lat !== "number" || typeof loc?.lng !== "number") continue;
+        results.push({
+          placeId: res.place_id,
+          name: res.name,
+          lat: loc.lat,
+          lng: loc.lng,
+          types: res.types || [],
+          businessStatus: res.business_status || "OPERATIONAL",
+        });
+      }
+      pageToken = data.next_page_token;
+      if (!pageToken) break;
+    } catch (err: any) {
+      console.warn("[goad-plan-data/places] nearby search failed:", err?.message);
+      break;
+    }
+  }
+  return results;
+}
+
+/**
  * Nearby search at a specific coord (25m radius). Picks the top result
  * and reads its status. We could also use Place Details but the search
  * response already has business_status so no second call needed.
@@ -378,6 +445,58 @@ export async function buildMappedUnits(args: PlanDataArgs & {
       unit.statusReason = unit.statusReason || "No active Google Places business at this address";
     }
   }
+
+  // 5b. Bbox-wide Places discovery — pull EVERY operational business in
+  // the bbox via Nearby Search. For each: snap to existing unit if
+  // within 15m and unnamed, otherwise create a synthetic unit so the
+  // renderer shows it. Closes the "Google has it but VOA doesn't" gap
+  // (luxury brands, new lettings, food trucks, etc).
+  const nearbyPlaces = await nearbyPlacesInBbox(args.subject, halfMeters);
+  let placesAdded = 0;
+  let placesAttached = 0;
+  for (const place of nearbyPlaces) {
+    let bestUnit: MappedUnit | null = null;
+    let bestDist = Infinity;
+    for (const u of unitsByBaRef.values()) {
+      const d = distMeters({ lat: u.lat, lng: u.lng }, { lat: place.lat, lng: place.lng });
+      if (d < bestDist && d <= 15) { bestDist = d; bestUnit = u; }
+    }
+    if (bestUnit) {
+      if (!bestUnit.tenantName) {
+        bestUnit.tenantName = place.name;
+        bestUnit.placeId = place.placeId;
+        bestUnit.tradingStatus = "trading";
+        if (!bestUnit.sourceLayers.includes("google_places_nearby")) {
+          bestUnit.sourceLayers.push("google_places_nearby");
+        }
+        placesAttached++;
+      }
+    } else {
+      // Synthetic key — Places place_ids are stable so we use them directly.
+      const synthKey = `places:${place.placeId}`;
+      if (!unitsByBaRef.has(synthKey)) {
+        unitsByBaRef.set(synthKey, {
+          placeId: place.placeId,
+          lat: place.lat,
+          lng: place.lng,
+          address: place.name,
+          tenantName: place.name,
+          tradingStatus: "trading",
+          category: resolveUnitCategory({
+            brand: place.name,
+            voaDescription: null,
+            placeTypes: place.types,
+            isConfirmedVacant: false,
+            isLikelyVacant: false,
+          }),
+          sourceLayers: ["google_places_nearby"],
+          confidence: 0.6,
+        } as MappedUnit);
+        placesAdded++;
+      }
+    }
+  }
+  console.log(`[goad-plan-data] Places nearby: ${nearbyPlaces.length} found → ${placesAttached} attached to VOA units, ${placesAdded} new units added`);
 
   // 6. CRM enrichment — three flavours, all best-effort:
   //    a) brand_stores: every brand store we've researched for a brand
