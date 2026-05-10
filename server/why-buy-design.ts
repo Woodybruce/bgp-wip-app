@@ -12,6 +12,7 @@ import { pool } from "./db";
 import { requireAuth } from "./auth";
 import { buildBrief } from "./why-buy-gamma";
 import { preferencesPromptFor } from "./document-preferences";
+import { applyEdit, type EditType } from "./html-edit";
 
 const PREFERENCES_SCOPE = "why_buy";
 
@@ -48,6 +49,18 @@ Each slide:
 - Big hero number or chart-like data viz where relevant
 - Supporting data/text below
 - BGP footer band on every slide
+
+EDITABLE MARKERS — IMPORTANT:
+The user can click images and text in the rendered deck to edit them
+inline. For that to work, every editable element MUST carry a stable
+\`data-edit-id\` attribute, unique within the document. Apply markers to:
+  - Every <img> → \`data-edit-id="image-{slide}-{role}"\` (e.g. "image-cover-hero", "image-2-property", "image-6-comp1")
+  - Every slide headline (h1/h2 at top of slide) → \`data-edit-id="heading-{slide}"\`
+  - Every big KPI / hero number → \`data-edit-id="kpi-{slide}-{label}"\` (e.g. "kpi-cover-price", "kpi-5-irr")
+  - Every key body paragraph or bullet line → \`data-edit-id="text-{slide}-{n}"\`
+
+IDs must be globally unique within the document. Stable across iterations
+(don't renumber when adding/removing slides — pick semantic names).
 
 Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`;
 
@@ -175,7 +188,7 @@ export function setupWhyBuyDesignRoutes(app: Express) {
         max_tokens: 16000,
         messages: [{
           role: "user",
-          content: `Here is the current HTML of a BGP Why Buy investment deck:\n\n${baseHtml}${prefsBlock}\n---\n\nUser request: ${prompt}\n\nReturn the FULL updated HTML (single self-contained document, inline CSS, print-ready A4 landscape). Apply the user's change while keeping everything else intact AND respecting the house preferences above. Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`,
+          content: `Here is the current HTML of a BGP Why Buy investment deck:\n\n${baseHtml}${prefsBlock}\n---\n\nUser request: ${prompt}\n\nReturn the FULL updated HTML (single self-contained document, inline CSS, print-ready A4 landscape). Apply the user's change while keeping everything else intact AND respecting the house preferences above. PRESERVE every existing \`data-edit-id\` attribute on its element — these power inline editing in the app. If you add new editable elements (images, headings, KPIs, text), give them unique \`data-edit-id\` attributes following the same naming pattern. Return ONLY the HTML, starting with <!DOCTYPE html>. No commentary.`,
         }],
       });
       const raw = msg.content?.[0]?.type === "text" ? msg.content[0].text : "";
@@ -194,6 +207,54 @@ export function setupWhyBuyDesignRoutes(app: Express) {
       res.json({ id: inserted.rows[0].id, version, createdAt: inserted.rows[0].created_at });
     } catch (e: any) {
       console.error("[why-buy-design] iterate error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Surgical inline edit — DocumentEditor calls this when the user clicks
+  // an editable element in the iframe and changes it (image swap, text
+  // edit). We mutate exactly that element via data-edit-id and save the
+  // result as a new version (auto-save). Undo = navigate to the previous
+  // version in the dropdown.
+  app.patch("/api/property-pathway/:runId/why-buy-design/:id/element", requireAuth, async (req: any, res: Response) => {
+    const { editId, type, value } = req.body || {};
+    if (!editId || !type || typeof value !== "string") {
+      return res.status(400).json({ error: "editId, type, value required" });
+    }
+    if (type !== "image" && type !== "text") {
+      return res.status(400).json({ error: `type must be 'image' or 'text' (got ${type})` });
+    }
+    try {
+      const userId = req.session?.userId || (req as any).tokenUserId || null;
+      const baseRows = await pool.query(
+        "SELECT html FROM why_buy_designs WHERE id = $1 AND run_id = $2",
+        [req.params.id, req.params.runId],
+      );
+      if (!baseRows.rows[0]) return res.status(404).json({ error: "version not found" });
+      const baseHtml = baseRows.rows[0].html as string;
+
+      const result = applyEdit(baseHtml, String(editId), type as EditType, value);
+      if (!result.changed) {
+        return res.status(404).json({ error: `no element with data-edit-id="${editId}"` });
+      }
+
+      // Auto-save: every direct edit becomes a new version. Cheap (HTML
+      // string copy) and gives the user free undo via the version
+      // dropdown.
+      const next = await pool.query(
+        `SELECT COALESCE(MAX(version), 0) + 1 AS v FROM why_buy_designs WHERE run_id = $1`,
+        [req.params.runId],
+      );
+      const version = next.rows[0].v;
+      const editLabel = type === "image" ? `Swapped image: ${editId}` : `Edited text: ${editId}`;
+      const inserted = await pool.query(
+        `INSERT INTO why_buy_designs (run_id, version, prompt, html, created_by_user_id)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id, version, created_at`,
+        [req.params.runId, version, editLabel, result.html, userId],
+      );
+      res.json({ id: inserted.rows[0].id, version, createdAt: inserted.rows[0].created_at, label: editLabel });
+    } catch (e: any) {
+      console.error("[why-buy-design] element edit error:", e.message);
       res.status(500).json({ error: e.message });
     }
   });

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { useLocation, Link } from "wouter";
 import DOMPurify from "dompurify";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -2496,7 +2496,9 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
   const [versions, setVersions] = useState<Array<{ id: string; version: number; prompt: string | null; created_at: string }>>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [iteratePrompt, setIteratePrompt] = useState("");
-  const [busy, setBusy] = useState<"generate" | "iterate" | null>(null);
+  const [busy, setBusy] = useState<"generate" | "iterate" | "edit" | null>(null);
+  const [pickerEditId, setPickerEditId] = useState<string | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -2509,6 +2511,116 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
   }, [runId, activeId]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // PATCH a single editable element. Auto-save: server returns a new
+  // version, we switch to it. Undo = go back one.
+  const patchElement = useCallback(async (editId: string, type: "image" | "text", value: string) => {
+    if (!activeId) return;
+    setBusy("edit");
+    try {
+      const r = await fetch(`/api/property-pathway/${runId}/why-buy-design/${activeId}/element`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ editId, type, value }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const d = await r.json();
+      await reload();
+      setActiveId(d.id);
+      toast({ title: "Saved", description: d.label });
+    } catch (e: any) {
+      toast({ title: "Edit failed", description: e?.message || "", variant: "destructive" });
+    } finally { setBusy(null); }
+  }, [activeId, runId, reload, toast]);
+
+  // Undo — switch active to the previous version (one row older in the
+  // list, which is sorted version DESC). Doesn't delete; the newer
+  // version stays in history so the user can redo via the dropdown.
+  const undo = useCallback(() => {
+    if (!activeId || versions.length < 2) return;
+    const idx = versions.findIndex(v => v.id === activeId);
+    if (idx < 0 || idx >= versions.length - 1) return;
+    setActiveId(versions[idx + 1].id);
+  }, [activeId, versions]);
+  const canUndo = (() => {
+    if (!activeId || versions.length < 2) return false;
+    const idx = versions.findIndex(v => v.id === activeId);
+    return idx >= 0 && idx < versions.length - 1;
+  })();
+
+  // Iframe overlay — attach hover/click handlers to data-edit-id
+  // elements inside the rendered deck. The iframe is same-origin
+  // (sandbox="allow-same-origin") so the parent can manipulate its DOM.
+  // Click an <img> → open picker. Click any other tagged element →
+  // contentEditable inline; auto-save on blur.
+  const onIframeLoad = useCallback(() => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc) return;
+    // Inject hover/edit styles
+    let style = doc.getElementById("__bgp_editor_styles") as HTMLStyleElement | null;
+    if (!style) {
+      style = doc.createElement("style");
+      style.id = "__bgp_editor_styles";
+      style.textContent = `
+        [data-edit-id] { cursor: pointer; transition: outline 0.12s ease, background 0.12s ease; }
+        [data-edit-id]:hover { outline: 2px dashed #15616D; outline-offset: 3px; }
+        [data-edit-id].__bgp_editing { outline: 2px solid #FF7D00; outline-offset: 3px; background: rgba(255,125,0,0.04); cursor: text; }
+        @media print { [data-edit-id] { outline: none !important; cursor: default !important; } }
+      `;
+      doc.head.appendChild(style);
+    }
+    // Attach handlers
+    doc.querySelectorAll<HTMLElement>("[data-edit-id]").forEach((el) => {
+      if ((el as any).__bgp_wired) return;
+      (el as any).__bgp_wired = true;
+      const editId = el.getAttribute("data-edit-id")!;
+      el.addEventListener("click", (e) => {
+        if (el.classList.contains("__bgp_editing")) return; // mid-edit, ignore
+        e.preventDefault();
+        e.stopPropagation();
+        if (el.tagName === "IMG") {
+          setPickerEditId(editId);
+          return;
+        }
+        // Inline text edit
+        el.classList.add("__bgp_editing");
+        el.contentEditable = "true";
+        el.focus();
+        // Select all on focus for easy overwrite
+        const range = doc.createRange();
+        range.selectNodeContents(el);
+        const sel = doc.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+        const original = el.textContent || "";
+        const finish = () => {
+          el.contentEditable = "false";
+          el.classList.remove("__bgp_editing");
+          const newText = (el.textContent || "").replace(/\s+/g, " ").trim();
+          el.removeEventListener("blur", finish);
+          el.removeEventListener("keydown", onKey);
+          if (newText && newText !== original.trim()) {
+            patchElement(editId, "text", newText);
+          } else {
+            // Restore original (in case user deleted everything then bailed)
+            el.textContent = original;
+          }
+        };
+        const onKey = (ke: KeyboardEvent) => {
+          if (ke.key === "Enter" && !ke.shiftKey) {
+            ke.preventDefault();
+            (el as HTMLElement).blur();
+          } else if (ke.key === "Escape") {
+            ke.preventDefault();
+            el.textContent = original;
+            (el as HTMLElement).blur();
+          }
+        };
+        el.addEventListener("blur", finish);
+        el.addEventListener("keydown", onKey);
+      });
+    });
+  }, [patchElement]);
 
   const generate = async () => {
     setBusy("generate");
@@ -2564,6 +2676,16 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
               ))}
             </select>
           )}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={undo}
+            disabled={!canUndo || busy !== null}
+            className="h-7 text-xs"
+            title="Go back to the previous version"
+          >
+            ↶ Undo
+          </Button>
           <Button size="sm" variant="outline" onClick={generate} disabled={busy !== null} className="h-7 text-xs">
             {busy === "generate" ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
             {versions.length === 0 ? "Generate" : "Re-generate"}
@@ -2583,16 +2705,23 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
           Click <strong>Generate</strong> — Claude builds a Why Buy deck from this pathway run's brief (property, tenant, model outputs, comps). You can then iterate by typing things like "make slide 2 punchier" or "swap the colour scheme".
         </div>
       ) : (
-        <div className="rounded-md overflow-hidden border bg-white" style={{ height: 600 }}>
-          {activeId && (
-            <iframe
-              src={`/api/property-pathway/${runId}/why-buy-design/${activeId}/render`}
-              className="w-full h-full border-0"
-              title="Why Buy preview"
-              sandbox="allow-same-origin"
-            />
-          )}
-        </div>
+        <>
+          <div className="text-[10px] text-muted-foreground italic px-1">
+            Click any image, headline, or KPI in the deck below to edit it inline. Edits auto-save as a new version — use Undo to step back.
+          </div>
+          <div className="rounded-md overflow-hidden border bg-white" style={{ height: 600 }}>
+            {activeId && (
+              <iframe
+                ref={iframeRef}
+                src={`/api/property-pathway/${runId}/why-buy-design/${activeId}/render`}
+                className="w-full h-full border-0"
+                title="Why Buy preview"
+                sandbox="allow-same-origin"
+                onLoad={onIframeLoad}
+              />
+            )}
+          </div>
+        </>
       )}
 
       {versions.length > 0 && (
@@ -2612,6 +2741,105 @@ function ClaudeDesignPane({ runId }: { runId: string }) {
       )}
 
       <HouseStylePanel scope="why_buy" />
+
+      {pickerEditId && (
+        <ImageStudioPicker
+          runId={runId}
+          onPick={(url) => {
+            const id = pickerEditId;
+            setPickerEditId(null);
+            if (id) patchElement(id, "image", url);
+          }}
+          onClose={() => setPickerEditId(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Modal that lists all images discovered for this pathway run (Stage 8 —
+// Street View, Retail Context Plan, additional, collections) so the user
+// can swap one into the deck without leaving the page.
+function ImageStudioPicker({ runId, onPick, onClose }: { runId: string; onPick: (url: string) => void; onClose: () => void }) {
+  const [images, setImages] = useState<Array<{ id: string; label: string; thumb: string; full: string }>>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/property-pathway/${runId}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        const stage8 = data?.stageResults?.stage8 || data?.stage_results?.stage8 || {};
+        const out: Array<{ id: string; label: string; thumb: string; full: string }> = [];
+        const push = (id: string | null | undefined, label: string) => {
+          if (!id) return;
+          out.push({
+            id,
+            label,
+            thumb: `/api/property-pathway/${runId}/image/${id}?thumb=1`,
+            full: `/api/property-pathway/${runId}/image/${id}`,
+          });
+        };
+        push(stage8.streetViewImageId, "Street View");
+        push(stage8.retailContextImageId, "Retail Context");
+        const additional = Array.isArray(stage8.additionalImageIds) ? stage8.additionalImageIds : [];
+        additional.forEach((id: string, i: number) => push(id, `Additional ${i + 1}`));
+        const collections = Array.isArray(stage8.collections) ? stage8.collections : [];
+        for (const c of collections) {
+          const ids = Array.isArray(c.imageIds) ? c.imageIds : [];
+          ids.forEach((id: string, i: number) => push(id, `${c.name || "Collection"} ${i + 1}`));
+        }
+        if (!cancelled) setImages(out);
+      } catch { /* ignore */ }
+      finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [runId]);
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-background rounded-lg shadow-2xl max-w-3xl w-full max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-4 border-b flex items-center justify-between">
+          <div>
+            <h3 className="font-semibold text-sm">Pick an image</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">From this property's Image Studio output. Click to use.</p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+        </div>
+        <div className="p-4 overflow-y-auto flex-1">
+          {loading ? (
+            <div className="text-xs text-muted-foreground italic text-center py-12">Loading…</div>
+          ) : images.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic text-center py-12">
+              No images yet for this property. Run Stage 8 (Image Studio) first.
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+              {images.map((img) => (
+                <button
+                  key={img.id}
+                  onClick={() => onPick(img.full)}
+                  className="group relative aspect-[4/3] rounded-md overflow-hidden border hover:border-primary hover:ring-2 hover:ring-primary/30 bg-muted"
+                  title={img.label}
+                >
+                  <img src={img.thumb} alt={img.label} className="w-full h-full object-cover" />
+                  <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent text-white text-[10px] p-1 leading-tight">
+                    {img.label}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
