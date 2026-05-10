@@ -169,21 +169,46 @@ export function registerRetailContextPlanRoutes(app: Express) {
         return res.status(400).json({ error: "lat + lng required" });
       }
       const radius = Math.max(50, Math.min(400, parseInt(String(req.query.radius || "180"), 10) || 180));
+
+      // VOA is the primary data source and is keyed by postcode. If the
+      // caller didn't pass one (live map fetch), reverse-geocode the
+      // centre point to derive one — without this we'd return nothing
+      // useful for most of London.
+      let postcode = String(req.query.postcode || "").trim();
+      let address = String(req.query.address || "").trim();
+      if (!postcode && GOOGLE_API_KEY) {
+        try {
+          const rgUrl = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_API_KEY}&result_type=premise|street_address|subpremise|establishment`;
+          const rgResp = await fetch(rgUrl, { signal: AbortSignal.timeout(5000) });
+          if (rgResp.ok) {
+            const rgData = await rgResp.json() as any;
+            const result = rgData.results?.[0];
+            const components = result?.address_components || [];
+            postcode = components.find((c: any) => c.types?.includes("postal_code"))?.long_name || "";
+            if (!address && result?.formatted_address) address = result.formatted_address.replace(/, UK$/i, "");
+          }
+        } catch {
+          /* ignore — buildMappedUnits will degrade gracefully */
+        }
+      }
+
       const planData = await buildMappedUnits({
-        subject: { lat, lng, address: String(req.query.address || ""), postcode: String(req.query.postcode || "") },
+        subject: { lat, lng, address, postcode },
         propertyId: null,
         bboxMeters: radius,
-        // Tight budgets for live map fetches — the unit set is cached by
-        // bbox, so subsequent pans benefit. Don't burn fresh geocodes /
-        // Places lookups on every map drag.
-        maxGeocodesPerRun: 8,
-        maxPlaceLookupsPerRun: 12,
+        // Slightly looser budgets than the deck render (which aims for
+        // perfect data) — live maps need to be snappy and a moderate
+        // number of fresh lookups per pan is fine.
+        maxGeocodesPerRun: 16,
+        maxPlaceLookupsPerRun: 24,
       });
+      console.log(`[retail-context-plan/units] (${lat.toFixed(4)},${lng.toFixed(4)}) r=${radius}m pc=${postcode || "(none)"} → ${planData.units.length} units (voa=${planData.stats.voaRows}, places=${planData.stats.placesMatched})`);
       res.json({
         subject: planData.subject,
         units: planData.units,
         bbox: planData.bbox,
         stats: planData.stats,
+        derivedPostcode: postcode || null,
       });
     } catch (err: any) {
       console.error("[retail-context-plan/units] error:", err?.message);

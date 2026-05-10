@@ -4824,6 +4824,11 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
           {showRetailContext && (
             <div className="mt-3 pt-2.5 border-t">
               <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5">Retail bands</p>
+              {!retailFetching && retailUnits.length === 0 && (
+                <p className="text-[10px] text-gray-500 italic mb-1.5 leading-snug">
+                  No retail data here yet. Try zooming closer to a UK high street, or pan and the layer will refetch.
+                </p>
+              )}
               <div className="grid grid-cols-2 gap-1">
                 {[
                   { k: "fashion",     l: "Fashion",     c: "#C9A961" },
