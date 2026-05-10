@@ -31,7 +31,93 @@ interface OverpassNode { id: number; lat: number; lon: number; }
 interface OverpassWay { id: number; nodes: number[]; tags?: Record<string, string>; }
 interface OverpassData { nodes: Map<number, OverpassNode>; buildings: OverpassWay[]; roads: OverpassWay[]; }
 
+/**
+ * Fetch building polygons from OS NGD — the same source Edozo uses for
+ * its live UK building outlines. Reliable because we authenticate with
+ * our OS_PLACES_API_KEY (not the public Overpass mirror, which
+ * rate-limits Railway IPs into oblivion).
+ *
+ * Returns the same OverpassData shape the renderer expects so we don't
+ * have to refactor the projection / drawing code — synthetic node IDs
+ * stand in for OSM node IDs, but the ways carry the real polygon
+ * geometry.
+ */
+async function fetchOsNgdBuildings(bbox: { south: number; north: number; west: number; east: number }): Promise<OverpassData> {
+  const key = process.env.OS_PLACES_API_KEY;
+  if (!key) throw new Error("OS_PLACES_API_KEY not configured");
+
+  const ngdBase = "https://api.os.uk/features/ngd/ofa/v1";
+  const ngdBbox = `${bbox.west},${bbox.south},${bbox.east},${bbox.north}`;
+  const filterCrs = "filter-crs=http://www.opengis.net/def/crs/EPSG/0/4326";
+  // Try buildingpart first (more detailed parts), fall back to building.
+  const collections = ["bld-fts-buildingpart-1", "bld-fts-building-1"];
+
+  let features: any[] = [];
+  for (const coll of collections) {
+    const url = `${ngdBase}/collections/${coll}/items?${filterCrs}&bbox=${ngdBbox}&limit=500&key=${encodeURIComponent(key)}`;
+    try {
+      const resp = await fetch(url, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+      if (resp.ok) {
+        const data: any = await resp.json();
+        features = Array.isArray(data?.features) ? data.features : [];
+        if (features.length > 0) break;
+      } else {
+        const body = await resp.text().catch(() => "");
+        console.warn(`[goad-plan/os-ngd] ${coll} HTTP ${resp.status}: ${body.slice(0, 200)}`);
+      }
+    } catch (err: any) {
+      console.warn(`[goad-plan/os-ngd] ${coll} failed:`, err?.message);
+    }
+  }
+
+  // Convert OS NGD GeoJSON features → OverpassWay format. NGD returns
+  // Polygon or MultiPolygon geometries; we flatten MultiPolygons into
+  // separate ways so each ring is its own building outline.
+  const nodes = new Map<number, OverpassNode>();
+  const buildings: OverpassWay[] = [];
+  let nextNodeId = 1_000_000_000;
+  let nextWayId = 2_000_000_000;
+  for (const feat of features) {
+    const geom = feat?.geometry;
+    if (!geom) continue;
+    const polygons: number[][][][] =
+      geom.type === "Polygon" ? [geom.coordinates] :
+      geom.type === "MultiPolygon" ? geom.coordinates :
+      [];
+    for (const poly of polygons) {
+      // poly[0] = outer ring; ignore inner rings (holes) for our purposes.
+      const ring = poly[0];
+      if (!Array.isArray(ring) || ring.length < 3) continue;
+      const wayNodes: number[] = [];
+      for (const [lng, lat] of ring) {
+        if (typeof lat !== "number" || typeof lng !== "number") continue;
+        const id = nextNodeId++;
+        nodes.set(id, { id, lat, lon: lng });
+        wayNodes.push(id);
+      }
+      if (wayNodes.length < 3) continue;
+      buildings.push({ id: nextWayId++, nodes: wayNodes, tags: { building: "yes" } });
+    }
+  }
+  return { nodes, buildings, roads: [] };
+}
+
 async function fetchOsm(bbox: { south: number; north: number; west: number; east: number }): Promise<OverpassData> {
+  // Primary: OS NGD (reliable, authenticated). Fallback: public Overpass
+  // for any addresses outside UK (rare for BGP) or if the OS key isn't
+  // configured.
+  if (process.env.OS_PLACES_API_KEY) {
+    try {
+      const ngd = await fetchOsNgdBuildings(bbox);
+      if (ngd.buildings.length > 0) return ngd;
+      console.warn("[goad-plan] OS NGD returned 0 buildings, falling through to Overpass");
+    } catch (err: any) {
+      console.warn("[goad-plan] OS NGD failed, falling through to Overpass:", err?.message);
+    }
+  }
+
+  // Fallback path — public OSM Overpass. Flaky but covers non-UK and
+  // OS-not-configured cases.
   const b = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
   const query = `[out:json][timeout:25];
 (
