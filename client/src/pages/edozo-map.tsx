@@ -3336,6 +3336,8 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [showDeals, setShowDeals] = useState(false);
   const [showComps, setShowComps] = useState(false);
   const [showLeaseEvents, setShowLeaseEvents] = useState(false);
+  const [showPathway, setShowPathway] = useState(false);
+  const pathwayMarkersRef = useRef<L.LayerGroup | null>(null);
   // ── Retail Context layer (BGP Goad-style data, live) ───────────────────────
   // When toggled on, fetch mapped units (VOA + OSM + Places + CRM) for the
   // current map view and render circle markers coloured by retail category.
@@ -3349,7 +3351,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const dealsLayerRef = useRef<any>(null);
   const compsLayerRef = useRef<any>(null);
   const leaseEventsLayerRef = useRef<any>(null);
-  const [mapPins, setMapPins] = useState<{ deals: any[]; comps: any[]; leaseEvents: any[] } | null>(null);
+  const [mapPins, setMapPins] = useState<{ deals: any[]; comps: any[]; leaseEvents: any[]; pathway?: any[] } | null>(null);
 
   // Land Registry title boundaries — always-on red-line layer
   const titleBoundaryLayerRef = useRef<L.LayerGroup | null>(null);
@@ -3832,6 +3834,39 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
       layer.addLayer(marker);
     }
   }, [showComps, mapPins]);
+
+  // Render Pathway runs layer — pins for active investigations.
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (!pathwayMarkersRef.current) {
+      pathwayMarkersRef.current = L.layerGroup().addTo(mapRef.current);
+    }
+    pathwayMarkersRef.current.clearLayers();
+    if (!showPathway || !mapPins?.pathway?.length) return;
+    for (const r of mapPins.pathway) {
+      if (!Number.isFinite(r.lat) || !Number.isFinite(r.lng)) continue;
+      const stage = r.currentStage || 0;
+      const stageLabel = stage > 0 ? `Stage ${stage}` : "Not started";
+      const marker = L.circleMarker([r.lat, r.lng], {
+        radius: 7,
+        fillColor: "#10b981", // emerald — pathway = active investigation
+        color: "#fff",
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.85,
+      });
+      marker.bindPopup(`
+        <div style="font-size:12px;max-width:240px">
+          <strong>${r.label || "Pathway run"}</strong>
+          ${r.postcode ? `<br/><span style="color:#666">${r.postcode}</span>` : ""}
+          ${r.tenant ? `<br/><span style="color:#666">Tenant: ${r.tenant}</span>` : ""}
+          <br/><span style="font-size:10px;background:#10b981;color:white;padding:1px 6px;border-radius:8px;display:inline-block;margin-top:3px">${stageLabel}</span>
+          <br/><a href="/property-pathway?runId=${r.id}" style="display:inline-block;margin-top:8px;font-size:11px;color:#10b981;text-decoration:none;border:1px solid #d1fae5;padding:3px 8px;border-radius:4px">Open run →</a>
+        </div>
+      `, { closeButton: false, offset: L.point(0, -5), maxWidth: 260 });
+      pathwayMarkersRef.current.addLayer(marker);
+    }
+  }, [showPathway, mapPins]);
 
   // Render Lease Events layer
   useEffect(() => {
@@ -4703,6 +4738,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               { key: "deals",  label: "Deals",          count: mapPins?.deals.length ?? 0, dot: "#f59e0b", on: showDeals, set: setShowDeals },
               { key: "comps",  label: "Comps",          count: mapPins?.comps.length ?? 0, dot: "#8b5cf6", on: showComps, set: setShowComps },
               { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
+              { key: "pathway",label: "Pathway runs",   count: mapPins?.pathway?.length ?? 0, dot: "#10b981", on: showPathway, set: setShowPathway },
               { key: "retail", label: retailFetching ? "Retail Context (loading…)" : "Retail Context", count: retailUnits.length, dot: "#15616D", on: showRetailContext, set: setShowRetailContext },
             ].map((row) => (
               <button

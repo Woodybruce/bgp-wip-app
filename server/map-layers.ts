@@ -338,7 +338,56 @@ If you cannot find a tenant list, return {"centre":"${name}","tenants":[]}. Retu
       }
       backgroundGeocode(leaseNeedGeocode.slice(0, 50));
 
-      res.json({ deals, comps, leaseEvents });
+      // ── 4. Pathway runs ────────────────────────────────────────────────────
+      // Active investigations — pin every pathway run that has a linked
+      // property (or a known address via cached geocode). Lets the user
+      // see all in-flight work on the map.
+      const pathwayRes = await pool.query(`
+        SELECT
+          r.id, r.address, r.postcode, r.property_id,
+          r.tenant, r.updated_at,
+          r.stage_results,
+          p.latitude  AS p_lat,
+          p.longitude AS p_lng
+        FROM property_pathway_runs r
+        LEFT JOIN crm_properties p ON p.id = r.property_id
+        ORDER BY r.updated_at DESC
+        LIMIT 500
+      `);
+
+      const pathway: any[] = [];
+      const pathwayNeedGeocode: string[] = [];
+      for (const r of pathwayRes.rows) {
+        let lat: number | null = null;
+        let lng: number | null = null;
+        if (r.p_lat && r.p_lng) {
+          lat = parseFloat(r.p_lat); lng = parseFloat(r.p_lng);
+        } else if (r.address) {
+          const geo = await getCachedGeocode(`${r.address} ${r.postcode || ""}, UK`);
+          if (geo) { lat = geo.lat; lng = geo.lng; }
+          else pathwayNeedGeocode.push(`${r.address} ${r.postcode || ""}, UK`);
+        }
+        if (lat !== null && lng !== null && isFinite(lat) && isFinite(lng)) {
+          // Highest-numbered stage with a result is "current stage"
+          let currentStage = 0;
+          const sr = r.stage_results || {};
+          for (let i = 1; i <= 9; i++) if (sr[`stage${i}`]) currentStage = i;
+          pathway.push({
+            id: r.id,
+            type: "pathway",
+            lat, lng,
+            label: r.address,
+            postcode: r.postcode,
+            tenant: r.tenant,
+            currentStage,
+            propertyId: r.property_id,
+            updatedAt: r.updated_at,
+          });
+        }
+      }
+      backgroundGeocode(pathwayNeedGeocode.slice(0, 50));
+
+      res.json({ deals, comps, leaseEvents, pathway });
     } catch (err: any) {
       console.error("[map-layers] error:", err?.message);
       res.status(500).json({ error: err?.message || "Failed to load map pins" });
