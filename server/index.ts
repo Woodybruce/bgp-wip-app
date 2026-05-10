@@ -1185,6 +1185,83 @@ import { pool } from "./db";
        LOWER(name) ILIKE 'jack%barratt%'
        OR LOWER(name) ILIKE 'charlotte%roberts%'
        OR LOWER(name) ILIKE 'rupert%bentley%smith%'`,
+
+    // ── Migration 0014 (HMLR ownership) — proprietors table only.
+    // Polygons + PostGIS deferred to when INSPIRE map shading is wanted.
+    // pg_trgm enables fast ILIKE on property_address for the
+    // postcode + street-number match.
+    `CREATE EXTENSION IF NOT EXISTS pg_trgm`,
+    `CREATE TABLE IF NOT EXISTS hmlr_proprietors (
+      title_number                       TEXT NOT NULL,
+      dataset                            TEXT NOT NULL,
+      proprietor_position                INTEGER NOT NULL DEFAULT 1,
+      proprietor_name                    TEXT,
+      proprietor_category                TEXT,
+      company_registration_no            TEXT,
+      country_incorporated               TEXT,
+      proprietor_address_1               TEXT,
+      proprietor_address_2               TEXT,
+      proprietor_address_3               TEXT,
+      date_proprietor_added              DATE,
+      price_paid                         TEXT,
+      property_address                   TEXT,
+      postcode                           TEXT,
+      postcode_normalised                TEXT,
+      tenure                             TEXT,
+      multiple_address_indicator         TEXT,
+      additional_proprietor_indicator    TEXT,
+      ingest_run_id                      UUID,
+      inserted_at                        TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at                         TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (title_number, dataset, proprietor_position)
+    )`,
+    `CREATE INDEX IF NOT EXISTS hmlr_proprietors_postcode_idx
+       ON hmlr_proprietors (postcode_normalised)
+       WHERE postcode_normalised IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS hmlr_proprietors_company_idx
+       ON hmlr_proprietors (company_registration_no)
+       WHERE company_registration_no IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS hmlr_proprietors_name_idx
+       ON hmlr_proprietors (lower(proprietor_name))`,
+    `CREATE INDEX IF NOT EXISTS hmlr_proprietors_dataset_idx
+       ON hmlr_proprietors (dataset)`,
+    `CREATE INDEX IF NOT EXISTS hmlr_proprietors_address_trgm_idx
+       ON hmlr_proprietors USING GIN (lower(property_address) gin_trgm_ops)`,
+    `CREATE TABLE IF NOT EXISTS hmlr_ingest_runs (
+      id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      dataset           TEXT NOT NULL,
+      source_url        TEXT,
+      source_filename   TEXT,
+      rows_processed    INTEGER NOT NULL DEFAULT 0,
+      rows_inserted     INTEGER NOT NULL DEFAULT 0,
+      rows_updated      INTEGER NOT NULL DEFAULT 0,
+      rows_skipped      INTEGER NOT NULL DEFAULT 0,
+      status            TEXT NOT NULL,
+      error             TEXT,
+      notes             TEXT,
+      started_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+      finished_at       TIMESTAMPTZ
+    )`,
+    `CREATE INDEX IF NOT EXISTS hmlr_ingest_runs_dataset_idx
+       ON hmlr_ingest_runs (dataset, started_at DESC)`,
+
+    // ── Migration 0015 (document design preferences) — free-text rows
+    // injected into Claude-driven document generation as house style.
+    `CREATE TABLE IF NOT EXISTS document_design_preferences (
+      id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      scope           TEXT NOT NULL,
+      preference      TEXT NOT NULL,
+      category        TEXT,
+      enabled         BOOLEAN NOT NULL DEFAULT true,
+      added_by        TEXT,
+      added_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+      disabled_at     TIMESTAMPTZ,
+      notes           TEXT
+    )`,
+    `CREATE INDEX IF NOT EXISTS document_design_preferences_scope_active_idx
+       ON document_design_preferences (scope) WHERE enabled = true`,
+    `CREATE INDEX IF NOT EXISTS document_design_preferences_added_at_idx
+       ON document_design_preferences (added_at DESC)`,
   ];
 
   let ok = 0, skipped = 0;
