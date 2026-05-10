@@ -74,6 +74,7 @@ export function RetailContextPlanEditor({
   const [excluded, setExcluded] = useState<Set<string>>(new Set(initialExcluded));
   const [previewImageId, setPreviewImageId] = useState<string | null>(initialPreviewImageId);
   const [previewAssetId, setPreviewAssetId] = useState<string | null>(null);
+  const [lastStats, setLastStats] = useState<{ buildingsCount: number; matchedUnits: number; voaRows: number } | null>(null);
   const [busy, setBusy] = useState<"render" | "pin" | null>(null);
   const [mapError, setMapError] = useState<string | null>(null);
 
@@ -184,8 +185,22 @@ export function RetailContextPlanEditor({
       const data = await r.json();
       setPreviewImageId(data.imageId);
       setPreviewAssetId(data.assetId);
+      setLastStats({
+        buildingsCount: data.buildingsCount ?? 0,
+        matchedUnits: data.matchedUnits ?? 0,
+        voaRows: data.voaRows ?? 0,
+      });
       onChange?.();
-      toast({ title: "Plan regenerated", description: `Radius ${radius}m, ${excluded.size} category band(s) hidden` });
+      const buildings = data.buildingsCount ?? 0;
+      if (buildings === 0) {
+        toast({
+          title: "Render came back blank",
+          description: "OSM Overpass returned no buildings — usually a temporary rate-limit. Try Regenerate again.",
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Plan regenerated", description: `${buildings} buildings, ${data.matchedUnits ?? 0} units matched` });
+      }
     } catch (e: any) {
       toast({ title: "Regenerate failed", description: e?.message || "", variant: "destructive" });
     } finally { setBusy(null); }
@@ -303,23 +318,45 @@ export function RetailContextPlanEditor({
           </div>
 
           {/* Right: preview */}
-          <div className="rounded-md border bg-muted/20 flex items-center justify-center overflow-hidden relative">
-            {previewSrc ? (
-              <img
-                src={previewSrc}
-                alt="Retail context plan preview"
-                className="max-w-full max-h-full object-contain"
-              />
-            ) : (
-              <div className="text-xs text-muted-foreground italic text-center p-12">
-                {busy === "render"
-                  ? "Rendering…"
-                  : "Click Regenerate to render the first version with the current settings."}
-              </div>
-            )}
-            {busy === "render" && previewSrc && (
-              <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
-                <Loader2 className="w-8 h-8 animate-spin text-white" />
+          <div className="flex flex-col gap-2 overflow-hidden">
+            <div className="flex-1 rounded-md border bg-muted/20 flex items-center justify-center overflow-hidden relative">
+              {previewSrc ? (
+                <img
+                  src={previewSrc}
+                  alt="Retail context plan preview"
+                  className="max-w-full max-h-full object-contain"
+                />
+              ) : (
+                <div className="text-xs text-muted-foreground italic text-center p-12">
+                  {busy === "render"
+                    ? "Rendering…"
+                    : "Click Regenerate to render the first version with the current settings."}
+                </div>
+              )}
+              {busy === "render" && previewSrc && (
+                <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                  <Loader2 className="w-8 h-8 animate-spin text-white" />
+                </div>
+              )}
+            </div>
+            {lastStats && (
+              <div className={`text-[10px] px-2 py-1.5 rounded border ${
+                lastStats.buildingsCount === 0
+                  ? "border-destructive/40 bg-destructive/5 text-destructive"
+                  : "border-border bg-background text-muted-foreground"
+              }`}>
+                {lastStats.buildingsCount === 0 ? (
+                  <>
+                    <strong>Render came back blank.</strong> OSM Overpass returned 0 buildings —
+                    likely a temporary rate-limit on the public API. Hit Regenerate again to retry.
+                  </>
+                ) : (
+                  <>
+                    <strong>{lastStats.buildingsCount}</strong> buildings ·
+                    {" "}<strong>{lastStats.matchedUnits}</strong> units matched ·
+                    {" "}<strong>{lastStats.voaRows}</strong> VOA rows in range
+                  </>
+                )}
               </div>
             )}
           </div>

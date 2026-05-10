@@ -294,13 +294,24 @@ export async function renderGoadPlan(args: RenderGoadPlanArgs): Promise<RenderGo
   const projector = makeProjector(args.bbox, mapWidth, mapHeight, mapX, mapY);
   const project = projector.project;
 
-  // 1. Overpass.
+  // 1. Overpass. Retry once after 1s if the first call fails or returns
+  // an empty buildings set — the public Overpass API is flaky and a
+  // second attempt usually succeeds. Logs the raw counts so blank
+  // renders are diagnosable from Railway logs.
   let osm: OverpassData = { nodes: new Map(), buildings: [], roads: [] };
-  try {
-    osm = await fetchOsm(args.bbox);
-  } catch (err: any) {
-    console.warn("[goad-plan] Overpass failed:", err?.message);
+  let osmAttempts = 0;
+  for (let i = 0; i < 2; i++) {
+    osmAttempts++;
+    try {
+      osm = await fetchOsm(args.bbox);
+      if (osm.buildings.length > 0) break;
+      console.warn(`[goad-plan] Overpass returned 0 buildings (attempt ${i + 1}) for bbox ${JSON.stringify(args.bbox)}`);
+    } catch (err: any) {
+      console.warn(`[goad-plan] Overpass failed (attempt ${i + 1}):`, err?.message);
+    }
+    if (i === 0) await new Promise((r) => setTimeout(r, 1000));
   }
+  console.log(`[goad-plan] Overpass: ${osm.buildings.length} buildings, ${osm.roads.length} roads after ${osmAttempts} attempt(s)`);
 
   // 2. Project every building + road.
   const buildings: PolyBuilding[] = [];

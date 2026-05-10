@@ -52,7 +52,16 @@ function postcodeOutwardCode(pc: string): string {
   return cleaned.slice(0, Math.max(0, cleaned.length - 3));
 }
 
-export async function renderRetailContextPlan(args: RenderArgs): Promise<{ id: string; assetId: string | null; localPath: string; width: number; height: number }> {
+export async function renderRetailContextPlan(args: RenderArgs): Promise<{
+  id: string;
+  assetId: string | null;
+  localPath: string;
+  width: number;
+  height: number;
+  buildingsCount: number;
+  matchedUnits: number;
+  voaRows: number;
+}> {
   const { address, postcode, propertyId, customCenter, excludeCategories, userId } = args;
   if (!GOOGLE_API_KEY) throw new Error("GOOGLE_API_KEY not configured");
 
@@ -153,7 +162,16 @@ export async function renderRetailContextPlan(args: RenderArgs): Promise<{ id: s
     }
   }
 
-  return { id: row.id, assetId, localPath, width: plan.width, height: plan.height };
+  return {
+    id: row.id,
+    assetId,
+    localPath,
+    width: plan.width,
+    height: plan.height,
+    buildingsCount: plan.buildingsCount,
+    matchedUnits: plan.matchedUnits,
+    voaRows: planData.stats.voaRows,
+  };
 }
 
 export function registerRetailContextPlanRoutes(app: Express) {
@@ -232,7 +250,17 @@ export function registerRetailContextPlanRoutes(app: Express) {
         excludeCategories: Array.isArray(excludeCategories) ? excludeCategories : undefined,
         userId,
       });
-      res.json({ success: true, imageId: result.id, assetId: result.assetId, width: result.width, height: result.height });
+      console.log(`[retail-context-plan/render] (${address}) buildings=${result.buildingsCount} matched=${result.matchedUnits} voa=${result.voaRows} → imageId=${result.id}`);
+      res.json({
+        success: true,
+        imageId: result.id,
+        assetId: result.assetId,
+        width: result.width,
+        height: result.height,
+        buildingsCount: result.buildingsCount,
+        matchedUnits: result.matchedUnits,
+        voaRows: result.voaRows,
+      });
     } catch (err: any) {
       console.error("[retail-context-plan] error:", err?.message);
       res.status(500).json({ error: err?.message || "Failed to render retail context plan" });
