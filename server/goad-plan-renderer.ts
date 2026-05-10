@@ -102,22 +102,65 @@ async function fetchOsNgdBuildings(bbox: { south: number; north: number; west: n
   return { nodes, buildings, roads: [] };
 }
 
+/**
+ * Roads-only Overpass query — much smaller/faster than the buildings-
+ * and-highways combo, so much more likely to succeed against the public
+ * Overpass mirror even when the buildings query times out.
+ */
+async function fetchOverpassRoads(bbox: { south: number; north: number; west: number; east: number }): Promise<{ nodes: Map<number, OverpassNode>; roads: OverpassWay[] }> {
+  const b = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
+  const query = `[out:json][timeout:15];
+(way["highway"](${b}););
+out body;
+>;
+out skel qt;`;
+  const res = await fetch("https://overpass-api.de/api/interpreter", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `data=${encodeURIComponent(query)}`,
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`Overpass ${res.status}`);
+  const data: any = await res.json();
+  const nodes = new Map<number, OverpassNode>();
+  const roads: OverpassWay[] = [];
+  for (const el of data.elements || []) {
+    if (el.type === "node") nodes.set(el.id, { id: el.id, lat: el.lat, lon: el.lon });
+    else if (el.type === "way" && el.tags?.highway) {
+      roads.push({ id: el.id, nodes: el.nodes, tags: el.tags });
+    }
+  }
+  return { nodes, roads };
+}
+
 async function fetchOsm(bbox: { south: number; north: number; west: number; east: number }): Promise<OverpassData> {
-  // Primary: OS NGD (reliable, authenticated). Fallback: public Overpass
-  // for any addresses outside UK (rare for BGP) or if the OS key isn't
-  // configured.
+  // Primary: OS NGD for buildings (reliable, authenticated, no rate-limit).
+  // Roads come from a SEPARATE Overpass call — buildings-only NGD doesn't
+  // give us roads, but the smaller "highways only" Overpass query is much
+  // less flaky than the combined query was.
   if (process.env.OS_PLACES_API_KEY) {
     try {
       const ngd = await fetchOsNgdBuildings(bbox);
-      if (ngd.buildings.length > 0) return ngd;
+      if (ngd.buildings.length > 0) {
+        // Try to enrich with roads via a small Overpass call. If it fails,
+        // we still have buildings — better than nothing.
+        try {
+          const r = await fetchOverpassRoads(bbox);
+          for (const [id, n] of r.nodes) ngd.nodes.set(id, n);
+          ngd.roads = r.roads;
+        } catch (err: any) {
+          console.warn("[goad-plan] roads-only Overpass failed (continuing without roads):", err?.message);
+        }
+        return ngd;
+      }
       console.warn("[goad-plan] OS NGD returned 0 buildings, falling through to Overpass");
     } catch (err: any) {
       console.warn("[goad-plan] OS NGD failed, falling through to Overpass:", err?.message);
     }
   }
 
-  // Fallback path — public OSM Overpass. Flaky but covers non-UK and
-  // OS-not-configured cases.
+  // Fallback path — full public OSM Overpass query. Flaky but covers
+  // non-UK and OS-not-configured cases.
   const b = `${bbox.south},${bbox.west},${bbox.north},${bbox.east}`;
   const query = `[out:json][timeout:25];
 (

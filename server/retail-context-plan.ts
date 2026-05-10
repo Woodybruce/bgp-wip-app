@@ -75,7 +75,10 @@ export async function renderRetailContextPlan(args: RenderArgs): Promise<{
   // Clamp radius into a sensible window. 50m is a single block; 300m
   // covers a few streets and is the upper bound before the plan gets
   // unreadable at our 1600x1200 canvas.
-  const halfMeters = Math.max(50, Math.min(300, Math.round(args.radius ?? 180)));
+  // Clamp 40-200m. Smaller default than before (120m vs 180m) — Mount St
+  // and similar prime stretches read much better zoomed in. Going beyond
+  // 200m makes labels unreadable and dilutes the relevant context.
+  const halfMeters = Math.max(40, Math.min(200, Math.round(args.radius ?? 120)));
 
   // 2. Build the mapped unit list (VOA + Places + CRM + cache).
   const planData = await buildMappedUnits({

@@ -54,7 +54,7 @@ export function RetailContextPlanEditor({
   postcode,
   initialLat,
   initialLng,
-  initialRadius = 180,
+  initialRadius = 120,
   initialExcluded = [],
   initialPreviewImageId = null,
   onClose,
@@ -258,17 +258,17 @@ export function RetailContextPlanEditor({
               </label>
               <input
                 type="range"
-                min={50}
-                max={300}
+                min={40}
+                max={200}
                 step={10}
                 value={radius}
                 onChange={(e) => setRadius(parseInt(e.target.value, 10))}
                 className="w-full"
               />
               <div className="flex justify-between text-[9px] text-muted-foreground">
-                <span>50m · single block</span>
-                <span>180m · default</span>
-                <span>300m · few streets</span>
+                <span>40m · close</span>
+                <span>120m · default</span>
+                <span>200m · block</span>
               </div>
             </div>
 
