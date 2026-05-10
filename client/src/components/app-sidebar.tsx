@@ -82,6 +82,7 @@ const coreNavBase = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "My Tasks", url: "/tasks", icon: ListTodo },
   { title: "Properties", url: "/properties", icon: Building2 },
+  { title: "MAP BGP", url: "/map-bgp", icon: MapPin },
   { title: "Deals", url: "/deals", icon: BarChart3 },
   { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
   { title: "Requirements", url: "/requirements", icon: FileText },

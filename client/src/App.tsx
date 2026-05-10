@@ -89,6 +89,7 @@ const ComplianceBoard = lazy(() => import("@/pages/compliance-board"));
 const AmlTraining = lazy(() => import("@/pages/aml-training"));
 const KycHub = lazy(() => import("@/pages/kyc-hub"));
 const PropertyIntelligence = lazy(() => import("@/pages/property-intelligence"));
+const MapBgp = lazy(() => import("@/pages/map-bgp"));
 const Reporting = lazy(() => import("@/pages/reporting"));
 const TodayPage = lazy(() => import("@/pages/today"));
 const AdminDedupe = lazy(() => import("@/pages/admin-dedupe"));
@@ -194,6 +195,7 @@ function Router() {
       {/* Property Intelligence Hub — unified investigation hub with 5 tabs.
           Legacy tool routes redirect here so old links keep working. */}
       <Route path="/property-intelligence" component={PropertyIntelligence} />
+      <Route path="/map-bgp" component={MapBgp} />
       <Route path="/land-registry" component={PropertyIntelligence} />
       <Route path="/business-rates" component={PropertyIntelligence} />
       {/* AML / KYC hub — compliance-focused tabs (board, training, settings).
