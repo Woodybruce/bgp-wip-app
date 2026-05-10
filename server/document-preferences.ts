@@ -30,24 +30,36 @@ export interface DesignPreference {
  * Active preferences for a scope, newest-first. Disabled rows are
  * excluded. Cap at 100 — past that the prompt gets unwieldy and the team
  * should tidy stale prefs.
+ *
+ * Tolerant of a missing table — if migration 0015 hasn't been applied
+ * yet (e.g. fresh deploy), returns []. Document generation flows
+ * continue to work without house preferences in that state.
  */
 export async function getActivePreferences(scope: string): Promise<DesignPreference[]> {
-  const r = await pool.query<any>(
-    `SELECT id, scope, preference, category,
-            to_char(added_at, 'YYYY-MM-DD"T"HH24:MI:SSOF') AS added_at
-       FROM document_design_preferences
-      WHERE scope = $1 AND enabled = true
-      ORDER BY added_at DESC
-      LIMIT 100`,
-    [scope],
-  );
-  return r.rows.map((row) => ({
-    id: row.id,
-    scope: row.scope,
-    preference: row.preference,
-    category: row.category,
-    addedAt: row.added_at,
-  }));
+  try {
+    const r = await pool.query<any>(
+      `SELECT id, scope, preference, category,
+              to_char(added_at, 'YYYY-MM-DD"T"HH24:MI:SSOF') AS added_at
+         FROM document_design_preferences
+        WHERE scope = $1 AND enabled = true
+        ORDER BY added_at DESC
+        LIMIT 100`,
+      [scope],
+    );
+    return r.rows.map((row) => ({
+      id: row.id,
+      scope: row.scope,
+      preference: row.preference,
+      category: row.category,
+      addedAt: row.added_at,
+    }));
+  } catch (err: any) {
+    if (/relation .* does not exist/i.test(err?.message || "")) {
+      console.warn("[document-preferences] table missing — run `npm run db:push` to apply migration 0015. Continuing with no preferences.");
+      return [];
+    }
+    throw err;
+  }
 }
 
 /**
@@ -125,6 +137,9 @@ export function setupDocumentPreferencesRoutes(app: Express) {
       const r = await pool.query(sql, params);
       res.json(r.rows);
     } catch (e: any) {
+      // Pre-migration: table doesn't exist yet. Return empty so the UI
+      // panel doesn't look broken — it just shows "no preferences yet".
+      if (/relation .* does not exist/i.test(e?.message || "")) return res.json([]);
       res.status(500).json({ error: e.message });
     }
   });
@@ -145,6 +160,9 @@ export function setupDocumentPreferencesRoutes(app: Express) {
       );
       res.json(r.rows[0]);
     } catch (e: any) {
+      if (/relation .* does not exist/i.test(e?.message || "")) {
+        return res.status(503).json({ error: "Preferences table not migrated yet — run `npm run db:push` to apply migration 0015." });
+      }
       res.status(500).json({ error: e.message });
     }
   });
