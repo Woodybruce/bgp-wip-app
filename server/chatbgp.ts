@@ -612,6 +612,7 @@ function getToolProgressLabel(toolName: string): string {
     search_crm: "Searching CRM...",
     web_search: "Searching the web...",
     ingest_url: "Reading page...",
+    follow_url: "Adding to news feed...",
     property_lookup: "Looking up property data...",
     property_data_lookup: "Querying PropertyData...",
     deep_investigate: "Running deep investigation...",
@@ -1115,6 +1116,7 @@ You are an active operational agent with full CRM read/write access, internet se
 - **Property onboarding**: Read document → create_property with full address → auto Land Registry enrichment runs in background.
 - **KYC**: run_kyc_check for Companies House + sanctions + financial strength. deep_investigate for full D&B-style intelligence combining all sources.
 - **Web research**: web_search → ingest_url → property_data_lookup → property_lookup. Chain tools for comprehensive answers.
+- **Auto-follow news URLs**: When the user pastes a URL from a news outlet, journalist blog, columnist page, research-house insights index, or industry publication (e.g. Sky News, FT, Bloomberg, Reuters, Property Week, Savills/CBRE/Knight Frank research, a Substack), call **follow_url** to register it as a persistent source. The news-feed cron then polls it automatically forever — no further action needed. Confirm in one short line ("Now tracking X — new posts will appear in your news feed"). Skip auto-follow for: internal app URLs, Companies House / planning portals, SharePoint/OneDrive links, social profiles, or one-off article reads (use ingest_url for those). If the user explicitly says "follow / track / watch / scrape this URL" — always call follow_url, regardless of source type. If both reading AND tracking are wanted, run ingest_url first, then follow_url.
 - **SharePoint**: read_sharepoint_file / browse_sharepoint_folder / move_sharepoint_item. Support both team SharePoint and personal OneDrive URLs. For subfolder navigation, use driveId+itemId from browse results, NOT webUrl.
 - **Leasing schedule**: query_leasing_schedule for read. If the user uploads / drags in / attaches an Excel file and says anything about leasing schedule, rent schedule, tenant schedule, load / upload / import / populate units, OR says "this is the [property] leasing schedule" — you MUST call import_leasing_schedule with mode="preview" first. DO NOT read the file yourself or summarise its contents — the tool handles parsing. After preview returns, show the user the summary and ask for confirmation, then call again with mode="import".
 - **Documents (plain text)**: generate_pdf (TEXT ONLY — no imagery, no design), generate_word, generate_pptx, export_to_excel. Use these ONLY for internal text reports.
@@ -3345,6 +3347,23 @@ The tool runs the brief, renders via Claude design, and saves to the canonical S
           url: { type: "string", description: "The URL to fetch and read" },
           addToNews: { type: "boolean", description: "If true, save the content as a news article in the BGP news feed" },
           sourceName: { type: "string", description: "Source name for the article (e.g. 'Savills Research', 'CBRE', 'Knight Frank')" },
+        },
+        required: ["url"],
+      },
+    },
+  });
+
+  tools.push({
+    type: "function",
+    function: {
+      name: "follow_url",
+      description: "Register a news/blog/publisher URL as a persistent source in the BGP news feed. The news-feeds cron will then auto-poll it on every cycle, dedupe, AI-score, and link to brands — so new articles appear automatically in /news without any further action. Use whenever the user pastes (or mentions) a URL from a news outlet, journalist blog, columnist page, research publisher, or industry publication and the intent is to track it ongoing rather than just read one page. Examples: a Sky News journalist blog, an FT columnist landing page, a research-house insights index. Do NOT use for: internal app URLs, Companies House records, planning-portal pages, SharePoint/OneDrive links, social profiles, or one-off article reads (use ingest_url for those).",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "The page URL to start tracking. Can be a homepage, section page, author/blog page, or direct article URL — RSS.app will generate an RSS feed from it." },
+          name: { type: "string", description: "Optional display name for the source. If omitted, the page title is used (e.g. 'Mark Kleinman — Sky News')." },
+          category: { type: "string", description: "Category bucket: Property, Retail, Hospitality, Investment, or general. Default 'general'." },
         },
         required: ["url"],
       },
@@ -6369,6 +6388,32 @@ async function executeCrmToolRaw(
       return { data: { success: true, action: "ingested", title, contentLength: extractedText.length, content: truncated } };
     } catch (err: any) {
       return { data: { error: `Failed to ingest URL: ${err.message}` } };
+    }
+  }
+
+  if (fnName === "follow_url") {
+    const targetUrl = (fnArgs.url as string || "").trim();
+    if (!targetUrl) return { data: { error: "url is required" } };
+    try {
+      const { newsSources } = await import("@shared/schema");
+      const { createRssAppFeed } = await import("./rssapp");
+      const existing = await db.select().from(newsSources).where(eq(newsSources.url, targetUrl)).limit(1);
+      if (existing.length > 0) {
+        return { data: { success: true, action: "already_following", source: existing[0], message: `Already tracking ${existing[0].name}.` } };
+      }
+      const feed = await createRssAppFeed(targetUrl);
+      const [source] = await db.insert(newsSources).values({
+        name: (fnArgs.name as string) || feed.title || new URL(targetUrl).hostname.replace("www.", ""),
+        url: targetUrl,
+        feedUrl: feed.rss_feed_url,
+        type: "rssapp",
+        category: (fnArgs.category as string) || "general",
+        active: true,
+      }).returning();
+      console.log(`[ChatBGP] follow_url: registered "${source.name}" (${targetUrl}) via RSS.app`);
+      return { data: { success: true, action: "now_following", source, message: `Now tracking ${source.name}. New articles will appear in your news feed on the next poll.` } };
+    } catch (err: any) {
+      return { data: { error: `Failed to follow URL: ${err?.message || err}` } };
     }
   }
 
@@ -9814,6 +9859,32 @@ export async function handleCrmToolCall(
       return { handled: true, response: { reply: reply || `I've read "${title}" (${extractedText.length} characters).${fnArgs.addToNews ? " Saved to news feed." : ""}` } };
     } catch (err: any) {
       return { handled: true, response: { reply: `Sorry, I couldn't read that URL: ${err.message}` } };
+    }
+  }
+
+  if (fnName === "follow_url") {
+    const targetUrl = (fnArgs.url as string || "").trim();
+    if (!targetUrl) return { handled: true, response: { reply: "I need a URL to follow." } };
+    try {
+      const { newsSources } = await import("@shared/schema");
+      const { createRssAppFeed } = await import("./rssapp");
+      const existing = await db.select().from(newsSources).where(eq(newsSources.url, targetUrl)).limit(1);
+      if (existing.length > 0) {
+        return { handled: true, response: { reply: `Already tracking **${existing[0].name}** — new articles flow into your news feed automatically.` } };
+      }
+      const feed = await createRssAppFeed(targetUrl);
+      const [source] = await db.insert(newsSources).values({
+        name: (fnArgs.name as string) || feed.title || new URL(targetUrl).hostname.replace("www.", ""),
+        url: targetUrl,
+        feedUrl: feed.rss_feed_url,
+        type: "rssapp",
+        category: (fnArgs.category as string) || "general",
+        active: true,
+      }).returning();
+      console.log(`[ChatBGP] follow_url: registered "${source.name}" (${targetUrl}) via RSS.app`);
+      return { handled: true, response: { reply: `Now tracking **${source.name}**. New posts will land in your news feed on the next poll.` } };
+    } catch (err: any) {
+      return { handled: true, response: { reply: `Couldn't start following that URL: ${err?.message || err}` } };
     }
   }
 
