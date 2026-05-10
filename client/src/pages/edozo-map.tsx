@@ -3338,6 +3338,13 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [showLeaseEvents, setShowLeaseEvents] = useState(false);
   const [showPathway, setShowPathway] = useState(false);
   const pathwayMarkersRef = useRef<L.LayerGroup | null>(null);
+  // ── Street View on-click ───────────────────────────────────────────────────
+  // When toggled on, clicking the map opens an embedded Google Street View
+  // panorama at that lat/lng in a popup. Reuses the GOOGLE_API_KEY already
+  // wired through /api/config/maps-key.
+  const [showStreetView, setShowStreetView] = useState(false);
+  const [googleMapsKey, setGoogleMapsKey] = useState<string | null>(null);
+  const streetViewClickRef = useRef<((e: L.LeafletMouseEvent) => void) | null>(null);
   // ── Retail Context layer (BGP Goad-style data, live) ───────────────────────
   // When toggled on, fetch mapped units (VOA + OSM + Places + CRM) for the
   // current map view and render circle markers coloured by retail category.
@@ -4089,6 +4096,57 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     return () => { cancelled = true; map.off("moveend", onMoveEnd); };
   }, [showRetailContext]);
 
+  // ── Street View on-click toggle ────────────────────────────────────────────
+  // Fetch Google Maps API key once so we can build embed URLs.
+  useEffect(() => {
+    if (googleMapsKey !== null) return;
+    fetch("/api/config/maps-key", { credentials: "include" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setGoogleMapsKey(d?.key || ""))
+      .catch(() => setGoogleMapsKey(""));
+  }, [googleMapsKey]);
+
+  // Bind a map-click handler when the toggle is on; clean up on toggle off.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const container = map.getContainer();
+    if (!showStreetView) {
+      container.style.cursor = "";
+      if (streetViewClickRef.current) {
+        map.off("click", streetViewClickRef.current);
+        streetViewClickRef.current = null;
+      }
+      return;
+    }
+    container.style.cursor = "crosshair";
+    const handler = (e: L.LeafletMouseEvent) => {
+      const { lat, lng } = e.latlng;
+      const key = googleMapsKey || "";
+      // Embed URL works with any key that has Maps Embed enabled. If the
+      // key is missing, fall back to a public Maps link.
+      const embedSrc = key
+        ? `https://www.google.com/maps/embed/v1/streetview?key=${encodeURIComponent(key)}&location=${lat},${lng}&heading=0&pitch=0&fov=90`
+        : "";
+      const fallback = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${lat},${lng}`;
+      const html = embedSrc
+        ? `<div style="width:360px"><iframe src="${embedSrc}" width="360" height="240" style="border:0;border-radius:6px" allow="fullscreen" referrerpolicy="no-referrer-when-downgrade"></iframe>
+            <div style="text-align:right;margin-top:4px"><a href="${fallback}" target="_blank" rel="noreferrer" style="font-size:11px;color:#1a73e8">Open in Maps ↗</a></div></div>`
+        : `<div style="width:240px;font-size:12px"><p>Google Maps key not configured.</p><a href="${fallback}" target="_blank" rel="noreferrer" style="font-size:11px;color:#1a73e8">Open Street View in Maps ↗</a></div>`;
+      L.popup({ maxWidth: 380, closeButton: true })
+        .setLatLng(e.latlng)
+        .setContent(html)
+        .openOn(map);
+    };
+    streetViewClickRef.current = handler;
+    map.on("click", handler);
+    return () => {
+      map.off("click", handler);
+      container.style.cursor = "";
+      streetViewClickRef.current = null;
+    };
+  }, [showStreetView, googleMapsKey]);
+
   // Render the units as colour-coded circle markers. Re-runs when units
   // change OR when the user toggles a category checkbox in the layer
   // panel (excludedRetailCategories).
@@ -4740,6 +4798,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
               { key: "pathway",label: "Pathway runs",   count: mapPins?.pathway?.length ?? 0, dot: "#10b981", on: showPathway, set: setShowPathway },
               { key: "retail", label: retailFetching ? "Retail Context (loading…)" : "Retail Context", count: retailUnits.length, dot: "#15616D", on: showRetailContext, set: setShowRetailContext },
+              { key: "sv",     label: showStreetView ? "Street View (click map)" : "Street View",      count: 0, dot: "#FBBC04", on: showStreetView, set: setShowStreetView },
             ].map((row) => (
               <button
                 key={row.key}
