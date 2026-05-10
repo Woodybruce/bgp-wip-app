@@ -167,7 +167,14 @@ async function resolveByPostcode(postcode: string): Promise<ResolveResult> {
 }
 
 async function resolveByAddress(text: string, postcode?: string): Promise<ResolveResult> {
-  const query = postcode ? `${text} ${postcode}` : text;
+  // Strip trailing country/region noise that confuses both Google's
+  // country:uk filter (returns ZERO_RESULTS when suffix duplicates the
+  // filter) and OS Places find (treats ", UK" as part of the address).
+  const cleanedText = text
+    .replace(/,?\s*(United\s+Kingdom|UK|England|Wales|Scotland|Northern\s+Ireland|Great\s+Britain|GB)\s*$/i, "")
+    .replace(/,\s*$/, "")
+    .trim();
+  const query = postcode ? `${cleanedText} ${postcode}` : cleanedText;
 
   // Primary path: Google Places resolves "what address did the user mean"
   // (typo-tolerant, partial-postcode-tolerant, business-name-tolerant)

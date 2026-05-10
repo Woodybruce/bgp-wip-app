@@ -175,14 +175,16 @@ export default function PropertyPathway() {
     } catch {}
   }
 
-  async function startRun() {
-    if (!newAddress.trim()) return;
+  async function startRun(addressOverride?: string, postcodeOverride?: string) {
+    const addr = (addressOverride ?? newAddress).trim();
+    if (!addr) return;
+    const pc = (postcodeOverride ?? newPostcode).trim();
     try {
       const res = await fetch("/api/property-pathway/start", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         credentials: "include",
-        body: JSON.stringify({ address: newAddress.trim(), postcode: newPostcode.trim() || undefined }),
+        body: JSON.stringify({ address: addr, postcode: pc || undefined }),
       });
       if (!res.ok) throw new Error("Failed to start");
       const { run, existing } = await res.json();
@@ -393,31 +395,21 @@ export default function PropertyPathway() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Start a new investigation</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
-          {/* Resolver-canonical entry point — Google Places autocomplete →
-              OS Places UPRN → enrichment cascade. Pre-fills the manual
-              fields below on pick. */}
+        <CardContent>
+          {/* Resolver-canonical entry point: Google Places autocomplete →
+              OS Places UPRN → auto-start investigation. The user picks a
+              suggestion and the run kicks off — no separate Start button.
+              If they want to revisit / edit, they can re-run from the
+              recent investigations list below. */}
           <PropertyResolverBar
             current={newAddress ? { id: "", name: newAddress, postcode: newPostcode || null } : null}
             onResolve={(_id, prop) => {
               setNewAddress(prop.name || "");
               setNewPostcode(prop.postcode || "");
+              startRun(prop.name || "", prop.postcode || "");
             }}
-            placeholder="Type any address — Google suggests, OS confirms…"
+            placeholder="Type any address — Google suggests, OS confirms, investigation starts…"
           />
-          <div className="flex gap-2 items-end">
-            <div className="flex-1">
-              <label className="text-xs text-muted-foreground mb-1 block">Address (editable)</label>
-              <Input value={newAddress} onChange={e => setNewAddress(e.target.value)} placeholder="e.g. 18-22 Haymarket" className="h-9" />
-            </div>
-            <div className="w-32">
-              <label className="text-xs text-muted-foreground mb-1 block">Postcode</label>
-              <Input value={newPostcode} onChange={e => setNewPostcode(e.target.value)} placeholder="SW1Y 4DG" className="h-9" />
-            </div>
-            <Button onClick={startRun} disabled={!newAddress.trim()} className="h-9 gap-1.5">
-              <Plus className="w-4 h-4" /> Start
-            </Button>
-          </div>
         </CardContent>
       </Card>
 

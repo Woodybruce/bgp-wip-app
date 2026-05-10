@@ -134,6 +134,11 @@ export function PropertyResolverBar({ onResolve, current, placeholder }: Props) 
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ kind: "googlePlace", placeId: s.placeId }),
       });
+      if (!resp.ok) {
+        const errBody: any = await resp.json().catch(() => ({}));
+        setError(errBody?.error || `Resolver returned HTTP ${resp.status}`);
+        return;
+      }
       const result = (await resp.json()) as ResolveResult;
       if (result.kind === "resolved") {
         onResolve(result.property.id, result.property);
@@ -177,6 +182,13 @@ export function PropertyResolverBar({ onResolve, current, placeholder }: Props) 
         headers: { "content-type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify(input),
       });
+      if (!resp.ok) {
+        // Surface the real reason rather than the generic "Couldn't resolve"
+        // fallback — server errors usually carry a useful message.
+        const errBody: any = await resp.json().catch(() => ({}));
+        setError(errBody?.error || `Resolver returned HTTP ${resp.status}`);
+        return;
+      }
       const result = (await resp.json()) as ResolveResult;
       if (result.kind === "resolved") {
         onResolve(result.property.id, result.property);
