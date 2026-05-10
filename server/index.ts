@@ -1186,6 +1186,30 @@ import { pool } from "./db";
        OR LOWER(name) ILIKE 'charlotte%roberts%'
        OR LOWER(name) ILIKE 'rupert%bentley%smith%'`,
 
+    // ── Migration 0005 (resolver columns on crm_properties) — defensively
+    // re-applied here in case a Railway deploy ever skipped the file-based
+    // 0005_property_resolver.sql. Without these the Drizzle select on
+    // crmProperties throws "column does not exist" → 500 on /api/crm/properties.
+    `ALTER TABLE crm_properties
+       ADD COLUMN IF NOT EXISTS uprn text,
+       ADD COLUMN IF NOT EXISTS toid text,
+       ADD COLUMN IF NOT EXISTS usrn text,
+       ADD COLUMN IF NOT EXISTS os_ngd_feature_id text,
+       ADD COLUMN IF NOT EXISTS inspire_polygon_id text,
+       ADD COLUMN IF NOT EXISTS voa_ba_reference text,
+       ADD COLUMN IF NOT EXISTS fhrs_id text,
+       ADD COLUMN IF NOT EXISTS ward text,
+       ADD COLUMN IF NOT EXISTS lpa text,
+       ADD COLUMN IF NOT EXISTS parl_constituency text,
+       ADD COLUMN IF NOT EXISTS aliases jsonb,
+       ADD COLUMN IF NOT EXISTS resolution_status text,
+       ADD COLUMN IF NOT EXISTS resolved_at timestamp,
+       ADD COLUMN IF NOT EXISTS resolved_by varchar`,
+    `CREATE INDEX IF NOT EXISTS crm_properties_uprn_idx ON crm_properties (uprn) WHERE uprn IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS crm_properties_toid_idx ON crm_properties (toid) WHERE toid IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS crm_properties_voa_idx ON crm_properties (voa_ba_reference) WHERE voa_ba_reference IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS crm_properties_inspire_idx ON crm_properties (inspire_polygon_id) WHERE inspire_polygon_id IS NOT NULL`,
+
     // ── Migration 0014 (HMLR ownership) — proprietors table only.
     // Polygons + PostGIS deferred to when INSPIRE map shading is wanted.
     // pg_trgm enables fast ILIKE on property_address for the

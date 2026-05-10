@@ -1945,7 +1945,21 @@ Only return the JSON object. If uncertain, return {"role": null}.`
       } else {
         res.json(result);
       }
-    } catch (e: any) { res.status(500).json({ error: e.message }); }
+    } catch (e: any) {
+      // Log the full stack so we can diagnose schema / column drift
+      // (the most likely cause of a sudden 500 here is a Drizzle schema
+      // column that doesn't exist in the live DB yet).
+      console.error("[/api/crm/properties] failed:", e?.message);
+      console.error(e?.stack);
+      res.status(500).json({
+        error: e?.message || "unknown error",
+        // Surface the missing-column hint so the frontend can show it.
+        hint: /column .* does not exist/i.test(e?.message || "")
+          ? "A column declared in the Drizzle schema is missing from the live DB. Run the missing migration (likely 0005_property_resolver) — see migrations/ for the SQL."
+          : undefined,
+        stack: process.env.NODE_ENV === "production" ? undefined : e?.stack,
+      });
+    }
   });
 
   app.get("/api/crm/properties/:id", async (req, res) => {
