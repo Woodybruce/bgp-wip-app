@@ -1526,7 +1526,16 @@ function RunDetail({ run, onBack, onAdvance, advancing, onReload, onSetTenant, o
 
       {/* Stage 8 — Image Studio */}
       {s8 && (
-        <ImageStudioCard runId={run.id} stage8={s8} onReload={onReload} />
+        <ImageStudioCard
+          runId={run.id}
+          stage8={s8}
+          onReload={onReload}
+          propertyId={run.propertyId || null}
+          runAddress={run.address || ""}
+          runPostcode={run.postcode || ""}
+          runLat={(run as any).lat ?? (run as any).latitude}
+          runLng={(run as any).lng ?? (run as any).longitude}
+        />
       )}
 
       {/* Stage 9 — Why Buy */}
@@ -3210,9 +3219,20 @@ function HouseStylePanel({ scope }: { scope: string }) {
   );
 }
 
-function ImageStudioCard({ runId, stage8, onReload }: { runId: string; stage8: any; onReload: () => void }) {
+function ImageStudioCard({ runId, stage8, onReload, propertyId, runAddress, runPostcode, runLat, runLng }: {
+  runId: string;
+  stage8: any;
+  onReload: () => void;
+  propertyId?: string | null;
+  runAddress?: string;
+  runPostcode?: string;
+  runLat?: number;
+  runLng?: number;
+}) {
   const { toast } = useToast();
   const [retrying, setRetrying] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [planEditorOpen, setPlanEditorOpen] = useState(false);
   const thumbUrl = (imageId: string) =>
     `/api/property-pathway/${runId}/image/${imageId}?thumb=1`;
   const fullUrl = (imageId: string) =>
@@ -3241,7 +3261,17 @@ function ImageStudioCard({ runId, stage8, onReload }: { runId: string; stage8: a
         <CardTitle className="text-base flex items-center gap-2">
           <ImageIcon className="w-4 h-4" /> Image Studio
         </CardTitle>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {propertyId && (
+            <Button size="sm" variant="outline" onClick={() => setPickerOpen(true)} className="h-7 text-xs gap-1">
+              <ImageIcon className="w-3.5 h-3.5" /> Manage images
+            </Button>
+          )}
+          {propertyId && (
+            <Button size="sm" variant="outline" onClick={() => setPlanEditorOpen(true)} className="h-7 text-xs gap-1">
+              🗺 Edit Retail Plan
+            </Button>
+          )}
           <a
             href={collections[0]?.id ? `/image-studio?collection=${encodeURIComponent(collections[0].id)}` : "/image-studio"}
             target="_blank"
@@ -3303,6 +3333,30 @@ function ImageStudioCard({ runId, stage8, onReload }: { runId: string; stage8: a
           </div>
         )}
       </CardContent>
+
+      {/* Picker — full image management for the property (capture, upload,
+          tag as hero, edit in Image Studio, soft-delete) */}
+      {pickerOpen && (
+        <ImageStudioPicker
+          runId={runId}
+          onPick={() => { /* not used here — this entry point is for management not swap */ }}
+          onClose={() => { setPickerOpen(false); onReload(); }}
+        />
+      )}
+
+      {/* Retail Context Plan editor — map + radius + category filter,
+          regenerate, mark canonical */}
+      {planEditorOpen && propertyId && (
+        <RetailContextPlanEditor
+          propertyId={propertyId}
+          address={runAddress || ""}
+          postcode={runPostcode || ""}
+          initialLat={runLat}
+          initialLng={runLng}
+          onClose={() => setPlanEditorOpen(false)}
+          onChange={onReload}
+        />
+      )}
     </Card>
   );
 }

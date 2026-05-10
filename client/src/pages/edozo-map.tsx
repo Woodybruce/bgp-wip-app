@@ -4096,6 +4096,26 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     return () => { cancelled = true; map.off("moveend", onMoveEnd); };
   }, [showRetailContext]);
 
+  // ── Persist last map centre to localStorage ───────────────────────────────
+  // Lets sibling components (e.g. the MAP BGP "🌐 3D View" button) pick up
+  // wherever the user last looked, even though they live outside this map.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const onMove = () => {
+      try {
+        const c = map.getCenter();
+        localStorage.setItem(
+          "bgp_map_last_centre",
+          JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom(), ts: Date.now() }),
+        );
+      } catch { /* localStorage may be disabled */ }
+    };
+    map.on("moveend", onMove);
+    onMove();
+    return () => { map.off("moveend", onMove); };
+  }, []);
+
   // ── Street View on-click toggle ────────────────────────────────────────────
   // Fetch Google Maps API key once so we can build embed URLs.
   useEffect(() => {

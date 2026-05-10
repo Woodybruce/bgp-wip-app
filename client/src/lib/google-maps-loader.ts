@@ -43,7 +43,9 @@ export function loadGoogleMaps(): Promise<boolean> {
     }
 
     const script = document.createElement("script");
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places,geometry`;
+    // v=beta enables Map3DElement (Photorealistic 3D Tiles). The other
+    // libraries we use (places, geometry) work the same on the beta channel.
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places,geometry&v=beta&loading=async`;
     script.async = true;
     script.onload = () => {
       loaded = true;
