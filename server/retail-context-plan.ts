@@ -157,6 +157,40 @@ export async function renderRetailContextPlan(args: RenderArgs): Promise<{ id: s
 }
 
 export function registerRetailContextPlanRoutes(app: Express) {
+  // Lightweight units endpoint — same data the PNG render uses, but
+  // returned as JSON so a Leaflet/Mapbox map can render it interactively
+  // (markers + polygons + popups). Drives the "Retail Context" layer
+  // toggle on MAP BGP / Edozo.
+  app.get("/api/retail-context-plan/units", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const lat = parseFloat(String(req.query.lat || ""));
+      const lng = parseFloat(String(req.query.lng || ""));
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return res.status(400).json({ error: "lat + lng required" });
+      }
+      const radius = Math.max(50, Math.min(400, parseInt(String(req.query.radius || "180"), 10) || 180));
+      const planData = await buildMappedUnits({
+        subject: { lat, lng, address: String(req.query.address || ""), postcode: String(req.query.postcode || "") },
+        propertyId: null,
+        bboxMeters: radius,
+        // Tight budgets for live map fetches — the unit set is cached by
+        // bbox, so subsequent pans benefit. Don't burn fresh geocodes /
+        // Places lookups on every map drag.
+        maxGeocodesPerRun: 8,
+        maxPlaceLookupsPerRun: 12,
+      });
+      res.json({
+        subject: planData.subject,
+        units: planData.units,
+        bbox: planData.bbox,
+        stats: planData.stats,
+      });
+    } catch (err: any) {
+      console.error("[retail-context-plan/units] error:", err?.message);
+      res.status(500).json({ error: err?.message || "Failed to load retail context units" });
+    }
+  });
+
   app.post("/api/retail-context-plan/render", requireAuth, async (req: any, res: Response) => {
     try {
       const { address, postcode, propertyId, radius, customCenter, excludeCategories } = req.body as RenderArgs;

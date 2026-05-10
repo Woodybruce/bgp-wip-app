@@ -3336,6 +3336,16 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
   const [showDeals, setShowDeals] = useState(false);
   const [showComps, setShowComps] = useState(false);
   const [showLeaseEvents, setShowLeaseEvents] = useState(false);
+  // ── Retail Context layer (BGP Goad-style data, live) ───────────────────────
+  // When toggled on, fetch mapped units (VOA + OSM + Places + CRM) for the
+  // current map view and render circle markers coloured by retail category.
+  // Same data source as the deck-export PNG (server/goad-plan-data.ts).
+  const [showRetailContext, setShowRetailContext] = useState(false);
+  const [retailUnits, setRetailUnits] = useState<Array<{ lat: number; lng: number; address: string; tenantName?: string; category: string; voaDescription?: string; rateableValue?: number; tradingStatus?: string; isSubject?: boolean }>>([]);
+  const [retailFetching, setRetailFetching] = useState(false);
+  const [excludedRetailCategories, setExcludedRetailCategories] = useState<Set<string>>(new Set());
+  const retailMarkersRef = useRef<L.LayerGroup | null>(null);
+  const retailFetchTokenRef = useRef(0);
   const dealsLayerRef = useRef<any>(null);
   const compsLayerRef = useRef<any>(null);
   const leaseEventsLayerRef = useRef<any>(null);
@@ -4008,6 +4018,91 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
     }
   }, [showCrmLayer, crmProperties]);
 
+  // ─── Retail Context layer ───────────────────────────────────────
+  // Fetch mapped units for the current map centre when the layer is
+  // toggled on or the user pans far enough. Tokenised so out-of-order
+  // responses don't clobber a newer fetch.
+  useEffect(() => {
+    if (!showRetailContext) {
+      retailMarkersRef.current?.clearLayers();
+      return;
+    }
+    const map = mapRef.current;
+    if (!map) return;
+    let cancelled = false;
+    const fetchForCentre = async () => {
+      const c = map.getCenter();
+      const myToken = ++retailFetchTokenRef.current;
+      setRetailFetching(true);
+      try {
+        const r = await fetch(`/api/retail-context-plan/units?lat=${c.lat}&lng=${c.lng}&radius=180`, { credentials: "include" });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (cancelled || myToken !== retailFetchTokenRef.current) return;
+        setRetailUnits(Array.isArray(data?.units) ? data.units : []);
+      } catch {
+        /* ignore — toggle still works, just no data */
+      } finally {
+        if (!cancelled && myToken === retailFetchTokenRef.current) setRetailFetching(false);
+      }
+    };
+    fetchForCentre();
+    // Refetch on significant pan. moveend fires after the user releases
+    // the mouse; debounced via the tokenised pattern above.
+    const onMoveEnd = () => fetchForCentre();
+    map.on("moveend", onMoveEnd);
+    return () => { cancelled = true; map.off("moveend", onMoveEnd); };
+  }, [showRetailContext]);
+
+  // Render the units as colour-coded circle markers. Re-runs when units
+  // change OR when the user toggles a category checkbox in the layer
+  // panel (excludedRetailCategories).
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (!retailMarkersRef.current) {
+      retailMarkersRef.current = L.layerGroup().addTo(mapRef.current);
+    }
+    retailMarkersRef.current.clearLayers();
+    if (!showRetailContext) return;
+
+    const COLOURS: Record<string, { fill: string; stroke: string; label: string }> = {
+      fashion:     { fill: "#C9A961", stroke: "#8A7237", label: "Fashion & Comparison" },
+      convenience: { fill: "#7FA99B", stroke: "#4F7064", label: "Convenience & Food Retail" },
+      fnb:         { fill: "#D08F6E", stroke: "#8A5A3F", label: "Food & Beverage" },
+      services:    { fill: "#8B9DC3", stroke: "#5C6E94", label: "Services" },
+      beauty:      { fill: "#B8A4B6", stroke: "#7C6A7A", label: "Beauty & Personal Care" },
+      vacant:      { fill: "#FF7D00", stroke: "#B25600", label: "Vacant" },
+      other:       { fill: "#A8A8A8", stroke: "#707070", label: "Other / Unknown" },
+    };
+
+    for (const u of retailUnits) {
+      if (!Number.isFinite(u.lat) || !Number.isFinite(u.lng)) continue;
+      if (excludedRetailCategories.has(u.category)) continue;
+      const style = COLOURS[u.category] || COLOURS.other;
+      const marker = L.circleMarker([u.lat, u.lng], {
+        radius: u.isSubject ? 9 : 6,
+        fillColor: style.fill,
+        color: u.isSubject ? "#001524" : style.stroke,
+        weight: u.isSubject ? 2.5 : 1.2,
+        opacity: 1,
+        fillOpacity: 0.85,
+      });
+      const ratable = u.rateableValue ? `<br/><span style="color:#666">RV £${u.rateableValue.toLocaleString()}</span>` : "";
+      const status = u.tradingStatus && u.tradingStatus !== "trading" ? `<br/><span style="font-size:10px;background:#ef4444;color:white;padding:1px 6px;border-radius:8px">${u.tradingStatus.replace(/_/g, " ")}</span>` : "";
+      marker.bindPopup(`
+        <div style="font-size:12px;max-width:240px">
+          <strong>${u.tenantName || u.address || "Unit"}</strong>
+          ${u.address && u.tenantName ? `<br/><span style="color:#666">${u.address}</span>` : ""}
+          ${u.voaDescription ? `<br/><span style="color:#666;font-style:italic">${u.voaDescription}</span>` : ""}
+          ${ratable}
+          <br/><span style="font-size:10px;background:${style.fill};color:white;padding:1px 6px;border-radius:8px;display:inline-block;margin-top:3px">${style.label}</span>
+          ${status}
+        </div>
+      `, { closeButton: false, offset: L.point(0, -5) });
+      retailMarkersRef.current.addLayer(marker);
+    }
+  }, [showRetailContext, retailUnits, excludedRetailCategories]);
+
   // ─── OS Data Layers: fetch buildings / sites on map move ─────────
   const [highlightedBuildingLayer, setHighlightedBuildingLayer] = useState<L.GeoJSON | null>(null);
 
@@ -4608,6 +4703,7 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               { key: "deals",  label: "Deals",          count: mapPins?.deals.length ?? 0, dot: "#f59e0b", on: showDeals, set: setShowDeals },
               { key: "comps",  label: "Comps",          count: mapPins?.comps.length ?? 0, dot: "#8b5cf6", on: showComps, set: setShowComps },
               { key: "lease",  label: "Lease Events",   count: mapPins?.leaseEvents.length ?? 0, dot: "#ec4899", on: showLeaseEvents, set: setShowLeaseEvents },
+              { key: "retail", label: retailFetching ? "Retail Context (loading…)" : "Retail Context", count: retailUnits.length, dot: "#15616D", on: showRetailContext, set: setShowRetailContext },
             ].map((row) => (
               <button
                 key={row.key}
@@ -4628,6 +4724,42 @@ export default function EdozoMap({ initialSearch, onSearchConsumed }: { initialS
               </button>
             ))}
           </div>
+          {/* Category filter for the Retail Context layer — only shown
+              when the layer is on. Click to exclude / include a band. */}
+          {showRetailContext && (
+            <div className="mt-3 pt-2.5 border-t">
+              <p className="text-[10px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5">Retail bands</p>
+              <div className="grid grid-cols-2 gap-1">
+                {[
+                  { k: "fashion",     l: "Fashion",     c: "#C9A961" },
+                  { k: "convenience", l: "Convenience", c: "#7FA99B" },
+                  { k: "fnb",         l: "Food & Drink",c: "#D08F6E" },
+                  { k: "services",    l: "Services",    c: "#8B9DC3" },
+                  { k: "beauty",      l: "Beauty",      c: "#B8A4B6" },
+                  { k: "vacant",      l: "Vacant",      c: "#FF7D00" },
+                  { k: "other",       l: "Other",       c: "#A8A8A8" },
+                ].map((cat) => {
+                  const showing = !excludedRetailCategories.has(cat.k);
+                  return (
+                    <button
+                      key={cat.k}
+                      onClick={() => setExcludedRetailCategories((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(cat.k)) next.delete(cat.k); else next.add(cat.k);
+                        return next;
+                      })}
+                      className={`flex items-center gap-1.5 text-[10px] rounded px-1.5 py-0.5 border ${
+                        showing ? "bg-white border-gray-200" : "bg-gray-100 border-gray-200 opacity-50 line-through"
+                      }`}
+                    >
+                      <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: cat.c }} />
+                      <span>{cat.l}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         <ScrollArea className="flex-1">
