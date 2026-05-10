@@ -255,14 +255,37 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
   if (typeof lat !== "number" || typeof lng !== "number") {
     return { kind: "not_found", reason: "Google Place Details returned no geometry" };
   }
-  // Resolve via lat/lng — OS Places nearest gives us the canonical UPRN at
-  // this exact location. 50m radius (vs 25m default) because Google-derived
-  // address centroids on big West End buildings sit further from individual
-  // entrance UPRNs than the tight default.
+
+  // Primary: postcode + street-number match. When Google gives us a
+  // postcode, we don't need geometry guesswork — pull every DPA record
+  // in that postcode from OS Places and find the one whose address
+  // starts with the street number Google extracted. Deterministic for
+  // big West End buildings where lat/lng nearest-radius is unreliable
+  // (the building centroid often sits >40m from any entrance UPRN).
+  if (postcode && isOsConfigured()) {
+    const streetNumber = extractStreetNumber(formatted);
+    if (streetNumber) {
+      const all = await osPlacesByPostcode(postcode, 100);
+      const matches = filterByStreetNumber(all, streetNumber);
+      if (matches.length === 1 && matches[0].uprn) {
+        return resolveByUprn(matches[0].uprn);
+      }
+      if (matches.length > 1) {
+        return {
+          kind: "candidates",
+          candidates: await annotateCandidates(matches),
+          reason: `Multiple addresses at ${postcode} starting with ${streetNumber} — user must pick`,
+        };
+      }
+    }
+  }
+
+  // Fallback: lat/lng nearest with a generous 50m radius. Google-derived
+  // building centroids on big West End blocks sit further from individual
+  // entrance UPRNs than the 25m default.
   const llResult = await resolveByLatLng(lat, lng, 50);
-  // If lat/lng yields nothing, go straight to OS Places with Google's
-  // formatted address — don't re-enter resolveByAddress, which would
-  // re-Google and end up back here in a loop.
+  // Final fallback: OS Places find on the formatted address — don't
+  // re-enter resolveByAddress, which would re-Google and loop.
   if (llResult.kind === "not_found" && formatted) {
     const results = await osPlacesFind(formatted, 10);
     if (results.length === 1 && results[0].uprn) {
@@ -277,6 +300,46 @@ async function resolveByGooglePlace(placeId: string): Promise<ResolveResult> {
     }
   }
   return llResult;
+}
+
+/** Pull a leading street number / range out of a formatted address. */
+function extractStreetNumber(formatted: string | undefined | null): string | null {
+  if (!formatted) return null;
+  const m = formatted.match(/^\s*(\d+[a-z]?(?:\s*-\s*\d+[a-z]?)?)\b/i);
+  return m ? m[1].replace(/\s*-\s*/g, "-").toLowerCase() : null;
+}
+
+/**
+ * Filter DPA records by street-number prefix. Handles ranges like "18-22"
+ * by accepting any record whose first number falls inside the range, plus
+ * exact-string matches like "18-22 Haymarket".
+ */
+function filterByStreetNumber(records: OsPlacesResult[], streetNumber: string): OsPlacesResult[] {
+  const sn = streetNumber.toLowerCase();
+  const range = sn.match(/^(\d+)([a-z]?)-(\d+)([a-z]?)$/);
+  return records.filter((r) => {
+    const addr = (r.address || "").toLowerCase();
+    if (!addr) return false;
+    // Exact prefix: "18-22 haymarket..." matches "18-22"
+    if (addr.startsWith(`${sn} `) || addr.startsWith(`${sn},`)) return true;
+    // Range: "18 haymarket..." or "20 haymarket..." matches "18-22"
+    if (range) {
+      const lo = parseInt(range[1], 10);
+      const hi = parseInt(range[3], 10);
+      const m = addr.match(/^(\d+)([a-z]?)\b/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n >= lo && n <= hi) return true;
+      }
+    } else {
+      // Single number: "18 haymarket..." matches "18"
+      const m = addr.match(/^(\d+)([a-z]?)\b/);
+      if (m && m[1] === sn.replace(/[a-z]$/, "") && (sn.match(/[a-z]$/)?.[0] || "") === (m[2] || "")) {
+        return true;
+      }
+    }
+    return false;
+  });
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
