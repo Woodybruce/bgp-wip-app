@@ -1503,6 +1503,40 @@ export async function registerRoutes(
     }
   });
 
+  // Debug: return the actual column headers PIPnet is using on already-imported
+  // rows, plus a small sample of values per column. Lets us see field names
+  // without re-scraping.
+  app.get("/api/external-requirements/pipnet-headers", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { externalRequirements: extReq } = await import("@shared/schema");
+      const rows = await db
+        .select({ rawData: extReq.rawData })
+        .from(extReq)
+        .where(eq(extReq.source, "PIPnet"))
+        .limit(20);
+      const headerCounts: Record<string, number> = {};
+      const samples: Record<string, string[]> = {};
+      for (const r of rows) {
+        const raw = (r.rawData ?? {}) as Record<string, any>;
+        for (const [k, v] of Object.entries(raw)) {
+          if (k.startsWith("_")) continue;
+          headerCounts[k] = (headerCounts[k] ?? 0) + 1;
+          const val = String(v ?? "").trim();
+          if (val && (samples[k]?.length ?? 0) < 3) {
+            (samples[k] ??= []).push(val.length > 80 ? val.slice(0, 80) + "…" : val);
+          }
+        }
+      }
+      const headers = Object.entries(headerCounts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, count]) => ({ name, presentIn: count, samples: samples[name] ?? [] }));
+      if (!res.headersSent) res.json({ rowsInspected: rows.length, headers });
+    } catch (err: any) {
+      console.error("[pipnet-headers] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "Failed to read PIPnet headers" });
+    }
+  });
+
   // Admin: wipe the leasing requirements that previously came from PIPnet
   // (using the wrong contact mapping) and re-run the sync with the corrected
   // promote logic. Only removes rows whose name matches a PIPnet-sourced

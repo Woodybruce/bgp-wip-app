@@ -278,6 +278,24 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
     }
   };
 
+  const inspectPipnetHeaders = async () => {
+    try {
+      const res = await fetch("/api/external-requirements/pipnet-headers", {
+        credentials: "include",
+        headers: { ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed");
+      console.log("[PIPnet headers]", data);
+      const summary = (data.headers || [])
+        .map((h: any) => `${h.name} (${h.presentIn}) → ${h.samples.join(" | ") || "—"}`)
+        .join("\n");
+      alert(`Inspected ${data.rowsInspected} rows.\n\n` + (summary || "No headers found."));
+    } catch (err: any) {
+      toast({ title: "Header inspect failed", description: err.message, variant: "destructive" });
+    }
+  };
+
   const wipeAndResyncPipnet = async () => {
     if (!confirm("This will delete every PIPnet-sourced requirement and re-import them with the corrected agent/contact mapping. Any manual edits on those rows will be lost. Continue?")) return;
     setPipnetSyncing(true);
@@ -641,6 +659,15 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
         >
           {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
           Wipe & Resync
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={inspectPipnetHeaders}
+          data-testid="button-inspect-pipnet"
+          title="Show the column headers PIPnet is actually returning"
+        >
+          Inspect PIPnet
         </Button>
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />
