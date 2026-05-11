@@ -57,7 +57,12 @@ function buildScraperUrl(targetUrl: string, opts: ScraperOptions = {}): string {
   if (opts.uk !== false) params.set("country_code", "uk");
   if (opts.keepHeaders !== false) params.set("keep_headers", "true");
   if (opts.sessionNumber != null) params.set("session_number", String(opts.sessionNumber));
-  return `${SCRAPERAPI_ENDPOINT}?${params.toString()}`;
+  const finalUrl = `${SCRAPERAPI_ENDPOINT}?${params.toString()}`;
+  if (process.env.SCRAPERAPI_DEBUG === "true") {
+    const masked = finalUrl.replace(/api_key=[^&]+/, "api_key=***");
+    console.log(`[scraperapi] ${masked}`);
+  }
+  return finalUrl;
 }
 
 /**

@@ -58,12 +58,41 @@ async function login(): Promise<string> {
     Submit: "Login",
   });
 
-  const res = await pipFetch(`${PIPNET_URL}/checkLogin.jsp`, {
+  // ScraperAPI's standard API has been returning HTTP 400 "malformed request"
+  // for our PIPnet POST (probably because we combine premium + session_number
+  // + keep_headers in a way it doesn't like). Try direct fetch first — if
+  // PIPnet's WAF blocks Railway's egress IP we'll see a 403 or similar and
+  // fall back to the proxy. The fallback path keeps the original behaviour.
+  const loginUrl = `${PIPNET_URL}/checkLogin.jsp`;
+  const loginInit: RequestInit = {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "User-Agent": PIPNET_UA,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-GB,en;q=0.9",
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
     body: body.toString(),
     redirect: "manual",
-  });
+  };
+  let res: Response;
+  let via = "direct fetch";
+  try {
+    res = await fetch(loginUrl, loginInit);
+    if (res.status === 403 || res.status === 406 || res.status === 429 || res.status >= 500) {
+      console.warn(`[pipnet login] direct fetch returned HTTP ${res.status}, falling back to ScraperAPI`);
+      if (isScraperApiAvailable()) {
+        res = await pipFetch(loginUrl, loginInit);
+        via = "ScraperAPI proxy (after direct fetch was blocked)";
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[pipnet login] direct fetch threw (${err?.message}), falling back to ScraperAPI`);
+    if (!isScraperApiAvailable()) throw err;
+    res = await pipFetch(loginUrl, loginInit);
+    via = "ScraperAPI proxy (after direct fetch threw)";
+  }
+  console.log(`[pipnet login] used ${via}, status ${res.status}`);
 
   const jsessionid = extractJsessionId(res);
   const bodyText = await res.text();
@@ -74,8 +103,8 @@ async function login(): Promise<string> {
     }
     const hdrKeys: string[] = [];
     res.headers.forEach((_v, k) => hdrKeys.push(k));
-    console.error(`[pipnet login] no JSESSIONID. status=${res.status} headers=${hdrKeys.join(",")} bodyPreview=${bodyText.slice(0, 300).replace(/\s+/g, " ")}`);
-    throw new Error(`PIPnet login failed: no session cookie (HTTP ${res.status} from ${PIPNET_URL}/checkLogin.jsp via ${isScraperApiAvailable() ? "ScraperAPI proxy" : "direct fetch"})`);
+    console.error(`[pipnet login] no JSESSIONID. via=${via} status=${res.status} headers=${hdrKeys.join(",")} bodyPreview=${bodyText.slice(0, 300).replace(/\s+/g, " ")}`);
+    throw new Error(`PIPnet login failed: no session cookie (HTTP ${res.status} via ${via})`);
   }
 
   if (bodyText.includes("Invalid logon")) {
