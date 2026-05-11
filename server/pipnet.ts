@@ -14,13 +14,27 @@ let sessionCookie: string | null = null;
 // every fetch would rotate to a new IP and PIPnet would invalidate the
 // session. Reset between full scrapes via `resetSession()` below.
 let scraperSession: ScraperSession | null = null;
+const PIPNET_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 function pipFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  // ScraperAPI requires a User-Agent whenever keep_headers=true, otherwise
+  // it rejects the request with HTTP 400 "Error, malformed request". PIPnet
+  // also responds more reliably with a real-browser UA, so we always set
+  // one here even on the direct-fetch dev path.
+  const mergedInit: RequestInit = {
+    ...init,
+    headers: {
+      "User-Agent": PIPNET_UA,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-GB,en;q=0.9",
+      ...(init.headers as Record<string, string> | undefined),
+    },
+  };
   // Fall back to direct fetch if ScraperAPI isn't configured (dev mode,
   // tests, etc). PIPnet works fine direct from a dev laptop — this proxy
   // detour is purely for Railway egress where pip's WAF blocks the IP.
-  if (!isScraperApiAvailable()) return fetch(url, init);
+  if (!isScraperApiAvailable()) return fetch(url, mergedInit);
   if (!scraperSession) scraperSession = new ScraperSession();
-  return scraperSession.fetch(url, init);
+  return scraperSession.fetch(url, mergedInit);
 }
 
 async function login(): Promise<string> {
