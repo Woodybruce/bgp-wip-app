@@ -278,6 +278,31 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
     }
   };
 
+  const wipeAndResyncPipnet = async () => {
+    if (!confirm("This will delete every PIPnet-sourced requirement and re-import them with the corrected agent/contact mapping. Any manual edits on those rows will be lost. Continue?")) return;
+    setPipnetSyncing(true);
+    try {
+      const res = await fetch("/api/external-requirements/resync-pipnet", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Resync failed");
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      const parts = [
+        `${data.deletedReqs} deleted`,
+        `${data.imported} re-imported`,
+        data.promoted ? `${data.promoted} re-promoted` : null,
+      ].filter(Boolean).join(" · ");
+      toast({ title: "Pipnet wiped and re-synced", description: parts });
+    } catch (err: any) {
+      toast({ title: "Pipnet resync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSyncing(false);
+    }
+  };
+
   const { data: items = [], isLoading, error } = useQuery<CrmRequirementsLeasing[]>({
     queryKey: ["/api/crm/requirements-leasing"],
   });
@@ -605,6 +630,17 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
         >
           {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
           Sync Pipnet
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={wipeAndResyncPipnet}
+          disabled={pipnetSyncing}
+          data-testid="button-resync-pipnet"
+          title="Delete previous PIPnet imports and re-run with corrected mapping"
+        >
+          {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+          Wipe & Resync
         </Button>
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />

@@ -1503,6 +1503,39 @@ export async function registerRoutes(
     }
   });
 
+  // Admin: wipe the leasing requirements that previously came from PIPnet
+  // (using the wrong contact mapping) and re-run the sync with the corrected
+  // promote logic. Only removes rows whose name matches a PIPnet-sourced
+  // external_requirements row. CRM companies/contacts are left in place
+  // (re-sync will reuse or update them).
+  app.post("/api/external-requirements/resync-pipnet", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { externalRequirements: extReq, crmRequirementsLeasing: crmReqL } = await import("@shared/schema");
+      const { inArray, sql: drizzleSql } = await import("drizzle-orm");
+      const pipnetRows = await db
+        .select({ id: extReq.id, companyName: extReq.companyName })
+        .from(extReq)
+        .where(eq(extReq.source, "PIPnet"));
+      const clientNames = Array.from(new Set(pipnetRows.map(r => r.companyName).filter((n): n is string => !!n)));
+      let deletedReqs = 0;
+      if (clientNames.length > 0) {
+        const deleted = await db
+          .delete(crmReqL)
+          .where(inArray(crmReqL.name, clientNames))
+          .returning({ id: crmReqL.id });
+        deletedReqs = deleted.length;
+      }
+      // Reset status so promoteToCrmRequirement re-runs for every PIPnet row.
+      await db.update(extReq).set({ status: drizzleSql`'active'` }).where(eq(extReq.source, "PIPnet"));
+
+      const result = await importPipnetRequirements({ allPages: true, monthsBack: 3, autoPromote: true });
+      if (!res.headersSent) res.json({ deletedReqs, clientNames: clientNames.length, ...result });
+    } catch (err: any) {
+      console.error("[resync-pipnet] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet resync failed" });
+    }
+  });
+
   app.delete("/api/external-requirements/:id", requireAuth, async (req, res) => {
     try {
       await db
