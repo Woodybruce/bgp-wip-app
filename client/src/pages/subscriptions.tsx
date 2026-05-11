@@ -98,8 +98,8 @@ const subscriptions: Subscription[] = [
   {
     name: "PIPNET",
     category: "Property Data",
-    description: "Property Industry Protocol Network — property listing and matching platform.",
-    url: "https://www.pipnet.com",
+    description: "Property Industry Protocol Network — UK property listing and matching platform (v1.pipnet.co.uk).",
+    url: "https://v1.pipnet.co.uk/login.jsp",
     icon: Globe,
     color: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
     hasApi: true,
