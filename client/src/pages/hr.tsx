@@ -2315,8 +2315,18 @@ function ReviewsTab({ userId, isAdmin, isOwn, person }: { userId: string; isAdmi
   });
 
   const updateReview = useMutation({
-    mutationFn: async ({ id, body }: { id: string; body: any }) => apiRequest("PATCH", `/api/hr/reviews/${id}`, body).then(r => r.json()),
+    // apiRequest throws on non-2xx via throwIfResNotOk, so any HTTP error
+    // surfaces through onError — no need to manually check r.ok here.
+    mutationFn: async ({ id, body }: { id: string; body: any }) =>
+      apiRequest("PATCH", `/api/hr/reviews/${id}`, body).then(r => r.json()),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/hr/reviews/${userId}`] }),
+    onError: (e: any) => {
+      toast({
+        title: "Save failed",
+        description: e?.message?.slice(0, 240) || "Couldn't save the review — check console / Railway logs.",
+        variant: "destructive",
+      });
+    },
   });
 
   const aiDraft = useMutation({
