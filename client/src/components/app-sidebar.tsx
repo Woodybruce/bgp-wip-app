@@ -84,7 +84,7 @@ const coreNavBase = [
   { title: "Properties", url: "/properties", icon: Building2 },
   { title: "MAP BGP", url: "/map-bgp", icon: MapPin },
   { title: "Deals", url: "/deals", icon: BarChart3 },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
+  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
   { title: "Requirements", url: "/requirements", icon: FileText },
   // Items below are still being polished — admin-only until ready for the firm
   { title: "Tenant Rep", url: "/tenant-rep", icon: Target, adminOnly: true },
@@ -95,7 +95,7 @@ const coreNavBase = [
   { title: "Landlords", url: "/landlords", icon: Briefcase, adminOnly: true },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
-  { title: "Lease Advisory", url: "/pla/matters", icon: Landmark },
+  { title: "Lease Advisory", url: "/pla/matters", icon: Landmark, adminOnly: true },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
 ];
 
@@ -437,7 +437,7 @@ const mobileOverlayItems = [
   { title: "Landlords", url: "/landlords", icon: Briefcase, adminOnly: true },
   { title: "Leasing Schedule", url: "/leasing-schedule", icon: Calendar, adminOnly: true },
   { title: "Comps", url: "/comps", icon: Scale },
-  { title: "Lease Advisory", url: "/pla/matters", icon: Landmark },
+  { title: "Lease Advisory", url: "/pla/matters", icon: Landmark, adminOnly: true },
   { title: "London Restaurants", url: "/westminster-restaurants", icon: Store, adminOnly: true, badge: "BD" },
   { title: "Model Studio", url: "/models", icon: FileSpreadsheet },
   { title: "Document Studio", url: "/templates", icon: FileTextIcon },
@@ -453,7 +453,7 @@ const mobileOverlayItems = [
   { title: "Leads", url: "/leads", icon: UserPlus },
   { title: "Property Intelligence", url: "/property-intelligence", icon: Globe },
   { title: "Cann CAD", url: "/cad-measure", icon: Ruler, badge: "Beta" },
-  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck },
+  { title: "AML Compliance", url: "/kyc-clouseau?tab=board", icon: ShieldCheck, adminOnly: true },
   { title: "Enrichment Hub", url: "/enrichment", icon: Sparkles },
   { title: "Office Add-ins", url: "/addins", icon: FileSpreadsheet },
   { title: "Settings", url: "/settings", icon: Settings },
