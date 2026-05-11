@@ -570,6 +570,95 @@ export function resetSession() {
   scraperSession = null;
 }
 
+// One-shot inspector: run a small search, find the first per-row link inside
+// the result table, fetch that page, and dump every label/value pair it can
+// find. Returns the discovered detail URL plus a flat object of fields. Used
+// purely to figure out what's actually on PIPnet's requirement detail page.
+export async function inspectPipnetDetail(): Promise<{
+  candidateLinks: string[];
+  detailUrl: string | null;
+  fields: Record<string, string>;
+  htmlPreview: string;
+  htmlLength: number;
+}> {
+  const cookie = await login();
+  const body = new URLSearchParams({
+    requirementType: "ReqRetail",
+    locationSearchEdit: "",
+    locationListBox: "",
+    status: "Latest",
+    documentDate: "",
+    extrapolated: "True",
+    clientSearchEdit: "",
+    clientListBox: "",
+    minSalesArea: "",
+    maxSalesArea: "",
+    Search: "Search",
+  });
+  const listRes = await pipFetch(`${PIPNET_URL}/reqfetch.jsp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: cookie },
+    body: body.toString(),
+  });
+  if (!listRes.ok) throw new Error(`PIPnet list fetch failed: ${listRes.status}`);
+  const listHtml = await listRes.text();
+
+  // Pull every href on the page; filter to ones that look like a per-row
+  // detail link (not pagination, not nav, not search).
+  const allHrefs = Array.from(new Set(
+    [...listHtml.matchAll(/href="([^"]+)"/gi)].map(m => m[1])
+  ));
+  const skip = /^(#|javascript:|mailto:|\/?logout|\/?login|reqresults\.jsp\?action=next|.*\.css|.*\.js)/i;
+  const detailCandidates = allHrefs.filter(h => !skip.test(h));
+  const detailHref = detailCandidates.find(h => /req|detail|show|view/i.test(h)) || detailCandidates[0] || null;
+
+  if (!detailHref) {
+    return { candidateLinks: detailCandidates.slice(0, 20), detailUrl: null, fields: {}, htmlPreview: listHtml.slice(0, 800), htmlLength: listHtml.length };
+  }
+
+  const detailUrl = detailHref.startsWith("http") ? detailHref : `${PIPNET_URL}/${detailHref.replace(/^\//, "")}`;
+  const detailRes = await pipFetch(detailUrl, { headers: { Cookie: cookie } });
+  if (!detailRes.ok) throw new Error(`PIPnet detail fetch failed: ${detailRes.status}`);
+  const detailHtml = await detailRes.text();
+
+  const fields: Record<string, string> = {};
+  const clean = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+
+  // Pattern 1: <th>Label</th><td>Value</td>
+  for (const m of detailHtml.matchAll(/<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) {
+    const k = clean(m[1]); const v = clean(m[2]);
+    if (k && v && k.length < 60) fields[k] = v;
+  }
+  // Pattern 2: <td class="label">Label</td><td>Value</td>
+  for (const m of detailHtml.matchAll(/<td[^>]*class="[^"]*(?:label|fieldLabel|key)[^"]*"[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) {
+    const k = clean(m[1]); const v = clean(m[2]);
+    if (k && v && k.length < 60) fields[k] = v;
+  }
+  // Pattern 3: <dt>Label</dt><dd>Value</dd>
+  for (const m of detailHtml.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi)) {
+    const k = clean(m[1]); const v = clean(m[2]);
+    if (k && v && k.length < 60) fields[k] = v;
+  }
+  // Pattern 4: generic <td>Label:</td><td>Value</td> (colon-terminated label)
+  for (const m of detailHtml.matchAll(/<td[^>]*>\s*([^<:]{2,40}):\s*<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>/gi)) {
+    const k = clean(m[1]); const v = clean(m[2]);
+    if (k && v && !(k in fields)) fields[k] = v;
+  }
+  // Pattern 5: bold-label rows — <b>Label</b> ... <td>Value</td>
+  for (const m of detailHtml.matchAll(/<b[^>]*>([^<:]{2,40}):?<\/b>\s*([^<]{1,200})/gi)) {
+    const k = clean(m[1]); const v = clean(m[2]);
+    if (k && v && !(k in fields)) fields[k] = v;
+  }
+
+  return {
+    candidateLinks: detailCandidates.slice(0, 20),
+    detailUrl,
+    fields,
+    htmlPreview: detailHtml.slice(0, 1200),
+    htmlLength: detailHtml.length,
+  };
+}
+
 export async function testPipnetLogin(): Promise<{ ok: boolean; message: string; status?: number; via: string }> {
   resetSession();
   const via = isScraperApiAvailable() ? "ScraperAPI proxy" : "direct fetch";

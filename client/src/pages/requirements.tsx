@@ -279,6 +279,37 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
   };
 
   const [pipnetHeadersText, setPipnetHeadersText] = useState<string | null>(null);
+  const inspectPipnetDetail = async () => {
+    try {
+      const res = await fetch("/api/external-requirements/pipnet-inspect-detail", {
+        credentials: "include",
+        headers: { ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed");
+      console.log("[PIPnet detail]", data);
+      const lines: string[] = [];
+      lines.push(`Detail URL: ${data.detailUrl || "(none found)"}`);
+      lines.push(`HTML size: ${data.htmlLength} bytes`);
+      lines.push("");
+      lines.push("--- Candidate links (first 20) ---");
+      lines.push(...(data.candidateLinks || []));
+      lines.push("");
+      lines.push("--- Fields extracted ---");
+      const entries = Object.entries(data.fields || {});
+      if (entries.length === 0) {
+        lines.push("(none — see HTML preview below)");
+      } else {
+        for (const [k, v] of entries) lines.push(`${k}: ${v}`);
+      }
+      lines.push("");
+      lines.push("--- HTML preview (first 1200 chars) ---");
+      lines.push(data.htmlPreview || "");
+      setPipnetHeadersText(lines.join("\n"));
+    } catch (err: any) {
+      toast({ title: "Detail inspect failed", description: err.message, variant: "destructive" });
+    }
+  };
   const inspectPipnetHeaders = async () => {
     try {
       const res = await fetch("/api/external-requirements/pipnet-headers", {
@@ -669,6 +700,15 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
           title="Show the column headers PIPnet is actually returning"
         >
           Inspect PIPnet
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={inspectPipnetDetail}
+          data-testid="button-inspect-pipnet-detail"
+          title="Fetch one requirement's detail page and dump every field"
+        >
+          Inspect Detail
         </Button>
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />

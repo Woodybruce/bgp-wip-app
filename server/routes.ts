@@ -1503,6 +1503,20 @@ export async function registerRoutes(
     }
   });
 
+  // Debug: fetch one requirement's detail page from PIPnet and dump every
+  // label/value pair we can find. Lets us see exactly what extra fields are
+  // available behind the click-through.
+  app.get("/api/external-requirements/pipnet-inspect-detail", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { inspectPipnetDetail } = await import("./pipnet");
+      const result = await inspectPipnetDetail();
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[pipnet-inspect-detail] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet detail inspect failed" });
+    }
+  });
+
   // Debug: return the actual column headers PIPnet is using on already-imported
   // rows, plus a small sample of values per column. Lets us see field names
   // without re-scraping.
