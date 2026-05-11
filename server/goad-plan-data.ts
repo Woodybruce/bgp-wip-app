@@ -581,6 +581,59 @@ export async function buildMappedUnits(args: PlanDataArgs & {
     console.warn("[goad-plan-data] crm_property_tenants enrichment failed:", err?.message);
   }
 
+  // c2) shopping_centre_tenants — hand-curated tenant directory for
+  //     multi-tenant schemes (Cardinal Place, Westfield, etc.) where
+  //     VOA can't reach. Each row has lat/lng so we snap-to-unit or
+  //     create a synthetic unit, same pattern as brand_stores.
+  try {
+    const { rows: sctenants } = await pool.query(
+      `SELECT t.tenant_name, t.unit_label, t.category, t.lat, t.lng,
+              t.area_sqft, t.use_class
+         FROM shopping_centre_tenants t
+        WHERE t.lat IS NOT NULL AND t.lng IS NOT NULL
+          AND t.lat BETWEEN $1 AND $2
+          AND t.lng BETWEEN $3 AND $4`,
+      [bbox.south, bbox.north, bbox.west, bbox.east],
+    );
+    for (const t of sctenants) {
+      let bestUnit: MappedUnit | null = null;
+      let bestDist = Infinity;
+      for (const u of unitsByBaRef.values()) {
+        const d = distMeters({ lat: u.lat, lng: u.lng }, { lat: t.lat, lng: t.lng });
+        if (d < bestDist && d <= 12) { bestDist = d; bestUnit = u; }
+      }
+      if (bestUnit) {
+        if (!bestUnit.tenantName) {
+          bestUnit.tenantName = t.tenant_name;
+          if (t.category) bestUnit.category = t.category;
+          if (!bestUnit.sourceLayers.includes("shopping_centre")) {
+            bestUnit.sourceLayers.push("shopping_centre");
+          }
+          bestUnit.tradingStatus = "trading";
+          crmOverrides++;
+        }
+      } else {
+        const key = `centre-tenant:${t.tenant_name}:${t.unit_label || ""}:${t.lat.toFixed(5)}`;
+        if (!unitsByBaRef.has(key)) {
+          unitsByBaRef.set(key, {
+            lat: t.lat,
+            lng: t.lng,
+            address: [t.unit_label, t.tenant_name].filter(Boolean).join(" "),
+            tenantName: t.tenant_name,
+            voaDescription: t.use_class || undefined,
+            tradingStatus: "trading",
+            category: (t.category as any) || "other",
+            sourceLayers: ["shopping_centre"],
+            confidence: 0.75,
+          } as MappedUnit);
+          crmOverrides++;
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn("[goad-plan-data] shopping_centre_tenants enrichment failed:", err?.message);
+  }
+
   // c) available_units → vacancy override (existing behaviour, unchanged)
   try {
     const { rows: crm } = await pool.query(

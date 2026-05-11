@@ -1269,6 +1269,64 @@ import { pool } from "./db";
     `CREATE INDEX IF NOT EXISTS hmlr_ingest_runs_dataset_idx
        ON hmlr_ingest_runs (dataset, started_at DESC)`,
 
+    // ── Shopping centres + tenants ─────────────────────────────────────
+    // Hand-curated (or scraped) tenant directory for major UK shopping
+    // centres — Cardinal Place, Westfield, Brent Cross, etc. Plugs the
+    // gap that VOA + Places + brand_stores can't fill: large multi-unit
+    // schemes where the centre is one VOA hereditament but houses many
+    // tenants. The retail context renderer reads from these tables as
+    // an additional unit source.
+    //
+    // Populate via ChatBGP sql_write (or a small scraper helper) per
+    // centre. Each tenant row has an approximate lat/lng so it can be
+    // matched to an OS NGD building polygon.
+    `CREATE TABLE IF NOT EXISTS shopping_centres (
+      id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name              TEXT NOT NULL,
+      short_name        TEXT,                              -- "Cardinal Place"
+      website_url       TEXT,
+      directory_url     TEXT,                              -- where tenants are listed
+      address           TEXT,
+      postcode          TEXT,
+      lat               DOUBLE PRECISION,
+      lng               DOUBLE PRECISION,
+      bbox              JSONB,                             -- {south,north,west,east}
+      operator          TEXT,                              -- Landsec / Hammerson / Unibail / ...
+      notes             TEXT,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS shopping_centres_postcode_idx
+       ON shopping_centres (UPPER(REPLACE(postcode, ' ', '')))
+       WHERE postcode IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS shopping_centres_latlng_idx
+       ON shopping_centres (lat, lng)
+       WHERE lat IS NOT NULL AND lng IS NOT NULL`,
+
+    `CREATE TABLE IF NOT EXISTS shopping_centre_tenants (
+      id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      centre_id         UUID NOT NULL,                     -- → shopping_centres.id
+      tenant_name       TEXT NOT NULL,
+      unit_label        TEXT,                              -- "Unit A1", "Ground Floor 12"
+      category          TEXT,                              -- 'fashion'|'fnb'|'services'|'beauty'|'convenience'|'vacant'|'other'
+      lat               DOUBLE PRECISION,
+      lng               DOUBLE PRECISION,
+      area_sqft         INTEGER,
+      use_class         TEXT,
+      source_url        TEXT,
+      last_verified     DATE,
+      notes             TEXT,
+      created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`,
+    `CREATE INDEX IF NOT EXISTS shopping_centre_tenants_centre_idx
+       ON shopping_centre_tenants (centre_id)`,
+    `CREATE INDEX IF NOT EXISTS shopping_centre_tenants_latlng_idx
+       ON shopping_centre_tenants (lat, lng)
+       WHERE lat IS NOT NULL AND lng IS NOT NULL`,
+    `CREATE INDEX IF NOT EXISTS shopping_centre_tenants_name_idx
+       ON shopping_centre_tenants (lower(tenant_name))`,
+
     // ── Migration 0015 (document design preferences) — free-text rows
     // injected into Claude-driven document generation as house style.
     `CREATE TABLE IF NOT EXISTS document_design_preferences (

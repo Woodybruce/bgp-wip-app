@@ -1906,6 +1906,47 @@ export const documentDesignPreferences = pgTable("document_design_preferences", 
 
 export type DocumentDesignPreference = typeof documentDesignPreferences.$inferSelect;
 
+// Shopping centres + their tenant directories — hand-curated (or scraped
+// via ChatBGP) for major UK schemes. Feeds the Retail Context Plan
+// renderer as an additional unit source for multi-tenant buildings where
+// VOA records the centre as a single hereditament. ChatBGP can populate
+// via sql_write (run_shell_command + scrape directory page → INSERT).
+export const shoppingCentres = pgTable("shopping_centres", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  shortName: text("short_name"),
+  websiteUrl: text("website_url"),
+  directoryUrl: text("directory_url"),
+  address: text("address"),
+  postcode: text("postcode"),
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  bbox: jsonb("bbox"),
+  operator: text("operator"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export type ShoppingCentre = typeof shoppingCentres.$inferSelect;
+
+export const shoppingCentreTenants = pgTable("shopping_centre_tenants", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  centreId: varchar("centre_id").notNull(),
+  tenantName: text("tenant_name").notNull(),
+  unitLabel: text("unit_label"),
+  category: text("category"),                  // fashion|fnb|services|beauty|convenience|vacant|other
+  lat: doublePrecision("lat"),
+  lng: doublePrecision("lng"),
+  areaSqft: integer("area_sqft"),
+  useClass: text("use_class"),
+  sourceUrl: text("source_url"),
+  lastVerified: timestamp("last_verified"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export type ShoppingCentreTenant = typeof shoppingCentreTenants.$inferSelect;
+
 export const systemSettings = pgTable("system_settings", {
   key: text("key").primaryKey(),
   value: jsonb("value"),

@@ -242,7 +242,18 @@ export function RetailContextPlanEditor({
               Each render is saved — pin one as the canonical version.
             </p>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+          <div className="flex items-center gap-2">
+            <a
+              href={`/map-bgp?propertyId=${encodeURIComponent(propertyId)}&address=${encodeURIComponent(address || "")}&postcode=${encodeURIComponent(postcode || "")}&layer=retail`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] text-muted-foreground hover:text-foreground border rounded px-2 py-1"
+              title="Open the full MAP BGP view (live, all layers toggleable, export current view as plan)"
+            >
+              Open in MAP BGP ↗
+            </a>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">✕</button>
+          </div>
         </div>
 
         <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3 p-3 overflow-hidden">

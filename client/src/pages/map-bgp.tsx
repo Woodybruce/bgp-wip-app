@@ -18,7 +18,7 @@
  *   /map-bgp?address=…&postcode=…    — pre-zoomed to a property
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSearch } from "wouter";
 import EdozoMap from "@/pages/edozo-map";
 import { Google3DView } from "@/components/google-3d-view";
@@ -32,11 +32,32 @@ export default function MapBgp() {
   const address = params.get("address") || "";
   const postcode = params.get("postcode") || "";
   const propertyId = params.get("propertyId") || "";
+  // ?layer=retail (or comma-separated list) auto-toggles layers on arrival.
+  // Used by the Sharp retail editor's "Open in MAP BGP" link so the user
+  // lands with Retail Context already on, no extra clicks.
+  const initialLayers = (params.get("layer") || "").split(",").map((s) => s.trim()).filter(Boolean);
   const initialSearch = (address || postcode) ? { address, postcode: postcode || null } : null;
 
   const [show3D, setShow3D] = useState(false);
   const [centre, setCentre] = useState<{ lat: number; lng: number }>({ lat: 51.5074, lng: -0.1278 });
   const [exporting, setExporting] = useState(false);
+
+  // Auto-toggle requested layers once EdozoMap has mounted. Hacky DOM
+  // click via the layer toggle's data-testid — much smaller than threading
+  // an initialLayers prop through Edozo's 4500-line layer state machine.
+  useEffect(() => {
+    if (initialLayers.length === 0) return;
+    const t = setTimeout(() => {
+      for (const layer of initialLayers) {
+        const btn = document.querySelector<HTMLButtonElement>(
+          `[data-testid="layer-toggle-${layer}"]`,
+        );
+        if (btn && btn.textContent?.includes("OFF")) btn.click();
+      }
+    }, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const open3D = () => {
     // Pick up the last centre EdozoMap wrote to localStorage on moveend.
