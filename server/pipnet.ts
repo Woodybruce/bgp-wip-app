@@ -51,26 +51,49 @@ async function login(): Promise<string> {
     redirect: "manual",
   });
 
-  const cookies = res.headers.getSetCookie?.() || [];
-  const jsessionid = cookies
-    .map((c) => c.split(";")[0])
-    .find((c) => c.startsWith("JSESSIONID="));
+  const jsessionid = extractJsessionId(res);
+  const bodyText = await res.text();
 
   if (!jsessionid) {
-    const html = await res.text();
-    if (html.includes("Invalid logon")) {
+    if (bodyText.includes("Invalid logon")) {
       throw new Error("PIPnet login failed: invalid credentials");
     }
-    throw new Error("PIPnet login failed: no session cookie");
+    const hdrKeys: string[] = [];
+    res.headers.forEach((_v, k) => hdrKeys.push(k));
+    console.error(`[pipnet login] no JSESSIONID. status=${res.status} headers=${hdrKeys.join(",")} bodyPreview=${bodyText.slice(0, 300).replace(/\s+/g, " ")}`);
+    throw new Error(`PIPnet login failed: no session cookie (HTTP ${res.status} from ${PIPNET_URL}/checkLogin.jsp via ${isScraperApiAvailable() ? "ScraperAPI proxy" : "direct fetch"})`);
   }
 
-  const checkHtml = await res.text();
-  if (checkHtml.includes("Invalid logon")) {
+  if (bodyText.includes("Invalid logon")) {
     throw new Error("PIPnet login failed: invalid credentials");
   }
 
   sessionCookie = jsessionid;
   return sessionCookie;
+}
+
+function extractJsessionId(res: Response): string | null {
+  const raw = (res.headers as any).getSetCookie?.();
+  if (Array.isArray(raw) && raw.length > 0) {
+    const hit = raw.map((c: string) => c.split(";")[0]).find((c: string) => c.startsWith("JSESSIONID="));
+    if (hit) return hit;
+  }
+  const single = res.headers.get("set-cookie");
+  if (single) {
+    const parts = single.split(/,(?=\s*[A-Za-z0-9_-]+=)/);
+    for (const p of parts) {
+      const head = p.trim().split(";")[0];
+      if (head.startsWith("JSESSIONID=")) return head;
+    }
+  }
+  let found: string | null = null;
+  res.headers.forEach((value, key) => {
+    if (found) return;
+    if (key.toLowerCase() !== "set-cookie") return;
+    const head = value.trim().split(";")[0];
+    if (head.startsWith("JSESSIONID=")) found = head;
+  });
+  return found;
 }
 
 function parseHtmlTable(html: string): Record<string, string>[] {
@@ -283,4 +306,15 @@ export async function importPipnetRequirements(params: {
 export function resetSession() {
   sessionCookie = null;
   scraperSession = null;
+}
+
+export async function testPipnetLogin(): Promise<{ ok: boolean; message: string; status?: number; via: string }> {
+  resetSession();
+  const via = isScraperApiAvailable() ? "ScraperAPI proxy" : "direct fetch";
+  try {
+    const cookie = await login();
+    return { ok: true, message: `Login successful — JSESSIONID acquired (${cookie.split("=")[1]?.slice(0, 6)}…) via ${via}.`, via };
+  } catch (err: any) {
+    return { ok: false, message: err?.message || String(err), via };
+  }
 }

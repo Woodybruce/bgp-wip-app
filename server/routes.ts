@@ -1458,12 +1458,11 @@ export async function registerRoutes(
 
   app.post("/api/admin/integrations/pipnet/test", requireAuth, requireAdmin, async (_req, res) => {
     try {
-      const { resetSession, searchPipnetRequirements } = await import("./pipnet");
-      resetSession();
-      await searchPipnetRequirements({ location: "London" });
-      res.json({ ok: true, message: "Login successful — PIPnet is responding." });
+      const { testPipnetLogin } = await import("./pipnet");
+      const result = await testPipnetLogin();
+      res.status(result.ok ? 200 : 400).json(result);
     } catch (err: any) {
-      res.status(400).json({ ok: false, message: err?.message || "PIPnet test failed" });
+      res.status(500).json({ ok: false, message: err?.message || "PIPnet test failed" });
     }
   });
 
