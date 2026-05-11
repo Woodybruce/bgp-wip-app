@@ -347,6 +347,45 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
     }
   };
 
+  const syncTrl = async () => {
+    setPipnetSyncing(true);
+    try {
+      const res = await fetch("/api/external-requirements/sync-trl", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Sync failed");
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      toast({ title: "TRL synced", description: `${data.discovered} discovered · ${data.imported} imported · ${data.failed} failed` });
+    } catch (err: any) {
+      toast({ title: "TRL sync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSyncing(false);
+    }
+  };
+
+  const wipeAndResyncTrl = async () => {
+    if (!confirm("This will delete every TRL-sourced requirement and re-import them. Any manual edits on those rows will be lost. Continue?")) return;
+    setPipnetSyncing(true);
+    try {
+      const res = await fetch("/api/external-requirements/resync-trl", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Resync failed");
+      queryClient.invalidateQueries({ queryKey: ["/api/crm/requirements-leasing"] });
+      toast({ title: "TRL wiped and re-synced", description: `${data.deletedReqs} deleted · ${data.imported} re-imported · ${data.failed} failed` });
+    } catch (err: any) {
+      toast({ title: "TRL resync failed", description: err.message, variant: "destructive" });
+    } finally {
+      setPipnetSyncing(false);
+    }
+  };
+
   const wipeAndResyncPipnet = async () => {
     if (!confirm("This will delete every PIPnet-sourced requirement and re-import them with the corrected agent/contact mapping. Any manual edits on those rows will be lost. Continue?")) return;
     setPipnetSyncing(true);
@@ -728,6 +767,28 @@ function LeasingTable({ teamFilter, companyFilter }: { teamFilter?: string | nul
           title="Fetch one requirement's detail page and dump every field"
         >
           Inspect Detail
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={syncTrl}
+          disabled={pipnetSyncing}
+          data-testid="button-sync-trl"
+          title="Pull every requirement from TheRequirementList"
+        >
+          {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+          Sync TRL
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={wipeAndResyncTrl}
+          disabled={pipnetSyncing}
+          data-testid="button-resync-trl"
+          title="Delete previous TRL imports and re-run"
+        >
+          {pipnetSyncing ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />}
+          Wipe & Resync TRL
         </Button>
         <Button size="sm" onClick={() => setCreateOpen(true)} data-testid="button-create-leasing">
           <Plus className="w-4 h-4 mr-1" />

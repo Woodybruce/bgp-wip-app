@@ -1,6 +1,6 @@
 import { db } from "./db";
-import { externalRequirements } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { externalRequirements, crmRequirementsLeasing, crmCompanies, crmContacts } from "@shared/schema";
+import { eq, and, isNull } from "drizzle-orm";
 import { ScraperSession, isScraperApiAvailable } from "./utils/scraperapi";
 
 const TRL_BASE = "https://www.therequirementlist.com";
@@ -203,7 +203,7 @@ export async function scrapeTrlPage(url: string): Promise<{
   }
 }
 
-export async function importTrlRequirement(url: string): Promise<string | null> {
+export async function importTrlRequirement(url: string, autoPromote = true): Promise<string | null> {
   const data = await scrapeTrlPage(url);
   if (!data) return null;
 
@@ -239,19 +239,192 @@ export async function importTrlRequirement(url: string): Promise<string | null> 
     updatedAt: new Date(),
   };
 
+  let externalId: string;
   if (existing.length > 0) {
     await db
       .update(externalRequirements)
       .set(record)
       .where(eq(externalRequirements.id, existing[0].id));
-    return existing[0].id;
+    externalId = existing[0].id;
+  } else {
+    const [inserted] = await db
+      .insert(externalRequirements)
+      .values(record)
+      .returning({ id: externalRequirements.id });
+    externalId = inserted.id;
   }
 
-  const [inserted] = await db
-    .insert(externalRequirements)
-    .values(record)
-    .returning({ id: externalRequirements.id });
-  return inserted.id;
+  if (autoPromote && (existing.length === 0 || existing[0].status !== "converted")) {
+    await promoteTrlToCrmRequirement(externalId, record);
+  }
+  return externalId;
+}
+
+// Mirror of PIPnet's promote — but TRL contacts are the OCCUPIER's property
+// director (Pret, Greggs, etc.), so they go into principalContactId rather
+// than agentContactId. The client company is also tagged as a Brand/Occupier
+// when freshly created, so it surfaces in the right CRM segment.
+async function promoteTrlToCrmRequirement(
+  externalId: string,
+  item: {
+    companyName: string;
+    companyLogo: string | null;
+    contactName: string | null;
+    contactTitle: string | null;
+    contactEmail: string | null;
+    contactPhone: string | null;
+    useClass: string | null;
+    sizeRange: string | null;
+    locations: string[] | null;
+    tenure: string | null;
+    description: string | null;
+    pitch: string | null;
+    lastUpdated: string | null;
+    sourceUrl?: string;
+    rawData: any;
+  }
+): Promise<boolean> {
+  const mappedUse: string[] = item.rawData?.mappedUse || [];
+  return db.transaction(async (tx) => {
+    // Client company — the tenant. Tag as "Brand" when newly created so it
+    // doesn't collide with the agent/landlord segments.
+    let clientCompanyId: string | null = null;
+    if (item.companyName) {
+      const existingCompany = await tx
+        .select()
+        .from(crmCompanies)
+        .where(eq(crmCompanies.name, item.companyName))
+        .limit(1);
+      if (existingCompany.length > 0) {
+        clientCompanyId = existingCompany[0].id;
+      } else {
+        const [newCompany] = await tx
+          .insert(crmCompanies)
+          .values({ name: item.companyName, companyType: "Brand" })
+          .returning({ id: crmCompanies.id });
+        clientCompanyId = newCompany.id;
+      }
+    }
+
+    // Principal (occupier-side) contact — Pret's property director etc.
+    let principalContactId: string | null = null;
+    if (item.contactName) {
+      const existingContact = await tx
+        .select()
+        .from(crmContacts)
+        .where(
+          and(
+            eq(crmContacts.name, item.contactName),
+            clientCompanyId ? eq(crmContacts.companyId, clientCompanyId) : isNull(crmContacts.companyId),
+          )
+        )
+        .limit(1);
+      if (existingContact.length > 0) {
+        principalContactId = existingContact[0].id;
+        const updates: Record<string, any> = {};
+        if (!existingContact[0].email && item.contactEmail) updates.email = item.contactEmail;
+        if (!existingContact[0].phone && item.contactPhone) updates.phone = item.contactPhone;
+        if (!existingContact[0].role && item.contactTitle) updates.role = item.contactTitle;
+        if (Object.keys(updates).length > 0) {
+          await tx.update(crmContacts).set(updates).where(eq(crmContacts.id, existingContact[0].id));
+        }
+      } else {
+        const [newContact] = await tx
+          .insert(crmContacts)
+          .values({
+            name: item.contactName,
+            companyName: item.companyName,
+            companyId: clientCompanyId,
+            email: item.contactEmail,
+            phone: item.contactPhone,
+            role: item.contactTitle,
+            contactType: "Principal",
+          })
+          .returning({ id: crmContacts.id });
+        principalContactId = newContact.id;
+      }
+    }
+
+    // Skip if a leasing requirement for this client already exists.
+    const existingReq = await tx
+      .select({ id: crmRequirementsLeasing.id })
+      .from(crmRequirementsLeasing)
+      .where(eq(crmRequirementsLeasing.name, item.companyName))
+      .limit(1);
+    if (existingReq.length > 0) {
+      await tx
+        .update(externalRequirements)
+        .set({ status: "converted" })
+        .where(eq(externalRequirements.id, externalId));
+      return false;
+    }
+
+    const useArray = mappedUse.length > 0
+      ? mappedUse
+      : item.useClass
+      ? item.useClass.split(/[,;|]/).map(s => s.trim()).filter(Boolean)
+      : null;
+
+    await tx.insert(crmRequirementsLeasing).values({
+      name: item.companyName,
+      companyId: clientCompanyId,
+      principalContactId,
+      agentContactId: null,
+      use: useArray,
+      size: item.sizeRange ? [item.sizeRange] : null,
+      requirementLocations: item.locations,
+      comments: [
+        item.description,
+        item.pitch ? `Pitch: ${item.pitch}` : null,
+        item.tenure ? `Tenure: ${item.tenure}` : null,
+        item.sourceUrl ? `TRL: ${item.sourceUrl}` : null,
+        "Source: TheRequirementList",
+      ].filter(Boolean).join("\n"),
+      status: "Active",
+    });
+
+    await tx
+      .update(externalRequirements)
+      .set({ status: "converted" })
+      .where(eq(externalRequirements.id, externalId));
+    return true;
+  });
+}
+
+// Full sync: discover every requirement URL via TRL's search, then import +
+// auto-promote each. Returns counts so the UI can show a useful toast.
+export async function syncAllTrlRequirements(): Promise<{ discovered: number; imported: number; failed: number; errors: string[] }> {
+  let imported = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  let urls: string[] = [];
+  try {
+    const searched = await scrapeTrlRequirementSearch();
+    urls = searched.map(s => s.url);
+  } catch (e: any) {
+    errors.push(`Requirement search failed: ${e?.message}`);
+  }
+  // Fall back to the static known-pages list if discovery yielded nothing
+  // (e.g. TRL search markup changes, auth blip).
+  if (urls.length === 0) urls = KNOWN_TRL_PAGES;
+
+  for (const url of urls) {
+    try {
+      const id = await importTrlRequirement(url, true);
+      if (id) imported++;
+      else {
+        failed++;
+        errors.push(`No data extracted from ${url}`);
+      }
+    } catch (err: any) {
+      failed++;
+      errors.push(`${url}: ${err.message}`);
+    }
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  return { discovered: urls.length, imported, failed, errors };
 }
 
 export const KNOWN_TRL_PAGES = [

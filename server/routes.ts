@@ -1584,6 +1584,49 @@ export async function registerRoutes(
     }
   });
 
+  // TRL: full sync — discovers every requirement URL via TRL's search and
+  // imports + auto-promotes each into crm_requirements_leasing.
+  app.post("/api/external-requirements/sync-trl", requireAuth, async (_req, res) => {
+    try {
+      const { syncAllTrlRequirements } = await import("./trl");
+      const result = await syncAllTrlRequirements();
+      if (!res.headersSent) res.json(result);
+    } catch (err: any) {
+      console.error("[sync-trl] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "TRL sync failed" });
+    }
+  });
+
+  // TRL: wipe every TRL-sourced leasing requirement and re-sync. Mirror of
+  // resync-pipnet — only removes crm rows whose name matches a TRL-sourced
+  // external_requirements row, leaving manual entries untouched.
+  app.post("/api/external-requirements/resync-trl", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const { externalRequirements: extReq, crmRequirementsLeasing: crmReqL } = await import("@shared/schema");
+      const { inArray, sql: drizzleSql } = await import("drizzle-orm");
+      const { syncAllTrlRequirements } = await import("./trl");
+      const trlRows = await db
+        .select({ id: extReq.id, companyName: extReq.companyName })
+        .from(extReq)
+        .where(eq(extReq.source, "TRL"));
+      const clientNames = Array.from(new Set(trlRows.map(r => r.companyName).filter((n): n is string => !!n)));
+      let deletedReqs = 0;
+      if (clientNames.length > 0) {
+        const deleted = await db
+          .delete(crmReqL)
+          .where(inArray(crmReqL.name, clientNames))
+          .returning({ id: crmReqL.id });
+        deletedReqs = deleted.length;
+      }
+      await db.update(extReq).set({ status: drizzleSql`'active'` }).where(eq(extReq.source, "TRL"));
+      const result = await syncAllTrlRequirements();
+      if (!res.headersSent) res.json({ deletedReqs, clientNames: clientNames.length, ...result });
+    } catch (err: any) {
+      console.error("[resync-trl] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "TRL resync failed" });
+    }
+  });
+
   app.delete("/api/external-requirements/:id", requireAuth, async (req, res) => {
     try {
       await db
