@@ -209,6 +209,7 @@ export async function searchPipnetRequirements(params: {
   documentDate?: string;
   allPages?: boolean;
   maxPages?: number;
+  stopBeforeDate?: Date;
 }): Promise<Record<string, string>[]> {
   const cookie = await login();
   const body = new URLSearchParams({
@@ -240,7 +241,7 @@ export async function searchPipnetRequirements(params: {
   const totalPages = parseTotalPages(html);
 
   if (params.allPages && totalPages > 1) {
-    const maxPages = Math.min(totalPages, params.maxPages || 50);
+    const maxPages = Math.min(totalPages, params.maxPages || 5);
     for (let page = 2; page <= maxPages; page++) {
       const nextMatch = html.match(/href="(reqresults\.jsp\?action=next&hash=[^"]+)"/);
       if (!nextMatch) break;
@@ -252,6 +253,12 @@ export async function searchPipnetRequirements(params: {
       const pageRows = parseHtmlTable(html);
       if (pageRows.length === 0) break;
       allRows.push(...pageRows);
+      // PIPnet sorts newest-first. If every row on this page is already
+      // outside the 3-month window, the rest will be too — stop paginating.
+      if (params.stopBeforeDate && pageRows.every(r => {
+        const d = parseUkDate(r["Document Date"] || r["Date"] || r["Updated"]);
+        return d ? d < params.stopBeforeDate! : false;
+      })) break;
       await new Promise((r) => setTimeout(r, 200));
     }
   }
@@ -349,6 +356,8 @@ export async function importPipnetRequirements(params: {
   const results = await searchPipnetRequirements({
     ...params,
     allPages: params.allPages ?? true,
+    maxPages: params.allPages === false ? 1 : 5,
+    stopBeforeDate: cutoff,
   });
   let imported = 0;
   let promoted = 0;

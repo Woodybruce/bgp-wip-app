@@ -1496,9 +1496,10 @@ export async function registerRoutes(
     try {
       const { location, minSize, maxSize, client, documentDate, allPages, monthsBack, autoPromote } = req.body;
       const result = await importPipnetRequirements({ location, minSize, maxSize, client, documentDate, allPages, monthsBack, autoPromote });
-      res.json(result);
+      if (!res.headersSent) res.json(result);
     } catch (err: any) {
-      res.status(500).json({ message: err?.message || "PIPnet import failed" });
+      console.error("[import-pipnet] failed:", err?.message);
+      if (!res.headersSent) res.status(500).json({ message: err?.message || "PIPnet import failed" });
     }
   });
 
